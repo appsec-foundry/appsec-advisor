@@ -804,9 +804,9 @@ Status as of 2026-08-10:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for full/rebuild; selected by default on this feature branch | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for full/rebuild; selected by default on this feature branch | Establish the resident-context and escape-rate targets |
-| WP5a | Repository implementation complete through the post-R9 projection, contract, lifecycle, summary, and telemetry fixes | Pass the R10 live acceptance checkpoint, then establish parity in the controlled A/B cohort |
+| WP5a | Repository implementation is substantially complete, and the R10 postfix run live-proved the recon and terminal-marker fixes | Close the R10 postfix coverage, abuse-signal, identity, and telemetry defects; then pass a fresh live checkpoint and the controlled A/B cohort |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
-| WP7 | Partially implemented; branch-local full/rebuild default selection landed before acceptance | Incremental and resume migration, controlled release rollout, acceptance, and legacy-switch removal remain |
+| WP7 | Partially implemented; branch-local full/rebuild default selection landed before acceptance, while context-v2 resume remains rejected | Incremental and resume migration, controlled release rollout, acceptance, and legacy-switch removal remain |
 
 The first WP5a slice now normalizes bounded literal repository-relative focus
 and exclude paths at the deterministic manifest-to-bundle boundary. Focus
@@ -1408,7 +1408,10 @@ removes redundant reads and writes, excludes scan and code-fix artifacts from
 recon, removes refuted threats from abuse inputs, and routes known
 vulnerabilities as `threats.known_threats`. Commit `7961c132` sorts the Findings
 Index by Critical, High, Medium, Low, and Info with deterministic tie-breaking.
-Neither change has been exercised in another live run.
+The postfix run exercised the bounded abuse projections and proved that the
+refuted threat did not enter the intermediate YAML, but it ended before the
+abuse stats row and final report. The limiter's complete cost effect and the
+Findings Index sort therefore remain unverified.
 
 The pre-R10 repository follow-up closes the remaining generic false-pass and
 measurement paths. Projection gates now reconstruct recon, route, evidence,
@@ -1504,97 +1507,258 @@ remain per-file checks so their `always_include` override still preserves API
 contracts and ADRs. A deterministic replay against the same target reduced
 Category 9 from 169 to 14 findings and Category 13 from 85 to 25, with no
 finding path under any detected prior assessment directory. The raw recon
-template and agent definition remain large fixed inputs; R10 must remeasure
-their cost before any broader producer redesign is justified.
+template and agent definition remain large fixed inputs. The postfix run now
+shows that exclusion fixes correctness without reducing live recon cost; any
+producer redesign must remain repository-neutral and preserve the canonical
+recon contract.
 
-### Continuation checkpoint — 2026-08-10
+### Continuation checkpoint — 2026-08-10 after the R10 postfix run
 
-Continue on branch `feature/turn-admission-telemetry`. The relevant ordered
-code commits are:
+Continue on branch `feature/turn-admission-telemetry`. Before this checkpoint
+update, the branch was clean at `43ef4b4a`; the remote branch pointed to the
+same commit. Preserve the ordered implementation history:
 
 - `c08be9c6` restores context-v2 watchdog and foreground-role progress;
 - `1da43366` excludes user-named prior assessment outputs from deterministic
   and model-driven recon;
 - `8eace243` makes context-v2 the branch default for eligible full/rebuild runs
-  and retains `APPSEC_CONTEXT_V2=0` as the legacy selection; and
+  and retains `APPSEC_CONTEXT_V2=0` as the legacy selection;
 - `9f00e2a1` clears live tool markers before monitor cleanup and from an
-  all-mode wrapper `EXIT` backstop.
+  all-mode wrapper `EXIT` backstop;
+- `e4f83820` records the pre-run continuation checkpoint; and
+- `43ef4b4a` binds the decision register to its own references.
 
-Commits `f2d48520` and `62e592d5` are independent decision-register
-documentation added while this work was in progress. They are part of the
-branch history and must be preserved. No live scan was started by the coding
-agent.
+Commits `f2d48520` and `62e592d5` are independent decision-register work in
+the same history and must also be preserved. Context-v2 remains a convenience
+default only on this feature branch. The failed smoke does not justify a
+release default, and `APPSEC_CONTEXT_V2=0` remains the rollback for a new run.
 
-The `fresh2` invocation was already running while the recon correction was
-being prepared. It began from the pre-fix producer and was operator-aborted in
-Phase 8. Its exact headless result reports `error_during_execution`, 41 turns,
-1,355,814 milliseconds, and USD 4.0637447. It produced no STRIDE output. Its
-deterministic recon sidecar contains 528 findings, including Category 9 at 169,
-Category 13 at 85, and ten distinct `docs/security*` finding paths; the summary
-contains 499 physical lines and 25,648 bytes. Stage rows report:
+The operator ran the planned command without an environment prefix because
+`8eace243` selected `runtime_generation=context-v2` from the persisted rebuild
+configuration:
+
+```bash
+./scripts/run-headless.sh \
+  --repo /home/mrohr/juice-shop \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix \
+  --model claude-sonnet-4-6 \
+  --reasoning-model sonnet-economy \
+  --assessment-depth quick \
+  --abuse-cases \
+  --keep-runtime-files \
+  --trust-mode trusted \
+  --rebuild
+```
+
+The run ended at the subscription session limit during Stage 1d abuse
+verification. The child result has `subtype=success` because the host request
+returned normally, but `is_error=true` and its result is `You've hit your
+session limit`; the wrapper correctly exited with code 1. It attempted the
+deterministic compose backstop and failed closed because `ms-verdict.json` and
+`security-architecture.md` had not been rendered. The preserved output has a
+237,222-byte `threat-model.yaml` but no `threat-model.md`, SARIF, Findings
+Index, Completion Summary, or final QA and architect-review result. Do not
+classify this invocation as a successful R10 or use it in the controlled A/B
+cohort.
+
+The exact partial headless totals are 82 turns, 4,057,449 milliseconds wall
+time, 7,406 input tokens, 330,443 output tokens, 22,163,647 cache-read tokens,
+1,266,462 cache-write tokens, and USD 15.6995814. R9 reported 157 turns,
+5,114,602 milliseconds, 29,589,045 cache-read tokens, and USD 19.66941455. The
+postfix values are lower only because rendering and review never completed;
+they do not prove a cost reduction.
+
+The live run proves three committed changes:
+
+1. Context-v2 is selected by default for this eligible rebuild without
+   `APPSEC_CONTEXT_V2=1`.
+2. Assessment-output exclusion is correct. The postfix recon sidecar has 273
+   findings instead of the contaminated `fresh2` run's 528, Category 9 fell
+   from 169 to 14, Category 13 fell from 85 to 25, and no finding path is under
+   a detected `docs/security*` assessment directory.
+3. Terminal cleanup works on a session-limit failure with runtime preservation:
+   `.active-tool-calls` is absent after wrapper exit. The retained lock is a
+   preserved diagnostic and `appsec_status.py --live` reports it as not alive.
+
+The recon correction is not a latency fix. The raw postfix summary has 520
+physical lines and 30,075 bytes, compared with 499 lines and 25,648 bytes in
+the contaminated `fresh2` run. Recon used 140,725 tokens, 26 tool calls, and
+249,635 milliseconds, which is 35.7% more tokens and 15.7% more duration than
+`fresh2`. The fixed role definition, template, publication work, and provider
+latency remain material. The run recorded a 282-second provider wait in the
+first STRIDE wave and a 492-second wait before the second-wave Web3 analyzer
+resumed. Fresh lock heartbeats, later semantic events, and successful Agent
+returns distinguish those waits from a local deadlock.
+
+All Stage-1 gates before the external limit passed. Architecture, boundary,
+control, both STRIDE waves, merge review, evidence verification, post-STRIDE
+synthesis, canonical YAML construction, and the deterministic Stage-2 handoff
+completed. Six selected components each produced all six STRIDE categories
+with `partial=false`. The final component inventory contains seven components:
+`backend-api`, `frontend-spa`, `auth-service`, `data-store`,
+`realtime-service`, `ci-cd-pipeline`, and `web3-nft`. R9 retained eight and had
+a separate `llm-client`; the postfix run folded LLM signals into `backend-api`.
+Six components were selected in both runs, but postfix selected `data-store`
+where R9 selected `llm-client`. This is an unresolved inventory and selection
+delta, not count parity.
+
+The stage rows written before the interruption are:
 
 | Role | Tokens | Tool calls | Duration |
 |---|---:|---:|---:|
-| Recon scanner | 103,723 | 22 | 215,699 ms |
-| Architecture analyst | 81,459 | 28 | 248,505 ms |
-| Trust-boundary analyst | 73,026 | 16 | 325,219 ms |
+| Recon scanner | 140,725 | 26 | 249,635 ms |
+| Architecture analyst | 90,780 | 27 | 335,177 ms |
+| Trust-boundary analyst | 67,819 | 17 | 305,049 ms |
+| Control analyst | 94,461 | 19 | 434,021 ms |
+| STRIDE analyzers | 452,782 | 153 | 3,128,567 ms aggregate compute |
+| Threat merger | 44,940 | 6 | 191,535 ms |
+| Evidence verifier | 54,053 | 15 | 212,337 ms |
+| Post-STRIDE synthesizer | 52,406 | 9 | 105,674 ms |
 
-Because the run admitted prior assessment artifacts, none of these values is an
-R10 acceptance measurement. The immediate post-abort audit also found a stale
-control-analyst marker after the headless result was written. The wrapper had
-placed marker cleanup after progress-monitor cleanup and had no all-mode EXIT
-backstop. Commit `9f00e2a1` closes both paths; the next run must prove terminal
-cleanup rather than treating the unit test as live evidence.
+The STRIDE row is internally inconsistent: six Agent dispatches occurred over
+two waves, but `dispatch_count` is five and `recorded_dispatch_count` is two.
+`record_stage_stats._merge_accumulate` takes the maximum per-wave dispatch
+count instead of preserving the total distinct dispatches. The session limit
+prevented the Stage 1d stats command, so there is no abuse-verifier usage row.
+Per-role priced token classes, turns, and cost remain unavailable from the
+provider. Do not synthesize them by proportional allocation.
 
-Verification after the recon correction passed 635 focused scan-exclusion,
-recon-pattern, agent-definition, and permission tests. The deterministic target
-replay reduced Category 9 from 169 to 14 and Category 13 from 85 to 25, with
-zero paths under a detected prior assessment directory. `make lint`, config
-validation, fragment-registry validation, target-specificity validation, and
-`git diff --check` passed.
+The final effective routing plan is valid at revision 10 with ten actions and
+154 decisions: 65 delivered, 32 forbidden, 15 `legacy_unreceipted`, 14
+observed scalars, and 28 omitted optionals. No active delivery used
+`shadow_hashed`. The merge-review action correctly logged shadow mode because
+its bounded route is still declared `shadow-only`; runtime generation remained
+context-v2, and its required 27,095-byte candidate projection was validated
+and receipted. The remaining `legacy_unreceipted` contexts are
+`discovery.repository_surface`, `discovery.scan_policy`,
+`architecture.targeted_source`, `controls.analysis_source`, one
+`threats.optional_discovery` input per STRIDE component, and one
+`abuse_cases.evidence` input per verifier. They remain explicit WP5a migration
+debt and prevent a literal claim that every Stage-1 input is receipted.
 
-The default-selection work exercised the complete resolve-config,
-orchestration-controller, and headless-completion target group: 583 tests
-passed and one new test-only assertion incorrectly assumed that a no-warning
-path must create a log file. After correcting that assertion, 20 focused tests
-passed; the final default, persistence, unsupported-mode, controller, and
-headless selection set passed 34 tests. The terminal-cleanup follow-up passed
-33 focused headless and active-marker tests plus `sh -n`, `make lint`, and
-`git diff --check`. Per operator direction, `make test`, `make check`, and the
-complete repository suite were not rerun after these commits. They remain
-required before a release or merge boundary that claims repository-wide
-acceptance.
+The largest delivered projections demonstrate the corrected separation
+between semantic and physical dimensions:
 
-No further repository change is currently justified before the next live
-checkpoint. The remaining pre-R10 actions are operational: confirm this branch
-is clean, confirm the new output path is absent, and run the command below only
-after the aborted `fresh2` wrapper has terminated. Do not resume or reuse any
-R10 directory.
+| Context | Physical lines | Bytes | Estimated tokens |
+|---|---:|---:|---:|
+| Architecture coverage | 1,868 | 70,962 | 17,741 |
+| Route projection, 96 records | 1,756 | 49,204 | 12,301 |
+| Recon patterns | 1,002 | 39,339 | 9,835 |
+| Boundary assessment | 1,268 | 32,599 | 8,150 |
+| Generated-threat projection | 502 | 29,061 | 7,266 |
+| Proposed-mitigation projection | 462 | 28,871 | 7,218 |
+| Merge-review projection | 1 | 27,095 | 6,774 |
+| Evidence sample | 711 | 24,579 | 6,145 |
+| Architecture recon projection | 524 | 20,115 | 5,029 |
+| Largest component evidence bundle | 1 | 19,504 | 4,876 |
 
-Open questions that R10 must answer before more implementation:
+Stage 1d dispatched five bounded abuse-verifier jobs. Their projections range
+from 91 to 213 physical lines, 3,863 to 8,876 bytes, and 966 to 2,219 estimated
+tokens. Four verdict files are complete. `AC-T-002` retains one decided and one
+pending step because the host limit interrupted finalization. The limiter's
+bounded delivery is therefore live-proven, but its cost effect is not: R9's
+212,533 tokens, 101 tool calls, and 185,975 milliseconds cannot be compared
+with a missing postfix role row.
 
-1. Does assessment-output exclusion reduce live recon pattern volume, agent
-   reads, tokens, tool calls, and latency, or does the fixed 78,894-byte agent
-   definition and approximately 33 KiB template remain the dominant cost?
-2. Is the architecture role's approximately four-to-five-minute latency
-   explained by model/service variance, or does its bounded route and recon
-   input still require another generic projection?
-3. Does the raw recon report remain near 500 physical lines because its
-   canonical headings and evidence tables are fixed while the downstream
-   projection correctly stays at 200 semantic retained lines? Do not collapse
-   these dimensions or truncate the producer merely to satisfy the projection
-   target.
-4. Do all semantic roles emit stage rows, and can the provider expose exact
-   per-role turns and priced cost? Until then, tokens, tool calls, and duration
-   are role-level measurements, while turns and cost remain exact only for the
-   whole run/model totals.
-5. Does the all-mode EXIT backstop remove `.active-tool-calls` after success,
-   provider failure, and operator interrupt with runtime preservation enabled?
-6. Does finding identity and coverage recover without reintroducing refuted or
-   generated candidates, especially DOM XSS and supported OAuth credential or
-   JWT claim findings?
-7. Does R10 support keeping the branch-local default, or should
-   `APPSEC_CONTEXT_V2=0` become the immediate rollback while defects are fixed?
+The intermediate YAML contains 40 threats: seven Critical, 22 High, and 11
+Medium. R9 had 42 findings at six Critical, 21 High, and 15 Medium; the fixed
+reference has 47 at nine Critical, 27 High, and 11 Medium. The postfix model
+recovers stored XSS through `DomSanitizer.bypassSecurityTrustHtml`, OAuth
+implicit flow, bearer tokens in local storage, JWT algorithm restriction, and
+hardcoded JWT signing material. It does not recover the reference's DOM XSS at
+`search-result.component.ts:143`, derived OAuth credential at
+`oauth.component.ts:30`, bundled test credentials, or JWT role-claim database
+revalidation. These are real unresolved coverage losses.
+
+The DOM-XSS loss has a concrete projection cause. The frontend evidence bundle
+records the search-result file as a focus path, known-threat entry, and recon
+signal, but `path_routing.focus_admission` omits its source projection with
+`reason=source-budget` after admitting two earlier sanitizer-bypass files. The
+OAuth component exists under the selected frontend glob but has no derived-
+credential recon signal or source slice. The backend and auth architecture
+context records the role-claim revalidation assumption, but the relevant
+source window does not reach the bounded analyzer input. Fix admission ordering
+and missing generic signals at their producers; do not seed fixture titles or
+raise all budgets without a measured contract reason.
+
+Evidence verification sampled 12 of 44 merged threats: ten verified, one
+refuted, and one ambiguous. Refuted `T-012` is absent from the 40-threat YAML,
+so the refutation filter works. Abuse matching has two independent defects:
+
+- `AC-T-004` is marked not applicable because `has_registration` is absent
+  even though the deterministic auto-emitter later records open registration
+  from `POST /api/Users`; scope signals do not have one canonical producer.
+- That inactive row binds `T-009` to `routes/address.ts:11`, while final
+  intermediate `T-009` is a SQL-injection finding at `routes/search.ts:23`.
+  The cause of this stale public-ID reference must be traced across match,
+  merge, refutation, and final ID allocation before the row may be rendered.
+
+One progress event described `data-store` as cheap STRIDE while its action,
+component context plan, Agent description, and final event all specified full
+depth. The analysis ran at full depth; the model-authored progress label was
+wrong. Progress must render the controller-owned `analysis_depth` rather than
+allow a role to restate it.
+
+R10 acceptance therefore remains failed for three independent reasons: the
+external session limit prevented rendering; component and finding parity are
+unresolved; and role telemetry is incomplete. Findings-index ordering and the
+new Completion Summary cannot be evaluated because `threat-model.md` does not
+exist. The next action is implementation and regression testing, not another
+live invocation or an unsupported resume.
+
+#### Required implementation sequence before another live checkpoint
+
+1. Preserve the postfix directory as read-only evidence. Do not resume it,
+   rebuild into it, or treat its partial YAML as an accepted report.
+2. Trace component production through `agents/appsec-architecture-analyst.md`,
+   `scripts/finalize_component_inventory.py`, architecture coverage, and
+   `scripts/build_stride_dispatch_manifest.py`. Define a repository-neutral
+   rule for when a security-distinct LLM surface remains separate instead of
+   being folded into a general backend. Add producer, finalization, selection,
+   and Completion Summary regression tests.
+3. Trace focus and signal ordering through
+   `scripts/build_stride_evidence_bundles.py` and its schemas. A bounded bundle
+   must preserve independently relevant mechanisms rather than letting earlier
+   same-class paths consume all source windows. Add neutral tests where a
+   later focus path carries a distinct source-to-sink mechanism. Keep byte,
+   physical-line, source-line, and token limits enforced separately.
+4. Add repository-neutral recon coverage for derived credentials, bundled
+   credentials, and authoritative role-claim use only when source evidence
+   supports each mechanism. Each check must state its inspected signal,
+   trigger, false-positive exclusions, CWE, severity cap, finding type, and
+   required file-and-line evidence. Trace the output through recon schemas,
+   component projection, analyzer input, and deterministic gates.
+5. Reconcile abuse scope through `scripts/match_abuse_cases.py`, the canonical
+   recon signal schema, `scripts/detect_open_registration.py`, and
+   `scripts/auto_emitter_pass.sh`. Select one authoritative registration signal
+   or a deterministic mapping; do not maintain two independently derived facts.
+   Add positive, negative, stale, and missing-signal tests.
+6. Trace abuse finding identity through `scripts/match_abuse_cases.py`,
+   `merge_threats.py`, evidence annotation and refutation, final ID allocation,
+   `scripts/build_abuse_case_contexts.py`, and
+   `scripts/promote_verified_abuse_cases.py`. Bind only stable final IDs or
+   remap by a contracted identity key after finalization. Add tests for ID gaps,
+   refuted findings, reordered findings, inactive cases, and partial verifier
+   output.
+7. Correct multi-wave telemetry in `scripts/record_stage_stats.py`. Preserve
+   the number of distinct dispatches across non-overlapping waves instead of
+   taking the maximum wave width, while retaining idempotency on repeated stats
+   writes. Record every returned Agent usage block before another semantic turn
+   can be lost to a host limit. On abnormal termination, disclose unrecorded
+   active roles rather than fabricating unavailable tokens or priced cost.
+8. Make STRIDE progress consume the action's `analysis_depth` in the thin
+   runtime and logging path. Add a regression where a full component follows a
+   screened component and cannot inherit or invent the prior label.
+9. Run the focused producer, bundle, recon, abuse, ID, telemetry, progress,
+   routing, completion-summary, headless, and permission tests. Replay neutral
+   golden fixtures where a deterministic-tail or scanner change requires it.
+10. Run `make lint`, `make test`, and `make check` once the focused suites are
+    green. Update this checkpoint with exact counts and commit at that fully
+    green boundary.
+
+Do not start the next paid scan until items 2-10 are complete. Begin it shortly
+after a subscription reset or through a capacity source that will not expire
+mid-run. Context-v2 resume remains WP7 work and must stay fail-closed.
 
 After a passing R10, the next work is the controlled three-baseline/three-v2
 A/B cohort, then WP6, then WP7 incremental and resume parity. Release rollout,
@@ -1602,20 +1766,25 @@ the acceptance matrix, required-branch-check enforcement, the 700-turn target,
 resident-context targets, and cost-reduction gates remain open. A single R10
 run cannot close any of them.
 
-The next required live checkpoint is a fresh R10 retry. It uses the same target
-and quick model cohort as R9 and forces Stage 1d. The old R10 directory is mixed
-with the invalid legacy recovery; `fresh`, `fresh2`, and every prior R10 path
-contain aborted or pre-fix runs and must not be reused. At this checkpoint,
-`/tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix` is reserved and absent.
-The target's repository-owned Claude configuration is known and trusted by the
-operator; therefore the exact invocation carries `--trust-mode trusted`. If
-that ownership cannot be attested later, move the configuration out of the
-target and use the default untrusted preflight instead:
+After the required implementation sequence and green repository gates, the
+next live checkpoint is a fresh R10 retry using the same target and quick model
+cohort as R9. Every existing `fresh`, `fresh2`, R10, and postfix directory
+contains aborted, pre-fix, or partial evidence and must remain unchanged. Use a
+new path and verify that it is absent before dispatch. The target's repository-
+owned Claude configuration was attested by the operator for the postfix run;
+the retry may carry `--trust-mode trusted` only while that attestation remains
+valid. Otherwise move the configuration outside the target and use the default
+untrusted preflight.
+
+The planned retry path is
+`/tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix2`. Do not run this
+command merely because the path is documented; all ten pre-scan items above
+must be complete first:
 
 ```bash
 ./scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix2 \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \
