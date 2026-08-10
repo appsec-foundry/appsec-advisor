@@ -38,10 +38,10 @@ to touch — each row names them. One row is one decision and carries everything
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| ST-2 | Every artifact crossing a boundary carries a versioned receipt whose hash is verified before dispatch, in `verify_receipt_hashes` | `test_exact_byte_plan_receipt_detects_mutation` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, Contract A |
-| ST-3 | A stale receipt is refused, never repaired | `test_shadow_plan_rejects_stale_action_receipt` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, Contract A |
-| ST-4 | A run cannot continue across runtime generations; generation and artifact schema versions are persisted *(generation-scoped — WP7)* | `test_route_rejects_context_v2_generation_on_legacy_runtime`, `test_context_v2_action_refuses_a_run_without_a_persisted_generation` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, WP7 |
-| ST-5 | Resume is refused after an authoritative abort; a stale aborted state is not resumable | `test_resume_guard_refuses_stale_aborted` | `CHANGELOG.md` (context-v2) |
+| ST-1 | Every artifact crossing a boundary carries a versioned receipt whose hash is verified before dispatch, in `verify_receipt_hashes` | `test_exact_byte_plan_receipt_detects_mutation` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, Contract A |
+| ST-2 | A stale receipt is refused, never repaired | `test_shadow_plan_rejects_stale_action_receipt` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, Contract A |
+| ST-3 | A run cannot continue across runtime generations; generation and artifact schema versions are persisted *(generation-scoped — WP7)* | `test_route_rejects_context_v2_generation_on_legacy_runtime`, `test_context_v2_action_refuses_a_run_without_a_persisted_generation` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, WP7 |
+| ST-4 | Resume is refused after an authoritative abort; a stale aborted state is not resumable | `test_resume_guard_refuses_stale_aborted` | `CHANGELOG.md` (context-v2) |
 
 ## Orchestration
 
@@ -65,12 +65,12 @@ to touch — each row names them. One row is one decision and carries everything
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
 | CE-1 | Every listed prompt surface stays within its byte budget; exceeding it is fixed by shortening the prompt, not by raising the number | `test_each_live_prompt_surface_stays_within_budget` | `data/context-budgets.yaml` |
-| CE-1b | Everything loaded resident is a listed surface | — *(no guard written)* | `data/context-budgets.yaml` |
-| CE-2 | Stage 2 context stays cumulatively bounded | `test_thin_full_cumulative_stage2_context_is_bounded` | `data/context-budgets.yaml`; see `docs/internal/analysis/analysis-context-compaction-thorough-runs-2026-07-16.md` |
-| CE-3 | Phase groups load at their boundary, never inline | `tests/test_lazy_phase_group_loading.py` | `AGENTS.md` → Orchestration and context |
-| CE-4 | Dispatch prompts run stable → specific → volatile | `tests/test_dispatch_prompt_cache_order.py` | `AGENTS.md` → Prompt caching contract |
-| CE-5 | Budget values may only decrease | — *(no guard written)* | deferred until the WP5a A/B closes |
-| CE-6 | Startup totals are gated, not merely measured | — *(no guard written)* | deferred, `admission.enforce_startup_totals` |
+| CE-2 | Everything loaded resident is a listed surface | — *(no guard written)* | `data/context-budgets.yaml` |
+| CE-3 | Stage 2 context stays cumulatively bounded | `test_thin_full_cumulative_stage2_context_is_bounded` | `data/context-budgets.yaml`; see `docs/internal/analysis/analysis-context-compaction-thorough-runs-2026-07-16.md` |
+| CE-4 | Phase groups load at their boundary, never inline | `tests/test_lazy_phase_group_loading.py` | `AGENTS.md` → Orchestration and context |
+| CE-5 | Dispatch prompts run stable → specific → volatile | `tests/test_dispatch_prompt_cache_order.py` | `AGENTS.md` → Prompt caching contract |
+| CE-6 | Budget values may only decrease | — *(no guard written)* | deferred until the WP5a A/B closes |
+| CE-7 | Startup totals are gated, not merely measured | — *(no guard written)* | deferred, `admission.enforce_startup_totals` |
 
 ## Depth and turn budgets
 
@@ -99,9 +99,9 @@ to touch — each row names them. One row is one decision and carries everything
 | MD-1 | Reasoning modes are a fixed canonical set; aliases resolve to a canonical value and never fork into a second vocabulary | `test_canonical_normaliser_maps_alias`, `test_cli_flag_alias_resolves_to_canonical`, `test_extended_models_alias_matches_canonical`, `test_stride_profile_alias_matches_canonical` | `docs/model-selection.md`; see `docs/internal/analysis/plan-model-routing-transparency-2026-07-04.md` |
 | MD-2 | Every mode fills all three slots — a mode is a complete routing triple, not a partial override | `test_every_mode_has_three_slots` | `docs/model-selection.md` |
 | MD-3 | Economy modes never move the STRIDE pass below sonnet; cost is saved elsewhere | `test_haiku_economy_keeps_stride_on_sonnet` | `docs/model-selection.md` |
-| MD-5 | The session model is the cost lever; no pipeline agent pins a model of its own | — *(no guard written)* | `docs/model-selection.md` |
-| MD-6 | Session-model detection is advisory and fails open; routing resolves with no session model present | `test_effective_routing_empty_session_model` | `AGENTS.md` → Sources and merge behavior |
-| MD-7 | An organization may cap Opus org-wide; absent policy defaults to permitted | `test_policy_disable_opus_absent_defaults_false` | `schemas/org-profile.schema.yaml` → `policy.disable_opus` |
+| MD-4 | The session model is the cost lever; no pipeline agent pins a model of its own | — *(no guard written)* | `docs/model-selection.md` |
+| MD-5 | Session-model detection is advisory and fails open; routing resolves with no session model present | `test_effective_routing_empty_session_model` | `AGENTS.md` → Sources and merge behavior |
+| MD-6 | An organization may cap Opus org-wide; absent policy defaults to permitted | `test_policy_disable_opus_absent_defaults_false` | `schemas/org-profile.schema.yaml` → `policy.disable_opus` |
 
 ## Trust boundaries
 
@@ -115,7 +115,7 @@ to touch — each row names them. One row is one decision and carries everything
 | TB-6 | Assumption shape violations are reported, never silently repaired | `test_assumption_shape_violations_are_reported_not_repaired` | `schemas/threat-model.output.schema.yaml` |
 | TB-7 | A legacy migration never promotes absence into a positive claim | `test_normalize_migrates_legacy_without_promoting_absence` | `schemas/threat-model.output.schema.yaml` |
 | TB-8 | The same crossing collapses unless a stated reason distinguishes it | `test_same_crossing_without_a_stated_reason_collapses` | `schemas/threat-model.output.schema.yaml` |
-| TB-10 | Boundary identity survives renumbering; external IDs are translated at delivery | `test_external_boundary_ids_are_translated_through_the_delivery_renumber` | `scripts/emit_severity_rationale.py` |
+| TB-9 | Boundary identity survives renumbering; external IDs are translated at delivery | `test_external_boundary_ids_are_translated_through_the_delivery_renumber` | `scripts/emit_severity_rationale.py` |
 
 ## Findings and evidence
 
@@ -133,11 +133,11 @@ to touch — each row names them. One row is one decision and carries everything
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
 | WK-1 | The weakness-class vocabulary has one source; schema enums equal the cluster IDs and every consumer references a known class | `test_schema_enums_match_cluster_ids`, `test_posture_rubric_themes_reference_known_classes`, `test_security_library_domains_reference_known_classes` | `data/weakness-classes.yaml`; see `docs/internal/analysis/implplan-weakness-class-evidence-model.md` |
-| WK-3 | `implementation_strategy` is derived from evidence: vetted library without bespoke code is standard-vetted, bespoke without a library is home-grown, both together is standard-misused | `test_vetted_lib_no_bespoke_is_standard_vetted`, `test_bespoke_no_lib_is_home_grown`, `test_lib_plus_bespoke_is_standard_misused` | `scripts/detect_impl_strategy.py`; see `docs/internal/analysis/proposal-weakness-class-evidence-model.md` |
-| WK-4 | An existing control may soften a design-risk weakness, never a confirmed one | `tests/test_detect_impl_strategy.py` *(name-level check open)* | `scripts/detect_impl_strategy.py` |
-| WK-5 | A design-risk weakness is `kind: design` and carries no CVSS | `tests/test_detect_impl_strategy.py` | see FE-1 |
-| WK-6 | Known vulnerabilities roll up into a vulnerability-management weakness instead of staying loose findings | `test_known_vuln_becomes_vulnerability_management_weakness` | `scripts/merge_threats.py` |
-| WK-7 | Per-instance findings stay separate by default; consolidation by mechanism is the exception you justify | — *(guard not located)* | `data/consolidation-groups.yaml`; see `docs/internal/analysis/analysis-finding-consolidation-improvements-2026-06-26.md` |
+| WK-2 | `implementation_strategy` is derived from evidence: vetted library without bespoke code is standard-vetted, bespoke without a library is home-grown, both together is standard-misused | `test_vetted_lib_no_bespoke_is_standard_vetted`, `test_bespoke_no_lib_is_home_grown`, `test_lib_plus_bespoke_is_standard_misused` | `scripts/detect_impl_strategy.py`; see `docs/internal/analysis/proposal-weakness-class-evidence-model.md` |
+| WK-3 | An existing control may soften a design-risk weakness, never a confirmed one | `tests/test_detect_impl_strategy.py` *(name-level check open)* | `scripts/detect_impl_strategy.py` |
+| WK-4 | A design-risk weakness is `kind: design` and carries no CVSS | `tests/test_detect_impl_strategy.py` | see FE-1 |
+| WK-5 | Known vulnerabilities roll up into a vulnerability-management weakness instead of staying loose findings | `test_known_vuln_becomes_vulnerability_management_weakness` | `scripts/merge_threats.py` |
+| WK-6 | Per-instance findings stay separate by default; consolidation by mechanism is the exception you justify | — *(guard not located)* | `data/consolidation-groups.yaml`; see `docs/internal/analysis/analysis-finding-consolidation-improvements-2026-06-26.md` |
 
 ## Security architecture
 
@@ -201,8 +201,8 @@ to touch — each row names them. One row is one decision and carries everything
 |---|---|---|---|
 | EXP-1 | The Threat Dragon export stays alpha and opt-in, and is never part of the `--formats all` expansion | `test_threat_dragon_is_alpha_and_opt_in`, `test_summary_description_marks_the_export_alpha` | `AGENTS.md` → Threat Dragon export |
 | EXP-2 | Emitted values stay inside Threat Dragon's own vocabulary; the envelope is v2 | `test_envelope_is_threat_dragon_v2` | `docs/threat-dragon-export.md`; see `docs/internal/analysis/analysis-threatatlas-export-format-2026-07-30.md` |
-| EXP-2b | Component tiers map to fixed DFD shapes rather than to whatever the renderer prefers | `test_tier_maps_to_dfd_shape` | `docs/threat-dragon-export.md` |
-| EXP-3 | `threat-model.md` stays authoritative and SARIF stays the scanner export; a deliberately lossy export never becomes the source of truth | — *(no guard written)* | `AGENTS.md` → Threat Dragon export |
+| EXP-3 | Component tiers map to fixed DFD shapes rather than to whatever the renderer prefers | `test_tier_maps_to_dfd_shape` | `docs/threat-dragon-export.md` |
+| EXP-4 | `threat-model.md` stays authoritative and SARIF stays the scanner export; a deliberately lossy export never becomes the source of truth | — *(no guard written)* | `AGENTS.md` → Threat Dragon export |
 
 ## Repository trust
 
@@ -212,10 +212,10 @@ to touch — each row names them. One row is one decision and carries everything
 | TR-2 | An untrusted run rejects repo-owned Claude Code hooks, settings and memory files, and out-of-repo symlinks, before Claude starts | `test_repo_owned_claude_settings_flagged`, `test_repo_root_claude_memory_is_flagged`, `test_escaping_symlink_flagged` | `scripts/preflight_untrusted.py` |
 | TR-3 | A preflight finding aborts the run; it is never downgraded to a warning | `test_clean_repo_passes` *(negative case; abort path name-level check open)* | `scripts/preflight_untrusted.py` |
 | TR-4 | An untrusted run requires a URL allow-list for every remote fetch | `tests/test_url_guard.py` *(the `--strict-urls` implication is not separately guarded)* | `--strict-urls` |
-| TR-4b | An untrusted run redacts sensitive paths from the run log, so a shared log cannot leak filesystem layout | — *(no guard written)* | `APPSEC_LOG_REDACT_PATHS` |
-| TR-5 | A blocked run names the escape hatch, so the operator learns what to review instead of what to disable | `test_preflight_abort_names_the_trust_mode_escape_hatch` | `tests/test_run_headless_completion.py` |
-| TR-6 | A file read cannot escape the repository through a symlink | `tests/test_path_guard.py` | `scripts/_path_guard.py` |
-| TR-7 | A leaked secret value in a run artifact fails the run | `tests/test_postscan_secret_check.py` | `scripts/postscan_secret_check.py` |
+| TR-5 | An untrusted run redacts sensitive paths from the run log, so a shared log cannot leak filesystem layout | — *(no guard written)* | `APPSEC_LOG_REDACT_PATHS` |
+| TR-6 | A blocked run names the escape hatch, so the operator learns what to review instead of what to disable | `test_preflight_abort_names_the_trust_mode_escape_hatch` | `tests/test_run_headless_completion.py` |
+| TR-7 | A file read cannot escape the repository through a symlink | `tests/test_path_guard.py` | `scripts/_path_guard.py` |
+| TR-8 | A leaked secret value in a run artifact fails the run | `tests/test_postscan_secret_check.py` | `scripts/postscan_secret_check.py` |
 
 ## Related repositories
 
