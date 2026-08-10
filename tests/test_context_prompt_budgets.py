@@ -248,6 +248,10 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     assert "Do not end your turn after dispatching" in text
     assert "Never re-dispatch an agent that already returned" in text
     assert "filesystem is authoritative" in flat
+    assert "Before the first boundary command" in text
+    assert "fixed heartbeat watchdog from the parent runtime" in flat
+    assert "run_in_background: true" in text
+    assert "HEARTBEAT_TASK_ID" in text
 
     # Per-role measurement must be executable, not a prose suggestion. R9
     # recorded only abuse verification and rendering despite dispatching all

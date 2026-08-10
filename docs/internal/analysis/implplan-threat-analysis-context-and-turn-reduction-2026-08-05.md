@@ -1452,14 +1452,41 @@ tool-call markers after the child process exits even when a capacity error or
 operator interrupt prevents the outer Stop hook. This fail-closed behavior is
 temporary until WP7 implements and tests context-v2 resume semantics.
 
+A second fresh R10 retry at
+`/tmp/appsec-context-v2-wp5a-smoke-20260810-r10-fresh` was manually aborted
+during the trust-boundary dispatch after 33 turns and USD 2.88304065. It
+completed recon and the Phase-3-6 architecture gate, but it is not an
+acceptance result. The run proved that the compact context-v2 Stage-1 runtime
+never started the required heartbeat watchdog: the lock heartbeat remained at
+the initial Stage-1 timestamp while foreground agents continued returning.
+It also showed that an Agent marker used the previous shared-session role and
+that missing nested PostToolUse events retained the completed role until the
+age filter hid it. The headless exit backstop removed all live-call markers
+after the operator abort, confirming that terminal cleanup independently.
+
+The post-abort telemetry fix starts the fixed watchdog before the first
+context-v2 boundary command. Agent markers now derive their role from the
+concrete `subagent_type`; a later different context-v2 foreground role retires
+the prior marker, while same-role parallel STRIDE and abuse waves remain
+visible. The progress renderer anchors watchdog output to the dispatched
+pipeline phase and renders scanner completion events. Regression coverage
+includes context-v2, legacy, parallel-role, missing-PostToolUse, and symlinked
+marker-directory cases.
+The focused telemetry, hook, status, watchdog, headless-completion, prompt,
+permission, and target-specificity suites pass 747 tests. `make lint` and the
+standalone configuration, fragment-registry, and target-specificity gates pass.
+Per operator direction, the complete test suite was not rerun after this
+follow-up.
+
 The next required live checkpoint is a fresh R10 retry. It uses the same target
 and quick model cohort as R9 and forces Stage 1d. The old R10 directory is mixed
-with the invalid legacy recovery and must not be reused:
+with the invalid legacy recovery, and the first fresh directory contains the
+manual-abort telemetry run; neither may be reused:
 
 ```bash
 APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-fresh \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-fresh2 \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \
@@ -1476,6 +1503,9 @@ R10 passes only when all of these conditions hold:
   `/home/mrohr/juice-shop`, all selected components cover all six STRIDE
   categories, and the final status, lock, checkpoint, and Completion Summary
   agree;
+- the Stage-1 watchdog refreshes the lock throughout every context-v2 boundary,
+  live progress names the current semantic phase, and completed foreground
+  roles do not remain listed beside their successors;
 - every intended active context route is delivered through a current
   `action_validated` receipt, no active delivery uses `shadow_hashed`, and
   focused evidence, synthesis, and abuse jobs do not receive their complete

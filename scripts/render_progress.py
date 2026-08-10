@@ -61,6 +61,19 @@ def _parse_ts(ts: str):
 
 _TIER_DISPLAY = {"screening": "light"}
 
+_AGENT_PHASES = {
+    "appsec-recon-scanner": "2/11 Reconnaissance",
+    "appsec-architecture-analyst": "3/11 Architecture",
+    "appsec-trust-boundary-analyst": "7/11 Trust Boundaries",
+    "appsec-control-analyst": "8/11 Controls",
+    "appsec-stride-analyzer-v2": "9/11 STRIDE",
+    "appsec-threat-merger": "10/11 Scan Synthesis",
+    "appsec-evidence-verifier": "10/11 Scan Synthesis",
+    "appsec-triage-validator": "10/11 Scan Synthesis",
+    "appsec-post-stride-synthesizer": "10/11 Scan Synthesis",
+    "appsec-abuse-case-verifier": "10/11 Abuse Verification",
+}
+
 
 def _kv(detail: str, key: str) -> str:
     # `)` terminates a value too: the orchestrator's own echoes put pairs inside
@@ -194,6 +207,11 @@ def main() -> int:
             depth = _kv(detail, "ANALYSIS_DEPTH")
             task = re.sub(r"\s*\[REPO_ROOT=[^\]]*\]\s*$", "", detail)
             task = re.sub(rf"^{re.escape(agent)}\s+model=\S+\s*", "", task).strip()
+            agent_name = agent.split(":")[-1]
+            inferred_phase = _AGENT_PHASES.get(agent_name)
+            if inferred_phase and inferred_phase != cur_phase:
+                cur_phase = inferred_phase
+                phase_start = when
             w(f"    ↳ {agent.split(':')[-1]}{_agent_tag(model, depth)}: {task}")
 
         elif event == "AGENT_INVOKE":
@@ -212,6 +230,10 @@ def main() -> int:
 
         elif event == "AGENT_DONE":
             w(f"    ✓ {comp.split(':')[-1]} done — {detail}")
+
+        elif event == "SCAN_END":
+            owner = comp or "scan"
+            w(f"    ✓ {owner} done — {detail}")
 
         elif event in ("STEP_START", "STEP_END"):
             mark = "·" if event == "STEP_START" else "✓"

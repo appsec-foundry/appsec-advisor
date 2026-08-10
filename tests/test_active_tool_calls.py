@@ -216,6 +216,106 @@ def test_summary_for_agent_decodes_html_entities(tmp_path, agent_logger):
     assert "&amp;" not in summary
 
 
+def _agent_call(tool_use_id: str, subtype: str, *, background: bool = False) -> dict:
+    return {
+        "tool_use_id": tool_use_id,
+        "tool_name": "Agent",
+        "tool_input": {
+            "subagent_type": f"appsec-advisor:{subtype}",
+            "description": subtype,
+            "run_in_background": background,
+        },
+    }
+
+
+def test_agent_marker_uses_concrete_subtype_instead_of_stale_session_label(tmp_path, agent_logger):
+    agent_logger._save_session_agent("abc12345", "recon-scanner")
+
+    agent_logger._record_tool_start(
+        _agent_call("toolu_arch", "appsec-architecture-analyst"),
+        sid="abc12345",
+    )
+
+    marker = _read_active(tmp_path)[0]
+    assert marker["agent"] == "architecture-analyst"
+    assert marker["background"] is False
+
+
+def test_context_v2_retires_superseded_foreground_role_marker(tmp_path, agent_logger):
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+    agent_logger._record_tool_start(_agent_call("toolu_recon", "appsec-recon-scanner"), sid="abc12345")
+    agent_logger._record_tool_start(
+        _agent_call("toolu_arch", "appsec-architecture-analyst"),
+        sid="abc12345",
+    )
+
+    markers = _read_active(tmp_path)
+    assert [marker["tool_use_id"] for marker in markers] == ["toolu_arch"]
+
+
+def test_context_v2_keeps_same_role_parallel_markers(tmp_path, agent_logger):
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+    agent_logger._record_tool_start(
+        _agent_call("toolu_stride_a", "appsec-stride-analyzer-v2"),
+        sid="abc12345",
+    )
+    agent_logger._record_tool_start(
+        _agent_call("toolu_stride_b", "appsec-stride-analyzer-v2"),
+        sid="abc12345",
+    )
+
+    assert {marker["tool_use_id"] for marker in _read_active(tmp_path)} == {
+        "toolu_stride_a",
+        "toolu_stride_b",
+    }
+
+
+def test_legacy_runtime_keeps_different_foreground_role_markers(tmp_path, agent_logger):
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "legacy"}),
+        encoding="utf-8",
+    )
+    agent_logger._record_tool_start(_agent_call("toolu_recon", "appsec-recon-scanner"), sid="abc12345")
+    agent_logger._record_tool_start(
+        _agent_call("toolu_arch", "appsec-architecture-analyst"),
+        sid="abc12345",
+    )
+
+    assert len(_read_active(tmp_path)) == 2
+
+
+def test_context_v2_retirement_does_not_follow_active_directory_symlink(tmp_path, agent_logger):
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    protected = outside / "toolu_recon.json"
+    protected.write_text(
+        json.dumps(
+            {
+                "tool": "Agent",
+                "session_id": "abc12345",
+                "agent": "recon-scanner",
+                "background": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".active-tool-calls").symlink_to(outside, target_is_directory=True)
+
+    agent_logger._retire_superseded_context_v2_agent_calls("abc12345", "architecture-analyst")
+
+    assert protected.is_file()
+
+
 def test_per_call_files_have_distinct_paths(tmp_path, agent_logger):
     al = agent_logger
     for tid in ("toolu_a", "toolu_b", "toolu_c"):

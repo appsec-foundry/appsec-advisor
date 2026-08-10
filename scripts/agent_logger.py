@@ -733,12 +733,18 @@ def _record_tool_start(data: dict, sid: str) -> None:
         os.makedirs(d, exist_ok=True)
         tool = data.get("tool_name", "?")
         inp = data.get("tool_input", {}) or {}
-        agent = _session_agent_label((sid or "")[:8]) or ""
+        if tool == "Agent":
+            subtype = str(inp.get("subagent_type", ""))
+            agent = _short_agent_name(subtype) or subtype.split(":")[-1]
+            _retire_superseded_context_v2_agent_calls((sid or "")[:8], agent)
+        else:
+            agent = _session_agent_label((sid or "")[:8]) or ""
         record = {
             "tool_use_id": tool_use_id,
             "session_id": (sid or "")[:8],
             "agent": agent,
             "tool": tool,
+            "background": bool(inp.get("run_in_background", False)) if tool == "Agent" else False,
             "started_at": int(time.time()),
             "input_summary": _summarise_tool_input(tool, inp),
         }
@@ -746,6 +752,57 @@ def _record_tool_start(data: dict, sid: str) -> None:
             json.dump(record, fh)
     except Exception:
         pass
+
+
+def _retire_superseded_context_v2_agent_calls(sid: str, next_agent: str) -> None:
+    """Remove foreground markers made obsolete by a later v2 role dispatch.
+
+    Current Claude Code builds do not reliably emit PostToolUse for nested
+    Agent calls. Context-v2 dispatches different semantic roles sequentially,
+    while parallel waves use one shared role. A later different foreground
+    role therefore proves that an older role returned; equal-role markers are
+    retained so STRIDE and abuse fan-outs remain visible.
+    """
+    if not sid or not next_agent:
+        return
+    try:
+        config = json.loads(Path(_output_dir(), ".skill-config.json").read_text(encoding="utf-8"))
+        if config.get("runtime_generation") != "context-v2":
+            return
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        directory_fd = os.open(_active_tools_dir(), flags)
+    except (OSError, ValueError):
+        return
+    try:
+        with os.scandir(directory_fd) as entries:
+            for marker in entries:
+                if not marker.name.endswith(".json") or not marker.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    marker_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                    marker_fd = os.open(marker.name, marker_flags, dir_fd=directory_fd)
+                    with os.fdopen(marker_fd, encoding="utf-8") as handle:
+                        entry = json.load(handle)
+                except (OSError, ValueError):
+                    continue
+                if (
+                    entry.get("tool") == "Agent"
+                    and entry.get("session_id") == sid
+                    and not entry.get("background", False)
+                    and entry.get("agent")
+                    and entry.get("agent") != next_agent
+                ):
+                    try:
+                        os.unlink(marker.name, dir_fd=directory_fd)
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(directory_fd)
+        except OSError:
+            pass
 
 
 def _record_tool_end(data: dict) -> int:

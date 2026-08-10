@@ -194,6 +194,27 @@ def test_agent_spawn_strips_repo_root_and_model_field():
     assert "REPO_ROOT" not in out
 
 
+def test_context_v2_agent_spawn_anchors_later_heartbeat_to_phase():
+    out = _render(
+        [
+            "2026-06-06T17:20:13Z  [067fff5c]  INFO   AGENT_SPAWN"
+            "         appsec-advisor:appsec-architecture-analyst  model=sonnet"
+            "  Architecture analyst: phase3-6-architecture",
+            "2026-06-06T17:25:13Z  [--------]  INFO   HEARTBEAT           pid=23  phase=skill  step=watchdog  ts=1",
+        ]
+    )
+    assert "still in Phase 3/11 Architecture — 5m" in out
+
+
+def test_scan_end_is_visible_as_agent_completion():
+    out = _render(
+        [
+            "2026-06-06T17:21:26Z  [--------]  INFO   recon-scanner  SCAN_END  Reconnaissance complete",
+        ]
+    )
+    assert "✓ recon-scanner done — Reconnaissance complete" in out
+
+
 def test_agent_spawn_surfaces_stride_tier_from_stripped_param_block():
     """The [KEY=value] block is stripped as noise, but in the default headless
     view this line is the only per-component record — so the tier must be

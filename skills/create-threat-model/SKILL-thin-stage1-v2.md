@@ -21,6 +21,12 @@ with legacy `SKILL-thin-stage1.md`.
 - On abort, quote the controller reason. Never recommend `--resume` or claim
   `--full` reuses context-v2 artifacts; a later `--full` restarts Stage 1.
 
+## Lifecycle
+
+Before the first boundary command, start the fixed heartbeat watchdog from the
+parent runtime with `run_in_background: true` and retain `HEARTBEAT_TASK_ID`.
+Skip it only for a dry run.
+
 ## Boundary loop
 
 Call the boundary command:
