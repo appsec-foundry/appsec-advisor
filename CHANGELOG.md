@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sessions now open with a status banner naming the plugin, threat model, and loaded baseline; `APPSEC_BANNER=0` disables it.
 - Organization profiles can ship custom skills, a secure-coding baseline, and a banner, and disable shipped skills.
 - A run that recorded an error now points at `/appsec-advisor:report-error`, which builds a local anonymised bundle and sends nothing.
+- Architecture decisions are now recorded in `docs/internal/decisions.md`, each with the guard that enforces it.
 
 ### Fixed
 
