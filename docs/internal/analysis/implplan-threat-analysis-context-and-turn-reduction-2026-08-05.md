@@ -769,9 +769,13 @@ with an explicit incompatible-state result; it must never switch producers
 because the current environment variable changed. Rollback selects the prior
 runtime for a new invocation, not midway through an existing context-v2 run.
 
-Retain `APPSEC_THIN_ORCHESTRATOR=0` as the documented legacy escape hatch. The
-temporary context-v2 switch may become the default only after the acceptance
-matrix passes; remove it once both paths no longer need side-by-side A/B.
+Retain `APPSEC_THIN_ORCHESTRATOR=0` as the documented top-level runtime escape
+hatch. The release rollout may make context-v2 the default only after the
+acceptance matrix passes. This feature branch temporarily defaults eligible
+full/rebuild runs to context-v2 for R10 convenience at the operator's explicit
+request; `APPSEC_CONTEXT_V2=0` selects the legacy producer for a new run. That
+branch-local selection is not rollout acceptance and must not reach a release
+unchanged if R10 or the controlled A/B fails.
 
 ## Rollout slices
 
@@ -790,7 +794,7 @@ two producers active for the same artifact within one invocation.
 
 ## Implementation status
 
-Status as of 2026-08-09:
+Status as of 2026-08-10:
 
 | Work package | Status | Remaining gate |
 |---|---|---|
@@ -798,11 +802,11 @@ Status as of 2026-08-09:
 | WP1 | Implemented, repository-tested, and captured in one complete live run | Evaluate the admission targets in the fixed comparison cohort |
 | WP2 | Implemented, repository-tested, and exercised in one live context-v2 run | Collect the bounded-context acceptance measurements |
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
-| WP4 | Implemented for opt-in full/rebuild | Establish artifact and finding parity against the legacy runtime |
-| WP5 | Implemented for opt-in full/rebuild | Establish the resident-context and escape-rate targets |
+| WP4 | Implemented for full/rebuild; selected by default on this feature branch | Establish artifact and finding parity against the legacy runtime |
+| WP5 | Implemented for full/rebuild; selected by default on this feature branch | Establish the resident-context and escape-rate targets |
 | WP5a | Repository implementation complete through the post-R9 projection, contract, lifecycle, summary, and telemetry fixes | Pass the R10 live acceptance checkpoint, then establish parity in the controlled A/B cohort |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
-| WP7 | Partially implemented | Incremental and resume migration, default rollout, and legacy-switch removal remain |
+| WP7 | Partially implemented; branch-local full/rebuild default selection landed before acceptance | Incremental and resume migration, controlled release rollout, acceptance, and legacy-switch removal remain |
 
 The first WP5a slice now normalizes bounded literal repository-relative focus
 and exclude paths at the deterministic manifest-to-bundle boundary. Focus
@@ -942,17 +946,18 @@ The implemented WP0-WP5 scope includes:
 - fail-closed authoritative gates plus persisted artifact-schema compatibility
   checks.
 
-Slices C and D are available only by opt-in. `APPSEC_CONTEXT_V2=1` selects the
-context-v2 `runtime_generation` for compact-runtime full and rebuild runs.
-Deadline, cost-limited, live-phase, and compact-runtime opt-out invocations stay
-on `legacy`. `resolve_config.py` persists that generation and its artifact
-schema versions; the controller reads them from durable state, refuses a
-cross-generation continuation, and hands the skill
+Context-v2 is now the branch default for compact-runtime full and rebuild runs;
+`APPSEC_CONTEXT_V2=0` selects legacy for a new invocation. Deadline,
+cost-limited, live-phase, incremental, resume, and compact-runtime opt-out
+invocations stay on `legacy`. `resolve_config.py` persists that generation and
+its artifact schema versions; the controller reads them from durable state,
+refuses a cross-generation continuation, and hands the skill
 `SKILL-thin-stage1-v2.md` instead of the legacy Stage-1 runtime.
 
-The implemented part of WP7 is limited to generation selection, persistence,
-schema-version persistence, and incompatible-generation rejection. Incremental
-and resume still use the legacy threat analyst. Context-v2 is not the default.
+The implemented part of WP7 covers generation selection, persistence,
+schema-version persistence, incompatible-generation rejection, and the
+branch-local full/rebuild default. Incremental and resume still use the legacy
+threat analyst. The controlled release rollout and acceptance remain open.
 
 Local verification on 2026-08-07 passed `git diff --check`, `make lint`,
 `make test`, and `make check`. The final `make test` and `make check` runs each
@@ -1502,20 +1507,121 @@ finding path under any detected prior assessment directory. The raw recon
 template and agent definition remain large fixed inputs; R10 must remeasure
 their cost before any broader producer redesign is justified.
 
+### Continuation checkpoint — 2026-08-10
+
+Continue on branch `feature/turn-admission-telemetry`. The relevant ordered
+code commits are:
+
+- `c08be9c6` restores context-v2 watchdog and foreground-role progress;
+- `1da43366` excludes user-named prior assessment outputs from deterministic
+  and model-driven recon;
+- `8eace243` makes context-v2 the branch default for eligible full/rebuild runs
+  and retains `APPSEC_CONTEXT_V2=0` as the legacy selection; and
+- `9f00e2a1` clears live tool markers before monitor cleanup and from an
+  all-mode wrapper `EXIT` backstop.
+
+Commits `f2d48520` and `62e592d5` are independent decision-register
+documentation added while this work was in progress. They are part of the
+branch history and must be preserved. No live scan was started by the coding
+agent.
+
+The `fresh2` invocation was already running while the recon correction was
+being prepared. It began from the pre-fix producer and was operator-aborted in
+Phase 8. Its exact headless result reports `error_during_execution`, 41 turns,
+1,355,814 milliseconds, and USD 4.0637447. It produced no STRIDE output. Its
+deterministic recon sidecar contains 528 findings, including Category 9 at 169,
+Category 13 at 85, and ten distinct `docs/security*` finding paths; the summary
+contains 499 physical lines and 25,648 bytes. Stage rows report:
+
+| Role | Tokens | Tool calls | Duration |
+|---|---:|---:|---:|
+| Recon scanner | 103,723 | 22 | 215,699 ms |
+| Architecture analyst | 81,459 | 28 | 248,505 ms |
+| Trust-boundary analyst | 73,026 | 16 | 325,219 ms |
+
+Because the run admitted prior assessment artifacts, none of these values is an
+R10 acceptance measurement. The immediate post-abort audit also found a stale
+control-analyst marker after the headless result was written. The wrapper had
+placed marker cleanup after progress-monitor cleanup and had no all-mode EXIT
+backstop. Commit `9f00e2a1` closes both paths; the next run must prove terminal
+cleanup rather than treating the unit test as live evidence.
+
+Verification after the recon correction passed 635 focused scan-exclusion,
+recon-pattern, agent-definition, and permission tests. The deterministic target
+replay reduced Category 9 from 169 to 14 and Category 13 from 85 to 25, with
+zero paths under a detected prior assessment directory. `make lint`, config
+validation, fragment-registry validation, target-specificity validation, and
+`git diff --check` passed.
+
+The default-selection work exercised the complete resolve-config,
+orchestration-controller, and headless-completion target group: 583 tests
+passed and one new test-only assertion incorrectly assumed that a no-warning
+path must create a log file. After correcting that assertion, 20 focused tests
+passed; the final default, persistence, unsupported-mode, controller, and
+headless selection set passed 34 tests. The terminal-cleanup follow-up passed
+33 focused headless and active-marker tests plus `sh -n`, `make lint`, and
+`git diff --check`. Per operator direction, `make test`, `make check`, and the
+complete repository suite were not rerun after these commits. They remain
+required before a release or merge boundary that claims repository-wide
+acceptance.
+
+No further repository change is currently justified before the next live
+checkpoint. The remaining pre-R10 actions are operational: confirm this branch
+is clean, confirm the new output path is absent, and run the command below only
+after the aborted `fresh2` wrapper has terminated. Do not resume or reuse any
+R10 directory.
+
+Open questions that R10 must answer before more implementation:
+
+1. Does assessment-output exclusion reduce live recon pattern volume, agent
+   reads, tokens, tool calls, and latency, or does the fixed 78,894-byte agent
+   definition and approximately 33 KiB template remain the dominant cost?
+2. Is the architecture role's approximately four-to-five-minute latency
+   explained by model/service variance, or does its bounded route and recon
+   input still require another generic projection?
+3. Does the raw recon report remain near 500 physical lines because its
+   canonical headings and evidence tables are fixed while the downstream
+   projection correctly stays at 200 semantic retained lines? Do not collapse
+   these dimensions or truncate the producer merely to satisfy the projection
+   target.
+4. Do all semantic roles emit stage rows, and can the provider expose exact
+   per-role turns and priced cost? Until then, tokens, tool calls, and duration
+   are role-level measurements, while turns and cost remain exact only for the
+   whole run/model totals.
+5. Does the all-mode EXIT backstop remove `.active-tool-calls` after success,
+   provider failure, and operator interrupt with runtime preservation enabled?
+6. Does finding identity and coverage recover without reintroducing refuted or
+   generated candidates, especially DOM XSS and supported OAuth credential or
+   JWT claim findings?
+7. Does R10 support keeping the branch-local default, or should
+   `APPSEC_CONTEXT_V2=0` become the immediate rollback while defects are fixed?
+
+After a passing R10, the next work is the controlled three-baseline/three-v2
+A/B cohort, then WP6, then WP7 incremental and resume parity. Release rollout,
+the acceptance matrix, required-branch-check enforcement, the 700-turn target,
+resident-context targets, and cost-reduction gates remain open. A single R10
+run cannot close any of them.
+
 The next required live checkpoint is a fresh R10 retry. It uses the same target
 and quick model cohort as R9 and forces Stage 1d. The old R10 directory is mixed
-with the invalid legacy recovery, and the first fresh directory contains the
-manual-abort telemetry run; neither may be reused:
+with the invalid legacy recovery; `fresh`, `fresh2`, and every prior R10 path
+contain aborted or pre-fix runs and must not be reused. At this checkpoint,
+`/tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix` is reserved and absent.
+The target's repository-owned Claude configuration is known and trusted by the
+operator; therefore the exact invocation carries `--trust-mode trusted`. If
+that ownership cannot be attested later, move the configuration out of the
+target and use the default untrusted preflight instead:
 
 ```bash
-APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
+./scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-fresh2 \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \
   --abuse-cases \
   --keep-runtime-files \
+  --trust-mode trusted \
   --rebuild
 ```
 
@@ -1535,9 +1641,11 @@ R10 passes only when all of these conditions hold:
   focused evidence, synthesis, and abuse jobs do not receive their complete
   shared source artifacts or another candidate's projection;
 - every major projection reports source, retained and omitted records,
-  serialized physical lines, bytes, and estimated tokens; recon remains at or
-  below 200 semantic retained lines and 1,024 physical lines, routes remain at
-  or below 96 records, and every routing profile passes in its declared unit;
+  serialized physical lines, bytes, and estimated tokens; the delivered recon
+  projection remains at or below 200 semantic retained lines and 1,024
+  serialized physical lines, routes remain at or below 96 records, and every
+  routing profile passes in its declared unit; the raw recon producer is
+  measured separately and is not judged against the projection's semantic cap;
 - `.stage-stats.jsonl` has a usage row for every dispatched semantic role and
   reports each role's aggregate tokens, tool calls, and duration; the headless
   result reports exact total turns and per-model priced token classes and cost;
@@ -1552,7 +1660,8 @@ R10 passes only when all of these conditions hold:
   loss is explained, and DOM-based XSS plus supported OAuth-derived credential
   and JWT role/claim findings are restored where the source evidence remains;
 - no refuted finding or run, scan, code-fix, or generated output artifact is
-  reintroduced as a candidate, and targeted repository escape reads remain
+  reintroduced as a candidate; `.recon-patterns.json` contains no path under a
+  detected assessment output; and targeted repository escape reads remain
   receipted and bounded;
 - the Findings Index is ordered Critical, High, Medium, Low, Info with stable
   within-severity order; `.active-tool-calls` is absent after terminal Stop even
@@ -1565,7 +1674,7 @@ R10 passes only when all of these conditions hold:
 
 R10 is a live smoke checkpoint, not the controlled three-pair A/B acceptance
 cohort. It cannot close WP6, the controlled A/B evidence, WP7 incremental and
-resume parity, default rollout, or the acceptance matrix.
+resume parity, controlled release rollout, or the acceptance matrix.
 
 A subsequent governance audit moved standing orchestration and admission rules
 into the durable contracts, pinned the legacy/context-v2 tool topology, added a
@@ -1579,7 +1688,7 @@ repository-tested guarantee.
 
 The acceptance matrix, runtime parity, 700-turn target, resident-context
 targets, and cost-reduction gates remain unverified. WP5a live acceptance,
-WP6, incremental/resume migration, and rollout slices E and F must not be
+WP6, incremental/resume migration, and release rollout slices E and F must not be
 reported as complete.
 
 ## Verification matrix
@@ -1681,7 +1790,7 @@ Repository gates:
   and failure paths;
 - `make lint` passes;
 - `make test` passes; and
-- `make check` passes before default rollout.
+- `make check` passes before controlled release rollout.
 
 ## Risks and mitigations
 
@@ -1710,7 +1819,7 @@ Repository gates:
 
 ## Stop conditions
 
-Do not make context-v2 the default if any of these occur:
+Do not ship context-v2 as the release default if any of these occur:
 
 - unexplained finding loss or weaker evidence;
 - a role repeatedly reads complete shared artifacts instead of projections;
