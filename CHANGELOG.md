@@ -36,8 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Context-v2 now validates and reconstructs every active structured projection before dispatch.
 - Context-v2 STRIDE routing now accepts component-owned focus directories under recursive file globs.
 - Completion summaries now distinguish STRIDE-analyzed components from the full modeled inventory.
-- Completed runs now clear live tool-call markers even when other runtime diagnostics are preserved.
+- Completed and aborted headless runs now clear live tool-call markers even when other runtime diagnostics are preserved.
 - Completion summaries now combine the report reading path, present model Q&A as a numbered action, and omit unsolicited requirements rerun advice.
+- Context-v2 headless runs now reject unsupported resume requests instead of restarting through the legacy full runtime.
+- Status inspection is now read-only, and stale-state cleanup preserves completed analysis-handoff checkpoints.
 - Threat-model assembly now accepts validated trust-boundary inheritance provenance instead of aborting before report rendering.
 
 ### Changed

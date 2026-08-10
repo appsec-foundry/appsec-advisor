@@ -389,27 +389,6 @@ class TestConfigSummary:
 
 
 # ---------------------------------------------------------------------------
-# _auto_clean_state (lines 217-236)
-# ---------------------------------------------------------------------------
-
-
-class TestAutoCleanState:
-    def test_helper_nonzero(self, appsec_status, monkeypatch, tmp_path):
-        monkeypatch.setattr(appsec_status, "_run_helper", lambda *a: (1, "", "err"))
-        assert appsec_status._auto_clean_state(tmp_path) == {"removed": [], "skipped": False}
-
-    def test_helper_ok_with_removed(self, appsec_status, monkeypatch, tmp_path):
-        payload = json.dumps({"clean": {"removed": ["a", "b"], "skipped": False}})
-        monkeypatch.setattr(appsec_status, "_run_helper", lambda *a: (0, payload, ""))
-        res = appsec_status._auto_clean_state(tmp_path)
-        assert res == {"removed": ["a", "b"], "skipped": False}
-
-    def test_helper_bad_json(self, appsec_status, monkeypatch, tmp_path):
-        monkeypatch.setattr(appsec_status, "_run_helper", lambda *a: (0, "not json", ""))
-        assert appsec_status._auto_clean_state(tmp_path) == {"removed": [], "skipped": False}
-
-
-# ---------------------------------------------------------------------------
 # _last_run_info (lines 295-307)
 # ---------------------------------------------------------------------------
 
@@ -640,7 +619,6 @@ class TestRenderText:
 class TestMain:
     def test_main_json_full(self, appsec_status, tmp_path, monkeypatch, capsys):
         # Stub the subprocess-backed helpers so no real scripts run.
-        monkeypatch.setattr(appsec_status, "_auto_clean_state", lambda od: {"removed": []})
         monkeypatch.setattr(appsec_status, "_last_run_info", lambda od: {"has_baseline": False})
         monkeypatch.setattr(appsec_status, "_fast_path_preview", lambda od, rr: None)
         rc = appsec_status.main(["--repo-root", str(tmp_path), "--json"])
@@ -650,7 +628,6 @@ class TestMain:
         assert data["paths"]["repo_root"] == str(tmp_path.resolve())
 
     def test_main_text_full(self, appsec_status, tmp_path, monkeypatch, capsys):
-        monkeypatch.setattr(appsec_status, "_auto_clean_state", lambda od: {"removed": []})
         monkeypatch.setattr(appsec_status, "_last_run_info", lambda od: {"has_baseline": False})
         monkeypatch.setattr(appsec_status, "_fast_path_preview", lambda od, rr: None)
         rc = appsec_status.main(["--repo-root", str(tmp_path)])
@@ -663,15 +640,26 @@ class TestMain:
 
         def _capture(od):
             captured["od"] = od
-            return {"removed": []}
+            return {"has_baseline": False}
 
-        monkeypatch.setattr(appsec_status, "_auto_clean_state", _capture)
-        monkeypatch.setattr(appsec_status, "_last_run_info", lambda od: {"has_baseline": False})
+        monkeypatch.setattr(appsec_status, "_last_run_info", _capture)
         monkeypatch.setattr(appsec_status, "_fast_path_preview", lambda od, rr: None)
         target = tmp_path / "custom-out"
         rc = appsec_status.main(["--repo-root", str(tmp_path), "--output-dir", str(target), "--json"])
         assert rc == 0
         assert captured["od"] == target.resolve()
+
+    def test_main_full_is_read_only_for_run_state(self, appsec_status, tmp_path, monkeypatch, capsys):
+        output = tmp_path / "out"
+        output.mkdir()
+        checkpoint = output / ".appsec-checkpoint"
+        checkpoint.write_text("phase=7 status=completed need_threat_analysis=true\n")
+        monkeypatch.setattr(appsec_status, "_last_run_info", lambda od: {"has_baseline": False})
+        monkeypatch.setattr(appsec_status, "_fast_path_preview", lambda od, rr: None)
+
+        assert appsec_status.main(["--repo-root", str(tmp_path), "--output-dir", str(output), "--json"]) == 0
+
+        assert checkpoint.read_text() == "phase=7 status=completed need_threat_analysis=true\n"
 
     def test_main_live_json(self, appsec_status, tmp_path, capsys):
         rc = appsec_status.main(["--repo-root", str(tmp_path), "--live", "--json"])

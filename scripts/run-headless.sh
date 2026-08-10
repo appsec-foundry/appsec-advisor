@@ -419,6 +419,24 @@ else
     OUTPUT_PATH="$REPO_PATH/docs/security"
 fi
 
+# Context-v2 resume is a WP7 capability and is not implemented yet. Letting a
+# resume request fall through to the legacy skill runtime silently restarts a
+# full assessment while reusing context-v2 artifacts, which wastes tokens and
+# produces a mixed output directory. Fail before trust preflight or dispatch.
+CONTEXT_V2_SELECTED=0
+if [ "${APPSEC_CONTEXT_V2:-}" = "1" ]; then
+    CONTEXT_V2_SELECTED=1
+elif [ -f "$OUTPUT_PATH/.skill-config.json" ] \
+    && python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("runtime_generation", ""))' \
+        "$OUTPUT_PATH/.skill-config.json" 2>/dev/null | grep -qx 'context-v2'; then
+    CONTEXT_V2_SELECTED=1
+fi
+if [ "$SKILL" = "create-threat-model" ] \
+   && [ "$RESUME_REQUESTED" = "1" ] \
+   && [ "$CONTEXT_V2_SELECTED" = "1" ]; then
+    die "Context-v2 does not support --resume yet (WP7). Start a fresh context-v2 run with --rebuild and a clean output directory; refusing to fall back to the legacy full runtime."
+fi
+
 # ── Trust mode: preflight + strict defaults ─────────────────────────
 # --trust-mode untrusted forces every defence we have today: reject
 # repo-owned Claude hooks, refuse out-of-repo symlinks, require an
@@ -938,6 +956,11 @@ print_recovery_hint() {
         done
         printf '%s %s\n' "$_cmd" "$1"
     }
+    if [ "$CONTEXT_V2_SELECTED" = "1" ]; then
+        warn "Context-v2 resume is not available yet (WP7) — start fresh:"
+        printf '    %s\n' "$(_rerun_cmd --rebuild)"
+        return
+    fi
     if [ -f "$_rh_dir/.appsec-checkpoint" ] \
        && python3 "$PLUGIN_DIR/scripts/check_state.py" "$_rh_dir" \
             --resume-guard --max-age-seconds 900 >/dev/null 2>&1; then
@@ -983,6 +1006,12 @@ trap 'cleanup_tails' INT TERM HUP
 set -e
 
 cleanup_tails
+
+# PreToolUse markers are live-state, not audit evidence. Ctrl-C, capacity
+# errors, and other CLI-level aborts may never emit the outer Stop hook that
+# normally clears them, so close the lifecycle after the child is gone.
+OUTPUT_DIR="$RESULT_DIR" python3 "$PLUGIN_DIR/scripts/agent_logger.py" \
+    --clear-active-tool-calls >/dev/null 2>&1 || true
 
 # Re-emit what claude's stdout used to show. `result` holds the final assistant
 # text verbatim (what `--output-format text` printed); --json additionally dumps

@@ -223,6 +223,24 @@ def test_clean_preserves_needs_stage2_checkpoint(tmp_path: Path):
     assert not lock.exists()
 
 
+@pytest.mark.parametrize(
+    "checkpoint",
+    [
+        "phase=6 status=completed need_boundary_assessment=true\n",
+        "phase=7 status=completed need_threat_analysis=true\n",
+    ],
+)
+def test_clean_preserves_completed_analysis_handoff(tmp_path: Path, checkpoint: str):
+    cp = tmp_path / ".appsec-checkpoint"
+    cp.write_text(checkpoint)
+
+    result = cs.clean(tmp_path)
+
+    assert ".appsec-checkpoint" in result["preserved"]
+    assert ".appsec-checkpoint" not in result["removed"]
+    assert cp.read_text() == checkpoint
+
+
 def test_clean_wipes_completed_checkpoint_when_not_needs_stage2(tmp_path: Path):
     """A completed checkpoint WITHOUT need_render (e.g. threat-model.md present)
     is not a recovery signal — clean() still reaps it as before."""

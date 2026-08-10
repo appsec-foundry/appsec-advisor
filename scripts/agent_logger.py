@@ -2589,6 +2589,9 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
 
 
 def main() -> None:
+    if sys.argv[1:] == ["--clear-active-tool-calls"]:
+        _clear_terminal_active_tool_calls()
+        return
     try:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError, OSError) as exc:
@@ -2615,4 +2618,5 @@ def main() -> None:
     handle_post_tool_use(data, sid)
 
 
-main()
+if __name__ == "__main__":
+    main()

@@ -113,6 +113,17 @@ def test_terminal_stop_does_not_follow_active_directory_symlink(tmp_path, agent_
     assert not (tmp_path / ".active-tool-calls").exists()
 
 
+def test_clear_active_tool_calls_cli_handles_missing_stop(tmp_path, agent_logger, monkeypatch):
+    active = tmp_path / ".active-tool-calls"
+    active.mkdir()
+    (active / "toolu_interrupted.json").write_text('{"tool_use_id":"toolu_interrupted"}')
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT_PATH), "--clear-active-tool-calls"])
+
+    agent_logger.main()
+
+    assert not active.exists()
+
+
 def test_pre_skips_when_tool_use_id_absent(tmp_path, agent_logger):
     al = agent_logger
     al._record_tool_start(

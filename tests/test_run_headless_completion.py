@@ -73,6 +73,20 @@ def test_failure_branch_prints_full_recovery_command() -> None:
     assert "_rerun_cmd --resume" in body and "_rerun_cmd --rebuild" in body
 
 
+def test_context_v2_resume_fails_before_dispatch() -> None:
+    """WP7 has not implemented context-v2 resume, so the wrapper must not
+    silently route a resume request through the legacy full runtime."""
+    body = _body()
+    guard = 'die "Context-v2 does not support --resume yet (WP7).'
+    assert guard in body
+    assert body.index(guard) < body.index("# ── Trust mode: preflight + strict defaults")
+    assert 'get("runtime_generation", "")' in body
+    assert "refusing to fall back to the legacy full runtime" in body
+    hint = 'warn "Context-v2 resume is not available yet (WP7) — start fresh:"'
+    assert hint in body
+    assert body.index(hint) < body.index('warn "Resume from the last checkpoint:"')
+
+
 def test_headless_scans_default_to_untrusted_mode() -> None:
     """A repository checkout must opt in before bypassing untrusted preflight."""
     body = _body()
@@ -145,3 +159,10 @@ def test_interrupt_arms_timed_escalation_watchdog() -> None:
     assert "APPSEC_INTERRUPT_KILL_SECS" in body
     # cancelled after claude exits — no lingering sleeper, no reused-pgroup signal
     assert 'kill "$ESCALATION_WATCHDOG_PID"' in body
+
+
+def test_headless_exit_clears_live_tool_markers() -> None:
+    body = _body()
+    cleanup = "--clear-active-tool-calls >/dev/null 2>&1 || true"
+    assert cleanup in body
+    assert body.index(cleanup) < body.index("# If the run was interrupted by Ctrl-C")

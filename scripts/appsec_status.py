@@ -216,28 +216,6 @@ def _config_summary(req_cfg_path: Path, plugin_cfg_path: Path) -> list[tuple[str
     return rows
 
 
-def _auto_clean_state(output_dir: Path) -> dict:
-    """Run check_state --auto-clean and return a summary of what was removed.
-    Never raises — any failure returns an empty result so status always prints."""
-    code, out, _ = _run_helper(
-        "check_state.py",
-        str(output_dir),
-        "--auto-clean",
-        "--json",
-    )
-    if code != 0:
-        return {"removed": [], "skipped": False}
-    try:
-        data = json.loads(out)
-        clean = data.get("clean", {})
-        return {
-            "removed": clean.get("removed", []),
-            "skipped": clean.get("skipped", False),
-        }
-    except (ValueError, json.JSONDecodeError):
-        return {"removed": [], "skipped": False}
-
-
 def _fast_path_preview(output_dir: Path, repo_root: Path) -> dict | None:
     """Run check-changes against the current working tree, then refine the
     verdict via dirty-set when the fast-path classified files as
@@ -872,7 +850,6 @@ def main(argv: list[str] | None = None) -> int:
             print(_render_live(snap), end="")
         return 0
 
-    auto_clean = _auto_clean_state(output_dir)
     plugin_json = _load_plugin_json()
     coach_state, coach_note = _coach_status()
     capsules = {
@@ -902,7 +879,6 @@ def main(argv: list[str] | None = None) -> int:
             PLUGIN_ROOT / "config.json",
         ),
         "fast_path": _fast_path_preview(output_dir, repo_root),
-        "auto_clean": auto_clean,
         "org_profile": _org_profile_status(output_dir),
         "cutoff": _cutoff_verdict(output_dir, live_snapshot=live_snapshot),
     }

@@ -259,6 +259,20 @@ def _file_mtime_age(output_dir: Path, name: str) -> float | None:
         return None
 
 
+def _checkpoint_has_pending_analysis(checkpoint: dict | None) -> bool:
+    """Return whether a completed checkpoint is an analysis handoff.
+
+    Phase completion is not run completion. These markers intentionally stop
+    between bounded agents and are consumed by the legacy resume runtime.
+    """
+    if not checkpoint or checkpoint.get("status") != "completed":
+        return False
+    phase = checkpoint.get("phase")
+    return (phase == "6" and checkpoint.get("need_boundary_assessment") == "true") or (
+        phase == "7" and checkpoint.get("need_threat_analysis") == "true"
+    )
+
+
 def _resolve_threshold(output_dir: Path, checkpoint: dict | None) -> int:
     """Phase-aware stall threshold for the lock at ``output_dir``.
 
@@ -465,17 +479,17 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
     Always leaves ``threat-model.*``, ``.appsec-cache/``, ``.fragments/``,
     ``.agent-run.log`` and ``.hook-events.log`` untouched.
 
-    ``needs_stage2`` carve-out: when Stage 1 finished but Stage 2 never ran
-    (``.appsec-checkpoint`` = ``phase=10b status=completed need_render=true``
-    and ``threat-model.md`` absent), the checkpoint is *not* crash residue —
-    it is the ``need_render`` recovery signal ``--resume`` reads to dispatch
-    Stage 2 only. Removing it here (e.g. from the ``--resume`` pre-flight
-    auto-clean, which fires because the status is ``completed``) would silently
-    destroy recoverable Phase-1–10b work and force a full re-run. So we
-    preserve ``.appsec-checkpoint`` while still reaping the stale lock and
-    other residue. ``clean-run-state --force`` still wipes it via its own
-    direct ``rm`` — the state machine is the guarantor of correctness, the
-    skill layer owns the escape hatch (see clean-run-state SKILL.md).
+    Continuation carve-outs: completed phase 6/7 analysis handoffs and the
+    ``needs_stage2`` state are not crash residue. When Stage 1 finished but
+    Stage 2 never ran (``.appsec-checkpoint`` = ``phase=10b status=completed
+    need_render=true`` and ``threat-model.md`` absent), the checkpoint is the
+    ``need_render`` recovery signal ``--resume`` reads to dispatch Stage 2
+    only. Removing it here would silently destroy recoverable Phase-1–10b work
+    and force a full re-run. We preserve ``.appsec-checkpoint`` while still
+    reaping the stale lock and other residue. ``clean-run-state --force`` still
+    wipes it via its own direct ``rm`` — the state machine is the guarantor of
+    correctness, the skill layer owns the escape hatch (see clean-run-state
+    SKILL.md).
     """
     report = report if report is not None else classify(output_dir)
     if report["state"] == "active":
@@ -487,7 +501,8 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
             "state": report["state"],
         }
 
-    preserve: set[str] = {CHECKPOINT_FILE} if report.get("needs_stage2") else set()
+    preserve_checkpoint = report.get("needs_stage2") or _checkpoint_has_pending_analysis(report.get("checkpoint"))
+    preserve: set[str] = {CHECKPOINT_FILE} if preserve_checkpoint else set()
 
     removed: list[str] = []
     preserved: list[str] = []
@@ -790,6 +805,8 @@ def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
                 "the stale checkpoint) or use --rebuild for a clean fresh run."
             ),
         )
+    if status == "completed" and _checkpoint_has_pending_analysis(cp):
+        return (0, f"checkpoint phase={phase} has pending analysis — safe to resume")
     if status == "completed":
         return (0, "checkpoint status=completed — prior run finalized cleanly")
     if status in ("started", "aborted") and age > max_age:

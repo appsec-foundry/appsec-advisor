@@ -1431,13 +1431,35 @@ byte, and token profiles. Regression tests construct projections whose physical
 line counts exceed their semantic window counts so either unit cannot silently
 stand in for the other.
 
-The next required live checkpoint is R10. It uses the same target and quick
-model cohort as R9 and forces Stage 1d:
+The first R10 attempt at
+`/tmp/appsec-context-v2-wp5a-smoke-20260809-r10` stopped on the subscription
+session limit during the first STRIDE wave. Its headless result reports HTTP
+429, 51 turns, and USD 9.8493143. Three component outputs completed, frontend
+and authentication remained partial, and Web3 had not started, so this attempt
+is operational evidence but not an acceptance result. A subsequent `--resume`
+attempt was aborted after 33 turns and USD 3.7767751 when it silently entered
+the legacy full runtime and restarted context resolution, recon, and Config/IaC.
+That spend is recorded separately and is not part of an R10 cost comparison.
+
+The failed recovery exposed two generic lifecycle defects. The nominally
+read-only broad status command ran stale-state cleanup and removed the phase-7
+analysis-handoff checkpoint, while the headless wrapper allowed context-v2
+`--resume` even though resume migration belongs to WP7. Status inspection is
+now non-mutating, cleanup preserves completed phase-6/7 continuation markers,
+and headless context-v2 rejects resume before trust preflight or model dispatch;
+its recovery hint also selects a fresh rebuild. The wrapper clears live
+tool-call markers after the child process exits even when a capacity error or
+operator interrupt prevents the outer Stop hook. This fail-closed behavior is
+temporary until WP7 implements and tests context-v2 resume semantics.
+
+The next required live checkpoint is a fresh R10 retry. It uses the same target
+and quick model cohort as R9 and forces Stage 1d. The old R10 directory is mixed
+with the invalid legacy recovery and must not be reused:
 
 ```bash
 APPSEC_CONTEXT_V2=1 ./scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260809-r10 \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-fresh \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \

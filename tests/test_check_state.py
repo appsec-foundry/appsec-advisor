@@ -241,6 +241,25 @@ class TestTrustBoundaryResumeGuard:
         assert code == 3
         assert "stale or malformed" in message
 
+    def test_completed_threat_analysis_handoff_is_not_called_finalized(self, tmp_path):
+        self._stage1a_artifacts(tmp_path)
+        assessment = {
+            "component_inventory_fingerprint": "sha256:" + "2" * 64,
+            "assessment_input_fingerprint": "sha256:" + "3" * 64,
+        }
+        (tmp_path / ".trust-boundary-assessment-input.json").write_text(json.dumps(assessment))
+        for name in (".trust-boundary-candidates.json", ".trust-boundary-coverage.json"):
+            (tmp_path / name).write_text(json.dumps({**assessment, "status": "pass"}))
+        for name in (".trust-boundaries.json", ".trust-boundary-diagnostics.json"):
+            (tmp_path / name).write_text("{}")
+        (tmp_path / ".appsec-checkpoint").write_text("phase=7 status=completed need_threat_analysis=true\n")
+
+        code, message = check_state._resume_guard_result(tmp_path, 900)
+
+        assert code == 0
+        assert "pending analysis" in message
+        assert "finalized cleanly" not in message
+
 
 # ---------------------------------------------------------------------------
 # clean() — mutation
