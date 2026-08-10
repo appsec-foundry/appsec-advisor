@@ -237,7 +237,13 @@ def _is_github_composite_action_descriptor(rel_path: str) -> bool:
     )
 
 
-def _is_excluded(rel_path: str) -> bool:
+def _is_excluded(rel_path: str, repo_root: Path | None = None) -> bool:
+    if _SCAN_EXCLUDES and repo_root is not None:
+        try:
+            if scan_excludes.is_assessment_artifact(rel_path, repo_root):
+                return True
+        except Exception:
+            pass
     # Composite action descriptors are CI/CD source. A valid action directory
     # can be named "build", which would otherwise trip the generic build-cache
     # hard exclude before the shared whitelist can preserve action.yml.
@@ -310,10 +316,10 @@ def _walk_repo(
     for dirpath, dirnames, filenames in os.walk(repo_root, followlinks=False):
         # Prune excluded directories up-front for speed
         rel_dir = str(Path(dirpath).relative_to(repo_root)).replace("\\", "/")
-        dirnames[:] = [d for d in dirnames if not _is_excluded(f"{rel_dir}/{d}" if rel_dir != "." else d)]
+        dirnames[:] = [d for d in dirnames if not _is_excluded(f"{rel_dir}/{d}" if rel_dir != "." else d, repo_root)]
         for name in filenames:
             rel = str((Path(dirpath) / name).relative_to(repo_root)).replace("\\", "/")
-            if _is_excluded(rel):
+            if _is_excluded(rel, repo_root):
                 continue
             p = Path(dirpath) / name
             # Skip symlinks whose target escapes the repo root — they
@@ -908,7 +914,7 @@ def scan_postinstall(repo_root: Path) -> dict[str, Any]:
     # npm / node lifecycle scripts in package.json
     for p in repo_root.rglob("package.json"):
         rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        if _is_excluded(rel):
+        if _is_excluded(rel, repo_root):
             continue
         try:
             data = json.loads(p.read_text(encoding="utf-8", errors="replace"))
@@ -958,7 +964,7 @@ def scan_postinstall(repo_root: Path) -> dict[str, Any]:
     )
     for p in repo_root.rglob("setup.py"):
         rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        if _is_excluded(rel):
+        if _is_excluded(rel, repo_root):
             continue
         for line_no, text in _grep_file(p, py_shell_re):
             findings.append(
@@ -1296,7 +1302,7 @@ def scan_frontend_xss(repo_root: Path) -> dict[str, Any]:
 
     for p in repo_root.rglob("package.json"):
         rel = str(p.relative_to(repo_root)).replace("\\", "/")
-        if _is_excluded(rel):
+        if _is_excluded(rel, repo_root):
             continue
         try:
             data = json.loads(p.read_text(encoding="utf-8", errors="replace"))
@@ -2842,7 +2848,7 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
             rel = str(path.relative_to(repo_root)).replace("\\", "/")
         except ValueError:
             return
-        if rel in seen or _is_excluded(rel):
+        if rel in seen or _is_excluded(rel, repo_root):
             return
         # A symlink/device in the settings location can hide the effective
         # configuration from both code review and the structured parser below.

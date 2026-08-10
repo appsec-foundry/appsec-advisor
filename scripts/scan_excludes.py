@@ -36,6 +36,7 @@ import fnmatch
 import functools
 import json
 import os
+import stat
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Iterable
@@ -57,6 +58,21 @@ _DEFAULT_YAML = _HERE.parent / "data" / "scan-excludes.yaml"
 # Per-file byte cap applied when the YAML omits `max_file_bytes`. Files larger
 # than this are almost never application source — see scan-excludes.yaml.
 DEFAULT_MAX_FILE_BYTES = 1_000_000
+
+_ASSESSMENT_RUNTIME_MARKERS = frozenset(
+    {
+        ".agent-run.log",
+        ".appsec-checkpoint",
+        ".context-routing-plan.json",
+        ".hook-events.log",
+        ".session-agent-map",
+        ".skill-config.json",
+        ".stage-stats.jsonl",
+        ".stride-selection.json",
+        ".threat-modeling-context.md",
+    }
+)
+_ASSESSMENT_FINAL_PAIR = frozenset({"threat-model.md", "threat-model.yaml"})
 
 
 def _yaml_path() -> Path:
@@ -114,6 +130,7 @@ def load_excludes(yaml_path_str: str | None = None) -> dict:
 def _reset_cache_for_tests() -> None:
     """Drop the cache so tests can switch yaml fixtures in the same process."""
     load_excludes.cache_clear()
+    _assessment_output_prefixes.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +220,64 @@ def is_excluded(
     return False
 
 
+def is_assessment_output_dir(path: Path) -> bool:
+    """Return whether ``path`` has the on-disk signature of a run output.
+
+    Output directories are user-selectable, so a fixed ``docs/security/``
+    prefix cannot protect recon from prior scans stored under another name.
+    Require either the final Markdown/YAML pair or two independent runtime
+    markers. A single similarly named project file is not enough.
+    """
+    try:
+        mode = path.lstat().st_mode
+        if not stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
+            return False
+        with os.scandir(path) as entries:
+            names = {entry.name for entry in entries}
+    except OSError:
+        return False
+    return _ASSESSMENT_FINAL_PAIR <= names or len(_ASSESSMENT_RUNTIME_MARKERS & names) >= 2
+
+
+@functools.lru_cache(maxsize=8)
+def _assessment_output_prefixes(repo_root: str) -> tuple[str, ...]:
+    root = Path(repo_root)
+    try:
+        root = root.resolve(strict=True)
+    except OSError:
+        return ()
+    found: list[str] = []
+    for dirpath, dirnames, _filenames in os.walk(root, followlinks=False):
+        kept: list[str] = []
+        for dirname in sorted(dirnames):
+            candidate = Path(dirpath) / dirname
+            try:
+                relative = candidate.relative_to(root).as_posix()
+            except ValueError:
+                continue
+            if is_assessment_output_dir(candidate):
+                found.append(relative)
+                continue
+            if candidate.is_symlink() or is_excluded(relative):
+                continue
+            kept.append(dirname)
+        dirnames[:] = kept
+    return tuple(sorted(found))
+
+
+def assessment_output_prefixes(repo_root: Path | str) -> tuple[str, ...]:
+    """Repo-relative directories that contain prior assessment products."""
+    return _assessment_output_prefixes(str(Path(repo_root).resolve(strict=False)))
+
+
+def is_assessment_artifact(rel_path: str, repo_root: Path | str) -> bool:
+    """Return whether ``rel_path`` is inside a detected assessment output."""
+    normalized = rel_path.replace("\\", "/").removeprefix("./")
+    return any(
+        normalized == prefix or normalized.startswith(prefix + "/") for prefix in assessment_output_prefixes(repo_root)
+    )
+
+
 def max_file_bytes(excludes: dict | None = None) -> int:
     """Resolve the per-file byte cap for scans.
 
@@ -243,11 +318,14 @@ def is_oversize(path, limit: int | None = None) -> bool:
 def glob_exclusion_string(
     opt_ins: Iterable[str] = (),
     excludes: dict | None = None,
+    repo_root: Path | str | None = None,
 ) -> str:
     """Return a Grep `glob:` exclusion string for the given opt-in set.
 
     Format: `!{dir1,dir2,...}/**`. Directories contributed by enabled
-    opt-in groups are subtracted from the default directory list.
+    opt-in groups are subtracted from the default directory list. Directory
+    detected assessment outputs are included. Configured path-prefix rules
+    remain per-file checks so ``always_include`` can still override them.
 
     The output is deterministic (sorted directory list) so test fixtures
     remain stable.
@@ -257,6 +335,8 @@ def glob_exclusion_string(
     for group_name in opt_ins:
         group = excludes.get("opt_in", {}).get(group_name, {})
         directories -= set(group.get("directories", []))
+    if repo_root is not None:
+        directories.update(assessment_output_prefixes(repo_root))
     if not directories:
         return ""
     return "!{" + ",".join(sorted(directories)) + "}/**"
@@ -273,6 +353,7 @@ def _cli(argv: list[str]) -> int:
 
     p_glob = sub.add_parser("glob", help="Emit the Grep glob exclusion string")
     p_glob.add_argument("opt_ins", nargs="*", help="opt-in group names (e.g. SCAN_TEST_FILES)")
+    p_glob.add_argument("--repo-root", type=Path, help="also exclude detected assessment output directories")
 
     p_check = sub.add_parser("check", help="Exit 0 iff the given path IS excluded")
     p_check.add_argument("path", help="repo-relative path to classify")
@@ -289,7 +370,7 @@ def _cli(argv: list[str]) -> int:
         return 2
 
     if args.cmd == "glob":
-        print(glob_exclusion_string(args.opt_ins, excludes))
+        print(glob_exclusion_string(args.opt_ins, excludes, repo_root=args.repo_root))
         return 0
     if args.cmd == "check":
         excluded = is_excluded(args.path, args.opt_in, excludes)

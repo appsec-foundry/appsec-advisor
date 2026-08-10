@@ -1478,6 +1478,30 @@ standalone configuration, fragment-registry, and target-specificity gates pass.
 Per operator direction, the complete test suite was not rerun after this
 follow-up.
 
+The aborted retry also exposed a repository-independent recon contamination
+path. The configured exclusion covered only `docs/security/`, while users may
+place preserved assessment outputs under any repository-relative name. The
+target contained several such directories, and the deterministic recon sidecar
+reported 169 Category-9 and 85 Category-13 findings, including generated
+taxonomy, actor, and component artifacts from earlier runs. The resulting
+summary grew to 590 physical lines and 35,331 bytes, and the recon role recorded
+103,010 tokens, 34 tool calls, and 308,847 milliseconds. Architecture recorded
+83,729 tokens, 32 tool calls, and 312,258 milliseconds, so the contamination
+explains material recon waste but does not by itself establish the root cause
+of all Stage-1 latency.
+
+Recon and STRIDE discovery now detect prior assessment directories from either
+the final Markdown/YAML report pair or two independent runtime markers. The
+detector does not follow directory symlinks, does not classify a directory from
+one similarly named file, and supplies the detected prefixes to both model Grep
+exclusions and deterministic recon traversal. Configured path-prefix rules
+remain per-file checks so their `always_include` override still preserves API
+contracts and ADRs. A deterministic replay against the same target reduced
+Category 9 from 169 to 14 findings and Category 13 from 85 to 25, with no
+finding path under any detected prior assessment directory. The raw recon
+template and agent definition remain large fixed inputs; R10 must remeasure
+their cost before any broader producer redesign is justified.
+
 The next required live checkpoint is a fresh R10 retry. It uses the same target
 and quick model cohort as R9 and forces Stage 1d. The old R10 directory is mixed
 with the invalid legacy recovery, and the first fresh directory contains the

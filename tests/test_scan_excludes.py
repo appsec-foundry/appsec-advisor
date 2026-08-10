@@ -659,6 +659,44 @@ def test_assessment_runtime_products_are_excluded(path):
     assert scan_excludes.is_excluded(path)
 
 
+class TestAssessmentOutputDirectories:
+    def test_runtime_marker_pair_detects_user_named_output(self, tmp_path):
+        output = tmp_path / "docs" / "audit-results"
+        output.mkdir(parents=True)
+        (output / ".skill-config.json").write_text("{}\n", encoding="utf-8")
+        (output / ".appsec-checkpoint").write_text("phase=7\n", encoding="utf-8")
+
+        assert scan_excludes.is_assessment_output_dir(output)
+        assert scan_excludes.assessment_output_prefixes(tmp_path) == ("docs/audit-results",)
+        assert scan_excludes.is_assessment_artifact("docs/audit-results/.taxonomy-slices/auth.yaml", tmp_path)
+
+    def test_final_report_pair_detects_cleaned_output(self, tmp_path):
+        output = tmp_path / "review"
+        output.mkdir()
+        (output / "threat-model.md").write_text("# Report\n", encoding="utf-8")
+        (output / "threat-model.yaml").write_text("version: 2\n", encoding="utf-8")
+
+        assert scan_excludes.is_assessment_output_dir(output)
+
+    def test_single_similarly_named_file_does_not_hide_project_docs(self, tmp_path):
+        docs = tmp_path / "docs" / "security-guidance"
+        docs.mkdir(parents=True)
+        (docs / "threat-model.md").write_text("# Design input\n", encoding="utf-8")
+
+        assert not scan_excludes.is_assessment_output_dir(docs)
+        assert scan_excludes.assessment_output_prefixes(tmp_path) == ()
+
+    def test_detection_does_not_follow_directory_symlink(self, tmp_path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / ".agent-run.log").write_text("event\n", encoding="utf-8")
+        (outside / ".hook-events.log").write_text("event\n", encoding="utf-8")
+        linked = tmp_path / "linked-output"
+        linked.symlink_to(outside, target_is_directory=True)
+
+        assert not scan_excludes.is_assessment_output_dir(linked)
+
+
 # ---------------------------------------------------------------------------
 # Opt-in relief (SCAN_TEST_FILES)
 # ---------------------------------------------------------------------------
@@ -761,6 +799,17 @@ class TestGlobString:
     def test_empty_directory_list_returns_empty_glob(self):
         assert scan_excludes.glob_exclusion_string(excludes=_minimal_excludes()) == ""
 
+    def test_includes_detected_outputs_without_bypassing_path_whitelist(self, tmp_path):
+        output = tmp_path / "docs" / "custom-review"
+        output.mkdir(parents=True)
+        (output / ".agent-run.log").write_text("event\n", encoding="utf-8")
+        (output / ".hook-events.log").write_text("event\n", encoding="utf-8")
+
+        glob = scan_excludes.glob_exclusion_string(repo_root=tmp_path)
+
+        assert "docs/custom-review" in glob
+        assert "docs/security" not in glob
+
 
 # ---------------------------------------------------------------------------
 # CLI smoke tests
@@ -777,6 +826,19 @@ class TestCLI:
         )
         assert r.stdout.strip().startswith("!{")
         assert "node_modules" in r.stdout
+
+    def test_cli_glob_accepts_repo_root(self, tmp_path):
+        output = tmp_path / "scan-output"
+        output.mkdir()
+        (output / "threat-model.md").write_text("# Report\n", encoding="utf-8")
+        (output / "threat-model.yaml").write_text("version: 2\n", encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, str(SCRIPT), "glob", "--repo-root", str(tmp_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        assert "scan-output" in r.stdout
 
     def test_cli_check_excluded_exits_0(self):
         r = subprocess.run(

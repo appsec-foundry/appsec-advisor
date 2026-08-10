@@ -263,10 +263,12 @@ Skip steps 1–3 when the JSON is missing or has `orm_detected: []`; the standar
 **Every Grep call MUST use `glob: "$EXCLUDE_GLOB"`** — build it once at the start of Step 2:
 
 ```bash
-EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob)
+EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob --repo-root "$REPO_ROOT")
 ```
 
-The glob is produced from `data/scan-excludes.yaml` (managed by `scripts/scan_excludes.py`). Covers excluded directories only — file-basename and path-prefix exclusions are enforced by `is_excluded()` and the whitelist rules in the YAML.
+The glob is produced from `data/scan-excludes.yaml` and the detected prior-run
+output directories under `REPO_ROOT` (managed by `scripts/scan_excludes.py`).
+File-basename exclusions remain enforced by `is_excluded()`.
 
 **Whitelist (always-included)** files that survive exclusion: `*.adoc`, `*.asciidoc`, `*.proto`, `*.graphql`, `*.gql`, `openapi.{yaml,json}`, `schema.graphql`, anything under `docs/adr/` and `docs/decisions/`.
 

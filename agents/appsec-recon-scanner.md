@@ -209,14 +209,19 @@ Parse the JSON output and feed each category directly into the corresponding `.r
 
 ```bash
 # Default exclusions (no opt-ins):
-EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob)
+EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob --repo-root "$REPO_ROOT")
 
 # With opt-in for test files (when SCAN_TEST_FILES=true is passed):
-# EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob SCAN_TEST_FILES)
+# EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob SCAN_TEST_FILES --repo-root "$REPO_ROOT")
 echo "EXCLUDE_GLOB=$EXCLUDE_GLOB"
 ```
 
-**Every Grep call in Step 3 MUST use `glob: "$EXCLUDE_GLOB"`** (substitute the string captured above). The script emits a deterministic, sorted `!{dir1,dir2,...}/**` string covering all excluded directories. File-basename patterns and path-prefix exclusions (e.g. `docs/security/`, `*.min.js`, `*.stories.tsx`) are handled by `is_excluded()` when `security_relevance_filter.py` classifies individual files in incremental mode — **they do not need to be repeated in the glob**.
+**Every Grep call in Step 3 MUST use `glob: "$EXCLUDE_GLOB"`**
+(substitute the string captured above). The script emits a deterministic,
+sorted exclusion covering configured directory names and any directory
+carrying the signature of a prior appsec-advisor run. Path-prefix and
+file-basename rules remain per-file checks so the configured whitelist can
+still preserve source inputs such as API contracts and ADRs.
 
 **Whitelist override — already baked into the data file.** Files matching `always_include` (e.g. `*.adoc`, `*.proto`, `*.graphql`, `*.gql`, `openapi.yaml`, `docs/adr/**`) are NEVER excluded, even if they live under a path that would otherwise match. This preserves ADRs, AsciiDoc source docs, and API contracts as first-class inputs for Phase 1 context resolution.
 

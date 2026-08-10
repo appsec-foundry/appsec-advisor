@@ -72,7 +72,8 @@ question that could change a finding. Before searching, append one bounded
 `component-path-sampling`), `decision_key`, `search_paths`, and optional `lens`
 (the selected fixed lens or `null`).
 
-Then obtain `EXCLUDE_GLOB` from `scripts/scan_excludes.py glob` and combine it
+Then obtain `EXCLUDE_GLOB` from
+`scripts/scan_excludes.py glob --repo-root "$REPO_ROOT"` and combine it
 with `path_routing.exclude_paths` for this component's optional broad discovery
 only. Use at most one batched Glob/Grep turn, stay within `component.paths`, and
 prefilter candidates rather than search an excluded subtree. Excludes never

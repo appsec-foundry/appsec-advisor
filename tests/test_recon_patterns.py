@@ -119,6 +119,27 @@ class TestHardExcludes:
         assert rp._is_excluded("coverage/report.js")
         assert not rp._is_excluded("src/app.ts")
 
+    def test_user_named_prior_assessment_output_is_not_scanned(self, repo):
+        source = repo / "src"
+        source.mkdir()
+        (source / "oauth.ts").write_text(
+            'const authorization_endpoint = "/authorize?response_type=token"\n',
+            encoding="utf-8",
+        )
+        prior = repo / "docs" / "custom-review"
+        prior.mkdir(parents=True)
+        (prior / ".skill-config.json").write_text("{}\n", encoding="utf-8")
+        (prior / ".appsec-checkpoint").write_text("phase=10b\n", encoding="utf-8")
+        (prior / "architectural-controls.yaml").write_text(
+            "authorization_endpoint: /authorize?response_type=token\n",
+            encoding="utf-8",
+        )
+
+        findings = rp.scan_oauth_oidc(repo)["findings"]
+
+        assert findings
+        assert {finding["file"] for finding in findings} == {"src/oauth.ts"}
+
     def test_walk_repo_skips_binary_unknown_files_and_records_manifest(self, repo):
         (repo / "src").mkdir()
         (repo / "src" / "app.ts").write_text("export const x = 1;\n", encoding="utf-8")
