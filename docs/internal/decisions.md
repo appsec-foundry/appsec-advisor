@@ -69,8 +69,6 @@ to touch — each row names them. One row is one decision and carries everything
 | CE-3 | Stage 2 context stays cumulatively bounded | `test_thin_full_cumulative_stage2_context_is_bounded` | `data/context-budgets.yaml`; see `docs/internal/analysis/analysis-context-compaction-thorough-runs-2026-07-16.md` |
 | CE-4 | Phase groups load at their boundary, never inline | `tests/test_lazy_phase_group_loading.py` | `AGENTS.md` → Orchestration and context |
 | CE-5 | Dispatch prompts run stable → specific → volatile | `tests/test_dispatch_prompt_cache_order.py` | `AGENTS.md` → Prompt caching contract |
-| CE-6 | Budget values may only decrease | — *(no guard written)* | deferred until the WP5a A/B closes |
-| CE-7 | Startup totals are gated, not merely measured | — *(no guard written)* | deferred, `admission.enforce_startup_totals` |
 
 ## Depth and turn budgets
 
@@ -79,7 +77,6 @@ to touch — each row names them. One row is one decision and carries everything
 | DT-1 | All six STRIDE categories stay mandatory for every dispatched component at every depth tier and in every depth mode — cheap-stride and quick mode are pacing levers, never coverage cuts | — *(guard not located)* | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md` |
 | DT-2 | `_cheap_stride_target` is the only place that decides which components are screened | `test_builder_cheap_stride_spares_auth_and_core_backend`, `test_builder_cheap_stride_spares_untrusted_input_entry_points`, `test_builder_cheap_stride_spares_datastores_not_crown_jewels` | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/design-cheap-stride-layer-2026-07-23.md` |
 | DT-3 | Exposure steers component selection, and unknown exposure fails safe to full depth — an off-vocabulary zone becomes exposure-unknown, never internal | `test_builder_cheap_stride_never_screens_exposure_unknown` | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/proposal-stride-depth-tiering-2026-07-23.md` |
-| DT-4 | Screening eligibility is not keyed on `handles_sensitive_data` — it over-tags | — *(no guard written)* | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/plan-stride-selection-cheap-layer-2026-07-23.md` |
 | DT-5 | Turn ceilings are computed per component at dispatch time, never declared in agent frontmatter; a ceiling paces work and never caps coverage | — *(no guard written)* | `AGENTS.md` → Model and depth configuration |
 | DT-6 | A ceiling lift or a dropped overflow is surfaced as a run issue, never silently absorbed | `test_stride_ceiling_lift_is_surfaced`, `test_stride_ceiling_overflow_dropped_is_surfaced` | `scripts/aggregate_run_issues.py` |
 
@@ -154,7 +151,6 @@ to touch — each row names them. One row is one decision and carries everything
 |---|---|---|---|
 | RN-1 | The render path is a mutation sequence and its order is load-bearing: `compose_threat_model.py --strict`, then `apply_prose_fixes.py`, then `qa_checks.py autofix` | — *(guard not located)* | `AGENTS.md` → Validation and repair |
 | RN-2 | A normalization pass is idempotent; running it twice changes nothing, or a re-render invents differences | `test_apply_fixes_is_idempotent_for_core_rewrites`, `test_autofix_is_idempotent_on_paths`, `test_r7_full_pipeline_is_idempotent` | `scripts/apply_prose_fixes.py`, `scripts/qa_checks.py` |
-| RN-3 | A renderer or QA autofix owns normalization only where a contract assigns it; otherwise the upstream producer is fixed and the autofix stays a documented backstop tested on both layers | — *(no guard written)* | `AGENTS.md` → Fix the source, not the symptom |
 | RN-4 | The deterministic emitters run in a fixed sequence | `test_emitter_sequence_preserved_in_order` | `scripts/auto_emitter_pass.sh` |
 
 ## Report and artifacts
@@ -243,18 +239,6 @@ to touch — each row names them. One row is one decision and carries everything
 | EX-4 | A package policy takes `include` or `exclude` per surface, never both, and the same rule applies to org-added skills | `test_policy_surface_explicit_block`, `test_policy_surface_fallback_to_root`, `test_the_package_policy_can_exclude_an_added_skill` | `docs/internal-plugin-packaging.md` |
 | EX-5 | What a build kept and what it dropped is recorded in `.claude-plugin/package-surface.json`, so a shipped plugin can be audited against its policy | — *(guard not located)* | `docs/internal-plugin-packaging.md` |
 | EX-6 | An organization baseline replaces the upstream copy instead of shipping both | `test_org_baseline_drops_the_unused_upstream_copy` | `scripts/package_internal_plugin.py` |
-
-## AuthN/AuthZ analysis
-
-| ID | Decision | Guard | Rationale |
-|---|---|---|---|
-| AZ-1 | A dedicated `appsec-authnz-analyzer` agent runs cross-component AuthN/AuthZ analysis; it consumes pre-extracted scanner output and does not re-read source files | — *(no guard written)* | `agents/appsec-authnz-analyzer.md`; separates reasoning budget from discovery budget |
-| AZ-2 | The authnz-review skill is standalone — it requires only a repository root, not a prior threat model run | — *(no guard written)* | `skills/authnz-review/SKILL.md`; `route_inventory.py`, `source_auth_scanner.py`, `authz_confirm.py` all take only `--repo-root` |
-| AZ-3 | The STRIDE analyzer retains EoP as a shallow signal-collection pass; the authnz agent deduplicates against those signals rather than replacing them | — *(no guard written)* | `agents/appsec-authnz-analyzer.md` → Step 3e; avoids double-counting EoP findings across the two passes |
-| AZ-4 | Requirement references in authnz findings are sourced from `.phase-8b-violations.json` when present, falling back to `.requirements.yaml`; no requirement ID is guessed | — *(no guard written)* | `agents/appsec-authnz-analyzer.md` → Step 5; mirrors RQ-4 |
-| AZ-5 | M3.4 (Auth-as-separate-component) remains in place as a structural inventory rule; the authnz agent does not replace it — it complements the per-component STRIDE pass with cross-component reasoning | — *(no guard written)* | `agents/phases/phase-group-threats.md` → M3.4; the structural separation still produces a dedicated `.stride-auth-*.json` useful for downstream dedup |
-| AZ-6 | In console-only runs (`--save` absent) the authnz-analyzer emits its JSON between `AUTHNZ_REPORT_START`/`AUTHNZ_REPORT_END` markers in its final message instead of writing a file; `--save` enables file output and partial-write safety | — *(no guard written)* | `agents/appsec-authnz-analyzer.md` → `SAVE_MODE`; avoids tmp-file permission prompts and unintended disk writes in the default case |
-| AZ-7 | When all three scanners return zero signals the skill skips the agent dispatch and emits a single High finding (CWE-306) directly | — *(no guard written)* | `skills/authnz-review/SKILL.md` → Step 4b; avoids wasting agent turns on repositories with no auth layer |
 
 ## Target agnosticism
 
