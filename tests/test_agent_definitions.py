@@ -606,7 +606,10 @@ class TestBodyContentConsistency:
         assert "Never emit `TH-UNCLASSIFIED`" in stride
         assert 'bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh"' in stride
         assert "never invoke that shell script with Python" in stride
-        assert "`MODEL_ID` and the component plan's `analysis.depth`" in stride
+        assert "`MODEL_ID` and exact plan `analysis.depth` (`full` or `light`)" in flat
+        assert "never infer it from profile, budget, or another component" in flat
+        assert "role/permission/identity claims as authorization questions" in flat
+        assert "use one `missing-control-proof` escape" in flat
         assert "Never read the shared effective plan or dispatch manifest" in flat
         assert "Its `analysis`, `lens_ids`, and `inputs` own the policy" in flat
         assert "max_threats_per_category" in stride
@@ -621,6 +624,10 @@ class TestBodyContentConsistency:
         flat_runtime = " ".join(thin_runtime.split())
         assert "Never recommend `--resume`" in flat_runtime
         assert "a later `--full` restarts Stage 1" in flat_runtime
+
+        architecture = (AGENTS_DIR / "appsec-architecture-analyst.md").read_text(encoding="utf-8")
+        assert "AI/LLM surface separate only when it is a distinct deployable" in architecture
+        assert "preserve the LLM evidence\nand lens instead of inventing a second component" in architecture
 
     def test_context_v2_root_cause_producer_maps_component_tiers_to_schema_keys(self):
         _, body = parse_frontmatter(AGENTS_DIR / "appsec-post-stride-synthesizer.md")

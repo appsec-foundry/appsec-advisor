@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Context-v2 headless runs now reject unsupported resume requests instead of restarting through the legacy full runtime.
 - Status inspection is now read-only, and stale-state cleanup preserves completed analysis-handoff checkpoints.
 - Threat-model assembly now accepts validated trust-boundary inheritance provenance instead of aborting before report rendering.
+- Recon now surfaces predictable OAuth-derived and bundled client credentials, preserves distinct focused evidence under fixed bounds, and avoids binding generic escalation prose to unrelated abuse steps.
+- Per-role telemetry now sums dispatches across STRIDE waves and deduplicates replayed stats groups.
 
 ### Changed
 

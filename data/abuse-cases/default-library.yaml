@@ -277,7 +277,7 @@ abuse_cases:
       prerequisite: Self-registration is open (one unauthenticated POST).
     goal: Obtain an administrator account without any existing privilege.
     scope_qualifier:
-      required_signals: [has_auth_surface, has_registration]
+      required_signals: [has_auth_surface, has_open_self_registration]
     chain:
       - step: 1
         label: Registration endpoint binds an attacker-supplied privilege field

@@ -56,7 +56,11 @@ application, or data tier, and a simple, moderate, or complex rating. Map
 deployment zones only from the canonical access-zone values carried by the
 input. Leave reachability unknown when evidence is insufficient. Keep auth or
 identity as its own component even when its source is co-located with a
-backend. Do not prune the inventory by assessment depth.
+backend. Keep an AI/LLM surface separate only when it is a distinct deployable
+unit or crosses a different trust boundary; when it is co-deployed behind the
+same boundary, retain it in the owning component and preserve the LLM evidence
+and lens instead of inventing a second component. Do not prune the inventory by
+assessment depth.
 
 Persist data flows between exact component IDs or `external`. Each flow needs
 a schema-valid provisional inventory fingerprint, a stable `df-NNN`

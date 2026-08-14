@@ -96,6 +96,20 @@ def test_build_all_emits_bounded_valid_component_bundle(tmp_path):
     assert not (output / ".dispatch-context/backend-api/architecture-context.json").exists()
 
 
+def test_build_all_reconstructs_its_canonical_empty_routing_lists(tmp_path):
+    repo, output = _repo(tmp_path)
+    manifest = _manifest(_component())
+
+    first = bundles.build_all(output, repo, manifest)
+    first_payload = (output / first["components"][0]["evidence_bundle_path"]).read_bytes()
+    second = bundles.build_all(output, repo, first)
+    second_payload = (output / second["components"][0]["evidence_bundle_path"]).read_bytes()
+
+    assert second["components"][0]["focus_paths"] == []
+    assert second["components"][0]["exclude_paths"] == []
+    assert second_payload == first_payload
+
+
 def test_business_context_is_normalized_and_receipted_per_component(tmp_path):
     repo, output = _repo(tmp_path)
     context = {
@@ -515,6 +529,59 @@ def test_focus_receipt_discloses_source_budget_omissions(tmp_path):
     assert receipt["candidate_files"] == bundles.MAX_SOURCE_SLICES + 3
     assert len(receipt["projected_files"]) == bundles.MAX_SOURCE_SLICES
     assert receipt["omitted_files"] == 3
+
+
+def test_later_focus_mechanism_cannot_be_starved_by_lexical_signal_fanout(tmp_path):
+    repo, output = _repo(tmp_path)
+    early = repo / "src" / "a-common.py"
+    early.write_text("\n".join(f"value_{index} = {index}" for index in range(40)) + "\n", encoding="utf-8")
+    focused = repo / "src" / "z-sensitive.py"
+    focused.write_text("browser_input = location.search\nrender(browser_input)\n", encoding="utf-8")
+    findings = [
+        {
+            "file": "src/a-common.py",
+            "line": index + 1,
+            "category": 10,
+            "subcategory": f"common-{index}",
+            "severity": "High",
+        }
+        for index in range(bundles.MAX_SOURCE_SLICES + 5)
+    ]
+    findings.append(
+        {
+            "file": "src/z-sensitive.py",
+            "line": 1,
+            "category": 20,
+            "subcategory": "distinct-source-sink",
+            "severity": "High",
+            "sink_line": 2,
+        }
+    )
+    (output / ".recon-patterns.json").write_text(json.dumps({"findings": findings}), encoding="utf-8")
+
+    manifest = bundles.build_all(
+        output,
+        repo,
+        _manifest(_component(focus_paths=["src/z-sensitive.py"])),
+    )
+    bundle = json.loads((output / manifest["components"][0]["evidence_bundle_path"]).read_text())
+
+    assert len(bundle["source_slices"]) == bundles.MAX_SOURCE_SLICES
+    assert {row["start_line"] for row in bundle["source_slices"] if row["path"] == "src/z-sensitive.py"} == {1, 2}
+    assert bundle["path_routing"]["focus_admission"] == [
+        {
+            "path": "src/z-sensitive.py",
+            "status": "admitted",
+            "reason": "projected",
+            "candidate_files": 1,
+            "projected_files": ["src/z-sensitive.py"],
+            "omitted_files": 0,
+            "enumeration_truncated": False,
+        }
+    ]
+    assert bundle["limits"]["referenced_source_lines"] <= bundles.MAX_SOURCE_LINES
+    assert bundle["limits"]["serialized_bytes"] <= bundles.MAX_BUNDLE_BYTES
+    assert bundle["limits"]["estimated_tokens"] <= bundles.MAX_ESTIMATED_TOKENS
 
 
 def test_exclude_path_is_receipted_without_removing_bundle_evidence(tmp_path):

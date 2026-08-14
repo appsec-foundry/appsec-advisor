@@ -1845,6 +1845,107 @@ R10 is a live smoke checkpoint, not the controlled three-pair A/B acceptance
 cohort. It cannot close WP6, the controlled A/B evidence, WP7 incremental and
 resume parity, controlled release rollout, or the acceptance matrix.
 
+### Pre-R10 implementation checkpoint — 2026-08-14
+
+Work resumed on `feature/turn-admission-telemetry` from clean commit
+`1bc2ccbf`. The R10 postfix evidence and every proposed corrective action were
+rechecked against the current producer, contract, consumer, validator, cleanup,
+permission, and test paths. No entry in `docs/internal/decisions.md` changed and
+no context, source-line, byte, token, turn, or component ceiling was raised.
+
+The component-count delta is not itself a defect. The architecture producer now
+states the repository-neutral boundary explicitly: an AI/LLM surface remains a
+separate component only when it is a distinct deployable unit or crosses a
+different trust boundary. A co-deployed LLM route stays in its owning component
+and retains the LLM lens. The existing deterministic selector already floors
+that folded component into STRIDE through `known_llm_patterns`, and the
+Completion Summary already reads modeled and selected counts from their
+authoritative artifacts. Do not force eight modeled components merely to match
+R9; R10 must report the actual inventory and explain any topology change.
+
+The following generic defects are fixed with regression coverage:
+
+1. Bounded source-slice selection no longer lets lexically early, repetitive
+   signals consume all 24 slots. It round-robins focused paths first, preserves
+   independently detected mechanisms and files, and carries both source and
+   sink locations when a deterministic signal declares them. All existing
+   physical-line, source-line, byte, and estimated-token limits remain active.
+2. The bundle producer accepts its own canonical empty `focus_paths: []` and
+   `exclude_paths: []` on reconstruction. Previously a second pass failed
+   closed with a misleading 16-path-cap error after a valid first pass.
+3. Deterministic recon now emits repository-neutral review signals for a
+   reversible OAuth-local credential derived from an identity claim and for a
+   reusable test/demo/shared credential bundled in executable client source.
+   The latter is redacted in the recon artifact. The checks exclude test,
+   fixture, generated, short-placeholder, random-credential, and password-KDF
+   cases and carry CWE, severity, finding type, and exact file/line evidence.
+4. A role or permission claim named by admitted architecture context is now a
+   concrete analyzer decision question. When current slices cannot show the
+   server-side authority, the analyzer uses its one bounded
+   `missing-control-proof` escape. No static rule claims that every signed JWT
+   role is a vulnerability.
+5. `AC-T-004` now consumes the contracted
+   `has_open_self_registration` signal instead of the nonexistent
+   `has_registration` token. At abuse-match time, the later deterministic
+   `meta.open_user_registration` result authoritatively overlays the earlier
+   recon value: true adds the signal, false removes a stale true, and an absent
+   late verdict leaves recon unchanged.
+6. The apparent stale `T-009` was disproved. `T-009` names the same IDOR in
+   `.threats-merged.json` and the intermediate YAML. The real defect was a
+   semantic false match: generic `privilege escalation` prose bound that IDOR
+   to a CWE-915 mass-assignment step. A finding with a different CWE now needs
+   the case's CWE-family match or a code-structural sink; no public-ID migration
+   or renumbering was introduced.
+7. Stage telemetry now sums dispatch counts across non-overlapping STRIDE waves
+   instead of taking the largest wave width. Each context-v2 stats group carries
+   a stable accumulation ID derived from role, agent type, model, and wave start,
+   so replaying one orchestration turn does not double-count tokens, tools,
+   duration, or dispatches; observed wall time still keeps the widest window.
+8. The context-v2 STRIDE producer must copy `analysis.depth` exactly as
+   `full` or `light` into start/end progress. It may not infer
+   `cheap-STRIDE` from quick mode, a profile, a turn budget, or the preceding
+   component.
+
+A reconstruction replay was performed only in
+`/tmp/appsec-r10-reprojection-check`; the preserved postfix directory was not
+modified. With the original postfix manifest and recon evidence, the rebuilt
+frontend bundle retains 24 source slices, 24 referenced source lines, 20,574
+bytes, and 5,144 estimated tokens. The receipt now admits
+`frontend/src/app/search-result/search-result.component.ts`, and its slices
+include both deterministic sanitizer-bypass locations at lines 110 and 143.
+
+The focused producer, recon, abuse, telemetry, prompt, inventory, selection,
+registration, and Completion Summary suites pass. The final focused run
+reported 505 passed tests, and the broader contract/schema/cleanup/routing/
+orchestration fixture set reported 919 passed and 17 skipped tests. `make lint`
+passes. The coverage run reported 91.43% coverage, 12,446 passed, and 95 skipped
+after exposing one exact prompt-wording regression; restoring the contracted
+single bundle read made the affected 239 prompt, budget, definition, and cache-
+order tests pass. The final `make check` then passed lint, formatting,
+configuration, fragment-registry, target-specificity, and all 12,447 tests with
+95 skips in 640.27 seconds. A third duplicate coverage run was deliberately not
+started after that full green current-tree gate.
+
+This checkpoint is ready for its green-boundary commit. The commit containing
+this paragraph is the handoff boundary; use the branch HEAD rather than the
+pre-change `1bc2ccbf` when starting R10.
+
+No further repository implementation is required before R10 if those final
+gates remain green. The paid retry is the next source of evidence, not proof of
+completion. It must still measure the abuse-verifier cost effect, final report
+and Findings Index, terminal state, full Completion Summary, provider stalls,
+and coverage against R9 and the fixed reference. Per-role priced token classes,
+turns, and cost remain unavailable from the provider; report that limitation
+instead of allocating total cost proportionally. The partial postfix run also
+cannot validate a Stage-1d stats row because the host limit interrupted that
+role before its Agent usage block returned.
+
+After a passing R10, the controlled three-baseline/three-context-v2 A/B cohort,
+WP6, WP7 incremental and resume parity, rollout, the acceptance matrix, the
+700-turn target, resident-context targets, and cost-reduction gates remain open.
+Do not mark WP5a live acceptance or the overall plan complete from repository
+tests alone.
+
 A subsequent governance audit moved standing orchestration and admission rules
 into the durable contracts, pinned the legacy/context-v2 tool topology, added a
 review ratchet for every prompt surface, registered the repository-local

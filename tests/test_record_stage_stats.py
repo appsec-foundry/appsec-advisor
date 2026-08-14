@@ -674,7 +674,40 @@ def test_accumulate_merges_wall_secs_observed_by_max(tmp_path):
     )
     r = json.loads((tmp_path / ".stage-stats.jsonl").read_text().splitlines()[0])
     assert r["wall_secs_observed"] == 3780  # widest window kept, not the 240s one
+    assert r["dispatch_count"] == 2  # distinct groups are additive, not max(1, 1)
     assert r["duration_ms"] == 3000
+
+
+def test_accumulate_id_makes_replayed_wave_idempotent(tmp_path):
+    first = _acc(
+        tmp_path,
+        **{
+            "--duration-ms": "1000",
+            "--tool-uses": "4",
+            "--tokens": "100",
+            "--accumulation-id": "stride:wave-1",
+        },
+    )
+    second = _acc(
+        tmp_path,
+        **{
+            "--duration-ms": "2000",
+            "--tool-uses": "6",
+            "--tokens": "200",
+            "--accumulation-id": "stride:wave-2",
+        },
+    )
+
+    assert rec.main(first) == 0
+    assert rec.main(first) == 0
+    assert rec.main(second) == 0
+
+    row = json.loads((tmp_path / ".stage-stats.jsonl").read_text().splitlines()[0])
+    assert row["duration_ms"] == 3000
+    assert row["tool_uses"] == 10
+    assert row["tokens"] == 300
+    assert row["recorded_dispatch_count"] == 2
+    assert row["accumulation_ids"] == ["stride:wave-1", "stride:wave-2"]
 
 
 def test_rebuild_unlink_oserror_warns_but_continues(tmp_path, monkeypatch, capsys):

@@ -461,6 +461,12 @@ _CAT9_CLAIM_VALIDATION = re.compile(
 _CAT9_STATIC_STATE_NONCE = re.compile(
     r"(?i)\b(state|nonce)\b\s*[:=]\s*['\"](?:state|nonce|test|changeme|static|12345|abcdef)['\"]"
 )
+_CAT9_DERIVED_CREDENTIAL = re.compile(
+    r"(?i)\b(?:password|passwd|credential)\w*\s*[:=]\s*"
+    r"(?:btoa\s*\(|Buffer\.from\s*\([^\n]{0,180}?\)\.toString\s*\(\s*['\"]base64['\"]|"
+    r"base64(?:url)?(?:encode|_encode)\s*\()[^\n]{0,240}?"
+    r"(?:email|e-mail|username|user_name|profile\.(?:email|name)|claims?\.(?:email|sub))"
+)
 
 
 def _line_hits(lines: list[str], pattern: re.Pattern[str]) -> list[tuple[int, str]]:
@@ -529,6 +535,31 @@ def scan_oauth_oidc(repo_root: Path) -> dict[str, Any]:
             match=surface_hits[0][1],
             evidence="OAuth/OIDC-related token, endpoint, SDK, or config pattern present",
         )
+
+        # A reversible transform of an identity claim is not a password
+        # generator. Keep this deliberately narrow: the assignment target must
+        # be credential-like, the transform must be reversible encoding (not a
+        # password KDF), and the input must be a user identity attribute in the
+        # same source line. Test/spec/fixture paths are already excluded by the
+        # repository walker. This is a review signal with exact file/line
+        # evidence; the STRIDE analyzer still establishes reachability.
+        for n, line in _line_hits(lines, _CAT9_DERIVED_CREDENTIAL):
+            _add_cat9(
+                findings,
+                rel=rel,
+                subcategory="oauth-derived-user-credential",
+                severity="High",
+                line=n,
+                match=line,
+                evidence="OAuth-local credential is predictably derived from a user identity attribute with reversible encoding",
+            )
+            findings[-1].update(
+                {
+                    "cwe": "CWE-522",
+                    "finding_type": "credential-management-candidate",
+                    "false_positive_exclusions": "cryptographic password KDFs, random credentials, and excluded test/spec/fixture paths",
+                }
+            )
 
         frontend_like = bool(_CAT9_FRONTEND_HINT.search(rel))
         for n, line in _line_hits(lines, _CAT9_IMPLICIT):
@@ -1114,6 +1145,10 @@ _CAT21_PATTERN = re.compile(
     r"|(stripe|supabase|firebase|amplify|sentry)[^\n]{0,80}"
     r"(secret|service[_-]?role|admin[_-]?key|auth[_-]?token|sk_live|sk_test)"
 )
+_CAT21_BUNDLED_CREDENTIAL = re.compile(
+    r"(?i)\b(?P<name>(?:test(?:ing)?|demo|default|shared|sample)[_-]?"
+    r"(?:password|passwd|credential|secret))\b\s*[:=]\s*['\"](?P<value>[^'\"\r\n]{8,})['\"]"
+)
 _CAT22_PATTERN = re.compile(
     r"(?i)(new\s+WebSocket|WebSocketServer|socket\.io|ws://|wss://|\.on\(\s*['\"]message|io\(|createServer.*socket|handleUpgrade)"
 )
@@ -1418,7 +1453,35 @@ def scan_dom_xss(repo_root: Path) -> dict[str, Any]:
 
 
 def scan_client_secrets(repo_root: Path) -> dict[str, Any]:
-    return _scan_pattern_category(repo_root, 21, "Client-Side Secrets", _CAT21_PATTERN)
+    findings = _scan_pattern_category(repo_root, 21, "Client-Side Secrets", _CAT21_PATTERN)["findings"]
+    for path in _walk_repo(repo_root):
+        if path.suffix.lower() not in _CLIENT_EXTS:
+            continue
+        rel = path.relative_to(repo_root).as_posix()
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line_no, line in enumerate(lines, start=1):
+            match = _CAT21_BUNDLED_CREDENTIAL.search(line)
+            if not match:
+                continue
+            value = match.group("value")
+            redacted = value[:4] + "****" if value else "****"
+            _add_client_finding(
+                findings,
+                category=21,
+                rel=rel,
+                subcategory="client-bundled-shared-credential",
+                severity="High",
+                line=line_no,
+                match=f"{match.group('name')} = {redacted} ({len(value)} chars)",
+                evidence="A reusable test/demo/shared credential literal is shipped in executable client source",
+                cwe="CWE-798",
+                finding_type="configuration-defect-candidate",
+                false_positive_exclusions="empty or short placeholders and excluded test/spec/fixture paths",
+            )
+    return {"category": 21, "name": "Client-Side Secrets", "findings": findings, "count": len(findings)}
 
 
 def scan_websocket(repo_root: Path) -> dict[str, Any]:

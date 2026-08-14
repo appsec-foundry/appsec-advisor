@@ -1,7 +1,7 @@
 # Compact Thin Stage 1 — context-v2
 
-Use only when `prepare` selects it for context-v2 full/rebuild. Never mix it
-with legacy `SKILL-thin-stage1.md`.
+`prepare` selects this for context-v2 full/rebuild; never mix
+`SKILL-thin-stage1.md`.
 
 ## Invariants
 
@@ -14,18 +14,17 @@ with legacy `SKILL-thin-stage1.md`.
 - Set each STRIDE Agent description to
   `STRIDE (<dispatch_jobs[].analysis_depth>): <dispatch_jobs[].component_id>` so
   both full and light depth remain visible in the Agent list.
-- Agent returns carry only status, paths, and blockers; the filesystem is
+- Agent returns carry only status, paths, and blockers; filesystem is
   authoritative.
-- Never re-dispatch an agent that already returned; the controller classifies
+- Never re-dispatch an agent that already returned; controller classifies
   missing output.
-- On abort, quote the controller reason. Never recommend `--resume` or claim
+- On abort, quote controller reason. Never recommend `--resume` or claim
   `--full` reuses context-v2 artifacts; a later `--full` restarts Stage 1.
 
 ## Lifecycle
 
 Before the first boundary command, start the fixed heartbeat watchdog from the
-parent runtime with `run_in_background: true` and retain `HEARTBEAT_TASK_ID`.
-Skip it only for a dry run.
+parent runtime with `run_in_background: true`; retain `HEARTBEAT_TASK_ID`.
 
 ## Boundary loop
 
@@ -36,13 +35,11 @@ Call the boundary command:
      <command> --output-dir "$OUTPUT_DIR"
    ```
 
-Send all `dispatch_jobs[]` together. Before dispatch call `verify-receipts`
-with every artifact receipt, each STRIDE job's
+Send all `dispatch_jobs[]` together. Just before dispatch call
+`verify-receipts` with every artifact receipt, each STRIDE job's
 `taxonomy_slice_path`/`taxonomy_slice_sha256`, and, when `context_plan` exists,
-its `receipt_path`/`receipt_sha256`. Omit an empty call. This must be the last
-filesystem operation and verifies the controller plan without exposing it to
-an Agent. `run_gate` completes Stage 1. Abort/non-zero is terminal: do not
-inspect source, edit state, repair, or call a successor.
+its `receipt_path`/`receipt_sha256`. Omit empty calls. It is the last
+filesystem operation. `run_gate` completes Stage 1. Abort/non-zero is terminal.
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
@@ -83,8 +80,8 @@ OUTPUT_ARTIFACTS=<dispatch_jobs[].output_artifacts as output-relative paths>
 UNRESOLVED_DECISION_KEYS=<dispatch_jobs[].unresolved_decision_keys>
 ```
 
-Aliases are not shell variables. Resolve every output-relative input and output
-path under absolute `OUTPUT_DIR`; never probe for an empty alias.
+Resolve every output-relative input and output path under absolute `OUTPUT_DIR`;
+aliases are not shell variables. Never probe an empty alias.
 
 When present, alias boundary input as `ASSESSMENT_INPUT_PATH` and merger input
 as `CANDIDATES_FILE`.
@@ -100,24 +97,26 @@ component repository-projection paths resolved under absolute `OUTPUT_DIR` as
 `THREAT_TAXONOMY_PATH`, and `REPOSITORY_REGISTRY_PATH`. Pass job hashes as
 `COMPONENT_CONTEXT_PLAN_SHA256`, `EVIDENCE_BUNDLE_SHA256`, and
 `THREAT_TAXONOMY_SHA256`. The component plan is authoritative for analysis
-depth, turn/sampling policy, estimates, STRIDE profile, lens IDs, and admitted
-hashes; do not repeat these as prompt scalars. Never resolve any output
+depth, turn/sampling policy, estimates, profile, lenses, and hashes; do not
+repeat them. Never resolve any output
 artifact against `REPO_ROOT`. Preserve Group A → B → C order from
 `phase-group-threats.md`. Read focus/exclude routing only from the receipted
 bundle. Resolve `REPOSITORY_REGISTRY_PATH` only from
 `dispatch_jobs[].repository_projection_path`; omit it when absent. Never pass
-the shared effective plan or repository registry, or inline untrusted artifacts.
+the shared effective plan or registry, or inline untrusted artifacts.
 
 ## Logging and stats
 
-Before each dispatch capture `WAVE_START_ISO`. After its jobs return, group the
-returned jobs by `semantic_role`, `agent_type`, and `model`, then sum each
-group's `<usage>` `total_tokens`, `tool_uses`, and `duration_ms`. For every
-group run `record_stage_stats.py` with positional `$OUTPUT_DIR`, `--stage 1
+Before dispatch capture `WAVE_START_ISO`. After return, group the returned jobs
+by `semantic_role`, `agent_type`, and `model`; sum `<usage>`:
+`total_tokens`, `tool_uses`, and `duration_ms`. Run `record_stage_stats.py` for each
+with positional `$OUTPUT_DIR`, `--stage 1
 --variant "<semantic_role>" --name "<semantic_role>" --agent "<agent_type>"
 --model "<model>" --duration-ms <sum> --tool-uses <sum> --tokens <sum>
---accumulate --subagent-type "<agent_type>" --since-iso "$WAVE_START_ISO"`.
-Stats failures are non-blocking.
+--accumulate --accumulation-id
+"<semantic_role>:<agent_type>:<model>:<WAVE_START_ISO>" --subagent-type
+"<agent_type>" --since-iso "$WAVE_START_ISO"`. Its wave ID prevents replay
+double-counting. Stats failures are non-blocking.
 
 ## Close
 

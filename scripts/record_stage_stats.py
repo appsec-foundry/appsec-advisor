@@ -240,16 +240,25 @@ def _merge_accumulate(existing: dict, incoming: dict) -> dict:
 
     Additive: duration_ms / tool_uses / tokens are summed (correct semantics
     for "net agent compute" — concurrent sub-agents bill additively even
-    though their wall-time overlaps). dispatch_count / wall_secs_observed are
-    merged by max() so the widest observed window wins regardless of which
-    sub-dispatch's derivation produced it. recorded_dispatch_count tracks how
-    many times the stage row was accumulated into.
+    though their wall-time overlaps). dispatch_count is summed because each
+    accumulate call describes a non-overlapping dispatch group; wall time is
+    merged by max() so the widest observed window wins. Callers can provide an
+    accumulation id to make replay of the same group idempotent.
     """
     for f in ("duration_ms", "tool_uses", "tokens"):
         existing[f] = int(existing.get(f) or 0) + int(incoming.get(f) or 0)
-    for f in ("dispatch_count", "wall_secs_observed"):
-        if incoming.get(f) is not None:
-            existing[f] = max(int(existing.get(f) or 0), int(incoming.get(f) or 0))
+    if incoming.get("dispatch_count") is not None:
+        existing["dispatch_count"] = int(existing.get("dispatch_count") or 0) + int(incoming.get("dispatch_count") or 0)
+    if incoming.get("wall_secs_observed") is not None:
+        existing["wall_secs_observed"] = max(
+            int(existing.get("wall_secs_observed") or 0),
+            int(incoming.get("wall_secs_observed") or 0),
+        )
+    if incoming.get("accumulation_ids"):
+        existing["accumulation_ids"] = [
+            *existing.get("accumulation_ids", []),
+            *[value for value in incoming["accumulation_ids"] if value not in existing.get("accumulation_ids", [])],
+        ]
     existing["recorded_dispatch_count"] = int(existing.get("recorded_dispatch_count") or 1) + 1
     existing["recorded_at"] = incoming.get("recorded_at") or existing.get("recorded_at")
     # Carry forward a name/model only if the existing row lacks one.
@@ -303,9 +312,15 @@ def main(argv: list[str]) -> int:
         "not just the final dispatch — without it the under-recorded compute "
         "surfaces downstream as a bogus 'standby' gap (run_timing.py). When "
         "no record exists yet this behaves like a normal first write. The "
-        "derived dispatch_count / wall_secs_observed fields are merged by "
-        "max() across calls so the widest observed window wins regardless "
-        "of call order.",
+        "derived dispatch_count is summed across non-overlapping groups; "
+        "wall_secs_observed keeps the widest observed window.",
+    )
+    parser.add_argument(
+        "--accumulation-id",
+        default="",
+        help="Stable identifier for one --accumulate group. Replaying the same "
+        "identifier is a no-op, so a recovered orchestration turn cannot double "
+        "count its usage or dispatches.",
     )
     parser.add_argument(
         "--rebuild",
@@ -400,6 +415,8 @@ def main(argv: list[str]) -> int:
     }
     if args.variant:
         record["variant"] = args.variant
+    if args.accumulation_id:
+        record["accumulation_ids"] = [args.accumulation_id]
     if inconsistency:
         record["_inconsistency"] = inconsistency
 
@@ -430,6 +447,9 @@ def main(argv: list[str]) -> int:
         merged = False
         for rec in all_records:
             if (rec.get("stage"), rec.get("variant") or "") == variant_key:
+                if args.accumulation_id and args.accumulation_id in (rec.get("accumulation_ids") or []):
+                    print(f"stage {args.stage} accumulation {args.accumulation_id!r} already recorded — skipping")
+                    return 0
                 _merge_accumulate(rec, record)
                 merged = True
                 break

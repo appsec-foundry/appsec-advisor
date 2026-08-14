@@ -852,6 +852,12 @@ def _normalize_routing_values(component: dict[str, Any], registry: dict[str, Pat
         if isinstance(raw, str):
             values = raw.split(",")
         elif isinstance(raw, list):
+            # ``build_all`` persists the canonical no-routing value as ``[]``
+            # in the manifest. Reconstruction must accept its own output;
+            # rejecting it made the second validation pass fail closed even
+            # though the first pass had produced valid bundles.
+            if not raw:
+                return []
             values = raw
         else:
             raise BundleError(f"{name} for {component_id} must be a string or list")
@@ -934,11 +940,53 @@ def _walk_signal_rows(value: Any, signal_kind: str) -> list[dict[str, Any]]:
                         "signal_kind": signal_kind,
                         "summary": {
                             key: value[key]
-                            for key in ("rule_id", "category", "subcategory", "strength", "kind", "message")
+                            for key in (
+                                "rule_id",
+                                "check_id",
+                                "category",
+                                "subcategory",
+                                "severity",
+                                "strength",
+                                "kind",
+                                "message",
+                            )
                             if key in value
                         },
                     }
                 )
+                sink_line = value.get("sink_line")
+                sink_file = value.get("sink_file") or file_value
+                if sink_line is not None and isinstance(sink_file, str):
+                    try:
+                        sink_start = int(sink_line)
+                    except (TypeError, ValueError):
+                        pass
+                    else:
+                        if sink_start != start or sink_file != file_value:
+                            sink_summary = {
+                                key: value[key]
+                                for key in (
+                                    "rule_id",
+                                    "check_id",
+                                    "category",
+                                    "subcategory",
+                                    "severity",
+                                    "strength",
+                                    "message",
+                                )
+                                if key in value
+                            }
+                            sink_summary["kind"] = "sink"
+                            found.append(
+                                {
+                                    "repository_id": str(value.get("repository_id") or "primary"),
+                                    "path": sink_file,
+                                    "start_line": sink_start,
+                                    "end_line": sink_start,
+                                    "signal_kind": signal_kind,
+                                    "summary": sink_summary,
+                                }
+                            )
         for child in value.values():
             found.extend(_walk_signal_rows(child, signal_kind))
     elif isinstance(value, list):
@@ -961,6 +1009,7 @@ def _source_signals(
     output_dir: Path,
     component_paths: list[str],
     registry: dict[str, Path],
+    focus_paths: list[str],
 ) -> tuple[list[dict[str, Any]], list[Any], int, set[str]]:
     candidates: list[dict[str, Any]] = []
     for signal_kind, filename in SIGNAL_FILES:
@@ -990,6 +1039,16 @@ def _source_signals(
         source_path = _canonical_under(registry[repository_id], relative)
         row_out = {key: row[key] for key in ("repository_id", "path", "start_line", "end_line", "signal_kind")}
         row_out["content_sha256"] = _slice_hash(source_path, row["start_line"], row["end_line"])
+        summary = row["summary"]
+        mechanism = str(
+            summary.get("subcategory")
+            or summary.get("check_id")
+            or summary.get("rule_id")
+            or summary.get("category")
+            or row["signal_kind"]
+        )
+        row_out["_mechanism"] = mechanism + (f":{summary['kind']}" if summary.get("kind") else "")
+        row_out["_severity"] = str(summary.get("severity") or "Info")
         normalized.append(row_out)
         summaries.append(
             {
@@ -997,7 +1056,7 @@ def _source_signals(
                 "file": relative,
                 "line": row["start_line"],
                 "signal_kind": row["signal_kind"],
-                **row["summary"],
+                **summary,
             }
         )
 
@@ -1006,13 +1065,69 @@ def _source_signals(
         for row in normalized
     }
     ordered = [keyed[key] for key in sorted(keyed)]
+    severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
+
+    def signal_rank(row: dict[str, Any]) -> tuple[int, str, int, str]:
+        return (
+            severity_rank.get(row["_severity"], 5),
+            row["path"],
+            row["start_line"],
+            row["signal_kind"],
+        )
+
+    # Selection is bounded, but it must not be lexically monopolised by many
+    # observations from the first few files. Preserve one cited slice for each
+    # focus path first, then one per independently detected mechanism and file,
+    # before filling the remaining slots. This changes ordering, not any byte,
+    # source-line, slice, or token ceiling.
+    candidates: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, int, int, str]] = set()
+
+    def append_once(row: dict[str, Any]) -> None:
+        key = (row["repository_id"], row["path"], row["start_line"], row["end_line"], row["signal_kind"])
+        if key not in seen_keys:
+            seen_keys.add(key)
+            candidates.append(row)
+
+    focus_matches: list[list[dict[str, Any]]] = []
+    for focus_path in focus_paths:
+        matches = sorted(
+            [
+                row
+                for row in ordered
+                if row["repository_id"] == "primary"
+                and (row["path"] == focus_path or row["path"].startswith(focus_path + "/"))
+            ],
+            key=signal_rank,
+        )
+        focus_matches.append(matches)
+    # Round-robin across focus paths so one noisy focused file cannot starve a
+    # later focused mechanism, while all cited source/sink lines still outrank
+    # non-focused signal fan-out.
+    for offset in range(max((len(matches) for matches in focus_matches), default=0)):
+        for matches in focus_matches:
+            if offset < len(matches):
+                append_once(matches[offset])
+
+    mechanism_first: dict[tuple[str, str], dict[str, Any]] = {}
+    file_first: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in sorted(ordered, key=signal_rank):
+        mechanism_first.setdefault((row["signal_kind"], row["_mechanism"]), row)
+        file_first.setdefault((row["repository_id"], row["path"]), row)
+    for row in mechanism_first.values():
+        append_once(row)
+    for row in file_first.values():
+        append_once(row)
+    for row in sorted(ordered, key=signal_rank):
+        append_once(row)
+
     retained: list[dict[str, Any]] = []
     source_lines = 0
-    for row in ordered:
+    for row in candidates:
         span = row["end_line"] - row["start_line"] + 1
         if len(retained) >= MAX_SOURCE_SLICES or source_lines + span > MAX_SOURCE_LINES:
             continue
-        retained.append(row)
+        retained.append({key: value for key, value in row.items() if not key.startswith("_")})
         source_lines += span
     protected_paths = {row["path"] for row in normalized if row["repository_id"] == "primary"}
     return retained, summaries, len(ordered), protected_paths
@@ -1216,6 +1331,7 @@ def build_bundle(
         output_dir,
         component_paths,
         registry,
+        focus_paths,
     )
     raw["recon_signals"].extend(signal_summaries)
     for evidence_class in ALL_EVIDENCE_CLASSES:

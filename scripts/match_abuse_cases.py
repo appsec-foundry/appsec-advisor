@@ -49,6 +49,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import scan_excludes
+import yaml
 from validate_intermediate import validate_recon_signals
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -371,6 +372,8 @@ def match_step(
         score = 0
         has_mechanism_match = False
         has_context_dependent_cwe_match = False
+        has_family_cwe_match = False
+        has_code_match = False
         # Distinct from has_mechanism_match, which is also set for a plain
         # CWE-field hit: this is true only when a NON-CWE pattern matched, i.e.
         # the step's actual code shape or phrasing was found in the finding.
@@ -381,6 +384,8 @@ def match_step(
             spec = _pattern_specificity(raw)
             if spec != 5:
                 has_non_cwe_match = True
+            if spec == 2:
+                has_code_match = True
             # A CWE pattern only earns its strong bonus when it matches the
             # finding's OWN cwe field, not a CWE named in passing in the prose.
             if spec == 5 and not (cwe_field and rx.search(cwe_field)):
@@ -389,6 +394,8 @@ def match_step(
                 has_context_dependent_cwe_match = True
             else:
                 has_mechanism_match = True
+                if spec == 5:
+                    has_family_cwe_match = True
             score += spec
         if has_context_dependent_cwe_match and not has_mechanism_match:
             continue
@@ -396,6 +403,14 @@ def match_step(
             continue
         fid = _finding_id(finding)
         exact_cwe = bool(step_cwe) and _cwe_code(cwe_field) == step_cwe
+        # A generic phrase such as "privilege escalation" can occur in an
+        # unrelated IDOR, authentication, or sandbox finding. When the case
+        # declares a CWE, a differently classified finding must also match the
+        # case's CWE family or a code-structural sink. Prose alone is not a
+        # stable binding and otherwise sends an expensive verifier to the wrong
+        # source location.
+        if step_cwe and not exact_cwe and not has_family_cwe_match and not has_code_match:
+            continue
         # A match resting ONLY on a multi-CWE family alternation — no mechanism
         # pattern, and not the step's own declared CWE — is not evidence that
         # THIS finding implements THIS step. Several unrelated findings share a
@@ -664,6 +679,37 @@ def _load_signals(path: str | None, repo_root: Path | None = None) -> set[str] |
     return None
 
 
+def _effective_registration_signal(signals: set[str] | None, output_dir: Path) -> set[str] | None:
+    """Overlay the late deterministic registration verdict onto recon signals.
+
+    The recon sidecar is produced before architecture curates attack surface,
+    while ``detect_open_registration.py`` evaluates the canonical attack surface
+    plus the complete route inventory during the deterministic tail. Abuse
+    matching runs after that tail, so the later boolean is authoritative when
+    present. Missing YAML/meta leaves the earlier signal unchanged; an explicit
+    false removes a stale recon true as well as true adding a missed signal.
+    """
+    path = output_dir / "threat-model.yaml"
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return signals
+    if not isinstance(document, dict):
+        return signals
+    meta = document.get("meta")
+    if not isinstance(meta, dict):
+        return signals
+    value = meta.get("open_user_registration")
+    if not isinstance(value, bool):
+        return signals
+    effective = set(signals or ())
+    if value:
+        effective.add("has_open_self_registration")
+    else:
+        effective.discard("has_open_self_registration")
+    return effective
+
+
 def _scan_case_config(output_dir: Path) -> tuple[list[Path], set[str]]:
     """Read optional per-scan case files and ID filters from run config."""
     try:
@@ -684,6 +730,7 @@ def cmd_match(args: argparse.Namespace) -> int:
     findings = matchable_findings(load_findings(findings_path))
     repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else None
     signals = _load_signals(args.signals, repo_root=repo_root)
+    signals = _effective_registration_signal(signals, out_dir)
 
     profile = None
     profile_dir = None

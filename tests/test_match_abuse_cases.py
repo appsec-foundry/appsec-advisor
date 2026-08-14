@@ -133,6 +133,24 @@ def test_cwe_specific_pattern_outranks_incidental_prose():
     assert m["matched_finding_id"] == "T-009"
 
 
+def test_declared_cwe_step_rejects_unrelated_generic_escalation_prose():
+    idor = {
+        "t_id": "T-008",
+        "title": "Insecure Direct Object Reference",
+        "scenario": "Attacker-controlled ownership permits horizontal privilege escalation.",
+        "cwe": "CWE-639",
+        "evidence": {"file": "routes/object.ts", "line": 11},
+    }
+    step = _step(1, "CWE-(915|266|269)")
+    step["finding"] = {"cwe": "CWE-915"}
+    step["probe"]["sink_patterns"].append("(?i)(role|privilege|admin) escalation")
+
+    matched = mac.match_step(step, [idor])
+
+    assert matched["matched"] is False
+    assert matched["matched_finding_id"] is None
+
+
 def test_context_dependent_cwe_needs_mechanism_evidence():
     """A broad access-control CWE alone must not create an IDOR candidate."""
     generic_access_control = {
@@ -267,6 +285,17 @@ def test_scope_satisfied_when_signal_present():
     case = _case([_step(1, "sql injection")], required_signals=["has_auth_surface"])
     r = mac.match_case(case, findings, signals={"has_auth_surface"})
     assert r["structural_verdict"] == "candidate"
+
+
+def test_default_registration_case_uses_canonical_open_registration_signal():
+    cases, errors = mac._rac().resolve_abuse_cases(None, None, mac.PLUGIN_ROOT, None)
+    assert errors == []
+    registration = next(case for case in cases if case["id"] == "AC-T-004")
+
+    assert registration["scope_qualifier"]["required_signals"] == [
+        "has_auth_surface",
+        "has_open_self_registration",
+    ]
 
 
 def test_scope_treated_satisfied_when_no_signals_source():
@@ -426,6 +455,44 @@ def test_load_signals_rejects_legacy_free_form_recon_evidence(tmp_path: Path):
 
 def test_load_signals_treats_missing_sidecar_as_unknown_scope(tmp_path: Path):
     assert mac._load_signals(str(tmp_path / ".recon-signals.json")) is None
+
+
+def test_late_registration_true_adds_canonical_signal(tmp_path: Path):
+    (tmp_path / "threat-model.yaml").write_text(
+        "meta:\n  open_user_registration: true\n",
+        encoding="utf-8",
+    )
+
+    assert mac._effective_registration_signal({"has_auth_surface"}, tmp_path) == {
+        "has_auth_surface",
+        "has_open_self_registration",
+    }
+
+
+def test_late_registration_false_removes_stale_recon_signal(tmp_path: Path):
+    (tmp_path / "threat-model.yaml").write_text(
+        "meta:\n  open_user_registration: false\n",
+        encoding="utf-8",
+    )
+
+    assert mac._effective_registration_signal(
+        {"has_auth_surface", "has_open_self_registration"},
+        tmp_path,
+    ) == {"has_auth_surface"}
+
+
+def test_missing_late_registration_verdict_preserves_recon_signal_state(tmp_path: Path):
+    assert mac._effective_registration_signal({"has_open_self_registration"}, tmp_path) == {
+        "has_open_self_registration"
+    }
+
+
+def test_malformed_late_registration_meta_preserves_recon_signal_state(tmp_path: Path):
+    (tmp_path / "threat-model.yaml").write_text("meta: malformed\n", encoding="utf-8")
+
+    assert mac._effective_registration_signal({"has_open_self_registration"}, tmp_path) == {
+        "has_open_self_registration"
+    }
 
 
 # ---------------------------------------------------------------------------

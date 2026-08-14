@@ -238,6 +238,33 @@ class TestCat9OAuthOidc:
             "oauth-refresh-token-browser-storage",
         } <= subs
 
+    def test_reversible_identity_derived_oauth_credential_is_a_bounded_review_signal(self, repo):
+        (repo / "src").mkdir()
+        (repo / "src" / "federated-login.ts").write_text(
+            "const accessToken = oauthResponse.access_token;\n"
+            "const password = btoa(profile.email.split('').reverse().join(''));\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_oauth_oidc(repo)
+        finding = next(f for f in out["findings"] if f.get("subcategory") == "oauth-derived-user-credential")
+
+        assert finding["file"] == "src/federated-login.ts"
+        assert finding["line"] == 2
+        assert finding["severity"] == "High"
+        assert finding["cwe"] == "CWE-522"
+
+    def test_password_kdf_from_identity_is_not_classified_as_reversible_credential(self, repo):
+        (repo / "login.ts").write_text(
+            "const token = oauthResponse.access_token;\n"
+            "const password = await argon2.hash(profile.email, randomSalt);\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_oauth_oidc(repo)
+
+        assert not any(f.get("subcategory") == "oauth-derived-user-credential" for f in out["findings"])
+
     def test_oidc_missing_nonce_and_claim_validation_gap_flagged(self, repo):
         (repo / "server.py").write_text(
             "def callback():\n    id_token = request.args['id_token']\n    return exchange(id_token)\n",
@@ -630,6 +657,27 @@ class TestAdditionalDeterministicCategories:
         assert "spa-client-side-role-trust" in subs
         assert "spa-without-bff-candidate" in subs
         assert any(f.get("anti_pattern") == "SPA without BFF" for f in out["findings"])
+
+    def test_reusable_demo_credential_in_runtime_client_source_is_redacted(self, repo):
+        (repo / "login.ts").write_text(
+            "export class Login {\n  public demoPassword = 'shared-account-password';\n}\n",
+            encoding="utf-8",
+        )
+
+        out = rp.scan_client_secrets(repo)
+        finding = next(f for f in out["findings"] if f.get("subcategory") == "client-bundled-shared-credential")
+
+        assert finding["line"] == 2
+        assert finding["cwe"] == "CWE-798"
+        assert "shared-account-password" not in finding["match"]
+        assert "shar****" in finding["match"]
+
+    def test_short_demo_placeholder_is_not_a_bundled_credential(self, repo):
+        (repo / "login.ts").write_text("const demoPassword = 'demo';\n", encoding="utf-8")
+
+        out = rp.scan_client_secrets(repo)
+
+        assert not any(f.get("subcategory") == "client-bundled-shared-credential" for f in out["findings"])
 
     def test_bff_marker_suppresses_spa_without_bff_candidate(self, repo):
         (repo / "app.ts").write_text(
