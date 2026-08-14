@@ -1,6 +1,6 @@
 # Threat Modeler
 
-`/appsec-advisor:create-threat-model` derives an architecture model from a repository and applies STRIDE. The result is a security review for engineering and AppSec teams.
+`/appsec-advisor:create-threat-model` derives an architecture model from a repository and applies STRIDE. The result is a code-derived threat model for engineering and AppSec teams.
 
 → [Back to README](../README.md)
 

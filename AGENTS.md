@@ -4,7 +4,7 @@ This file helps coding agents work safely in this repository. It is a map to the
 
 ## Project at a glance
 
-`appsec-advisor` is a Claude Code plugin for STRIDE threat modeling. It produces Markdown reports, structured exports, SARIF, PDFs, and optional pentest task files. The main user-facing skill is `skills/create-threat-model`.
+`appsec-advisor` is a Claude Code plugin for code-derived STRIDE threat modeling. It produces Markdown reports, structured exports, SARIF, PDFs, and optional pentest task files. The main user-facing skill is `skills/create-threat-model`.
 
 Agents handle discovery and prose. Deterministic Python owns validation, rendering, exports, and release gates.
 
