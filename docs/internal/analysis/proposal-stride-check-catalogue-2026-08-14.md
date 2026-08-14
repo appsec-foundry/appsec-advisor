@@ -89,11 +89,13 @@ never a guess.
 - **STR-E03** Is the owner identity part of the query, and does it come from the session rather than a parameter?
 - **STR-E04** Is generated or loaded code executed, and inside which boundary?
 
-### C — Abuse of legitimate function (into the abuse-case layer)
+### C — Abuse of legitimate function (targeting, not a new finding class)
 
 STRIDE has no letter for using a feature exactly as designed, against the
-business. Forcing it into one of the six is wrong; these feed the abuse-case
-machinery instead.
+business. Forcing it into one of the six is wrong. These questions name the
+function that carries business value; what becomes a finding is a block-B check
+pointed at that function. See the reconciliation section below for why they
+cannot enter as abuse cases in the shipped sense.
 
 - **ABU-01** Which function earns someone money or advantage when used often, fast, or out of order?
 - **ABU-02** Which function releases data in volumes that are permitted individually and a data exfiltration in aggregate?
@@ -215,7 +217,7 @@ content rather than leaving it in an artifact.
 6. Add the block-D LLM-conditional checks.
 7. Block A, wired to the existing weight consumers — crown-jewel marking, actor
    relevance, severity caps — not to a new report section.
-8. Block C, only after a pass against the shipped abuse cases.
+8. Block C as targeting for block B — no new case class, no new chain layer.
 
 Blocks A and C come last because they change how findings are weighted and named,
 and doing that before the receipt is trustworthy makes both harder to judge.
@@ -286,13 +288,39 @@ component receiving the mandatory subset only. All three need measuring against
 the current per-component turn budget before this is worth building.
 
 Block A is cheap by comparison — six questions once per run, not per component.
-Block C is per system too, and rides the abuse-case stage that already exists.
+Block C is per system too, and adds no run of its own — it redirects block-B
+checks that would run anyway.
+
+## Reconciliation with the shipped abuse cases
+
+Checked against `data/abuse-cases/default-library.yaml` and decisions AC-1…AC-5.
+
+The shipped library is six technical chains — AC-T-001 account takeover via
+stored XSS, AC-T-002 bulk exfiltration via broken object authorization, AC-T-003
+JWT algorithm confusion, AC-T-004 mass assignment on registration, AC-T-005
+exposed secret material, AC-T-006 server-side injection. Every step carries a
+CWE and a `probe` with `sink_patterns` and `control_patterns`, gated by
+`scope_qualifier.required_signals`. Nothing in it models misuse of a working
+feature.
+
+So block C does not duplicate the library by subject. It cannot ride its
+mechanism either: AC-1 promotes only a confirmed probe, and business misuse has
+no sink pattern to confirm. A block-C case entering there would sit unpromoted
+forever — the same dead end as the unlinked hypotheses removed on 2026-07-03.
+
+The resolution is that block C produces targeting, not cases. It names the
+function that earns money, releases data in aggregate, or spends at a third
+party; the confirmable part is then STR-D01, STR-D02, STR-E01/E03 or STR-I02
+applied to that named function, weighted by block A. That keeps AC-1 and AC-2
+intact and adds no third chain layer — `data/compound-chain-patterns.yaml`
+(CC-01…CC-06) already overlaps the AC-T templates, and that redundancy is open.
+
+One question needs sharpening against the library rather than merging into it:
+ABU-02 sits next to AC-T-002 but is the opposite case — export that is permitted
+per record and an exfiltration in aggregate, with no broken authorization
+anywhere. It has to state that difference or it will re-ask AC-T-002.
 
 ## Known gaps in the catalogue
-
-Block C is the thinnest part and the least grounded: three questions covering
-everything from fraud to bulk export. It needs a pass against the shipped abuse
-cases before it is worth wiring, or it will re-ask what that stage already asks.
 
 Block A has no mechanism yet for the case where declared context contradicts the
 code — a README claiming single-tenant against a schema with a tenant column.
