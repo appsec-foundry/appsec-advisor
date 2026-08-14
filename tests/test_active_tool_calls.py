@@ -216,7 +216,7 @@ def test_summary_for_agent_decodes_html_entities(tmp_path, agent_logger):
     assert "&amp;" not in summary
 
 
-def _agent_call(tool_use_id: str, subtype: str, *, background: bool = False) -> dict:
+def _agent_call(tool_use_id: str, subtype: str, *, background: bool = False, prompt: str = "") -> dict:
     return {
         "tool_use_id": tool_use_id,
         "tool_name": "Agent",
@@ -224,8 +224,61 @@ def _agent_call(tool_use_id: str, subtype: str, *, background: bool = False) -> 
             "subagent_type": f"appsec-advisor:{subtype}",
             "description": subtype,
             "run_in_background": background,
+            "prompt": prompt,
         },
     }
+
+
+def _seed_stride_identity(tmp_path: Path, depth: str = "full") -> str:
+    component_id = "api"
+    action_id = "phase9-stride"
+    job_id = "stride:api:attempt-1"
+    plan_dir = tmp_path / ".dispatch-context" / component_id
+    plan_dir.mkdir(parents=True)
+    plan = {
+        "schema_version": 1,
+        "component_id": component_id,
+        "source_manifest_sha256": "0" * 64,
+        "analysis": {
+            "depth": depth,
+            "max_turns": 31,
+            "sampling_required": False,
+            "file_count": 1,
+            "estimated_threat_count": "moderate",
+            "stride_profile": {"stride_profile_label": "full"},
+        },
+        "lens_ids": [],
+        "inputs": [
+            {"context_id": "controls.component_evidence", "artifact_path": "a.json", "sha256": "1" * 64},
+            {"context_id": "threats.component_taxonomy", "artifact_path": "b.json", "sha256": "2" * 64},
+        ],
+    }
+    plan_path = plan_dir / "context-plan.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    (tmp_path / ".context-routing-plan.json").write_text(
+        json.dumps({"actions": [{"action_id": action_id, "job_ids": [job_id]}]}), encoding="utf-8"
+    )
+    (tmp_path / ".dispatch-waves.json").write_text(
+        json.dumps(
+            {
+                "active_claim": {
+                    "component_ids": [component_id],
+                    "attempts": {component_id: 1},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    return f"COMPONENT_ID={component_id} JOB_ID={job_id} ACTION_ID={action_id} COMPONENT_CONTEXT_PLAN_PATH={plan_path}"
+
+
+def _seed_abuse_identity(tmp_path: Path) -> str:
+    action_id = "phase10c-abuse"
+    job_id = "phase10c-abuse-ac-001"
+    (tmp_path / ".context-routing-plan.json").write_text(
+        json.dumps({"actions": [{"action_id": action_id, "job_ids": [job_id]}]}), encoding="utf-8"
+    )
+    return f"JOB_ID={job_id} ACTION_ID={action_id}"
 
 
 def test_context_v2_foreground_stride_call_is_denied_before_marker(tmp_path, agent_logger, capsys):
@@ -246,14 +299,20 @@ def test_context_v2_foreground_stride_call_is_denied_before_marker(tmp_path, age
     assert _read_active(tmp_path) == [], "OR-5: a denied serial call is never active"
 
 
-def test_context_v2_background_stride_call_is_allowed(tmp_path, agent_logger, capsys):
+@pytest.mark.parametrize("depth", ["full", "light"])
+def test_context_v2_background_stride_call_is_allowed(tmp_path, agent_logger, capsys, depth):
     (tmp_path / ".skill-config.json").write_text(
         json.dumps({"runtime_generation": "context-v2"}),
         encoding="utf-8",
     )
 
     agent_logger.handle_pre_tool_use(
-        _agent_call("toolu_stride", "appsec-stride-analyzer-v2", background=True),
+        _agent_call(
+            "toolu_stride",
+            "appsec-stride-analyzer-v2",
+            background=True,
+            prompt=_seed_stride_identity(tmp_path, depth),
+        ),
         sid="abc12345",
     )
 
@@ -261,6 +320,10 @@ def test_context_v2_background_stride_call_is_allowed(tmp_path, agent_logger, ca
     markers = [entry for entry in _read_active(tmp_path) if entry.get("tool_use_id")]
     assert len(markers) == 1
     assert markers[0]["background"] is True
+    for log_name in (".hook-events.log", ".agent-run.log"):
+        log = (tmp_path / log_name).read_text(encoding="utf-8")
+        assert f"analysis_depth={depth}" in log
+        assert "analysis_depth=TBD" not in log
 
 
 def test_context_v2_foreground_abuse_verifier_is_denied_before_marker(tmp_path, agent_logger, capsys):
@@ -288,7 +351,12 @@ def test_context_v2_background_abuse_verifier_is_allowed(tmp_path, agent_logger,
     )
 
     agent_logger.handle_pre_tool_use(
-        _agent_call("toolu_abuse", "appsec-abuse-case-verifier", background=True),
+        _agent_call(
+            "toolu_abuse",
+            "appsec-abuse-case-verifier",
+            background=True,
+            prompt=_seed_abuse_identity(tmp_path),
+        ),
         sid="abc12345",
     )
 

@@ -222,7 +222,7 @@ def test_budget_scope_disables_multi_agent_shared_counter(tmp_path, monkeypatch)
 
 
 def test_tally_uses_budget_agent_when_supplied(tmp_path, monkeypatch) -> None:
-    """budget_agent overrides which maxTurns the shared counter is measured on."""
+    """The legacy adapter preserves its explicit maxTurns override."""
     import budget_watchdog
 
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(REPO_ROOT))
@@ -236,5 +236,6 @@ def test_tally_uses_budget_agent_when_supplied(tmp_path, monkeypatch) -> None:
     budget_watchdog.tally_and_check("sid00001", "stride-analyzer", out, budget_agent="threat-analyst")
     state = budget_watchdog._read_state(out)
 
-    assert state["sid00001"]["max_turns"] == wide
-    assert state["sid00001"]["agent"] == "stride-analyzer", "reporting name stays the caller"
+    entry = state["calls"]["legacy:sid00001:stride-analyzer"]
+    assert entry["max_turns"] == wide
+    assert entry["agent"] == "stride-analyzer", "reporting name stays the caller"

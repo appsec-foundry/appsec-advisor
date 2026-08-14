@@ -1650,7 +1650,7 @@ Full run: discarding stale intermediate artifacts to avoid cross-contamination.
     .stage-stats.jsonl, .run-issues.json, .run-issues-fixes.json (prior-run observability — must not bleed into this run's stats)
     .dispatch-waves.json (bounded STRIDE schedule and retry checkpoint)
     .context-routing-plan.json, .context-routing-plan.receipt.json (prior context-v2 shadow audit)
-    .budget-critical, .budget-warning (prior-session turn-budget signals)
+    .budget-critical, .budget-warning (prior-run call-scoped turn-budget signals)
     .trust-boundary-assessment-input.json, .trust-boundary-candidates.json (transient Stage-1b handoff)
   Preserved:
     threat-model.md, threat-model.yaml, threat-model.sarif.json (overwritten by orchestrator)
@@ -2747,7 +2747,7 @@ fi
 
    **Dispatch params** — for each AC-ID in `$CANDIDATES`, call `appsec-advisor:appsec-abuse-case-verifier` (**`model:` = the tier alias of `$ABUSE_VERIFIER_MODEL`** — bare tier alias only (`sonnet`/`opus`/`haiku`), reduce a `claude-sonnet-5` pin to `sonnet`; foreground, `run_in_background: false`) with prompt body `ABUSE_CASE_ID=<AC-ID>`, `MATCH_RESULT_PATH=$OUTPUT_DIR/.abuse-case-matches.json`, `REPO_ROOT`, `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, `MODEL_ID=$ABUSE_VERIFIER_MODEL`. `$ABUSE_VERIFIER_MODEL` defaults to `sonnet` → the host session (byte-unchanged when unpinned); pin to `claude-sonnet-5` (verdict decisiveness) via `APPSEC_ABUSE_VERIFIER_MODEL`. Set the Agent `model` param explicitly or the frontmatter `sonnet` default silently wins. Do **not** hard-default it to 4.6 — 4.6 reintroduces `inconclusive` verdicts. Each writes one `.abuse-case-verdict-<AC-ID>.json` — and per the agent's write-first contract it pre-seeds that file (finding ids from the matcher) before investigating, so a cut-off verifier still leaves a valid file.
 
-   **Budget guard:** if `$OUTPUT_DIR/.budget-critical` exists, SKIP the fan-out (the merge below records every candidate `inconclusive`). When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
+   **Budget guard:** if `python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"` succeeds, skip the fan-out (the merge below records every candidate `inconclusive`). Bare marker existence is not a guard. When `$CANDIDATES` is empty, skip straight to step 3 (the not-applicable catalog still renders). **Collect each agent's `<usage>`** (sum `duration_ms` / `tool_uses` / `total_tokens` across all verifiers) for the stage-stats record in step 4.
 
    *Why single-pass sonnet (perf 2026-06-02):* the former haiku-first + bounded-sonnet-escalation two-tier ran its waves *sequentially* (haiku → finalize barrier → sonnet re-verify), and on complex repos most candidates escalated anyway (juice-shop: 5/6) — so the haiku wave was near-pure wasted wall-time for the same final verdicts (sonnet is what produced them). Dispatching sonnet directly collapses it to one wave.
 3. **Merge + finalize** (deterministic) — produces the final chain verdicts directly from the single sonnet wave:
@@ -2787,7 +2787,7 @@ fi
    fi
    ```
 
-3b2. **Fold verified chains into severity** (deterministic, no LLM). Direct source probes confirmed by the verifier have just been materialised into normal findings and the YAML was rebuilt, so a **code-verified `fully_viable` chain bubbles every bound finding up** — not only in §9, but in §8 `effective_severity` AND the §1 `top_findings` / Management-Summary ranking. This re-reads `.abuse-case-verdicts.json` + `.abuse-case-matches.json` (the sidecars did not exist when Stage 1 ran Phase 10b) and re-applies the elevation + ranking onto the already-final `threat-model.yaml` + `.triage-flags.json`. The script **self-gates** via `--if-deterministic-owner` on the artifact marker `ranking.computed_by` in `.triage-flags.json` — written only by the deterministic Step 6 run — and exits cleanly otherwise. So this only acts in deterministic-triage mode, where `triage_compute_ranking.py` is the **sole owner** of `effective_severity` and there is no LLM refinement to clobber (`appsec-triage-validator.md` fast-path). Do NOT gate this on the `APPSEC_TRIAGE_DETERMINISTIC` env var: env vars do not reach skill-level Bash, so an env-gated call silently no-ops on every default run. Non-fatal and idempotent — the elevation is upward-only (`_detect_verified_abuse_chains`), so a second pass on identical inputs is a no-op. Under `.budget-critical` every chain is `inconclusive`, so there is nothing to fold and this is a harmless no-op.
+3b2. **Fold verified chains into severity** (deterministic, no LLM). Direct source probes confirmed by the verifier have just been materialised into normal findings and the YAML was rebuilt, so a **code-verified `fully_viable` chain bubbles every bound finding up** — not only in §9, but in §8 `effective_severity` AND the §1 `top_findings` / Management-Summary ranking. This re-reads `.abuse-case-verdicts.json` + `.abuse-case-matches.json` (the sidecars did not exist when Stage 1 ran Phase 10b) and re-applies the elevation + ranking onto the already-final `threat-model.yaml` + `.triage-flags.json`. The script **self-gates** via `--if-deterministic-owner` on the artifact marker `ranking.computed_by` in `.triage-flags.json` — written only by the deterministic Step 6 run — and exits cleanly otherwise. So this only acts in deterministic-triage mode, where `triage_compute_ranking.py` is the **sole owner** of `effective_severity` and there is no LLM refinement to clobber (`appsec-triage-validator.md` fast-path). Do NOT gate this on the `APPSEC_TRIAGE_DETERMINISTIC` env var: env vars do not reach skill-level Bash, so an env-gated call silently no-ops on every default run. Non-fatal and idempotent — the elevation is upward-only (`_detect_verified_abuse_chains`), so a second pass on identical inputs is a no-op. A validated active critical claim makes each affected chain `inconclusive`; bare `.budget-critical` existence has no effect.
    ```bash
    if [ -f "$OUTPUT_DIR/.abuse-case-verdicts.json" ]; then
      python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_compute_ranking.py" "$OUTPUT_DIR" \
@@ -2907,10 +2907,9 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 
 2. **Restart the heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` invocation with `run_in_background:true` (same flags as Stage 1 — see "Skill-layer heartbeat watchdog" above). Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
 
-   **Fresh-budget clear (G-BC).** Immediately before dispatch, clear any stale turn-budget flags so the renderer — which has its own `maxTurns` and polls `.budget-critical` by existence — is not forced into a premature wrap-up by a flag raised earlier in the run (Stage 1, STRIDE, or the abuse fan-out). The PostToolUse watchdog also resets per dispatch, but this skill-layer clear is the deterministic guarantee that does not depend on the hook firing:
-   ```bash
-   rm -f "$OUTPUT_DIR/.budget-critical" "$OUTPUT_DIR/.budget-warning"
-   ```
+   Budget state opens and closes with the renderer's Agent call. Do not clear
+   shared marker files before dispatch; stale entries are inert and an entry
+   may belong to another current call.
 
 3. **Dispatch the renderer.** Two paths — a **parallel split** (default when §7 enrichment is on) and the **single full dispatch** (back-compat). Resolve which:
 
@@ -3100,13 +3099,14 @@ if [ ! -f "$OUTPUT_DIR/threat-model.md" ] || [ "$MD_POST_STAGE1" = "$MD_PRE_STAG
   # MAX_TURNS surfacing (RC.B — 2026-05-24). The budget watchdog mirrors
   # MAX_TURNS to hook-stderr via _HIGH_SIGNAL_EVENTS in agent_logger.py,
   # but Claude Code's interactive TUI does NOT surface hook stderr; the
-  # orchestrator's own wrap-up Bash call (cat .budget-critical) is
+  # orchestrator's own wrap-up Bash output is
   # collapsed past ~20 lines so the headline fact is invisible. Print a
   # short, prominent banner here whenever a cut-off fires AND a
-  # .budget-critical flag is on disk — the user reliably sees this
+  # active call-scoped marker is on disk — the user reliably sees this
   # because it comes from the skill's own stderr (not a hook, not a
   # collapsed bash output). Fires once, before the recovery dispatch.
-  if [ -f "$OUTPUT_DIR/.budget-critical" ]; then
+  if python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical \
+       --output-dir "$OUTPUT_DIR"; then
     BUDGET_LINE=$(python3 -c "
 import json
 try:
@@ -3926,7 +3926,7 @@ json.dump({'status': 'pass', 'source': 'deterministic-post-content-repair',
            repair_iteration += 1
            continue  (back to Stage 3 — no heavy LLM dispatch this turn)
        repair_iteration += 1
-       rm -f $OUTPUT_DIR/.budget-critical $OUTPUT_DIR/.budget-warning   # fresh-budget clear (G-BC): the REPAIR pass has its own maxTurns; never inherit an earlier stage's wrap-up flag
+       # The repair call opens its own counter; never clear another call's marker.
        dispatch appsec-fragment-fixer (REPAIR_MODE=true) + REPAIR_PLAN_PATH=$OUTPUT_DIR/.qa-repair-plan.json
        # Transient-capacity guard: if the dispatch never produced a repair
        # attempt because the SESSION itself was cut off — "session limit",
@@ -4272,7 +4272,7 @@ terminated early — the `threat-model.md` would still exist, but with
 
 The watchdog (`scripts/budget_watchdog.py`, called from the PostToolUse
 hook in `agent_logger.py`) emits `BUDGET_WARN` (75%), `BUDGET_CRITICAL`
-(90%), and `MAX_TURNS` (100%) per session, plus the agent-emitted
+(90%), and `MAX_TURNS` (100%) per Agent call, plus the agent-emitted
 `WRAP_UP_TRIGGERED` when an agent gracefully wound down on a critical
 flag. This block surfaces all of those events.
 
@@ -4281,11 +4281,13 @@ flag. This block surfaces all of those events.
 # INCOMPLETE banner below conflates orchestrator MAX_TURNS (= run did not
 # produce a usable deliverable) with sub-agent MAX_TURNS (= deliverable is
 # fine, only that sub-agent's output is reduced-depth). When md exists AND
-# .budget-critical is on disk, surface a less alarming INFO note and
+# an active call-scoped critical marker exists, surface a less alarming INFO note and
 # suppress the louder INCOMPLETE banner. The threat-model.yaml meta.incomplete
 # check below still fires for the truly-incomplete case.
 SUPPRESS_INCOMPLETE_BANNER=false
-if [ -f "$OUTPUT_DIR/threat-model.md" ] && [ -f "$OUTPUT_DIR/.budget-critical" ]; then
+if [ -f "$OUTPUT_DIR/threat-model.md" ] && \
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical \
+     --output-dir "$OUTPUT_DIR"; then
   AGENTS_AFFECTED=$(python3 -c "
 import json
 try:
@@ -4302,8 +4304,6 @@ except Exception:
     printf '  Details: %s/.budget-critical\n\n' "$OUTPUT_DIR" >&2
     SUPPRESS_INCOMPLETE_BANNER=true
   fi
-  # Clean up stale flag so the next run's banner reflects only that run's events.
-  rm -f "$OUTPUT_DIR/.budget-critical"
 fi
 
 if [ "$SUPPRESS_INCOMPLETE_BANNER" = "false" ] && \
@@ -4313,7 +4313,7 @@ if [ "$SUPPRESS_INCOMPLETE_BANNER" = "false" ] && \
   grep -E "BUDGET_CRITICAL|MAX_TURNS|WRAP_UP_TRIGGERED" \
        "$OUTPUT_DIR/.agent-run.log" | sed 's/^/  /' >&2
   echo "" >&2
-  echo "  Details: $OUTPUT_DIR/.budget-critical (JSON list of affected sessions)" >&2
+  echo "  Details: $OUTPUT_DIR/.budget-critical (JSON list of affected Agent calls)" >&2
   if [ -f "$OUTPUT_DIR/threat-model.yaml" ] && \
      grep -q "^  incomplete: true" "$OUTPUT_DIR/threat-model.yaml" 2>/dev/null; then
     echo "  threat-model.yaml is marked meta.incomplete:true — incremental runs will refuse this baseline." >&2

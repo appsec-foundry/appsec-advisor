@@ -25,6 +25,7 @@ EXPECTED_HOOK_EVENTS = {
     "UserPromptExpansion",
     "PreToolUse",
     "PostToolUse",
+    "SubagentStart",
     "Stop",
     "SubagentStop",
 }

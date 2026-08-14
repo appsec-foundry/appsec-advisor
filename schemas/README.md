@@ -14,6 +14,10 @@ template, emitted deterministically on context-v2, and validated through
 
 | Schema | Artifact | Written by | Read by |
 |--------|----------|------------|---------|
+| `agent-call-lifecycle.schema.json` | `$OUTPUT_DIR/.active-tool-calls/agent-lifecycle.json` | `scripts/agent_logger.py` through `scripts/agent_lifecycle.py` | lifecycle, budget, deterministic join, and progress telemetry |
+| `agent-call-budget-state.schema.json` | `$OUTPUT_DIR/.budget-state.json` | `scripts/budget_watchdog.py` | call-scoped threshold emission and current-claim consumers |
+| `agent-call-budget-marker.schema.json` | `$OUTPUT_DIR/.budget-warning`, `$OUTPUT_DIR/.budget-critical` | `scripts/budget_watchdog.py` | actionable call and controller-claim identity for transient budget signals |
+| `stride-progress.schema.json` | `$OUTPUT_DIR/.progress/<component-id>.json` | `scripts/write_stride_progress.py` | current claim-bound STRIDE progress and status rendering |
 | `stride.schema.yaml` | `$OUTPUT_DIR/.stride-attempts/<component-id>.attempt-<n>.json`, promoted to `$OUTPUT_DIR/.stride-<component-id>.json` | `appsec-stride-analyzer` | `scripts/stride_dispatch_waves.py`, then orchestrator Phase 9 merge |
 | `stride-evidence-bundle.schema.json` | `$OUTPUT_DIR/.dispatch-context/<component-id>/evidence-bundle.json` | `scripts/build_stride_evidence_bundles.py` | context-v2 manifest validator and STRIDE analyzer |
 | `stride-component-business-context.schema.json` | `$OUTPUT_DIR/.dispatch-context/<component-id>/business-context.json` | `scripts/build_stride_evidence_bundles.py` | context-v2 manifest and context-plan validators and STRIDE analyzer when selected |

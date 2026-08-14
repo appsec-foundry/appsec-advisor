@@ -49,8 +49,9 @@ start until the deterministic coverage gate passes.
 
    **Retry once only** when the file is missing or this validation fails:
    dispatch the same agent with the same immutable input path and no broader
-   read scope, then run the same validation again. If `.budget-critical`
-   exists, do not retry; write
+   read scope, then run the same validation again. If
+   `budget_watchdog.py active-critical --output-dir "$OUTPUT_DIR"` succeeds,
+   do not retry; write
    `phase=7 status=aborted reason=boundary-budget-exhausted` and stop. After
    two malformed/missing attempts, write
    `phase=7 status=aborted reason=boundary-candidate-gate` and stop before

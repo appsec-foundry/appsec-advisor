@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/agent-call-lifecycle.schema.json",
+  "title": "Transient Agent call lifecycle telemetry",
+  "type": "object",
+  "required": ["schema_version", "calls"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "calls": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/call"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "call": {
+      "type": "object",
+      "required": [
+        "agent_call_id", "session_id", "agent", "agent_type", "model",
+        "description", "background", "state", "spawned_at", "running_at"
+      ],
+      "properties": {
+        "agent_call_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"},
+        "session_id": {"type": "string", "maxLength": 8},
+        "agent": {"type": "string", "minLength": 1, "maxLength": 100},
+        "agent_type": {"type": "string", "minLength": 1, "maxLength": 256},
+        "model": {"type": "string", "minLength": 1, "maxLength": 100},
+        "description": {"type": "string", "maxLength": 512},
+        "background": {"type": "boolean"},
+        "runtime_agent_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"},
+        "action_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"},
+        "job_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"},
+        "component_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,99}$"},
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 5},
+        "analysis_depth": {"enum": ["full", "light"]},
+        "max_turns": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "state": {"enum": ["running", "done", "failed"]},
+        "spawned_at": {"type": "integer", "minimum": 0},
+        "running_at": {"type": "integer", "minimum": 0},
+        "launch_acknowledged_at": {"type": "integer", "minimum": 0},
+        "finished_at": {"type": "integer", "minimum": 1},
+        "failure_reason": {"type": "string", "maxLength": 512},
+        "usage_recorded_at": {"type": "integer", "minimum": 1},
+        "usage": {
+          "type": "object",
+          "required": ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"],
+          "properties": {
+            "input_tokens": {"type": "integer", "minimum": 0},
+            "output_tokens": {"type": "integer", "minimum": 0},
+            "cache_creation_input_tokens": {"type": "integer", "minimum": 0},
+            "cache_read_input_tokens": {"type": "integer", "minimum": 0},
+            "tool_uses": {"type": "integer", "minimum": 0, "maximum": 1000000}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1893,7 +1893,7 @@ prompt: |
 
 `$ABUSE_VERIFIER_MODEL` defaults to `sonnet` (→ host session); pin via `APPSEC_ABUSE_VERIFIER_MODEL`. SKILL-impl.md Stage 1c is authoritative for operational runs. Set the Agent `model` param explicitly (as the **tier alias** — `sonnet`/`opus`/`haiku`, never a full version id; reduce a pinned `claude-sonnet-5` to `sonnet`, see the STRIDE dispatch note in Phase 9) or the frontmatter `sonnet` default silently wins.
 
-Dispatch all candidates together (wall-clock ≈ the slowest single case, not the sum). Each agent writes one `.abuse-case-verdict-<AC-ID>.json`. **Budget-critical guard:** if `$OUTPUT_DIR/.budget-critical` exists before this step, skip the fan-out — the merge below records every candidate as `inconclusive`.
+Dispatch all candidates together (wall-clock ≈ the slowest single case, not the sum). Each agent writes one `.abuse-case-verdict-<AC-ID>.json`. **Budget-critical guard:** if `python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"` succeeds before this step, skip the fan-out — the merge below records every candidate as `inconclusive`. Bare marker existence is not a guard.
 
 **Step 3 — merge + finalize (deterministic):**
 ```bash

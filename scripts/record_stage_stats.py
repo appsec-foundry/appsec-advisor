@@ -32,7 +32,7 @@ When ``--subagent-type`` and ``--since-iso`` are provided, the helper parses
   * ``dispatch_count`` — number of ``AGENT_SPAWN`` events for this subagent
     in the stage window. ``> 1`` means the skill re-dispatched the agent.
   * ``wall_secs_observed`` — seconds from the first ``AGENT_SPAWN`` to the
-    last ``AGENT_INVOKE`` for this subagent. Covers all dispatches.
+    last call-matched ``AGENT_DONE`` or ``AGENT_FAILED``. Covers all dispatches.
 
 Both are omitted when the args are not passed or ``.hook-events.log`` is
 absent (back-compat with pre-existing call sites).
@@ -66,6 +66,8 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from event_log import parse_line
 
 JSONL_FILENAME = ".stage-stats.jsonl"
 HOOK_LOG_FILENAME = ".hook-events.log"
@@ -129,17 +131,18 @@ def _derive_dispatch_stats(
     lexicographically sortable).
 
     ``wall_secs_observed`` is the seconds from the first ``AGENT_SPAWN``
-    to the last ``AGENT_INVOKE`` for this subagent. When no
-    ``AGENT_INVOKE`` is present (all dispatches aborted), the field is
+    to the last call-matched terminal event for this subagent. When no
+    terminal event is present (all dispatches aborted), the field is
     set to the spread between first and last ``AGENT_SPAWN`` — the
     caller can detect "no clean return" via ``dispatch_count > 0`` plus
     a missing successful-return signal elsewhere.
     """
     if not log_path.is_file():
         return None
-    spawn_count = 0
-    first_ts: str | None = None
-    last_ts: str | None = None
+    spawn_times: dict[str, str] = {}
+    terminal_times: dict[str, str] = {}
+    legacy_spawn_times: list[str] = []
+    legacy_terminal_times: list[str] = []
     subagent_types = {value.strip() for value in (subagent_type or "").split(",") if value.strip()}
     if not subagent_types:
         return None
@@ -147,35 +150,46 @@ def _derive_dispatch_stats(
     try:
         with log_path.open(encoding="utf-8", errors="replace") as fh:
             for raw in fh:
-                m = _match_hook_event(raw)
-                if not m:
+                parsed = parse_line(raw)
+                legacy_match = _match_hook_event(raw) if parsed is None else None
+                if parsed is None and legacy_match is None:
                     continue
-                if m.group("subagent") not in subagent_types:
-                    continue
-                ts = m.group("ts")
+                ts = parsed.timestamp if parsed is not None else legacy_match.group("ts")
                 if ts < since_iso:
                     continue
-                event = m.group("event")
+                event = parsed.event if parsed is not None else legacy_match.group("event")
+                detail = parsed.detail if parsed is not None else ""
+                call_id_match = re.search(r"\bagent_call_id=([^\s]+)", detail)
+                agent_match = re.search(r"\bagent_type=([^\s]+)", detail)
+                if call_id_match and agent_match and agent_match.group(1) in subagent_types:
+                    call_id = call_id_match.group(1)
+                    if event == "AGENT_SPAWN":
+                        spawn_times.setdefault(call_id, ts)
+                    elif event in {"AGENT_DONE", "AGENT_FAILED"} and call_id in spawn_times:
+                        terminal_times[call_id] = ts
+                    continue
+                match = legacy_match or _match_hook_event(raw)
+                if match is None or match.group("subagent") not in subagent_types:
+                    continue
                 if event == "AGENT_SPAWN":
-                    spawn_count += 1
-                    if first_ts is None:
-                        first_ts = ts
-                # Track the latest timestamp regardless of event. Preferred
-                # "end" markers are AGENT_INVOKE (legacy) and SCAN_COMPLETE
-                # (current hooks); SCAN_START is also tracked so a dispatch
-                # that hasn't yet completed still produces a non-zero spread.
-                last_ts = ts
+                    legacy_spawn_times.append(ts)
+                elif event in {"AGENT_INVOKE", "SCAN_COMPLETE"}:
+                    legacy_terminal_times.append(ts)
     except OSError:
         return None
-    if spawn_count == 0 or first_ts is None or last_ts is None:
+    all_spawns = list(spawn_times.values()) + legacy_spawn_times
+    all_terminals = list(terminal_times.values()) + legacy_terminal_times
+    if not all_spawns:
         return None
+    first_ts = min(all_spawns)
+    last_ts = max(all_terminals) if all_terminals else max(all_spawns)
     try:
         t0 = datetime.strptime(first_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         t1 = datetime.strptime(last_ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
     except ValueError:
         return None
     wall_secs = max(0, int((t1 - t0).total_seconds()))
-    return {"dispatch_count": spawn_count, "wall_secs_observed": wall_secs}
+    return {"dispatch_count": len(all_spawns), "wall_secs_observed": wall_secs}
 
 
 def _existing_stage_keys(path: Path) -> set[tuple[int, str]]:

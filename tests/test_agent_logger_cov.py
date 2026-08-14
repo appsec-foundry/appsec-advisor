@@ -230,7 +230,7 @@ class TestSessionAgentMap:
         al._save_session_agent("single01", "recon-scanner")
         assert al._budget_scope_agent("single01") == "recon-scanner"
 
-    def test_multi_agent_tool_call_resets_instead_of_tallying(self, al, tmp_path, monkeypatch):
+    def test_multi_agent_tool_call_is_not_attributed_by_session(self, al, tmp_path, monkeypatch):
         al._save_session_agent("parallel", "context-resolver")
         al._save_session_agent("parallel", "recon-scanner")
         resets = []
@@ -255,7 +255,7 @@ class TestSessionAgentMap:
             },
             "parallel",
         )
-        assert resets == [("parallel", str(tmp_path))]
+        assert resets == []
 
 
 # ---------------------------------------------------------------------------
@@ -828,6 +828,7 @@ class TestTracingPaths:
     def test_pre_tool_emits_agent_dispatch(self, al_trace, tmp_path):
         al_trace.handle_pre_tool_use(
             {
+                "tool_use_id": "toolu_trace",
                 "tool_name": "Agent",
                 "tool_input": {
                     "subagent_type": "appsec-advisor:appsec-stride-analyzer",

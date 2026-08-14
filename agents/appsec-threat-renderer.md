@@ -768,11 +768,11 @@ If `WRITE_SARIF=true`, use the existing deterministic SARIF export path from `ag
 
 ## Budget-critical wrap-up
 
-The watchdog writes `$OUTPUT_DIR/.budget-critical` when any agent in this run hits 90 % of its `maxTurns`. Renderer maxTurns is 80; the most common trigger is the renderer itself burning budget on optional fragments (attack-walkthroughs, deep enrichment).
+The watchdog records a call-scoped critical marker when an agent hits 90 % of its `maxTurns`. Check it through `budget_watchdog.py active-critical --output-dir "$OUTPUT_DIR"`; bare file existence must not control rendering. Renderer maxTurns is 80; the most common trigger is the renderer itself burning budget on optional fragments (attack-walkthroughs, deep enrichment).
 
 **Check the flag before each major action:**
 
-| Before this action | If `.budget-critical` exists, do this instead |
+| Before this action | If `active-critical` succeeds, do this instead |
 |---|---|
 | Authoring `ms-verdict.json` | Author with minimal viable content (the schema allows brief prose); skip optional sections |
 | Authoring `ms-critical-attack-tree.json` | **Skip entirely** — the composer soft-skips the section with a warning; safer than a half-built tree |

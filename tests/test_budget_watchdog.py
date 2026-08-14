@@ -37,6 +37,18 @@ def _make_plugin_root(tmp_path: Path, agent_name: str, max_turns: int) -> Path:
     return root
 
 
+def _marker_payload(call_id: str = "legacy:s1:a", sid: str = "s1") -> dict:
+    return {
+        "agent_call_id": call_id,
+        "sid": sid,
+        "agent": "a",
+        "agent_type": "a",
+        "turns": 8,
+        "max": 10,
+        "pct": 0.8,
+    }
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     """Fixture returning (output_dir, plugin_root) with one agent file
@@ -175,16 +187,23 @@ def test_max_turns_implies_warn_and_critical_already_marked(env):
     reset), the watchdog should still emit MAX_TURNS exactly once."""
     output_dir, _ = env
     # Force the state to skip all earlier thresholds.
+    call_id = "legacy:sid12345:appsec-test-agent"
     state = {
-        "sid12345": {
-            "agent": "appsec-test-agent",
-            "turns": 9,
-            "max_turns": 10,
-            "warn_emitted": True,
-            "critical_emitted": True,
-            "max_emitted": False,
-            "first_seen": 0,
-        }
+        "schema_version": 2,
+        "calls": {
+            call_id: {
+                "agent_call_id": call_id,
+                "sid": "sid12345",
+                "agent": "appsec-test-agent",
+                "agent_type": "appsec-test-agent",
+                "turns": 9,
+                "max_turns": 10,
+                "warn_emitted": True,
+                "critical_emitted": True,
+                "max_emitted": False,
+                "first_seen": 0,
+            },
+        },
     }
     bw._write_state(str(output_dir), state)
     r = bw.tally_and_check("sid12345", "appsec-test-agent", str(output_dir))
@@ -307,7 +326,8 @@ def test_state_file_corrupted_resets_gracefully(env):
     r = bw.tally_and_check("sid12345", "appsec-test-agent", str(output_dir))
     assert r is None  # 1/10, no threshold
     state = json.loads((output_dir / bw.STATE_FILENAME).read_text())
-    assert state["sid12345"]["turns"] == 1
+    assert state["schema_version"] == 2
+    assert state["calls"]["legacy:sid12345:appsec-test-agent"]["turns"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -393,18 +413,18 @@ def test_write_flag_handles_corrupt_existing(env):
     output_dir, _ = env
     flag = output_dir / bw.WARN_FLAG_FILENAME
     flag.write_text("not json{[", encoding="utf-8")
-    bw._write_flag(str(output_dir), bw.WARN_FLAG_FILENAME, {"sid": "s1", "agent": "a"})
+    bw._write_flag(str(output_dir), bw.WARN_FLAG_FILENAME, _marker_payload())
     data = json.loads(flag.read_text())
-    assert data == [{"sid": "s1", "agent": "a"}]
+    assert data == [_marker_payload()]
 
 
 def test_write_flag_non_list_existing_reset(env):
     output_dir, _ = env
     flag = output_dir / bw.WARN_FLAG_FILENAME
     flag.write_text('{"sid": "old"}', encoding="utf-8")  # dict, not list
-    bw._write_flag(str(output_dir), bw.WARN_FLAG_FILENAME, {"sid": "s2", "agent": "a"})
+    bw._write_flag(str(output_dir), bw.WARN_FLAG_FILENAME, _marker_payload("legacy:s2:a", "s2"))
     data = json.loads(flag.read_text())
-    assert data == [{"sid": "s2", "agent": "a"}]
+    assert data == [_marker_payload("legacy:s2:a", "s2")]
 
 
 def test_write_flag_swallows_write_oserror(env, monkeypatch):
@@ -420,7 +440,7 @@ def test_write_flag_swallows_write_oserror(env, monkeypatch):
         return real_write(self, *a, **k)
 
     monkeypatch.setattr(Path, "write_text", boom)
-    bw._write_flag(str(output_dir), bw.WARN_FLAG_FILENAME, {"sid": "s", "agent": "a"})
+    bw._write_flag(str(output_dir), bw.WARN_FLAG_FILENAME, _marker_payload("legacy:s:a", "s"))
 
 
 def test_reset_session_swallows_read_state_exception(env, monkeypatch):

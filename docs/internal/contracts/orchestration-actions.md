@@ -20,6 +20,42 @@ normalization out of model loops. The action contract and artifact receipts
 own the first gate; controller commands and fixed successor classification own
 the second.
 
+### Agent call lifecycle and budget telemetry
+
+Every Agent tool invocation uses the host `tool_use_id` as its immutable
+`agent_call_id`. `scripts/agent_lifecycle.py` persists the schema-v1 lifecycle
+under `.active-tool-calls/agent-lifecycle.json` and permits only
+`AGENT_SPAWN -> AGENT_RUNNING -> AGENT_DONE | AGENT_FAILED`. Replayed terminal
+events are no-ops; missing, reordered, or conflicting transitions emit
+`AGENT_LIFECYCLE_REJECTED`. The host `agent_id` binds SubagentStart and
+SubagentStop usage to the call. SubagentStop terminalizes the concrete call and
+retires its budget; a missing or later Agent PostToolUse cannot reopen it. A run
+or session ID alone never assigns a role, usage record, or turn counter.
+
+Context-v2 semantic prompts carry the controller action and job IDs. STRIDE
+calls also carry their component and attempt-qualified job, while depth and
+turn policy are re-read from the schema-valid current component plan. The
+context-routing ledger, persisted dispatch-wave active claim, and promoted
+attempt remain authoritative. Lifecycle state, `.active-tool-calls`, hook
+events, and status output are observational.
+
+`scripts/budget_watchdog.py` opens one schema-v2 counter at call admission and
+retires it with the terminal call. Budget markers retain the compatible JSON
+list envelope but each new entry must validate against
+`schemas/agent-call-budget-marker.schema.json`. Entries without a current
+`agent_call_id + action_id + job_id + component_id + attempt` identity are
+inert. Consumers use `budget_watchdog.py active-critical`; they never branch on
+marker-file existence. Terminal cleanup first emits `AGENT_FAILED` for any
+remaining calls, retires their counters and markers, then removes
+`.active-tool-calls/`.
+
+Context-v2 STRIDE progress uses schema version 2 in
+`schemas/stride-progress.schema.json`. Its producer resolves the one running
+component call and persists `action_id`, attempt-qualified `job_id`, `attempt`,
+and the validated context-plan depth. A stale attempt or non-current active
+claim fails at the producer gate. Status accepts schema-v1 progress only as
+legacy observational input; current v2 records are schema- and claim-checked.
+
 The standing contract surfaces are:
 
 - action and dispatch receipts in this document and

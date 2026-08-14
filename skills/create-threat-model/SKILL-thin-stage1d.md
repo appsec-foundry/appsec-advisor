@@ -19,8 +19,8 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; do not read Stage 1d from `S
    SHA-256 pairs as the final filesystem action. Then launch every job as an
    `appsec-advisor:appsec-abuse-case-verifier` call with
    `run_in_background:true`; launch the whole wave before waiting. Description:
-   `Abuse case: <candidate_id> — <title>` from `candidate_titles`, falling back
-   to the ID. Each prompt contains:
+   `Abuse case: <candidate_id> — <title>`; use the ID if its title is missing.
+   Each prompt contains:
 
    ```text
    ABUSE_CASE_ID=<AC-ID>
@@ -29,9 +29,11 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; do not read Stage 1d from `S
    OUTPUT_DIR=<OUTPUT_DIR>
    CLAUDE_PLUGIN_ROOT=<CLAUDE_PLUGIN_ROOT>
    MODEL_ID=<ABUSE_VERIFIER_MODEL>
+   ACTION_ID=<context_plan.action_id>
+   JOB_ID=<dispatch_jobs[].job_id>
    ```
 
-   Use the job's model alias; never replace a versioned ID with 4.6. Then run
+   Use the job model alias; never replace a versioned ID with 4.6. Run
    one blocking waiter with every job's candidate id:
 
    ```bash

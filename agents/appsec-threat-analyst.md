@@ -612,16 +612,16 @@ or the boundary stage.
 
 ### Budget-critical wrap-up (graceful early exit)
 
-Independent of `STAGE1_PHASE_LIMIT` and `INCREMENTAL`, the orchestrator MUST check for `$OUTPUT_DIR/.budget-critical` at every phase boundary (combine with the existing `PHASE_END` + checkpoint + heartbeat Bash call). The watchdog (`scripts/budget_watchdog.py`) writes this file when ANY session — orchestrator or sub-agent — crosses 90 % of its `maxTurns`. The flag means: stop expanding scope, finalize what exists, exit cleanly.
+Independent of `STAGE1_PHASE_LIMIT` and `INCREMENTAL`, the orchestrator MUST run the watchdog's `active-critical` check at every phase boundary. It returns success only for a budget marker whose Agent call and controller claim are still current. A session ID or bare marker file is not a control signal.
 
 ```bash
 echo "<iso>  [--------]  INFO   threat-analyst  PHASE_END   [Phase N/11] …" >> "$OUTPUT_DIR/.agent-run.log" && \
   echo "phase=N status=completed timestamp=<iso>" > "$OUTPUT_DIR/.appsec-checkpoint" && \
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock" --heartbeat >/dev/null 2>&1 && \
-  [ -f "$OUTPUT_DIR/.budget-critical" ] && WRAP_UP=1 || true
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR" && WRAP_UP=1 || true
 ```
 
-When `WRAP_UP=1` (the flag exists), follow this wrap-up sequence — **do not** start any new phase:
+When `WRAP_UP=1`, follow this wrap-up sequence — **do not** start any new phase:
 
 1. **Log the trigger** in `.agent-run.log` (high-signal event, auto-mirrored to stderr):
    ```bash
@@ -644,9 +644,9 @@ When `WRAP_UP=1` (the flag exists), follow this wrap-up sequence — **do not** 
 5. **Write the checkpoint** `phase=10b status=completed need_render=true wrap_up=true` (single Bash call as usual). Stage 2 still runs — the renderer composes whatever is available and the resulting `threat-model.md` carries the partial-assessment notice (`compose_threat_model.py` detects `meta.incomplete` in the yaml and emits a prominent `⚠ PARTIAL ASSESSMENT` block at the top of the report).
 6. **Exit cleanly** with `ASSESSMENT_END`. Do not retry; do not re-dispatch missed sub-agents.
 
-**Repair-mode interaction:** if `REPAIR_MODE=true` AND `.budget-critical` exists, the repair loop is the wrong tool — wrap-up cannot fix render drift caused by a missing fragment. In that case, log `WRAP_UP_TRIGGERED reason=budget_critical_during_repair` and exit with exit code 2 (signals the skill's re-render loop to count this iteration as failed and stop iterating).
+**Repair-mode interaction:** if `REPAIR_MODE=true` and `active-critical` succeeds, the repair loop is the wrong tool — wrap-up cannot fix render drift caused by a missing fragment. In that case, log `WRAP_UP_TRIGGERED reason=budget_critical_during_repair` and exit with exit code 2 (signals the skill's re-render loop to count this iteration as failed and stop iterating).
 
-**Stride-analyzer interaction:** Stride sub-agents also poll for `.budget-critical` (see `appsec-stride-analyzer.md → Budget-critical wrap-up`). When a stride agent partials out, its `.stride-<id>.json` carries `partial:true` + `skipped_categories[]`. The orchestrator's Phase 10 merge MUST tolerate these without crashing — `merge_threats.py` already accepts arbitrary trailing keys, so this is a no-op on the script side, but the orchestrator should add the component to `meta.wrap_up_skipped.partial_components` so the user sees which components got reduced-depth analysis.
+**Stride-analyzer interaction:** Stride sub-agents use the same claim-validating check (see `appsec-stride-analyzer.md → Budget-critical wrap-up`). When a stride agent partials out, its `.stride-<id>.json` carries `partial:true` + `skipped_categories[]`. The orchestrator's Phase 10 merge MUST tolerate these without crashing — `merge_threats.py` already accepts arbitrary trailing keys, so this is a no-op on the script side, but the orchestrator should add the component to `meta.wrap_up_skipped.partial_components` so the user sees which components got reduced-depth analysis.
 
 ### Stage 2 renderer handoff (M2.12 / M3.8)
 

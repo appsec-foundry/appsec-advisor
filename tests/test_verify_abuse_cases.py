@@ -114,12 +114,12 @@ def test_cmd_merge_stubs_missing_candidates(tmp_path):
     assert stub["step_verdicts"] == []
 
 
-def test_cmd_merge_budget_critical_note(tmp_path, capsys):
+def test_cmd_merge_budget_critical_note(tmp_path, capsys, monkeypatch):
     _write(
         tmp_path / ".abuse-case-matches.json",
         {"matches": [{"abuse_case_id": "AC-200", "structural_verdict": "partial_candidate"}]},
     )
-    (tmp_path / ".budget-critical").write_text("", encoding="utf-8")
+    monkeypatch.setattr(mod.budget_watchdog, "has_active_critical_claim", lambda _output_dir: True)
     rc = mod.cmd_merge(_ns(tmp_path))
     assert rc == 0
     merged = json.loads((tmp_path / ".abuse-case-verdicts.json").read_text())

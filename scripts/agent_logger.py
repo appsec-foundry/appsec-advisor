@@ -7,14 +7,17 @@ This is SEPARATE from docs/security/.agent-run.log which is written
 by the agents themselves via bash echo commands. Keeping them apart
 avoids confusing chronological interleaving.
 
-Triggered by: PreToolUse (all tools), PostToolUse (all tools), Stop, SubagentStop
+Triggered by: PreToolUse, PostToolUse, SubagentStart, Stop, SubagentStop
 
 Events logged:
   AGENT_SPAWN   — any Agent tool call is about to start (PreToolUse, all depths)
+  AGENT_RUNNING — the admitted Agent call is running under its tool_use_id
+  AGENT_DONE    — one foreground return or validated background join succeeded
+  AGENT_FAILED  — one call failed, expired, was superseded, or was terminally cleaned
+  AGENT_USAGE   — SubagentStop usage bound through agent_id to the Agent call
   SCAN_START    — threat-analyst dispatched / scan beginning (PreToolUse, top-level only)
   SCAN_COMPLETE — threat-analyst finished (PostToolUse, top-level only)
   CONTEXT_READY — context resolver wrote .threat-modeling-context.md (size)
-  AGENT_INVOKE  — non-orchestrator agent completed (PostToolUse, top-level only)
   FILE_WRITE    — Write tool completed (path, size, duration)
   FILE_EDIT     — Edit tool completed (path, char delta, duration)
   FILE_READ     — Read tool completed (path, byte/line size, duration)
@@ -36,7 +39,14 @@ and each event carries a `dur=<seconds>` tail computed from the matching PreTool
 manifest in `.active-tool-calls/`. Use `dur` to spot slow tools (e.g. long-running
 compose_threat_model.py invocations) without re-instrumenting the agents themselves.
 
-Why both PreToolUse (AGENT_SPAWN / SCAN_START) and PostToolUse (SCAN_COMPLETE / AGENT_INVOKE)?
+Agent lifecycle identity
+  PreToolUse opens AGENT_SPAWN -> AGENT_RUNNING under the host tool_use_id.
+  PostToolUse closes a foreground call, acknowledges a background launch, or
+  rejects a return without a matching call. SubagentStart and SubagentStop bind
+  the host agent_id to that call for usage. Session IDs remain observational and
+  never select lifecycle, usage, or budget ownership.
+
+Why both PreToolUse (AGENT_SPAWN / SCAN_START) and PostToolUse (SCAN_COMPLETE / AGENT_DONE)?
   PostToolUse for the Agent tool only fires in the *outermost* Claude session —
   the one where the skill runs. Sub-agents spawned from within appsec-threat-analyst
   (context-resolver, recon-scanner, dep-scanner, stride-analyzer) are invisible to
@@ -58,7 +68,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import agent_lifecycle
 from event_log import format_line
+from jsonschema import Draft202012Validator
 
 # ---------------------------------------------------------------------------
 # Config loading — single cached read of config.json
@@ -841,9 +853,18 @@ def clear_terminal_active_tool_calls(output_dir: str | Path | None = None) -> No
     after the terminal outer Stop or controller abort makes preserved-runtime
     diagnostics report work that can no longer be active.
     """
-    directory = (
-        os.path.join(os.fspath(output_dir), _ACTIVE_TOOLS_DIR) if output_dir is not None else _active_tools_dir()
-    )
+    destination = os.fspath(output_dir) if output_dir is not None else _output_dir()
+    try:
+        events = agent_lifecycle.fail_all_running(destination, "outer_session_terminal")
+        agent_lifecycle.append_events(destination, events)
+        if events:
+            from budget_watchdog import close_call
+
+            for event in events:
+                close_call(str(event.call.get("agent_call_id") or ""), destination)
+    except Exception:
+        pass
+    directory = os.path.join(destination, _ACTIVE_TOOLS_DIR)
     try:
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
         directory_fd = os.open(directory, flags)
@@ -928,6 +949,29 @@ def _write(level: str, event: str, detail: str, sid: str = "") -> None:
 def _clip(s, n: int = 120) -> str:
     s = str(s).replace("\n", " ").strip()
     return s[:n] + "…" if len(s) > n else s
+
+
+def _runtime_agent_id(value: object) -> str:
+    """Extract Claude Code's existing agentId from a tool result."""
+    if isinstance(value, dict):
+        for key in ("agentId", "agent_id"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", candidate):
+                return candidate
+        for child in value.values():
+            candidate = _runtime_agent_id(child)
+            if candidate:
+                return candidate
+    elif isinstance(value, list):
+        for child in value:
+            candidate = _runtime_agent_id(child)
+            if candidate:
+                return candidate
+    elif isinstance(value, str):
+        match = re.search(r"\bagent(?:Id|_id):\s*([A-Za-z0-9][A-Za-z0-9._:-]{0,255})", value)
+        if match:
+            return match.group(1)
+    return ""
 
 
 def _plain_log_text(value: object) -> str:
@@ -1681,6 +1725,55 @@ def _stride_tier(component_id: str) -> str:
     return ""
 
 
+def _stride_plan_policy(component_id: str, plan_path: str, job_id: str, action_id: str) -> dict:
+    """Return validated controller-owned STRIDE policy fields, or ``{}``.
+
+    The full schema is enforced before dispatch.  The hook repeats the identity
+    and closed-vocabulary checks needed for telemetry so model-authored prompt
+    prose cannot relabel the depth or turn budget.
+    """
+    if not component_id or not plan_path:
+        return {}
+    try:
+        output_dir = Path(_output_dir()).resolve()
+        expected = (output_dir / ".dispatch-context" / component_id / "context-plan.json").resolve()
+        supplied = Path(plan_path).resolve()
+        if supplied != expected or output_dir not in supplied.parents:
+            return {}
+        plan = json.loads(supplied.read_text(encoding="utf-8"))
+        schema = json.loads(
+            (
+                Path(__file__).resolve().parent.parent / "schemas" / "stride-component-context-plan.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        if next(Draft202012Validator(schema).iter_errors(plan), None) is not None:
+            return {}
+        analysis = plan.get("analysis") or {}
+        depth = analysis.get("depth")
+        max_turns = analysis.get("max_turns")
+        if plan.get("component_id") != component_id or depth not in {"full", "light"}:
+            return {}
+        if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
+            return {}
+        routing = json.loads((output_dir / ".context-routing-plan.json").read_text(encoding="utf-8"))
+        if not any(
+            row.get("action_id") == action_id and job_id in (row.get("job_ids") or [])
+            for row in routing.get("actions", [])
+        ):
+            return {}
+        attempt_match = re.search(r":attempt-(\d+)$", job_id)
+        if attempt_match is None:
+            return {}
+        active = json.loads((output_dir / ".dispatch-waves.json").read_text(encoding="utf-8")).get("active_claim", {})
+        if component_id not in (active.get("component_ids") or []):
+            return {}
+        if (active.get("attempts") or {}).get(component_id) != int(attempt_match.group(1)):
+            return {}
+        return {"ANALYSIS_DEPTH": depth, "MAX_TURNS": max_turns}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
 def _agent_params(prompt: str) -> dict:
     """Extract well-known KEY=value pairs from an agent prompt.
 
@@ -1689,14 +1782,53 @@ def _agent_params(prompt: str) -> dict:
     progress view record which components ran at screening depth.
     """
     params = {}
-    for key in ("REPO_ROOT", "COMPONENT_ID", "MANIFESTS", "CONTEXT_FILE"):
-        val = _extract_param(prompt, key)
+    for key in (
+        "REPO_ROOT",
+        "COMPONENT_ID",
+        "MANIFESTS",
+        "CONTEXT_FILE",
+        "JOB_ID",
+        "ACTION_ID",
+        "COMPONENT_CONTEXT_PLAN_PATH",
+    ):
+        limit = 512 if key in {"REPO_ROOT", "CONTEXT_FILE", "COMPONENT_CONTEXT_PLAN_PATH"} else 256
+        val = _extract_param(prompt, key, max_len=limit)
         if val:
             params[key] = val
-    tier = _stride_tier(params.get("COMPONENT_ID", ""))
-    if tier:
-        params["ANALYSIS_DEPTH"] = tier
+    policy = _stride_plan_policy(
+        params.get("COMPONENT_ID", ""),
+        params.get("COMPONENT_CONTEXT_PLAN_PATH", ""),
+        params.get("JOB_ID", ""),
+        params.get("ACTION_ID", ""),
+    )
+    if policy:
+        params.update(policy)
+    elif not params.get("COMPONENT_CONTEXT_PLAN_PATH"):
+        tier = _stride_tier(params.get("COMPONENT_ID", ""))
+        if tier:
+            params["ANALYSIS_DEPTH"] = tier
     return params
+
+
+def _mirror_lifecycle_events(events: list[agent_lifecycle.LifecycleEvent]) -> None:
+    """Preserve verbose hook feedback without writing duplicate log records."""
+    if not _VERBOSE:
+        return
+    for item in events:
+        level = "WARN" if item.event in {"AGENT_FAILED", "AGENT_LIFECYCLE_REJECTED"} else "INFO"
+        try:
+            sys.stderr.write(
+                "[appsec] "
+                + format_line(
+                    item.event,
+                    agent_lifecycle.event_detail(item),
+                    level=level,
+                    sid=item.call.get("session_id"),
+                )
+            )
+            sys.stderr.flush()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -1733,8 +1865,7 @@ def _refresh_progress_snapshot(event: str, detail: str, sid: str = "") -> None:
         from log_event import _progress_payload, _write_progress  # type: ignore
 
         kind = "phase-start" if event == "PHASE_START" else "phase-end"
-        agent = _lookup_session_agent((sid or "")[:8]) or "threat-analyst"
-        payload = _progress_payload(kind, event, detail, agent)
+        payload = _progress_payload(kind, event, detail, "threat-analyst")
         _write_progress(Path(_output_dir()), payload)
     except Exception:
         pass
@@ -1892,7 +2023,7 @@ def _emit_activity(tool: str, inp: dict, sid: str) -> None:
         return
 
     verb = _TOOL_VERBS.get(tool, "working")
-    agent = _lookup_session_agent((sid or "")[:8])
+    agent = _session_agent_label((sid or "")[:8])
     if not agent:
         # Tool call from the outermost session (orchestrator / skill) —
         # those are already covered by PHASE_START / STEP_START logging.
@@ -1979,6 +2110,48 @@ def _context_v2_parallel_foreground_reason(data: dict) -> str | None:
         "A foreground Agent call serializes the controller's dispatch_parallel wave; "
         f"launch every job before entering {waiter}."
     )
+
+
+def _context_v2_agent_identity_reason(data: dict) -> str | None:
+    """Require controller and call identity on context-v2 semantic dispatches."""
+    if data.get("tool_name") != "Agent":
+        return None
+    try:
+        config = json.loads(Path(_output_dir(), ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if config.get("runtime_generation") != "context-v2":
+        return None
+    subtype = str((data.get("tool_input") or {}).get("subagent_type") or "")
+    context_v2_agents = {
+        "appsec-advisor:appsec-context-resolver",
+        "appsec-advisor:appsec-recon-scanner",
+        "appsec-advisor:appsec-config-scanner",
+        "appsec-advisor:appsec-actor-discoverer",
+        "appsec-advisor:appsec-architecture-analyst",
+        "appsec-advisor:appsec-trust-boundary-analyst",
+        "appsec-advisor:appsec-control-analyst",
+        "appsec-advisor:appsec-stride-analyzer-v2",
+        "appsec-advisor:appsec-threat-merger",
+        "appsec-advisor:appsec-evidence-verifier",
+        "appsec-advisor:appsec-triage-validator",
+        "appsec-advisor:appsec-post-stride-synthesizer",
+        "appsec-advisor:appsec-abuse-case-verifier",
+    }
+    if subtype not in context_v2_agents:
+        return None
+    if not str(data.get("tool_use_id") or "").strip():
+        return "Context-v2 Agent dispatch requires the host tool_use_id as agent_call_id."
+    prompt = str((data.get("tool_input") or {}).get("prompt") or "")
+    if not _extract_param(prompt, "JOB_ID"):
+        return "Context-v2 Agent dispatch requires controller-owned JOB_ID."
+    if not _extract_param(prompt, "ACTION_ID"):
+        return "Context-v2 Agent dispatch requires controller-owned ACTION_ID."
+    if subtype.endswith("appsec-stride-analyzer-v2"):
+        params = _agent_params(prompt)
+        if params.get("ANALYSIS_DEPTH") not in {"full", "light"} or not params.get("MAX_TURNS"):
+            return "Context-v2 STRIDE dispatch requires a valid current component context plan."
+    return None
 
 
 def _context_v2_terminal_abort_reason() -> str | None:
@@ -2081,6 +2254,61 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     if serial_reason is not None:
         _emit_pretool_denial(serial_reason)
         return
+
+    identity_reason = _context_v2_agent_identity_reason(data)
+    if identity_reason is not None:
+        _emit_pretool_denial(identity_reason)
+        return
+
+    lifecycle_events: list[agent_lifecycle.LifecycleEvent] = []
+    if tool == "Agent":
+        inp = data.get("tool_input", {}) or {}
+        subtype = str(inp.get("subagent_type") or "unknown")
+        params = _agent_params(str(inp.get("prompt") or ""))
+        job_id = params.get("JOB_ID") or ""
+        attempt_match = re.search(r":attempt-(\d+)$", str(job_id))
+        identity = {
+            "agent_call_id": data.get("tool_use_id"),
+            "session_id": (sid or "")[:8],
+            "agent": _short_agent_name(subtype) or subtype.split(":")[-1] or "unknown",
+            "agent_type": subtype,
+            "model": _agent_model(subtype, inp),
+            "description": _plain_log_text(inp.get("description", "")),
+            "background": bool(inp.get("run_in_background", False)),
+            "action_id": params.get("ACTION_ID"),
+            "job_id": job_id,
+            "component_id": params.get("COMPONENT_ID"),
+            "attempt": int(attempt_match.group(1)) if attempt_match else None,
+            "analysis_depth": params.get("ANALYSIS_DEPTH")
+            if params.get("ANALYSIS_DEPTH") in {"full", "light"}
+            else None,
+            "max_turns": params.get("MAX_TURNS"),
+        }
+        try:
+            lifecycle_events = agent_lifecycle.register_call(_output_dir(), identity)
+            agent_lifecycle.append_events(_output_dir(), lifecycle_events)
+            _mirror_lifecycle_events(lifecycle_events)
+        except agent_lifecycle.LifecycleError as exc:
+            _emit_pretool_denial(f"Agent lifecycle admission failed: {exc}")
+            return
+        try:
+            from budget_watchdog import close_call, open_call
+
+            for event in lifecycle_events:
+                if event.event in {"AGENT_DONE", "AGENT_FAILED"}:
+                    close_call(str(event.call.get("agent_call_id") or ""), _output_dir())
+            call = next(
+                (
+                    row
+                    for row in agent_lifecycle.running_calls(_output_dir())
+                    if row.get("agent_call_id") == str(data.get("tool_use_id") or "")
+                ),
+                None,
+            )
+            if call is not None:
+                open_call(call, _output_dir())
+        except Exception:
+            pass
 
     # M3.6 #2 — record an in-flight marker file so /appsec-advisor:status
     # --live can answer "what is happening right now?". One file per
@@ -2205,10 +2433,6 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     params = _agent_params(inp.get("prompt", "") or "")
     pairs = "  ".join(f"{k}={v}" for k, v in params.items())
 
-    _write(
-        "INFO ", "AGENT_SPAWN", f"{subtype:<38}{bg_tag}  model={model}  {desc}" + (f"  [{pairs}]" if pairs else ""), sid
-    )
-
     # Tracing: record dispatch time and emit AGENT_DISPATCH with context size estimate
     if _TRACING:
         prompt_str = inp.get("prompt", "") or ""
@@ -2241,20 +2465,6 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     short = _short_agent_name(subtype)
     if short and sid:
         _save_session_agent(sid[:8], short)
-
-    # Fresh turn budget per dispatched stage. In headless mode every sub-agent
-    # shares the orchestrator session id, so without this reset the watchdog
-    # accumulates the whole pipeline's tool calls into one counter capped at a
-    # single agent's maxTurns — tripping a false BUDGET_CRITICAL mid-run that
-    # then poisons the fresh-budget renderer (it polls the shared flag by
-    # existence). Reset at each dispatch boundary scopes budget to one stage.
-    if sid:
-        try:
-            from budget_watchdog import reset_session
-
-            reset_session(sid, _output_dir())
-        except Exception:
-            pass
 
     # SCAN_START fires at PreToolUse (dispatch time) so it precedes
     # the threat-analyst's own SESSION_STOP in the log. Emitting it
@@ -2376,6 +2586,35 @@ def _stop_reason_from_transcript(transcript_path: str) -> str:
     return last
 
 
+def _tool_uses_from_transcript(transcript_path: str) -> int:
+    """Count distinct tool-use blocks in one agent transcript."""
+    if not transcript_path:
+        return 0
+    tool_ids: set[str] = set()
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if not raw.lstrip().startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except Exception:
+                    continue
+                msg = obj.get("message") or obj
+                content = msg.get("content") if isinstance(msg, dict) else None
+                if not isinstance(content, list):
+                    continue
+                for block in content:
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    tool_id = block.get("id")
+                    if isinstance(tool_id, str) and tool_id:
+                        tool_ids.add(tool_id)
+    except OSError:
+        return 0
+    return len(tool_ids)
+
+
 def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     reason = data.get("stop_reason", "") or ""
     if not reason:
@@ -2418,6 +2657,67 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     cr = usage.get("cache_read_input_tokens", 0)
     has_usage = bool(usage)  # False when neither the payload nor the transcript had usage
 
+    runtime_agent_id = str(data.get("agent_id") or "") if event_name == "SubagentStop" else ""
+    if runtime_agent_id:
+        agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, str(data.get("agent_type") or ""))
+    tool_uses = _tool_uses_from_transcript(transcript) if runtime_agent_id and transcript else 0
+    runtime_call = (
+        agent_lifecycle.running_call_by_runtime_agent_id(_output_dir(), runtime_agent_id) if runtime_agent_id else None
+    )
+    if runtime_call is not None:
+        try:
+            from budget_watchdog import format_detail, observe_tool_uses
+
+            crossing = observe_tool_uses(runtime_call, tool_uses, _output_dir())
+            if crossing is not None:
+                _write("WARN ", crossing["event"], format_detail(crossing), sid)
+        except Exception:
+            pass
+    if has_usage and runtime_agent_id:
+        try:
+            events = agent_lifecycle.record_runtime_usage(_output_dir(), runtime_agent_id, usage, tool_uses=tool_uses)
+            agent_lifecycle.append_events(_output_dir(), events)
+            if not events:
+                _write(
+                    "WARN ",
+                    "AGENT_USAGE_UNATTRIBUTED",
+                    f"runtime_agent_id={runtime_agent_id}  reason=no_running_agent_call",
+                    sid,
+                )
+        except agent_lifecycle.LifecycleError:
+            pass
+    elif has_usage:
+        _write(
+            "WARN ",
+            "AGENT_USAGE_UNATTRIBUTED",
+            "reason=no_agent_call_identity",
+            sid,
+        )
+
+    # SubagentStop is the concrete child-call return boundary. Close lifecycle
+    # and budget ownership here so a missing/delayed Agent PostToolUse cannot
+    # charge later parent tools to the finished child. The later PostToolUse is
+    # an idempotent acknowledgement; background output promotion remains owned
+    # by the controller waiter, not by this telemetry transition.
+    if runtime_call is not None:
+        try:
+            clean = reason in _CLEAN_STOP_REASONS
+            events = (
+                agent_lifecycle.finish_call(_output_dir(), runtime_call["agent_call_id"])
+                if clean
+                else agent_lifecycle.fail_call(
+                    _output_dir(),
+                    runtime_call["agent_call_id"],
+                    f"subagent_stop:{reason}",
+                )
+            )
+            agent_lifecycle.append_events(_output_dir(), events)
+            from budget_watchdog import close_call
+
+            close_call(runtime_call["agent_call_id"], _output_dir())
+        except (agent_lifecycle.LifecycleError, OSError):
+            pass
+
     # Always emit token fields so the ASSESSMENT_SUMMARY aggregation regex
     # can find and sum them. Emitting zeros explicitly when no usage is
     # available makes the absence of data visible instead of silently dropped.
@@ -2448,42 +2748,46 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         )
 
     # --- Mirror critical events to .agent-run.log ---
-    # Look up which appsec agent owns this session via the file-based
-    # mapping written during AGENT_SPAWN (each hook call is a new process).
-    agent_name = _lookup_session_agent(sid[:8]) if sid else ""
+    # The session map is observational only. Multiple call registrations are
+    # rendered as shared-session instead of assigning Stop to the latest role.
+    registrations = _lookup_session_agent_registrations(sid[:8]) if sid else []
     telemetry_agent = _session_agent_label(sid[:8]) if sid else ""
+    owner_sid = ""
+    try:
+        owner_sid = Path(_output_dir(), ".assessment-owner-sid").read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    assessment_owner = bool(sid and (owner_sid == sid[:8] or (not owner_sid and registrations == ["threat-analyst"])))
 
-    if agent_name:
+    if telemetry_agent:
         # Mirror SESSION_STOP with token/cost summary to agent-run.log.
         # SubagentStop fires on the *parent* session for the same child
         # completion that already fired a Stop event — suppress the duplicate.
         if event_name != "SubagentStop":
-            _write_agent_run(level, telemetry_agent or agent_name, "SESSION_STOP", detail)
+            _write_agent_run(level, telemetry_agent, "SESSION_STOP", detail)
 
         # Mirror MAX_TURNS to agent-run.log so it's visible in the unified log
         if reason == "max_turns":
-            _write_agent_run(
-                "ERROR", telemetry_agent or agent_name, "MAX_TURNS", "Agent terminated — maxTurns limit reached"
-            )
+            _write_agent_run("ERROR", telemetry_agent, "MAX_TURNS", "Agent terminated — maxTurns limit reached")
 
         # Stamp the checkpoint as aborted when the outermost orchestrator
         # session ends uncleanly. Leaves a durable signal that the next
         # pre-flight (check_state.py --auto-clean) can act on without waiting
         # for the mtime-based stale threshold.
         # G-4: also mark on any non-clean stop in the top-level skill session
-        # (agent_name may be empty when the skill Bash layer itself dies without
+        # (registrations may be empty when the skill Bash layer itself dies without
         # a sub-agent name being registered — e.g. context-compaction kills the
         # outer session between Stage 1 return and Stage 2 dispatch).
-        if agent_name == "threat-analyst" or not agent_name:
+        if assessment_owner or not registrations:
             aborted_phase = _mark_checkpoint_aborted_if_dirty(reason)
             if aborted_phase is not None:
                 # The outer session ended uncleanly while a run was mid-flight.
                 # Log it as a first-class event so post-hoc analysis can find it
                 # (the raw signal was previously only a checkpoint rewrite). When
-                # agent_name is empty the skill-Bash layer died without a
+                # the registration list is empty when the skill-Bash layer died without a
                 # sub-agent registered — context-compaction between stages is the
                 # common cause; we record the fact without asserting the cause.
-                who = agent_name or "skill-session"
+                who = "threat-analyst" if assessment_owner else "skill-session"
                 detail = (
                     f"phase={aborted_phase}  reason={reason}  agent={who}  "
                     f"(unclean stop mid-run; if agent=skill-session, "
@@ -2493,8 +2797,8 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                 _write_agent_run("WARN", who, "SESSION_ABORTED_MIDRUN", f"phase={aborted_phase}  reason={reason}")
 
     # --- Tracing: emit AGENT_COMPLETE with per-session token/cost/wall-time ---
-    if _TRACING and (telemetry_agent or agent_name):
-        trace_agent = telemetry_agent or agent_name
+    if _TRACING and telemetry_agent:
+        trace_agent = telemetry_agent
         wall_secs = "?"
         dispatch_key = (sid or "")[:8]
         dispatched_at = _take_dispatch_time(dispatch_key)
@@ -2575,11 +2879,6 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     started_at = _record_tool_end(data)
     dur_tail = _dur_suffix(started_at)
 
-    # --- errors from any tool take priority ---
-    if is_err:
-        _write("ERROR", "TOOL_ERROR", f"tool={tool}  {_mask_secrets(_clip(resp))}{dur_tail}", sid)
-        return
-
     # --- Agent invocation ---
     if tool == "Agent":
         subtype = inp.get("subagent_type", "unknown")
@@ -2589,6 +2888,32 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         model = _agent_model(subtype, inp)
         params = _agent_params(inp.get("prompt", "") or "")
         pairs = "  ".join(f"{k}={v}" for k, v in params.items())
+
+        call_id = str(data.get("tool_use_id") or "")
+        try:
+            runtime_agent_id = _runtime_agent_id(resp)
+            if runtime_agent_id:
+                agent_lifecycle.bind_runtime_agent_id(_output_dir(), call_id, runtime_agent_id)
+            if is_err:
+                events = agent_lifecycle.fail_call(_output_dir(), call_id, "agent_tool_error")
+            elif bg:
+                events = agent_lifecycle.acknowledge_background_call(_output_dir(), call_id)
+            else:
+                events = agent_lifecycle.finish_call(_output_dir(), call_id)
+            agent_lifecycle.append_events(_output_dir(), events)
+        except agent_lifecycle.LifecycleError as exc:
+            _write("WARN ", "AGENT_LIFECYCLE_REJECTED", f"agent_call_id={call_id or '?'}  reason={exc}", sid)
+        if is_err or not bg:
+            try:
+                from budget_watchdog import close_call
+
+                close_call(call_id, _output_dir())
+            except Exception:
+                pass
+
+        if is_err:
+            _write("ERROR", "TOOL_ERROR", f"tool={tool}  {_mask_secrets(_clip(resp))}{dur_tail}", sid)
+            return
 
         # Emit a SCAN_COMPLETE line when the orchestrator agent finishes.
         # (SCAN_START is now emitted at PreToolUse / dispatch time, so the
@@ -2600,13 +2925,14 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
             _write("INFO ", "SCAN_COMPLETE", f"repo={repo}  agent={subtype}  model={model}", sid)
             return
 
-        # Regular sub-agent completion (only visible at the top-level session)
-        _write(
-            "INFO ",
-            "AGENT_INVOKE",
-            f"{subtype:<38}{bg_tag}  model={model}  {desc}" + (f"  [{pairs}]" if pairs else ""),
-            sid,
-        )
+        # A successful background Agent PostToolUse acknowledges launch only.
+        # The deterministic waiter closes that call after validating its
+        # attempt-specific output. It must never create a second start event.
+
+    # --- errors from non-Agent tools take priority ---
+    elif is_err:
+        _write("ERROR", "TOOL_ERROR", f"tool={tool}  {_mask_secrets(_clip(resp))}{dur_tail}", sid)
+        return
 
     # --- Write tool ---
     elif tool == "Write":
@@ -2720,23 +3046,38 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     # Runs LAST so any earlier early-return paths still count the call. Failures
     # are swallowed inside the watchdog itself — never blocks the hook.
     try:
-        from budget_watchdog import format_detail, reset_session, tally_and_check
+        from budget_watchdog import format_detail, tally_and_check
 
-        agent = _lookup_session_agent((sid or "")[:8]) or "unknown"
-        budget_agent = _budget_scope_agent((sid or "")[:8])
-        if budget_agent is None:
-            # Multiple Agent dispatches share this hook session. Their tool
-            # calls cannot be assigned to individual budgets, so remove any
-            # threshold state accumulated before the second registration and
-            # rely on each Agent harness's own maxTurns ceiling.
-            reset_session(sid, _output_dir())
-        else:
-            crossing = tally_and_check(sid, agent, _output_dir(), budget_agent=budget_agent or agent)
+        call = agent_lifecycle.unique_running_call(_output_dir(), (sid or "")[:8])
+        if call is not None:
+            crossing = tally_and_check(call, _output_dir())
             if crossing is not None:
                 _write("WARN ", crossing["event"], format_detail(crossing), sid)
     except Exception:
         # Watchdog must never break a run.
         pass
+
+
+def handle_subagent_start(data: dict, sid: str) -> None:
+    runtime_agent_id = str(data.get("agent_id") or "")
+    agent_type = str(data.get("agent_type") or "")
+    try:
+        call = agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, agent_type)
+    except agent_lifecycle.LifecycleError as exc:
+        _write(
+            "WARN ",
+            "AGENT_LIFECYCLE_REJECTED",
+            f"runtime_agent_id={runtime_agent_id or '?'}  reason={exc}",
+            sid,
+        )
+        return
+    if call is None:
+        _write(
+            "WARN ",
+            "AGENT_LIFECYCLE_REJECTED",
+            f"runtime_agent_id={runtime_agent_id or '?'}  agent_type={agent_type or '?'}  reason=unmatched_subagent_start",
+            sid,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2759,6 +3100,10 @@ def main() -> None:
 
     sid = data.get("session_id", "")
     event_name = data.get("hook_event_name", "")
+
+    if event_name == "SubagentStart":
+        handle_subagent_start(data, sid)
+        return
 
     # Stop / SubagentStop
     if event_name in ("Stop", "SubagentStop") or "stop_reason" in data:

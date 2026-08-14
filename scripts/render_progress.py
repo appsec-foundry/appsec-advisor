@@ -127,6 +127,8 @@ def main() -> int:
     status_shown = False  # a transient \r heartbeat line is on screen
     last_perm = None  # datetime of the last permanent (scrolling) line
     last_pct_shown = None  # last RUN_PROGRESS percentage given a permanent line
+    spawned_calls: set[str] = set()
+    terminal_calls: set[str] = set()
     _CLEAR = "\r\033[K"  # carriage-return + clear-to-end-of-line
 
     # Heartbeats are pure liveness — on a TTY they update one in-place status
@@ -197,39 +199,50 @@ def main() -> int:
                 w(f"✓ Phase {num}/{total} · {head}{tail}")
 
         elif event == "AGENT_SPAWN":
-            # SPAWN: agent name leads the detail, model in a model= field.
-            agent = detail.split()[0] if detail else "?"
+            call_id = _kv(detail, "agent_call_id")
+            if call_id and call_id in spawned_calls:
+                continue
+            if call_id:
+                spawned_calls.add(call_id)
+            # Current lifecycle lines name the agent in agent_type=. Retain the
+            # positional fallback for logs produced before call-scoped lifecycle.
+            agent = _kv(detail, "agent_type") or (detail.split()[0] if detail else "")
+            if not agent:
+                continue
             model = _kv(detail, "model")
             # The trailing [KEY=value …] block is stripped as noise below, so lift
             # the STRIDE tier out of it first: in the default (non-verbose) headless
             # view this line is the only per-component record the user gets, and a
             # screened component must not read like a full-depth one.
-            depth = _kv(detail, "ANALYSIS_DEPTH")
-            task = re.sub(r"\s*\[REPO_ROOT=[^\]]*\]\s*$", "", detail)
-            task = re.sub(rf"^{re.escape(agent)}\s+model=\S+\s*", "", task).strip()
+            depth = _kv(detail, "analysis_depth") or _kv(detail, "ANALYSIS_DEPTH")
+            description = re.search(r"(?:^|\s{2})description=(.*)$", detail)
+            task = description.group(1).strip() if description else detail
+            if not description:
+                task = re.sub(r"\s*\[REPO_ROOT=[^\]]*\]\s*$", "", task)
+                task = re.sub(rf"^{re.escape(agent)}\s+model=\S+\s*", "", task).strip()
             agent_name = agent.split(":")[-1]
             inferred_phase = _AGENT_PHASES.get(agent_name)
             if inferred_phase and inferred_phase != cur_phase:
                 cur_phase = inferred_phase
                 phase_start = when
-            w(f"    ↳ {agent.split(':')[-1]}{_agent_tag(model, depth)}: {task}")
+            w(f"    ↳ {agent_name}{_agent_tag(model, depth)}: {task}")
 
         elif event == "AGENT_INVOKE":
-            # INVOKE: agent name is the component, model in a "(model: x)" suffix.
-            # The suffix may carry more pairs (`(model: sonnet, MAX_TURNS=8,
-            # depth=screening)`), so match up to the comma as well as the paren —
-            # anchoring on `)` alone dropped the model for every STRIDE line.
-            m = re.search(r"\(model:\s*(\w+)[,)]", detail)
-            model = m.group(1) if m else ""
-            # Hook-emitted lines carry ANALYSIS_DEPTH=; the orchestrator's own
-            # per-component echo carries depth= (background agents do not always
-            # reach the hook, which is why that echo exists).
-            depth = _kv(detail, "depth") or _kv(detail, "ANALYSIS_DEPTH")
-            task = re.sub(r"\s*\(model:[^)]*\)\s*$", "", detail).strip()
-            w(f"    ↳ {comp.split(':')[-1]}{_agent_tag(model, depth)}: {task}")
+            # Legacy PostToolUse mislabeled a successful return as a new start.
+            # Keep parsing compatibility but never render it as lifecycle.
+            continue
 
-        elif event == "AGENT_DONE":
-            w(f"    ✓ {comp.split(':')[-1]} done — {detail}")
+        elif event in ("AGENT_DONE", "AGENT_FAILED"):
+            call_id = _kv(detail, "agent_call_id")
+            if call_id and call_id in terminal_calls:
+                continue
+            if call_id:
+                terminal_calls.add(call_id)
+            agent = _kv(detail, "agent_type") or comp
+            agent_name = agent.split(":")[-1] if agent else "agent"
+            mark = "✓" if event == "AGENT_DONE" else "⚠"
+            state = "done" if event == "AGENT_DONE" else "failed"
+            w(f"    {mark} {agent_name} {state} — {detail}")
 
         elif event == "SCAN_END":
             owner = comp or "scan"

@@ -764,20 +764,21 @@ Do **not** invent new TH-IDs. The taxonomy is the single authoritative source.
 
 ## Budget-critical wrap-up
 
-The watchdog (`scripts/budget_watchdog.py`, fired by the PostToolUse hook) writes `$OUTPUT_DIR/.budget-critical` when ANY agent — orchestrator or sub-agent — crosses 90% of its `maxTurns`. Its bare existence is the trigger, which is safe because the watchdog only writes the flag for a session that owns this run's `.appsec-lock` — a concurrent foreign session sharing `OUTPUT_DIR` can no longer raise it (see `budget_watchdog._write_flag`). If it exists, this run's orchestrator will soon wind down, so finer-grained stride analysis is wasted budget that the merger will never read.
+The watchdog writes a call-scoped marker when an agent crosses 90% of its `maxTurns`. Only `budget_watchdog.py active-critical` may consume it; that check validates the running Agent call and current controller claim. Bare file existence, a shared session, and a stale call are not triggers.
 
 **Check at every STRIDE-category boundary** (between Spoofing → Tampering → Repudiation → InfoDisclosure → DoS → EoP). Combine the check with the Bash call that prints `↳ Checking <category>…`, e.g.:
 
 ```bash
 echo "[stride | $COMPONENT_NAME]   ↳ Checking Tampering…" \
-  && [ -f "$OUTPUT_DIR/.budget-critical" ] && exit 99 || true
+  && python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical \
+       --output-dir "$OUTPUT_DIR" && exit 99 || true
 ```
 
 The `exit 99` is a sentinel — when the orchestrator polls for `.stride-<COMPONENT_ID>.json` and finds it missing, it treats this as a wrap-up signal (not a failure). To make the wrap-up deterministic, run the **abbreviated** Step 4 below instead of exiting raw:
 
 ### Abbreviated Step 4 — partial output
 
-When `.budget-critical` exists at the start of a STRIDE-category check, jump immediately to writing the JSON with the threats you have so far:
+When `active-critical` succeeds at the start of a STRIDE-category check, jump immediately to writing the JSON with the threats you have so far:
 
 1. **Log the wrap-up** (do this FIRST, before the write — so the skill-layer banner sees it):
    ```bash

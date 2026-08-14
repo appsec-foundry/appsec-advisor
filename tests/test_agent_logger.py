@@ -58,7 +58,12 @@ def last_line(log: str) -> str:
 
 
 def make_post_tool_event(
-    tool: str, inp: dict, resp: str = "", is_error: bool = False, session_id: str = "testsid1"
+    tool: str,
+    inp: dict,
+    resp: str = "",
+    is_error: bool = False,
+    session_id: str = "testsid1",
+    tool_use_id: str = "toolu_test",
 ) -> dict:
     return {
         "hook_event_name": "PostToolUse",
@@ -67,15 +72,17 @@ def make_post_tool_event(
         "tool_input": inp,
         "tool_response": resp,
         "is_error": is_error,
+        "tool_use_id": tool_use_id,
     }
 
 
-def make_pre_tool_event(tool: str, inp: dict, session_id: str = "testsid1") -> dict:
+def make_pre_tool_event(tool: str, inp: dict, session_id: str = "testsid1", tool_use_id: str = "toolu_test") -> dict:
     return {
         "hook_event_name": "PreToolUse",
         "session_id": session_id,
         "tool_name": tool,
         "tool_input": inp,
+        "tool_use_id": tool_use_id,
     }
 
 
@@ -84,8 +91,8 @@ def make_pre_tool_event(tool: str, inp: dict, session_id: str = "testsid1") -> d
 # ===========================================================================
 
 
-class TestAgentInvoke:
-    def test_stride_analyzer_logs_agent_invoke(self, tmp_path):
+class TestAgentReturn:
+    def test_agent_return_does_not_log_a_second_start(self, tmp_path):
         event = make_post_tool_event(
             "Agent",
             {
@@ -95,9 +102,11 @@ class TestAgentInvoke:
                 "run_in_background": True,
             },
         )
+        run_logger(make_pre_tool_event("Agent", event["tool_input"]), tmp_path)
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
-        assert "AGENT_INVOKE" in log
+        assert log.count("AGENT_SPAWN") == 1
+        assert "AGENT_INVOKE" not in log
         assert "appsec-stride-analyzer" in log
 
     def test_background_flag_annotated(self, tmp_path):
@@ -110,9 +119,10 @@ class TestAgentInvoke:
                 "run_in_background": True,
             },
         )
+        run_logger(make_pre_tool_event("Agent", event["tool_input"]), tmp_path)
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
-        assert "[bg]" in log
+        assert "background=true" in log
 
     def test_foreground_agent_no_bg_tag(self, tmp_path):
         event = make_post_tool_event(
@@ -124,10 +134,12 @@ class TestAgentInvoke:
                 "run_in_background": False,
             },
         )
+        run_logger(make_pre_tool_event("Agent", event["tool_input"]), tmp_path)
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         line = last_line(log)
-        assert "[bg]" not in line
+        assert "AGENT_DONE" in line
+        assert "background=false" in line
 
     def test_threat_analyst_logs_scan_start(self, tmp_path):
         """SCAN_START is emitted at PreToolUse for the orchestrator dispatch."""
@@ -155,11 +167,12 @@ class TestAgentInvoke:
                 "run_in_background": True,
             },
         )
+        run_logger(make_pre_tool_event("Agent", event["tool_input"]), tmp_path)
         rc, log = run_logger(event, tmp_path)
         assert "auth-service" in log
 
     def test_model_from_agent_definition_logged(self, tmp_path):
-        """AGENT_INVOKE must include model= read from the agent frontmatter file."""
+        """Lifecycle events include model= read from agent frontmatter."""
         event = make_post_tool_event(
             "Agent",
             {
@@ -169,6 +182,7 @@ class TestAgentInvoke:
                 "run_in_background": False,
             },
         )
+        run_logger(make_pre_tool_event("Agent", event["tool_input"]), tmp_path)
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "model=sonnet" in log
@@ -185,6 +199,7 @@ class TestAgentInvoke:
                 "model": "opus",
             },
         )
+        run_logger(make_pre_tool_event("Agent", event["tool_input"]), tmp_path)
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "model=opus" in log
@@ -263,7 +278,7 @@ class TestAgentSpawn:
         assert "model=sonnet" in log
 
     def test_agent_spawn_background_flag(self, tmp_path):
-        """AGENT_SPAWN must include [bg] tag for background agents."""
+        """AGENT_SPAWN records the background flag structurally."""
         event = make_pre_tool_event(
             "Agent",
             {
@@ -275,7 +290,7 @@ class TestAgentSpawn:
         )
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
-        assert "[bg]" in log
+        assert "background=true" in log
 
     def test_pre_tool_use_non_agent_tool_not_logged(self, tmp_path):
         """PreToolUse for non-Agent tools must produce no log entry."""
@@ -301,7 +316,7 @@ class TestAgentSpawn:
         assert "model=opus" in log
 
     def test_agent_spawn_params_extracted(self, tmp_path):
-        """AGENT_SPAWN must include COMPONENT_ID and REPO_ROOT from prompt."""
+        """AGENT_SPAWN includes the component but does not copy repository paths."""
         event = make_pre_tool_event(
             "Agent",
             {
@@ -314,7 +329,7 @@ class TestAgentSpawn:
         rc, log = run_logger(event, tmp_path)
         assert rc == 0
         assert "api-gw" in log
-        assert "REPO_ROOT" in log
+        assert "REPO_ROOT" not in log
 
     def test_agent_spawn_lands_in_prompt_output_dir(self, tmp_path):
         """Regression (2026-06-05): the PreToolUse hook runs as a separate

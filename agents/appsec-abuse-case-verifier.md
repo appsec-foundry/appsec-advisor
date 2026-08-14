@@ -104,7 +104,7 @@ You have 28 turns. Spend them on decisions, not repeated source acquisition. The
 
 **Turn budget guard.** If you reach ~20 turns and any step is still undecided, STOP searching and finalize the file now: write your best partial conclusions, leave still-undecided steps `inconclusive` **with a concrete reason** (e.g. `"could not resolve handler precedence within budget"`, never an empty excerpt), and exit. Never burn the last turns on search at the cost of writing the file.
 
-If `$OUTPUT_DIR/.budget-critical` exists when you start, immediately write the pre-seeded verdict file (every step `inconclusive`, reason: `budget-critical`, finding ids from the matcher) and exit — do not search.
+If `python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"` returns zero when you start, immediately write the pre-seeded verdict file (every step `inconclusive`, reason: `budget-critical`, finding ids from the matcher) and exit — do not search.
 
 ## Output — exactly one file
 

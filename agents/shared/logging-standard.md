@@ -13,29 +13,36 @@ All agents (orchestrator + sub-agents) MUST follow this logging standard. Replac
 | Timestamp | 20 | `date -u +%Y-%m-%dT%H:%M:%SZ` |
 | Session ID | 10 | `[--------]` for orchestrator, `[<8-hex>]` for subagents (from `$APPSEC_SESSION_ID`) |
 | Level | 6 | `INFO`, `WARN`, `ERROR` |
-| Agent | variable | Short name. **Rule: this column always identifies the agent that is the subject of the line.** For `PHASE_START`/`PHASE_END`/`ASSESSMENT_*`/`FILE_WRITE` the orchestrator writes its own name (`threat-analyst`). For `AGENT_INVOKE`/`AGENT_DONE`/`AGENT_DISPATCH` the column is the **sub-agent's name** (e.g. `recon-scanner`, not `threat-analyst`). Each sub-agent writes its own `AGENT_START`/`AGENT_END` using its own name. |
+| Agent | variable | Short name. **Rule: this column always identifies the agent that is the subject of the line.** For `PHASE_START`/`PHASE_END`/`ASSESSMENT_*`/`FILE_WRITE` the orchestrator writes its own name (`threat-analyst`). Hook lifecycle events carry `agent_type=` and immutable `agent_call_id=` fields. Each sub-agent writes its own `AGENT_START`/`AGENT_END` using its own name. |
 | Event | variable | See event catalog below. |
-| Message | variable | Description. **All agent-related events (`AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `AGENT_START`, `AGENT_END`) MUST include `(model: <model-id>)` in the message.** `ASSESSMENT_START` includes CET time, mode, and flags. `ASSESSMENT_END` includes CET time and duration. `FILE_WRITE` includes path and size. `MAX_TURNS` indicates an agent hit its turn limit. |
+| Message | variable | Description. Hook lifecycle events include `agent_call_id`, `agent_type`, `model`, and `background`; routed jobs also include their controller identity. Agent-authored start/end events include `(model: <model-id>)`. `ASSESSMENT_START` includes CET time, mode, and flags. `ASSESSMENT_END` includes CET time and duration. `FILE_WRITE` includes path and size. `MAX_TURNS` indicates an agent hit its turn limit. |
 
 ## Event catalog
 
 | Scope | Events |
 |-------|--------|
 | Controller / skill / legacy orchestrator only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT` |
+| Hook lifecycle | `AGENT_SPAWN`, `AGENT_RUNNING`, `AGENT_USAGE`, `AGENT_DONE`, `AGENT_FAILED`, `AGENT_LIFECYCLE_REJECTED` |
 | Semantic agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `WRAP_UP_TRIGGERED` |
-| Watchdog-emitted (via PostToolUse hook) | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog (`scripts/budget_watchdog.py`) counts tool calls only while one Agent dispatch owns the hook session. Once a second dispatch is registered under the same session, the hook resets and disables the shared counter because it cannot attribute calls per Agent; each Agent harness then owns its `maxTurns` ceiling. On a valid single-Agent `BUDGET_CRITICAL`, the watchdog writes `$OUTPUT_DIR/.budget-critical`; agents poll for the file at phase boundaries and execute their wrap-up sequence. |
+| Watchdog-emitted | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog counts only a concrete running `agent_call_id`. SubagentStop reconciles the distinct tool-use count, terminalizes the call, and retires its budget; a later PostToolUse is idempotent. Parent tools and shared sessions never select a budget owner. |
 
-Claude Code may assign the parent session ID to multiple Agent dispatches. In
-that case hook-authored tool and completion telemetry uses `shared-session`, and
-`AGENT_COMPLETE` states `scope=session-cumulative`; it must not assign the
-cumulative transcript usage to whichever Agent type was registered most
-recently. Plugin-owned `appsec-*` roles are registered by their canonical short
-name even when they are newer than the logger's explicit compatibility map.
+Claude Code may assign the parent session ID to multiple Agent dispatches. The
+host `tool_use_id` is the immutable call identity, and the host `agent_id`
+connects SubagentStart/SubagentStop usage to that call. Telemetry without either
+identity is labeled `shared-session` or `AGENT_USAGE_UNATTRIBUTED`; it must not
+use the most recently registered role. `.session-agent-map` is observational.
 | Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
 
 ## Budget wrap-up signal (read at every phase boundary)
 
-Every agent that runs more than a handful of phases (orchestrator, stride-analyzer, threat-renderer, qa-reviewer) MUST check for `$OUTPUT_DIR/.budget-critical` at each phase boundary — same Bash call that refreshes the lock heartbeat. When the file exists:
+Every agent that runs more than a handful of phases must run
+`python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical
+--output-dir "$OUTPUT_DIR"` at each phase boundary. A zero exit means the
+marker identity still matches a running call and its authoritative controller
+claim. Bare file existence is never a control signal; legacy or malformed
+entries are inert.
+
+When the command exits zero:
 
 1. Stop dispatching new work.
 2. Run the agent-specific wrap-up sequence (defined in that agent's `.md` file — typically: finalize current artifact, write minimal-valid output with `partial: true` / `meta.incomplete: true`, emit `WRAP_UP_TRIGGERED` log event with reason + skipped items, exit cleanly).

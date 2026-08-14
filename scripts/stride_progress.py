@@ -39,9 +39,12 @@ import sys
 import time
 from pathlib import Path
 
+from jsonschema import Draft202012Validator, ValidationError
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from stride_outputs import component_id as _stride_component_id  # noqa: E402
 from stride_outputs import stride_output_files  # noqa: E402
+from write_stride_progress import authoritative_depth  # noqa: E402
 
 STALE_SECONDS = 180  # progress file is considered stale after 3 minutes
 HEARTBEAT_TICKS = 6  # force a reprint every N unchanged polls (~2 min at 20 s cadence)
@@ -75,8 +78,26 @@ def _load(path: Path) -> dict:
         return {}
 
 
-def _light_ids(output_dir: Path) -> set[str] | None:
-    """Component ids dispatched at light depth, from the dispatch manifest.
+def _validate_progress_record(output_dir: Path, data: dict, done: bool) -> None:
+    """Validate v2 progress identity and reject an obsolete active attempt."""
+    if data.get("schema_version") != 2:
+        return
+    schema = _load(Path(__file__).resolve().parent.parent / "schemas" / "stride-progress.schema.json")
+    Draft202012Validator(schema).validate(data)
+    waves = _load(output_dir / ".dispatch-waves.json")
+    active = waves.get("active_claim") if isinstance(waves, dict) else None
+    if not isinstance(active, dict):
+        if not done:
+            raise ValueError("v2 progress has no dispatch-wave claim")
+        return
+    component_id = data["component_id"]
+    if component_id in (active.get("component_ids") or []):
+        if (active.get("attempts") or {}).get(component_id) != data["attempt"]:
+            raise ValueError(f"progress attempt contradicts current dispatch claim for {component_id}")
+
+
+def _depths(output_dir: Path) -> dict[str, str] | None:
+    """Validated per-component depths from context plans or the legacy manifest.
 
     ``build_stride_dispatch_manifest.py`` marks every cheap-stride entry with
     ``cheap_stride: true``, so the tier is known deterministically here — the
@@ -84,26 +105,50 @@ def _light_ids(output_dir: Path) -> set[str] | None:
     manifest → ``None``: the tier could not be established, so no entry claims
     one. Printing ``(full)`` there would assert a depth nobody verified.
     """
+    context_root = output_dir / ".dispatch-context"
+    plans = sorted(context_root.glob("*/context-plan.json")) if context_root.is_dir() else []
+    if plans:
+        depths: dict[str, str] = {}
+        for path in plans:
+            plan = _load(path)
+            component_id = plan.get("component_id") if isinstance(plan, dict) else None
+            if not isinstance(component_id, str) or component_id != path.parent.name:
+                raise ValueError(f"invalid component context plan identity: {path}")
+            depth = authoritative_depth(output_dir, component_id, Path(__file__).resolve().parent.parent)
+            depths[component_id] = depth
+        return depths
     manifest = _load(output_dir / ".stride-dispatch-manifest.json")
     components = manifest.get("components") if isinstance(manifest, dict) else None
     if not isinstance(components, list):
         return None
     return {
-        str(c.get("component_id"))
+        str(c.get("component_id")): "light" if c.get("cheap_stride") else "full"
         for c in components
-        if isinstance(c, dict) and c.get("cheap_stride") and c.get("component_id")
+        if isinstance(c, dict) and c.get("component_id")
     }
 
 
-def _tier(comp_id: str, light_ids: set[str] | None) -> str:
+def _light_ids(output_dir: Path) -> set[str] | None:
+    """Compatibility view for callers that only need the legacy light set."""
+    try:
+        depths = _depths(output_dir)
+    except (OSError, ValueError, json.JSONDecodeError, ValidationError) as exc:
+        print(f"stride_progress: invalid component context plan: {exc}", file=sys.stderr)
+        return None
+    return None if depths is None else {component_id for component_id, depth in depths.items() if depth == "light"}
+
+
+def _tier(comp_id: str, depths: dict[str, str] | set[str] | None) -> str:
     """``(light)`` / ``(full)`` prefix for a component, ``''`` when unknown.
 
     Both tiers are named so the list reads as a depth column; a lone marked
     entry reads as an anomaly instead of a tier.
     """
-    if light_ids is None:
+    if isinstance(depths, set):
+        return "(light) " if comp_id in depths else "(full) "
+    if depths is None or depths.get(comp_id) not in {"full", "light"}:
         return ""
-    return "(light) " if comp_id in light_ids else "(full) "
+    return f"({depths[comp_id]}) "
 
 
 def _format_entry(data: dict, done: bool, stale: bool, marks: dict, tier: str = "") -> str:
@@ -205,15 +250,28 @@ def main(argv: list[str]) -> int:
 
     progress_files = sorted(progress_dir.glob("*.json")) if progress_dir.exists() else []
     now = time.time()
-    light_ids = _light_ids(output_dir)
+    try:
+        depths = _depths(output_dir)
+    except (OSError, ValueError, json.JSONDecodeError, ValidationError) as exc:
+        print(f"stride_progress: invalid component context plan: {exc}", file=sys.stderr)
+        return 2
 
     entries: list[str] = []
     seen_ids: set[str] = set()
     for pf in progress_files:
         data = _load(pf)
         comp_id = data.get("component_id") or pf.stem
-        seen_ids.add(comp_id)
         done = comp_id in ready_ids
+        try:
+            _validate_progress_record(output_dir, data, done)
+        except (ValueError, ValidationError) as exc:
+            print(f"stride_progress: invalid progress record: {exc}", file=sys.stderr)
+            return 2
+        expected_depth = depths.get(comp_id) if depths is not None else None
+        if expected_depth is not None and data.get("analysis_depth") not in (None, expected_depth):
+            print(f"stride_progress: progress depth contradicts current context plan for {comp_id}", file=sys.stderr)
+            return 2
+        seen_ids.add(comp_id)
         stale = False
         if not done:
             try:
@@ -221,7 +279,7 @@ def main(argv: list[str]) -> int:
                 stale = (now - mtime) > STALE_SECONDS
             except OSError:
                 stale = True
-        entries.append(_format_entry(data, done=done, stale=stale, marks=marks, tier=_tier(comp_id, light_ids)))
+        entries.append(_format_entry(data, done=done, stale=stale, marks=marks, tier=_tier(comp_id, depths)))
 
     # Components that already produced final output but never wrote progress.
     # Flag as potentially stale if the output file is older than STALE_SECONDS
@@ -234,7 +292,7 @@ def main(argv: list[str]) -> int:
             stale = (now - mtime) > STALE_SECONDS
         except OSError:
             pass
-        name = f"{_tier(cid, light_ids)}{cid}"
+        name = f"{_tier(cid, depths)}{cid}"
         label = f"{name} {marks['done']}"
         if stale:
             label += f" {marks['stale']} (no progress file — may be stale)"

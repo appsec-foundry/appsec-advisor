@@ -28,6 +28,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import agent_lifecycle
+import budget_watchdog
 from jsonschema import Draft202012Validator
 from merge_threats import (
     backfill_threat_attack_steps,
@@ -53,6 +55,33 @@ _COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # ``reconcile_progress``. Deliberately not one of the analyzer's nine substep
 # labels: the output already landed, so the state is past "Writing output".
 FINAL_PROGRESS_LABEL = "Complete"
+
+
+def _context_plan_depth(output_dir: Path, component_id: str) -> str | None:
+    """Read the controller-owned depth when this is a context-v2 dispatch."""
+    path = output_dir / ".dispatch-context" / component_id / "context-plan.json"
+    if not path.is_file():
+        return None
+    plan = _read_object(path, "component context plan")
+    schema = _read_object(
+        Path(__file__).resolve().parent.parent / "schemas" / "stride-component-context-plan.schema.json",
+        "component context plan schema",
+    )
+    errors = sorted(Draft202012Validator(schema).iter_errors(plan), key=lambda item: list(item.path))
+    if errors:
+        raise WavePlanError(f"component context plan failed schema validation: {errors[0].message}")
+    depth = (plan.get("analysis") or {}).get("depth")
+    if plan.get("component_id") != component_id or depth not in {"full", "light"}:
+        raise WavePlanError(f"component context plan has invalid analysis depth: {component_id}")
+    return depth
+
+
+def _close_agent_jobs(output_dir: Path, job_ids: list[str], *, success: bool, reason: str = "") -> None:
+    events = agent_lifecycle.finish_jobs(output_dir, job_ids, success=success, reason=reason)
+    agent_lifecycle.append_events(output_dir, events)
+    for event in events:
+        budget_watchdog.close_call(str(event.call.get("agent_call_id") or ""), output_dir)
+
 
 # Per-component dispatch attempts: the initial call plus retries. Two is right
 # for a transient stall -- an identical third attempt rarely behaves
@@ -378,6 +407,12 @@ def reconcile_progress(output_dir: Path, component_id: str) -> bool:
         return False
     if not isinstance(data, dict):
         return False
+    expected_depth = _context_plan_depth(output_dir, component_id)
+    if expected_depth is not None:
+        recorded_depth = data.get("analysis_depth")
+        if recorded_depth not in (None, expected_depth):
+            raise WavePlanError(f"progress depth for {component_id} contradicts its component context plan")
+        data["analysis_depth"] = expected_depth
     total = data.get("total")
     if isinstance(total, bool) or not isinstance(total, int) or total < 1:
         return False
@@ -598,9 +633,22 @@ def wait_status(
         )
         is not None
     ]
-    for component_id in component_ids:
-        if not any(row["component_id"] == component_id for row in incomplete):
-            reconcile_progress(output_dir, component_id)
+    complete_ids = [
+        component_id
+        for component_id in component_ids
+        if not any(row["component_id"] == component_id for row in incomplete)
+    ]
+    for component_id in complete_ids:
+        reconcile_progress(output_dir, component_id)
+    if complete_ids:
+        _close_agent_jobs(
+            output_dir,
+            [
+                f"stride:{component_id}:attempt-{plan['active_claim']['attempts'][component_id]}"
+                for component_id in complete_ids
+            ],
+            success=True,
+        )
     if not incomplete:
         return {"status": "complete", "component_ids": component_ids, "incomplete": []}
     current = int(time.time()) if now is None else now
@@ -609,7 +657,7 @@ def wait_status(
         return {"status": "unstarted", "component_ids": component_ids, "incomplete": incomplete}
     started_at = min(starts)
     elapsed = max(0, current - started_at)
-    return {
+    result = {
         "status": "expired" if elapsed >= WAIT_DEADLINE_SECONDS else "pending",
         "component_ids": component_ids,
         "incomplete": incomplete,
@@ -617,6 +665,17 @@ def wait_status(
         "elapsed_seconds": elapsed,
         "remaining_seconds": max(0, WAIT_DEADLINE_SECONDS - elapsed),
     }
+    if result["status"] == "expired":
+        _close_agent_jobs(
+            output_dir,
+            [
+                f"stride:{row['component_id']}:attempt-{plan['active_claim']['attempts'][row['component_id']]}"
+                for row in incomplete
+            ],
+            success=False,
+            reason="join_deadline_expired",
+        )
+    return result
 
 
 def load_wait_status(

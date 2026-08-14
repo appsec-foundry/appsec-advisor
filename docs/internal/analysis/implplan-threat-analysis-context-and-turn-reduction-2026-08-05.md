@@ -2293,6 +2293,80 @@ slice. After a green commit boundary, the next reserved R10 invocation is:
   --rebuild
 ```
 
+### Postfix5 lifecycle, budget, and depth telemetry correction — 2026-08-14
+
+The retained postfix5 artifacts were inspected read-only after the live status
+declared the run incomplete and no live tool markers remained. Recon had one
+`AGENT_SPAWN` and one `SCAN_END`; the later outer `SESSION_STOP` and
+PostToolUse-generated `AGENT_INVOKE` did not represent a second dispatch.
+Stage statistics and budget telemetry then continued charging parent controller
+tools to recon until the shared-session counter reached `MAX_TURNS`. The
+transient critical marker cannot prove that orchestration consumed it, but its
+global existence made that possible. Five STRIDE calls did start before the
+first join, so parallel scheduling was not the defect. The same trace showed
+controller depth `full` rendered as `light`, `TBD`, or absent in agent-authored
+progress.
+
+The code trace confirmed the common cause. Agent PreToolUse wrote a spawn and
+replaced the latest role in `.session-agent-map`; PostToolUse mislabeled a
+successful return as `AGENT_INVOKE`; the watchdog keyed counters and markers by
+the shared session; Stop and later parent PostToolUse paths selected the latest
+registered role; the renderer treated both spawn and invoke as starts; and
+STRIDE progress accepted depth inferred from prompt or model-authored text.
+
+The corrected producer-to-control chain is:
+
+1. Agent PreToolUse uses the host `tool_use_id` as immutable `agent_call_id`,
+   validates context-v2 `ACTION_ID` and `JOB_ID`, and persists schema-v1
+   lifecycle state under `.active-tool-calls/`.
+2. The lifecycle contract admits only `AGENT_SPAWN -> AGENT_RUNNING ->
+   AGENT_DONE | AGENT_FAILED`. SubagentStart/PostToolUse bind the host
+   `agent_id`; SubagentStop usage without that identity is visibly
+   unattributed, never assigned through the session map. A matched SubagentStop
+   terminalizes the call, so missing, delayed, and repeated PostToolUse cannot
+   reopen it.
+3. The schema-v2 budget state opens with that call and closes atomically at
+   SubagentStop, foreground PostToolUse, explicit error, or deterministic join.
+   Transcript tool-use IDs reconcile the exact subagent count. Parent tools
+   after closure cannot select the call.
+4. Warning and critical marker entries validate against the call-specific
+   marker schema. They are actionable only while lifecycle state is running,
+   the job belongs to the routing-ledger action, and STRIDE component and
+   attempt still match `.dispatch-waves.json`'s active claim. Legacy or stale
+   entries remain readable but inert.
+5. Controller and abuse consumers use the validated active-claim query. The
+   controller ledger, active wave claim, attempt output, validation, and atomic
+   promotion remain authoritative; hook and status state remains observational.
+6. The renderer emits one start per call ID and one terminal state, ignores
+   legacy `AGENT_INVOKE` as lifecycle, and refuses an empty role prefix.
+7. STRIDE hook logs, agent logs, progress files, reconciled progress, and status
+   re-read `analysis.depth` from the schema-valid current component plan.
+   Schema-v2 progress also persists the lifecycle action, attempt-qualified job,
+   and attempt after checking the active wave claim. Model-authored `TBD`,
+   missing, contradictory, or stale-attempt values cannot select progress.
+8. Terminal cleanup first fails remaining calls and closes their counters and
+   markers, then removes `.active-tool-calls/`. Parallel wave claims,
+   attempt-qualified outputs, promotion, replay rejection, and abort
+   terminality are unchanged.
+
+No turn, time, context, concurrency, or retry limit changed. No decision entry
+changed. The postfix5 output remains regression evidence only; no replacement
+scan was started. Before broad repository gates, the focused lifecycle,
+watchdog, hook, renderer, stage-stat, wave, join, depth, status, cleanup, and
+schema selection passed 935 tests in 19.68 seconds. This includes a neutral
+31-tool-use regression, sequential roles sharing one session, parallel calls,
+missing and reordered returns, idempotent replay, stale and current critical
+claims, both depth tiers, contradictory depth rejection, five pre-join starts,
+and terminal live-state cleanup. Broad gate results are recorded below after
+they run. `make lint` passed. The coverage-enabled `make test` run reached 95%
+without an observed failure before its runner detached and discarded the final
+summary, so that invocation has no retained exit result. The subsequent
+`make check` gate passed lint, formatting, configuration validation, fragment
+registry drift validation, and the complete correctness suite: 12,546 passed
+and 95 skipped in 674.10 seconds. The unavailable `.venv/bin/pytest` command
+was a local environment baseline condition; the repository's configured
+Python 3.10.12 and pytest 9.0.2 executed the recorded tests.
+
 ## Remaining verification
 
 Only two verification layers remain:

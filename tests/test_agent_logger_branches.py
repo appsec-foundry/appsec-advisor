@@ -340,20 +340,29 @@ class TestPostToolAgentBranches:
         f = Path(al._output_dir()) / ".hook-events.log"
         return f.read_text() if f.exists() else ""
 
-    def test_agent_invoke_non_analyst(self, al):
+    def test_agent_return_closes_without_agent_invoke(self, al):
+        tool_input = {"subagent_type": "appsec-recon-scanner", "description": "recon"}
+        al.handle_pre_tool_use(
+            {"tool_use_id": "toolu_recon", "tool_name": "Agent", "tool_input": tool_input},
+            "sid",
+        )
         al.handle_post_tool_use(
             {
+                "tool_use_id": "toolu_recon",
                 "tool_name": "Agent",
-                "tool_input": {"subagent_type": "appsec-recon-scanner", "description": "recon"},
+                "tool_input": tool_input,
                 "tool_response": "",
             },
             "sid",
         )
-        assert "AGENT_INVOKE" in self._log(al)
+        log = self._log(al)
+        assert "AGENT_DONE" in log
+        assert "AGENT_INVOKE" not in log
 
     def test_agent_scan_complete_for_analyst(self, al):
         al.handle_post_tool_use(
             {
+                "tool_use_id": "toolu_analyst",
                 "tool_name": "Agent",
                 "tool_input": {
                     "subagent_type": "appsec-threat-analyst",
@@ -400,6 +409,11 @@ class TestPostToolAgentBranches:
 
         monkeypatch.setattr(budget_watchdog, "tally_and_check", lambda *a, **k: {"event": "BUDGET_WARN", "agent": "x"})
         monkeypatch.setattr(budget_watchdog, "format_detail", lambda c: "detail")
+        monkeypatch.setattr(
+            al.agent_lifecycle,
+            "unique_running_call",
+            lambda *_a, **_k: {"agent_call_id": "toolu_live", "state": "running"},
+        )
         al.handle_post_tool_use({"tool_name": "Read", "tool_input": {"file_path": "/f"}, "tool_response": "ok"}, "sid")
         assert "BUDGET_WARN" in self._log(al)
 
@@ -413,6 +427,7 @@ class TestPreToolUseBranches:
         recovered = tmp_path / "recovered"
         al.handle_pre_tool_use(
             {
+                "tool_use_id": "toolu_analyst",
                 "tool_name": "Agent",
                 "tool_input": {
                     "subagent_type": "appsec-recon-scanner",
@@ -486,6 +501,7 @@ class TestPreToolUseBranches:
     def test_threat_analyst_spawn_emits_scan_start(self, al, tmp_path):
         al.handle_pre_tool_use(
             {
+                "tool_use_id": "toolu_threat_analyst",
                 "tool_name": "Agent",
                 "tool_input": {
                     "subagent_type": "appsec-threat-analyst",
@@ -579,6 +595,7 @@ class TestMainRouting:
             {
                 "hook_event_name": "PreToolUse",
                 "session_id": "sidmain",
+                "tool_use_id": "toolu_main",
                 "tool_name": "Agent",
                 "tool_input": {"subagent_type": "appsec-recon-scanner", "description": "d"},
             }

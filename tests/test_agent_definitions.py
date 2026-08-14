@@ -618,7 +618,8 @@ class TestBodyContentConsistency:
         assert 'bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh"' in stride
         assert "never invoke that shell script with Python" in stride
         assert "--agent stride-analyzer-v2" in stride
-        assert "component=<COMPONENT_ID literal>" in stride
+        assert '--component-id "<COMPONENT_ID literal>"' in flat
+        assert "never author depth" in flat
         assert "`MODEL_ID` and exact plan `analysis.depth` (`full` or `light`)" in flat
         assert "never infer it from profile, budget, or another component" in flat
         assert "role/permission/identity claims as authorization questions" in flat

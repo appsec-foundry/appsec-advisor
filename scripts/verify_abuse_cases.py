@@ -9,7 +9,8 @@ deterministic glue around that fan-out:
 
   merge   Collect every `.abuse-case-verdict-*.json`, validate the basic shape,
           and write the consolidated `<output-dir>/.abuse-case-verdicts.json`.
-          When `.budget-critical` is present, candidates without a verdict file
+          When `.budget-critical` contains a validated current call claim,
+          candidates without a verdict file
           are recorded as `inconclusive` (no agent ran for them) rather than
           dropped — keeping the report honest about what was not verified.
 
@@ -23,6 +24,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+import budget_watchdog
 
 _VALID_STEP_VERDICTS = {"confirmed", "blocked", "inconclusive"}
 
@@ -192,7 +195,7 @@ def _load_verdict_files(output_dir: Path) -> dict[str, dict]:
 def cmd_merge(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir)
     verdicts = _load_verdict_files(output_dir)
-    budget_critical = (output_dir / ".budget-critical").exists()
+    budget_critical = budget_watchdog.has_active_critical_claim(output_dir)
 
     # Candidates with no verdict file → inconclusive stub (esp. under budget pressure).
     for cid in _candidates(output_dir):

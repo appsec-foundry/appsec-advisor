@@ -57,6 +57,8 @@ import time
 from pathlib import Path
 
 from event_log import format_line
+from jsonschema import ValidationError
+from write_stride_progress import authoritative_call
 
 _CANONICAL_EVENTS = {
     "phase-start": "PHASE_START",
@@ -69,6 +71,7 @@ _CANONICAL_EVENTS = {
 _PHASE_RE = re.compile(r"\[Phase\s+(\d+)/(\d+)\]")
 _PHASE_LOOSE_RE = re.compile(r"\[Phase\s+([0-9]+b?|[0-9]+(?:\.[0-9]+)?)(?:/(\d+))?\]")
 _STEP_RE = re.compile(r"(?:\[Phase\s+[0-9]+b?(?:/\d+)?\]\s*)?\[(\d+)/(\d+)\]")
+_DEPTH_TOKEN_RE = re.compile(r"(?i)(?:analysis_)?depth\s*[:=]\s*[^\s,;)\]]+")
 
 
 def _now_iso() -> str:
@@ -200,12 +203,21 @@ def _write_progress(output_dir: Path, payload: dict) -> None:
 def main(argv: list[str]) -> int:
     argv = list(argv)
     agent = os.environ.get("APPSEC_LOG_AGENT", "threat-analyst").strip() or "threat-analyst"
+    component_id = ""
     if "--agent" in argv:
         i = argv.index("--agent")
         try:
             agent = argv[i + 1].strip() or agent
         except IndexError:
             print(f"{argv[0]}: --agent requires a value", file=sys.stderr)
+            return 2
+        del argv[i : i + 2]
+    if "--component-id" in argv:
+        i = argv.index("--component-id")
+        try:
+            component_id = argv[i + 1].strip()
+        except IndexError:
+            print(f"{argv[0]}: --component-id requires a value", file=sys.stderr)
             return 2
         del argv[i : i + 2]
 
@@ -229,6 +241,22 @@ def main(argv: list[str]) -> int:
     else:
         event = _CANONICAL_EVENTS[kind]
         detail = argv[3]
+
+    if agent == "stride-analyzer-v2":
+        if not component_id:
+            print(f"{argv[0]}: stride-analyzer-v2 logging requires --component-id", file=sys.stderr)
+            return 2
+        try:
+            call = authoritative_call(output_dir, component_id, Path(__file__).resolve().parent.parent)
+        except (OSError, ValueError, json.JSONDecodeError, ValidationError) as exc:
+            print(f"{argv[0]}: cannot validate STRIDE logging depth: {exc}", file=sys.stderr)
+            return 2
+        detail = _DEPTH_TOKEN_RE.sub("", detail)
+        detail = re.sub(r"\s{2,}", " ", detail).strip(" ,;()")
+        detail = (
+            f"component={component_id} depth={call['analysis_depth']} action_id={call['action_id']} "
+            f"job_id={call['job_id']} attempt={call['attempt']}" + (f"  {detail}" if detail else "")
+        )
 
     _append_log(output_dir, event, detail, agent)
     _write_progress(output_dir, _progress_payload(kind, event, detail, agent))

@@ -10,6 +10,8 @@ import sys
 import time
 from pathlib import Path
 
+import agent_lifecycle
+import budget_watchdog
 import verify_abuse_cases
 
 _CANDIDATE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
@@ -27,6 +29,18 @@ def candidate_status(output_dir: Path, candidate_id: str) -> str:
     if not isinstance(verdict, dict) or verdict.get("abuse_case_id") != candidate_id:
         return "invalid"
     return "complete" if verify_abuse_cases.is_finalized_verdict(verdict) else "pending"
+
+
+def _close_jobs(output_dir: Path, candidate_ids: list[str], *, success: bool, reason: str = "") -> None:
+    events = agent_lifecycle.finish_jobs(
+        output_dir,
+        [f"phase10c-abuse-{candidate}" for candidate in candidate_ids],
+        success=success,
+        reason=reason,
+    )
+    agent_lifecycle.append_events(output_dir, events)
+    for event in events:
+        budget_watchdog.close_call(str(event.call.get("agent_call_id") or ""), output_dir)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,6 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     for round_no in range(1, args.rounds + 1):
         states = {candidate: candidate_status(args.output_dir, candidate) for candidate in args.candidate_ids}
         complete = sum(state == "complete" for state in states.values())
+        completed_ids = [candidate for candidate, state in states.items() if state == "complete"]
+        _close_jobs(args.output_dir, completed_ids, success=True)
         pending = [candidate for candidate, state in states.items() if state != "complete"]
         elapsed = int(time.time() - started)
         print(f"  ↳ (+{elapsed // 60}m{elapsed % 60:02d}s) abuse verification {complete}/{len(states)} complete")
@@ -64,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         "BASH_WARN abuse verifier poll cap reached; unfinished: " + ", ".join(pending),
         file=sys.stderr,
     )
+    _close_jobs(args.output_dir, pending, success=False, reason="join_deadline_expired")
     return 1
 
 

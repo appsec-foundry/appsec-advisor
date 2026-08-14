@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/stride-progress.schema.json",
+  "title": "Current claim-bound STRIDE progress",
+  "type": "object",
+  "required": [
+    "schema_version", "component_id", "component_name", "action_id", "job_id",
+    "attempt", "analysis_depth", "step", "total", "label", "updated_at"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "component_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,99}$"},
+    "component_name": {"type": "string", "maxLength": 200},
+    "action_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"},
+    "job_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"},
+    "attempt": {"type": "integer", "minimum": 1, "maximum": 5},
+    "analysis_depth": {"enum": ["full", "light"]},
+    "step": {"type": "integer", "minimum": 1},
+    "total": {"type": "integer", "minimum": 1},
+    "label": {"type": "string", "maxLength": 300},
+    "updated_at": {"type": "string", "format": "date-time"}
+  },
+  "additionalProperties": false
+}

@@ -768,7 +768,7 @@ def test_stage1a_to_stage1b_controller_handoff_and_promotion(tmp_path):
     assert coverage["signals"][0]["boundary_ids"] == ["tb-1"]
 
 
-def test_stage1a_budget_exhaustion_preserves_input_and_blocks_stage1b(tmp_path, monkeypatch):
+def test_stage1a_active_budget_exhaustion_preserves_input_and_blocks_stage1b(tmp_path, monkeypatch):
     output = tmp_path / "out"
     output.mkdir()
     (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
@@ -785,7 +785,7 @@ def test_stage1a_budget_exhaustion_preserves_input_and_blocks_stage1b(tmp_path, 
         "phase=6 status=completed need_boundary_assessment=true\n",
         encoding="utf-8",
     )
-    (output / ".budget-critical").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(controller.budget_watchdog, "has_active_critical_claim", lambda _output: True)
 
     def fake_script(name, args, **kwargs):
         if name == "build_trust_boundary_assessment_input.py":

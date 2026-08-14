@@ -56,6 +56,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import budget_watchdog  # noqa: E402
 import check_permissions  # noqa: E402
 import context_routing  # noqa: E402
 import cutoff_cause  # noqa: E402
@@ -4685,7 +4686,7 @@ def _gate_architecture_stage(
             str(cfg.get("assessment_depth") or "standard"),
         ],
     )
-    if (output_dir / ".budget-critical").is_file():
+    if budget_watchdog.has_active_critical_claim(output_dir):
         from _atomic_io import atomic_write_text
 
         atomic_write_text(
@@ -4887,7 +4888,7 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
     if already := _finalized_abuse_verdicts(output_dir, candidates):
         receipts.append("already verified, not re-dispatched: " + ", ".join(already))
         candidates = [item for item in candidates if item not in already]
-    if not candidates or (output_dir / ".budget-critical").exists():
+    if not candidates or budget_watchdog.has_active_critical_claim(output_dir):
         return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
     if (cfg.get("runtime_generation") or LEGACY_GENERATION) == CONTEXT_V2_GENERATION:
         projection_args = ["--output-dir", str(output_dir), "--repo-root", repo_root]

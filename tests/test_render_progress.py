@@ -172,14 +172,14 @@ def test_assessment_models_line_is_rendered():
     assert "models · agents: stride-analyzer=sonnet" in out
 
 
-def test_agent_invoke_uses_component_and_model():
+def test_legacy_agent_invoke_is_not_rendered_as_a_start():
     out = _render(
         [
             "2026-06-06T17:21:26Z  [--------]  INFO   recon-scanner     AGENT_INVOKE"
             "  Reconnaissance scan (model: haiku)",
         ]
     )
-    assert "↳ recon-scanner (haiku): Reconnaissance scan" in out
+    assert out == ""
 
 
 def test_agent_spawn_strips_repo_root_and_model_field():
@@ -232,18 +232,26 @@ def test_agent_spawn_surfaces_stride_tier_from_stripped_param_block():
     assert "COMPONENT_ID" not in out
 
 
-def test_agent_invoke_surfaces_depth_from_orchestrator_echo():
-    """Background agents do not always reach the hook, so the orchestrator
-    echoes its own AGENT_INVOKE with depth= — that form must render too."""
+def test_call_scoped_stride_spawn_renders_canonical_full_depth_once():
+    line = (
+        "2026-08-14T17:20:13Z  [067fff5c]  INFO   AGENT_SPAWN"
+        "  agent_call_id=toolu_api  agent_type=appsec-advisor:appsec-stride-analyzer-v2"
+        "  model=sonnet  background=true  component_id=api  attempt=1"
+        "  analysis_depth=full  description=STRIDE: API"
+    )
+    out = _render([line, line])
+    assert out.count("↳ appsec-stride-analyzer-v2 (sonnet, full): STRIDE: API") == 1
+    assert "↳ :" not in out
+
+
+def test_legacy_agent_invoke_with_depth_is_not_rendered_as_a_start():
     out = _render(
         [
             "2026-06-06T17:21:26Z  [--------]  INFO   stride-analyzer   AGENT_INVOKE"
             "  STRIDE analysis for ci-cd (model: sonnet, MAX_TURNS=8, depth=screening)",
         ]
     )
-    assert "↳ stride-analyzer (sonnet, light): STRIDE analysis for ci-cd" in out
-    # The pairs are shown in the tag, so the raw suffix must not be repeated.
-    assert "MAX_TURNS=8" not in out
+    assert out == ""
 
 
 def test_agent_tag_unchanged_for_agents_without_a_tier():
