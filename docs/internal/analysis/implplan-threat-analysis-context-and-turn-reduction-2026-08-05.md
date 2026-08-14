@@ -2021,6 +2021,59 @@ suite passes with 707 tests. `make lint`, `make test`, and `make check` pass;
 fragment-registry, and target-specificity gates. No follow-up live scan was
 started before this green commit boundary.
 
+### Post-e1ad2ba6 invalid pre-R10 rerun — 2026-08-14
+
+The invocation started after commit `e1ad2ba6` reused
+`/tmp/appsec-context-v2-wp5a-smoke-20260810-` instead of the reserved
+`r10-postfix2` path. Its persisted invocation again contained only `--repo`
+and `--output`, so it resolved to standard depth with `rebuild=false` and
+`keep_runtime_files=false`. Run `0c910129-20d9-47ec-81df-a561d0a9035c` was
+therefore not an R10 cohort member and also modified the preserved prior abort
+directory. The reserved postfix2 path remained absent.
+
+The run live-proved the static actor fix: its 493-line raw recon summary passed
+the bounded projection and static/resolved actor receipts, actor discovery
+completed, and architecture, boundary, and control roles ran. Architecture
+produced five semantic components before deterministic reconciliation added
+the CI/CD and Web3 surfaces. Boundary analysis promoted seven candidates and
+accounted for all 18 mandatory signals. The run then reached an authoritative
+`RUN_ABORTED` at `2026-08-14T08:15:20Z` while building the STRIDE evidence
+bundles. Terminal cleanup removed `.active-tool-calls/`, live-proving the
+controller-abort cleanup added in `e1ad2ba6`.
+
+The reported first failure was a `websocket-server` focus path,
+`lib/startup/registerWebsocketEvents.ts`, outside that component's finalized
+`server.ts` scope. Replaying the new semantic validator against the preserved
+artifacts exposed the second latent failure that the fail-fast consumer had
+not reached: `auth-service` also focused `lib/insecurity.ts` outside its four
+`routes/*.ts` paths. Both files existed and carried evidence relevant to the
+named component; the architecture producer had modeled only entrypoints or
+route handlers and omitted delegated or shared implementation files from the
+component ownership globs. The control producer then emitted useful routing
+hints but validated only the standalone JSON Schema. The controller checked
+schema, size, and component IDs, so cross-artifact path ownership remained
+unvalidated until the bundle consumer blocked after the control role had
+returned.
+
+The source correction requires architecture components to own every concrete
+file used to support their assigned security role, including delegated
+initialization and middleware; co-located semantic components may share a file
+when evidence supports both roles. Control analysis may not repair or broaden
+that ownership. It must retain an out-of-scope fact as semantic context and
+omit the routing hint. `validate_intermediate.py` now applies the bundle's
+canonical path and glob semantics to `.stride-analyst-context.json` against
+the finalized `.components.json` and repository at the producer gate. The
+controller repeats that cross-artifact validation before manifest construction,
+and the existing bundle check remains an independent fail-closed boundary.
+Focused producer, controller, prompt, and bundle regressions pass with 672
+tests. The adjacent contract, schema, routing, inventory, token-bound, and
+dispatch suites add 233 passing tests. `make lint`, configuration validation,
+and context-routing validation pass. `make test` reports 12,460 passed, 95
+skipped, and 91.41% coverage; the final `make check` reports the same test
+counts and passes its format, configuration, fragment-registry, and
+target-specificity gates. No follow-up live scan was started before this green
+commit boundary.
+
 ## Verification matrix
 
 Use the same target commit, Claude Code version, exact model IDs, versioned

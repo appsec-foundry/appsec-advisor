@@ -53,6 +53,12 @@ against `REPO_ROOT` before using it in an output; never copy a plausible file
 name from prose. Every component needs repository-relative path globs that
 match at least one existing contained repository entry, a client,
 application, or data tier, and a simple, moderate, or complex rating. Map
+each component to every concrete file that implements the security role you
+assign it, including handlers, middleware, and delegated initialization code;
+an entrypoint alone is insufficient when it calls implementation elsewhere.
+Shared files may belong to multiple co-located security components when their
+observed behavior supports both roles. Do not broaden a component to an
+unrelated parent directory merely to include one file. Map
 deployment zones only from the canonical access-zone values carried by the
 input. Leave reachability unknown when evidence is insufficient. Keep auth or
 identity as its own component even when its source is co-located with a

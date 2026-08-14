@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Findings index now orders entries by effective severity, with Critical findings first and stable IDs within each tier.
 - Context-v2 now builds project context deterministically, excludes prior-run evidence, routes analyst candidates and bounded abuse evidence through receipted inputs, preserves rebuild and STRIDE retry state, serializes rebuild deliverables as full assessments, and rejects resume after authoritative controller aborts.
 - Context-v2 now evaluates the complete Config/IaC catalog without a model turn.
-- Context-v2 now validates and reconstructs every active structured projection, including distinct static and resolved actor contracts, before dispatch.
+- Context-v2 now validates and reconstructs every active structured projection, including distinct actor contracts and component-owned STRIDE routing hints, before dispatch.
 - Context-v2 STRIDE routing now accepts component-owned focus directories under recursive file globs.
 - Completion summaries now distinguish STRIDE-analyzed components from the full modeled inventory.
 - Completed and controller-aborted runs now clear live tool-call markers even when other runtime diagnostics are preserved.

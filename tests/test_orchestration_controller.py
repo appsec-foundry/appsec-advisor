@@ -2882,6 +2882,32 @@ def test_context_v2_analyst_context_rejects_unknown_component_id(tmp_path):
         controller._validate_context_v2_analyst_context(output)
 
 
+def test_context_v2_analyst_context_rejects_out_of_scope_routing_before_manifest_build(tmp_path):
+    output = tmp_path / "out"
+    repo = tmp_path / "repo"
+    output.mkdir()
+    (repo / "services" / "realtime").mkdir(parents=True)
+    (repo / "shared").mkdir()
+    (repo / "services" / "realtime" / "entry.ts").write_text("export const start = true\n", encoding="utf-8")
+    (repo / "shared" / "handler.ts").write_text("export const handle = true\n", encoding="utf-8")
+    (output / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [{"id": "realtime-service", "paths": ["services/realtime/**"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output / ".stride-analyst-context.json").write_text(
+        json.dumps({"realtime-service": {"focus_paths": ["shared/handler.ts"]}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="routing validation failed.*outside the component paths"):
+        controller._validate_context_v2_analyst_context(output, repo_root=repo)
+
+
 def test_context_v2_analyst_context_rejects_oversized_routing_list(tmp_path):
     output = tmp_path / "out"
     output.mkdir()

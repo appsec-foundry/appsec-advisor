@@ -631,12 +631,37 @@ def test_routing_warns_and_skips_missing_focus_path(tmp_path, capsys):
     assert component.get("focus_paths", []) == []
 
 
+def test_producer_routing_gate_rejects_missing_focus_path(tmp_path):
+    repo, _output = _repo(tmp_path)
+
+    with pytest.raises(bundles.BundleError, match="does not exist"):
+        bundles.validate_component_routing_values(
+            "backend-api",
+            ["src/**"],
+            {"focus_paths": ["src/nonexistent.py"]},
+            repo,
+        )
+
+
 def test_routing_rejects_path_outside_component_scope(tmp_path):
     repo, output = _repo(tmp_path)
     other = repo / "other.py"
     other.write_text("value = 1\n", encoding="utf-8")
     with pytest.raises(bundles.BundleError, match="outside the component paths"):
         bundles.build_all(output, repo, _manifest(_component(focus_paths=["other.py"])))
+
+
+def test_producer_routing_gate_rejects_existing_path_outside_component_scope(tmp_path):
+    repo, _output = _repo(tmp_path)
+    (repo / "other.py").write_text("value = 1\n", encoding="utf-8")
+
+    with pytest.raises(bundles.BundleError, match="outside the component paths"):
+        bundles.validate_component_routing_values(
+            "backend-api",
+            ["src/**"],
+            {"focus_paths": ["other.py"]},
+            repo,
+        )
 
 
 def test_focus_receipt_discloses_enumeration_limit(tmp_path, monkeypatch):

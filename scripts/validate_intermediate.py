@@ -1459,8 +1459,55 @@ def validate_recon_signals(data: Any, repo_root: Path | None = None) -> tuple[bo
     return len(errors) == 0, errors
 
 
-def validate_stride_analyst_context(data: Any) -> tuple[bool, list[str]]:
-    return _validate_schema_only("stride_analyst_context", data)
+def validate_stride_analyst_context(
+    data: Any,
+    output_dir: Path | None = None,
+    repo_root: Path | None = None,
+) -> tuple[bool, list[str]]:
+    """Validate the semantic overlay and optional component-owned routing."""
+    ok, errors = _validate_schema_only("stride_analyst_context", data)
+    if not ok or output_dir is None or repo_root is None:
+        return ok, errors
+
+    components_path = output_dir / ".components.json"
+    try:
+        components_document = json.loads(components_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"cannot validate routing ownership without {components_path}: {exc}")
+        return False, errors
+    components = components_document.get("components") if isinstance(components_document, dict) else None
+    if not isinstance(components, list):
+        errors.append("components-v1 artifact has no components array")
+        return False, errors
+    by_id = {
+        component.get("id"): component
+        for component in components
+        if isinstance(component, dict) and isinstance(component.get("id"), str)
+    }
+
+    from build_stride_evidence_bundles import (  # noqa: PLC0415
+        BundleError,
+        validate_component_routing_values,
+    )
+
+    for component_id, overlay in data.items():
+        if component_id == "_stride_profile" or not isinstance(overlay, dict):
+            continue
+        component = by_id.get(component_id)
+        if component is None:
+            errors.append(f"unknown component ID in stride analyst context: {component_id}")
+            continue
+        if not any(key in overlay for key in ("focus_paths", "exclude_paths")):
+            continue
+        paths = component.get("paths")
+        if not isinstance(paths, list) or not all(isinstance(value, str) for value in paths):
+            errors.append(f"component {component_id} has no valid paths array")
+            continue
+        try:
+            validate_component_routing_values(component_id, paths, overlay, repo_root)
+        except BundleError as exc:
+            errors.append(str(exc))
+    return len(errors) == 0, errors
 
 
 def validate_evidence_verification(data: Any) -> tuple[bool, list[str]]:
@@ -1529,7 +1576,9 @@ def main() -> None:
         )
         sys.exit(2)
 
-    if sys.argv[1] not in _VALIDATORS or (repo_root is not None and sys.argv[1] != "recon_signals"):
+    if sys.argv[1] not in _VALIDATORS or (
+        repo_root is not None and sys.argv[1] not in {"recon_signals", "stride_analyst_context"}
+    ):
         print(
             f"Usage: {sys.argv[0]} <{'|'.join(_VALIDATORS)}> <path-to-json-file> [--repo-root <path>]",
             file=sys.stderr,
@@ -1566,6 +1615,8 @@ def main() -> None:
     # sibling files (e.g. .stride-dispatch-manifest.json) can find them.
     if schema_type == "recon_signals":
         is_valid, errors = validate_recon_signals(data, repo_root=repo_root)
+    elif schema_type == "stride_analyst_context":
+        is_valid, errors = validate_stride_analyst_context(data, output_dir=path.parent, repo_root=repo_root)
     else:
         try:
             is_valid, errors = _VALIDATORS[schema_type](data, path.parent)

@@ -454,6 +454,17 @@ class TestBodyContentConsistency:
         flat = " ".join(body.split())
         assert "controller derives that reserved routing value from `.skill-config.json`" in flat
 
+    def test_context_v2_semantic_roles_preserve_component_path_ownership(self):
+        _, architecture = parse_frontmatter(AGENTS_DIR / "appsec-architecture-analyst.md")
+        _, controls = parse_frontmatter(AGENTS_DIR / "appsec-control-analyst.md")
+        architecture_flat = " ".join(architecture.split())
+        controls_flat = " ".join(controls.split())
+
+        assert "including handlers, middleware, and delegated initialization code" in architecture_flat
+        assert "Shared files may belong to multiple co-located security components" in architecture_flat
+        assert "retain the fact in the applicable semantic field but omit the routing hint" in controls_flat
+        assert '--repo-root "$REPO_ROOT"' in controls
+
     def test_recon_scanner_self_check_uses_canonical_oauth_heading(self):
         meta, body = parse_frontmatter(AGENTS_DIR / "appsec-recon-scanner.md")
         template = (AGENTS_DIR / "shared" / "recon-output-template.md").read_text(encoding="utf-8")

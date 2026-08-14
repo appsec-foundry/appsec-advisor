@@ -117,7 +117,10 @@ as defined by the schema.
 Write `focus_paths` and `exclude_paths` only as literal repository-relative
 file or directory paths already owned by that component and confirmed to exist
 under `REPO_ROOT`. Do not copy a path from recon or architecture prose without
-resolving it. Use `focus_paths` to
+resolving it. Compare each routing path with that component's finalized
+`.components.json` `paths` globs before publication. If relevant evidence is
+outside those globs, retain the fact in the applicable semantic field but omit
+the routing hint; never expand or rewrite component ownership here. Use `focus_paths` to
 prioritize source that should enter the bounded bundle. Use `exclude_paths`
 only to suppress optional broad discovery; never name a focus path, evidence
 citation, deterministic signal, output artifact, receipt, another component,
@@ -130,7 +133,7 @@ Immediately after writing both artifacts, use one Bash tool call:
 ```bash
 set -e
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" security-controls "$OUTPUT_DIR/.security-controls.json"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" stride_analyst_context "$OUTPUT_DIR/.stride-analyst-context.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" stride_analyst_context "$OUTPUT_DIR/.stride-analyst-context.json" --repo-root "$REPO_ROOT"
 ```
 
 Do not emit `AGENT_END` or finish before both commands exit 0. Correct the

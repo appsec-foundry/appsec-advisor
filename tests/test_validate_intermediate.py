@@ -1552,3 +1552,72 @@ def test_context_v2_schema_only_contracts_are_registered(kind):
     ok, errors = vi._VALIDATORS[kind]([])
     assert not ok
     assert errors == ["root must be a mapping"]
+
+
+def test_stride_analyst_context_rejects_focus_outside_finalized_component_paths(tmp_path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    (repo / "services" / "realtime").mkdir(parents=True)
+    (repo / "shared").mkdir()
+    output.mkdir()
+    (repo / "services" / "realtime" / "entry.ts").write_text("export const start = true\n", encoding="utf-8")
+    (repo / "shared" / "handler.ts").write_text("export const handle = true\n", encoding="utf-8")
+    (output / ".components.json").write_text(
+        _json.dumps(
+            {
+                "schema_version": 1,
+                "components": [{"id": "realtime-service", "paths": ["services/realtime/**"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    context = {"realtime-service": {"focus_paths": ["shared/handler.ts"]}}
+
+    ok, errors = vi.validate_stride_analyst_context(context, output_dir=output, repo_root=repo)
+
+    assert not ok, "RA-1: cross-artifact routing ownership drift was accepted"
+    assert any("outside the component paths" in error for error in errors)
+
+
+def test_stride_analyst_context_accepts_shared_file_owned_by_component(tmp_path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    (repo / "shared").mkdir(parents=True)
+    output.mkdir()
+    (repo / "shared" / "handler.ts").write_text("export const handle = true\n", encoding="utf-8")
+    (output / ".components.json").write_text(
+        _json.dumps(
+            {
+                "schema_version": 1,
+                "components": [{"id": "realtime-service", "paths": ["shared/handler.ts"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    context = {"realtime-service": {"focus_paths": ["shared/handler.ts"]}}
+
+    ok, errors = vi.validate_stride_analyst_context(context, output_dir=output, repo_root=repo)
+
+    assert ok, f"RA-1: valid shared component ownership was rejected: {errors}"
+
+
+def test_stride_analyst_context_cli_applies_cross_artifact_routing_gate(tmp_path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    output.mkdir()
+    (repo / "outside.ts").write_text("export const outside = true\n", encoding="utf-8")
+    (output / ".components.json").write_text(
+        _json.dumps({"schema_version": 1, "components": [{"id": "service", "paths": ["owned/**"]}]}),
+        encoding="utf-8",
+    )
+    context_path = output / ".stride-analyst-context.json"
+    context_path.write_text(
+        _json.dumps({"service": {"focus_paths": ["outside.ts"]}}),
+        encoding="utf-8",
+    )
+
+    completed = _run(["stride_analyst_context", str(context_path), "--repo-root", str(repo)])
+
+    assert completed.returncode == 1
+    assert "outside the component paths" in completed.stdout

@@ -1966,7 +1966,11 @@ def _check_context_v2_analyst_context_size(path: Path) -> None:
         )
 
 
-def _validate_context_v2_analyst_context(output_dir: Path) -> dict[str, Any]:
+def _validate_context_v2_analyst_context(
+    output_dir: Path,
+    *,
+    repo_root: Path | None = None,
+) -> dict[str, Any]:
     """Validate the bounded semantic overlay against finalized component IDs."""
     path = output_dir / ".stride-analyst-context.json"
     _check_context_v2_analyst_context_size(path)
@@ -1986,6 +1990,14 @@ def _validate_context_v2_analyst_context(output_dir: Path) -> dict[str, Any]:
     unknown = sorted(set(value) - component_ids)
     if unknown:
         raise ControllerError("stride-analyst-context-v1 contains unknown component IDs: " + ", ".join(unknown[:10]))
+    if repo_root is not None:
+        valid, errors = intermediate_contract.validate_stride_analyst_context(
+            value,
+            output_dir=output_dir,
+            repo_root=repo_root,
+        )
+        if not valid:
+            raise ControllerError("stride-analyst-context-v1 routing validation failed: " + "; ".join(errors[:10]))
     return value
 
 
@@ -3913,9 +3925,10 @@ def context_v2_prepare_stride(output_dir: Path) -> dict[str, Any]:
     output_dir, cfg = _load_context_v2_config(output_dir)
     controls_path = output_dir / ".security-controls.json"
     analyst_context_path = output_dir / ".stride-analyst-context.json"
+    repo_root = Path(str(cfg.get("repo_root") or output_dir))
     _run_script("validate_fragment.py", ["security-controls", str(controls_path)])
     _normalize_context_v2_analyst_context(output_dir)
-    _validate_context_v2_analyst_context(output_dir)
+    _validate_context_v2_analyst_context(output_dir, repo_root=repo_root)
     build_args = [
         str(output_dir),
         "--depth",
@@ -3932,7 +3945,7 @@ def context_v2_prepare_stride(output_dir: Path) -> dict[str, Any]:
     try:
         from build_stride_evidence_bundles import BundleError, write_repository_registry
 
-        write_repository_registry(Path(str(cfg.get("repo_root") or output_dir)), repository_registry)
+        write_repository_registry(repo_root, repository_registry)
     except (BundleError, OSError) as exc:
         raise ControllerError(f"cannot build context-v2 repository registry: {exc}") from exc
     build_args.extend(["--repository-registry", str(repository_registry)])

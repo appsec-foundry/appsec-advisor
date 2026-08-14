@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/stride-analyst-context.schema.json",
   "title": "Bounded per-component semantic context for STRIDE bundle construction",
+  "description": "Routing hints are additionally validated against the finalized component paths and repository before publication and bundle construction.",
   "type": "object",
   "propertyNames": { "pattern": "^(?:_stride_profile|[a-z][a-z0-9-]{1,99})$" },
   "properties": {

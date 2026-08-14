@@ -837,7 +837,12 @@ def _path_overlaps(left: str, right: str) -> bool:
     return left == right or left.startswith(right + "/") or right.startswith(left + "/")
 
 
-def _normalize_routing_values(component: dict[str, Any], registry: dict[str, Path]) -> tuple[list[str], list[str]]:
+def _normalize_routing_values(
+    component: dict[str, Any],
+    registry: dict[str, Path],
+    *,
+    reject_missing: bool = False,
+) -> tuple[list[str], list[str]]:
     """Normalize the compatibility string-or-list routing inputs at dispatch."""
     component_id = component["component_id"]
     paths_value = component.get("component_paths") or []
@@ -877,6 +882,8 @@ def _normalize_routing_values(component: dict[str, Any], registry: dict[str, Pat
                 raise BundleError(f"{name} for {component_id} must contain literal repository-relative paths")
             resolved = _canonical_under(repo_root, value)
             if not resolved.exists():
+                if reject_missing:
+                    raise BundleError(f"{name} for {component_id} does not exist: {value!r}")
                 skipped_missing.append(f"{name} for {component_id}: {value!r}")
                 continue
             if not _owned_routing_path(component_paths, value, is_directory=resolved.is_dir()):
@@ -901,6 +908,33 @@ def _normalize_routing_values(component: dict[str, Any], registry: dict[str, Pat
     component["focus_paths"] = focus_paths
     component["exclude_paths"] = exclude_paths
     return focus_paths, exclude_paths
+
+
+def validate_component_routing_values(
+    component_id: str,
+    component_paths: list[str],
+    overlay: dict[str, Any],
+    repo_root: Path,
+) -> tuple[list[str], list[str]]:
+    """Validate producer-authored routing hints against finalized ownership.
+
+    This is the cross-artifact producer gate used before bundle construction.
+    It deliberately rejects missing paths rather than applying the bundle
+    builder's compatibility skip, so the semantic producer can correct its
+    own artifact before returning control.
+    """
+    component = {
+        "component_id": component_id,
+        "component_paths": component_paths,
+    }
+    for key in ("focus_paths", "exclude_paths"):
+        if key in overlay:
+            component[key] = overlay[key]
+    return _normalize_routing_values(
+        component,
+        {"primary": repo_root.resolve()},
+        reject_missing=True,
+    )
 
 
 def _referenced_primary_paths(value: Any) -> set[str]:
