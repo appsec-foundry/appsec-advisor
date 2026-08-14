@@ -314,7 +314,7 @@ def _parse_composer_json(path: Path, rel: str) -> list[Dep]:
     out: list[Dep] = []
     for block in ("require", "require-dev"):
         for pkg, ver in (data.get(block) or {}).items():
-            if pkg.startswith("php") or pkg.startswith("ext-"):
+            if pkg == "php" or pkg.startswith("ext-"):
                 continue
             out.append(Dep("composer", pkg, str(ver), rel, _find_line_for_key(text, pkg)))
     return out

@@ -103,3 +103,15 @@ def test_cause_for_default_when_no_stall(tmp_path):
     assert mod.cause_for(tmp_path, "session_death")[0] == "session_death"
     assert mod.cause_for(tmp_path, "budget")[0] == "budget"
     assert mod.cause_for(tmp_path, "interrupted")[0] == "interrupted"
+
+
+def test_abort_detector_requires_run_aborted_in_the_event_column(tmp_path):
+    mod = _import_cutoff_cause()
+    start = 1_000_000_000
+    line = (
+        f"{_iso(start + 1)}  [--------]  WARN   controller          "
+        "ORCHESTRATION_WARN  untrusted filename contains RUN_ABORTED\n"
+    )
+    _write_run(tmp_path, start=start, log=line)
+
+    assert mod.detect_abort(tmp_path) is False

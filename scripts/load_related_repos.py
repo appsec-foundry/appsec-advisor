@@ -55,8 +55,10 @@ except ImportError:  # pragma: no cover - dependency is in scripts/requirements.
 
 _HERE = Path(__file__).resolve().parent
 _DEFAULT_SCHEMA = _HERE.parent / "schemas" / "related-repos.schema.yaml"
+_THREAT_MODEL_SCHEMA = _HERE.parent / "schemas" / "threat-model.output.schema.yaml"
 
 sys.path.insert(0, str(_HERE))
+from _threat_model_fields import evidence_file_of, extract_threats, is_active, severity_of  # noqa: E402
 from _url_guard import same_host, validate_target_url  # noqa: E402
 
 _DEFAULT_CAP = 12
@@ -234,18 +236,29 @@ def _parse_threat_model(raw: str) -> dict[str, Any] | None:
     return data
 
 
+def _validate_versioned_threat_model(model: dict[str, Any]) -> list[str]:
+    """Validate models that declare the current external schema version."""
+    meta = model.get("meta") if isinstance(model.get("meta"), dict) else {}
+    if meta.get("schema_version") != 1:
+        return []
+    if jsonschema is None:
+        return ["jsonschema dependency unavailable"]
+    try:
+        schema = yaml.safe_load(_THREAT_MODEL_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return [f"could not load threat-model output schema: {exc}"]
+    return [
+        f"{'/'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message}"
+        for error in sorted(
+            jsonschema.Draft202012Validator(schema).iter_errors(model),
+            key=lambda item: list(item.absolute_path),
+        )
+    ]
+
+
 def _extract_threats(tm: dict[str, Any]) -> list[dict[str, Any]]:
     """Support both v1 flat ``threats[]`` and v2 ``threat_categories[].findings[]``."""
-    if isinstance(tm.get("threats"), list):
-        return [t for t in tm["threats"] if isinstance(t, dict)]
-    out: list[dict[str, Any]] = []
-    for cat in tm.get("threat_categories", []) or []:
-        if not isinstance(cat, dict):
-            continue
-        for f in cat.get("findings", []) or []:
-            if isinstance(f, dict):
-                out.append(f)
-    return out
+    return extract_threats(tm)
 
 
 def _is_outdated(generated: str | None, *, outdated_days: int, now: _dt.datetime) -> bool:
@@ -272,10 +285,9 @@ def _filter_findings(
 
     keep: list[dict[str, Any]] = []
     for t in threats:
-        status = str(t.get("status", "")).strip().lower()
-        if status != "open":
+        if not is_active(t):
             continue
-        severity = str(t.get("severity", "")).strip().title()
+        severity = severity_of(t)
         component = str(t.get("component", "") or t.get("component_name", "")).strip()
         component_match = (component.lower() in declared_set) if declared_set else True
 
@@ -478,21 +490,15 @@ def _compute_expectation_mismatch(
 
 
 def _shape_finding(t: dict[str, Any]) -> dict[str, Any]:
-    evidence = t.get("evidence")
-    evidence_file = None
-    if isinstance(evidence, dict):
-        evidence_file = evidence.get("file")
-    elif isinstance(t.get("evidence_file"), str):
-        evidence_file = t["evidence_file"]
     return {
         "id": str(t.get("id") or t.get("threat_id") or ""),
         "title": str(t.get("title") or t.get("summary") or ""),
         "stride": str(t.get("stride") or t.get("stride_category") or ""),
         "cwe": str(t.get("cwe") or ""),
-        "severity": str(t.get("severity") or "").strip().title(),
+        "severity": severity_of(t),
         "component": str(t.get("component") or t.get("component_name") or ""),
         "status": "open",
-        "evidence_file": evidence_file,
+        "evidence_file": evidence_file_of(t),
     }
 
 
@@ -504,7 +510,7 @@ def _shape_finding(t: dict[str, Any]) -> dict[str, Any]:
 def _count_threats(threats: list[dict[str, Any]]) -> dict[str, int]:
     counts = {"total": len(threats), "critical": 0, "high": 0, "medium": 0, "low": 0, "open": 0}
     for t in threats:
-        sev = str(t.get("severity", "")).strip().title()
+        sev = severity_of(t)
         if sev == "Critical":
             counts["critical"] += 1
         elif sev == "High":
@@ -513,7 +519,7 @@ def _count_threats(threats: list[dict[str, Any]]) -> dict[str, int]:
             counts["medium"] += 1
         elif sev == "Low":
             counts["low"] += 1
-        if str(t.get("status", "")).lower() == "open":
+        if is_active(t):
             counts["open"] += 1
     return counts
 
@@ -582,6 +588,13 @@ def _process_entry(
     if tm is None:
         record["threat_model"]["status"] = "unavailable"
         record["threat_model"]["fetch_detail"] = "unavailable: yaml parse error"
+        return record
+    contract_errors = _validate_versioned_threat_model(tm)
+    if contract_errors:
+        record["threat_model"]["status"] = "unavailable"
+        record["threat_model"]["fetch_detail"] = "unavailable: threat-model schema violation: " + "; ".join(
+            contract_errors[:3]
+        )
         return record
 
     meta = tm.get("meta") if isinstance(tm.get("meta"), dict) else {}

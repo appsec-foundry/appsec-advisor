@@ -85,3 +85,25 @@ def test_long_event_name_is_not_truncated():
     long_event = "YAML_INVARIANT_DRIFT"  # 20 > EVENT_WIDTH (18)
     line = format_line(long_event, "msg", level="WARN", component="skill")
     assert long_event in line
+
+
+def test_parse_line_recovers_exact_event_column_for_both_shapes():
+    component_line = format_line("RUN_ABORTED", "contract failure", level="WARN", component="controller")
+    hook_line = format_line("SESSION_STOP", "reason=end_turn")
+
+    component = event_log.parse_line(component_line)
+    hook = event_log.parse_line(hook_line)
+
+    assert component is not None
+    assert (component.component, component.event, component.detail) == ("controller", "RUN_ABORTED", "contract failure")
+    assert hook is not None
+    assert (hook.component, hook.event, hook.detail) == (None, "SESSION_STOP", "reason=end_turn")
+
+
+def test_parse_line_does_not_promote_event_name_from_detail():
+    line = format_line("ORCHESTRATION_WARN", "RUN_ABORTED        appears only in detail")
+
+    parsed = event_log.parse_line(line)
+
+    assert parsed is not None
+    assert parsed.event == "ORCHESTRATION_WARN"

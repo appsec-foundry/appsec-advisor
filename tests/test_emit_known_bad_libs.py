@@ -57,6 +57,33 @@ def test_manifest_match_emits_known_bad_lib_finding(tmp_path: Path) -> None:
     assert finding["derived_from"] == []
 
 
+def test_composer_package_beginning_with_php_reaches_known_bad_detection(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    repo.mkdir()
+    out.mkdir()
+    _write(repo / "composer.json", '{"require-dev": {"phpunit/phpunit": "^5.6.2"}}\n')
+    plugin = tmp_path / "plugin"
+    _write(
+        plugin / "data" / "known-bad-libs.yaml",
+        """
+version: 1
+known_bad:
+  - ecosystem: composer
+    package: phpunit/phpunit
+    reason: legacy eval-stdin exposure
+    category: abandoned_with_known_cves
+    severity: Medium
+""".lstrip(),
+    )
+
+    assert kbl.run(repo, out, "T2", plugin) == 0
+
+    findings = _findings(out)
+    assert len(findings) == 1
+    assert "phpunit/phpunit" in findings[0]["title"]
+
+
 def test_asset_tier_caps_known_bad_lib_severity(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     out = tmp_path / "out"

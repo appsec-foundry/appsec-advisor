@@ -639,6 +639,7 @@ def _live_snapshot(output_dir: Path) -> dict:
       * ``lock``              — classify-style summary or None
       * ``checkpoint``        — phase / status from ``.appsec-checkpoint``
       * ``current``           — latest structured progress state or None
+      * ``phase``             — freshest phase from progress, then checkpoint
       * ``threshold_seconds`` — phase-aware stall window applied to filtering
       * ``active_tool_calls`` — list of {tool_use_id, agent, tool, age_s,
                                 input_summary} sorted oldest-first
@@ -662,6 +663,7 @@ def _live_snapshot(output_dir: Path) -> dict:
             "lock": None,
             "checkpoint": None,
             "current": None,
+            "phase": None,
             "threshold_seconds": 0,
             "active_tool_calls": [],
             "progress": [],
@@ -676,7 +678,18 @@ def _live_snapshot(output_dir: Path) -> dict:
     except Exception:
         report = {"state": "unknown", "lock": None, "checkpoint": None, "reasons": []}
     cp = report.get("checkpoint") or {}
-    phase = cp.get("phase")
+
+    # Structured progress advances at semantic phase boundaries where the
+    # coarse checkpoint can legitimately remain behind. Use the freshest
+    # progress phase for both display and phase-aware liveness thresholds.
+    now = int(time.time())
+    current = _load_json(progress_state_path)
+    if current:
+        try:
+            current["age_s"] = max(0, now - int(progress_state_path.stat().st_mtime))
+        except OSError:
+            current["age_s"] = 0
+    phase = (current or {}).get("phase") or cp.get("phase")
 
     # Resolve threshold: phase from checkpoint, depth from skill-config.
     depth = "standard"
@@ -692,20 +705,23 @@ def _live_snapshot(output_dir: Path) -> dict:
         threshold = 300
 
     # Active tool calls — per-file scan, age-filtered.
-    now = int(time.time())
-    current = _load_json(progress_state_path)
-    if current:
-        try:
-            current["age_s"] = max(0, now - int(progress_state_path.stat().st_mtime))
-        except OSError:
-            current["age_s"] = 0
-
     active: list[dict] = []
     if has_active:
         for f in sorted(active_dir.glob("*.json")):
             try:
                 entry = json.loads(f.read_text(encoding="utf-8"))
+                # The directory also carries hook bookkeeping such as
+                # dispatch-times.json. Only a structurally valid PreToolUse
+                # marker represents a live call.
+                if not isinstance(entry, dict):
+                    continue
+                if not str(entry.get("tool_use_id") or "").strip():
+                    continue
+                if not str(entry.get("tool") or "").strip():
+                    continue
                 started = int(entry.get("started_at") or 0)
+                if started <= 0:
+                    continue
                 age = max(0, now - started) if started else 0
                 if started and age > threshold * 2:
                     # Stale Pre-only entry (sub-agent without propagating
@@ -731,11 +747,19 @@ def _live_snapshot(output_dir: Path) -> dict:
                 age = max(0, now - int(f.stat().st_mtime))
             except OSError:
                 age = 0
+            step = data.get("step")
+            total = data.get("total")
+            try:
+                completed = int(step) >= int(total) if step is not None and total is not None else False
+            except (TypeError, ValueError):
+                completed = False
+            if completed or str(data.get("status") or "").lower() in {"complete", "completed"}:
+                continue
             progress.append(
                 {
                     "component": data.get("component_name") or data.get("component_id") or f.stem,
-                    "step": data.get("step"),
-                    "total": data.get("total"),
+                    "step": step,
+                    "total": total,
                     "label": (data.get("label") or "").strip(),
                     "age_s": age,
                 }
@@ -750,6 +774,7 @@ def _live_snapshot(output_dir: Path) -> dict:
         "lock": report.get("lock"),
         "checkpoint": cp or None,
         "current": current,
+        "phase": phase,
         "threshold_seconds": threshold,
         "active_tool_calls": active,
         "progress": progress,
@@ -763,7 +788,7 @@ def _render_live(snap: dict) -> str:
         return "  (no run in progress — output dir has no lock / progress / active-tool markers)\n"
 
     cp = snap.get("checkpoint") or {}
-    phase = cp.get("phase", "?")
+    phase = snap.get("phase") or cp.get("phase", "?")
     status = cp.get("status", "?")
     lock = snap.get("lock") or {}
     hb_age = lock.get("heartbeat_age")

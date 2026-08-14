@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reconnaissance now excludes prior assessment directories even when the output path was user-named.
 - Reconnaissance and architecture handoffs now remove unverifiable summary path claims, carry structured signal evidence, and reject stale repository paths before they can reach component analysis.
 - The Findings index now orders entries by effective severity, with Critical findings first and stable IDs within each tier.
-- Context-v2 now builds project context deterministically, excludes prior-run evidence, routes analyst candidates and bounded abuse evidence through receipted inputs, preserves rebuild and STRIDE retry state, serializes rebuild deliverables as full assessments, and rejects resume after authoritative controller aborts.
+- Context-v2 now builds project context deterministically, excludes prior-run evidence, routes bounded inputs through versioned contracts, isolates STRIDE retry writers, normalizes merged findings against the component registry before post-STRIDE synthesis, preserves rebuild state, serializes rebuild deliverables as full assessments, and rejects resume after exact controller-abort events.
 - Context-v2 now evaluates the complete Config/IaC catalog without a model turn.
 - Context-v2 now validates and reconstructs every active structured projection, including distinct actor contracts and component-owned STRIDE routing hints, before dispatch.
 - Context-v2 STRIDE routing now accepts component-owned focus directories under recursive file globs.
@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Threat-model assembly now accepts validated trust-boundary inheritance provenance instead of aborting before report rendering.
 - Recon now surfaces predictable OAuth-derived and bundled client credentials, preserves distinct focused evidence under fixed bounds, and avoids binding generic escalation prose to unrelated abuse steps.
 - Per-role telemetry now sums dispatches across STRIDE waves and deduplicates replayed stats groups.
+- Live status now ignores bookkeeping and completed component markers, follows the freshest phase, and preserves authoritative controller-abort reasons in run issues.
+- Related-repository findings now consume current risk, lifecycle, and evidence fields while retaining explicit legacy compatibility.
+- Composer dependency analysis now retains real packages whose names begin with `php`, including known-bad PHPUnit versions.
+- Final threat-model YAML is now schema-validated before it replaces the prior canonical artifact.
 
 ### Changed
 

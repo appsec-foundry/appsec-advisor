@@ -91,22 +91,22 @@ UNRESOLVED_DECISION_KEYS=<dispatch_jobs[].unresolved_decision_keys>
 ```
 
 Resolve every output-relative input and output path under absolute `OUTPUT_DIR`;
-aliases are not shell variables. Never probe an empty alias. Alias boundary
-input as `ASSESSMENT_INPUT_PATH` and merger input as `CANDIDATES_FILE`.
+never resolve any output artifact against `REPO_ROOT`. Alias boundary/merger
+inputs as `ASSESSMENT_INPUT_PATH`/`CANDIDATES_FILE`. Never probe an empty alias.
 
-Aliases: context gets `CHECK_REQUIREMENTS`, `REQUIREMENTS_URL_OVERRIDE`; recon
-gets `SCOPE`, `SCAN_MANIFEST`, `ASSESSMENT_DEPTH`; config gets `ASSESSMENT_DEPTH`;
-triage gets it too; evidence also gets `EVIDENCE_VERIFIER_MAX_FINDINGS`. Omit nulls.
+Aliases: context `CHECK_REQUIREMENTS`, `REQUIREMENTS_URL_OVERRIDE`; recon `SCOPE`,
+`SCAN_MANIFEST`, `ASSESSMENT_DEPTH`; config gets `ASSESSMENT_DEPTH`; triage too; evidence
+`EVIDENCE_VERIFIER_MAX_FINDINGS`. Omit nulls.
 
 For STRIDE pass `COMPONENT_ID` plus plan, bundle, taxonomy, and optional
 component repository-projection paths resolved under absolute `OUTPUT_DIR` as
 `COMPONENT_CONTEXT_PLAN_PATH`, `EVIDENCE_BUNDLE_PATH`,
-`THREAT_TAXONOMY_PATH`, and `REPOSITORY_REGISTRY_PATH`. Pass job hashes as
+`THREAT_TAXONOMY_PATH`, `REPOSITORY_REGISTRY_PATH`, and `STRIDE_OUTPUT_PATH`.
+`STRIDE_OUTPUT_PATH` is the sole attempt-qualified write path. Pass job hashes as
 `COMPONENT_CONTEXT_PLAN_SHA256`, `EVIDENCE_BUNDLE_SHA256`, and
 `THREAT_TAXONOMY_SHA256`. The component plan is authoritative for analysis
 depth, turn/sampling policy, estimates, profile, lenses, and hashes; do not
-repeat them. Never resolve any output
-artifact against `REPO_ROOT`. Preserve Group A → B → C order from
+repeat them. Preserve Group A → B → C order from
 `phase-group-threats.md`. Read focus/exclude routing only from the receipted
 bundle. Resolve `REPOSITORY_REGISTRY_PATH` only from
 `dispatch_jobs[].repository_projection_path`; omit it when absent. Never pass

@@ -660,6 +660,27 @@ class TestContextV2LifecycleGuards:
         assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "authoritative RUN_ABORTED" in payload["hookSpecificOutput"]["permissionDecisionReason"]
 
+    def test_pretool_fails_closed_on_corrupt_persisted_run_config(self, tmp_path):
+        output = tmp_path / "out"
+        output.mkdir()
+        (output / ".skill-config.json").write_text("{not-json", encoding="utf-8")
+        env = os.environ.copy()
+        env.update({"OUTPUT_DIR": str(output), "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT)})
+        event = make_pre_tool_event("Agent", {"subagent_type": "appsec-advisor:appsec-architecture-analyst"})
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+
+        payload = json.loads(result.stdout)
+        assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "configuration is unreadable" in payload["hookSpecificOutput"]["permissionDecisionReason"]
+
     def test_token_usage_logged_on_stop(self, tmp_path):
         event = {
             "hook_event_name": "Stop",

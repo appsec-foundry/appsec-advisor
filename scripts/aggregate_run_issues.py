@@ -1395,6 +1395,27 @@ def _extract_run_outcome(agent_log: list[tuple[int, str]], output_dir: Path) -> 
         return []
     if rec.get("run_completed"):
         return []
+    # RUN_ABORTED is the authoritative controller verdict. Preserve its exact
+    # reason instead of replacing it with the generic missing-deliverable
+    # symptom; otherwise .run-issues.json sends operators to the wrong layer.
+    for line_number, raw in reversed(agent_log):
+        event = _parse_event_line(raw)
+        if event and event.get("event") == "RUN_ABORTED":
+            detail = (event.get("detail") or "controller gate rejected the run").strip()
+            return [
+                {
+                    "category": "run_incomplete",
+                    "severity": "error",
+                    "title": f"Run aborted at authoritative controller gate — {detail}",
+                    "evidence": {
+                        "log_file": ".agent-run.log",
+                        "log_line": line_number,
+                        "raw_event": raw.strip(),
+                        "timestamp_iso": event.get("ts") or "",
+                        "source_agent": event.get("source") or "skill-controller",
+                    },
+                }
+            ]
     unrecovered = rec.get("unrecovered", 0)
     # The run reached no deliverable. Flag it only when there is positive evidence
     # it did real work: it reached the STRIDE merge (.threats-merged.json), or it

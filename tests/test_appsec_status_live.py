@@ -294,6 +294,15 @@ def test_threshold_uses_skill_config_depth(tmp_path, appsec_status):
     assert snap["threshold_seconds"] == 1080  # 720 × 1.5
 
 
+def test_current_progress_phase_overrides_stale_checkpoint(tmp_path, appsec_status):
+    _seed_run(tmp_path, phase="7", current_progress={"phase": "9"})
+    snap = appsec_status._live_snapshot(tmp_path)
+    assert snap["checkpoint"]["phase"] == "7"
+    assert snap["phase"] == "9"
+    assert snap["threshold_seconds"] == 540
+    assert "Phase 9" in appsec_status._render_live(snap).splitlines()[0]
+
+
 # ---------------------------------------------------------------------------
 # Active tool-call age filter — sub-agent missing-Post must not pollute view.
 # ---------------------------------------------------------------------------
@@ -313,6 +322,15 @@ def test_stale_active_tool_call_is_filtered(tmp_path, appsec_status):
     assert snap["active_tool_calls"] == []
 
 
+def test_dispatch_time_bookkeeping_is_not_a_live_tool_call(tmp_path, appsec_status):
+    _seed_run(tmp_path)
+    (tmp_path / ".active-tool-calls" / "dispatch-times.json").write_text(
+        json.dumps({"deadbeef": time.time()}),
+        encoding="utf-8",
+    )
+    assert appsec_status._live_snapshot(tmp_path)["active_tool_calls"] == []
+
+
 # ---------------------------------------------------------------------------
 # Progress sort + age tracking
 # ---------------------------------------------------------------------------
@@ -326,6 +344,12 @@ def test_progress_entries_include_step_label(tmp_path, appsec_status):
     for p in snap["progress"]:
         assert p["step"] is not None
         assert p["total"] == 9
+
+
+def test_completed_progress_entries_are_not_in_flight(tmp_path, appsec_status):
+    _seed_run(tmp_path, progress_components=[("auth", 9), ("billing", 4)])
+    progress = appsec_status._live_snapshot(tmp_path)["progress"]
+    assert [entry["component"] for entry in progress] == ["Billing"]
 
 
 def test_completed_stride_count_is_surfaced(tmp_path, appsec_status):

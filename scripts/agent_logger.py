@@ -1984,10 +1984,21 @@ def _context_v2_parallel_foreground_reason(data: dict) -> str | None:
 def _context_v2_terminal_abort_reason() -> str | None:
     """Reject tool use after a current-run context-v2 controller abort."""
     output_dir = Path(_output_dir())
-    try:
-        config = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, AttributeError):
+    config_path = output_dir / ".skill-config.json"
+    if not config_path.is_file():
         return None
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, AttributeError):
+        return (
+            "The persisted run configuration is unreadable, so the hook cannot prove that this invocation may "
+            "continue. Preserve the runtime artifacts for diagnosis and start a fresh rebuild invocation."
+        )
+    if not isinstance(config, dict):
+        return (
+            "The persisted run configuration is invalid, so the hook cannot prove that this invocation may "
+            "continue. Preserve the runtime artifacts for diagnosis and start a fresh rebuild invocation."
+        )
     if config.get("runtime_generation") != "context-v2":
         return None
     try:
@@ -1995,7 +2006,10 @@ def _context_v2_terminal_abort_reason() -> str | None:
 
         aborted = cutoff_cause.detect_abort(output_dir)
     except Exception:
-        return None
+        return (
+            "The context-v2 abort state is unreadable, so the hook cannot prove that this invocation may continue. "
+            "Preserve the runtime artifacts for diagnosis and start a fresh rebuild invocation."
+        )
     if not aborted:
         return None
     return (

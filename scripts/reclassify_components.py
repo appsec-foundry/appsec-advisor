@@ -21,13 +21,14 @@ This script applies a conservative deterministic reassignment:
     and emit an advisory line on stderr — same shape as the existing
     validate_intermediate.py advisory.
 
-The script mutates both `threat-model.yaml.threats[].component` and
+The normal mode mutates both `threat-model.yaml.threats[].component` and
 `.threats-merged.json.threats[].component_id` (when present) so the two
-artefacts stay consistent. Idempotent — a second run on the same input
-produces no further changes.
+artefacts stay consistent. `--merged-only` performs the same repair against
+the Stage-1 component registry before a YAML report exists. Both modes are
+idempotent.
 
 Usage:
-    python3 reclassify_components.py <output_dir>
+    python3 reclassify_components.py [--merged-only] <output_dir>
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _atomic_io import atomic_write_json  # noqa: E402
 from _boundary_adjacency import is_adjacent  # noqa: E402
 
 
@@ -303,7 +305,7 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
                 else:
                     print(
                         f"reclassify_components: removed optional boundary reference "
-                        f"{ref.get('boundary_id')} from {t.get('id') or '<anon>'}; "
+                        f"{ref.get('boundary_id')} from {t.get('t_id') or t.get('id') or '<anon>'}; "
                         "new component is not a confirmed adjacent origin or evidence did not survive",
                         file=sys.stderr,
                     )
@@ -317,7 +319,7 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         t["evidence_flags"] = flags
         changes.append(
             {
-                "id": t.get("id") or "<anon>",
+                "id": t.get("t_id") or t.get("id") or "<anon>",
                 "from": current or "<unset>",
                 "to": new_cid,
                 "evidence_files": files,
@@ -351,7 +353,7 @@ def unresolved_phantoms(data: dict) -> list[tuple[str, str]]:
             continue
         cur = (t.get("component") or t.get("component_id") or "").strip()
         if cur and cur not in known:
-            out.append((t.get("id") or "<anon>", cur))
+            out.append((t.get("t_id") or t.get("id") or "<anon>", cur))
     return out
 
 
@@ -400,8 +402,86 @@ def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
             t.pop("boundary_refs", None)
         n += 1
     if n:
-        path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        atomic_write_json(path, doc, sort_keys=False)
     return n
+
+
+def _load_json_mapping(path: Path, label: str) -> dict | None:
+    if not path.is_file():
+        print(f"reclassify_components: no {label} at {path}", file=sys.stderr)
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"reclassify_components: could not parse {path}: {exc}", file=sys.stderr)
+        return None
+    if not isinstance(value, dict):
+        print(f"reclassify_components: {path} did not parse to a mapping", file=sys.stderr)
+        return None
+    return value
+
+
+def _run_merged_only(output_dir: Path, *, strict: bool, check_only: bool) -> int:
+    """Repair the canonical merged register before threat-model.yaml exists."""
+    merged_path = output_dir / ".threats-merged.json"
+    components_path = output_dir / ".components.json"
+    merged = _load_json_mapping(merged_path, "merged threat register")
+    components_doc = _load_json_mapping(components_path, "component registry")
+    if merged is None or components_doc is None:
+        return 1
+    threats = merged.get("threats")
+    components = components_doc.get("components")
+    if not isinstance(threats, list):
+        print(f"reclassify_components: {merged_path} has no threats array", file=sys.stderr)
+        return 1
+    if not isinstance(components, list) or not components:
+        print(f"reclassify_components: {components_path} has no non-empty components array", file=sys.stderr)
+        return 1
+
+    boundaries: list = []
+    boundaries_path = output_dir / ".trust-boundaries.json"
+    if boundaries_path.is_file():
+        boundaries_doc = _load_json_mapping(boundaries_path, "trust-boundary registry")
+        if boundaries_doc is None:
+            return 1
+        raw_boundaries = boundaries_doc.get("trust_boundaries")
+        if isinstance(raw_boundaries, list):
+            boundaries = raw_boundaries
+
+    # Keep the canonical threats list by reference so reclassify mutates the
+    # loaded merged artifact without manufacturing a second stage contract.
+    working = {
+        "components": components,
+        "trust_boundaries": boundaries,
+        "threats": threats,
+    }
+    on_disk_phantoms = unresolved_phantoms(working)
+    working, changes = reclassify(working)
+    if changes and not check_only:
+        atomic_write_json(merged_path, merged, sort_keys=False)
+
+    if changes:
+        details = ", ".join(f"{c['id']}:{c['from']}→{c['to']}" for c in changes[:8])
+        more = f" (+{len(changes) - 8} more)" if len(changes) > 8 else ""
+        action = "would reassign" if check_only else "reassigned"
+        print(f"reclassify_components: {action} {len(changes)} merged threat(s) [{details}{more}]")
+    else:
+        print("reclassify_components: no merged tier-confusion drift found — nothing to reassign")
+
+    leftovers = on_disk_phantoms if check_only else unresolved_phantoms(working)
+    if leftovers:
+        sample = ", ".join(f"{tid}:{cid}" for tid, cid in leftovers[:6])
+        where = "(on disk) carry a" if check_only else "still carry a"
+        msg = (
+            f"reclassify_components: {len(leftovers)} merged threat(s) {where} "
+            f"non-registered component [{sample}]. Check components[].paths cover "
+            "the evidence files."
+        )
+        if strict:
+            print(f"ERROR {msg}", file=sys.stderr)
+            return 3
+        print(f"WARNING {msg}", file=sys.stderr)
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -418,14 +498,17 @@ def main(argv: list[str]) -> int:
     #             the already-rendered anchor — fail closed with a clear message.
     strict = "--strict" in argv
     check_only = "--check" in argv
+    merged_only = "--merged-only" in argv
     positionals = [a for a in argv if not a.startswith("--")]
     if len(positionals) != 1:
         print(
-            "Usage: reclassify_components.py [--strict] [--check] <output_dir>",
+            "Usage: reclassify_components.py [--strict] [--check] [--merged-only] <output_dir>",
             file=sys.stderr,
         )
         return 2
     output_dir = Path(positionals[0])
+    if merged_only:
+        return _run_merged_only(output_dir, strict=strict, check_only=check_only)
     yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.is_file():
         print(f"reclassify_components: no yaml at {yaml_path}", file=sys.stderr)

@@ -87,6 +87,7 @@ EXPECTED_WHITELIST_DIRS = {
     ".progress",
     ".taxonomy-slices",
     ".dispatch-context",
+    ".stride-attempts",
     ".merge-context",
     # M3.6 — per-tool-call markers; sub-agent calls without a propagating
     # PostToolUse may leave stale entries that the post-run cleanup wipes.

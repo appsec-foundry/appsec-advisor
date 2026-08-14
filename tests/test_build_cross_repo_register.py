@@ -436,11 +436,7 @@ class TestReadThreatModelMeta:
         meta = bcrr._read_threat_model_meta(f)
         assert meta["status"] == "found"
         assert meta["threats_total"] == 3
-        # BUG (noted in report): severity counters never increment because the
-        # producer compares a Title-cased severity ("High") against lowercase
-        # `counts` keys, so `sev in counts` is always False. We assert the
-        # actual (buggy) behaviour rather than the intended count.
-        assert meta["threats_high"] == 0
+        assert meta["threats_high"] == 1
         assert meta["threats_open"] == 2
         assert meta["components"] == ["X"]
 

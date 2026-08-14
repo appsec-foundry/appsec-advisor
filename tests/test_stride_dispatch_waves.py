@@ -48,6 +48,14 @@ def _complete(output_dir: Path, component_id: str, *, threats: list | None = Non
     (output_dir / f".stride-{component_id}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _complete_attempt(output_dir: Path, component_id: str, attempt: int) -> None:
+    canonical = output_dir / f".stride-{component_id}.json"
+    _complete(output_dir, component_id)
+    attempt_path = output_dir / waves.attempt_artifact(component_id, attempt)
+    attempt_path.parent.mkdir(parents=True, exist_ok=True)
+    canonical.replace(attempt_path)
+
+
 def test_fifty_components_are_partitioned_without_dropping_or_reordering() -> None:
     manifest = _manifest(50)
     plan = waves.build_plan(manifest, concurrency=5)
@@ -58,6 +66,14 @@ def test_fifty_components_are_partitioned_without_dropping_or_reordering() -> No
         component["component_id"] for component in manifest["components"]
     ]
     waves.validate_plan(plan, manifest)
+
+
+def test_produced_wave_plan_validates_against_its_published_schema() -> None:
+    plan = waves.build_plan(_manifest(2), concurrency=2)
+
+    waves.validate_plan(plan, _manifest(2))
+
+    assert plan["schema_version"] == 2
 
 
 @pytest.mark.parametrize("concurrency", [True, 0, 6, 33])
@@ -453,7 +469,7 @@ def test_wait_status_joins_only_the_claimed_wave_not_future_waves(tmp_path: Path
     assert changed is True
     current = [component["component_id"] for component in claimed["wave"]["components"]]
     for component_id in current:
-        _complete(tmp_path, component_id)
+        _complete_attempt(tmp_path, component_id, 1)
 
     result = waves.wait_status(plan, manifest, tmp_path, current, now=100)
 
@@ -536,6 +552,28 @@ def test_claim_retries_only_after_the_active_join_deadline(tmp_path: Path, monke
     assert retry["wave"]["attempts"] == {"service-01": 2}
 
 
+def test_late_prior_attempt_cannot_overwrite_promoted_retry(tmp_path: Path, monkeypatch) -> None:
+    manifest = _manifest(1)
+    plan = waves.build_plan(manifest, concurrency=1)
+    waves.claim(plan, manifest, tmp_path)
+    plan["wait_started_at"]["service-01"] = 100
+    monkeypatch.setattr(waves.time, "time", lambda: 100 + waves.WAIT_DEADLINE_SECONDS)
+    retry, changed = waves.claim(plan, manifest, tmp_path)
+    assert changed is True
+    assert retry["wave"]["attempts"] == {"service-01": 2}
+
+    _complete_attempt(tmp_path, "service-01", 2)
+    current = waves.wait_status(plan, manifest, tmp_path, ["service-01"], now=1000)
+    assert current["status"] == "complete"
+    promoted = (tmp_path / ".stride-service-01.json").read_bytes()
+
+    late = tmp_path / waves.attempt_artifact("service-01", 1)
+    late.parent.mkdir(parents=True, exist_ok=True)
+    late.write_text('{"late": true}\n', encoding="utf-8")
+
+    assert (tmp_path / ".stride-service-01.json").read_bytes() == promoted
+
+
 def test_blocked_claim_reports_the_component_validation_reason(tmp_path: Path, capsys) -> None:
     manifest = _manifest(1)
     (tmp_path / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
@@ -583,7 +621,8 @@ def test_reinitializing_corrupt_same_manifest_plan_fails_closed(tmp_path: Path, 
     (tmp_path / waves.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8")
 
     assert waves.main(["init", str(tmp_path)]) == 2
-    assert "attempts must cover" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "schema validation failed at attempts" in error
 
 
 def test_cli_init_next_and_verify_round_trip(tmp_path: Path, capsys) -> None:

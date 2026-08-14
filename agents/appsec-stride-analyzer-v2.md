@@ -88,7 +88,7 @@ reserve two turns for writes.
 ## Write-first guarantee
 
 At the end of context loading and before source reads, write a schema-valid
-`$OUTPUT_DIR/.stride-<COMPONENT_ID>.json` with:
+`$STRIDE_OUTPUT_PATH` with:
 
 ```json
 {
@@ -262,4 +262,4 @@ only for an actual conflict.
 On completion, write all six categories, set `partial:false`, clear
 `skipped_categories`, emit `AGENT_END`, and return only:
 
-`Wrote <N> threats to <OUTPUT_DIR>/.stride-<COMPONENT_ID>.json. Completed all six STRIDE categories for <COMPONENT_NAME>.`
+`Wrote <N> threats to <STRIDE_OUTPUT_PATH>. Completed all six STRIDE categories for <COMPONENT_NAME>.`

@@ -40,6 +40,43 @@ contracts live in `docs/internal/contracts/orchestration-actions.md` and
 `docs/internal/contracts/context-routing.md`; this plan records migration and
 acceptance status only.
 
+## Active completion scope
+
+This plan now ends at tested full/rebuild context-v2 acceptance. The postfix4
+post-STRIDE component correction, live-status fixes, abort-reason issue
+reporting, focused regressions, and repository gates are complete. `make lint`
+passes, and `make check` reports 12,510 passed and 95 skipped. Only the
+following work remains active:
+
+1. Run one correctly invoked quick rebuild checkpoint through merge, evidence
+   verification, abuse verification, rendering, final gates, and terminal
+   cleanup. The run must also prove bounded parallel STRIDE and abuse waves,
+   current-claim joins, no action replay, and no continuation after
+   `RUN_ABORTED`.
+2. Run the fixed thorough three-baseline/three-context-v2 cohort. Adjudicate
+   every quality delta and evaluate the 700-turn and 20% reconstructed-cost
+   gates from cohort medians rather than a single run.
+3. Record the acceptance result. Keep context-v2 resume fail-closed and do not
+   make context-v2 a release default from this plan.
+
+The following work is outside this plan:
+
+- Stage 2-4 admission optimization and broad top-level throughput work. Open a
+  separately scoped follow-up only if the controlled cohort misses a release
+  gate and turn telemetry identifies that surface as a material cause.
+- Context-v2 incremental or resume support, legacy-switch removal, and release
+  default rollout. Those changes require a separate compatibility plan.
+- An exhaustive mode, depth, selector, organization-extension, rerender, and
+  repair-path cross-product beyond the current regression suite, the live
+  checkpoint, and the fixed comparison cohort.
+- Migration performed only to eliminate a `legacy_unreceipted` label for a
+  bounded, validated policy scalar or source-access rule. An unbounded shared
+  artifact or unvalidated execution input remains a blocker.
+
+Historical checkpoints below retain the scope and terminology that applied
+when they were written. This section and the remaining verification section
+define the current completion gate.
+
 The first release target is a p50 reduction from 928 to at most 700 usage turns
 on the fixed thorough benchmark, together with at least 20% reconstructed cost
 reduction. A later 650-turn target is a stretch goal, not a release gate for the
@@ -738,44 +775,21 @@ mandatory and forbidden deliveries are enforced; the existing Stage-1 fixtures
 remain behaviorally equivalent; and no complete shared artifact enters a
 focused role when a bounded projection exists.
 
-### WP6 — reduce top-level and remaining fixed-prefix throughput
+### WP6 — deferred outside this plan
 
-After WP0-WP5a pass the controlled A/B, apply the same action-receipt and
-catalog-resolved admission inventory to Stage 2-4 and then to other roles ranked
-by:
+Stage 2-4 admission optimization and broad top-level throughput work are not
+required to accept the full/rebuild Stage-1 migration. Reopen that surface in a
+separate plan only when the controlled cohort misses an acceptance target and
+turn-purpose telemetry identifies it as a material cause. Renderer, QA, and
+architect-review ownership remain unchanged.
 
-```text
-first resident tokens * observed turns
-```
+### WP7 — deferred outside this plan
 
-Extend `orchestration_controller.py` only where deterministic work currently
-returns to the parent before another semantic boundary. Do not merge renderer,
-QA, or architect-review semantics into the controller.
-
-Exit gate: no status-only or successful-validation turn remains in the thin
-top-level trace, and renderer/QA mutation order is unchanged.
-
-### WP7 — incremental, resume, and default rollout
-
-Keep incremental and resume on the legacy threat analyst until full/rebuild
-parity is established. Then migrate one mode at a time with checkpoint,
-preserved-state, stable-ID, retry-budget, and cleanup tests.
-
-Resolve the temporary context-v2 selection in `resolve_config.py`, persist a
-`runtime_generation` value and relevant artifact schema versions in durable run
-state, and include them in controller reconstruction. Repository content cannot
-select the generation. Resume must continue the persisted generation or abort
-with an explicit incompatible-state result; it must never switch producers
-because the current environment variable changed. Rollback selects the prior
-runtime for a new invocation, not midway through an existing context-v2 run.
-
-Retain `APPSEC_THIN_ORCHESTRATOR=0` as the documented top-level runtime escape
-hatch. The release rollout may make context-v2 the default only after the
-acceptance matrix passes. This feature branch temporarily defaults eligible
-full/rebuild runs to context-v2 for R10 convenience at the operator's explicit
-request; `APPSEC_CONTEXT_V2=0` selects the legacy producer for a new run. That
-branch-local selection is not rollout acceptance and must not reach a release
-unchanged if R10 or the controlled A/B fails.
+The implemented generation selection, persistence, schema-version binding,
+and incompatible-generation rejection remain in place. Context-v2 incremental
+and resume support, legacy-switch removal, and release-default rollout are not
+active work here. Resume stays fail-closed, and the branch-local convenience
+default must not be promoted to a release default by this plan.
 
 ## Rollout slices
 
@@ -786,8 +800,8 @@ unchanged if R10 or the controlled A/B fails.
 | C | Context-v2 opt-in for full/rebuild | WP4 focused threat roles |
 | D | Context-v2 opt-in for full/rebuild | WP5 STRIDE modularization |
 | D2 | Context-v2 opt-in for full/rebuild | WP5a context catalog, effective routing plan, and Stage-1 migration |
-| E | Context-v2 default for full/rebuild | WP6 top-level changes after A/B |
-| F | Context-v2 default for all supported modes | WP7 incremental and resume parity |
+| E | Deferred outside this plan | Stage 2-4 and broader top-level optimization |
+| F | Deferred outside this plan | Incremental, resume, and release-default rollout |
 
 Each slice must be revertible by selection of the prior runtime. Do not keep
 two producers active for the same artifact within one invocation.
@@ -804,9 +818,9 @@ Status as of 2026-08-14:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for full/rebuild; selected by default on this feature branch | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for full/rebuild; selected by default on this feature branch | Establish the resident-context and escape-rate targets |
-| WP5a | Repository implementation and the postfix3 corrective slice are repository-tested; successive R10 checkpoints exposed producer, routing, lifecycle, replay, and parallel-join defects | Pass a fresh live checkpoint and the controlled A/B cohort, then establish the resident-context and cost targets |
-| WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
-| WP7 | Partially implemented; branch-local full/rebuild default selection landed before acceptance, while context-v2 resume remains rejected | Incremental and resume migration, controlled release rollout, acceptance, and legacy-switch removal remain |
+| WP5a | Repository implementation, successive corrective slices, and repository gates are complete | Pass one valid live checkpoint, then pass the fixed controlled cohort |
+| WP6 | Deferred outside this plan | None; open a separate plan only if cohort telemetry proves it necessary |
+| WP7 | Safe boundary retained; context-v2 resume remains rejected | None in this plan; compatibility migration and rollout require a separate plan |
 
 The first WP5a slice now normalizes bounded literal repository-relative focus
 and exclude paths at the deterministic manifest-to-bundle boundary. Focus
@@ -2198,13 +2212,78 @@ fragment-registry, and drift gates pass. No live scan was started, so R10
 acceptance, the controlled A/B cohort, WP6, WP7 parity, and the
 resident-context, turn, and cost targets remain open.
 
-No live scan is part of this fix. After a green commit boundary, the next
-reserved R10 invocation is:
+### Postfix4 contract and producer root-cause correction — 2026-08-14
+
+A producer-to-consumer audit of the postfix3 boundary found three repository
+defects before the reserved postfix4 live run. The wave producer had added
+`wait_started_at` and `active_claim` while its published schema and durable
+artifact-version registry remained on the prior shape. Attempt-qualified job
+IDs still sent every retry to the same canonical component output, so expiry
+could admit a second live writer without proving the first background producer
+had terminated. The terminal-abort guard searched the entire log line for
+`RUN_ABORTED`, allowing untrusted detail text to impersonate the event column.
+
+The correction versions and validates the complete wave plan as v2, including
+the five-job concurrency bound. Each STRIDE attempt now owns a distinct output
+under `.stride-attempts/`; only the currently claimed, schema-valid attempt is
+atomically promoted to `.stride-<component>.json`. A late prior attempt can
+therefore mutate only its own transient file. The shared event-log parser now
+extracts the canonical event column, and lifecycle guards require that parsed
+event to equal `RUN_ABORTED`.
+
+The same audit found older defects outside the context-reduction design:
+cross-repository readers consumed legacy severity, lifecycle, and evidence
+fields instead of the current output contract; Composer parsing discarded real
+packages beginning with `php`; and final YAML was published before validation
+while validation silently migrated only its in-memory copy. Those producers
+and consumers are corrected in the same repository hardening slice, but they do
+not change WP5a routing, prompt admission, or turn targets.
+
+### R10 postfix4 post-STRIDE abort and correction — 2026-08-14
+
+The postfix4 command did not create its reserved output directory. The actual
+invocation and `.skill-config.json` ended at
+`/tmp/appsec-context-v2-wp5a-smoke-`; it ran at standard depth without rebuild,
+runtime preservation, or the reserved suffix. It is therefore not an R10
+cohort member independently of its pipeline outcome.
+
+The run still supplied useful lifecycle evidence. Five Wave-1 STRIDE agents
+started concurrently, the controller joined only the persisted active claim,
+Wave 2 started its two agents concurrently, all seven attempt-1 artifacts were
+promoted, and no action was replayed. Merge completed with 12 decisions and the
+evidence verifier completed 29 samples before the controller emitted
+`RUN_ABORTED`. No controller, agent, synthesis, abuse-verification, or rendering
+action followed the abort, and terminal cleanup removed `.active-tool-calls`.
+
+The abort was deterministic: source scanning assigned `T-007` at
+`routes/search.ts:23` to the provisional `backend-api` id, while the run's
+component registry owns `routes/**` under `api-backend`. The legacy pipeline
+reclassified such producer placeholders after YAML construction, but
+context-v2 built post-STRIDE synthesis contexts before that pass and correctly
+rejected the unknown component. Context-v2 now runs the existing deterministic
+reclassifier directly against `.threats-merged.json` and `.components.json`
+before triage, validates the mutated register, and fails closed when any
+component remains unresolved. A replay on a copy of the postfix4 artifacts
+reassigned nine threats, validated all 58 merged threats, and built both
+synthesis projections successfully.
+
+The same run exposed three status defects. `appsec_status.py --live` treated
+`dispatch-times.json` as an active call, retained completed component progress,
+and used the older checkpoint phase instead of the newer structured progress
+phase for display and timeout filtering. Those reads now require a valid tool
+marker, omit completed progress, and use the freshest phase. Run issue
+aggregation now reports the exact authoritative `RUN_ABORTED` reason instead
+of only the missing-report symptom.
+
+The postfix4 correction and repository gates are complete. One valid R10
+checkpoint and the fixed controlled cohort remain open. WP6 and WP7 are
+outside the active scope. No replacement scan is part of this corrective
+slice. After a green commit boundary, the next reserved R10 invocation is:
 
 ```bash
 /home/mrohr/appsec-advisor/scripts/run-headless.sh \
   --repo /home/mrohr/juice-shop \
-  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix4 \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix5 \
   --model claude-sonnet-4-6 \
   --reasoning-model sonnet-economy \
   --assessment-depth quick \
@@ -2214,135 +2293,77 @@ reserved R10 invocation is:
   --rebuild
 ```
 
-## Verification matrix
+## Remaining verification
 
-Use the same target commit, Claude Code version, exact model IDs, versioned
-pricing table, depth, concurrency, formats, and clean-session conditions. Run at
-least three baselines and three variants before evaluating p50 cost or turns.
-Alternate baseline and variant runs where practical, record median and range,
-and pair runs by time block so service-load drift is visible. A run on a
-different Claude Code version is a new benchmark cohort, not another sample in
-the fixed cohort.
+Only two verification layers remain:
 
-Required behavior coverage:
+1. One correctly invoked quick rebuild R10 checkpoint that completes the full
+   pipeline. Inspect run-local logs and artifacts for concurrent wave starts,
+   active-claim joins, successor waves, action-ledger uniqueness, abort
+   terminality, merge, evidence and abuse verification, rendering, final
+   deliverables, issue reporting, and live-marker cleanup.
+2. Three legacy and three context-v2 thorough runs with the same target commit,
+   Claude Code version, model IDs, pricing table, concurrency, formats, and
+   clean-session conditions. Alternate the variants where practical and report
+   median, range, and service-load drift.
 
-| Dimension | Cases |
-|---|---|
-| Mode | full, rebuild, incremental, resume |
-| Depth | quick, standard, thorough |
-| STRIDE execution | parallel, serial fallback, bounded retry, blocked component |
-| Merge | no candidates, ambiguous candidates, failed specialist, invalid decision artifact |
-| Triage | no flags, semantic flags, missing specialist output, invalid output |
-| State | fresh output, preserved baseline, stale checkpoint, corrupted sidecar, incompatible runtime generation |
-| Evidence bundle | clean tree, dirty tree, stale slice hash, truncation, related repository, path and symlink escape |
-| Context routing | required, optional, forbidden, conditional, unmatched, ambiguous, duplicate, and contradictory routes |
-| Context selectors | component ID, type, technology, capability, zone, exposure, boundary, actor, related repository, mode, and depth |
-| Context extensions | stricter organization policy, repository data addition, attempted mandatory-route removal, attempted projector or instruction selection |
-| Context sources | known threats, prior findings, related repositories, external context, boundaries, actors, requirements, controls, focus/exclude paths, and abuse cases |
-| Runtime dependency | schema validator present, structural validator unavailable |
-| Report path | normal Stage 2, rerender, Stage 3 skipped, Stage 4 repair plan |
+Before the cohort, freeze matching keys for mechanism, evidence location,
+component, and public identity. Classify every finding, severity, evidence, and
+component-selection delta as expected variance, explained improvement or
+regression, or unresolved. Aggregate counts cannot waive a lost evidence-backed
+finding, and an unresolved delta blocks acceptance.
 
-Compare findings by stable mechanism, evidence location, component, and public
-identity rather than generated title wording. Before running the A/B, freeze the
-matching keys and adjudication procedure. Every apparent loss, addition,
-unsupported item, duplicate, severity change, and component-selection delta is
-classified as expected variance, explained improvement/regression, or
-unresolved. Any unresolved quality delta blocks rollout; aggregate counts alone
-cannot waive a lost evidence-backed finding.
+Incremental, resume, release-default, organization-extension, rerender, repair,
+and exhaustive mode/depth cross-product testing are not remaining tasks in this
+plan. Existing tests for those surfaces remain guards and must stay green.
 
-## Acceptance criteria
+## Completion criteria
 
-Quality and compatibility:
+The plan is complete only when:
 
-- identical finalized component inventory and STRIDE selection;
-- all six STRIDE categories completed for every selected component;
-- no unexplained loss of schema-valid evidence-backed findings;
-- no weakening of severity caps, CVSS eligibility, T/F identity, cross-links,
-  cleanup, permission, renderer, QA, or architect-review gates;
-- no increase in unsupported, rejected, ambiguous, or duplicate findings;
-- no increase in incomplete exits or semantic repair frequency;
-- a required GitHub status check enforces the repository test gate before
-  context-v2 becomes the default;
-- full/rebuild parity before incremental/resume activation;
-- no unresolved finding, severity, evidence, or component-selection delta; and
-- runtime generation, schema versions, checkpoints, and artifact fingerprints
-  reconstruct exactly one valid successor action on resume.
+- the valid R10 run reaches final rendering and read-only gates with all six
+  STRIDE categories for every selected component;
+- STRIDE and abuse waves start concurrently, join only their current claims,
+  start successor waves once, do not replay actions, and never continue after
+  an authoritative `RUN_ABORTED`;
+- terminal state removes `.active-tool-calls`, reports the exact abort reason
+  when aborted, and contains every expected deliverable when successful;
+- the controlled cohort has no unexplained loss of evidence-backed findings or
+  weakening of severity, CVSS, stable-ID, cleanup, permission, renderer, QA, or
+  architect-review gates;
+- focused role definitions remain within their existing kernel, role, startup,
+  and initial-resident admission budgets, or the cohort identifies and records
+  an immutable runtime floor;
+- the thorough context-v2 cohort median is at most 700 usage turns and at least
+  20% cheaper than the 928-turn baseline, with every usage turn aggregated from
+  all blocks of its assistant message before classification;
+- no dedicated `status_or_logging` turn, validation-only re-entry after a
+  successful gate, or complete shared analysis artifact in a common semantic
+  prompt is observed;
+- every delivered artifact used for an active semantic decision is bounded,
+  schema-validated, exact-byte receipted, and fresh at consumption; and
+- the focused suites, `make lint`, `make test`, and `make check` pass.
 
-Context and turns:
-
-- shared kernel at or below 4k tokens;
-- each focused role contract at or below 3k tokens;
-- total plugin-selected startup payload at or below 10k tokens;
-- initial resident context at or below 30k for each focused threat role unless
-  a controlled A/B proves a higher immutable runtime floor;
-- `admission.enforce_startup_totals` enabled after reviewed startup-layer
-  measurements stabilize the WP5a cohort;
-- peak threat-role context below 120k with no automatic compaction on the target
-  fixture;
-- p50 total usage turns at or below 700 from the 928-turn baseline;
-- zero dedicated `status_or_logging` turns;
-- no validation-only model re-entry after successful deterministic validation;
-- at most one `workflow_routing` turn per semantic boundary;
-- no complete shared analysis artifact in a common prompt or initial dispatch;
-- every Stage-1 delivery represented by one validated effective-plan entry with
-  its selection reason, limit, trust class, source receipt, and delivered size;
-- mandatory routes cannot be removed or weakened by organization or repository
-  configuration, and forbidden routes cannot be added;
-- effective-plan diagnostics disclose omission, truncation, staleness, and
-  unmatched selectors without disclosing sensitive source content;
-- every usage turn aggregated from all of its JSONL content blocks before
-  classification; and
-- no unadjudicated mixed, low-confidence, or unclassified turn in a zero-turn
-  release claim.
-
-Cost and latency:
-
-- p50 reconstructed cost reduction of at least 15% at quick and 20% at
-  thorough;
-- no compaction latency in focused threat sessions on the target fixture; and
-- no regression in p50 wall time after controlling for model variance and
-  concurrency, with the cohort range reported beside the median.
-
-Repository gates:
-
-- targeted schema, controller, dispatch, permissions, cleanup, checkpoint,
-  resume, and golden-fixture tests pass;
-- path containment, symlink escape, stale-fingerprint, runtime-generation, and
-  fail-closed validator tests pass;
-- every new `scripts/` module has a matching `tests/test_*.py` covering success
-  and failure paths;
-- `make lint` passes;
-- `make test` passes; and
-- `make check` passes before controlled release rollout.
+Quick-mode cost, broad Stage 2-4 optimization, context-v2 incremental and
+resume parity, GitHub branch-policy enforcement, and release-default rollout
+are not completion criteria for this plan.
 
 ## Risks and mitigations
 
 | Risk | Mitigation |
 |---|---|
 | A projection hides cross-cutting evidence | Preserve bounded escape reads, record the reason, and compare escape and finding rates in A/B |
-| Session splitting increases cold starts | Use three coherent semantic roles, not one agent per mechanical phase |
-| A new receipt duplicates state | Extend ephemeral orchestration actions first; add no persisted receipt without a resume gap |
 | Controller normalization changes security meaning | Limit it to contract-owned mechanical fields and route semantic conflicts to focused agents |
 | Agent and controller both own a stage | Activate producers atomically and forbid dual writes in tests |
 | Turn classifier overstates precision | Publish precedence, mixed classifications, and confidence; keep it diagnostic |
 | Prompt reduction causes broad rereads | Measure full-artifact reads and bundle escapes; fail the A/B if they erase savings |
 | One cheaper run reflects model variance | Require three baseline and three variant runs and compare p50 plus finding identity |
-| New sidecars break cleanup or resume | Reuse `.dispatch-context/`, trace cleanup and diagnostics, and test every preserved-state mode |
-| The catalog becomes a second semantic-role registry | Keep one authoritative registry or generate one representation from the other; reject drift in tests |
-| A routing extension becomes a prompt or execution channel | Permit schema-backed data and bounded selectors only; keep consumers, projectors, tools, commands, instructions, and paths core-owned |
-| Over-granular entries make policy unmaintainable | Create a separate element only when it can be independently projected, limited, omitted, audited, or assigned |
-| Component changes silently stop a user assignment from matching | Prefer semantic selectors and report every unmatched or ambiguous rule in the effective-plan diagnostics |
 | Transcript deduplication hides a tool call | Aggregate all blocks by `message.id` before turn classification |
-| Startup layers are inferred from an aggregate counter | Use provider token counting or one-variable startup A/B; record residuals only as residuals |
 | A validated file changes before consumption | Bind receipts to exact bytes and re-hash immediately before use |
-| Absolute or symlinked compatibility paths escape output | Apply canonical containment to bundles and retained legacy index paths on context-v2 |
-| Environment changes the runtime during resume | Persist `runtime_generation` and refuse incompatible continuation |
-| The required tool surface cannot fit the 10k startup target | Measure it in WP0 and amend allocations before enforcing WP1; do not hide tools from the accounting |
-| Controller proxy logging obscures the acting agent | Assign event ownership in the shared logging contract and keep semantic events agent-authored |
 
 ## Stop conditions
 
-Do not ship context-v2 as the release default if any of these occur:
+Do not accept this plan if any of these occur:
 
 - unexplained finding loss or weaker evidence;
 - a role repeatedly reads complete shared artifacts instead of projections;
@@ -2350,14 +2371,14 @@ Do not ship context-v2 as the release default if any of these occur:
 - initial resident context remains near 66k after the agent split, indicating
   the assumed avoidable startup producer was wrong;
 - repair or incomplete-exit frequency increases materially;
-- incremental or resume changes T/F identity;
-- cost falls by less than 20% at thorough after WP0-WP6 while quality remains
-  constant;
+- parallel waves serialize, join the wrong claim, replay an action, or continue
+  after `RUN_ABORTED`;
+- cost falls by less than 20% at thorough after the controlled cohort while
+  quality remains constant;
 - any release metric depends on unadjudicated mixed or low-confidence turns;
 - bundle freshness cannot be reconstructed from repository and artifact
   fingerprints; or
-- durable state permits more than one valid runtime generation or successor
-  action on resume.
+- a required repository gate remains red.
 
 If startup remains high, remeasure runtime, task, tools, preloaded skills, and
 agent-definition layers independently before changing the architecture. If

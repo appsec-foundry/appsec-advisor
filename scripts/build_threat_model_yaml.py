@@ -104,6 +104,28 @@ def _git(args: list[str], cwd: Path) -> str | None:
         return None
 
 
+def _validate_and_publish_yaml(
+    out_path: Path,
+    rendered: str,
+    validator: Path,
+) -> subprocess.CompletedProcess[str]:
+    """Validate pending YAML bytes before atomically replacing the canonical file."""
+    if not validator.is_file():
+        raise FileNotFoundError(f"schema validator missing: {validator}")
+    pending_path = out_path.with_name(".threat-model.yaml.pending")
+    atomic_write_text(pending_path, rendered)
+    result = subprocess.run(
+        ["python3", str(validator), "threat_model_output", str(pending_path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pending_path.unlink(missing_ok=True)
+        return result
+    os.replace(pending_path, out_path)
+    return result
+
+
 def _read_recon_project(recon_path: Path) -> str | None:
     """Extract project name from .recon-summary.md Section 1 (best-effort)."""
     if not recon_path.exists():
@@ -2555,31 +2577,25 @@ def main() -> int:
         return 0
 
     out_path = od / "threat-model.yaml"
-    atomic_write_text(out_path, rendered)
+    plugin_root = args.plugin_root
+    validator = plugin_root / "scripts" / "validate_intermediate.py"
+    try:
+        rc = _validate_and_publish_yaml(out_path, rendered, validator)
+    except FileNotFoundError as exc:
+        sys.stderr.write(f"FATAL: {exc}\n")
+        return 5
+    if rc.returncode != 0:
+        sys.stderr.write("FATAL: schema validation failed\n")
+        sys.stderr.write(rc.stdout)
+        sys.stderr.write(rc.stderr)
+        return 5
 
-    # Publish the delivery remap for the post-build emitters that still hold
-    # pre-renumber ids — `emit_severity_rationale.py` reads the boundary ids out
-    # of `.triage-flags.json`, which triage wrote against the sidecar catalogue.
-    # Always rewritten (empty map included): a stale file would mistranslate.
+    # Publish the delivery remap only after the validated YAML becomes
+    # canonical. A failed build must leave both prior delivery artifacts intact.
     atomic_write_text(
         od / ".trust-boundary-renumber.json",
         json.dumps({"schema_version": 1, "mapping": tb_remap}, indent=2, sort_keys=True) + "\n",
     )
-
-    # Schema validate
-    plugin_root = args.plugin_root
-    validator = plugin_root / "scripts" / "validate_intermediate.py"
-    if validator.exists():
-        rc = subprocess.run(
-            ["python3", str(validator), "threat_model_output", str(out_path)],
-            capture_output=True,
-            text=True,
-        )
-        if rc.returncode != 0:
-            sys.stderr.write("FATAL: schema validation failed\n")
-            sys.stderr.write(rc.stdout)
-            sys.stderr.write(rc.stderr)
-            return 5
 
     sys.stderr.write(
         f"✓ threat-model.yaml built deterministically — "

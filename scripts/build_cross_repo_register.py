@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from _threat_model_fields import extract_threats, is_active, severity_of
 
 try:
     import jsonschema  # type: ignore
@@ -129,21 +130,13 @@ def _read_threat_model_meta(tm_path: Path) -> dict[str, Any]:
 
     meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
     git = meta.get("git") if isinstance(meta.get("git"), dict) else {}
-    threats: list[dict[str, Any]] = []
-    if isinstance(data.get("threats"), list):
-        threats = [t for t in data["threats"] if isinstance(t, dict)]
-    else:
-        for cat in data.get("threat_categories", []) or []:
-            if isinstance(cat, dict):
-                for f in cat.get("findings", []) or []:
-                    if isinstance(f, dict):
-                        threats.append(f)
+    threats = extract_threats(data)
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "open": 0}
     for t in threats:
-        sev = str(t.get("severity", "")).strip().title()
+        sev = severity_of(t).lower()
         if sev in counts:
-            counts[sev.lower()] += 1
-        if str(t.get("status", "")).lower() == "open":
+            counts[sev] += 1
+        if is_active(t):
             counts["open"] += 1
     components = [
         c.get("name") for c in (data.get("components") or []) if isinstance(c, dict) and isinstance(c.get("name"), str)

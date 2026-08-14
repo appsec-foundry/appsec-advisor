@@ -897,40 +897,6 @@ def _check_triage_flags_version(data: dict) -> list[str]:
     return []
 
 
-def _normalise_mitigation_field_drift(data: dict) -> list[str]:
-    """Migrate the legacy `mitigation_title`/`addresses` fields into their
-    canonical names (`title`/`threat_ids`).
-
-    The STRIDE analyzer emits `mitigation_title` inside per-threat
-    `remediation` blocks (see `schemas/stride.schema.yaml`). When the
-    orchestrator consolidates these into `threat-model.yaml → mitigations[]`
-    it MUST rename them to the canonical fields enforced by this schema.
-    Legacy LLM behaviour drops the rename, producing yamls where the
-    required `title` is missing.
-
-    Rather than fail the entire pipeline (which would block delivery for
-    every existing pre-migration yaml), we migrate in place and append an
-    advisory note so the producer fixes it at source. After one release
-    cycle on the canonical fields, this helper can be removed and the
-    schema gate becomes hard.
-    """
-    notes: list[str] = []
-    for i, m in enumerate(data.get("mitigations", []) or []):
-        if not isinstance(m, dict):
-            continue
-        if not m.get("title") and m.get("mitigation_title"):
-            m["title"] = m["mitigation_title"]
-            notes.append(
-                f"mitigations[{i}].mitigation_title → title (legacy field name; emit `title` per output schema)"
-            )
-        if not m.get("threat_ids") and m.get("addresses"):
-            m["threat_ids"] = m["addresses"]
-            notes.append(
-                f"mitigations[{i}].addresses → threat_ids (legacy field name; emit `threat_ids` per output schema)"
-            )
-    return notes
-
-
 def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     """Validate the final `$OUTPUT_DIR/threat-model.yaml` export.
 
@@ -938,14 +904,12 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     SonarQube, and sibling threat-model cross-repo discovery. Schema drift
     breaks integrations silently, so producers should validate before emit.
 
-    Runs a transitional in-place migration of legacy mitigation field names
-    (``mitigation_title`` / ``addresses``) before checking the schema, so
-    pre-migration yamls do not hard-fail. Migration notes are returned as
-    informational entries (prefixed ``[migrated]``) — they are not errors.
+    The parsed document is validated unchanged. Legacy field migration belongs
+    to an explicit producer or migration step; validation never turns invalid
+    on-disk bytes into an in-memory pass.
     """
     if not isinstance(data, dict):
         return False, ["root must be a mapping"]
-    migration_notes = _normalise_mitigation_field_drift(data)
     errors = _schema_errors("threat_model_output", data)
     errors.extend(_check_security_controls_shape(data))
     errors.extend(_check_attack_surface_shape(data))
@@ -954,8 +918,7 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     errors.extend(_check_threat_hypotheses_invariants(data))
     errors.extend(_check_boundary_refs(data))
     errors.extend(_check_final_boundary_links(data))
-    # Surface migration as informational advisory, not as a failure.
-    advisories = [f"[migrated] {note}" for note in migration_notes]
+    advisories: list[str] = []
     # Detect F-NNN numbering gaps. A gap (e.g. F-001..F-013, F-015..) means
     # the threat-analyst dropped a finding without reflowing the IDs, leaving
     # a phantom F-NNN in the legacy_id_map and tombstone slots in cross-refs.
@@ -972,7 +935,7 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     # (e.g. the recoverable empty-mitigations case) must NOT fail validity —
     # main() already displays them as ADVISORY. Compute validity from the
     # hard errors only, mirroring the advisory split at the CLI layer.
-    advisory_prefixes = ("[migrated] ", "[advisory] ")
+    advisory_prefixes = ("[advisory] ",)
     hard_errors = [e for e in errors if not e.startswith(advisory_prefixes)]
     return len(hard_errors) == 0, errors + advisories
 
@@ -1624,11 +1587,8 @@ def main() -> None:
             # Validators that don't accept output_dir (all except threats_merged).
             is_valid, errors = _VALIDATORS[schema_type](data)
 
-    # Migration + non-fatal advisories — emitted by validators that detect
-    # legacy field names (`[migrated]`) or soft structural drift like a
-    # threat's component-vs-evidence-path mismatch (`[advisory]`). Neither
-    # affects validity; both are surfaced so the producer can fix the source.
-    advisory_prefixes = ("[migrated] ", "[advisory] ")
+    # Non-fatal structural advisories remain visible without changing validity.
+    advisory_prefixes = ("[advisory] ",)
     advisories = [e for e in errors if e.startswith(advisory_prefixes)]
     real_errors = [e for e in errors if not e.startswith(advisory_prefixes)]
 

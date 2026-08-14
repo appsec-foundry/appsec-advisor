@@ -457,6 +457,7 @@ CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS = {
     "trust-boundaries": 2,
     "stride-analyst-context": 1,
     "stride-dispatch-manifest": 2,
+    "stride-dispatch-waves": 2,
     "stride-evidence-bundle": 1,
     "stride-component-context-plan": 1,
     "stride-component-business-context": 1,

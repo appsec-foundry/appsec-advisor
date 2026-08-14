@@ -109,6 +109,23 @@ class TestSchemaValidation:
         result = lrr.load(tmp_path)
         assert any("rogue" in e or "additional" in e.lower() for e in result["errors"])
 
+    def test_declared_current_threat_model_schema_is_validated_before_consumption(self, tmp_path: Path) -> None:
+        tm_path = tmp_path / "invalid-current.yaml"
+        tm_path.write_text(
+            yaml.safe_dump({"meta": {"schema_version": 1, "generated": "2099-01-01T00:00:00Z"}, "threats": []}),
+            encoding="utf-8",
+        )
+        _write_yaml(
+            tmp_path / "repo" / "docs" / "related-repos.yaml",
+            {"related": [{"name": "invalid", "threat_model": str(tm_path)}]},
+        )
+
+        record = lrr.load(tmp_path / "repo")["related"][0]
+
+        assert record["threat_model"]["status"] == "unavailable"
+        assert "schema violation" in record["threat_model"]["fetch_detail"]
+        assert record["interface_findings"] is None
+
 
 # ---------------------------------------------------------------------------
 # Path resolution
@@ -221,6 +238,37 @@ class TestFindingFilter:
         result = self._setup(tmp_path, threats)
         ids = sorted(f["id"] for f in result["related"][0]["interface_findings"]["findings"])
         assert ids == ["T-1", "T-2"]
+
+    def test_current_output_contract_fields_are_consumed_without_legacy_aliases(self, tmp_path: Path) -> None:
+        threats = [
+            {
+                "id": "T-001",
+                "title": "Current finding",
+                "risk": "High",
+                "_status": "active",
+                "component": "AuthController",
+                "stride": "Tampering",
+                "cwe": "CWE-20",
+                "evidence": [{"file": "src/auth.py", "line": 12}],
+            },
+            {
+                "id": "T-002",
+                "title": "Dormant finding",
+                "risk": "Critical",
+                "_status": "dormant",
+                "component": "AuthController",
+                "stride": "Spoofing",
+                "cwe": "CWE-287",
+                "evidence": [{"file": "src/old.py", "line": 4}],
+            },
+        ]
+
+        result = self._setup(tmp_path, threats)
+        findings = result["related"][0]["interface_findings"]["findings"]
+
+        assert [finding["id"] for finding in findings] == ["T-001"]
+        assert findings[0]["severity"] == "High"
+        assert findings[0]["evidence_file"] == "src/auth.py"
 
     def test_medium_included_only_when_component_match(self, tmp_path: Path) -> None:
         threats = [

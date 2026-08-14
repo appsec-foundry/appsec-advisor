@@ -1034,20 +1034,15 @@ def test_triage_flags_version_dead():
     assert vi._check_triage_flags_version({}) == []
 
 
-# --- _normalise_mitigation_field_drift -------------------------------------
+def test_threat_model_validation_does_not_migrate_legacy_fields_in_memory():
+    data = {"mitigations": [{"mitigation_title": "Fix it", "addresses": ["T-001"]}]}
 
+    ok, errors = vi.validate_threat_model_output(data)
 
-def test_mitigation_drift_migrates_legacy_fields():
-    data = {
-        "mitigations": [
-            {"mitigation_title": "Fix it", "addresses": ["T-001"]},
-            "skip",
-        ]
-    }
-    notes = vi._normalise_mitigation_field_drift(data)
-    assert data["mitigations"][0]["title"] == "Fix it"
-    assert data["mitigations"][0]["threat_ids"] == ["T-001"]
-    assert len(notes) == 2
+    assert ok is False
+    assert any("title" in error for error in errors)
+    assert any("threat_ids" in error for error in errors)
+    assert data["mitigations"][0] == {"mitigation_title": "Fix it", "addresses": ["T-001"]}
 
 
 # --- validate_threat_model_output non-dict ---------------------------------
@@ -1159,7 +1154,7 @@ def test_validator_valid_when_empty_register_recoverable():
         "mitigations": [],
     }
     ok, msgs = vi.validate_threat_model_output(data)
-    hard = [m for m in msgs if not m.startswith(("[advisory] ", "[migrated] "))]
+    hard = [m for m in msgs if not m.startswith("[advisory] ")]
     # The empty-register check itself must not contribute a hard error.
     assert not any("mitigations[] is empty" in m and not m.startswith("[advisory]") for m in hard)
     assert any(m.startswith("[advisory]") and "mitigations[] is empty" in m for m in msgs)

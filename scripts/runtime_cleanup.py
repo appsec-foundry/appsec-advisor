@@ -47,6 +47,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .progress/                       (directory)
     .taxonomy-slices/                (directory)
     .dispatch-context/               (directory)
+    .stride-attempts/                (directory)
     .merge-context/                  (directory)
 
   Post-QA cleanup (only after QA reviewer finishes):
@@ -185,6 +186,9 @@ ALWAYS_DIRS = [
     # Component-scoped volatile JSON slices passed to STRIDE analyzers by path
     # instead of inline prompt blobs.
     ".dispatch-context",
+    # Attempt-qualified STRIDE producer outputs. Validated winners are promoted
+    # to durable .stride-<component>.json files before merge.
+    ".stride-attempts",
     # Focused merger context passed by path instead of inline prompt JSON.
     ".merge-context",
     # M3.6 — per-tool-call markers written by agent_logger PreToolUse +

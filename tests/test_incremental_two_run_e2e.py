@@ -16,9 +16,8 @@ changelog overwritten not extended).
 Hermetic strategy:
   * Minimal sidecars only (.skill-config / .threats-merged / .components /
     .assets / .trust-boundaries / .security-controls) so main() runs.
-  * --plugin-root → an EMPTY dir, which makes main() skip the
-    validate_intermediate.py subprocess (see main(): `if validator.exists()`),
-    so the test needs no schema-perfect output and spawns no child process.
+  * --plugin-root → the checked-out plugin, so each candidate output crosses
+    the same mandatory schema gate as a production run.
   * --repo-root → a non-git tmp dir, so build_meta's git lookups resolve to
     "unknown" → fully deterministic output.
   * baseline.json + .stride-<id>.json are seeded by hand between the two runs
@@ -64,9 +63,13 @@ def _threat(tid, comp, cwe, title):
         "component_id": comp,
         "cwe": cwe,
         "title": title,
+        "stride": "Spoofing",
+        "scenario": "An attacker exploits the demonstrated weakness.",
         "risk": "High",
         "likelihood": "Medium",
         "impact": "High",
+        "mitigation_title": f"Remediate {title}",
+        "remediation": {"how": "Apply the component-specific defensive control.", "effort": "Medium"},
     }
 
 
@@ -81,9 +84,16 @@ def _seed_sidecars(out: Path, repo: Path, *, mode: str, depth: str, threats: lis
     _write_json(out / ".skill-config.json", {"mode": mode, "assessment_depth": depth, "repo_root": str(repo)})
     _write_json(out / ".threats-merged.json", {"threats": threats})
     _write_json(out / ".components.json", {"components": _COMPONENTS})
-    _write_json(out / ".assets.json", {"assets": [{"id": "A-1", "name": "User DB", "classification": "PII"}]})
+    _write_json(out / ".assets.json", {"assets": [{"id": "A-1", "name": "User DB", "classification": "Restricted"}]})
     _write_json(out / ".trust-boundaries.json", {"trust_boundaries": [{"id": "TB-1", "name": "Internet edge"}]})
-    _write_json(out / ".security-controls.json", {"security_controls": [{"id": "SC-1", "name": "TLS"}]})
+    _write_json(
+        out / ".security-controls.json",
+        {
+            "security_controls": [
+                {"id": "SC-1", "domain": "Transport Security", "control": "TLS", "effectiveness": "Partial"}
+            ]
+        },
+    )
 
 
 def _seed_baseline(out: Path, *, prior_depth: str, stride: dict[str, tuple[bytes, bytes]]) -> None:
@@ -112,14 +122,12 @@ def _run_main(monkeypatch, out: Path, plugin_root: Path, repo: Path) -> int:
 
 
 def _scaffold(tmp_path: Path):
-    """Return (out_dir, empty_plugin_root, non_git_repo_root)."""
+    """Return (out_dir, plugin_root, non_git_repo_root)."""
     out = tmp_path / "run"
     out.mkdir()
-    plugin = tmp_path / "empty_plugin"  # lacks scripts/validate_intermediate.py → main skips validation
-    plugin.mkdir()
     repo = tmp_path / "repo"  # non-git → deterministic "unknown" commit
     repo.mkdir()
-    return out, plugin, repo
+    return out, ROOT, repo
 
 
 # ─── canonical scenario: shallower re-scan must carry the dropped threat ────

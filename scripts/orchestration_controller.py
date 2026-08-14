@@ -63,6 +63,7 @@ import detect_session_model  # noqa: E402
 import ensure_output_gitignore  # noqa: E402
 import merge_threats as merge_decision_contract  # noqa: E402
 import resolve_config  # noqa: E402
+import stride_dispatch_waves  # noqa: E402
 import validate_intermediate as intermediate_contract  # noqa: E402
 import validate_recon_summary as recon_summary_contract  # noqa: E402
 import validate_threat_modeling_context as context_document_contract  # noqa: E402
@@ -613,6 +614,15 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
         if role != "stride_analyzer" and any(job.get(key) is not None for key in component_projection_keys):
             raise ControllerError("component projections are valid only for stride analyzer jobs")
         if role == "stride_analyzer":
+            attempt = job.get("attempt")
+            if not isinstance(component_id, str) or isinstance(attempt, bool) or not isinstance(attempt, int):
+                raise ControllerError("stride analyzer job requires component and attempt identity")
+            expected_job_suffix = f":attempt-{attempt}"
+            if not job_id.endswith(expected_job_suffix):
+                raise ControllerError("stride analyzer job id does not match its attempt identity")
+            expected_output = stride_dispatch_waves.attempt_artifact(component_id, attempt)
+            if job.get("output_artifacts") != [expected_output]:
+                raise ControllerError("stride analyzer output does not match its exclusive attempt identity")
             expected_taxonomy = (
                 f".taxonomy-slices/{component_id}/threat-category-taxonomy.yaml" if component_id else None
             )
@@ -3712,6 +3722,8 @@ def _context_v2_stride_wave_action(
         attempt = claimed_attempts.get(component_id)
         if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
             raise ControllerError(f"STRIDE wave has invalid attempt accounting for {component_id}")
+        attempt_artifact = stride_dispatch_waves.attempt_artifact(component_id, attempt)
+        _resolve_artifact_path(output_dir, attempt_artifact).parent.mkdir(parents=True, exist_ok=True)
         if component_id in seen:
             raise ControllerError(f"duplicate dispatch component id: {component_id}")
         seen.add(component_id)
@@ -3908,7 +3920,7 @@ def _context_v2_stride_wave_action(
                 "context_plan_path": context_plan_path,
                 "context_plan_sha256": context_plan_receipt["sha256"],
                 "input_artifacts": input_artifacts,
-                "output_artifacts": [f".stride-{component_id}.json"],
+                "output_artifacts": [attempt_artifact],
                 "unresolved_decision_keys": [f"stride:{category}" for category in "STRIDE"],
             }
         )
@@ -4190,6 +4202,19 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
             [str(output_dir), *([] if evidence_summary_valid else ["--ignore-summary"])],
             receipts,
         )
+    # Deterministic source scanners use provisional component ids because the
+    # merge stage does not own the run's component registry. Resolve those ids
+    # before ranking or synthesis consumes the canonical merged register. The
+    # legacy path gets the same repair later from auto_emitter_pass.sh, but
+    # context-v2 has no YAML artifact at this boundary.
+    _run_script(
+        "reclassify_components.py",
+        ["--merged-only", "--strict", str(output_dir)],
+    )
+    _run_script(
+        "validate_intermediate.py",
+        ["threats_merged", str(output_dir / ".threats-merged.json")],
+    )
     _run_script(
         "triage_validate_ratings.py",
         [str(output_dir), "--depth", str(cfg.get("assessment_depth") or "standard")],

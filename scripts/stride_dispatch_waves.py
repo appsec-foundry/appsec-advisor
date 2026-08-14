@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
 from merge_threats import (
     backfill_threat_attack_steps,
     backfill_threat_boundary_leg,
@@ -44,6 +45,9 @@ DEFAULT_CONCURRENCY = 5
 # effective-plan receipt remain within the controller's fixed 64-artifact cap.
 MAX_CONCURRENCY = 5
 PLAN_NAME = ".dispatch-waves.json"
+PLAN_SCHEMA_VERSION = 2
+PLAN_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "stride-dispatch-waves.schema.json"
+ATTEMPT_DIR_NAME = ".stride-attempts"
 _COMPONENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # Label stamped on a completed component's progress file by
 # ``reconcile_progress``. Deliberately not one of the analyzer's nine substep
@@ -129,7 +133,7 @@ def build_plan(manifest: dict[str, Any], concurrency: int) -> dict[str, Any]:
         for offset in range(0, len(component_ids), concurrency)
     ]
     return {
-        "schema_version": 1,
+        "schema_version": PLAN_SCHEMA_VERSION,
         "manifest_fingerprint": _fingerprint(manifest),
         "manifest_generated_at": manifest.get("generated_at"),
         "concurrency": concurrency,
@@ -142,8 +146,17 @@ def build_plan(manifest: dict[str, Any], concurrency: int) -> dict[str, Any]:
 
 
 def validate_plan(plan: dict[str, Any], manifest: dict[str, Any]) -> None:
-    if plan.get("schema_version") != 1:
-        raise WavePlanError("wave plan schema_version must be 1")
+    try:
+        schema = json.loads(PLAN_SCHEMA.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WavePlanError(f"could not load wave plan schema: {exc}") from exc
+    schema_errors = sorted(Draft202012Validator(schema).iter_errors(plan), key=lambda error: list(error.absolute_path))
+    if schema_errors:
+        error = schema_errors[0]
+        location = "/".join(str(part) for part in error.absolute_path) or "<root>"
+        raise WavePlanError(f"wave plan schema validation failed at {location}: {error.message}")
+    if plan.get("schema_version") != PLAN_SCHEMA_VERSION:
+        raise WavePlanError(f"wave plan schema_version must be {PLAN_SCHEMA_VERSION}")
     concurrency = plan.get("concurrency")
     if not isinstance(concurrency, int) or isinstance(concurrency, bool) or not 1 <= concurrency <= MAX_CONCURRENCY:
         raise WavePlanError(f"wave plan concurrency must be between 1 and {MAX_CONCURRENCY}")
@@ -229,8 +242,34 @@ def _canonicalize_discovery_escape_aliases(data: dict[str, Any]) -> bool:
     return changed
 
 
-def completion_error(output_dir: Path, component_id: str) -> str | None:
-    path = output_dir / f".stride-{component_id}.json"
+def attempt_artifact(component_id: str, attempt: int) -> str:
+    """Return the output-relative path owned by one STRIDE attempt."""
+    if not _COMPONENT_ID_RE.fullmatch(component_id) or not 1 <= attempt <= MAX_ATTEMPTS_CEILING:
+        raise WavePlanError("invalid STRIDE attempt artifact identity")
+    return f"{ATTEMPT_DIR_NAME}/{component_id}.attempt-{attempt}.json"
+
+
+def _promote_attempt_output(source: Path, canonical: Path) -> None:
+    """Publish validated attempt bytes without giving another attempt the same target."""
+    try:
+        payload = source.read_bytes()
+        tmp = canonical.with_name(canonical.name + ".tmp")
+        tmp.write_bytes(payload)
+        os.replace(tmp, canonical)
+    except OSError as exc:
+        raise WavePlanError(f"could not promote validated STRIDE attempt output: {exc}") from exc
+
+
+def completion_error(
+    output_dir: Path,
+    component_id: str,
+    *,
+    attempt: int | None = None,
+    promote: bool = False,
+) -> str | None:
+    path = output_dir / (
+        attempt_artifact(component_id, attempt) if attempt is not None else f".stride-{component_id}.json"
+    )
     if not path.is_file():
         return "missing output"
     try:
@@ -307,6 +346,10 @@ def completion_error(output_dir: Path, component_id: str) -> str | None:
     ok, errors = validate_stride(data)
     if not ok:
         return "schema validation failed: " + "; ".join(errors[:3])
+    if promote:
+        if attempt is None:
+            raise WavePlanError("only an attempt-qualified output can be promoted")
+        _promote_attempt_output(path, output_dir / f".stride-{component_id}.json")
     return None
 
 
@@ -545,7 +588,15 @@ def wait_status(
     incomplete = [
         {"component_id": component_id, "reason": error}
         for component_id in component_ids
-        if (error := completion_error(output_dir, component_id)) is not None
+        if (
+            error := completion_error(
+                output_dir,
+                component_id,
+                attempt=plan["active_claim"]["attempts"][component_id],
+                promote=True,
+            )
+        )
+        is not None
     ]
     for component_id in component_ids:
         if not any(row["component_id"] == component_id for row in incomplete):
@@ -643,6 +694,7 @@ def main(argv: list[str] | None = None) -> int:
                         plan["attempts"] = existing["attempts"]
                         plan["wait_started_at"] = existing["wait_started_at"]
                         plan["active_claim"] = existing["active_claim"]
+                        validate_plan(plan, manifest)
                 else:
                     plan = build_plan(manifest, args.concurrency)
             else:

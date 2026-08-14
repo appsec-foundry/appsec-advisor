@@ -28,6 +28,7 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .recon-scanner.stdout
 .coverage-gaps.json
 .dispatch-waves.json
+.stride-attempts/
 .stride-repository-registry.json
 .route-inventory.json
 .db-privilege-separation.json

@@ -305,10 +305,7 @@ def test_parse_composer_json(tmp_path: Path):
     # php and ext-* skipped
     assert "php" not in by_name
     assert "ext-json" not in by_name
-    # BUG (producer): the `pkg.startswith("php")` guard over-matches any
-    # package whose NAME begins with "php" (phpunit, phpstan, php-di, ...),
-    # so legitimate require-dev deps like phpunit/phpunit are dropped.
-    assert "phpunit/phpunit" not in by_name
+    assert by_name["phpunit/phpunit"].version == "^9.0"
 
 
 # ---------------------------------------------------------------------------

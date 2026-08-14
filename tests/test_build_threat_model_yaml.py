@@ -612,6 +612,52 @@ def _write_min_intermediates(out: Path) -> None:
     )
 
 
+def test_validate_and_publish_preserves_prior_yaml_on_schema_failure(tmp_path, monkeypatch):
+    out_path = tmp_path / "threat-model.yaml"
+    out_path.write_text("prior: true\n", encoding="utf-8")
+    validator = tmp_path / "validate_intermediate.py"
+    validator.write_text("# test stub\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        b.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 1, "invalid\n", ""),
+    )
+
+    result = b._validate_and_publish_yaml(out_path, "replacement: invalid\n", validator)
+
+    assert result.returncode == 1
+    assert out_path.read_text(encoding="utf-8") == "prior: true\n"
+    assert not (tmp_path / ".threat-model.yaml.pending").exists()
+
+
+def test_validate_and_publish_rejects_missing_validator_without_writing(tmp_path):
+    out_path = tmp_path / "threat-model.yaml"
+    out_path.write_text("prior: true\n", encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="schema validator missing"):
+        b._validate_and_publish_yaml(out_path, "replacement: true\n", tmp_path / "missing.py")
+
+    assert out_path.read_text(encoding="utf-8") == "prior: true\n"
+
+
+def test_validate_and_publish_replaces_canonical_only_after_success(tmp_path, monkeypatch):
+    out_path = tmp_path / "threat-model.yaml"
+    out_path.write_text("prior: true\n", encoding="utf-8")
+    validator = tmp_path / "validate_intermediate.py"
+    validator.write_text("# test stub\n", encoding="utf-8")
+    monkeypatch.setattr(
+        b.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "valid\n", ""),
+    )
+
+    result = b._validate_and_publish_yaml(out_path, "replacement: true\n", validator)
+
+    assert result.returncode == 0
+    assert out_path.read_text(encoding="utf-8") == "replacement: true\n"
+
+
 def test_cli_persists_validated_data_flow_sidecar_into_yaml(tmp_path: Path):
     repo = tmp_path / "repo"
     out = tmp_path / "out"
@@ -1835,21 +1881,26 @@ def test_main_schema_validation_failure_returns_5(tmp_path, monkeypatch, capsys)
         return real_run(cmd, *a, **k)
 
     monkeypatch.setattr(b.subprocess, "run", fake_run)
+    prior = (run / "threat-model.yaml").read_bytes()
     rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(ROOT)])
     assert rc == 5
+    assert (run / "threat-model.yaml").read_bytes() == prior
+    assert not (run / ".threat-model.yaml.pending").exists()
     assert "schema validation failed" in capsys.readouterr().err
 
 
 @_requires_last_run
-def test_main_skips_validation_when_validator_absent(tmp_path, monkeypatch, capsys):
-    """No validate_intermediate.py under plugin-root → write succeeds, no validation."""
+def test_main_fails_closed_when_validator_absent(tmp_path, monkeypatch, capsys):
+    """No validator means no canonical output publication."""
     run = _copy_run(_LAST_RUN, tmp_path)
     # Point plugin-root at an empty dir lacking scripts/validate_intermediate.py.
     fake_plugin = tmp_path / "empty_plugin"
     fake_plugin.mkdir()
+    prior = (run / "threat-model.yaml").read_bytes()
     rc = _run_main(monkeypatch, [str(run), "--plugin-root", str(fake_plugin)])
-    assert rc == 0
-    assert (run / "threat-model.yaml").is_file()
+    assert rc == 5
+    assert (run / "threat-model.yaml").read_bytes() == prior
+    assert "schema validator missing" in capsys.readouterr().err
 
 
 # --- helper / error branches -------------------------------------------------

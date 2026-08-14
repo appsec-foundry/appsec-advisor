@@ -1466,6 +1466,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.coverage-gaps.json` | Phase 9 coverage-gap intermediate |
 | `$OUTPUT_DIR/.dispatch-waves.json` | bounded STRIDE wave schedule and retry checkpoint |
 | `$OUTPUT_DIR/.stride-repository-registry.json` | context-v2 local related-repository roots used only for STRIDE admission |
+| `$OUTPUT_DIR/.stride-attempts/` | context-v2 attempt-qualified STRIDE outputs promoted to canonical component artifacts before merge |
 | `$OUTPUT_DIR/.route-inventory.json` | deterministic route-extractor MVP (arch.md) — feeds Phase 6 `attack_surface[]` and architecture-coverage engine |
 | `$OUTPUT_DIR/.db-privilege-separation.json` | thorough-only database principal-separation evidence sidecar consumed by architecture coverage |
 | `$OUTPUT_DIR/.architecture-coverage.json` | always-on architecture-coverage rule evaluations (arch.md) — feeds `security_controls[]` / `threat_hypotheses[]` / Phase-9 bridge |

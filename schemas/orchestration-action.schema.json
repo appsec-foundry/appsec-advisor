@@ -556,7 +556,15 @@
               "taxonomy_slice_sha256",
               "context_plan_path",
               "context_plan_sha256"
-            ]
+            ],
+            "properties": {
+              "output_artifacts": {
+                "maxItems": 1,
+                "items": {
+                  "pattern": "^\\.stride-attempts/[a-z0-9][a-z0-9-]{0,99}\\.attempt-[1-5]\\.json$"
+                }
+              }
+            }
           },
           "else": {
             "not": {

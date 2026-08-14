@@ -47,6 +47,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from event_log import parse_line
+
 # 2-space-indented blocks sized to the ~62-col cut-off banner body.
 _CAUSE_BLOCKS = {
     "api_stall": (
@@ -139,7 +141,14 @@ def detect_abort(output_dir: Path) -> bool:
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception:
         return False
-    return any("RUN_ABORTED" in line and (epoch := _line_epoch(line)) is not None and epoch >= start for line in lines)
+    for line in lines:
+        parsed = parse_line(line)
+        if parsed is None or parsed.event != "RUN_ABORTED":
+            continue
+        epoch = _line_epoch(line)
+        if epoch is not None and epoch >= start:
+            return True
+    return False
 
 
 def cause_for(output_dir: Path, default: str = "session_death") -> tuple[str, str]:

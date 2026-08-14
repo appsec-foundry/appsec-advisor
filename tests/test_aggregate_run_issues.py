@@ -1205,6 +1205,22 @@ def test_run_outcome_flags_external_stop_after_analysis_started(tmp_path):
     assert "no threat-model.md" in out[0]["title"]
 
 
+def test_run_outcome_preserves_authoritative_abort_reason(tmp_path):
+    (tmp_path / ".threats-merged.json").write_text("{}", encoding="utf-8")
+    reason = "build_post_stride_contexts.py failed: threat 'T-007' references unknown component"
+    log = [
+        (41, _line("2026-08-14T18:06:41Z", "RUN_ABORTED", reason)),
+    ]
+
+    out = agg._extract_run_outcome(log, tmp_path)
+
+    assert len(out) == 1
+    assert out[0]["category"] == "run_incomplete"
+    assert reason in out[0]["title"]
+    assert out[0]["evidence"]["log_line"] == 41
+    assert out[0]["evidence"]["raw_event"] == log[0][1]
+
+
 def test_run_outcome_silent_when_completed(tmp_path):
     (tmp_path / "threat-model.md").write_text("# report", encoding="utf-8")
     (tmp_path / ".threats-merged.json").write_text("{}", encoding="utf-8")

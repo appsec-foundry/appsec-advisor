@@ -2218,6 +2218,17 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
     )
     assert all(job["taxonomy_slice_path"] in job["input_artifacts"] for job in action["dispatch_jobs"])
     assert all(job["context_plan_path"] in job["input_artifacts"] for job in action["dispatch_jobs"])
+    assert [job["output_artifacts"] for job in action["dispatch_jobs"]] == [
+        [".stride-attempts/api.attempt-1.json"],
+        [".stride-attempts/worker.attempt-1.json"],
+    ]
+    assert (output / ".stride-attempts").is_dir()
+    conflicting = dict(action)
+    conflicting_jobs = [dict(job) for job in action["dispatch_jobs"]]
+    conflicting_jobs[0]["output_artifacts"] = [".stride-api.json"]
+    conflicting["dispatch_jobs"] = conflicting_jobs
+    with pytest.raises(controller.ControllerError, match="exclusive attempt identity"):
+        controller._validate_action_semantics(conflicting)
     assert all(".stride-dispatch-manifest.json" not in job["input_artifacts"] for job in action["dispatch_jobs"])
     assert all("focus_paths" not in job and "exclude_paths" not in job for job in action["dispatch_jobs"])
     assert all(
@@ -2679,6 +2690,7 @@ def test_context_v2_post_stride_claims_retry_before_verify_or_merge(tmp_path, mo
 
     assert action["action"] == "dispatch_parallel"
     assert action["dispatch_jobs"][0]["component_id"] == "api"
+    assert action["dispatch_jobs"][0]["output_artifacts"] == [".stride-attempts/api.attempt-2.json"]
     assert [name for name, _ in calls[:2]] == ["validate_dispatch_manifest.py", "stride_dispatch_waves.py"]
     assert all(name not in {"merge_threats.py"} for name, _ in calls)
 
@@ -3042,8 +3054,10 @@ def test_context_v2_analyst_context_rejects_oversized_artifact(tmp_path):
 def test_context_v2_after_evidence_skips_triage_agent_and_dispatches_only_root_cause_synthesis(tmp_path, monkeypatch):
     output = _write_context_v2_config(tmp_path)
     _write_post_stride_sources(tmp_path, output, [_post_stride_threat()])
+    calls = []
 
     def fake_script(name, args, **kwargs):
+        calls.append((name, list(args)))
         if name == "triage_validate_ratings.py":
             (output / ".triage-flags.json").write_text(
                 json.dumps({"version": 2, "flags": []}),
@@ -3059,6 +3073,10 @@ def test_context_v2_after_evidence_skips_triage_agent_and_dispatches_only_root_c
     assert action["semantic_role"] == "post_stride_synthesizer"
     assert action["unresolved_decision_keys"] == ["tier_root_causes"]
     assert all(job["semantic_role"] != "triage_validator" for job in action["dispatch_jobs"])
+    names = [name for name, _args in calls]
+    assert names.index("reclassify_components.py") < names.index("triage_validate_ratings.py")
+    reclassify_call = next(args for name, args in calls if name == "reclassify_components.py")
+    assert reclassify_call == ["--merged-only", "--strict", str(output)]
 
 
 def test_evidence_verification_semantics_reject_inconsistent_counts(tmp_path):

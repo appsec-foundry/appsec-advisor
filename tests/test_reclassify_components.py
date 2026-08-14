@@ -383,6 +383,62 @@ def test_main_reassigns_and_writes(tmp_path, capsys):
     assert by["T-002"] == "file-upload-service"
 
 
+def test_main_merged_only_repairs_phantom_before_yaml_exists(tmp_path, capsys):
+    (tmp_path / ".components.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {"id": "api-backend", "paths": ["server.ts", "routes/**"]},
+                    {"id": "web-frontend", "paths": ["frontend/**"]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".threats-merged.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "threats": [
+                    {
+                        "id": "F-007",
+                        "t_id": "T-007",
+                        "component_id": "backend-api",
+                        "evidence": [{"file": "routes/search.ts", "line": 23}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert rc.main(["--merged-only", "--strict", str(tmp_path)]) == 0
+    repaired = json.loads((tmp_path / ".threats-merged.json").read_text(encoding="utf-8"))
+    assert repaired["threats"][0]["component_id"] == "api-backend"
+    assert "tier_reclassified_from_backend-api" in repaired["threats"][0]["evidence_flags"]
+    assert "T-007:backend-api→api-backend" in capsys.readouterr().out
+
+    # The pre-YAML boundary is idempotent on retries/resume.
+    before = (tmp_path / ".threats-merged.json").read_bytes()
+    assert rc.main(["--merged-only", "--strict", str(tmp_path)]) == 0
+    assert (tmp_path / ".threats-merged.json").read_bytes() == before
+
+
+def test_main_merged_only_strict_rejects_unresolved_phantom(tmp_path, capsys):
+    (tmp_path / ".components.json").write_text(
+        json.dumps({"components": [{"id": "api-backend", "paths": ["routes/**"]}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / ".threats-merged.json").write_text(
+        json.dumps({"threats": [{"t_id": "T-099", "component_id": "ghost", "evidence": []}]}),
+        encoding="utf-8",
+    )
+
+    assert rc.main(["--merged-only", "--strict", str(tmp_path)]) == 3
+    assert "T-099:ghost" in capsys.readouterr().err
+
+
 def test_main_reassigns_many_truncates_details(tmp_path, capsys):
     # >8 changes triggers the "(+N more)" branch.
     comps = [dict(c) for c in _COMPONENTS]
