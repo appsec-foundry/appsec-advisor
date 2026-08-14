@@ -856,6 +856,11 @@ echo ""
 # pipe would make $! the reader's PID and break escalation.
 RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
 mkdir -p "$RESULT_DIR" 2>/dev/null || true
+# Hooks are separate processes of the Claude child. Export the resolved run
+# directory before launching that child so Stop, Bash, and other non-Agent
+# hooks use the same audit and lifecycle state as Agent hooks. Prompt recovery
+# remains a compatibility fallback for interactive and older callers.
+export OUTPUT_DIR="$RESULT_DIR"
 RESULT_CAPTURE="$RESULT_DIR/.headless-result.json"
 : > "$RESULT_CAPTURE" 2>/dev/null || RESULT_CAPTURE=""
 

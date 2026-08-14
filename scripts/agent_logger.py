@@ -1981,6 +1981,51 @@ def _context_v2_parallel_foreground_reason(data: dict) -> str | None:
     )
 
 
+def _context_v2_terminal_abort_reason() -> str | None:
+    """Reject tool use after a current-run context-v2 controller abort."""
+    output_dir = Path(_output_dir())
+    try:
+        config = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, AttributeError):
+        return None
+    if config.get("runtime_generation") != "context-v2":
+        return None
+    try:
+        import cutoff_cause
+
+        aborted = cutoff_cause.detect_abort(output_dir)
+    except Exception:
+        return None
+    if not aborted:
+        return None
+    return (
+        "This context-v2 invocation has already emitted an authoritative RUN_ABORTED event. "
+        "No later tool call or semantic producer may continue it; preserve the runtime artifacts "
+        "for diagnosis and start a fresh rebuild invocation."
+    )
+
+
+def _emit_pretool_denial(reason: str) -> None:
+    """Emit one fail-closed PreToolUse decision."""
+    try:
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                }
+            )
+        )
+        sys.stdout.flush()
+    except Exception:
+        sys.stderr.write(reason + "\n")
+        sys.stderr.flush()
+        sys.exit(2)
+
+
 def handle_pre_tool_use(data: dict, sid: str) -> None:
     """Log AGENT_SPAWN for Agent tool calls, and emit verbose activity
     indicators for all other tool calls from sub-agent sessions.
@@ -2013,25 +2058,14 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         if _od:
             os.environ["OUTPUT_DIR"] = _od
 
+    abort_reason = _context_v2_terminal_abort_reason()
+    if abort_reason is not None:
+        _emit_pretool_denial(abort_reason)
+        return
+
     serial_reason = _context_v2_parallel_foreground_reason(data)
     if serial_reason is not None:
-        try:
-            sys.stdout.write(
-                json.dumps(
-                    {
-                        "hookSpecificOutput": {
-                            "hookEventName": "PreToolUse",
-                            "permissionDecision": "deny",
-                            "permissionDecisionReason": serial_reason,
-                        }
-                    }
-                )
-            )
-            sys.stdout.flush()
-        except Exception:
-            sys.stderr.write(serial_reason + "\n")
-            sys.stderr.flush()
-            sys.exit(2)
+        _emit_pretool_denial(serial_reason)
         return
 
     # M3.6 #2 — record an in-flight marker file so /appsec-advisor:status

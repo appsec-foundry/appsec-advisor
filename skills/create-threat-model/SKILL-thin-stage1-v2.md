@@ -10,8 +10,7 @@
 - For STRIDE `dispatch_parallel`, launch every job with `run_in_background: true`
   and an explicit model. Never wait for one STRIDE job before launching the next.
   Other dispatches use `run_in_background: false`.
-- Do not end your turn after dispatching; use the STRIDE waiter below or wait for
-  every foreground job to return.
+- Do not end your turn after dispatching; join STRIDE below and wait for foreground jobs.
 - Description: `STRIDE (<dispatch_jobs[].analysis_depth>): <dispatch_jobs[].component_id>`.
 - Agent returns carry only status, paths, and blockers; filesystem is
   authoritative.
@@ -46,16 +45,18 @@ abort/non-zero is terminal.
      --receipt "<artifact_path>" "<sha256>" [...]
    ```
 
-For a STRIDE wave, launch every background Agent, retain its ID, then block once:
+After launching every STRIDE job, join only the current action's components:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
   "$OUTPUT_DIR" <dispatch_jobs count> --plugin-root "$CLAUDE_PLUGIN_ROOT" \
-  --interval 20 --rounds 45
+  --interval 20 --rounds 24 \
+  --component <dispatch_jobs[0].component_id> [...]
 ```
 
-The waiter validates completion, not write-first seeds. Its non-zero result
-falls through to the controller-owned retry or abort; never re-dispatch directly.
+Exit `75`: repeat unchanged (deadline persists). `0`/`1`: call
+`context-v2-post-stride`. `2`: abort. It rejects seeds and future waves; never
+re-dispatch or end here.
 
 The command order is fixed:
 

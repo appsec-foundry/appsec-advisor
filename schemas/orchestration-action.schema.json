@@ -364,6 +364,12 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$"
         },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Controller-owned attempt identity for retryable STRIDE jobs."
+        },
         "candidate_id": {
           "type": "string",
           "pattern": "^(AC-T|AC|ORG-AC|REPO-AC)-[0-9]{3,}$"
@@ -538,6 +544,7 @@
           "then": {
             "required": [
               "component_id",
+              "attempt",
               "analysis_depth",
               "max_turns",
               "sampling_required",

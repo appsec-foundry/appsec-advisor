@@ -98,11 +98,11 @@ def test_main_waits_for_wave_validation_after_seed_file_appears(tmp_path, monkey
     (tmp_path / ".dispatch-waves.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: 0)
     states = iter(["pending", "complete"])
-    monkeypatch.setattr(wsp, "_wave_status", lambda _out: next(states))
+    monkeypatch.setattr(wsp, "_wave_status", lambda _out, _components: next(states))
     slept = []
     monkeypatch.setattr(wsp.time, "sleep", lambda seconds: slept.append(seconds))
 
-    assert wsp.main([str(tmp_path), "1", "--plugin-root", str(root)]) == 0
+    assert wsp.main([str(tmp_path), "1", "--plugin-root", str(root), "--component", "backend-api"]) == 0
     assert slept == [20]
 
 
@@ -112,7 +112,9 @@ def test_wave_status_treats_real_write_first_seed_as_pending(tmp_path):
         "components": [{"component_id": "backend-api"}],
     }
     (tmp_path / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (tmp_path / waves.PLAN_NAME).write_text(json.dumps(waves.build_plan(manifest, 1)), encoding="utf-8")
+    plan = waves.build_plan(manifest, 1)
+    waves.claim(plan, manifest, tmp_path)
+    (tmp_path / waves.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8")
     (tmp_path / ".stride-backend-api.json").write_text(
         json.dumps(
             {
@@ -126,7 +128,7 @@ def test_wave_status_treats_real_write_first_seed_as_pending(tmp_path):
         encoding="utf-8",
     )
 
-    assert wsp._wave_status(tmp_path) == "pending"
+    assert wsp._wave_status(tmp_path, ["backend-api"]) == "pending"
 
 
 def test_main_pending_wave_cannot_exit_zero_at_poll_cap(tmp_path, monkeypatch):
@@ -134,10 +136,24 @@ def test_main_pending_wave_cannot_exit_zero_at_poll_cap(tmp_path, monkeypatch):
     root = _make_root_with_progress(tmp_path)
     (tmp_path / ".dispatch-waves.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: 0)
-    monkeypatch.setattr(wsp, "_wave_status", lambda _out: "pending")
+    monkeypatch.setattr(wsp, "_wave_status", lambda _out, _components: "pending")
     monkeypatch.setattr(wsp.time, "sleep", lambda _seconds: None)
 
-    assert wsp.main([str(tmp_path), "1", "--plugin-root", str(root), "--rounds", "1"]) == 1
+    assert (
+        wsp.main(
+            [
+                str(tmp_path),
+                "1",
+                "--plugin-root",
+                str(root),
+                "--rounds",
+                "1",
+                "--component",
+                "backend-api",
+            ]
+        )
+        == wsp.PENDING_EXIT_CODE
+    )
 
 
 def test_main_returns_high_rc_immediately(tmp_path, monkeypatch):
@@ -184,7 +200,7 @@ def test_main_cap_reached_emits_warn_and_returns_last_rc(tmp_path, monkeypatch, 
     rc = wsp.main([str(tmp_path), "5", "--plugin-root", str(root), "--rounds", "13"])
     assert rc == 1
     _out, err = capsys.readouterr()
-    assert "poll cap reached" in err
+    assert "join slice exhausted" in err
     assert "polling slow" in err  # round 12 warning
 
 

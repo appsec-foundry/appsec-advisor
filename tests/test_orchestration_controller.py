@@ -1721,6 +1721,68 @@ def test_context_v2_dispatch_clears_prior_output_but_preserves_in_place_input(tm
     assert repair.read_text(encoding="utf-8") == "current partial state"
 
 
+def test_context_v2_replay_is_rejected_before_fresh_producer_output_is_cleared(tmp_path):
+    output = _write_context_v2_config(tmp_path)
+    cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+    action = controller._context_v2_dispatch(
+        output,
+        cfg,
+        role="context_resolver",
+        job_id="phase1-context",
+        input_artifacts=[".skill-config.json"],
+        output_artifacts=[".threat-modeling-context.md"],
+        decision_keys=[],
+        receipts=[],
+    )
+    controller.context_routing.resolve_action(
+        action,
+        output,
+        semantic_roles=controller.SEMANTIC_ROLE_REGISTRY,
+        model_keys=controller.SEMANTIC_ROLE_MODEL_KEYS,
+    )
+    produced = output / ".threat-modeling-context.md"
+    produced.write_text("fresh producer output\n", encoding="utf-8")
+
+    with pytest.raises(controller.ControllerError, match="dispatch replay rejected"):
+        controller._context_v2_dispatch(
+            output,
+            cfg,
+            role="context_resolver",
+            job_id="phase1-context",
+            input_artifacts=[".skill-config.json"],
+            output_artifacts=[".threat-modeling-context.md"],
+            decision_keys=[],
+            receipts=[],
+        )
+
+    assert produced.read_text(encoding="utf-8") == "fresh producer output\n"
+
+
+def test_context_v2_boundary_rejects_current_run_after_authoritative_abort(tmp_path):
+    output = _write_context_v2_config(tmp_path)
+    (output / ".scan-start-epoch").write_text("1\n", encoding="utf-8")
+    (output / ".agent-run.log").write_text(
+        "2026-08-14T12:43:31Z  [--------]  WARN   RUN_ABORTED  architecture artifacts missing\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(controller.ControllerError, match="authoritative RUN_ABORTED"):
+        controller._load_context_v2_config(output)
+
+
+def test_controller_abort_clears_live_tool_markers(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path)
+    active = output / ".active-tool-calls"
+    active.mkdir()
+    (active / "recon-scanner.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(controller.subprocess, "run", lambda *args, **kwargs: _completed())
+
+    controller._aggregate_issues_on_abort(output, "producer contract failed")
+
+    assert not active.exists() or list(active.iterdir()) == []
+    assert "RUN_ABORTED" in (output / ".agent-run.log").read_text(encoding="utf-8")
+
+
 def test_context_v2_begin_clears_optional_outputs_with_no_current_producer(tmp_path, monkeypatch):
     output = _write_context_v2_config(tmp_path)
     optional = [
@@ -2128,6 +2190,7 @@ def test_context_v2_prepare_stride_returns_bounded_bundle_jobs(tmp_path, monkeyp
                         "status": "claimed",
                         "wave": {
                             "components": components,
+                            "attempts": {"api": 1, "worker": 1},
                             "retry_reasons": {"api": "schema validation failed: discovery_escapes[0]"},
                         },
                     }
@@ -2600,7 +2663,9 @@ def test_context_v2_post_stride_claims_retry_before_verify_or_merge(tmp_path, mo
     def fake_script(name, args, **kwargs):
         calls.append((name, args))
         if name == "stride_dispatch_waves.py" and args[0] == "claim":
-            return _completed(json.dumps({"status": "claimed", "wave": {"components": [component]}}))
+            return _completed(
+                json.dumps({"status": "claimed", "wave": {"components": [component], "attempts": {"api": 2}}})
+            )
         return _completed()
 
     monkeypatch.setattr(controller, "_run_script", fake_script)
@@ -2691,12 +2756,13 @@ def test_context_v2_prepare_stride_rejects_bundle_escape_after_external_gate(tmp
                     {
                         "status": "claimed",
                         "wave": {
+                            "attempts": {"api": 1},
                             "components": [
                                 {
                                     "component_id": "api",
                                     "evidence_bundle_path": "../outside.json",
                                 }
-                            ]
+                            ],
                         },
                     }
                 )

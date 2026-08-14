@@ -421,23 +421,119 @@ def test_plan_fingerprint_rejects_changed_manifest() -> None:
         waves.validate_plan(plan, changed)
 
 
-def test_claim_persists_two_attempt_budget_across_resume(tmp_path: Path) -> None:
+def test_claim_persists_two_attempt_budget_across_resume(tmp_path: Path, monkeypatch) -> None:
     manifest = _manifest(1)
     plan = waves.build_plan(manifest, concurrency=1)
+    now = [100]
+    monkeypatch.setattr(waves.time, "time", lambda: now[0])
 
     first, changed = waves.claim(plan, manifest, tmp_path)
     assert changed is True
     assert first["wave"]["attempts"] == {"service-01": 1}
 
+    plan["wait_started_at"]["service-01"] = now[0]
+    now[0] += waves.WAIT_DEADLINE_SECONDS
     second, changed = waves.claim(plan, manifest, tmp_path)
     assert changed is True
     assert second["wave"]["attempts"] == {"service-01": 2}
     assert second["wave"]["retry_reasons"] == {"service-01": "missing output"}
 
+    plan["wait_started_at"]["service-01"] = now[0]
+    now[0] += waves.WAIT_DEADLINE_SECONDS
     blocked, changed = waves.claim(plan, manifest, tmp_path)
     assert changed is False
     assert blocked["status"] == "blocked"
     assert blocked["blocked_components"] == ["service-01"]
+
+
+def test_wait_status_joins_only_the_claimed_wave_not_future_waves(tmp_path: Path) -> None:
+    manifest = _manifest(6)
+    plan = waves.build_plan(manifest, concurrency=5)
+    claimed, changed = waves.claim(plan, manifest, tmp_path)
+    assert changed is True
+    current = [component["component_id"] for component in claimed["wave"]["components"]]
+    for component_id in current:
+        _complete(tmp_path, component_id)
+
+    result = waves.wait_status(plan, manifest, tmp_path, current, now=100)
+
+    assert result["status"] == "complete"
+    assert plan["attempts"]["service-06"] == 0
+    assert not (tmp_path / ".stride-service-06.json").exists()
+
+
+def test_wait_deadline_is_cumulative_across_bounded_poll_slices(tmp_path: Path) -> None:
+    manifest = _manifest(1)
+    manifest_path = tmp_path / ".stride-dispatch-manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    plan = waves.build_plan(manifest, concurrency=1)
+    waves.claim(plan, manifest, tmp_path)
+    (tmp_path / waves.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8")
+
+    first = waves.load_wait_status(tmp_path, ["service-01"], begin=True, now=100)
+    pending = waves.load_wait_status(
+        tmp_path,
+        ["service-01"],
+        begin=True,
+        now=100 + waves.WAIT_DEADLINE_SECONDS - 1,
+    )
+    expired = waves.load_wait_status(
+        tmp_path,
+        ["service-01"],
+        begin=True,
+        now=100 + waves.WAIT_DEADLINE_SECONDS,
+    )
+
+    assert first["status"] == "pending"
+    assert pending["status"] == "pending"
+    assert pending["wait_started_at"] == 100
+    assert expired["status"] == "expired"
+
+
+def test_wait_rejects_an_undispatched_future_component(tmp_path: Path) -> None:
+    manifest = _manifest(2)
+    plan = waves.build_plan(manifest, concurrency=1)
+    waves.claim(plan, manifest, tmp_path)
+
+    with pytest.raises(waves.WavePlanError, match="exactly match the active dispatch claim"):
+        waves.wait_status(plan, manifest, tmp_path, ["service-02"], now=100)
+
+
+def test_wait_rejects_a_subset_of_the_active_claim(tmp_path: Path) -> None:
+    manifest = _manifest(2)
+    plan = waves.build_plan(manifest, concurrency=2)
+    waves.claim(plan, manifest, tmp_path)
+
+    with pytest.raises(waves.WavePlanError, match="exactly match the active dispatch claim"):
+        waves.wait_status(plan, manifest, tmp_path, ["service-01"], now=100)
+
+
+def test_claim_rejects_a_second_dispatch_before_the_active_join(tmp_path: Path) -> None:
+    manifest = _manifest(1)
+    plan = waves.build_plan(manifest, concurrency=1)
+    first, changed = waves.claim(plan, manifest, tmp_path)
+
+    second, changed_again = waves.claim(plan, manifest, tmp_path)
+
+    assert changed is True
+    assert first["status"] == "claimed"
+    assert changed_again is False
+    assert second["status"] == "in_flight"
+    assert plan["attempts"]["service-01"] == 1
+
+
+def test_claim_retries_only_after_the_active_join_deadline(tmp_path: Path, monkeypatch) -> None:
+    manifest = _manifest(1)
+    plan = waves.build_plan(manifest, concurrency=1)
+    waves.claim(plan, manifest, tmp_path)
+    plan["wait_started_at"]["service-01"] = 100
+    monkeypatch.setattr(waves.time, "time", lambda: 100 + waves.WAIT_DEADLINE_SECONDS)
+
+    retry, changed = waves.claim(plan, manifest, tmp_path)
+
+    assert changed is True
+    assert retry["status"] == "claimed"
+    assert retry["wave"]["attempts"] == {"service-01": 2}
 
 
 def test_blocked_claim_reports_the_component_validation_reason(tmp_path: Path, capsys) -> None:

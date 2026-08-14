@@ -624,6 +624,42 @@ class TestStopEvent:
         rc, log = run_logger(event, tmp_path)
         assert "SESSION_STOP" in log
 
+
+class TestContextV2LifecycleGuards:
+    @staticmethod
+    def _context_v2_output(tmp_path: Path) -> Path:
+        output = tmp_path / "out"
+        output.mkdir()
+        (output / ".skill-config.json").write_text(
+            json.dumps({"runtime_generation": "context-v2"}),
+            encoding="utf-8",
+        )
+        return output
+
+    def test_pretool_denies_any_continuation_after_run_aborted(self, tmp_path):
+        output = self._context_v2_output(tmp_path)
+        (output / ".scan-start-epoch").write_text("1\n", encoding="utf-8")
+        (output / ".agent-run.log").write_text(
+            "2026-08-14T12:43:31Z  [--------]  WARN   RUN_ABORTED  contract failure\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env.update({"OUTPUT_DIR": str(output), "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT)})
+        event = make_pre_tool_event("Agent", {"subagent_type": "appsec-advisor:appsec-architecture-analyst"})
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+
+        payload = json.loads(result.stdout)
+        assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "authoritative RUN_ABORTED" in payload["hookSpecificOutput"]["permissionDecisionReason"]
+
     def test_token_usage_logged_on_stop(self, tmp_path):
         event = {
             "hook_event_name": "Stop",

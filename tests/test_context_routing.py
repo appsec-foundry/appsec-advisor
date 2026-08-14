@@ -99,6 +99,7 @@ def _generic_action(
     if component_id:
         job["component_id"] = component_id
         job.update(
+            attempt=1,
             analysis_depth="full",
             estimated_threat_count="moderate",
             file_count=3,
@@ -384,6 +385,24 @@ def test_shadow_plan_explains_delivery_omission_and_legacy_read(tmp_path):
     assert by_context["run.configuration"]["category_name"] == "Target and run"
     assert by_context["run.configuration"]["reason"]
     assert (output / routing.PLAN_RECEIPT_NAME).is_file()
+
+
+def test_effective_plan_rejects_semantic_action_replay_but_accepts_new_attempt_identity(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    action = _context_action(output)
+    _resolve(action, output)
+
+    with pytest.raises(routing.ContextRoutingError, match="already issued"):
+        routing.assert_action_not_replayed(action, output)
+    with pytest.raises(routing.ContextRoutingError, match="already resolved"):
+        _resolve(action, output)
+
+    retry = copy.deepcopy(action)
+    retry["dispatch_jobs"][0]["job_id"] = "phase1-context:attempt-2"
+    routing.assert_action_not_replayed(retry, output)
+    plan = _resolve(retry, output)
+    assert len(plan["actions"]) == 2
 
 
 def test_active_declared_context_rejects_unreceipted_existing_bytes(tmp_path):

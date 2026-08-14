@@ -58,6 +58,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import check_permissions  # noqa: E402
 import context_routing  # noqa: E402
+import cutoff_cause  # noqa: E402
 import detect_session_model  # noqa: E402
 import ensure_output_gitignore  # noqa: E402
 import merge_threats as merge_decision_contract  # noqa: E402
@@ -2024,6 +2025,11 @@ def _load_context_v2_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
         raise ControllerError(
             "incompatible context-v2 artifact schema versions; start a new run with the current plugin generation"
         )
+    if cutoff_cause.detect_abort(output_dir):
+        raise ControllerError(
+            "this context-v2 invocation already reached an authoritative RUN_ABORTED state; "
+            "no later boundary or semantic producer may continue it"
+        )
     env_override = os.environ.get("APPSEC_CONTEXT_V2", "").strip()
     if env_override not in ("", "1"):
         _append_event(
@@ -2713,6 +2719,10 @@ def _context_v2_dispatch(
         "artifact_receipts": receipts,
         "unresolved_decision_keys": decision_keys,
     }
+    try:
+        context_routing.assert_action_not_replayed(action, output_dir)
+    except context_routing.ContextRoutingError as exc:
+        raise ControllerError(f"context-v2 dispatch replay rejected: {exc}") from exc
     _prepare_context_v2_dispatch_outputs(output_dir, action["dispatch_jobs"])
     return _validate_action(action)
 
@@ -3674,6 +3684,9 @@ def _context_v2_stride_wave_action(
     claimed_components = wave.get("components") if isinstance(wave, dict) else None
     if not isinstance(claimed_components, list) or not claimed_components:
         raise ControllerError("STRIDE wave claim has no component entries")
+    claimed_attempts = wave.get("attempts") if isinstance(wave, dict) else None
+    if not isinstance(claimed_attempts, dict):
+        raise ControllerError("STRIDE wave claim has no attempt accounting")
     retry_reasons = wave.get("retry_reasons") if isinstance(wave, dict) else None
     if isinstance(retry_reasons, dict) and retry_reasons:
         details = "; ".join(
@@ -3696,6 +3709,9 @@ def _context_v2_stride_wave_action(
         bundle_path = component.get("evidence_bundle_path") if isinstance(component, dict) else None
         if not isinstance(component_id, str) or not isinstance(bundle_path, str):
             raise ControllerError("STRIDE wave references an incomplete or unknown component entry")
+        attempt = claimed_attempts.get(component_id)
+        if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+            raise ControllerError(f"STRIDE wave has invalid attempt accounting for {component_id}")
         if component_id in seen:
             raise ControllerError(f"duplicate dispatch component id: {component_id}")
         seen.add(component_id)
@@ -3875,8 +3891,9 @@ def _context_v2_stride_wave_action(
         jobs.append(
             {
                 "schema_version": 1,
-                "job_id": f"stride:{component_id}",
+                "job_id": f"stride:{component_id}:attempt-{attempt}",
                 "component_id": component_id,
+                "attempt": attempt,
                 "semantic_role": "stride_analyzer",
                 **_context_v2_job_metadata(cfg, "stride_analyzer"),
                 "analysis_depth": analysis["depth"],
@@ -3906,18 +3923,21 @@ def _context_v2_stride_wave_action(
         if business_context_receipt is not None:
             jobs[-1]["business_context_path"] = business_context_path
             jobs[-1]["business_context_sha256"] = business_context_receipt["sha256"]
+    action = {
+        **_context_v2_common(output_dir, cfg),
+        "action": "dispatch_parallel",
+        "dispatch_jobs": jobs,
+        "artifact_receipts": structured,
+        "receipts": [
+            f"Context-v2 STRIDE wave admitted for {len(jobs)} component(s) after persisted attempt accounting"
+        ],
+    }
+    try:
+        context_routing.assert_action_not_replayed(action, output_dir)
+    except context_routing.ContextRoutingError as exc:
+        raise ControllerError(f"context-v2 dispatch replay rejected: {exc}") from exc
     _prepare_context_v2_dispatch_outputs(output_dir, jobs)
-    return _validate_action(
-        {
-            **_context_v2_common(output_dir, cfg),
-            "action": "dispatch_parallel",
-            "dispatch_jobs": jobs,
-            "artifact_receipts": structured,
-            "receipts": [
-                f"Context-v2 STRIDE wave admitted for {len(jobs)} component(s) after persisted attempt accounting"
-            ],
-        }
-    )
+    return _validate_action(action)
 
 
 def context_v2_prepare_stride(output_dir: Path) -> dict[str, Any]:

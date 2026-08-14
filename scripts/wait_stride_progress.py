@@ -15,6 +15,8 @@ from pathlib import Path
 
 import stride_dispatch_waves
 
+PENDING_EXIT_CODE = 75
+
 
 def _run_progress(script: Path, output_dir: Path, expected: int, *, force: bool) -> int:
     cmd = [sys.executable, str(script), str(output_dir), str(expected)]
@@ -28,22 +30,25 @@ def _run_progress(script: Path, output_dir: Path, expected: int, *, force: bool)
     return proc.returncode
 
 
-def _wave_status(output_dir: Path) -> str | None:
-    """Return validated wave status, or ``None`` without a wave plan.
+def _wave_status(output_dir: Path, component_ids: list[str]) -> str | None:
+    """Return status for the dispatched jobs, or ``None`` without a plan.
 
     A background analyzer writes a schema-valid seed before doing its work.
-    File-count progress therefore cannot prove completion. When the deterministic
-    wave plan exists, use its normal completion validator so the waiter does not
-    release the controller while an analyzer is still replacing its seed.
+    File-count progress therefore cannot prove completion. Validate only the
+    component IDs in the current controller action; future waves must not keep
+    this join open.
     """
     if not (output_dir / ".dispatch-waves.json").is_file():
         return None
+    if not component_ids:
+        print("STRIDE waiter requires --component for a persisted wave plan", file=sys.stderr)
+        return "invalid"
     try:
-        status = stride_dispatch_waves.load_status(output_dir).get("status")
+        status = stride_dispatch_waves.load_wait_status(output_dir, component_ids, begin=True).get("status")
     except (OSError, ValueError, stride_dispatch_waves.WavePlanError) as exc:
         print(f"invalid STRIDE wave state: {exc}", file=sys.stderr)
         return "invalid"
-    return status if status in {"complete", "pending"} else "invalid"
+    return status if status in {"complete", "pending", "expired"} else "invalid"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,8 +56,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("output_dir", type=Path)
     parser.add_argument("expected", type=int)
     parser.add_argument("--interval", type=int, default=20)
-    parser.add_argument("--rounds", type=int, default=45)
+    parser.add_argument("--rounds", type=int, default=24)
     parser.add_argument("--plugin-root", type=Path, default=None)
+    parser.add_argument("--component", action="append", default=[])
     args = parser.parse_args(argv)
 
     if args.expected <= 0:
@@ -72,9 +78,14 @@ def main(argv: list[str] | None = None) -> int:
         elapsed_s = f"{elapsed // 60}m{elapsed % 60:02d}s"
         print(f"  ↳ (+{elapsed_s}) STRIDE progress poll {round_no}/{args.rounds}")
         last_rc = _run_progress(progress_script, args.output_dir, args.expected, force=(round_no == 1))
-        last_wave_status = _wave_status(args.output_dir)
+        last_wave_status = _wave_status(args.output_dir, args.component)
         if last_wave_status == "complete" or (last_wave_status is None and last_rc == 0):
             return 0
+        if last_wave_status == "expired":
+            print(
+                "BASH_WARN STRIDE wave join deadline reached — returning to controller retry ownership", file=sys.stderr
+            )
+            return 1
         if last_wave_status == "invalid":
             return 2
         if last_rc >= 2:
@@ -88,10 +99,10 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(max(args.interval, 1))
 
     print(
-        f"BASH_WARN STRIDE poll cap reached — proceeding after {args.rounds} rounds",
+        "BASH_WARN STRIDE join slice exhausted while the cumulative wave deadline remains — repeat the same waiter",
         file=sys.stderr,
     )
-    return 1 if last_wave_status == "pending" else last_rc
+    return PENDING_EXIT_CODE if last_wave_status == "pending" else last_rc
 
 
 if __name__ == "__main__":

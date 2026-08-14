@@ -60,6 +60,7 @@ FINAL_PROGRESS_LABEL = "Complete"
 # made the component fail, not as a way to retry the same thing harder.
 DEFAULT_MAX_ATTEMPTS = 2
 MAX_ATTEMPTS_CEILING = 5
+WAIT_DEADLINE_SECONDS = 15 * 60
 
 
 def max_attempts() -> int:
@@ -134,6 +135,8 @@ def build_plan(manifest: dict[str, Any], concurrency: int) -> dict[str, Any]:
         "concurrency": concurrency,
         "component_ids": component_ids,
         "attempts": {component_id: 0 for component_id in component_ids},
+        "wait_started_at": {component_id: 0 for component_id in component_ids},
+        "active_claim": {"component_ids": [], "attempts": {}},
         "waves": waves,
     }
 
@@ -159,6 +162,24 @@ def validate_plan(plan: dict[str, Any], manifest: dict[str, Any]) -> None:
         for value in attempts.values()
     ):
         raise WavePlanError(f"wave plan attempt counts must be integers between 0 and {ceiling}")
+    wait_started_at = plan.get("wait_started_at")
+    if not isinstance(wait_started_at, dict) or set(wait_started_at) != set(expected):
+        raise WavePlanError("wave plan wait_started_at must cover every manifest component exactly once")
+    if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in wait_started_at.values()):
+        raise WavePlanError("wave plan wait_started_at values must be non-negative integer epochs")
+    active_claim = plan.get("active_claim")
+    if not isinstance(active_claim, dict) or set(active_claim) != {"component_ids", "attempts"}:
+        raise WavePlanError("wave plan active_claim must contain component_ids and attempts")
+    active_ids = active_claim["component_ids"]
+    active_attempts = active_claim["attempts"]
+    if not isinstance(active_ids, list) or len(active_ids) > concurrency or len(set(active_ids)) != len(active_ids):
+        raise WavePlanError("wave plan active claim must be a unique bounded component list")
+    if not all(isinstance(component_id, str) and component_id in attempts for component_id in active_ids):
+        raise WavePlanError("wave plan active claim contains an unknown component")
+    if not isinstance(active_attempts, dict) or set(active_attempts) != set(active_ids):
+        raise WavePlanError("wave plan active claim attempts must match its component IDs")
+    if any(active_attempts[component_id] != attempts[component_id] for component_id in active_ids):
+        raise WavePlanError("wave plan active claim attempts differ from persisted attempt accounting")
     waves = plan.get("waves")
     if not isinstance(waves, list) or not waves:
         raise WavePlanError("wave plan waves must be a non-empty array")
@@ -420,9 +441,21 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
     parent-session resumes.
     """
     current = status(plan, manifest, output_dir)
+    active_ids = plan["active_claim"]["component_ids"]
+    if active_ids:
+        active_status = wait_status(plan, manifest, output_dir, active_ids)
+        if active_status["status"] in {"unstarted", "pending"}:
+            return {
+                "status": "in_flight",
+                "component_ids": active_ids,
+                "incomplete": active_status["incomplete"],
+            }, False
+        plan["active_claim"] = {"component_ids": [], "attempts": {}}
+        if active_status["status"] == "complete":
+            current = status(plan, manifest, output_dir)
     next_wave = current["next_wave"]
     if next_wave is None:
-        return current, False
+        return current, bool(active_ids)
     budget = max_attempts()
     blocked = [
         component["component_id"]
@@ -451,6 +484,7 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
         if plan["attempts"][component_id] > 0:
             retry_reasons[component_id] = incomplete_reasons.get(component_id, "incomplete output")
         plan["attempts"][component_id] += 1
+        plan["wait_started_at"][component_id] = 0
         # Escalate the budget for every attempt after the first. A component
         # only lands here because the previous attempt did not complete, and the
         # dominant cause is a turn budget too small for its file footprint --
@@ -465,6 +499,10 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
     next_wave["attempts"] = {
         component["component_id"]: plan["attempts"][component["component_id"]] for component in claimed_components
     }
+    plan["active_claim"] = {
+        "component_ids": [component["component_id"] for component in claimed_components],
+        "attempts": dict(next_wave["attempts"]),
+    }
     if retry_reasons:
         next_wave["retry_reasons"] = retry_reasons
     return {
@@ -474,6 +512,85 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
         "concurrency": current["concurrency"],
         "wave": next_wave,
     }, True
+
+
+def _validated_wait_components(plan: dict[str, Any], component_ids: list[str]) -> list[str]:
+    if not component_ids or len(component_ids) > plan["concurrency"]:
+        raise WavePlanError("wait component list must contain one bounded dispatch wave")
+    if len(set(component_ids)) != len(component_ids):
+        raise WavePlanError("wait component list contains duplicate IDs")
+    known = set(plan["component_ids"])
+    unknown = sorted(set(component_ids) - known)
+    if unknown:
+        raise WavePlanError("wait component list contains unknown IDs: " + ", ".join(unknown))
+    matching_waves = [wave for wave in plan["waves"] if set(component_ids).issubset(set(wave["component_ids"]))]
+    if len(matching_waves) != 1:
+        raise WavePlanError("wait component list must belong to exactly one persisted wave")
+    if component_ids != plan["active_claim"]["component_ids"]:
+        raise WavePlanError("wait component list must exactly match the active dispatch claim")
+    return component_ids
+
+
+def wait_status(
+    plan: dict[str, Any],
+    manifest: dict[str, Any],
+    output_dir: Path,
+    component_ids: list[str],
+    *,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Validate only the currently dispatched wave, not future waves."""
+    validate_plan(plan, manifest)
+    component_ids = _validated_wait_components(plan, component_ids)
+    incomplete = [
+        {"component_id": component_id, "reason": error}
+        for component_id in component_ids
+        if (error := completion_error(output_dir, component_id)) is not None
+    ]
+    for component_id in component_ids:
+        if not any(row["component_id"] == component_id for row in incomplete):
+            reconcile_progress(output_dir, component_id)
+    if not incomplete:
+        return {"status": "complete", "component_ids": component_ids, "incomplete": []}
+    current = int(time.time()) if now is None else now
+    starts = [plan["wait_started_at"][row["component_id"]] for row in incomplete]
+    if any(start <= 0 for start in starts):
+        return {"status": "unstarted", "component_ids": component_ids, "incomplete": incomplete}
+    started_at = min(starts)
+    elapsed = max(0, current - started_at)
+    return {
+        "status": "expired" if elapsed >= WAIT_DEADLINE_SECONDS else "pending",
+        "component_ids": component_ids,
+        "incomplete": incomplete,
+        "wait_started_at": started_at,
+        "elapsed_seconds": elapsed,
+        "remaining_seconds": max(0, WAIT_DEADLINE_SECONDS - elapsed),
+    }
+
+
+def load_wait_status(
+    output_dir: Path,
+    component_ids: list[str],
+    *,
+    begin: bool = False,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Load one claimed wave and optionally start its cumulative join timer."""
+    manifest_path, plan_path = _paths(output_dir)
+    manifest = _read_object(manifest_path, "dispatch manifest")
+    plan = _read_object(plan_path, "wave plan")
+    validate_plan(plan, manifest)
+    component_ids = _validated_wait_components(plan, component_ids)
+    current = int(time.time()) if now is None else now
+    changed = False
+    if begin:
+        for component_id in component_ids:
+            if plan["wait_started_at"][component_id] == 0:
+                plan["wait_started_at"][component_id] = current
+                changed = True
+        if changed:
+            _atomic_write_json(plan_path, plan)
+    return wait_status(plan, manifest, output_dir, component_ids, now=current)
 
 
 def _paths(output_dir: Path, manifest_arg: Path | None = None) -> tuple[Path, Path]:
@@ -524,6 +641,8 @@ def main(argv: list[str] | None = None) -> int:
                     else:
                         plan = build_plan(manifest, args.concurrency)
                         plan["attempts"] = existing["attempts"]
+                        plan["wait_started_at"] = existing["wait_started_at"]
+                        plan["active_claim"] = existing["active_claim"]
                 else:
                     plan = build_plan(manifest, args.concurrency)
             else:

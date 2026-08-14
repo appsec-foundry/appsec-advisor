@@ -683,6 +683,41 @@ def _load_prior_plan(
     return plan
 
 
+def assert_action_not_replayed(action: dict[str, Any], output_root: Path) -> None:
+    """Reject a semantic dispatch that was already issued for this run.
+
+    The effective plan is an append-only execution ledger within one
+    context-v2 invocation. Replacing a row with the same job identity hides a
+    duplicate dispatch and, more importantly, lets dispatch preparation delete
+    the artifact just returned by the first producer. Controller-owned retries
+    therefore use a new attempt-qualified job ID instead of replaying an
+    existing action.
+    """
+    plan_path, receipt_path = _plan_paths(output_root.resolve())
+    if not plan_path.exists() and not receipt_path.exists():
+        return
+    if not plan_path.is_file() or not receipt_path.is_file():
+        raise ContextRoutingError("effective context plan and its receipt must exist together")
+    plan = _validate_plan_receipt(plan_path, receipt_path)
+    run_id = action.get("dispatch_values", {}).get("run_id")
+    mode = action.get("mode")
+    if not isinstance(run_id, str) or not run_id or mode not in {"full", "rebuild"}:
+        raise ContextRoutingError("context-v2 dispatch replay check requires a resolved run identity")
+    expected_run_key = _sha256(_canonical_json_bytes({"mode": mode, "run_id": run_id}))
+    if plan.get("runtime_generation") != "context-v2" or plan.get("run_key_sha256") != expected_run_key:
+        raise ContextRoutingError("effective context plan belongs to another runtime or run identity")
+
+    job_ids = sorted(job["job_id"] for job in action.get("dispatch_jobs", []))
+    action_id = f"{action.get('stage', 'stage1')}:{_sha256('|'.join(job_ids).encode())[:16]}"
+    prior = [row for row in plan.get("actions", []) if row.get("action_id") == action_id]
+    if prior:
+        raise ContextRoutingError(
+            "semantic dispatch was already issued for job(s) "
+            + ", ".join(job_ids)
+            + "; invoke the successor boundary instead of replaying it"
+        )
+
+
 def _write_plan(output_root: Path, plan: dict[str, Any]) -> None:
     _validate_schema(plan, PLAN_SCHEMA_PATH, "effective context plan")
     payload = json.dumps(plan, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8") + b"\n"
@@ -766,6 +801,10 @@ def resolve_action(
         "stage": action.get("stage", "stage1"),
         "job_ids": job_ids,
     }
+    if any(row.get("action_id") == action_id for row in plan["actions"]):
+        raise ContextRoutingError(
+            "semantic dispatch action identity was already resolved; retries require a new attempt-qualified job ID"
+        )
     action_receipts = {receipt["artifact_path"]: receipt for receipt in action.get("artifact_receipts", [])}
 
     deliveries: list[dict[str, Any]] = []
@@ -824,10 +863,9 @@ def resolve_action(
         if delivered_bytes > limits["max_bytes"]:
             raise ContextRoutingError(f"agent {agent_id!r} exceeds its aggregate context-byte cap")
 
-    old_action_ids = {action_id}
-    plan["actions"] = [row for row in plan["actions"] if row["action_id"] not in old_action_ids] + [action_record]
-    plan["deliveries"] = [row for row in plan["deliveries"] if row["action_id"] not in old_action_ids] + deliveries
-    plan["diagnostics"] = [row for row in plan["diagnostics"] if row["action_id"] not in old_action_ids] + diagnostics
+    plan["actions"].append(action_record)
+    plan["deliveries"].extend(deliveries)
+    plan["diagnostics"].extend(diagnostics)
     plan["actions"].sort(key=lambda row: row["action_id"])
     plan["deliveries"].sort(key=lambda row: row["delivery_id"])
     plan["diagnostics"].sort(key=lambda row: (row["action_id"], row["job_id"], row["context_id"], row["code"]))

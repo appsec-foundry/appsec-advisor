@@ -116,6 +116,15 @@ def test_bg_wait_ceiling_is_disabled_for_headless() -> None:
     assert "export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0" in body
 
 
+def test_resolved_output_dir_is_exported_before_claude_launch() -> None:
+    """Every hook process, including Stop and Bash, must share run-local state."""
+    body = _body()
+    export = 'export OUTPUT_DIR="$RESULT_DIR"'
+    launch = 'eval "$CLAUDE_CMD" < /dev/null'
+    assert export in body
+    assert body.index(export) < body.index(launch)
+
+
 # ── Untrusted-preflight abort message ───────────────────────────────────
 # 2026-07-20: the abort named the problem ("preflight findings present") and
 # pointed at preflight_untrusted.py for details, but never mentioned that

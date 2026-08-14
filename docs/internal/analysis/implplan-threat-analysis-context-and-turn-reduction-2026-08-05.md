@@ -794,7 +794,7 @@ two producers active for the same artifact within one invocation.
 
 ## Implementation status
 
-Status as of 2026-08-10:
+Status as of 2026-08-14:
 
 | Work package | Status | Remaining gate |
 |---|---|---|
@@ -804,7 +804,7 @@ Status as of 2026-08-10:
 | WP3 | Implemented, repository-tested, and exercised through final rendering in one complete live invocation | Establish behavior and finding parity against the legacy runtime |
 | WP4 | Implemented for full/rebuild; selected by default on this feature branch | Establish artifact and finding parity against the legacy runtime |
 | WP5 | Implemented for full/rebuild; selected by default on this feature branch | Establish the resident-context and escape-rate targets |
-| WP5a | Repository implementation is substantially complete, and the R10 postfix run live-proved the recon and terminal-marker fixes | Close the R10 postfix coverage, abuse-signal, identity, and telemetry defects; then pass a fresh live checkpoint and the controlled A/B cohort |
+| WP5a | Repository implementation and the postfix3 corrective slice are repository-tested; successive R10 checkpoints exposed producer, routing, lifecycle, replay, and parallel-join defects | Pass a fresh live checkpoint and the controlled A/B cohort, then establish the resident-context and cost targets |
 | WP6 | Not implemented | WP0-WP5a must pass the controlled A/B before Stage 2-4 changes begin |
 | WP7 | Partially implemented; branch-local full/rebuild default selection landed before acceptance, while context-v2 resume remains rejected | Incremental and resume migration, controlled release rollout, acceptance, and legacy-switch removal remain |
 
@@ -2130,6 +2130,89 @@ mechanism match, while specific execution CWEs and direct source probes retain
 their existing behavior. Regression coverage pins both the wallet-state false
 positive and a real template-injection match. No new live scan is part of this
 corrective change.
+
+### R10 postfix3 replay and parallel-join abort — 2026-08-14
+
+The postfix3 run at
+`/tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix3` used the intended
+quick depth, explicit abuse-case verification, retained runtime files, trusted
+mode, and rebuild. It is not an accepted R10 result. The wrapper correctly
+failed closed because the run returned without `threat-model.md`.
+
+The first architecture producer completed at `12:42:52Z`. The parent then
+invoked `context-v2-post-recon` again instead of the successor
+`context-v2-post-architecture`. Semantic dispatch actions were replaceable in
+the effective plan, and `_context_v2_dispatch` removed declared outputs before
+resolving that plan. The replay therefore deleted the fresh components,
+data-flow, asset, and attack-surface artifacts and produced `RUN_ABORTED` at
+`12:43:31Z`. The abort existed only as an event and did not prevent later tool
+use, so the parent incorrectly dispatched a second architecture producer and
+continued the same invocation.
+
+The later STRIDE wave live-proved the postfix2 parallelization correction. Five
+Agent starts occurred between `13:10:23Z` and `13:11:06Z`, before any analyzer
+completed. The persisted plan contained a sixth component in wave two. The
+waiter validated global plan completion instead of the five component IDs in
+the current action, so it could not finish after those five outputs completed.
+Its configured 15-minute loop also exceeded the host Bash tool's 600-second
+ceiling and was terminated after 601 seconds. The parent then ended after the
+five completion notifications without claiming wave two or invoking the merge
+boundary.
+
+The hook log split the evidence across two directories. Agent prompts recovered
+`OUTPUT_DIR`, but Bash and Stop hooks inherited no run output and wrote to the
+plugin's default `docs/security` directory. This hid the waiter termination and
+outer Stop from the retained postfix3 hook log and prevented those hooks from
+enforcing run-local continuation state.
+
+The correction makes the effective plan an append-only execution ledger and
+rejects a repeated semantic action before output preparation. STRIDE retries
+receive attempt-qualified job IDs and a schema-validated attempt field. Every
+context-v2 entry point and PreToolUse reject continuation after an in-window
+`RUN_ABORTED`; controller abort aggregation remains responsible for terminal
+live-marker cleanup. Headless exports the resolved output directory before the
+Claude child starts, so every hook observes the same run-local state.
+
+The STRIDE waiter now receives exactly the component IDs in the returned
+dispatch action. It persists one 15-minute wave deadline, polls in slices below
+the host Bash limit, returns `75` when another slice is required, and returns
+deadline ownership to `context-v2-post-stride` for retry classification. The
+persisted active claim prevents a premature boundary call from claiming the
+same running component again. The compact runtime treats each waiter slice as
+nonterminal and advances only from the validated current-wave result. No Stop
+hook is used for this lifecycle boundary because agent and controller Stop
+events do not have a reliably distinct payload on every supported host version.
+
+The question whether each STRIDE category should represent a deterministic
+catalogue of concrete checks is deliberately deferred until the lifecycle and
+acceptance work is stable. The design, outcome receipt, naming alternative,
+and unresolved decisions are preserved in
+`proposal-stride-check-catalogue-2026-08-14.md`; no catalogue behavior is part
+of this corrective slice.
+
+Current implementation status: the postfix3 corrective slice is complete at a
+green repository boundary. `make lint` passes, `make test` reports 12,487
+passed and 95 skipped with 91.38% coverage, and `make check` repeats the same
+12,487 passed and 95 skipped after its format, configuration,
+fragment-registry, and drift gates pass. No live scan was started, so R10
+acceptance, the controlled A/B cohort, WP6, WP7 parity, and the
+resident-context, turn, and cost targets remain open.
+
+No live scan is part of this fix. After a green commit boundary, the next
+reserved R10 invocation is:
+
+```bash
+/home/mrohr/appsec-advisor/scripts/run-headless.sh \
+  --repo /home/mrohr/juice-shop \
+  --output /tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix4 \
+  --model claude-sonnet-4-6 \
+  --reasoning-model sonnet-economy \
+  --assessment-depth quick \
+  --abuse-cases \
+  --keep-runtime-files \
+  --trust-mode trusted \
+  --rebuild
+```
 
 ## Verification matrix
 
