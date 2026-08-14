@@ -6,9 +6,11 @@ the subprocess-running helper so the loop is fast and deterministic.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
+import stride_dispatch_waves as waves
 import wait_stride_progress as wsp
 
 
@@ -88,6 +90,54 @@ def test_main_returns_0_on_first_round_success(tmp_path, monkeypatch):
     assert rc == 0
     assert calls == [True]  # first round uses force
     assert slept == []  # never sleeps when round 1 succeeds
+
+
+def test_main_waits_for_wave_validation_after_seed_file_appears(tmp_path, monkeypatch):
+    """OR-5: a background analyzer's write-first seed is not completion."""
+    root = _make_root_with_progress(tmp_path)
+    (tmp_path / ".dispatch-waves.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: 0)
+    states = iter(["pending", "complete"])
+    monkeypatch.setattr(wsp, "_wave_status", lambda _out: next(states))
+    slept = []
+    monkeypatch.setattr(wsp.time, "sleep", lambda seconds: slept.append(seconds))
+
+    assert wsp.main([str(tmp_path), "1", "--plugin-root", str(root)]) == 0
+    assert slept == [20]
+
+
+def test_wave_status_treats_real_write_first_seed_as_pending(tmp_path):
+    manifest = {
+        "generated_at": "2026-08-14T10:16:16Z",
+        "components": [{"component_id": "backend-api"}],
+    }
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (tmp_path / waves.PLAN_NAME).write_text(json.dumps(waves.build_plan(manifest, 1)), encoding="utf-8")
+    (tmp_path / ".stride-backend-api.json").write_text(
+        json.dumps(
+            {
+                "component_id": "backend-api",
+                "partial": True,
+                "seed_only": True,
+                "skipped_categories": ["S", "T", "R", "I", "D", "E"],
+                "threats": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert wsp._wave_status(tmp_path) == "pending"
+
+
+def test_main_pending_wave_cannot_exit_zero_at_poll_cap(tmp_path, monkeypatch):
+    """OR-5: ready-looking seed counts must not turn a pending wave green."""
+    root = _make_root_with_progress(tmp_path)
+    (tmp_path / ".dispatch-waves.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: 0)
+    monkeypatch.setattr(wsp, "_wave_status", lambda _out: "pending")
+    monkeypatch.setattr(wsp.time, "sleep", lambda _seconds: None)
+
+    assert wsp.main([str(tmp_path), "1", "--plugin-root", str(root), "--rounds", "1"]) == 1
 
 
 def test_main_returns_high_rc_immediately(tmp_path, monkeypatch):

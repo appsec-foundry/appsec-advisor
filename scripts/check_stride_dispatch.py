@@ -289,6 +289,65 @@ _STEP_START_RE = re.compile(r"\[([^\]\s]+)\]\s+Starting STRIDE analysis")
 _STEP_END_RE = re.compile(r"\[([^\]\s]+)\]\s+STRIDE analysis complete")
 
 
+def _context_v2_dispatch_starts(output_dir: Path, since: str | None) -> dict[str, str]:
+    """Earliest context-v2 hook dispatch timestamp for each component."""
+    try:
+        text = (output_dir / ".hook-events.log").read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    starts: dict[str, str] = {}
+    for line in text.splitlines():
+        if "AGENT_SPAWN" not in line or "appsec-stride-analyzer-v2" not in line:
+            continue
+        match = _COMPONENT_ID_RE.search(line)
+        if match is None:
+            continue
+        timestamp = line.split("  ", 1)[0].strip()
+        if since is not None and timestamp < since:
+            continue
+        component_id = match.group(1)
+        starts[component_id] = min(starts.get(component_id, timestamp), timestamp)
+    return starts
+
+
+def _context_v2_completion_events(output_dir: Path, component_ids: set[str]) -> list[tuple[str, set[str]]]:
+    """Completion timestamps from the event shapes emitted by the v2 producer."""
+    try:
+        text = (output_dir / ".agent-run.log").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    events: list[tuple[str, set[str]]] = []
+    for line in text.splitlines():
+        if "AGENT_END" not in line and "All six STRIDE categories complete" not in line:
+            continue
+        timestamp = line.split("  ", 1)[0].strip()
+        named = {
+            component_id
+            for component_id in component_ids
+            if re.search(rf"(?<![A-Za-z0-9-]){re.escape(component_id)}(?![A-Za-z0-9-])", line)
+        }
+        events.append((timestamp, named))
+    return sorted(events)
+
+
+def _context_v2_serial_components(output_dir: Path, since: str | None) -> list[str]:
+    """Return components participating in a proven serialized v2 dispatch edge."""
+    starts = _context_v2_dispatch_starts(output_dir, since)
+    if len(starts) < 2:
+        return []
+    ordered = sorted(starts.items(), key=lambda item: item[1])
+    events = _context_v2_completion_events(output_dir, set(starts))
+    serialized: set[str] = set()
+    for index, ((component_id, started), (next_component, next_started)) in enumerate(zip(ordered, ordered[1:])):
+        completed_before_next = any(
+            started <= timestamp <= next_started and (component_id in named or (index == 0 and not named))
+            for timestamp, named in events
+        )
+        if completed_before_next:
+            serialized.update({component_id, next_component})
+    return [component_id for component_id, _timestamp in ordered if component_id in serialized]
+
+
 def _dispatch_intervals(output_dir: Path, since: str | None = None) -> dict[str, dict[str, str]]:
     """Per-component ``{"start": ts, "end": ts}`` from ``.agent-run.log``.
 
@@ -347,6 +406,9 @@ def detect_serial_dispatch(output_dir: Path) -> list[str]:
     strictly preferable to false-tripping a healthy parallel run.
     """
     manifest = _read_manifest(output_dir)
+    context_v2_serial = _context_v2_serial_components(output_dir, manifest.get("generated_at"))
+    if context_v2_serial:
+        return context_v2_serial
     spans = _dispatch_intervals(output_dir, since=manifest.get("generated_at"))
     if len(spans) < 2:
         return []  # nothing to compare — cannot distinguish serial from single
@@ -394,8 +456,8 @@ def _print_serial_banner(ordered: list[str]) -> None:
     print("  RUN DEGRADED — STRIDE wave dispatched SERIALLY", file=sys.stderr)
     print(bar, file=sys.stderr)
     print("", file=sys.stderr)
-    print("  Every analyzer below started only after the previous one", file=sys.stderr)
-    print("  returned — no two ran concurrently:", file=sys.stderr)
+    print("  The components below contain a proven serialized dispatch", file=sys.stderr)
+    print("  edge — an analyzer finished before the next one started:", file=sys.stderr)
     print("", file=sys.stderr)
     for cid in ordered:
         print(f"    • {cid}", file=sys.stderr)
@@ -404,10 +466,9 @@ def _print_serial_banner(ordered: list[str]) -> None:
     print("  the run — but it costs roughly N× the wall-clock a wave of N", file=sys.stderr)
     print("  should take, and each long gap risks a standard-tier stall.", file=sys.stderr)
     print("", file=sys.stderr)
-    print("  Cause: the orchestrator emitted one Agent tool call per", file=sys.stderr)
-    print("  assistant message. A wave's calls MUST be issued together in", file=sys.stderr)
-    print("  ONE assistant message — see SKILL-thin-stage1.md → 'Never", file=sys.stderr)
-    print("  dispatch them sequentially'.", file=sys.stderr)
+    print("  Cause: the context-v2 dispatcher waited on foreground Agent", file=sys.stderr)
+    print("  calls. STRIDE waves must launch non-blocking Agent calls before", file=sys.stderr)
+    print("  entering their deterministic waiter — see SKILL-thin-stage1-v2.md.", file=sys.stderr)
     print(bar, file=sys.stderr)
     print("", file=sys.stderr)
 

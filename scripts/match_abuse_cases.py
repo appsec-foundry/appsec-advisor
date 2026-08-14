@@ -183,9 +183,11 @@ def _cwe_code(value: object) -> str:
 # A finding with only one of them is useful triage input, but is not sufficient
 # evidence that a particular abuse-case mechanism exists. For example, CWE-347
 # can describe unsigned artifact provenance as well as JWT verification. The
+# CWE-74 parent spans injection into many downstream components and does not by
+# itself establish a server-side interpreter or code-execution sink. The
 # matcher therefore requires an accompanying code or mechanism phrase from the
 # case probe before dispatching an expensive verifier for these CWEs.
-_CONTEXT_DEPENDENT_CWES = frozenset({"284", "287", "347", "384"})
+_CONTEXT_DEPENDENT_CWES = frozenset({"74", "284", "287", "347", "384"})
 
 _RUNTIME_SURFACE_SIGNALS = frozenset({"has_auth_surface", "has_role_concept", "has_client_storage"})
 _NON_RUNTIME_EVIDENCE_PREFIXES = (

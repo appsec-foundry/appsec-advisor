@@ -617,6 +617,8 @@ class TestBodyContentConsistency:
         assert "Never emit `TH-UNCLASSIFIED`" in stride
         assert 'bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh"' in stride
         assert "never invoke that shell script with Python" in stride
+        assert "--agent stride-analyzer-v2" in stride
+        assert "component=<COMPONENT_ID literal>" in stride
         assert "`MODEL_ID` and exact plan `analysis.depth` (`full` or `light`)" in flat
         assert "never infer it from profile, budget, or another component" in flat
         assert "role/permission/identity claims as authorization questions" in flat

@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Context-v2 now evaluates the complete Config/IaC catalog without a model turn.
 - Context-v2 now validates and reconstructs every active structured projection, including distinct actor contracts and component-owned STRIDE routing hints, before dispatch.
 - Context-v2 STRIDE routing now accepts component-owned focus directories under recursive file globs.
+- Context-v2 STRIDE and abuse-verifier waves now launch concurrently and wait for validated completion instead of serializing blocking Agent calls.
 - Completion summaries now distinguish STRIDE-analyzed components from the full modeled inventory.
 - Completed and controller-aborted runs now clear live tool-call markers even when other runtime diagnostics are preserved.
 - Context-v2 headless runs now keep the Stage-1 heartbeat active and report current agent phases without retaining superseded role markers.

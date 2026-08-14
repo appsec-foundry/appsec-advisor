@@ -197,6 +197,31 @@ def test_context_dependent_jwt_cwe_needs_jwt_mechanism_evidence():
     assert mac.match_step(step, [jwt_verifier])["matched_finding_id"] == "T-002"
 
 
+def test_generic_injection_cwe_needs_code_execution_mechanism_evidence():
+    """CWE-74 state injection must not create a server-side RCE candidate."""
+    wallet_state_injection = {
+        "t_id": "T-016",
+        "title": "Unauthenticated wallet injection into challenge state",
+        "scenario": "An attacker adds an arbitrary address to an in-memory wallet set.",
+        "cwe": "CWE-74",
+        "evidence": {"file": "routes/web3Wallet.ts", "line": 16},
+    }
+    execution_sink = {
+        "t_id": "T-017",
+        "title": "Server-side template injection permits remote code execution",
+        "scenario": "User input reaches an unsafe template interpreter.",
+        "cwe": "CWE-74",
+        "evidence": {"file": "routes/render.ts", "line": 28},
+    }
+    step = _step(1, "CWE-(94|95|917|1336|502|74)", grants="code_execution")
+    step["finding"] = {"cwe": "CWE-94"}
+    step["probe"]["sink_patterns"].append("(?i)(remote code execution|\\bRCE\\b)")
+    step["probe"]["sink_patterns"].append("(?i)(template injection|\\bSSTI\\b)")
+
+    assert not mac.match_step(step, [wallet_state_injection])["matched"]
+    assert mac.match_step(step, [execution_sink])["matched_finding_id"] == "T-017"
+
+
 def test_chain_steps_do_not_collapse_to_one_finding():
     # A two-step chain (IDOR read → mass-assignment write) must map to two
     # distinct findings, not the same one twice.

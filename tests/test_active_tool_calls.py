@@ -228,6 +228,92 @@ def _agent_call(tool_use_id: str, subtype: str, *, background: bool = False) -> 
     }
 
 
+def test_context_v2_foreground_stride_call_is_denied_before_marker(tmp_path, agent_logger, capsys):
+    """OR-5: the hook mechanically prevents serial context-v2 STRIDE."""
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+
+    agent_logger.handle_pre_tool_use(
+        _agent_call("toolu_stride", "appsec-stride-analyzer-v2"),
+        sid="abc12345",
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "run_in_background:true" in payload["hookSpecificOutput"]["permissionDecisionReason"]
+    assert _read_active(tmp_path) == [], "OR-5: a denied serial call is never active"
+
+
+def test_context_v2_background_stride_call_is_allowed(tmp_path, agent_logger, capsys):
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+
+    agent_logger.handle_pre_tool_use(
+        _agent_call("toolu_stride", "appsec-stride-analyzer-v2", background=True),
+        sid="abc12345",
+    )
+
+    assert capsys.readouterr().out == ""
+    markers = [entry for entry in _read_active(tmp_path) if entry.get("tool_use_id")]
+    assert len(markers) == 1
+    assert markers[0]["background"] is True
+
+
+def test_context_v2_foreground_abuse_verifier_is_denied_before_marker(tmp_path, agent_logger, capsys):
+    """A dispatch_parallel abuse wave cannot silently become serial."""
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+
+    agent_logger.handle_pre_tool_use(
+        _agent_call("toolu_abuse", "appsec-abuse-case-verifier"),
+        sid="abc12345",
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "wait_abuse_progress.py" in payload["hookSpecificOutput"]["permissionDecisionReason"]
+    assert _read_active(tmp_path) == []
+
+
+def test_context_v2_background_abuse_verifier_is_allowed(tmp_path, agent_logger, capsys):
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+
+    agent_logger.handle_pre_tool_use(
+        _agent_call("toolu_abuse", "appsec-abuse-case-verifier", background=True),
+        sid="abc12345",
+    )
+
+    assert capsys.readouterr().out == ""
+    markers = [entry for entry in _read_active(tmp_path) if entry.get("tool_use_id")]
+    assert len(markers) == 1
+    assert markers[0]["background"] is True
+
+
+def test_legacy_foreground_stride_call_remains_allowed(tmp_path, agent_logger, capsys):
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "legacy"}),
+        encoding="utf-8",
+    )
+
+    agent_logger.handle_pre_tool_use(
+        _agent_call("toolu_stride", "appsec-stride-analyzer-v2"),
+        sid="abc12345",
+    )
+
+    assert capsys.readouterr().out == ""
+    markers = [entry for entry in _read_active(tmp_path) if entry.get("tool_use_id")]
+    assert len(markers) == 1
+
+
 def test_agent_marker_uses_concrete_subtype_instead_of_stale_session_label(tmp_path, agent_logger):
     agent_logger._save_session_agent("abc12345", "recon-scanner")
 

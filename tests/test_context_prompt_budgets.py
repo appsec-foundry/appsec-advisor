@@ -200,7 +200,9 @@ def test_compact_stage_contracts_preserve_level0_dispatch_and_gates():
 
     assert "prepare-abuse --output-dir" in stage1d
     assert "finalize-abuse --output-dir" in stage1d
-    assert "single assistant message" in stage1d
+    assert "run_in_background:true" in stage1d
+    assert "launch the whole wave before waiting" in stage1d
+    assert "wait_abuse_progress.py" in stage1d
     assert "model alias" in stage1d
     assert "without reproducing evidence or artifact content" in stage1d
     assert "must not silently drop candidates" in stage1d
@@ -240,10 +242,12 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     text = (ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text(encoding="utf-8")
     flat = " ".join(text.split())
 
-    # Anti-serial and anti-background dispatch rules are load-bearing: a
-    # backgrounded agent strands the run and a serial chain multiplies wall-clock.
-    assert "in ONE assistant message" in flat
-    assert "Never one call per message" in flat
+    # OR-5: STRIDE waves use non-blocking fan-out plus a deterministic waiter so
+    # one-call-per-message drift cannot serialize the wave. Other semantic
+    # boundaries remain foreground and blocking.
+    assert "run_in_background: true" in text
+    assert "wait_stride_progress.py" in text
+    assert "Never wait for one STRIDE job before launching the next" in flat
     assert "run_in_background: false" in text
     assert "Do not end your turn after dispatching" in text
     assert "Never re-dispatch an agent that already returned" in text

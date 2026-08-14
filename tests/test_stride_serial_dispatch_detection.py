@@ -193,17 +193,53 @@ def test_serial_wave_is_reported_but_does_not_fail_the_run(tmp_path: Path, capsy
 
 
 def test_skill_forbids_sequential_wave_dispatch() -> None:
-    """The mechanical detector above only reports; the prose must forbid.
+    """OR-5: context-v2 must remain parallel even if calls drift across turns."""
+    text = (REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text(encoding="utf-8")
+    flat = " ".join(text.split())
+    assert "run_in_background: true" in text, "OR-5: STRIDE fan-out must be non-blocking"
+    assert "wait_stride_progress.py" in text, "OR-5: background STRIDE requires a deterministic waiter"
+    assert "Never wait for one STRIDE job before launching the next" in flat, (
+        "OR-5: a wave must not serialize when tool calls span assistant turns"
+    )
 
-    The 115178f thin-orchestrator rebuild compacted the original HARD-CONSTRAINT
-    block (SKILL-impl.md) down to one descriptive sentence, dropping the
-    imperative + concrete anti-serial check — which is what let the orchestrator
-    dispatch the wave serially. These substrings pin the restored imperative so a
-    future compaction pass cannot silently weaken it back to a description.
-    """
-    text = (REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1.md").read_text(encoding="utf-8")
-    assert "one assistant message" in text
-    # The imperative force, not just the phrasing: an explicit anti-serial order
-    # and the concrete self-check that names the exact violation.
-    assert "do NOT send one call, wait for it" in text
-    assert "you have already violated" in text
+
+def test_context_v2_serial_wave_is_detected_from_production_event_shapes(tmp_path: Path) -> None:
+    """The 2026-08-14 R10 shape used hooks for starts and v2 AGENT_END rows."""
+    out = tmp_path / "security"
+    out.mkdir()
+    components = ["backend-api", "auth-service", "frontend-spa"]
+    (out / ".stride-dispatch-manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-08-14T10:16:16Z",
+                "components": [{"component_id": component_id} for component_id in components],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out / ".hook-events.log").write_text(
+        "\n".join(
+            [
+                "2026-08-14T10:18:49Z  [run]  INFO   AGENT_SPAWN   appsec-advisor:appsec-stride-analyzer-v2 [COMPONENT_ID=backend-api]",
+                "2026-08-14T10:29:43Z  [run]  INFO   AGENT_SPAWN   appsec-advisor:appsec-stride-analyzer-v2 [COMPONENT_ID=auth-service]",
+                "2026-08-14T10:38:45Z  [run]  INFO   AGENT_SPAWN   appsec-advisor:appsec-stride-analyzer-v2 [COMPONENT_ID=frontend-spa]",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (out / ".agent-run.log").write_text(
+        "\n".join(
+            [
+                "2026-08-14T10:29:25Z  [--------]  INFO   threat-analyst  STEP_END  All six STRIDE categories complete",
+                "2026-08-14T10:38:26Z  [--------]  INFO   threat-analyst  AGENT_END auth-service: 6 threats written",
+                "2026-08-14T10:49:05Z  [--------]  INFO   threat-analyst  AGENT_END 6 threats written for frontend-spa",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert check_stride_dispatch.detect_serial_dispatch(out) == components, (
+        "OR-5: the detector must consume the context-v2 producer's real event shapes"
+    )

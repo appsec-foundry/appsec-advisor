@@ -1953,6 +1953,34 @@ def _is_sanctioned_background_watchdog(cmd: str) -> bool:
     return True
 
 
+def _context_v2_parallel_foreground_reason(data: dict) -> str | None:
+    """Reject a blocking Agent call that would serialize a context-v2 wave."""
+    if data.get("tool_name") != "Agent":
+        return None
+    tool_input = data.get("tool_input", {}) or {}
+    subtype = tool_input.get("subagent_type")
+    waiters = {
+        "appsec-advisor:appsec-stride-analyzer-v2": ("STRIDE", "wait_stride_progress.py"),
+        "appsec-advisor:appsec-abuse-case-verifier": ("abuse verifier", "wait_abuse_progress.py"),
+    }
+    if subtype not in waiters:
+        return None
+    if tool_input.get("run_in_background") is True:
+        return None
+    try:
+        config = json.loads(Path(_output_dir(), ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if config.get("runtime_generation") != "context-v2":
+        return None
+    wave, waiter = waiters[subtype]
+    return (
+        f"Context-v2 {wave} jobs must use run_in_background:true. "
+        "A foreground Agent call serializes the controller's dispatch_parallel wave; "
+        f"launch every job before entering {waiter}."
+    )
+
+
 def handle_pre_tool_use(data: dict, sid: str) -> None:
     """Log AGENT_SPAWN for Agent tool calls, and emit verbose activity
     indicators for all other tool calls from sub-agent sessions.
@@ -1984,6 +2012,27 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         )
         if _od:
             os.environ["OUTPUT_DIR"] = _od
+
+    serial_reason = _context_v2_parallel_foreground_reason(data)
+    if serial_reason is not None:
+        try:
+            sys.stdout.write(
+                json.dumps(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "deny",
+                            "permissionDecisionReason": serial_reason,
+                        }
+                    }
+                )
+            )
+            sys.stdout.flush()
+        except Exception:
+            sys.stderr.write(serial_reason + "\n")
+            sys.stderr.flush()
+            sys.exit(2)
+        return
 
     # M3.6 #2 — record an in-flight marker file so /appsec-advisor:status
     # --live can answer "what is happening right now?". One file per

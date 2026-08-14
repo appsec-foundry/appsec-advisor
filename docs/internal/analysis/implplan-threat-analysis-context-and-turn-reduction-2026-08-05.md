@@ -2074,6 +2074,63 @@ counts and passes its format, configuration, fragment-registry, and
 target-specificity gates. No follow-up live scan was started before this green
 commit boundary.
 
+### R10 postfix2 serial-wave defect — 2026-08-14
+
+The correctly invoked postfix2 run used quick depth, explicit abuse-case
+verification, retained runtime files, trusted mode, and rebuild at
+`/tmp/appsec-context-v2-wp5a-smoke-20260810-r10-postfix2`. It live-proved the
+actor, recon-projection, architecture-ownership, control-routing, and receipt
+fixes through five complete six-category STRIDE outputs. It is not an accepted
+R10 result because the five-job wave configured with concurrency five ran
+strictly serially.
+
+Hook dispatches started `backend-api` at `10:18:49Z`, `auth-service` at
+`10:29:43Z`, `frontend-spa` at `10:38:45Z`, `realtime-channel` at `10:49:24Z`,
+and `web3-nft` at `10:54:54Z`. Each of the first four analyzers completed before
+the next started. The 246-, 473-, and 594-second idle intervals contained only
+the independent heartbeat and resumed without retry, so they are model/API
+waits. Serial dispatch incorrectly summed those waits across the wave instead
+of bounding wall time by the slowest component.
+
+The controller correctly returned `action=dispatch_parallel`; the compact
+context-v2 runtime consumed it as foreground calls and relied on the model to
+emit every tool block in one assistant message. The same soft invariant had
+already failed in an earlier legacy run. The existing serial detector still
+returned success because it recognized only legacy `stride-analyzer`
+`[component] Starting/complete` lines, while context-v2 emitted hook
+`AGENT_SPAWN` records and `AGENT_END` details under the v2 role.
+
+The correction launches every context-v2 STRIDE job as a non-blocking Agent
+call before waiting. The PreToolUse hook denies a foreground context-v2 STRIDE
+call before it creates an active-call marker, making parallel dispatch
+mechanical rather than prompt-only. `wait_stride_progress.py` now consults the
+deterministic wave validator, so a write-first seed cannot release the boundary,
+and the controller retains retry and abort ownership. The v2 producer emits
+canonical component-tagged boundary events. The serial detector consumes the
+real v2 hook and completion shapes while retaining legacy coverage; replaying
+it against the preserved postfix2 directory reports all five serialized
+components.
+
+The completed run exposed the same defect in Stage 1d: the six verifier starts
+at `11:18:44Z`, `11:21:25Z`, `11:25:20Z`, `11:28:05Z`, `11:29:52Z`, and
+`11:31:35Z` were serial despite `dispatch_parallel`. Context-v2 now backgrounds
+the complete abuse-verifier wave, mechanically rejects foreground verifier
+calls, and blocks in `wait_abuse_progress.py` until every declared verdict has
+decided all steps. Missing, malformed, or write-first pending verdicts cannot
+release the boundary.
+
+The sole reported run issue, `AC-T-006`, was an upstream deterministic matcher
+false positive. Its RCE step accepted the generic parent `CWE-74` as sufficient
+evidence and bound `T-016`, an unauthenticated wallet-address insertion into an
+in-memory set at `routes/web3Wallet.ts:16`, even though the admitted source
+window contained no interpreter, template, eval, or deserialization sink. The
+verifier correctly returned a reasoned inconclusive verdict. `CWE-74` is now a
+context-dependent family signal: it requires an accompanying case-specific
+mechanism match, while specific execution CWEs and direct source probes retain
+their existing behavior. Regression coverage pins both the wallet-state false
+positive and a real template-injection match. No new live scan is part of this
+corrective change.
+
 ## Verification matrix
 
 Use the same target commit, Claude Code version, exact model IDs, versioned
