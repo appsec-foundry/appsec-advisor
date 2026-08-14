@@ -34,8 +34,15 @@ import sys
 from pathlib import Path
 
 import yaml
+from _atomic_io import atomic_write_json
 from jsonschema import Draft202012Validator
-from validate_intermediate import validate_actor, validate_actors_repo, validate_actors_resolved, validate_recon_signals
+from validate_intermediate import (
+    validate_actor,
+    validate_actors_merged_static,
+    validate_actors_repo,
+    validate_actors_resolved,
+    validate_recon_signals,
+)
 
 _DISCOVERY_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "actors-discovered.schema.yaml"
 _ACT_X_RE = re.compile(r"^ACT-X-[0-9]{1,4}$")
@@ -615,9 +622,11 @@ def resolve(
             if a["_provenance"].get("disabled_by")
         ],
     }
-    merged_static_path = os.path.join(output_dir, ".actors-merged-static.json")
-    with open(merged_static_path, "w") as f:
-        json.dump(merged_static, f, indent=2)
+    valid, errors = validate_actors_merged_static(merged_static)
+    if not valid:
+        raise RuntimeError(f"resolver produced invalid .actors-merged-static.json: {'; '.join(errors[:5])}")
+    merged_static_path = Path(output_dir) / ".actors-merged-static.json"
+    atomic_write_json(merged_static_path, merged_static, sort_keys=False)
     print(
         f"[resolve_actors] .actors-merged-static.json written ({len(merged_static['resolved_actors'])} active actors)"
     )
@@ -733,9 +742,8 @@ def resolve(
     valid, errors = validate_actors_resolved(resolved_out)
     if not valid:
         raise RuntimeError(f"resolver produced invalid .actors-resolved.json: {'; '.join(errors[:5])}")
-    resolved_path = os.path.join(output_dir, ".actors-resolved.json")
-    with open(resolved_path, "w") as f:
-        json.dump(resolved_out, f, indent=2)
+    resolved_path = Path(output_dir) / ".actors-resolved.json"
+    atomic_write_json(resolved_path, resolved_out, sort_keys=False)
 
     active_count = sum(1 for a in resolved_map.values() if a["_provenance"].get("active"))
     print(

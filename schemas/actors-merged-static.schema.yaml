@@ -1,0 +1,47 @@
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "https://appsec-advisor/schemas/actors-merged-static.schema.yaml"
+title: Merged Static Actor Set
+description: "Static plugin, organization, and repository actors admitted to actor discovery."
+
+type: object
+additionalProperties: false
+required:
+  - schema_version
+  - actors_inputs_fingerprint
+  - catalog_actors
+  - resolved_actors
+  - disabled_actors
+
+properties:
+  schema_version:
+    const: 1
+  actors_inputs_fingerprint:
+    type: string
+    pattern: "^[0-9a-f]{64}$"
+  catalog_actors:
+    type: array
+    items:
+      $ref: "https://appsec-advisor/schemas/actors.schema.yaml"
+  resolved_actors:
+    type: array
+    items:
+      $ref: "https://appsec-advisor/schemas/actors.schema.yaml"
+  disabled_actors:
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - disabled_by
+        - disable_reason
+      properties:
+        id:
+          type: string
+          pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+        disabled_by:
+          type: string
+          enum: [enterprise, repo]
+        disable_reason:
+          type: ["null", string]
+          maxLength: 400

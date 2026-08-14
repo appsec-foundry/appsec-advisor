@@ -1819,8 +1819,15 @@ def _write_architecture_receipt_inputs(output: Path, *, discovery_enabled: bool 
         "discovery_actor_count": 0,
         "rejected_discovery_actors": [],
     }
+    static_actors = {
+        "schema_version": 1,
+        "actors_inputs_fingerprint": "0" * 64,
+        "catalog_actors": [],
+        "resolved_actors": [],
+        "disabled_actors": [],
+    }
     (output / ".actors-resolved.json").write_text(json.dumps(actors), encoding="utf-8")
-    (output / ".actors-merged-static.json").write_text(json.dumps(actors), encoding="utf-8")
+    (output / ".actors-merged-static.json").write_text(json.dumps(static_actors), encoding="utf-8")
     architecture_context.build(output)
 
 
@@ -4412,6 +4419,53 @@ class TestContextV2PostRecon:
         action = controller.context_v2_post_recon(output)
         assert action["semantic_role"] == "actor_discoverer"
         assert action["dispatch_jobs"][0]["output_artifacts"] == [".actors-discovered.json"]
+        static_receipt = next(
+            receipt
+            for receipt in action["artifact_receipts"]
+            if receipt["artifact_path"] == ".actors-merged-static.json"
+        )
+        assert static_receipt["schema_id"] == "schemas/actors-merged-static.schema.yaml#v1", (
+            "ST-1: the static actor receipt must validate the bytes against their own contract"
+        )
+        controller.consume_artifact_receipt(output, static_receipt)
+
+    def test_raw_recon_warning_does_not_expand_actor_projection(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        summary_path = output / ".recon-summary.md"
+        summary_path.write_text(
+            _valid_recon_summary() + "\n" + "\n".join(f"additional raw evidence {index}" for index in range(300)),
+            encoding="utf-8",
+        )
+        _write_architecture_receipt_inputs(output, discovery_enabled=True)
+
+        def fake_script(name, args, **kwargs):
+            if name == "actor_discovery_cache.py":
+                return _completed("cache-key-1" if args[0] == "compute" else "miss")
+            return _completed()
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+        action = controller.context_v2_post_recon(output)
+
+        assert action["semantic_role"] == "actor_discoverer"
+        projection_path = output / ".dispatch-context/architecture/recon-summary-context.json"
+        projection = json.loads(projection_path.read_text(encoding="utf-8"))
+        payload = projection_path.read_bytes()
+        bindings = json.loads((ROOT / "data/context-routing-bindings.json").read_text(encoding="utf-8"))
+        profile = bindings["limit_profiles"]["recon_projection"]
+        assert projection["source"]["line_count"] > controller.TARGET_RECON_SUMMARY_LINES
+        assert projection["limits"]["retained_lines"] <= controller.TARGET_RECON_SUMMARY_LINES, (
+            "CR-7: raw recon growth must not expand semantic delivery"
+        )
+        assert payload.count(b"\n") <= profile["max_lines"], (
+            "CR-7: the actor and architecture projection must stay within its physical-line limit"
+        )
+        assert len(payload) <= profile["max_bytes"], (
+            "CR-7: the actor and architecture projection must stay within its byte limit"
+        )
+        assert any(
+            receipt["artifact_path"] == ".dispatch-context/architecture/recon-summary-context.json"
+            for receipt in action["artifact_receipts"]
+        )
 
     def test_discovery_cache_hit_skips_the_discoverer(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)

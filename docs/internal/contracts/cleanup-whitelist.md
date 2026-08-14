@@ -57,6 +57,6 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .active-tool-calls/
 ```
 
-The outer-session `Stop` hook removes `.active-tool-calls/` at terminal run
-state even when runtime artifacts are otherwise preserved. Nested Agent stops
-must not clear it while the parent run still owns the lock.
+The outer-session `Stop` hook and a controller `RUN_ABORTED` terminal gate remove
+`.active-tool-calls/` even when runtime artifacts are otherwise preserved.
+Nested Agent stops must not clear it while the parent run still owns the lock.

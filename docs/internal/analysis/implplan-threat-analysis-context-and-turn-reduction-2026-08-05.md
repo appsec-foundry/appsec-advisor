@@ -1930,15 +1930,17 @@ This checkpoint is ready for its green-boundary commit. The commit containing
 this paragraph is the handoff boundary; use the branch HEAD rather than the
 pre-change `1bc2ccbf` when starting R10.
 
-No further repository implementation is required before R10 if those final
-gates remain green. The paid retry is the next source of evidence, not proof of
-completion. It must still measure the abuse-verifier cost effect, final report
-and Findings Index, terminal state, full Completion Summary, provider stalls,
-and coverage against R9 and the fixed reference. Per-role priced token classes,
-turns, and cost remain unavailable from the provider; report that limitation
-instead of allocating total cost proportionally. The partial postfix run also
-cannot validate a Stage-1d stats row because the host limit interrupted that
-role before its Agent usage block returned.
+At that checkpoint, no further repository implementation was known to be
+required before R10. The next attempted invocation exposed the additional
+contract and terminal-cleanup defects recorded below. A paid retry remains a
+source of evidence, not proof of completion. It must still measure the abuse-
+verifier cost effect, final report and Findings Index, terminal state, full
+Completion Summary, provider stalls, and coverage against R9 and the fixed
+reference. Per-role priced token classes, turns, and cost remain unavailable
+from the provider; report that limitation instead of allocating total cost
+proportionally. The partial postfix run also cannot validate a Stage-1d stats
+row because the host limit interrupted that role before its Agent usage block
+returned.
 
 After a passing R10, the controlled three-baseline/three-context-v2 A/B cohort,
 WP6, WP7 incremental and resume parity, rollout, the acceptance matrix, the
@@ -1960,6 +1962,64 @@ The acceptance matrix, runtime parity, 700-turn target, resident-context
 targets, and cost-reduction gates remain unverified. WP5a live acceptance,
 WP6, incremental/resume migration, and release rollout slices E and F must not be
 reported as complete.
+
+### Post-91321d13 pre-R10 abort — 2026-08-14
+
+The first invocation after commit `91321d13` wrote to
+`/tmp/appsec-context-v2-wp5a-smoke-20260810-` and reached an authoritative
+`RUN_ABORTED` at `2026-08-14T07:03:33Z`. Preserve that directory as failed-run
+evidence and do not resume it or rebuild into it.
+
+The persisted invocation was exactly:
+
+```text
+--repo /home/mrohr/juice-shop --output /tmp/appsec-context-v2-wp5a-smoke-20260810-
+```
+
+The omitted flags explain why this was not R10. Resolution selected
+`assessment_depth=standard`, `mode=full (first run)`, `rebuild=false`, and
+`keep_runtime_files=false`. The invocation did not carry `--abuse-cases`, but
+abuse verification was not effectively disabled: standard depth resolved
+`skip_abuse_case_verification=false` with label `enabled`. The run still fails
+the R10 cohort definition because quick depth, explicit abuse-case inclusion,
+runtime preservation, and rebuild were not requested.
+
+Actor resolution produced a valid static catalog with `catalog_actors`,
+`resolved_actors`, and `disabled_actors`, followed by a separately valid final
+resolved set. The routing binding and actor-dispatch receipt incorrectly
+validated the static catalog as `actors-resolved.schema.yaml`, so the controller
+rejected producer-correct bytes. The fix adds
+`actors-merged-static.schema.yaml` v1, validates static membership, activation,
+disable provenance, and ID uniqueness before atomic publication, registers the
+artifact version, and binds the static route and exact-byte receipt to that
+contract. The final `.actors-resolved.json` route remains on its existing
+contract.
+
+The raw recon summary contained 476 physical lines against the 200-line
+producer target. This did not expand either semantic consumer input. Actor
+discovery and architecture share the same receipted recon projection; it
+retained exactly 200 semantic lines, serialized to 525 physical JSON lines and
+19,246 bytes, and stayed below the active 1,024-line and 131,072-byte routing
+limits. The warning is therefore raw-producer cost evidence, not a projection
+or consumer-limit failure. Regression coverage now builds an oversized raw
+summary and proves both semantic and physical delivery remain bounded.
+
+The abort also exposed a lifecycle gap outside the headless-wrapper backstop.
+The controller recorded `RUN_ABORTED` while the run lock still belonged to the
+outer session, so the subsequent Stop hook correctly treated that Stop as
+nonterminal and could leave the recon-scanner marker in
+`.active-tool-calls/`. A controller abort now performs the same symlink-safe
+live-marker cleanup directly after diagnostic aggregation. Runtime artifacts
+and the abort reason remain preserved.
+
+Focused actor contract, resolver, routing, receipt, recon projection, abort
+cleanup, and existing live-marker tests pass with 519 tests. The targeted
+contract, schema, cleanup, agent-definition, config, and headless-completion
+suite passes with 707 tests. `make lint`, `make test`, and `make check` pass;
+`make test` reports 12,453 passed, 95 skipped, and 91.42% coverage, while
+`make check` reports the same test counts and passes its format, configuration,
+fragment-registry, and target-specificity gates. No follow-up live scan was
+started before this green commit boundary.
 
 ## Verification matrix
 

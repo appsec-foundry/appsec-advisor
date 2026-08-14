@@ -142,6 +142,9 @@ def test_controller_abort_populates_run_issues(tmp_path: Path) -> None:
         _log("2026-07-20T16:20:10Z", "WARN", "threat-analyst", "AGENT_ERROR", "something failed") + "\n",
         encoding="utf-8",
     )
+    active = out / ".active-tool-calls"
+    active.mkdir()
+    (active / "recon-scanner.json").write_text('{"agent":"recon-scanner"}\n', encoding="utf-8")
 
     completed = subprocess.run(
         [
@@ -161,6 +164,7 @@ def test_controller_abort_populates_run_issues(tmp_path: Path) -> None:
         "controller aborted without leaving .run-issues.json; the diagnostic "
         "bundle is empty for exactly the runs that need it"
     )
+    assert not active.exists(), "RA-6: RUN_ABORTED retained stale live tool-call state"
 
 
 # --------------------------------------------------------------------------

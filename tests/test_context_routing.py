@@ -334,6 +334,18 @@ def test_semantics_reject_missing_schema_referenced_by_active_route():
         _semantic_validate(catalog, changed)
 
 
+def test_static_and_resolved_actor_routes_use_distinct_contracts():
+    _catalog, bindings = _contracts()
+    by_id = {row["id"]: row for row in bindings["contexts"]}
+
+    assert by_id["actors.static"]["contract"] == "schemas/actors-merged-static.schema.yaml#v1", (
+        "RA-1: the static actor boundary needs its own artifact contract"
+    )
+    assert by_id["actors.resolved"]["contract"] == "schemas/actors-resolved.schema.yaml#v1", (
+        "RA-1: the resolved actor boundary must retain its authoritative contract"
+    )
+
+
 def test_semantics_reject_plugin_symlink_escape(tmp_path):
     catalog, bindings = _contracts()
     plugin = tmp_path / "plugin"

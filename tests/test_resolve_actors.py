@@ -485,9 +485,30 @@ def test_resolve_with_signals_activation(plugin_lib: Path, tmp_path: Path):
     assert "ACT-D-03" in active_ids
     assert "ACT-D-02" not in active_ids
     assert {a["id"] for a in merged["catalog_actors"]} == {"ACT-D-01", "ACT-D-02", "ACT-D-03"}
+    valid, errors = resolve_actors.validate_actors_merged_static(merged)
+    assert valid, f"RA-1: resolver published an invalid static actor artifact: {errors}"
     resolved = _read(out, ".actors-resolved.json")
     skipped = [i for i in resolved["run_issues"] if i["class"] == "default_actor_skipped"]
     assert any(i["actor_id"] == "ACT-D-02" for i in skipped)
+
+
+def test_resolve_refuses_to_publish_invalid_static_actor_contract(plugin_lib: Path, tmp_path: Path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "out"
+    monkeypatch.setattr(resolve_actors, "validate_actors_merged_static", lambda _value: (False, ["bad static set"]))
+
+    with pytest.raises(RuntimeError, match="invalid .actors-merged-static.json: bad static set"):
+        resolve_actors.resolve(
+            plugin_root=str(plugin_lib),
+            repo_root=str(repo),
+            output_dir=str(out),
+            quick_mode=True,
+        )
+
+    assert not (out / ".actors-merged-static.json").exists(), (
+        "RA-1: resolver published static actor bytes after contract validation failed"
+    )
 
 
 def test_resolve_enterprise_and_repo_merge_and_disable(plugin_lib: Path, tmp_path: Path):

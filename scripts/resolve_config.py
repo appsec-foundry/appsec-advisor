@@ -451,6 +451,7 @@ CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS = {
     "recon-summary-context": 1,
     "architecture-route-context": 1,
     "recon-signals": 2,
+    "actors-merged-static": 1,
     "actors-resolved": 1,
     "trust-boundary-assessment-input": 1,
     "trust-boundaries": 2,

@@ -179,6 +179,32 @@ def _valid_resolved_actors() -> dict:
     }
 
 
+def _valid_merged_static_actors() -> dict:
+    actor = _valid_resolved_actors()["resolved_actors"][0]
+    return {
+        "schema_version": 1,
+        "actors_inputs_fingerprint": "a" * 64,
+        "catalog_actors": [actor],
+        "resolved_actors": [actor],
+        "disabled_actors": [],
+    }
+
+
+def test_actor_merged_static_contract_accepts_catalog_shape():
+    ok, errors = vi.validate_actors_merged_static(_valid_merged_static_actors())
+    assert ok, f"RA-1: valid static actor boundary rejected: {errors}"
+
+
+def test_actor_merged_static_contract_rejects_non_catalog_resolved_actor():
+    data = _valid_merged_static_actors()
+    data["catalog_actors"] = []
+    ok, errors = vi.validate_actors_merged_static(data)
+    assert not ok, "RA-1: a static resolved actor outside the catalog was accepted"
+    assert any("matching catalog actor" in error for error in errors), (
+        f"RA-1: wrong invariant rejected the invalid static actor set: {errors}"
+    )
+
+
 def test_actor_resolved_contract_accepts_runtime_fields():
     ok, errors = vi.validate_actors_resolved(_valid_resolved_actors())
     assert ok, errors

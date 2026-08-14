@@ -833,15 +833,17 @@ def _record_tool_end(data: dict) -> int:
     return started_at
 
 
-def _clear_terminal_active_tool_calls() -> None:
+def clear_terminal_active_tool_calls(output_dir: str | Path | None = None) -> None:
     """Remove live-only call state after the outer session has terminated.
 
     Sub-agent PreToolUse hooks do not reliably receive matching PostToolUse
-    events.  Their markers are useful while the run is live, but retaining
-    them after the terminal outer Stop makes preserved-runtime diagnostics
-    report work that can no longer be active.
+    events. Their markers are useful while the run is live, but retaining them
+    after the terminal outer Stop or controller abort makes preserved-runtime
+    diagnostics report work that can no longer be active.
     """
-    directory = _active_tools_dir()
+    directory = (
+        os.path.join(os.fspath(output_dir), _ACTIVE_TOOLS_DIR) if output_dir is not None else _active_tools_dir()
+    )
     try:
         flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
         directory_fd = os.open(directory, flags)
@@ -2447,7 +2449,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     # happy path releases the lock before its final Stop.
     run_still_owned = bool(sid and _run_lock_owner_sid() == sid[:8])
     if event_name == "Stop" and not run_still_owned:
-        _clear_terminal_active_tool_calls()
+        clear_terminal_active_tool_calls()
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
         try:
             with open(sentinel, "x") as fh:  # atomic O_CREAT|O_EXCL
@@ -2647,7 +2649,7 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
 
 def main() -> None:
     if sys.argv[1:] == ["--clear-active-tool-calls"]:
-        _clear_terminal_active_tool_calls()
+        clear_terminal_active_tool_calls()
         return
     try:
         data = json.load(sys.stdin)

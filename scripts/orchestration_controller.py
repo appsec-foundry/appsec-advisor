@@ -112,6 +112,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/post-stride-generated-threats.schema.json#v1": "threats",
     "schemas/post-stride-proposed-mitigations.schema.json#v1": "mitigations",
     "schemas/abuse-case-verifier-context.schema.json#v1": "candidate",
+    "schemas/actors-merged-static.schema.yaml#v1": "resolved_actors",
     "schemas/actors-resolved.schema.yaml#v1": "resolved_actors",
 }
 _OPTIONAL_RECEIPT_RECORD_KEYS = {
@@ -695,6 +696,7 @@ def _receipt_schema_registry():
     for name in (
         "actors.schema.yaml",
         "actors-discovered.schema.yaml",
+        "actors-merged-static.schema.yaml",
         "actors-resolved.schema.yaml",
         "actors-repo.schema.yaml",
     ):
@@ -3439,7 +3441,7 @@ def _context_v2_actor_input_receipts(output_dir: Path) -> list[dict[str, Any]]:
         _validated_json_receipt(
             output_dir,
             ".actors-merged-static.json",
-            schema_id="schemas/actors-resolved.schema.yaml#v1",
+            schema_id="schemas/actors-merged-static.schema.yaml#v1",
             record_count=_record_count(output_dir / ".actors-merged-static.json", "resolved_actors"),
         ),
         _context_v2_recon_projection_receipt(output_dir),
@@ -5504,6 +5506,7 @@ def _aggregate_issues_on_abort(output_dir: Any, reason: str, repo_root: Any = No
     """
     if not output_dir:
         return
+    path: Path | None = None
     try:
         path = Path(output_dir)
         if not path.is_dir():
@@ -5526,6 +5529,14 @@ def _aggregate_issues_on_abort(output_dir: Any, reason: str, repo_root: Any = No
         )
     except Exception:
         pass
+    finally:
+        if path is not None:
+            try:
+                from agent_logger import clear_terminal_active_tool_calls  # noqa: PLC0415
+
+                clear_terminal_active_tool_calls(path)
+            except Exception:
+                pass
 
 
 def main(argv: list[str] | None = None) -> int:

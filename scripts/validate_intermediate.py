@@ -65,6 +65,7 @@ _SCHEMA_FILES = {
     "source_auth_findings": "source-auth-findings.schema.yaml",
     "db_privilege_separation": "db-privilege-separation.schema.yaml",
     "actors_discovered": "actors-discovered.schema.yaml",
+    "actors_merged_static": "actors-merged-static.schema.yaml",
     "actors_resolved": "actors-resolved.schema.yaml",
     "actors_repo": "actors-repo.schema.yaml",
     "actor": "actors.schema.yaml",
@@ -95,6 +96,7 @@ def _schema_registry() -> Registry:
     for filename in (
         "actors.schema.yaml",
         "actors-discovered.schema.yaml",
+        "actors-merged-static.schema.yaml",
         "actors-resolved.schema.yaml",
         "actors-repo.schema.yaml",
     ):
@@ -1346,6 +1348,56 @@ def validate_actors_discovered(data: Any) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
+def validate_actors_merged_static(data: Any) -> tuple[bool, list[str]]:
+    """Validate the static actor catalog consumed by semantic discovery."""
+    if not isinstance(data, dict):
+        return False, ["root must be a mapping"]
+    errors = _schema_errors("actors_merged_static", data)
+    if errors:
+        return False, errors
+
+    catalog = data.get("catalog_actors", [])
+    resolved = data.get("resolved_actors", [])
+    disabled = data.get("disabled_actors", [])
+    catalog_by_id = {actor["id"]: actor for actor in catalog}
+    if len(catalog_by_id) != len(catalog):
+        errors.append("catalog_actors contains duplicate actor IDs")
+
+    resolved_ids: set[str] = set()
+    for index, actor in enumerate(resolved):
+        actor_id = actor["id"]
+        if actor_id in resolved_ids:
+            errors.append(f"resolved_actors[{index}].id '{actor_id}' is duplicated")
+        resolved_ids.add(actor_id)
+        if catalog_by_id.get(actor_id) != actor:
+            errors.append(f"resolved_actors[{index}] is not the matching catalog actor")
+        if actor.get("_provenance", {}).get("active") is not True:
+            errors.append(f"resolved_actors[{index}] is not marked active")
+
+    disabled_ids: set[str] = set()
+    for index, record in enumerate(disabled):
+        actor_id = record["id"]
+        if actor_id in disabled_ids:
+            errors.append(f"disabled_actors[{index}].id '{actor_id}' is duplicated")
+        disabled_ids.add(actor_id)
+        actor = catalog_by_id.get(actor_id)
+        if actor is None:
+            errors.append(f"disabled_actors[{index}].id '{actor_id}' is absent from catalog_actors")
+            continue
+        provenance = actor.get("_provenance", {})
+        if provenance.get("disabled_by") != record["disabled_by"]:
+            errors.append(f"disabled_actors[{index}].disabled_by disagrees with catalog_actors")
+        if provenance.get("disable_reason") != record["disable_reason"]:
+            errors.append(f"disabled_actors[{index}].disable_reason disagrees with catalog_actors")
+        if provenance.get("active") is not False:
+            errors.append(f"disabled_actors[{index}] is not marked inactive in catalog_actors")
+
+    overlap = sorted(resolved_ids & disabled_ids)
+    if overlap:
+        errors.append(f"actors cannot be both resolved and disabled: {', '.join(overlap)}")
+    return len(errors) == 0, errors
+
+
 def validate_actors_resolved(data: Any) -> tuple[bool, list[str]]:
     """Validate the authoritative resolver output consumed downstream."""
     if not isinstance(data, dict):
@@ -1455,6 +1507,7 @@ _VALIDATORS = {
     "source_auth_findings": validate_source_auth_findings,
     "db_privilege_separation": validate_db_privilege_separation,
     "actors_discovered": validate_actors_discovered,
+    "actors_merged_static": validate_actors_merged_static,
     "actors_resolved": validate_actors_resolved,
     "actors_repo": validate_actors_repo,
     "actor": validate_actor,

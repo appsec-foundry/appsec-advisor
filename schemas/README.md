@@ -43,6 +43,7 @@ template, emitted deterministically on context-v2, and validated through
 | `cross-repo-register.schema.json` | `$OUTPUT_DIR/.cross-repo-register.json` | `scripts/build_cross_repo_register.py` | STRIDE dispatcher, `coverage_checks.check_cross_repo`, Phase 11 §5/§7 renderer |
 | `actors-repo.schema.yaml` | `<repo>/.appsec/actors.yaml` | analyzed team | `scripts/resolve_actors.py` |
 | `actors-discovered.schema.yaml` | `$OUTPUT_DIR/.actors-discovered.json` | `appsec-actor-discoverer` | `scripts/resolve_actors.py` |
+| `actors-merged-static.schema.yaml` | `$OUTPUT_DIR/.actors-merged-static.json` | `scripts/resolve_actors.py` | `appsec-actor-discoverer` |
 | `actors-resolved.schema.yaml` | `$OUTPUT_DIR/.actors-resolved.json` | `scripts/resolve_actors.py` | actor slicer, report composer, architect review |
 | `context-routing-catalog.schema.json` | `data/context-routing-catalog.yaml` | plugin maintainers | semantic validator and context-v2 resolver |
 | `context-routing-bindings.schema.json` | `data/context-routing-bindings.json` | plugin maintainers | semantic validator and context-v2 resolver |
