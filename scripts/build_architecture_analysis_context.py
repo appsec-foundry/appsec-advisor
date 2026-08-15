@@ -103,11 +103,18 @@ def project_recon_summary(payload: bytes) -> dict[str, Any]:
 
 def _route_order_key(route: dict[str, Any]) -> tuple[Any, ...]:
     method = str(route.get("method") or "")
+    tags = route.get("relevance_tags") or []
     return (
         0 if route.get("management_surface") is True else 1,
         0 if route.get("missing_auth_suspect") is True else 1,
         0 if route.get("missing_authz_suspect") is True else 1,
-        0 if route.get("relevance_tags") else 1,
+        # An LLM endpoint is a trust boundary the architect cannot infer from
+        # anything else in this projection: drop it and the model surface is
+        # invisible for the rest of the run. Juice Shop's single `/rest/chat`
+        # lost the cut at 96 of 247 routes on 2026-08-15, and with it every
+        # prompt-injection, excessive-agency, and system-prompt-leak finding.
+        0 if "llm" in tags else 1,
+        0 if tags else 1,
         0 if method in _STATE_CHANGING else 1,
         0 if route.get("confidence") == "high" else (1 if route.get("confidence") == "medium" else 2),
         str(route.get("framework") or ""),
@@ -173,7 +180,7 @@ def project_routes(payload: bytes) -> dict[str, Any]:
             "omitted_routes": len(routes) - len(selected),
             "max_unsupported_route_files": MAX_UNSUPPORTED_ROUTE_FILES,
             "omitted_unsupported_route_files": max(0, len(unsupported) - MAX_UNSUPPORTED_ROUTE_FILES),
-            "ordering_key": "management,missing-auth,missing-authz,relevance,state-change,confidence,framework,file,line,id",
+            "ordering_key": "management,missing-auth,missing-authz,llm,relevance,state-change,confidence,framework,file,line,id",
             "diversity_key": "framework,top-level-handler-directory",
         },
         "coverage": {

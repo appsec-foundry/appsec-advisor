@@ -549,3 +549,30 @@ def test_missing_authz_suspect_not_on_collection_route(tmp_path: Path) -> None:
     )
     inv = _run(tmp_path)
     assert _route(inv, "GET", "/api/orders")["missing_authz_suspect"] is False
+
+
+def test_llm_tag_requires_both_a_model_path_and_a_declared_sdk(tmp_path: Path) -> None:
+    """A chat route counts as an LLM surface only where a model SDK is declared."""
+    (tmp_path / "app.ts").write_text("const app = express();\napp.post('/rest/chat', chatbot);\n")
+    (tmp_path / "package.json").write_text('{"dependencies": {"@ai-sdk/openai-compatible": "^2.0.35"}}')
+    assert "llm" in _route(_run(tmp_path), "POST", "/rest/chat")["relevance_tags"]
+
+
+def test_a_chat_route_without_a_model_dependency_is_not_tagged(tmp_path: Path) -> None:
+    """False-positive guard: plenty of applications chat without a model."""
+    (tmp_path / "app.ts").write_text("const app = express();\napp.post('/rest/chat', chatbot);\n")
+    (tmp_path / "package.json").write_text('{"dependencies": {"express": "^4.19.0"}}')
+    assert "llm" not in _route(_run(tmp_path), "POST", "/rest/chat")["relevance_tags"]
+
+
+def test_a_model_dependency_alone_tags_nothing(tmp_path: Path) -> None:
+    (tmp_path / "app.ts").write_text("const app = express();\napp.get('/api/products', listProducts);\n")
+    (tmp_path / "package.json").write_text('{"dependencies": {"openai": "^4.0.0"}}')
+    assert _route(_run(tmp_path), "GET", "/api/products")["relevance_tags"] == []
+
+
+def test_llm_sdk_signal_covers_proxy_and_gateway_libraries(tmp_path: Path) -> None:
+    """A route reaches a model through a proxy layer just as through a vendor SDK."""
+    (tmp_path / "app.py").write_text("@app.post('/v1/completions')\ndef complete():\n    pass\n")
+    (tmp_path / "requirements.txt").write_text("fastapi==0.115.0\nlitellm==1.52.0\n")
+    assert "llm" in _route(_run(tmp_path), "POST", "/v1/completions")["relevance_tags"]

@@ -137,3 +137,36 @@ def test_build_writes_both_projection_artifacts(tmp_path: Path) -> None:
     assert routes == tmp_path / ".dispatch-context/architecture/route-context.json"
     jsonschema.validate(json.loads(recon.read_text()), _schema("recon-summary-context.schema.json"))
     jsonschema.validate(json.loads(routes.read_text()), _schema("architecture-route-context.schema.json"))
+
+
+def test_an_llm_route_survives_the_cut_that_drops_ordinary_routes() -> None:
+    """The model surface must reach the architect, or the run never sees it.
+
+    Juice Shop's single `/rest/chat` ranked 97th of 247 on 2026-08-15 and was
+    omitted. The architect then produced an inventory with no LLM component,
+    and every prompt-injection and excessive-agency finding was lost with it.
+    """
+    routes = [_route(i) for i in range(1, 200)]
+    llm = _route(200)
+    llm["path"] = "/rest/chat"
+    llm["relevance_tags"] = ["llm"]
+    routes.append(llm)
+    payload = json.dumps({"version": 1, "routes": routes, "coverage": {}}).encode()
+
+    projected = context.project_routes(payload)
+
+    assert len(projected["routes"]) == context.MAX_ROUTES
+    assert "/rest/chat" in [row["path"] for row in projected["routes"]]
+    assert "llm" in projected["limits"]["ordering_key"]
+
+
+def test_the_llm_rank_is_what_retains_it_not_merely_having_a_tag() -> None:
+    """Without the dedicated rank the tag alone does not survive the cut."""
+    routes = [_route(i) for i in range(1, 200)]
+    llm = _route(200)
+    llm["relevance_tags"] = ["llm"]
+    routes.append(llm)
+    payload = json.dumps({"version": 1, "routes": routes, "coverage": {}}).encode()
+
+    ranked = sorted(routes, key=context._route_order_key)
+    assert ranked.index(llm) < context.MAX_ROUTES // 2, "an LLM route must rank into the guaranteed half"

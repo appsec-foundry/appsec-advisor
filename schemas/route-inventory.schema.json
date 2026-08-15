@@ -148,7 +148,8 @@
               "graphql-mutation",
               "graphql-object-access",
               "missing-auth",
-              "missing-authz"
+              "missing-authz",
+              "llm"
             ]
           },
           "uniqueItems": true,

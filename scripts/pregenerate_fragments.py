@@ -3187,6 +3187,7 @@ _RELEVANCE_LABELS = {
     "graphql-object-access": "GraphQL object lookup",
     "missing-auth": "no auth guard detected",
     "missing-authz": "no authz guard detected",
+    "llm": "model/prompt endpoint",
 }
 
 

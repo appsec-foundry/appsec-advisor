@@ -344,6 +344,89 @@ _AUTHFLOW_PATH_RE = re.compile(
     r"sso|saml|2fa|mfa|otp|session|credential)\b"
 )
 
+# An endpoint that carries user text into a model prompt is its own attack
+# surface (OWASP LLM01/LLM06), but its path alone proves nothing — plenty of
+# applications have a `/chat` that never reaches a model. The tag therefore
+# requires both halves: an LLM-shaped path AND a declared LLM SDK dependency in
+# the repository. A chat route in a project with no such dependency stays
+# untagged, and an LLM dependency alone tags nothing.
+_LLM_PATH_RE = re.compile(
+    r"(?i)(?:^|/)(?:chat|chatbot|completion|completions|prompt|prompts|"
+    r"assistant|copilot|ask|llm|ai|agent|generate|summarize|embed|embedding|embeddings)\b"
+)
+
+#: Package names that establish a model-inference dependency. Matched against
+#: declared dependencies only, never against arbitrary source text, so a
+#: mention in a comment or a test fixture cannot trigger the tag.
+_LLM_SDK_NAMES = (
+    "openai",
+    "anthropic",
+    "@ai-sdk/",
+    "@anthropic-ai/",
+    "@google/generative-ai",
+    "@langchain/",
+    "langchain",
+    "llamaindex",
+    "llama-index",
+    "cohere",
+    "mistralai",
+    "ollama",
+    "replicate",
+    "google-generativeai",
+    "vertexai",
+    "semantic-kernel",
+    "transformers",
+    "litellm",
+    "huggingface_hub",
+    "huggingface-hub",
+    "@huggingface/inference",
+    "groq",
+    "together-ai",
+    "togetherai",
+    "fireworks-ai",
+    "dashscope",
+    "haystack-ai",
+    "bedrock-runtime",
+    "amazon-bedrock",
+    "langchain-aws",
+)
+
+#: Manifests whose declared dependencies are read for the SDK signal.
+_LLM_MANIFESTS = (
+    "package.json",
+    "requirements.txt",
+    "pyproject.toml",
+    "Pipfile",
+    "go.mod",
+    "Gemfile",
+    "composer.json",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "Cargo.toml",
+)
+
+
+def _declares_llm_sdk(repo_root: Path) -> bool:
+    """True when a top-level manifest declares a model-inference dependency."""
+    for name in _LLM_MANIFESTS:
+        manifest = repo_root / name
+        try:
+            if not manifest.is_file():
+                continue
+            text = manifest.read_text(encoding="utf-8", errors="replace")[:_MAX_MANIFEST_BYTES]
+        except OSError:
+            continue
+        lowered = text.lower()
+        if any(sdk in lowered for sdk in _LLM_SDK_NAMES):
+            return True
+    return False
+
+
+#: Manifests are small; the cap only bounds a pathological file.
+_MAX_MANIFEST_BYTES = 512_000
+
+
 _AUTHZ_PATTERNS = re.compile(
     r"(?i)\b("
     r"requireRole|hasPermission|hasRole|checkPermission|authorize|"
@@ -773,6 +856,7 @@ def _extract_file(repo_root: Path, path: Path) -> list[RouteCandidate]:
 
 
 def build_inventory(repo_root: Path) -> dict:
+    llm_sdk_declared = _declares_llm_sdk(repo_root)
     all_routes: list[RouteCandidate] = []
     frameworks_seen: set[str] = set()
     unsupported: list[str] = []
@@ -879,6 +963,8 @@ def build_inventory(repo_root: Path) -> dict:
             tags.append("missing-auth")
         if r.missing_authz_suspect:
             tags.append("missing-authz")
+        if llm_sdk_declared and _LLM_PATH_RE.search(r.path or ""):
+            tags.append("llm")
         r.relevance_tags = tags
 
     seen_keys: set[tuple] = set()
