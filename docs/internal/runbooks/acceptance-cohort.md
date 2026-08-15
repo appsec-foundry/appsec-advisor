@@ -48,6 +48,27 @@ expensive to discover later.
 
 The two A/B arms differ only in producer generation; a test pins that.
 
+## Prove the host integration first
+
+The repository gates cannot exercise the installed host's hook payloads,
+background scheduling, or signal propagation. Run the canary before the paid
+scan so that gap does not surface after recon and later roles have been billed:
+
+```bash
+python3 scripts/live_canary.py run   --output <canary-dir> [--max-duration 900]
+python3 scripts/live_canary.py check --output <canary-dir>/run
+```
+
+It scans the bundled synthetic repository under a hard wall-clock cap with
+`APPSEC_TELEMETRY_STRICT=1`, then checks five properties of what the host
+actually produced: a foreground child completed, a bounded parallel pair
+overlapped, a completed child reported non-zero usage, every terminal call's
+turn budget was retired, and live markers were cleared. `check` reads artifacts
+only, so it can also be pointed at an earlier run.
+
+A failing property names what to fix before the cohort run. Do not launch a
+paid member on a red canary.
+
 ## Record the host with the result
 
 Capture `claude --version` alongside the acceptance evidence. Hook payload
