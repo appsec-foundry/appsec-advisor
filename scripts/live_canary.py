@@ -20,7 +20,7 @@ produced:
 so it is fully testable without spending anything, and can also be pointed at
 an earlier run's directory.
 
-  python3 live_canary.py run   --output <dir> [--max-wall-time 600]
+  python3 live_canary.py run   --output <dir> [--max-duration 600]
   python3 live_canary.py check --output <dir>
 """
 
@@ -44,7 +44,7 @@ from event_log import parse_line  # noqa: E402
 SYNTHETIC_REPO = PLUGIN_ROOT / "tests" / "fixtures" / "e2e" / "synthetic-repo"
 HOOK_LOG = ".hook-events.log"
 ACTIVE_CALLS = ".active-tool-calls"
-DEFAULT_WALL_TIME_S = 900
+DEFAULT_MAX_DURATION_S = 900
 
 
 def _kv(detail: str, key: str) -> str:
@@ -150,7 +150,7 @@ def check(output_dir: Path) -> list[tuple[str, bool, str]]:
     ]
 
 
-def run(output_dir: Path, max_wall_time: int) -> int:
+def run(output_dir: Path, max_duration: int) -> int:
     """Launch the canary scan against a private copy of the synthetic repo."""
     if not SYNTHETIC_REPO.is_dir():
         print(f"canary: no synthetic repository at {SYNTHETIC_REPO}", file=sys.stderr)
@@ -175,7 +175,7 @@ def run(output_dir: Path, max_wall_time: int) -> int:
         # The wrapper's own clock, not the skill's: it bounds what the canary
         # can spend even if the run never reaches a phase boundary.
         "--max-duration",
-        str(max_wall_time),
+        str(max_duration),
     ]
     print("canary: " + " ".join(command))
     completed = subprocess.run(command, check=False, env={**os.environ, "APPSEC_TELEMETRY_STRICT": "1"})
@@ -188,13 +188,13 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     runner = sub.add_parser("run", help="launch the canary scan")
     runner.add_argument("--output", required=True, help="directory for the canary repo copy and its run")
-    runner.add_argument("--max-wall-time", type=int, default=DEFAULT_WALL_TIME_S)
+    runner.add_argument("--max-duration", type=int, default=DEFAULT_MAX_DURATION_S)
     checker = sub.add_parser("check", help="check what a canary run produced")
     checker.add_argument("--output", required=True, help="the canary run's OUTPUT_DIR")
 
     args = parser.parse_args(argv)
     if args.command == "run":
-        return run(Path(args.output), args.max_wall_time)
+        return run(Path(args.output), args.max_duration)
 
     results = check(Path(args.output))
     width = max(len(name) for name, _, _ in results)

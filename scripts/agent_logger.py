@@ -2638,6 +2638,35 @@ def _tool_uses_from_transcript(transcript_path: str) -> int:
     return len(tool_ids)
 
 
+def _transcript_diagnosis(path: str) -> str:
+    """Why a transcript yielded nothing, in terms the next reader can act on."""
+    if not path:
+        return "reason=no_path_in_payload"
+    try:
+        stat = os.stat(path)
+    except OSError as exc:
+        return f"reason=unreadable  errno={exc.errno}"
+    if stat.st_size == 0:
+        return "reason=empty_file"
+    records = assistant = 0
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                records += 1
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                message = entry.get("message") if isinstance(entry, dict) else None
+                if isinstance(message, dict) and message.get("role") == "assistant":
+                    assistant += 1
+    except OSError as exc:
+        return f"reason=read_failed  errno={exc.errno}"
+    return f"reason=no_assistant_usage  bytes={stat.st_size}  records={records}  assistant_records={assistant}"
+
+
 def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     event = _hook_event(data, event_name, sid)
     transcript = event.owner_transcript
@@ -2680,6 +2709,19 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     cw = usage.get("cache_creation_input_tokens", 0)
     cr = usage.get("cache_read_input_tokens", 0)
     has_usage = bool(usage)  # False when neither the payload nor the transcript had usage
+
+    if event_name == "SubagentStop" and not has_usage:
+        # "no usage data" alone cannot be acted on: the path may be absent from
+        # the payload, name a file the host has not written, or hold records
+        # this parser does not recognize. Say which — a completed call that
+        # reports nothing is the postfix6 signature, and the next reader needs
+        # the evidence, not the symptom.
+        _write(
+            "WARN ",
+            "AGENT_USAGE_UNAVAILABLE",
+            f"transcript={transcript or '<none>'}  {_transcript_diagnosis(transcript)}",
+            sid,
+        )
 
     runtime_agent_id = event.agent_id if event_name == "SubagentStop" else ""
     if runtime_agent_id:

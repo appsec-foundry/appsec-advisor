@@ -82,3 +82,22 @@ def test_identifiers_are_bounded() -> None:
     event = hook_payload.parse({"hook_event_name": "PreToolUse", "tool_use_id": "x" * 5000, "tool_name": "Agent"})
     assert len(event.tool_use_id) == hook_payload._MAX_ID
     assert event.is_agent_call
+
+
+def test_transcript_diagnosis_names_why_nothing_was_read(tmp_path) -> None:
+    """`no usage data` alone cannot be acted on; the reason can."""
+    import agent_logger
+
+    assert agent_logger._transcript_diagnosis("") == "reason=no_path_in_payload"
+    assert "reason=unreadable" in agent_logger._transcript_diagnosis(str(tmp_path / "gone.jsonl"))
+
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    assert agent_logger._transcript_diagnosis(str(empty)) == "reason=empty_file"
+
+    userland = tmp_path / "user.jsonl"
+    userland.write_text('{"message": {"role": "user", "content": "hi"}}\n', encoding="utf-8")
+    diagnosis = agent_logger._transcript_diagnosis(str(userland))
+    assert "reason=no_assistant_usage" in diagnosis
+    assert "records=1" in diagnosis
+    assert "assistant_records=0" in diagnosis
