@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Live progress reports agent turn consumption as plain progress instead of a warning; a threshold an operator cannot act on no longer competes with real failures for attention.
+- Reconnaissance now reports whether the application calls a language model as a structured signal, and a prompt-injection abuse case is matched from it.
 - An endpoint that reaches a language model is now always modelled: it is marked in the route inventory and reaches architecture analysis even in repositories with hundreds of routes.
 - A scan no longer ends when an analysis agent writes a malformed artifact: the controller asks that agent once to correct it, naming the exact contract violations, and stops only if the second attempt fails too.
 - Quick-depth scans no longer abort after the architecture stage: each dispatch now names the boundary that follows it, so the run never has to infer one from a depth-dependent command table.

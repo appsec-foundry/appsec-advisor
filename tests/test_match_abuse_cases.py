@@ -389,6 +389,7 @@ def test_load_signals_reads_canonical_recon_sidecar_shape(tmp_path: Path):
         "has_client_storage",
         "has_multi_tenancy_signal",
         "has_open_self_registration",
+        "has_llm_surface",
     }
     evidence = {key: {"status": "none", "locations": []} for key in keys}
     evidence["has_auth_surface"] = {
@@ -428,6 +429,7 @@ def test_load_signals_rejects_non_runtime_evidence_for_surface_signals(tmp_path:
                     "has_external_apis": False,
                     "has_multi_tenancy_signal": False,
                     "has_open_self_registration": False,
+                    "has_llm_surface": False,
                 },
                 "signal_evidence": {
                     "has_public_routes": {"status": "none", "locations": []},
@@ -451,6 +453,7 @@ def test_load_signals_rejects_non_runtime_evidence_for_surface_signals(tmp_path:
                     "has_external_apis": {"status": "none", "locations": []},
                     "has_multi_tenancy_signal": {"status": "none", "locations": []},
                     "has_open_self_registration": {"status": "none", "locations": []},
+                    "has_llm_surface": {"status": "none", "locations": []},
                 },
                 "signal_classification": {"has_open_self_registration": "deterministic"},
                 "component_hints": [],
@@ -922,3 +925,42 @@ def test_cmd_finalize_unknown_case_uses_empty_step_matches(tmp_path: Path):
     assert rc == 0
     out = json.loads((tmp_path / ".abuse-case-verdicts.json").read_text())
     assert out["verdicts"][0]["chain_verdict"] == "not_applicable"
+
+
+def _shipped_case(case_id: str) -> dict:
+    import yaml
+
+    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "default-library.yaml").read_text(encoding="utf-8"))
+    return next(case for case in library["abuse_cases"] if case["id"] == case_id)
+
+
+def test_the_llm_abuse_case_is_gated_on_the_llm_signal():
+    """Without a structured signal the chain could never be selected.
+
+    LLM risk reached the report only through findings on a modelled component,
+    so a target whose model surface was never modelled produced no
+    prompt-injection chain at all. The signal is what lets the library gate one.
+    """
+    case = _shipped_case("AC-T-007")
+    assert case["scope_qualifier"]["required_signals"] == ["has_llm_surface"]
+
+    findings = [_finding("T-001", "prompt injection reaches the system prompt")]
+    blocked = mac.match_case(case, findings, {"has_auth_surface"})
+    assert blocked["structural_verdict"] == "not_applicable"
+    assert "has_llm_surface" in (blocked.get("unmet_signals") or [])
+
+    allowed = mac.match_case(case, findings, {"has_llm_surface"})
+    assert "has_llm_surface" not in (allowed.get("unmet_signals") or [])
+
+
+def test_the_llm_signal_is_part_of_the_recon_contract():
+    """The gate is only real if the producer can set it and the schema knows it."""
+    import json
+
+    schema = json.loads((REPO_ROOT / "schemas" / "recon-signals.schema.json").read_text(encoding="utf-8"))
+    assert "has_llm_surface" in schema["properties"]["signals"]["required"]
+    assert "has_llm_surface" in schema["properties"]["signal_evidence"]["required"]
+
+    prompt = (REPO_ROOT / "agents" / "appsec-recon-scanner.md").read_text(encoding="utf-8")
+    assert "has_llm_surface" in prompt
+    assert "A declared dependency alone is not enough" in prompt, "the tag needs its false-positive exclusion"

@@ -746,7 +746,8 @@ already gathered; do not issue additional Grep calls.
     "has_external_apis": "<bool> — true when Cat 25b found ≥1 SaaS integration OR Cat 7 found external HTTP client patterns",
     "has_client_storage": "<bool> — true when Cat 10 found `spa-token-browser-storage` / `spa-refresh-token-browser-storage`, Cat 29 found mobile token-storage subcategories, OR Cat 8 found client-side patterns",
     "has_multi_tenancy_signal": "<bool> — true ONLY when BOTH conditions met: (a) tenant ID field detected (tenant_id, tenantId, organization_id, orgId, workspace_id, customer_id, realm_id or camelCase variants) AND (b) tenant scoping pattern (tenantContext/current_tenant middleware, RLS policy reference, FK to tenants table). Single tenant_id field without scoping pattern → false.",
-    "has_open_self_registration": "<bool> — true when registration route exists WITHOUT invite-token, email-whitelist, payment gate, or admin-approval requirement. Deterministic detection via Cat 11 route listing + Cat 1/2 auth pattern cross-check; falls back to llm-fallback classification when ambiguous."
+    "has_open_self_registration": "<bool> — true when registration route exists WITHOUT invite-token, email-whitelist, payment gate, or admin-approval requirement. Deterministic detection via Cat 11 route listing + Cat 1/2 auth pattern cross-check; falls back to llm-fallback classification when ambiguous.",
+    "has_llm_surface": "<bool> — true only when executable code dispatches application data to a language model (provider SDK or HTTP client, local inference runner, or a prompt assembled and sent in code); a declared dependency alone is false"
   },
   "signal_evidence": {
     "has_public_routes": {"status": "supporting | candidate | none", "locations": [{"file": "<repository-relative regular file>", "line": "<existing one-based line>"}]},
@@ -757,7 +758,8 @@ already gathered; do not issue additional Grep calls.
     "has_external_apis": {"status": "supporting | candidate | none", "locations": []},
     "has_client_storage": {"status": "supporting | candidate | none", "locations": []},
     "has_multi_tenancy_signal": {"status": "supporting | candidate | isolation-gap | none", "locations": []},
-    "has_open_self_registration": {"status": "supporting | candidate | none", "locations": []}
+    "has_open_self_registration": {"status": "supporting | candidate | none", "locations": []},
+    "has_llm_surface": {"status": "supporting | candidate | none", "locations": []}
   },
   "signal_classification": {
     "has_open_self_registration": "deterministic | llm-fallback"
@@ -779,6 +781,7 @@ already gathered; do not issue additional Grep calls.
 - `has_role_concept` requires executable application code that evaluates a principal's role or permission to grant/deny access. Do **not** set it from role words in documentation, taxonomies, prompts, examples, or policy templates.
 - `has_client_storage` requires browser or mobile runtime code that stores a credential or token. Do **not** infer it from prose, build tooling, or files merely mentioning `localStorage` / `sessionStorage`.
 - `has_multi_tenancy_signal` requires **both** sub-conditions — this is the most commonly over-triggered signal. When only a tenant ID field exists without scoping middleware, keep the boolean `false` and use `status: "isolation-gap"` with the exact tenant-field location. This status is exclusive to `has_multi_tenancy_signal`; it keeps the broken-isolation evidence visible as a TH-20 candidate without activating multi-tenant actors.
+- `has_llm_surface` requires executable code that sends application data to a language model: an SDK or HTTP client for a model provider, a local inference runner, or a prompt assembled and dispatched in code. A declared dependency alone is not enough, and neither is documentation, a model name in a comment, an embedding-only or classical-ML use, or a vendor SDK used for a non-inference API. Cite the dispatch site, not the manifest, so the architecture step can model the surface.
 - `has_open_self_registration` classification: deterministic when a registration route is found AND it clearly lacks gating (no invite/payment/approval patterns in the same file/module). Ambiguous cases → `llm-fallback` classification.
 - All other signals are deterministic from existing Grep evidence — do not call LLM inference.
 - Missing evidence for a signal → `false` (conservative). The Actor resolver will activate actors with `signal_status: activate-with-warning` as fallback only for signals that are structurally unknowable (e.g. single-file repos with no package.json).

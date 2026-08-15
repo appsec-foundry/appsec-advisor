@@ -3,10 +3,18 @@
   "$id": "https://appsec-advisor/schemas/recon-signals.schema.json",
   "title": "Deterministic reconnaissance signals for actor and architecture resolution",
   "type": "object",
-  "required": ["schema_version", "signals", "signal_evidence", "signal_classification", "component_hints"],
+  "required": [
+    "schema_version",
+    "signals",
+    "signal_evidence",
+    "signal_classification",
+    "component_hints"
+  ],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "const": 2 },
+    "schema_version": {
+      "const": 2
+    },
     "signals": {
       "type": "object",
       "required": [
@@ -18,19 +26,41 @@
         "has_external_apis",
         "has_client_storage",
         "has_multi_tenancy_signal",
-        "has_open_self_registration"
+        "has_open_self_registration",
+        "has_llm_surface"
       ],
       "additionalProperties": false,
       "properties": {
-        "has_public_routes": { "type": "boolean" },
-        "has_auth_surface": { "type": "boolean" },
-        "has_role_concept": { "type": "boolean" },
-        "has_secrets_in_repo": { "type": "boolean" },
-        "has_ci_pipeline": { "type": "boolean" },
-        "has_external_apis": { "type": "boolean" },
-        "has_client_storage": { "type": "boolean" },
-        "has_multi_tenancy_signal": { "type": "boolean" },
-        "has_open_self_registration": { "type": "boolean" }
+        "has_public_routes": {
+          "type": "boolean"
+        },
+        "has_auth_surface": {
+          "type": "boolean"
+        },
+        "has_role_concept": {
+          "type": "boolean"
+        },
+        "has_secrets_in_repo": {
+          "type": "boolean"
+        },
+        "has_ci_pipeline": {
+          "type": "boolean"
+        },
+        "has_external_apis": {
+          "type": "boolean"
+        },
+        "has_client_storage": {
+          "type": "boolean"
+        },
+        "has_multi_tenancy_signal": {
+          "type": "boolean"
+        },
+        "has_open_self_registration": {
+          "type": "boolean"
+        },
+        "has_llm_surface": {
+          "type": "boolean"
+        }
       }
     },
     "signal_evidence": {
@@ -44,37 +74,74 @@
         "has_external_apis",
         "has_client_storage",
         "has_multi_tenancy_signal",
-        "has_open_self_registration"
+        "has_open_self_registration",
+        "has_llm_surface"
       ],
       "additionalProperties": false,
       "properties": {
-        "has_public_routes": { "$ref": "#/$defs/evidence" },
-        "has_auth_surface": { "$ref": "#/$defs/evidence" },
-        "has_role_concept": { "$ref": "#/$defs/evidence" },
-        "has_secrets_in_repo": { "$ref": "#/$defs/evidence" },
-        "has_ci_pipeline": { "$ref": "#/$defs/evidence" },
-        "has_external_apis": { "$ref": "#/$defs/evidence" },
-        "has_client_storage": { "$ref": "#/$defs/evidence" },
-        "has_multi_tenancy_signal": { "$ref": "#/$defs/multi_tenancy_evidence" },
-        "has_open_self_registration": { "$ref": "#/$defs/evidence" }
+        "has_public_routes": {
+          "$ref": "#/$defs/evidence"
+        },
+        "has_auth_surface": {
+          "$ref": "#/$defs/evidence"
+        },
+        "has_role_concept": {
+          "$ref": "#/$defs/evidence"
+        },
+        "has_secrets_in_repo": {
+          "$ref": "#/$defs/evidence"
+        },
+        "has_ci_pipeline": {
+          "$ref": "#/$defs/evidence"
+        },
+        "has_external_apis": {
+          "$ref": "#/$defs/evidence"
+        },
+        "has_client_storage": {
+          "$ref": "#/$defs/evidence"
+        },
+        "has_multi_tenancy_signal": {
+          "$ref": "#/$defs/multi_tenancy_evidence"
+        },
+        "has_open_self_registration": {
+          "$ref": "#/$defs/evidence"
+        },
+        "has_llm_surface": {
+          "$ref": "#/$defs/evidence"
+        }
       }
     },
     "signal_classification": {
       "type": "object",
-      "required": ["has_open_self_registration"],
+      "required": [
+        "has_open_self_registration"
+      ],
       "additionalProperties": false,
       "properties": {
-        "has_open_self_registration": { "enum": ["deterministic", "llm-fallback"] }
+        "has_open_self_registration": {
+          "enum": [
+            "deterministic",
+            "llm-fallback"
+          ]
+        }
       }
     },
     "component_hints": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["component_id", "component_type", "deployment_zones", "classification"],
+        "required": [
+          "component_id",
+          "component_type",
+          "deployment_zones",
+          "classification"
+        ],
         "additionalProperties": false,
         "properties": {
-          "component_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,99}$" },
+          "component_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,99}$"
+          },
           "component_type": {
             "enum": [
               "auth-service",
@@ -111,7 +178,12 @@
               ]
             }
           },
-          "classification": { "enum": ["deterministic", "llm-fallback"] }
+          "classification": {
+            "enum": [
+              "deterministic",
+              "llm-fallback"
+            ]
+          }
         }
       }
     }
@@ -120,7 +192,10 @@
     "location": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["file", "line"],
+      "required": [
+        "file",
+        "line"
+      ],
       "properties": {
         "file": {
           "type": "string",
@@ -130,59 +205,99 @@
             "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
           }
         },
-        "line": { "type": "integer", "minimum": 1, "maximum": 10000000 }
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000000
+        }
       }
     },
     "locations": {
       "type": "array",
       "maxItems": 8,
       "uniqueItems": true,
-      "items": { "$ref": "#/$defs/location" }
+      "items": {
+        "$ref": "#/$defs/location"
+      }
     },
     "evidence": {
       "oneOf": [
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["status", "locations"],
+          "required": [
+            "status",
+            "locations"
+          ],
           "properties": {
-            "status": { "enum": ["supporting", "candidate"] },
-            "locations": { "$ref": "#/$defs/observed_locations" }
+            "status": {
+              "enum": [
+                "supporting",
+                "candidate"
+              ]
+            },
+            "locations": {
+              "$ref": "#/$defs/observed_locations"
+            }
           }
         },
-        { "$ref": "#/$defs/no_evidence" }
+        {
+          "$ref": "#/$defs/no_evidence"
+        }
       ]
     },
     "multi_tenancy_evidence": {
       "oneOf": [
-        { "$ref": "#/$defs/evidence" },
+        {
+          "$ref": "#/$defs/evidence"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["status", "locations"],
+          "required": [
+            "status",
+            "locations"
+          ],
           "properties": {
-            "status": { "const": "isolation-gap" },
-            "locations": { "$ref": "#/$defs/observed_locations" }
+            "status": {
+              "const": "isolation-gap"
+            },
+            "locations": {
+              "$ref": "#/$defs/observed_locations"
+            }
           }
         }
       ]
     },
     "observed_locations": {
       "allOf": [
-        { "$ref": "#/$defs/locations" },
-        { "minItems": 1 }
+        {
+          "$ref": "#/$defs/locations"
+        },
+        {
+          "minItems": 1
+        }
       ]
     },
     "no_evidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "locations"],
+      "required": [
+        "status",
+        "locations"
+      ],
       "properties": {
-        "status": { "const": "none" },
+        "status": {
+          "const": "none"
+        },
         "locations": {
           "allOf": [
-            { "$ref": "#/$defs/locations" },
-            { "maxItems": 0 }
+            {
+              "$ref": "#/$defs/locations"
+            },
+            {
+              "maxItems": 0
+            }
           ]
         }
       }

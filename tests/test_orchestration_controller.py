@@ -1908,6 +1908,7 @@ def _valid_recon_signals() -> dict:
         "has_client_storage",
         "has_multi_tenancy_signal",
         "has_open_self_registration",
+        "has_llm_surface",
     )
     return {
         "schema_version": 2,

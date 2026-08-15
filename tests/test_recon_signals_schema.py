@@ -24,6 +24,7 @@ SIGNAL_KEYS = (
     "has_client_storage",
     "has_multi_tenancy_signal",
     "has_open_self_registration",
+    "has_llm_surface",
 )
 
 

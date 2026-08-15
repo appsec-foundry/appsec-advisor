@@ -418,3 +418,86 @@ abuse_cases:
       A single injection into a server-side interpreter yields code execution in
       the application process — the highest-impact outcome, granting full
       filesystem and network access from one unauthenticated request.
+
+  - id: AC-T-007
+    title: Privileged Action via Prompt Injection into a Tool-Calling Model
+    source: mandatory
+    detail_level: standard
+    attacker:
+      actor_id: external-attacker
+      initial_access: unauthenticated
+      prerequisite: >-
+        Attacker can place text into a conversation, document, or record that the
+        application later sends to a language model.
+    goal: >-
+      Make the model invoke a privileged tool or return data the attacker is not
+      entitled to, using the application's own authority.
+    scope_qualifier:
+      required_signals:
+        - has_llm_surface
+    chain:
+      - step: 1
+        label: Untrusted text reaches the model prompt unseparated
+        grants: model_instruction_control
+        finding:
+          title: Untrusted input is concatenated into the model prompt
+          cwe: CWE-1427
+          stride: Tampering
+          severity: High
+          mitigation_title: Separate instructions from untrusted content
+          remediation: >-
+            Carry user and retrieved text in dedicated content fields, never in the
+            instruction segment, and treat every model output as untrusted data.
+        description: >-
+          The handler builds the prompt by interpolating request or stored text into
+          the same string as the system instructions, so attacker text is read as
+          instruction.
+        required: true
+        probe:
+          entry_points:
+            endpoint_patterns:
+              - /chat
+              - /completion
+              - /ask
+              - /assistant
+              - /agent
+          sink_patterns:
+            - "(?i)prompt.*(inject|concat|template)"
+            - "(?i)system.?prompt"
+            - "(?i)messages\\.push|messages\\s*=\\s*\\["
+            - CWE-(1427|94)
+          control_patterns:
+            - "(?i)(sanitiz|delimit|guardrail|content.?filter|instruction.?hierarch)"
+          control_sufficiency: any
+      - step: 2
+        label: The model may call tools without a second authorization check
+        grants: privileged_action
+        finding:
+          title: Model tool calls execute without server-side authorization
+          cwe: CWE-862
+          stride: Elevation of Privilege
+          severity: High
+          mitigation_title: Authorize every tool call server-side
+          remediation: >-
+            Authorize each tool invocation against the calling user's own
+            permissions, and require human approval for irreversible actions.
+        description: >-
+          Tools exposed to the model run with the application's authority; a
+          manipulated model turn therefore performs actions the caller could not.
+        required: false
+        probe:
+          entry_points:
+            endpoint_patterns:
+              - /chat
+              - /agent
+          sink_patterns:
+            - "(?i)tool(s)?\\s*[:=]|function.?call|tool_choice"
+            - CWE-(862|863|269)
+          control_patterns:
+            - "(?i)(authorize|permission|can\\(|isAuthorized|requireRole).*tool"
+          control_sufficiency: any
+    combined_risk_rationale: >-
+      Text an attacker can place anywhere the application later feeds to the model
+      becomes instruction, and the tools behind that model run with the
+      application's authority rather than the caller's — so a comment or a stored
+      record reaches actions the attacker was never entitled to.

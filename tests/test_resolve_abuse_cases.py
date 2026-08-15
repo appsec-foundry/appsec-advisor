@@ -57,7 +57,7 @@ abuse_cases:
 # ---------------------------------------------------------------------------
 
 
-_LIBRARY_IDS = ["AC-T-001", "AC-T-002", "AC-T-003", "AC-T-004", "AC-T-005", "AC-T-006"]
+_LIBRARY_IDS = ["AC-T-001", "AC-T-002", "AC-T-003", "AC-T-004", "AC-T-005", "AC-T-006", "AC-T-007"]
 
 
 def test_library_loads_mandatory_cases():
