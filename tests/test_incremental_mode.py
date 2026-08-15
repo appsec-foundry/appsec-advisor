@@ -520,13 +520,18 @@ class TestRunHeadlessScript:
         tail_started = tmp_path / "tail-started"
         tail_stopped = tmp_path / "tail-stopped"
         fake_tail = bin_dir / "tail"
+        # Detect follow mode anywhere in the arguments: the monitor also passes
+        # `-n 0` so a fresh run never replays the previous run's last lines, and
+        # this stub must not be pinned to one flag order.
         fake_tail.write_text(
             "#!/bin/sh\n"
-            'if [ "${1:-}" = "-F" ]; then\n'
-            '  printf "%s\\n" "$$" > "$TAIL_STARTED"\n'
-            "  trap 'printf stopped > \"$TAIL_STOPPED\"; exit 0' TERM INT HUP\n"
-            "  while :; do sleep 1; done\n"
-            "fi\n"
+            "for arg in \"$@\"; do\n"
+            '  if [ "$arg" = "-F" ]; then\n'
+            '    printf "%s\\n" "$$" > "$TAIL_STARTED"\n'
+            "    trap 'printf stopped > \"$TAIL_STOPPED\"; exit 0' TERM INT HUP\n"
+            "    while :; do sleep 1; done\n"
+            "  fi\n"
+            "done\n"
             'exec "$REAL_TAIL" "$@"\n'
         )
         fake_tail.chmod(0o755)
