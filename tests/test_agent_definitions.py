@@ -160,6 +160,15 @@ def test_pipeline_agent_frontmatter_never_admits_mcp_tools():
     assert not violations, f"pipeline agent MCP tools are forbidden: {violations}"
 
 
+def test_cross_repo_mismatch_requires_target_evidence():
+    text = (AGENTS_DIR / "appsec-stride-analyzer.md").read_text(encoding="utf-8")
+    cross_repo_line = next(line for line in text.splitlines() if line.startswith("- `CROSS_REPO_CONTEXT_PATH`"))
+    assert "requires a target-side probe" in cross_repo_line
+    assert "emit a threat only when this repository's source" in cross_repo_line
+    assert "cannot justify CVSS by itself" in cross_repo_line
+    assert "emit a HIGH-likelihood threat" not in cross_repo_line
+
+
 def test_actor_discovery_prompt_keeps_actor_identity_boundary():
     """Do not regress to technique-, feature-, or persona-based actor classes."""
     text = (AGENTS_DIR / "appsec-actor-discoverer.md").read_text(encoding="utf-8")

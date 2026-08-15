@@ -7,7 +7,8 @@ A requirement is only binding if something breaks when it is ignored. This
 script is the part that breaks. It does not judge whether a requirement is
 right — it keeps the catalog's references real, so an entry cannot claim
 enforcement it does not have: a guard that no test defines, a decision the
-register does not carry, a path that matches nothing.
+register does not carry, a path that matches nothing, or a documentation source
+whose named section has disappeared.
 
 What it deliberately cannot check: whether a requirement is faithful to its
 source, and whether a named guard actually bites. Both stay a review. The
@@ -45,6 +46,7 @@ KEY_RE = re.compile(r"^\*\*(Applies to|Source|Guard):\*\*\s*(.*)$")
 CODE_RE = re.compile(r"`([^`]+)`")
 DECISION_RE = re.compile(r"^[A-Z]{2,3}-\d+$")
 TEST_NAME_RE = re.compile(r"^(?:[\w./-]+\.py::)?(?:[\w]+::)?(test_\w+)$")
+SOURCE_SECTION_RE = re.compile(r"`(?P<path>[^`]+\.md)`\s*→\s*(?P<labels>.*?)(?=,\s*(?:decisions?|principles?)\s+`|$)")
 
 NO_GUARD = ("— (no guard written)", "— (guard not located)")
 
@@ -126,6 +128,61 @@ def path_matches(pattern: str, root: Path) -> list[str]:
     return glob.glob(pattern, root_dir=root, recursive=True)
 
 
+def _heading_key(text: str) -> str:
+    """Normalize a Markdown heading or source label for a stable comparison."""
+    text = re.sub(r"[`*_]", "", text)
+    return " ".join(text.casefold().strip().split())
+
+
+def _markdown_headings(path: Path) -> set[str]:
+    headings: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^#{1,6}\s+(.+?)\s*$", line)
+        if match:
+            headings.add(_heading_key(match.group(1)))
+    return headings
+
+
+def _source_section_exists(headings: set[str], label: str) -> bool:
+    wanted = _heading_key(label)
+    return any(heading == wanted or heading.startswith(f"{wanted} ") for heading in headings)
+
+
+def _validate_source_documents(entry: Entry, root: Path) -> list[str]:
+    """Validate Markdown source paths and any `path → heading` references."""
+    source = entry.keys.get("Source", "")
+    problems: list[str] = []
+    documents: dict[str, Path] = {}
+    for token in CODE_RE.findall(source):
+        if not token.endswith(".md"):
+            continue
+        candidate = (root / token).resolve()
+        try:
+            candidate.relative_to(root.resolve())
+        except ValueError:
+            problems.append(f"source document escapes the repository: {token}")
+            continue
+        if not candidate.is_file():
+            problems.append(f"source document does not exist: {token}")
+            continue
+        documents[token] = candidate
+
+    for match in SOURCE_SECTION_RE.finditer(source):
+        token = match.group("path")
+        path = documents.get(token)
+        if path is None:
+            continue
+        labels = match.group("labels").strip()
+        headings = _markdown_headings(path)
+        if _source_section_exists(headings, labels):
+            continue
+        split_labels = [label.strip() for label in labels.split(",") if label.strip()]
+        missing = [label for label in split_labels if not _source_section_exists(headings, label)]
+        if missing:
+            problems.append(f"source section does not exist in {token}: {', '.join(missing)}")
+    return problems
+
+
 def validate(entries: list[Entry], root: Path = ROOT) -> list[str]:
     """Every problem found, as one message per problem."""
     problems: list[str] = []
@@ -159,6 +216,8 @@ def validate(entries: list[Entry], root: Path = ROOT) -> list[str]:
         for token in CODE_RE.findall(entry.keys.get("Source", "")):
             if DECISION_RE.match(token) and token not in decisions:
                 problems.append(f"{where}: source names an unknown decision: {token}")
+        for problem in _validate_source_documents(entry, root):
+            problems.append(f"{where}: {problem}")
 
         if entry.unguarded:
             if entry.guards:

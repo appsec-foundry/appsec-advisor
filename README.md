@@ -45,11 +45,14 @@ SAST finds bugs on concrete code paths. This tool looks at the architecture arou
 ## Security notes
 
 > [!IMPORTANT]
-> **Treat scanned repositories as untrusted input.** Repository content enters the LLM context and may attempt prompt injection. The interactive setup grants unrestricted shell access to avoid mid-run prompts, so scan third-party or vendor code with `--trust-mode untrusted` inside a container or VM. See [Security: Untrusted repositories](SECURITY.md#known-issues--untrusted-repositories).
+> **Treat scanned repositories as untrusted input.** Repository content enters the LLM context and may attempt prompt injection. Untrusted mode is the default; keep it enabled and use a container or VM for third-party or vendor code. See [Security: Untrusted repositories](SECURITY.md#known-issues--untrusted-repositories).
 
 **Data handling.** Only source, manifests, and configuration for analyzed components are sent to Anthropic; surfaced secrets are masked. The plugin requires `api.anthropic.com`, cannot run air-gapped, and uses provider-side prompt caching.
 
-**Output safety.** Python renders reports from validated structured data, and publishing stops if the secret scan finds an unmasked secret.
+### Output safety
+
+Python renders reports from validated structured data. An unmasked secret in a
+run artifact fails the run before its outputs are considered publishable.
 
 ---
 
@@ -119,7 +122,7 @@ For depth, cost, focused scans, actors, and repository context, see the [Threat 
 
 - **First-class trust boundaries.** Assessed in a dedicated stage, drawn in the architecture diagram, and referenced by the findings that cross them — a confirmed internet-facing crossing can raise a finding's severity.
 - **Secure-coding baseline — a new capability next to threat modeling.** `install-baseline` writes the bundled [AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline) into Claude Code's instruction files, so the rules reach every prompt before code is written; `verify-baseline` lets CI gate on it.
-- **Cheap-STRIDE depth tier**, on by default outside thorough scans. The internal tail is screened on a smaller budget; exposed and data-carrying components keep full depth, and all six STRIDE categories still run everywhere.
+- **Cheap-STRIDE depth tier**, on by default outside thorough scans. The internal tail is screened on a smaller budget; exposed components and data stores keep full depth, and all six STRIDE categories still run everywhere.
 - **Threat Dragon export (alpha).** `--formats threatdragon` writes Threat Dragon v2 JSON — the one interchange format that carries threats and mitigations into both Threat Dragon and OWASP ThreatAtlas.
 - **Session status banner.** Reports the threat model and the loaded secure-coding baseline, and flags either when it needs attention; `/appsec-advisor:help` lists the commands.
 - **Extended org profiles.** Ship your own skills and baseline, configure the banner, disable individual skills.
@@ -155,6 +158,11 @@ Each assessment is:
 - **Stable across reruns:** Preserves finding IDs so changes remain traceable.
 
 The report covers architecture observations, risk-ranked findings, affected components, remediation guidance, and generated diagrams. Default outputs are `threat-model.md` and `threat-model.yaml`; optional exports include PDF, HTML, SARIF, and pentest task lists.
+
+A finding is one evidence-backed instance in the repository. The Weakness
+Register groups those instances under systemic or design patterns. A design
+weakness can carry severity from architectural risk, but receives no CVSS when
+there is no eligible code-level evidence to score.
 
 The result is a starting point for security review, not a release verdict. An AppSec engineer or security architect should validate findings before they drive remediation, exceptions, or risk acceptance.
 

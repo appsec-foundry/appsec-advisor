@@ -6,15 +6,15 @@
       business context, cost, report, trust, and configuration.
 - [x] `scripts/check_specs.py` — validation and the `--for <path>` lookup.
 - [x] `tests/test_check_specs.py` — one test per rejected reference.
-- [x] `scripts/requirements_hook.py` — denies the catalog and the register
-      through `Edit`/`Write` and through a shell command that could write to
-      either, and attaches the governing requirements to every other edit.
+- [x] `scripts/requirements_hook.py` — requires user approval for the catalog
+      and register through direct write tools and recognized shell writes, and
+      attaches the governing requirements to every other edit.
 - [x] `check_specs.py --changed-against <ref>` — a held file changed with no
       change directory fails.
 - [x] `tests/test_requirements_hook.py`.
 - [x] `make check` runs `scripts/check_specs.py`.
-- [ ] Operator wires the hook into `.claude/settings.json` (`PreToolUse`,
-      matcher `Edit|Write|NotebookEdit|Bash`). Not writable from a session.
+- [x] Operator wires the hook into `.claude/settings.json` (`PreToolUse`,
+      matcher `Edit|Write|MultiEdit|NotebookEdit|Bash`).
 - [x] `AGENTS.md` names the catalog, the `--for` lookup, and that neither file
       is the agent's to edit.
 - [ ] Operator wires `--changed-against` into `.github/workflows/tests.yml`.

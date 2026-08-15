@@ -22,10 +22,10 @@ a test obligation, or a scope extension of your own.
 
 ## Who writes what
 
-You write the requirement: the title and the sentence. Whoever writes the test
-fills in the guard. An agent may not edit `requirements.md`;
-`scripts/requirements_hook.py` denies the write and tells it to bring the change
-to you.
+You approve the requirement: the title and the sentence. Whoever writes the
+test fills in the guard. An agent cannot edit `requirements.md` silently;
+`scripts/requirements_hook.py` routes every recognized write attempt through a
+user permission prompt.
 
 ## What belongs here, and what belongs in the decision register
 
@@ -83,10 +83,10 @@ to a file. Run it before changing that file.
 the decision register changed with no change directory under `changes/`. It
 belongs in CI, where the base ref is always resolvable.
 
-`scripts/requirements_hook.py` denies an agent both files before the write —
-through `Edit`, `Write` and `NotebookEdit`, and through a shell command that
-names one of them and could write to it. `APPSEC_SPEC_EDIT=1` is your override
-for when you want the agent to type the change for you.
+`scripts/requirements_hook.py` asks for user approval before an agent changes
+either held file through `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, or a shell
+command that names one of them and could write to it. The hook is wired in this
+checkout's `.claude/settings.json` and is not shipped with the plugin.
 
 ## What is not enforced
 

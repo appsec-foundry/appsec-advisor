@@ -229,11 +229,14 @@ deterministic owners. The commands run the boundary chain in order:
 `context-v2-post-architecture`, `context-v2-post-boundary`,
 `context-v2-prepare-stride`, then the `context-v2-post-*` post-STRIDE chain.
 
-When an LLM-written artifact fails its contract, the boundary returns one
-redispatch of the producing role instead of aborting. The retry carries the
-validator errors as an input artifact, uses an attempt-qualified job id, and is
-budgeted at one per artifact; the second violation aborts as before. A
-deterministic producer's invalid output is never retried.
+When the LLM-written recon-signals artifact fails its contract, the recon
+boundary returns one redispatch of the producing role instead of aborting. The
+retry carries the validator errors as an input artifact, uses an
+attempt-qualified job id, and is budgeted once for that artifact; the second
+violation aborts. STRIDE uses its separate persisted two-attempt component
+budget described below. Other producer failures follow the boundary-specific
+behavior in the table, and a deterministic producer's invalid output is never
+retried.
 
 Every dispatching action carries `next_boundary`, the command the caller must
 invoke once those jobs return. The caller invokes it verbatim and never derives

@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- New context-v2 analysis runtime projects only the facts each component needs instead of a shared prompt context; full and rebuild scans use it by default, `APPSEC_CONTEXT_V2=0` keeps the legacy producer. See `docs/threat-modeler.md`.
+- A fresh interactive analysis now asks once whether to add business context, taking pasted text or a URL, and `--context <url|path>` supplies it headless. See `docs/threat-modeler.md`.
 - New alpha export: `--formats threatdragon` writes OWASP Threat Dragon v2 JSON, which also imports into OWASP ThreatAtlas; `create-threat-model --threatdragon` writes it during a scan. See `docs/threat-dragon-export.md`.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
 - New `install-baseline`, `verify-baseline` and `remove-baseline` skills manage a secure-coding baseline in Claude Code's instruction files, with `verify-baseline --enforce` as a CI gate.
@@ -22,53 +24,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Live progress reports agent turn consumption as plain progress instead of a warning; a threshold an operator cannot act on no longer competes with real failures for attention.
-- Reconnaissance now reports whether the application calls a language model as a structured signal, and a prompt-injection abuse case is matched from it.
-- An endpoint that reaches a language model is now always modelled: it is marked in the route inventory and reaches architecture analysis even in repositories with hundreds of routes.
-- A scan no longer ends when an analysis agent writes a malformed artifact: the controller asks that agent once to correct it, naming the exact contract violations, and stops only if the second attempt fails too.
-- Quick-depth scans no longer abort after the architecture stage: each dispatch now names the boundary that follows it, so the run never has to infer one from a depth-dependent command table.
-- Agent lifecycle outcomes, usage, turn budgets, and STRIDE depth telemetry now remain bound to the dispatched call and current controller claim across shared sessions and parallel waves.
-- Live progress now reports one start and one outcome per agent, and names any disagreement between accepted output, lifecycle state, turn budget, and recorded usage.
+- Cross-repository expectation mismatches now remain hypotheses until target-repository evidence supports a finding.
+- An endpoint that reaches a language model is now always modelled: reconnaissance records the call as a structured signal, marks the route, and matches a prompt-injection abuse case.
+- A scan no longer ends when an analysis agent writes a malformed artifact: the controller asks that agent once to correct it, naming the exact contract violations.
+- Quick-depth scans no longer abort after the architecture stage.
 - An interrupted or failed run now releases its lock and reports its abort immediately instead of showing an unknown phase until the heartbeat ages out.
-- Headless runs no longer report every completed agent as failed with zero tokens; per-agent usage and cost are reported from the agent's own return.
-- Final QA now counts rendered finding cards instead of stray global anchors, ignores inactive merged findings, and preserves F/T cross-references when finding IDs have gaps.
-- Run diagnostics now parse the hook log format correctly, include non-passing architecture reviews, and clear stale recovery markers after successful progress.
-- Duplicate findings from overlapping component scans now merge even when their trust-boundary annotations exceed the per-finding display cap.
+- Headless runs no longer report every completed agent as failed with zero tokens; per-agent usage and cost come from the agent's own return.
+- Live progress now reports one start and one outcome per agent, follows the freshest phase, and treats turn consumption as progress instead of a warning.
+- Inspecting a run's status no longer writes to its state.
+- Final QA now counts rendered finding cards instead of stray global anchors, and preserves F/T cross-references when finding IDs have gaps.
 - Client-side code is no longer modelled as a trust zone, preventing invalid browser-boundary crossings.
 - `Automated SCA scanning` is now rated only from scanners the pipeline actually invokes, not from a tool name in a comment, a step label, or string data.
-- Completed component analyses now survive repairable schema and walkthrough defects.
-- Requested Threat Dragon and SARIF exports are now always written and listed in the completion summary.
+- Requested exports are now always written and listed in the completion summary.
 - Reconnaissance now reserves its final turns for validated output, so large repositories cannot crowd out required security sections.
 - Reconnaissance now excludes prior assessment directories even when the output path was user-named.
-- Reconnaissance and architecture handoffs now remove unverifiable summary path claims, carry structured signal evidence, and reject stale repository paths before they can reach component analysis.
+- Reconnaissance now surfaces predictable OAuth-derived and bundled client credentials.
 - The Findings index now orders entries by effective severity, with Critical findings first and stable IDs within each tier.
-- Context-v2 now builds project context deterministically, excludes prior-run evidence, routes bounded inputs through versioned contracts, isolates STRIDE retry writers, normalizes merged findings against the component registry before post-STRIDE synthesis, preserves rebuild state, serializes rebuild deliverables as full assessments, and rejects resume after exact controller-abort events.
-- Context-v2 now evaluates the complete Config/IaC catalog without a model turn.
-- Context-v2 now validates and reconstructs every active structured projection, including distinct actor contracts and component-owned STRIDE routing hints, before dispatch.
-- Context-v2 STRIDE routing now accepts component-owned focus directories under recursive file globs.
-- Context-v2 dispatch and concurrent analysis waves now continue reliably across long-running batches.
 - Completion summaries now distinguish STRIDE-analyzed components from the full modeled inventory.
-- Completed and controller-aborted runs now clear live tool-call markers even when other runtime diagnostics are preserved.
-- Context-v2 headless runs now keep the Stage-1 heartbeat active and report current agent phases without retaining superseded role markers.
-- Completion summaries now combine the report reading path, present model Q&A as a numbered action, and omit unsolicited requirements rerun advice.
-- Context-v2 headless runs now reject unsupported resume requests instead of restarting through the legacy full runtime.
-- Status inspection is now read-only, and stale-state cleanup preserves completed analysis-handoff checkpoints.
-- Threat-model assembly now accepts validated trust-boundary inheritance provenance instead of aborting before report rendering.
-- Recon now surfaces predictable OAuth-derived and bundled client credentials, preserves distinct focused evidence under fixed bounds, and avoids binding generic escalation prose to unrelated abuse steps.
-- Per-role telemetry now sums dispatches across STRIDE waves and deduplicates replayed stats groups.
-- Live status now ignores bookkeeping and completed component markers, follows the freshest phase, and preserves authoritative controller-abort reasons in run issues.
-- Related-repository findings now consume current risk, lifecycle, and evidence fields while retaining explicit legacy compatibility.
 - Composer dependency analysis now retains real packages whose names begin with `php`, including known-bad PHPUnit versions.
 - Final threat-model YAML is now schema-validated before it replaces the prior canonical artifact.
 
 ### Changed
 
-- Eligible full and rebuild scans now use context-v2 by default; `APPSEC_CONTEXT_V2=0` selects the legacy producer.
 - Attack walkthroughs now balance severity and chain relevance with threat-category diversity, while reserving coverage for Critical Access Control and LLM Abuse findings when present.
 - Verified findings at a confirmed internet ingress can now be raised by one severity band, up to High, within CWE caps.
 - Findings of the same kind at different trust boundaries now stay separate instead of consolidating into one row.
 - `threat-model.yaml` now includes the report verdict.
-- SARIF results now include trust-boundary crossing and exposure details.
 - `show-threat-model` now reports matching finding IDs and severity counts, opens with the report verdict and worst-case scenarios, and triage warns when the model is stale.
 - The Management Summary, §1 Scope and §11 now state that the report is a code-derived threat model at implementation level, and what that does not cover.
 

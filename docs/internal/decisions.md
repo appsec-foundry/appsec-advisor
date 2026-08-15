@@ -53,7 +53,7 @@ Removing an entry means listing it here in the same change.
 |---|---|---|---|
 | OR-1 | Level-0 dispatch belongs to the deterministic controller; only the legacy orchestrator recurses through `Agent` *(generation-scoped — WP7)*, pinned by `AGENT_TOOL_OWNERS` | `tests/test_agent_definitions.py` | comment at the constant |
 | OR-2 | `Edit` stays limited to the two repair roles, pinned by `EDIT_TOOL_OWNERS` | `tests/test_agent_definitions.py` | comment at the constant |
-| OR-3 | A stage refuses to proceed on a missing upstream artifact | `test_post_stage1_fails_closed_on_missing_artifact` | `docs/internal/contracts/orchestration-actions.md` |
+| OR-3 | A stage refuses to proceed on a missing required upstream artifact; optional enrichment degrades only where its contract names the fail-open behavior | `test_post_stage1_fails_closed_on_missing_artifact` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-4 | Rebuild archives before it clears, and fails closed if archiving fails | `test_rebuild_mode_archive_is_fail_closed` | `docs/internal/contracts/audit-artifacts.md` |
 | OR-5 | Serial STRIDE dispatch is detected and reported as a defect; parallel is the intended shape | `tests/test_stride_serial_dispatch_detection.py` *(guards the detector, not the prohibition)* | `AGENTS.md` → Orchestration |
 | OR-6 | Only the call-scoped hook lifecycle terminalizes a call; a semantic event such as `SCAN_END` publishes output and is never presented as an outcome | `test_postfix6_recon_sequence_renders_one_start_and_one_terminal_outcome` | `agents/shared/logging-standard.md` |
@@ -62,7 +62,7 @@ Removing an entry means listing it here in the same change.
 | OR-9 | Host hook payloads are read through one adapter that fails open and names a missing key, and host sequences are replayed against pinned per-version payload fixtures | `tests/test_hook_payload.py`, `tests/test_hook_payload_contract.py` | `agents/shared/logging-standard.md` |
 | OR-10 | An undeterminable stop reason defers the call outcome instead of recording a failure; the Agent return then terminalizes the call and supplies its usage | `test_a_stop_without_a_transcript_defers_the_outcome` | `agents/shared/logging-standard.md` |
 | OR-11 | Every dispatching action names its successor boundary in `next_boundary`; the caller invokes that name and never derives the sequence, which branches by depth | `tests/test_orchestration_controller.py::TestContextV2NextBoundary` | `docs/internal/contracts/orchestration-actions.md` |
-| OR-12 | A contract violation in an LLM-written artifact buys one redispatch carrying the validator errors; a deterministic producer's failure and a second identical violation stay terminal | `tests/test_orchestration_controller.py::TestProducerContractRetry` | `docs/internal/contracts/orchestration-actions.md` |
+| OR-12 | A contract violation in LLM-written recon signals buys one redispatch carrying the validator errors; STRIDE keeps its separate persisted two-attempt component budget, and other producers follow their boundary contract | `tests/test_orchestration_controller.py::TestProducerContractRetry` | `docs/internal/contracts/orchestration-actions.md` |
 
 ## Repair
 
@@ -85,7 +85,7 @@ Removing an entry means listing it here in the same change.
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| DT-1 | All six STRIDE categories stay mandatory for every dispatched component at every depth tier and in every depth mode — cheap-stride and quick mode are pacing levers, never coverage cuts | — *(guard not located)* | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md` |
+| DT-1 | All six STRIDE categories stay mandatory for every dispatched component at every depth tier and in every depth mode — cheap-stride and quick mode are pacing levers, never coverage cuts | `test_profile_does_not_skip_stride_categories` | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md` |
 | DT-2 | `_cheap_stride_target` is the only place that decides which components are screened | `test_builder_cheap_stride_spares_auth_and_core_backend`, `test_builder_cheap_stride_spares_untrusted_input_entry_points`, `test_builder_cheap_stride_spares_datastores_not_crown_jewels` | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/design-cheap-stride-layer-2026-07-23.md` |
 | DT-3 | Exposure steers component selection, and unknown exposure fails safe to full depth — an off-vocabulary zone becomes exposure-unknown, never internal | `test_builder_cheap_stride_never_screens_exposure_unknown` | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/proposal-stride-depth-tiering-2026-07-23.md` |
 | DT-5 | Turn ceilings are computed per component at dispatch time, never declared in agent frontmatter; a ceiling paces work and never caps coverage | — *(no guard written)* | `AGENTS.md` → Model and depth configuration |
@@ -107,7 +107,7 @@ Removing an entry means listing it here in the same change.
 | MD-1 | Reasoning modes are a fixed canonical set; aliases resolve to a canonical value and never fork into a second vocabulary | `test_canonical_normaliser_maps_alias`, `test_cli_flag_alias_resolves_to_canonical`, `test_extended_models_alias_matches_canonical`, `test_stride_profile_alias_matches_canonical` | `docs/model-selection.md`; see `docs/internal/analysis/plan-model-routing-transparency-2026-07-04.md` |
 | MD-2 | Every mode fills all three slots — a mode is a complete routing triple, not a partial override | `test_every_mode_has_three_slots` | `docs/model-selection.md` |
 | MD-3 | Economy modes never move the STRIDE pass below sonnet; cost is saved elsewhere | `test_haiku_economy_keeps_stride_on_sonnet` | `docs/model-selection.md` |
-| MD-4 | The session model is the cost lever; no pipeline agent pins a model of its own | — *(no guard written)* | `docs/model-selection.md` |
+| MD-4 | The session model controls the orchestrator and is the primary cost lever; the pipeline centrally routes subagents, while no agent selects its own model | — *(no guard written)* | `docs/model-selection.md` |
 | MD-5 | Session-model detection is advisory and fails open; routing resolves with no session model present | `test_effective_routing_empty_session_model` | `AGENTS.md` → Sources and merge behavior |
 | MD-6 | An organization may cap Opus org-wide; absent policy defaults to permitted | `test_policy_disable_opus_absent_defaults_false` | `schemas/org-profile.schema.yaml` → `policy.disable_opus` |
 
@@ -118,7 +118,7 @@ Removing an entry means listing it here in the same change.
 | TB-1 | A boundary is a falsifiable assumption decomposed into legs; a finding's CWE names the leg it refutes | `test_context_carries_the_assumption_legs_to_the_analyzer` | `data/cwe-boundary-legs.yaml`; see `docs/internal/analysis/fixplan-trust-boundary-assumption-legs-2026-08-01.md` |
 | TB-2 | `assumption_verdict` is derived, never authored, and derived in one place — the deterministic scoring reads the same states, and two copies would argue with each other's severities | `tests/test_compose_threat_model.py` *(state table for `_boundary_assumption_verdict`)* | docstring of `_boundary_assumption_verdict`; see `docs/internal/analysis/proposal-boundary-scoring-impact-2026-08-01.md` |
 | TB-3 | `refuted` requires a clean evidence check; a boundary is not declared broken on unverified evidence | `test_boundary_assumption_state_refuted_requires_clean_evidence_check` | `scripts/prepare_trust_boundary_context.py` |
-| TB-4 | A boundary with no verdict is not-examined, never rendered as clean | — *(guard not located)* | `AGENTS.md` → report prose; see `docs/internal/analysis/analysis-trust-boundary-documentation-gaps-2026-07-27.md` |
+| TB-4 | A boundary is unconfirmed when adjacent findings do not examine its crossing, not-examined when it protects no known component, and never rendered as clean merely because evidence is absent | — *(guard not located)* | `scripts/prepare_trust_boundary_context.py`; see `docs/internal/analysis/analysis-trust-boundary-documentation-gaps-2026-07-27.md` |
 | TB-5 | `confidence` (does it exist), `resolution_status` (is the declaration coherent) and `assumption_verdict` (did the assumption survive) are three axes and are never collapsed | — *(guard not located)* | `schemas/threat-model.output.schema.yaml`; see `docs/internal/analysis/analysis-trust-boundary-data-model-f1-f5-2026-07-30.md` |
 | TB-6 | Assumption shape violations are reported, never silently repaired | `test_assumption_shape_violations_are_reported_not_repaired` | `schemas/threat-model.output.schema.yaml` |
 | TB-7 | A legacy migration never promotes absence into a positive claim | `test_normalize_migrates_legacy_without_promoting_absence` | `schemas/threat-model.output.schema.yaml` |
@@ -132,7 +132,7 @@ Removing an entry means listing it here in the same change.
 | FE-1 | CVSS is assigned only to evidence-backed dependency and known-vulnerability findings and to eligible STRIDE CWEs with file-and-line evidence | `tests/test_cvss_eligibility.py` | `data/cvss-eligible-cwes.yaml` |
 | FE-2 | A control is rated only from what the pipeline actually invokes — never from a tool name in a comment, a step label, or string data | `tests/test_assess_supply_chain_controls.py` *(name-level check open)* | `CHANGELOG.md` |
 | FE-3 | Client-side code is not modelled as a trust zone | `tests/test_prepare_trust_boundary_context.py` *(name-level check open)* | `CHANGELOG.md` |
-| FE-4 | Findings derive from the target's source, configuration and git history — never from walkthroughs, solution guides or bundled vulnerability prose | — *(no guard written)* | `AGENTS.md` → Protect trust and compatibility |
+| FE-4 | Findings require target evidence from source, configuration, git history or target-owned declarations; validated external context may seed only an unverified hypothesis, and walkthroughs, solution guides or bundled vulnerability prose seed nothing | `test_cross_repo_mismatch_requires_target_evidence` | `AGENTS.md` → Protect trust and compatibility |
 | FE-5 | Supply-chain analysis is passive: files and git history only, no package manager, no network CVE scanner | — *(no guard written)* | `AGENTS.md` → Sources and merge behavior; see `docs/internal/analysis/analysis-supply-chain-coverage-improvement.md` |
 | FE-6 | Every remote fetch goes through a URL allow-list and an SSRF guard | `tests/test_url_guard.py`, see TR-4 | `schemas/org-profile.schema.yaml` → `policy.url_allowlist` |
 
@@ -170,7 +170,7 @@ Removing an entry means listing it here in the same change.
 |---|---|---|---|
 | RA-1 | Every artifact crossing a stage boundary has a schema and a validation path | `tests/test_schema_integrity.py`, `scripts/validate_intermediate.py` | `docs/internal/contracts/schema-invariants.md` |
 | RA-2 | A document never duplicates a schema; it points at the authoritative file | `tests/test_schema_drift.py` | `docs/internal/contracts/schema-invariants.md` |
-| RA-3 | `T`/`F` identity survives incremental runs; `M` may be regenerated; `W` follows display order | — *(guard not located)* | `AGENTS.md` → Protect trust and compatibility; see `docs/internal/analysis/backlog-numbering-native-contiguous-2026-07-05.md` |
+| RA-3 | `T`/`F` identity survives incremental runs; `M` may be regenerated, `W` follows display order, and deliberate `--rebuild` may reassign all IDs | — *(guard not located)* | `AGENTS.md` → Protect trust and compatibility; see `docs/internal/analysis/backlog-numbering-native-contiguous-2026-07-05.md` |
 | RA-4 | Reference formats are fixed per context; locators are stripped, never invented | `tests/test_reference_format.py` | `schema-invariants.md` §4a, `qa-crossref-rules.md` |
 | RA-5 | Structure and integrity gates after the review stages are read-only | — *(guard not located)* | `AGENTS.md` → Validation and repair |
 | RA-6 | Audit artifacts and `.appsec-cache/baseline.json` survive normal cleanup; `--rebuild` is the only exception | `tests/test_runtime_cleanup.py` | `docs/internal/contracts/cleanup-whitelist.md` |
@@ -200,7 +200,7 @@ Removing an entry means listing it here in the same change.
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
 | IN-1 | Reuse is authorised by a fingerprint match on an unchanged tree; a cache is validated, never assumed fresh | `test_check_fingerprint_matches_unchanged_repo`, `test_validate_accepts_fresh_cache` | `phase-group-recon.md` → Incremental fingerprint skip |
-| IN-2 | A finding that is no longer reachable goes dormant rather than being deleted, because deleting it loses the anchor and the history | — *(no guard written)* | `_status` on a threat; see `docs/internal/analysis/implplan-B1-B2-incremental-threat-preservation.md` |
+| IN-2 | A shallower rescan carries an unverified prior finding; an equal-or-deeper rescan records a non-reproduced finding as resolved with its prior identity and reason instead of dropping its history | `test_reconcile_carries_dropped_prior_threat_at_shallower_depth`, `test_reconcile_no_carry_at_equal_depth` | `scripts/build_threat_model_yaml.py`; see `docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md` |
 
 ## Exports
 
@@ -238,7 +238,7 @@ Removing an entry means listing it here in the same change.
 |---|---|---|---|
 | RC-1 | Threat input declared by the target repository is schema-validated before it can enter the analysis context | `test_rejects_invalid_known_threats_before_context_publication` | `schemas/known-threats.schema.yaml`; see `docs/internal/analysis/analysis-external-threat-model-ingestion.md` |
 | RC-2 | Valid repo-declared input enters fenced — data the analysis reads, never instructions it follows | `test_preserves_schema_valid_known_threats_as_fenced_input` | see P-4 |
-| RC-3 | An actor disable persists only in the target repository's own `.appsec/actors.yaml`; a decision made in conversation is never written back | — *(guard not located)* | `docs/threat-modeler.md` → actor layer |
+| RC-3 | An actor disable persists only in the target repository's own `.appsec/actors.yaml`; a decision made in conversation is never written back | `test_resolver_never_writes_actor_choices_back_to_repo` | `docs/threat-modeler.md` → actor layer |
 
 ## Extension surface
 

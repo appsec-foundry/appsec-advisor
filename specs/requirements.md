@@ -65,8 +65,9 @@ severity comes from the design risk, not from a score.
 ### REQ-MOD-003 — A trust boundary is an assumption that can fail
 
 A boundary states an assumption the system relies on, and a finding refutes it.
-A boundary nobody examined is reported as not examined. It is never shown as
-intact because nothing was found.
+If findings exist in the protected components but none examines the crossing,
+the boundary is unconfirmed. It is not examined only when it protects no known
+component, and it is never shown as intact merely because evidence is absent.
 
 **Applies to:** `scripts/prepare_trust_boundary_context.py`, `data/cwe-boundary-legs.yaml`
 **Source:** decisions `TB-1`, `TB-3`, `TB-4`, `TB-5`
@@ -85,15 +86,18 @@ not a category of its own.
 `test_confirmed_source_probe_becomes_normal_bound_finding`,
 `test_promotion_is_idempotent_when_next_scan_rediscovers_same_source_probe`
 
-### REQ-MOD-005 — Findings come from the target's own code
+### REQ-MOD-005 — Findings require evidence from the target repository
 
-A finding comes from the scanned repository's source, configuration, and git
-history. Never from a walkthrough, a solution guide, or a vulnerability
-write-up that happens to lie in the repository.
+A finding is supported by the scanned repository's source, configuration, git
+history, or target-owned declarations. Validated external context may seed a
+hypothesis, but it is not verified evidence and cannot justify CVSS. A
+walkthrough, solution guide, or bundled vulnerability write-up never seeds a
+finding.
 
-**Applies to:** `scripts/merge_threats.py`, `agents/appsec-stride-analyzer.md`
+**Applies to:** `scripts/merge_threats.py`, `agents/appsec-stride-analyzer.md`,
+`schemas/related-repos.schema.yaml`, `scripts/slice_cross_repo_for_component.py`
 **Source:** `AGENTS.md`, decision `FE-4`
-**Guard:** — (no guard written)
+**Guard:** `test_cross_repo_mismatch_requires_target_evidence`
 
 ## Who does what
 
@@ -101,8 +105,9 @@ write-up that happens to lie in the repository.
 
 Agents read the repository, judge security meaning, and write prose. Everything
 that can be wrong in a checkable way — artifact shape, validation, rendering,
-exports, gates — belongs to Python. Dispatch belongs to the controller, and only
-the two repair roles may edit files.
+exports, gates — belongs to Python. Dispatch belongs to the controller. Only the
+two repair roles receive the `Edit` tool; producer roles may create only their
+assigned contracted artifacts.
 
 **Applies to:** `scripts/orchestration_controller.py`, `agents/**`
 **Source:** `README.md` → Project structure, principle `P-2`, decisions `OR-1`, `OR-2`
@@ -148,23 +153,25 @@ never how many categories it sees.
 
 **Applies to:** `scripts/build_stride_dispatch_manifest.py`, `scripts/check_stride_dispatch.py`
 **Source:** `AGENTS.md` → Model and depth configuration, decision `DT-1`
-**Guard:** — (guard not located)
+**Guard:** `test_profile_does_not_skip_stride_categories`
 
 ### REQ-FLW-003 — A stage refuses to build on something it cannot check
 
-Everything handed from one stage to the next has a defined shape and is
-validated on arrival. A missing or malformed input stops the stage; it is never
-worked around.
+Every required artifact handed from one stage to the next has a defined shape
+and is validated on arrival. A missing or malformed required input stops the
+stage. Optional enrichments may degrade only where their contract states the
+fail-open behavior explicitly.
 
 **Applies to:** `scripts/orchestration_controller.py`, `scripts/validate_intermediate.py`, `schemas/**`
 **Source:** `AGENTS.md` → Fix the source, not the symptom, decisions `OR-3`, `RA-1`
 **Guard:** `test_post_stage1_fails_closed_on_missing_artifact`
 
-### REQ-FLW-004 — A bad artifact costs one retry, not a loop
+### REQ-FLW-004 — Producer retries are bounded by their contract
 
-An LLM-written artifact that fails its contract is dispatched once more with the
-validator errors. A second identical failure, or a failure from a deterministic
-producer, ends the stage.
+An invalid LLM-written recon-signals artifact is dispatched once more with the
+validator errors, then fails terminally. STRIDE uses its separate persisted
+two-attempt component budget. Other producers follow their documented boundary
+behavior, and an invalid deterministic artifact is never retried.
 
 **Applies to:** `scripts/orchestration_controller.py`
 **Source:** `docs/internal/contracts/orchestration-actions.md`, decision `OR-12`
@@ -194,14 +201,16 @@ shallower model, and a shallower rescan may not drop what the deeper run found.
 **Guard:** `test_check_fingerprint_matches_unchanged_repo`,
 `test_depth_increase_quick_to_standard_forces_full`, `test_shallower_depth_stays_incremental`
 
-### REQ-INC-002 — A finding that is gone goes dormant, not away
+### REQ-INC-002 — A finding lifecycle is never silently discarded
 
-A finding that is no longer reachable is marked dormant. Deleting it would lose
-its number and its history.
+A shallower rescan carries forward a prior finding it cannot reverify. At equal
+or deeper depth, a non-reproduced finding is recorded as resolved with its prior
+identity and reason, so it never disappears without an audit trail.
 
-**Applies to:** `scripts/merge_threats.py`
+**Applies to:** `scripts/build_threat_model_yaml.py`
 **Source:** decision `IN-2`
-**Guard:** — (no guard written)
+**Guard:** `test_reconcile_carries_dropped_prior_threat_at_shallower_depth`,
+`test_reconcile_no_carry_at_equal_depth`
 
 ## Context
 
@@ -273,15 +282,16 @@ written back — only the target's own `.appsec/actors.yaml` persists that.
 
 **Applies to:** `scripts/resolve_actors.py`, `data/actors/**`
 **Source:** `docs/threat-modeler.md` → actor layer, decision `RC-3`
-**Guard:** — (guard not located)
+**Guard:** `test_resolver_never_writes_actor_choices_back_to_repo`
 
 ## What a run may cost
 
-### REQ-CST-001 — The session model is the cost lever
+### REQ-CST-001 — Model routing has one owner per runtime layer
 
-Cost is steered by the model the session runs on, not by pins inside the
-pipeline. No agent chooses its own model, and an economy mode never moves the
-STRIDE pass onto something weaker than Sonnet.
+The session model controls the orchestrator and remains the primary cost lever.
+The pipeline centrally routes subagents and may apply explicit stage overrides;
+an agent never selects its own model, and an economy mode never moves the STRIDE
+pass onto something weaker than Sonnet.
 
 **Applies to:** `scripts/resolve_config.py`, `agents/appsec-*.md`
 **Source:** `docs/model-selection.md`, decisions `MD-3`, `MD-4`
@@ -312,9 +322,10 @@ to it, and a finding without evidence for a score does not get one.
 
 ### REQ-RPT-002 — Finding numbers survive a rescan
 
-A finding that is still there after a rescan keeps its number, so links into an
-earlier report still work. Mitigation IDs may be renumbered, weakness IDs follow
-display order.
+A finding that is still there after an incremental rescan keeps its number, so
+links into an earlier report still work. Mitigation IDs may be renumbered,
+weakness IDs follow display order. `--rebuild` deliberately clears the
+stable-ID anchor and may assign finding numbers again.
 
 **Applies to:** `scripts/merge_threats.py`, `scripts/build_threat_model_yaml.py`
 **Source:** `AGENTS.md` → Protect trust and compatibility, decision `RA-3`

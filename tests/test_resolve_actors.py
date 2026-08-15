@@ -554,6 +554,28 @@ def test_resolve_enterprise_and_repo_merge_and_disable(plugin_lib: Path, tmp_pat
     assert by_id["ACT-D-02"]["_provenance"]["disabled_by"] == "enterprise"
 
 
+def test_resolver_never_writes_actor_choices_back_to_repo(plugin_lib: Path, tmp_path: Path):
+    repo = tmp_path / "repo"
+    actor_config = repo / ".appsec" / "actors.yaml"
+    _write_yaml(
+        actor_config,
+        {
+            "disable": [{"id": "ACT-D-01", "reason": "not relevant"}],
+            "discovery": {"enabled": False},
+        },
+    )
+    original = actor_config.read_bytes()
+
+    resolve_actors.resolve(
+        plugin_root=str(plugin_lib),
+        repo_root=str(repo),
+        output_dir=str(tmp_path / "out"),
+        quick_mode=True,
+    )
+
+    assert actor_config.read_bytes() == original
+
+
 def test_resolve_disable_no_reason_emits_defect(plugin_lib: Path, tmp_path: Path):
     repo = tmp_path / "repo"
     _write_yaml(

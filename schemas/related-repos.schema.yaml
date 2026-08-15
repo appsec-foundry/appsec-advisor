@@ -114,9 +114,10 @@ properties:
             Compared deterministically against the dependency's
             `attack_surface[].auth_required` / inferred auth signal in
             `load_related_repos.py`; mismatches surface as
-            `expectation_mismatch.auth` in the cross-repo register and are
-            treated by the STRIDE analyzer as a HIGH-likelihood Spoofing
-            or Elevation-of-Privilege hypothesis.
+            `expectation_mismatch.auth` in the cross-repo register. The STRIDE
+            analyzer treats the mismatch as a Spoofing or Elevation-of-
+            Privilege hypothesis and requires target-repository evidence
+            before emitting a finding.
           examples:
             - JWT
             - mTLS
@@ -133,8 +134,9 @@ properties:
             dependency's `security_controls[]`; absence of a matching
             control surfaces as `expectation_mismatch.validation` and is
             treated by the STRIDE analyzer as a Tampering / Information-
-            Disclosure hypothesis the consumer must defend against in
-            depth.
+            Disclosure hypothesis. It becomes a finding only when target-
+            repository evidence proves the reliance and missing compensating
+            control.
           examples:
             - schema
             - allow-list

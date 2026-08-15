@@ -51,19 +51,20 @@ model; `CONTRIBUTING.md` separates it from the manual full run.
 
 Acceptance: `make check` gains one step and stays offline.
 
-## SDD-005 An agent does not write the requirements
+## SDD-005 An agent does not change requirements without user approval
 
 Source: operator request; `docs/internal/decisions.md:6` and `AGENTS.md:21` ask
 that a decision change go to the operator first.
 
-- Writes to `specs/requirements.md` and `docs/internal/decisions.md` are denied
-  by a hook rather than discouraged in prose.
-- The denial names what to do instead: propose the change to the operator.
-- `APPSEC_SPEC_EDIT=1` is the operator's own override, following the precedent
-  of `APPSEC_PLUGIN_DEV` in `scripts/plugin_write_gate.py`.
+- Writes to `specs/requirements.md` and `docs/internal/decisions.md` require an
+  explicit user permission decision from a hook rather than relying on prose.
+- The prompt names what the operator must review: the wording, rationale, and
+  guard.
+- The hook covers direct write tools and recognized shell writes, and has no
+  environment-variable bypass.
 
-Acceptance: an `Edit` or `Write` against either file is denied without the
-variable, and allowed with it.
+Acceptance: every recognized write surface against either file returns
+`permissionDecision: ask`, and project settings wire the hook before tool use.
 
 ## SDD-006 Nothing here ships to an install
 

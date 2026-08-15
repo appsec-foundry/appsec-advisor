@@ -2,12 +2,13 @@
 
 The hook is the only part of the specs mechanism that acts before an edit
 rather than after it. These tests pin both halves: the catalog and the decision
-register are held, and every other governed file arrives with its requirements
-attached.
+register require explicit user approval, and every other governed file arrives
+with its requirements attached.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -20,10 +21,11 @@ import requirements_hook  # noqa: E402
 
 
 def payload(tool: str = "Edit", path: str = "scripts/merge_threats.py") -> dict:
+    field = "notebook_path" if tool == "NotebookEdit" else "file_path"
     return {
         "hook_event_name": "PreToolUse",
         "tool_name": tool,
-        "tool_input": {"file_path": path},
+        "tool_input": {field: path},
     }
 
 
@@ -33,26 +35,19 @@ def output(response: dict | None) -> dict:
 
 
 @pytest.mark.parametrize("held", ["specs/requirements.md", "docs/internal/decisions.md"])
-def test_held_files_are_denied(held, monkeypatch):
-    monkeypatch.delenv("APPSEC_SPEC_EDIT", raising=False)
-    decision = output(requirements_hook.decide(payload(path=held)))
-    assert decision["permissionDecision"] == "deny"
+@pytest.mark.parametrize("tool", ["Edit", "Write", "MultiEdit", "NotebookEdit"])
+def test_held_files_require_user_approval(held, tool):
+    decision = output(requirements_hook.decide(payload(tool=tool, path=held)))
+    assert decision["permissionDecision"] == "ask"
     assert held in decision["permissionDecisionReason"]
 
 
-def test_held_file_is_denied_through_an_absolute_path(monkeypatch):
-    monkeypatch.delenv("APPSEC_SPEC_EDIT", raising=False)
+def test_held_file_requires_approval_through_an_absolute_path():
     absolute = str(ROOT / "specs" / "requirements.md")
-    assert output(requirements_hook.decide(payload(path=absolute)))["permissionDecision"] == "deny"
+    assert output(requirements_hook.decide(payload(path=absolute)))["permissionDecision"] == "ask"
 
 
-def test_operator_can_hand_the_edit_over(monkeypatch):
-    monkeypatch.setenv("APPSEC_SPEC_EDIT", "1")
-    assert requirements_hook.decide(payload(path="specs/requirements.md")) is None
-
-
-def test_governed_file_carries_its_requirements(monkeypatch):
-    monkeypatch.delenv("APPSEC_SPEC_EDIT", raising=False)
+def test_governed_file_carries_its_requirements():
     context = output(requirements_hook.decide(payload()))["additionalContext"]
     assert "scripts/merge_threats.py" in context
     assert "REQ-" in context
@@ -105,9 +100,8 @@ def bash(command: str) -> dict:
         "git checkout other -- specs/requirements.md",
     ],
 )
-def test_a_shell_write_to_a_held_file_is_denied(command, monkeypatch):
-    monkeypatch.delenv("APPSEC_SPEC_EDIT", raising=False)
-    assert output(requirements_hook.decide(bash(command)))["permissionDecision"] == "deny"
+def test_a_shell_write_to_a_held_file_requires_user_approval(command):
+    assert output(requirements_hook.decide(bash(command)))["permissionDecision"] == "ask"
 
 
 @pytest.mark.parametrize(
@@ -119,11 +113,20 @@ def test_a_shell_write_to_a_held_file_is_denied(command, monkeypatch):
         "echo hello > /tmp/note.txt",
     ],
 )
-def test_a_harmless_command_is_allowed(command, monkeypatch):
-    monkeypatch.delenv("APPSEC_SPEC_EDIT", raising=False)
+def test_a_harmless_command_is_allowed(command):
     assert requirements_hook.decide(bash(command)) is None
 
 
-def test_the_operator_override_also_covers_the_shell(monkeypatch):
-    monkeypatch.setenv("APPSEC_SPEC_EDIT", "1")
-    assert requirements_hook.decide(bash("cat > specs/requirements.md")) is None
+def test_project_settings_wire_every_write_surface_to_the_hook():
+    settings = json.loads((ROOT / ".claude" / "settings.json").read_text())
+    groups = settings["hooks"]["PreToolUse"]
+    matches = [
+        group
+        for group in groups
+        if group.get("matcher") == "Edit|Write|MultiEdit|NotebookEdit|Bash"
+        and any(
+            "requirements_hook.py" in " ".join([hook.get("command", ""), *hook.get("args", [])])
+            for hook in group.get("hooks", [])
+        )
+    ]
+    assert len(matches) == 1

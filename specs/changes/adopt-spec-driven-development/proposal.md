@@ -23,9 +23,9 @@ consult the operator before changing a decision, and nothing checks that it did.
 
 A short catalog of central requirements written in plain language, each bound to
 the files it governs and the test that fails when it breaks. A checker that
-keeps those bindings real. A hook that denies an agent the catalog and the
-register, and that puts the governing requirements in front of it at the moment
-it edits a file.
+keeps those bindings real. A hook that requires user approval before an agent
+changes the catalog or register, and that puts the governing requirements in
+front of it at the moment it edits any other file.
 
 ## Non-goals
 
@@ -42,6 +42,6 @@ it edits a file.
 ## What it breaks
 
 Nothing at runtime. `specs/` is new, `make check` gains one step, and an agent
-loses write access to two files. The development hook is wired in this
+must request approval to change two files. The development hook is wired in this
 repository's `.claude/settings.json` and is deliberately absent from
 `hooks/hooks.json`, so nothing here reaches an install.

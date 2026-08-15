@@ -102,6 +102,21 @@ def test_unknown_decision_in_source_is_reported():
     assert any("unknown decision" in problem for problem in problems(text))
 
 
+def test_missing_source_document_is_reported():
+    text = entry(source="`docs/there-is-no-such-source.md`")
+    assert any("source document does not exist" in problem for problem in problems(text))
+
+
+def test_missing_source_section_is_reported():
+    text = entry(source="`README.md` → There is no such heading")
+    assert any("source section does not exist" in problem for problem in problems(text))
+
+
+def test_existing_source_sections_are_accepted():
+    text = entry(source="`README.md` → Why this isn't a SAST tool, Threat Modeler")
+    assert problems(text) == []
+
+
 def test_applies_to_pattern_matching_nothing_is_reported():
     text = entry(applies="`scripts/there_is_no_such_module.py`")
     assert any("matches nothing" in problem for problem in problems(text))

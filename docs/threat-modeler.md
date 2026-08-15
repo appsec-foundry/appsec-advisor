@@ -95,6 +95,14 @@ flowchart LR
 
 Run `/appsec-advisor:create-threat-model` for the first assessment. It analyzes repository evidence and produces validated Markdown and YAML. After code changes, `/appsec-advisor:update-threat-model` re-analyzes affected components and preserves finding identity across runs. It stops with guidance when no prior model exists, so an update cannot become an accidental first full scan.
 
+Incremental reassessments preserve T/F finding identity for findings that
+remain. A shallower reassessment carries forward a prior finding it could not
+reverify; an equal-or-deeper reassessment records a non-reproduced finding as
+resolved in the changelog instead of dropping its history silently. Mitigation
+IDs may be regenerated, and weakness IDs follow ranked display order.
+`--rebuild` is the deliberate exception: it clears the prior model and
+stable-ID cache, so finding IDs may be assigned again.
+
 ### Ask about the model directly
 
 You do not need a command to explore an existing model. Ask a natural-language question in the Claude Code console:
@@ -141,7 +149,7 @@ Before running STRIDE, `appsec-advisor` performs a reconnaissance pass that coll
 | **Supply Chain** | Dependency and lockfile signals, unpinned GitHub Actions, container image pinning, and build/deployment configuration. |
 | **GenAI / LLM Security** | Prompt-injection surfaces, tool or agent boundaries, vector-store access patterns, LLM API usage, and OWASP LLM Top 10 related risks. |
 | **Threat Actors** | Insider, supply-chain, partner, and adjacent-tenant threats where they apply. |
-| **Abuse Cases** | Relevant catalog scenarios are selected from recon signals and repository paths; candidates are checked step-by-step against code evidence. |
+| **Abuse Cases** | Relevant catalog scenarios are selected from recon signals and repository paths; candidates are checked step-by-step against code evidence. An unconfirmed or inconclusive case remains a hypothesis; only a confirmed source probe becomes an ordinary finding. |
 
 > [!NOTE]
 > These checks provide context for STRIDE. They do not replace dedicated SAST, SCA, secrets, or IaC scanners.
@@ -222,7 +230,7 @@ Run these commands directly within the Claude Code interface.
 # Deeper assessment
 /appsec-advisor:create-threat-model --assessment-depth thorough
 
-# Force a fresh scan and discard cached run state
+# Force a fresh scan, discard cached state, and allow finding IDs to be reassigned
 /appsec-advisor:create-threat-model --full --rebuild
 
 # Preview the run without writing files
@@ -432,13 +440,34 @@ paths remain on the legacy runtime.
 
 ## Repo-local context
 
-Three optional files add team-owned context. None of them can suppress a finding supported by repository evidence.
+Four optional files add team-owned context. None of them can suppress a finding supported by repository evidence.
 
 ### Business context — `docs/business-context.md`
 
 Use this Markdown file for facts the code cannot show. Write the business or
 user purpose, concrete compromise impact, sensitive assets, applicable
 security obligations, and explicit assumptions. The first 200 lines are read.
+
+You can write the file yourself, or let the run capture it. A fresh interactive
+analysis — a first run or `--rebuild` — asks once whether to add context, and takes
+pasted text or a raw Markdown/plain-text URL. On `--rebuild` with a file already
+present, the question is whether to keep or replace it; replacing overwrites the file,
+so commit changes you want to keep. Context is optional throughout: declining runs the
+analysis on repository evidence alone.
+
+Captured text is stored, never followed. The URL goes through the SSRF policy
+(including an org profile's `policy.url_allowlist`), an HTML page is rejected in favour
+of a raw export, and a source carrying a credential is refused rather than written into
+your repository.
+
+Headless runs are never asked. `--context <url|path>` supplies context for that run
+only — it is not written to `docs/business-context.md`, because committing a file to a
+repository is a decision for a person, not a pipeline. The value takes no spaces; put
+pasted text in a file and pass its path.
+
+Changing the context does not by itself re-rate an existing model. An incremental run
+that meets changed context says so and recommends `--full`, which applies the new
+context to every finding.
 
 Context-v2 projects only facts that apply to each component before STRIDE
 analysis. It does not expose the complete Markdown document to every component
@@ -451,6 +480,27 @@ from validated analysis results. It contains only the component's security
 role, exposed interfaces, security dependencies, deployment constraints, and
 explicit architecture assumptions. There is no user-facing model, token,
 schema, path, or projector setting for this internal routing decision.
+
+### Actor layer — `.appsec/actors.yaml`
+
+Use this schema-validated file to add repository-specific actors, override an
+existing actor, disable an actor with a reason, or disable actor discovery. The
+repository layer normally inherits organization actors; `inherit_org: false`
+removes that layer. An organization-level disable remains authoritative and
+cannot be re-enabled by the repository.
+
+```yaml
+disable:
+  - id: ACT-D-1
+    reason: This repository has no direct customer accounts.
+discovery:
+  enabled: false
+inherit_org: true
+```
+
+Actor choices made in conversation apply only to that run. They are never
+written back automatically; commit `.appsec/actors.yaml` when a choice must
+persist across runs.
 
 ### Known threats — `docs/known-threats.yaml`
 
@@ -541,7 +591,9 @@ On the next scan, `appsec-advisor` uses that upstream threat model as context fo
 
 The `interface:` value is matched against the upstream model's `attack_surface[].entry_point`. When it matches, the scan can use upstream details such as protocol, authentication requirement, handling component, and documented controls.
 
-Imported data is context, not verified evidence. It can suggest findings but cannot suppress local evidence.
+Imported data is context, not verified evidence. It can suggest hypotheses but
+cannot by itself justify a finding, CVSS score, or suppression of local
+evidence.
 
 ### Declare assumptions about the upstream service
 
@@ -552,7 +604,10 @@ If this repo relies on a specific upstream guarantee, declare it explicitly:
     expected_validation: schema
 ```
 
-If the upstream threat model documents something different, the scan can raise a cross-repo hypothesis at that boundary. For example, expecting `JWT` while the upstream model documents `api-key` can seed an authentication-related finding.
+If the upstream threat model documents something different, the scan can raise
+a cross-repo hypothesis at that boundary. For example, expecting `JWT` while
+the upstream model documents `api-key` can trigger an authentication probe; it
+becomes a finding only when target-repository evidence supports it.
 
 These fields are optional. Without them, the scan still uses the upstream model as context, but it does not perform this expectation check.
 
