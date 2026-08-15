@@ -170,7 +170,13 @@ def check_returned_calls(output_dir: str | Path) -> list[dict[str, str]]:
             )
         usage = call.get("usage") or {}
         charged = int(usage.get("output_tokens") or 0)
-        if state_name == "done" and not charged:
+        # Only a foreground call can answer for itself. A background Agent
+        # return acknowledges the launch — it carries `isAsync` and an output
+        # file, never usage, because the agent has not run yet — and no later
+        # per-call source exists on the host. Wave usage is recorded in the
+        # stage stats instead, so demanding it here would be demanding evidence
+        # that cannot exist.
+        if state_name == "done" and not charged and not call.get("background"):
             findings.append(_mismatch(call, "usage_unattributed", "terminal call carries no child output tokens"))
         if call.get("agent_call_id") in open_budget:
             findings.append(_mismatch(call, "budget_not_retired", "turn budget still holds an entry for the call"))

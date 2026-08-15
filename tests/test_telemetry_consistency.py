@@ -92,6 +92,33 @@ def test_terminal_call_without_child_usage_is_named(tmp_path: Path) -> None:
     assert _codes(tmp_path) == ["usage_unattributed"]
 
 
+def test_a_background_call_without_usage_is_not_a_finding(tmp_path: Path) -> None:
+    """A background Agent return acknowledges the launch and carries no usage —
+    the agent has not run yet. Demanding it would demand evidence the host
+    cannot produce; the wave's usage lives in the stage stats."""
+    (tmp_path / ".context-routing-plan.json").write_text(
+        json.dumps({"actions": [{"action_id": ACTION_ID, "job_ids": ["stride:api:attempt-1"]}]}),
+        encoding="utf-8",
+    )
+    lifecycle.register_call(
+        tmp_path,
+        {
+            "agent_call_id": "toolu_bg",
+            "session_id": "shared01",
+            "agent": "stride-analyzer-v2",
+            "agent_type": "appsec-advisor:appsec-stride-analyzer-v2",
+            "model": "sonnet",
+            "description": "STRIDE: api",
+            "background": True,
+            "action_id": ACTION_ID,
+            "job_id": "stride:api:attempt-1",
+            "max_turns": 20,
+        },
+    )
+    lifecycle.finish_jobs(tmp_path, ["stride:api:attempt-1"], success=True)
+    assert telemetry.check_returned_calls(tmp_path) == []
+
+
 def test_running_call_at_an_accept_boundary_is_named(tmp_path: Path) -> None:
     _seed(tmp_path, state="running")
     assert _codes(tmp_path) == ["lifecycle_not_terminal"]
