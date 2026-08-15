@@ -309,7 +309,14 @@ def main() -> int:
             w(f"    ⛔ aborted mid-run — {detail}")
         elif event == "BUDGET_CRITICAL":
             w(f"    ⛔ budget critical — {detail}")
-        elif event in ("BUDGET_WARN", "MAX_TURNS", "AGENT_ERROR", "RENDER_FAILED", "TELEMETRY_MISMATCH"):
+        elif event in (
+            "BUDGET_WARN",
+            "MAX_TURNS",
+            "AGENT_ERROR",
+            "RENDER_FAILED",
+            "TELEMETRY_MISMATCH",
+            "HOOK_PAYLOAD_UNEXPECTED",
+        ):
             w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "PARALLEL_STRIDE_RESOLVED":
             w(f"   config · {detail}")

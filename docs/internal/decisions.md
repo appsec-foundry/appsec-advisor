@@ -55,6 +55,7 @@ to touch — each row names them. One row is one decision and carries everything
 | OR-6 | Only the call-scoped hook lifecycle terminalizes a call; a semantic event such as `SCAN_END` publishes output and is never presented as an outcome | `test_postfix6_recon_sequence_renders_one_start_and_one_terminal_outcome` | `agents/shared/logging-standard.md` |
 | OR-7 | Call telemetry stays observational: a disagreement between accepted output, lifecycle, budget, and stage stats is reported, and blocks only under `APPSEC_TELEMETRY_STRICT` | `test_boundary_reports_by_default_and_aborts_only_under_strict` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-8 | Every non-clean exit converges on one terminal state through a single terminator, which releases only a lock its own run holds | `test_interrupt_converges_every_terminal_surface`, `test_a_live_foreign_lock_is_left_alone` | `docs/internal/contracts/orchestration-actions.md` |
+| OR-9 | Host hook payloads are read through one adapter that fails open and names a missing key, and host sequences are replayed against pinned per-version payload fixtures | `tests/test_hook_payload.py`, `tests/test_hook_payload_contract.py` | `agents/shared/logging-standard.md` |
 
 ## Repair
 

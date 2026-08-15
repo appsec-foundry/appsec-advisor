@@ -48,6 +48,14 @@ expensive to discover later.
 
 The two A/B arms differ only in producer generation; a test pins that.
 
+## Record the host with the result
+
+Capture `claude --version` alongside the acceptance evidence. Hook payload
+shapes are host-version specific, and the repository gates cannot prove the
+installed one. If that version has no fixture in
+`tests/fixtures/hook-payloads/`, capture a sanitized one and let the replay
+harness run against it before the paid run, not after.
+
 ## If a run ends badly
 
 `scripts/terminate_run.py` runs from the headless wrapper on every non-clean

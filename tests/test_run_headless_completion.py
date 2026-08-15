@@ -55,9 +55,7 @@ def test_failure_branch_surfaces_run_issues() -> None:
     """
     body = _body()
     assert "--issues-only" in body, "failure branch must render the Run Issues block"
-    assert "terminate_run.py" in body, (
-        "failure branch must refresh .run-issues.json from the logs before rendering"
-    )
+    assert "terminate_run.py" in body, "failure branch must refresh .run-issues.json from the logs before rendering"
     assert body.index("terminate_run.py") < body.index("--issues-only"), (
         "the run issues must be regenerated before they are rendered"
     )

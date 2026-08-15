@@ -69,6 +69,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import agent_lifecycle
+import hook_payload
 from event_log import format_line
 from jsonschema import Draft202012Validator
 
@@ -2089,11 +2090,11 @@ def _is_sanctioned_background_watchdog(cmd: str) -> bool:
     return True
 
 
-def _context_v2_parallel_foreground_reason(data: dict) -> str | None:
+def _context_v2_parallel_foreground_reason(event: hook_payload.HookEvent) -> str | None:
     """Reject a blocking Agent call that would serialize a context-v2 wave."""
-    if data.get("tool_name") != "Agent":
+    if not event.is_agent_call:
         return None
-    tool_input = data.get("tool_input", {}) or {}
+    tool_input = event.tool_input
     subtype = tool_input.get("subagent_type")
     waiters = {
         "appsec-advisor:appsec-stride-analyzer-v2": ("STRIDE", "wait_stride_progress.py"),
@@ -2117,9 +2118,9 @@ def _context_v2_parallel_foreground_reason(data: dict) -> str | None:
     )
 
 
-def _context_v2_agent_identity_reason(data: dict) -> str | None:
+def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | None:
     """Require controller and call identity on context-v2 semantic dispatches."""
-    if data.get("tool_name") != "Agent":
+    if not event.is_agent_call:
         return None
     try:
         config = json.loads(Path(_output_dir(), ".skill-config.json").read_text(encoding="utf-8"))
@@ -2127,7 +2128,7 @@ def _context_v2_agent_identity_reason(data: dict) -> str | None:
         return None
     if config.get("runtime_generation") != "context-v2":
         return None
-    subtype = str((data.get("tool_input") or {}).get("subagent_type") or "")
+    subtype = str(event.tool_input.get("subagent_type") or "")
     context_v2_agents = {
         "appsec-advisor:appsec-context-resolver",
         "appsec-advisor:appsec-recon-scanner",
@@ -2145,9 +2146,9 @@ def _context_v2_agent_identity_reason(data: dict) -> str | None:
     }
     if subtype not in context_v2_agents:
         return None
-    if not str(data.get("tool_use_id") or "").strip():
+    if not event.tool_use_id.strip():
         return "Context-v2 Agent dispatch requires the host tool_use_id as agent_call_id."
-    prompt = str((data.get("tool_input") or {}).get("prompt") or "")
+    prompt = str(event.tool_input.get("prompt") or "")
     if not _extract_param(prompt, "JOB_ID"):
         return "Context-v2 Agent dispatch requires controller-owned JOB_ID."
     if not _extract_param(prompt, "ACTION_ID"):
@@ -2197,6 +2198,20 @@ def _context_v2_terminal_abort_reason() -> str | None:
     )
 
 
+def _hook_event(data: dict, event_name: str, sid: str) -> hook_payload.HookEvent:
+    """Normalize one hook payload, and say so once when it is not what we expect.
+
+    Every handler goes through here so the host contract is validated in one
+    place instead of being restated per field. A payload that drifts from the
+    supported shape is logged rather than silently read as zeros — that silence
+    is what let a completed call be recorded as failed.
+    """
+    event = hook_payload.parse(data, event_name)
+    if event.problems:
+        _write("WARN ", "HOOK_PAYLOAD_UNEXPECTED", f"event={event.name or '?'}  {'  '.join(event.problems)}", sid)
+    return event
+
+
 def _emit_pretool_denial(reason: str) -> None:
     """Emit one fail-closed PreToolUse decision."""
     try:
@@ -2226,8 +2241,6 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     so this handler captures sub-agent activity that PostToolUse misses
     (PostToolUse only fires in the outermost session).
     """
-    tool = data.get("tool_name", "")
-
     # OUTPUT_DIR recovery (2026-06-05) — this PreToolUse hook runs as a SEPARATE
     # process that does NOT inherit the skill's OUTPUT_DIR env. Without this,
     # every AGENT_SPAWN landed in the plugin-root `docs/security/.hook-events.log`
@@ -2250,30 +2263,35 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         if _od:
             os.environ["OUTPUT_DIR"] = _od
 
+    # Parsed only after the OUTPUT_DIR recovery above: a payload note has to
+    # land in the run's own log, not in the plugin-root fallback.
+    event = _hook_event(data, "PreToolUse", sid)
+    tool = event.tool_name
+
     abort_reason = _context_v2_terminal_abort_reason()
     if abort_reason is not None:
         _emit_pretool_denial(abort_reason)
         return
 
-    serial_reason = _context_v2_parallel_foreground_reason(data)
+    serial_reason = _context_v2_parallel_foreground_reason(event)
     if serial_reason is not None:
         _emit_pretool_denial(serial_reason)
         return
 
-    identity_reason = _context_v2_agent_identity_reason(data)
+    identity_reason = _context_v2_agent_identity_reason(event)
     if identity_reason is not None:
         _emit_pretool_denial(identity_reason)
         return
 
     lifecycle_events: list[agent_lifecycle.LifecycleEvent] = []
-    if tool == "Agent":
-        inp = data.get("tool_input", {}) or {}
+    if event.is_agent_call:
+        inp = event.tool_input
         subtype = str(inp.get("subagent_type") or "unknown")
         params = _agent_params(str(inp.get("prompt") or ""))
         job_id = params.get("JOB_ID") or ""
         attempt_match = re.search(r":attempt-(\d+)$", str(job_id))
         identity = {
-            "agent_call_id": data.get("tool_use_id"),
+            "agent_call_id": event.tool_use_id,
             "session_id": (sid or "")[:8],
             "agent": _short_agent_name(subtype) or subtype.split(":")[-1] or "unknown",
             "agent_type": subtype,
@@ -2299,14 +2317,14 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         try:
             from budget_watchdog import close_call, open_call
 
-            for event in lifecycle_events:
-                if event.event in {"AGENT_DONE", "AGENT_FAILED"}:
-                    close_call(str(event.call.get("agent_call_id") or ""), _output_dir())
+            for lifecycle_event in lifecycle_events:
+                if lifecycle_event.event in {"AGENT_DONE", "AGENT_FAILED"}:
+                    close_call(str(lifecycle_event.call.get("agent_call_id") or ""), _output_dir())
             call = next(
                 (
                     row
                     for row in agent_lifecycle.running_calls(_output_dir())
-                    if row.get("agent_call_id") == str(data.get("tool_use_id") or "")
+                    if row.get("agent_call_id") == event.tool_use_id
                 ),
                 None,
             )
@@ -2337,8 +2355,8 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # the background-operator confirmation is Claude-Code-version dependent and
     # must be verified in a live run — if it is a hardcoded circuit-breaker the
     # decision is ignored and the prompt still fires (harmless, just no-op).
-    if tool == "Bash" and (data.get("tool_input", {}) or {}).get("run_in_background"):
-        cmd = ((data.get("tool_input", {}) or {}).get("command") or "").strip()
+    if tool == "Bash" and event.tool_input.get("run_in_background"):
+        cmd = (event.tool_input.get("command") or "").strip()
         if _is_sanctioned_background_watchdog(cmd):
             try:
                 sys.stdout.write(
@@ -2382,7 +2400,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     #
     # The guard also covers `MultiEdit` — same blast radius.
     if tool in ("Write", "Edit", "MultiEdit"):
-        inp = data.get("tool_input", {}) or {}
+        inp = event.tool_input
         path = (inp.get("file_path") or "").strip()
         if path and Path(path).name == "threat-model.md":
             reason = (
@@ -2424,12 +2442,12 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
             return
 
     # --- Non-Agent tools: verbose-only activity indicator ---
-    if tool != "Agent":
+    if not event.is_agent_call:
         if _VERBOSE:
-            _emit_activity(tool, data.get("tool_input", {}), sid)
+            _emit_activity(tool, event.tool_input, sid)
         return
 
-    inp = data.get("tool_input", {})
+    inp = event.tool_input
     subtype = inp.get("subagent_type", "unknown")
     desc = _plain_log_text(inp.get("description", ""))
     bg = inp.get("run_in_background", False)
@@ -2620,23 +2638,9 @@ def _tool_uses_from_transcript(transcript_path: str) -> int:
     return len(tool_ids)
 
 
-def _stop_transcript_path(data: dict, event_name: str) -> str:
-    """Return the transcript owned by the session that is stopping.
-
-    ``SubagentStop`` carries both the parent session's ``transcript_path`` and
-    the child's ``agent_transcript_path``. Lifecycle, usage, and tool totals
-    belong to the child call, so the child-specific path must win. The common
-    path remains a compatibility fallback for older hook payloads.
-    """
-    key = "agent_transcript_path" if event_name == "SubagentStop" else "transcript_path"
-    value = data.get(key)
-    if not isinstance(value, str) or not value:
-        value = data.get("transcript_path")
-    return value if isinstance(value, str) else ""
-
-
 def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
-    transcript = _stop_transcript_path(data, event_name)
+    event = _hook_event(data, event_name, sid)
+    transcript = event.owner_transcript
     reason = data.get("stop_reason", "") or ""
     if not reason:
         # The Claude Code Stop/SubagentStop payload carries no `stop_reason`
@@ -2677,9 +2681,9 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     cr = usage.get("cache_read_input_tokens", 0)
     has_usage = bool(usage)  # False when neither the payload nor the transcript had usage
 
-    runtime_agent_id = str(data.get("agent_id") or "") if event_name == "SubagentStop" else ""
+    runtime_agent_id = event.agent_id if event_name == "SubagentStop" else ""
     if runtime_agent_id:
-        agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, str(data.get("agent_type") or ""))
+        agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, event.agent_type)
     tool_uses = _tool_uses_from_transcript(transcript) if runtime_agent_id and transcript else 0
     runtime_call = (
         agent_lifecycle.running_call_by_runtime_agent_id(_output_dir(), runtime_agent_id) if runtime_agent_id else None
@@ -2888,10 +2892,11 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
 
 
 def handle_post_tool_use(data: dict, sid: str) -> None:
-    tool = data.get("tool_name", "")
-    inp = data.get("tool_input", {})
-    resp = data.get("tool_response", "")
-    is_err = data.get("is_error", False)
+    event = _hook_event(data, "PostToolUse", sid)
+    tool = event.tool_name
+    inp = event.tool_input
+    resp = event.tool_response
+    is_err = event.is_error
 
     # M3.6 #2 — clear the in-flight marker file. Idempotent and silent on
     # missing files (sub-agent Pre + missing-Post case is handled by the
@@ -2909,7 +2914,7 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         params = _agent_params(inp.get("prompt", "") or "")
         pairs = "  ".join(f"{k}={v}" for k, v in params.items())
 
-        call_id = str(data.get("tool_use_id") or "")
+        call_id = event.tool_use_id
         try:
             runtime_agent_id = _runtime_agent_id(resp)
             if runtime_agent_id:
@@ -3079,8 +3084,9 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
 
 
 def handle_subagent_start(data: dict, sid: str) -> None:
-    runtime_agent_id = str(data.get("agent_id") or "")
-    agent_type = str(data.get("agent_type") or "")
+    event = _hook_event(data, "SubagentStart", sid)
+    runtime_agent_id = event.agent_id
+    agent_type = event.agent_type
     try:
         call = agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, agent_type)
     except agent_lifecycle.LifecycleError as exc:
