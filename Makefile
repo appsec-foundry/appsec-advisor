@@ -143,6 +143,7 @@ check:  ## Continuous gate: lint, format, config, drift, full test suite (no cov
 	@python3 scripts/validate_config.py .
 	@python3 scripts/check_fragment_registry.py
 	@python3 scripts/check_target_specificity.py
+	@python3 scripts/check_specs.py
 	@# Run WITHOUT --cov: coverage enables `[tool.coverage.run] patch=["subprocess"]`,
 	@# which instruments every child interpreter. The subprocess-heavy integration
 	@# tests (e.g. test_incremental_mode spawning run-headless.sh) then crawl and the
