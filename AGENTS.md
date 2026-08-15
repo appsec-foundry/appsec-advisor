@@ -18,7 +18,7 @@ Agents handle discovery and prose. Deterministic Python owns validation, renderi
 
 ### Fix the source, not the symptom
 
-- What the plugin must do is in `specs/requirements.md`; the decisions behind how the pipeline is wired, budgeted, routed or trusted, and the guards enforcing them, are in `docs/internal/decisions.md`. Consult both before changing a file (`scripts/check_specs.py --for <path>`), and propose a change to either to the operator rather than editing it — a decision belongs in the register only when breaking it is costly and non-obvious, never for implementation details, deferred intentions, or descriptions of current behavior.
+- What the plugin must do is in `specs/requirements.md`; how the pipeline is wired, budgeted, routed or trusted, and the guards for it, are in `docs/internal/decisions.md`. Consult both before changing a file (`scripts/check_specs.py --for <path>`) and propose changes rather than editing them; register a decision only when breaking it is costly and non-obvious.
 - Every structured artifact exchanged between pipeline stages or delivered to users needs a defined shape and a validation path; contracted artifacts use a schema. Before changing behavior, trace the producer, contract, consumer, validation, tests, and permission or cleanup impact.
 - Fix incorrect findings and report output in the plugin component that creates them: the producer, prompt, heuristic, renderer, or deterministic enforcer.
 - Do not hide a defect by patching the rendered report, weakening schemas or QA, or changing fixture expectations. Do not ship LLM-authored placeholder comments.
