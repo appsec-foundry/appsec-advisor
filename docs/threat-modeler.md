@@ -1,6 +1,6 @@
 # Threat Modeler
 
-`/appsec-advisor:create-threat-model` derives an architecture model from a repository and applies STRIDE. The result is a code-derived threat model for engineering and AppSec teams.
+`/appsec-advisor:create-threat-model` derives an architecture model from a repository and applies STRIDE. The result is a code-derived (implementation-level) threat model for engineering and AppSec teams.
 
 → [Back to README](../README.md)
 
@@ -26,7 +26,7 @@ The Markdown and YAML outputs are generated from the same validated data.
 
 ### How this relates to classic threat modeling
 
-This skill builds a technical model from repository evidence. It complements workshops: automation keeps the model current, while classic sessions own intent, business impact, and residual-risk decisions. Comparison and limits: [README](../README.md#how-this-relates-to-classic-threat-modeling).
+This skill builds a code-derived (implementation-level) model from repository evidence. It complements workshops: automation keeps the model current, while classic sessions own intent, business impact, and residual-risk decisions. Comparison and limits: [README](../README.md#how-this-relates-to-classic-threat-modeling).
 
 Trust-boundary assessment runs as its own stage, after the component registry
 is final. A coverage gate blocks STRIDE when boundary signals are missing,

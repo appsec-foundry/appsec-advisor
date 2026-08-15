@@ -8,7 +8,7 @@
 
 > ⚠️ **Beta — not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin for code-derived threat modeling — the model is derived from the repository, not maintained by hand. It maps the implemented architecture, applies STRIDE, and produces findings with a mitigation plan. It complements workshops: automate a first pass, re-run it as code changes, and involve experts where judgment is needed.
+`appsec-advisor` is a Claude Code plugin for code-derived (implementation-level) threat modeling — the model is derived from the repository, not maintained by hand. It maps the implemented architecture, applies STRIDE, and produces findings with a mitigation plan. It complements workshops: automate a first pass, re-run it as code changes, and involve experts where judgment is needed.
 
 Beyond threat modeling, it supports requirements audits, change reviews, and CI gates. AppSec teams can tailor it for internal use; see [Enterprise rollout](#enterprise-rollout).
 
@@ -26,7 +26,7 @@ Workshop and design-review threat models become stale as the implementation chan
 
 ### How this relates to classic threat modeling
 
-Classic threat modeling (workshops, design reviews) owns intent, business impact, and residual-risk decisions. It needs skilled people and does not scale to every service. This tool automates the *technical* picture from the repository, so teams start with coverage and specialists focus on difficult cases.
+Classic threat modeling (workshops, design reviews) owns intent, business impact, and residual-risk decisions. It needs skilled people and does not scale to every service. This tool automates the *implementation-level* picture from the repository, so teams start with coverage and specialists focus on difficult cases.
 
 | | Classic | `appsec-advisor` |
 |---|---|---|
