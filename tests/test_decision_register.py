@@ -77,16 +77,40 @@ def test_ids_are_unique():
     assert not duplicates, f"duplicate decision IDs: {sorted(duplicates)}"
 
 
+def _retired_ids_line() -> str:
+    """The header line listing ids removed from the table, or an empty string."""
+    for line in _register_text().splitlines():
+        if line.startswith("**Retired IDs:**"):
+            return line
+    return ""
+
+
 def test_ids_are_contiguous_per_prefix():
-    """IDs are anchors once a guard cites one, so gaps must not appear silently."""
+    """IDs are anchors once a guard cites one, so gaps must not appear silently.
+
+    An entry may be retired — the register's own gate admits only decisions whose
+    breach is costly and non-obvious, so pruning one is intended. What must not
+    happen is the number quietly vanishing: a retired id is listed in the header,
+    and only a listed one may leave a gap.
+    """
     seen: dict[str, list[int]] = defaultdict(list)
     for row in _rows():
         prefix, number = row[0].rsplit("-", 1)
         seen[prefix].append(int(number))
-    gaps = {
-        p: sorted(set(range(1, max(n) + 1)) - set(n)) for p, n in seen.items() if set(range(1, max(n) + 1)) - set(n)
-    }
-    assert not gaps, f"decision IDs must be contiguous per prefix; missing: {gaps}"
+    retired = {(m.group(1), int(m.group(2))) for m in ID_RE.finditer(_retired_ids_line())}
+    gaps = {}
+    for prefix, numbers in seen.items():
+        missing = sorted(n for n in set(range(1, max(numbers) + 1)) - set(numbers) if (prefix, n) not in retired)
+        if missing:
+            gaps[prefix] = missing
+    assert not gaps, f"decision IDs must be contiguous per prefix unless retired in the header; missing: {gaps}"
+
+
+def test_a_retired_id_is_actually_gone_from_the_table():
+    """The header must not retire an id that still has a row."""
+    live = {row[0] for row in _rows()}
+    retired = {m.group(0) for m in ID_RE.finditer(_retired_ids_line())}
+    assert not (live & retired), f"retired ids still present as rows: {sorted(live & retired)}"
 
 
 @pytest.mark.parametrize("row", _rows(), ids=lambda r: r[0])

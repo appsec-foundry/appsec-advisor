@@ -22,6 +22,10 @@ to touch — each row names them. One row is one decision and carries everything
 - A decision that only holds while both runtime generations ship is marked
   *(generation-scoped)* with the work package that must revisit it.
 
+**Retired IDs:** `DT-4`, `RN-3`. A retired number is never reused, because a guard,
+commit or requirement may still cite it and would then point at a different decision.
+Removing an entry means listing it here in the same change.
+
 ## Context routing
 
 | ID | Decision | Guard | Rationale |
