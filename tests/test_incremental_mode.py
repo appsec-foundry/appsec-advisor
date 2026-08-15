@@ -525,7 +525,7 @@ class TestRunHeadlessScript:
         # this stub must not be pinned to one flag order.
         fake_tail.write_text(
             "#!/bin/sh\n"
-            "for arg in \"$@\"; do\n"
+            'for arg in "$@"; do\n'
             '  if [ "$arg" = "-F" ]; then\n'
             '    printf "%s\\n" "$$" > "$TAIL_STARTED"\n'
             "    trap 'printf stopped > \"$TAIL_STOPPED\"; exit 0' TERM INT HUP\n"
