@@ -126,7 +126,7 @@ else is fixed at the producer. A repair may not weaken the gate it had to pass.
 
 **Applies to:** `scripts/qa_checks.py`, `scripts/apply_prose_fixes.py`,
 `agents/appsec-architect-reviewer.md`, `agents/appsec-qa-reviewer.md`
-**Source:** `AGENTS.md` → Validation and repair, decisions `RN-1`, `RN-2`, `RN-3`
+**Source:** `AGENTS.md` → Validation and repair, decisions `RN-1`, `RN-2`
 **Guard:** `test_apply_fixes_is_idempotent_for_core_rewrites`, `test_autofix_is_idempotent_on_paths`
 
 ## How a run flows
@@ -224,7 +224,7 @@ Every prompt surface has a byte budget. Exceeding it is fixed by cutting the
 prompt, never by raising the budget.
 
 **Applies to:** `data/context-budgets.yaml`, `skills/create-threat-model/**`
-**Source:** `AGENTS.md` → Orchestration and context, decisions `CE-1`, `CE-6`
+**Source:** `AGENTS.md` → Orchestration and context, decision `CE-1`
 **Guard:** `test_each_live_prompt_surface_stays_within_budget`
 
 ### REQ-CTX-003 — Prompts are built so the stable part can be cached
