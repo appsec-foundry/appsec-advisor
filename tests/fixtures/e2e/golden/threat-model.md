@@ -78,6 +78,9 @@ _Append-only history of assessment runs. Most recent first._
 **Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: 0 · **Total: 4**
 
 
+
+**Basis:** a code-derived threat model at implementation level - built from repository evidence, not a planning document. Design intent, business processes, runtime behaviour and production-only configuration are outside what this analysis can see (see [§11 Out of Scope](#11-out-of-scope)).
+
 <br/>
 
 **Worst-case scenarios behind this verdict - what an attacker could do today:**

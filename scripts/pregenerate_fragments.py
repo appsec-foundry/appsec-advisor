@@ -298,6 +298,14 @@ def gen_system_overview(yaml_data: dict) -> str:
             "operating-system kernel, and the underlying network infrastructure."
         )
     lines.append("")
+    # Method boundary next to the system boundary: the line above names the parts
+    # of the system that are excluded, this one names what kind of model this is.
+    # §11 → "Not Covered by This Method" carries the itemised version.
+    lines.append(
+        "**Basis:** a code-derived threat model at implementation level, built from source, "
+        "configuration and git history. It describes the system as built, not as designed."
+    )
+    lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -3400,6 +3408,29 @@ def gen_out_of_scope(yaml_data: dict) -> str:
     accepted_risks = meta.get("accepted_risks") or []
 
     lines = ["## 11. Out of Scope", ""]
+    # Two different boundaries live in this section. This first block is the
+    # method boundary — it holds regardless of the target repository and of the
+    # assessment depth, so it is emitted unconditionally and stated before the
+    # system-specific exclusions below.
+    lines.append("### Not Covered by This Method")
+    lines.append("")
+    lines.append(
+        "This is a code-derived threat model at implementation level: it is built from source, "
+        "configuration and git history, models the system as built rather than as designed, and "
+        "does not replace a design-time review."
+    )
+    lines.append("")
+    lines.append(
+        "- Design intent and the reasoning behind it — no design documents, ADRs or workshop context are read."
+    )
+    lines.append("- Business processes and user journeys that leave the code.")
+    lines.append("- Runtime behaviour, deployment topology and production-only configuration.")
+    lines.append("- External and organizational controls.")
+    lines.append("")
+    lines.append("Treat this report as review input, not sign-off.")
+    lines.append("")
+    lines.append("### Excluded from This Assessment")
+    lines.append("")
     lines.append(
         "The following items are **explicitly excluded** from this threat model. "
         "Findings against these areas should be tracked separately."

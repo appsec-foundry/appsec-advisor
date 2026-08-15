@@ -131,6 +131,18 @@ class TestSystemOverview:
         assert "**Out of scope:** third-party hosted dependencies" in md
         assert "all endpoints" not in md
 
+    def test_scope_states_the_method_boundary(self, minimal_yaml_data):
+        """§1 Scope names which components were covered; the Basis line names
+        what kind of model this is, so the section is not read as design-time
+        coverage."""
+        md = pf.gen_system_overview(minimal_yaml_data)
+        assert "**Basis:** a code-derived threat model at implementation level" in md
+        assert "as built, not as designed" in md
+
+    def test_method_boundary_is_independent_of_meta_scope(self):
+        md = pf.gen_system_overview({"meta": {}, "components": []})
+        assert "**Basis:** a code-derived threat model at implementation level" in md
+
 
 class TestArchitectureDiagrams:
     def test_starts_with_correct_heading(self, minimal_yaml_data):
@@ -2200,6 +2212,26 @@ class TestOutOfScope:
         md = pf.gen_out_of_scope({"meta": {}})
         assert md.startswith("## 11. Out of Scope\n")
         assert "Third-party hosted dependencies" in md  # default
+
+    def test_method_boundary_precedes_the_system_exclusions(self, minimal_yaml_data):
+        """§11 carries two boundaries. The method boundary holds for every target
+        repository and every depth, so it is stated first and unconditionally."""
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        assert "### Not Covered by This Method" in md
+        assert "### Excluded from This Assessment" in md
+        assert md.index("### Not Covered by This Method") < md.index("### Excluded from This Assessment")
+
+    def test_method_boundary_names_what_the_model_cannot_see(self, minimal_yaml_data):
+        md = pf.gen_out_of_scope(minimal_yaml_data)
+        assert "code-derived threat model at implementation level" in md
+        assert "does not replace a design-time review" in md
+        assert "Design intent" in md
+        assert "Runtime behaviour, deployment topology and production-only configuration." in md
+        assert "review input, not sign-off" in md
+
+    def test_method_boundary_emitted_without_meta_scope(self):
+        md = pf.gen_out_of_scope({"meta": {}})
+        assert "### Not Covered by This Method" in md
 
     @pytest.mark.parametrize("scope", [None, [], "all endpoints"])
     def test_non_mapping_scope_falls_back_to_default(self, scope):

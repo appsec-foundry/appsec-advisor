@@ -4852,6 +4852,47 @@ def test_verdict_scope_coverage_line(tmp_path: Path) -> None:
     assert "other 2 (lower-priority / internal) were not individually assessed" in out
 
 
+def test_verdict_basis_line_is_unconditional(tmp_path: Path) -> None:
+    """The coverage line is conditional on a narrowed component selection; the
+    method boundary is not. A full-coverage run still has to say that the model
+    is code-derived, so the verdict is never read as a design-time review."""
+    frag = tmp_path / ".fragments"
+    frag.mkdir(parents=True)
+    (frag / "ms-verdict.json").write_text(
+        json.dumps(
+            {
+                "severity": "red",
+                "opening": "Not production-ready. The application leaves its most sensitive operations open to anyone.",
+                "bullets": [
+                    {
+                        "title": "Anyone can act as admin",
+                        "body": "An unauthenticated caller reaches every privileged action.",
+                        "refs": ["F-001"],
+                    },
+                    {
+                        "title": "Customer data is reachable",
+                        "body": "Any logged-in user can read other customers' records.",
+                        "refs": ["F-002"],
+                    },
+                ],
+                "closing": "Address authentication and authorization before any production use.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # No component_selection at all — scope_coverage stays empty.
+    ctx = compose.RenderContext(
+        output_dir=tmp_path, contract={}, yaml_data={"meta": {}, "threats": []}, triage={}, fragments_dir=frag
+    )
+    env = compose._build_jinja_env(ctx)
+    section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
+    out = compose._render_verdict(ctx, env, section)
+    assert "**Scope:**" not in out
+    assert "**Basis:** a code-derived threat model at implementation level" in out
+    assert "not a planning document" in out
+    assert "[§11 Out of Scope](#11-out-of-scope)" in out
+
+
 def test_verdict_scope_coverage_counts_screening_separately(tmp_path: Path) -> None:
     """A --cheap-stride screening pass is not full STRIDE depth — it must not be
     counted into the full-analysis figure the executive verdict states."""

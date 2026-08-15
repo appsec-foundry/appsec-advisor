@@ -2754,6 +2754,16 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
                 f"The other {n_exc} (lower-priority / internal) were not individually assessed at this depth "
             )
         scope_coverage += "(see [§1 Scope](#scope))."
+    # Method boundary — unconditional, unlike the coverage line above. That line
+    # says how much of the system was analyzed; this says what kind of statement
+    # the report makes at all, so an executive reader cannot take a model derived
+    # from the implementation for a design-time review. §11 carries the full list.
+    basis = (
+        "**Basis:** a code-derived threat model at implementation level — built from repository "
+        "evidence, not a planning document. Design intent, business processes, runtime behaviour "
+        "and production-only configuration are outside what this analysis can see "
+        "(see [§11 Out of Scope](#11-out-of-scope))."
+    )
     # Badge worst-case bullets whose findings anchor a code-verified
     # (fully_viable) abuse chain. Data-level (per bullet.refs) — no fuzzy
     # markdown parsing. Empty suffix when no viable chain / abuse skipped.
@@ -2775,6 +2785,7 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
             data=data,
             risk_distribution=risk_distribution,
             scope_coverage=scope_coverage,
+            basis=basis,
             verified_suffixes=verified_suffixes,
         ).rstrip()
         + "\n"
