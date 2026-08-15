@@ -126,7 +126,7 @@ SKILL-impl tells you to print after config resolution (e.g.
 `📋 Existing threat model found — computing the incremental delta …`), and then
 (2) the `Threat Model — Pre-flight` summary. Nothing may appear between them.
 
-**One sanctioned exception — the interactive orchestrator-model prompt.** When the
+**Sanctioned exception 1 — the interactive orchestrator-model prompt.** When the
 thin runtime's prepare ACTION reports `orchestrator_prompt_needed: true`
 (SKILL-full-runtime.md §2a), you MUST call `AskUserQuestion` to let the user choose
 the session model — emitted **before the Pre-flight summary** (the choice is a cost
@@ -136,6 +136,10 @@ whenever the detected session model diverges from the repo-size recommendation (
 Sonnet-5 or an Opus session on a normal-sized repo), and is skipped under
 `APPSEC_HEADLESS=1`. The early `💡 Session model` heads-up is NOT a substitute — it
 is a one-line hint, not a choice.
+
+**Sanctioned exception 2 — the business-context question.** An interactive
+full/rebuild run asks once whether to add business context, between the Pre-flight
+summary and Stage 1. Do not suppress it.
 
 In particular do **not** announce your own actions — the following are all
 contract violations, even though they are *true*: "I've read through to the

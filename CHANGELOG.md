@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - New context-v2 analysis runtime projects only the facts each component needs instead of a shared prompt context; full and rebuild scans use it by default, `APPSEC_CONTEXT_V2=0` keeps the legacy producer. See `docs/threat-modeler.md`.
-- A new or rebuilt analysis now takes optional business context from pasted text or a URL, interactively or through `--context`. See `docs/threat-modeler.md`.
+- A new or rebuilt analysis now takes optional business context from pasted text or a URL, interactively, through `--context`, or not at all with `--skip-context`. See `docs/threat-modeler.md`.
 - New alpha export: `--formats threatdragon` writes OWASP Threat Dragon v2 JSON, which also imports into OWASP ThreatAtlas; `create-threat-model --threatdragon` writes it during a scan. See `docs/threat-dragon-export.md`.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
 - New `install-baseline`, `verify-baseline` and `remove-baseline` skills manage a secure-coding baseline in Claude Code's instruction files, with `verify-baseline --enforce` as a CI gate.

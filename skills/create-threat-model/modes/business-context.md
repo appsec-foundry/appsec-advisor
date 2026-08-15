@@ -1,9 +1,11 @@
 # Business Context Capture (interactive full / rebuild runs)
 
-> **Lazy-loaded mode file.** Read by `SKILL-impl.md` only when `BUSINESS_CONTEXT_SOURCE`
-> is empty, `APPSEC_HEADLESS` is not `1`, `DRY_RUN=false`, and `MODE` is `full` or
-> `rebuild`. The control-flow position is the "Business context" anchor in
-> `SKILL-impl.md` — after both pre-flight wipes, before the lock acquisition.
+> **Lazy-loaded mode file.** Read at the "Business context" anchor of the runtime in
+> use — `SKILL-full-runtime.md` §3a on the default full/rebuild path,
+> `SKILL-impl.md` on the legacy path — after the pre-flight wipes, before Stage 1.
+> `SKILL-impl.md` reads it only for the question (`BUSINESS_CONTEXT_SOURCE` empty,
+> `APPSEC_HEADLESS` not `1`, `DRY_RUN=false`, `MODE` `full` or `rebuild`) because it
+> captures a supplied source itself; the compact runtime reads it for both.
 
 Business context is what the repository cannot show: what the system is for, which
 flows carry money or personal data, which obligations apply. It changes severity and
@@ -12,6 +14,18 @@ priority, so it is worth one question at the start of a fresh analysis.
 It stays optional. Declining is a complete answer, the analysis runs on repository
 evidence either way, and nothing later in the run treats a missing context as a defect.
 Ask once, take the first answer, never press.
+
+## Step 0 — A source was supplied
+
+When `BUSINESS_CONTEXT_SOURCE` is non-empty, capture it for this run and return
+without asking — `--context` is the user's answer already:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/load_business_context.py" \
+    --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" \
+    --source "$BUSINESS_CONTEXT_SOURCE" --run-only \
+  || printf 'Continuing without the supplied business context.\n' >&2
+```
 
 ## Step 1 — What is already there
 

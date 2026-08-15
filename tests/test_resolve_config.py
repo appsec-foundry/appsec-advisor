@@ -2825,6 +2825,17 @@ class TestBusinessContext:
 
         assert out["business_context_source"] == str(source.resolve())
 
+    def test_skip_context_is_carried_through(self, tmp_path):
+        cfg = {"incremental": False, "repo_root": str(tmp_path), "output_dir": str(tmp_path)}
+
+        assert rc.resolve_business_context(self._ns("--skip-context"), cfg)["skip_business_context"] is True
+        assert rc.resolve_business_context(self._ns(), cfg)["skip_business_context"] is False
+
+    def test_skip_context_contradicts_context(self, tmp_path):
+        cfg = {"incremental": False, "repo_root": str(tmp_path), "output_dir": str(tmp_path)}
+        with pytest.raises(SystemExit, match="contradict"):
+            rc.resolve_business_context(self._ns("--context", "https://ctx.example.test/a.md", "--skip-context"), cfg)
+
     def test_unusable_value_is_rejected(self, tmp_path):
         cfg = {"incremental": False, "repo_root": str(tmp_path), "output_dir": str(tmp_path)}
         with pytest.raises(SystemExit, match="neither an http"):

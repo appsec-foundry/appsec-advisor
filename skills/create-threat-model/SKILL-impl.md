@@ -741,6 +741,7 @@ Parse the user's arguments for the following flags:
 | `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
 | `--context <url\|path>` | `BUSINESS_CONTEXT_SOURCE=<value>` — business context captured for this run only via `scripts/load_business_context.py` (see Business context). Optional; an interactive full/rebuild run is asked instead. Conflicts with `--rerender` and `--resume`. | (none — asked interactively) |
+| `--skip-context` | `SKIP_BUSINESS_CONTEXT=true` — run without business context and without the question. Conflicts with `--context`. | `false` |
 | `--dry-run` | `DRY_RUN=true` | `false` |
 | `--no-confirm` / `--yes` | `NO_CONFIRM=true` — skip confirmation prompts for destructive cleanup modes. | `false` |
 | `--resume` | Resume from last checkpoint | n/a |
@@ -890,6 +891,7 @@ RERENDER=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.lo
 # --context <url|path>, already validated by resolve_config. Empty on an
 # interactive run, which is asked instead (see "Business context" below).
 BUSINESS_CONTEXT_SOURCE=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('business_context_source') or '')")
+SKIP_BUSINESS_CONTEXT=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('skip_business_context',False)).lower())")
 # Auto-upgraded-full recon reuse: set by resolve_config on the depth-increase /
 # requirements-added overrides (NOT on explicit --full or first run). Tells the
 # recon gate it may skip Phase 2 when the tree is git-provably clean. See
@@ -1727,8 +1729,9 @@ if [ -n "$BUSINESS_CONTEXT_SOURCE" ] && [ "$DRY_RUN" != "true" ]; then
 fi
 ```
 
-**Lazy-load — only when `BUSINESS_CONTEXT_SOURCE` is empty, `APPSEC_HEADLESS` is not
-`1`, `DRY_RUN=false`, and `MODE` is `full` or `rebuild`.** Then read
+**Lazy-load — only when `BUSINESS_CONTEXT_SOURCE` is empty, `SKIP_BUSINESS_CONTEXT`
+is false, `APPSEC_HEADLESS` is not `1`, `DRY_RUN=false`, and `MODE` is `full` or
+`rebuild`.** Then read
 `<base-dir>/modes/business-context.md` (base-dir is the skill dir on the
 `Base directory for this skill:` invocation line) and follow it: it asks whether to
 add or refresh business context and captures the answer. **On any other run

@@ -143,6 +143,8 @@ TARGET & SCAN
   --context <url|path>         Business context for this run, from a raw
                                Markdown/text URL or a file (optional; a new
                                interactive analysis asks for it instead)
+  --skip-context               Run without business context and without the
+                               question
 
 INCREMENTAL / CI
   --incremental                Re-analyze only components changed since last run

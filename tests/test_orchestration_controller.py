@@ -1625,6 +1625,14 @@ def test_dispatch_values_supply_runtime_defaults(tmp_path):
     assert set(values) == set(controller._DISPATCH_KEYS) | set(controller._DISPATCH_EXTRA_KEYS)
 
 
+def test_dispatch_values_carry_business_context_source(tmp_path):
+    """--context must survive into the compact runtime, which reads only dispatch_values."""
+    cfg = _cfg(tmp_path)
+    cfg["business_context_source"] = "https://example.test/context.md"
+    values = controller._dispatch_values(cfg)
+    assert values["business_context_source"] == "https://example.test/context.md"
+
+
 def test_dispatch_values_preserve_slug(tmp_path):
     cfg = _cfg(tmp_path)
     cfg["slug"] = "juice-shop-quick"

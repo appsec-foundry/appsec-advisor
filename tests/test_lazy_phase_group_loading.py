@@ -237,6 +237,32 @@ def test_business_context_prompt_lazy_loaded_not_inline():
     )
 
 
+def test_business_context_reaches_the_default_full_runtime():
+    """The default interactive full/rebuild scan runs the compact runtime, not
+    SKILL-impl.md. Wiring the question only into the legacy body made it unreachable."""
+    runtime = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
+    router = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "BUSINESS_CONTEXT_SOURCE = business_context_source" in runtime, (
+        "the compact runtime must bind the --context value from dispatch_values"
+    )
+    assert runtime.count("modes/business-context.md") == 1, (
+        "SKILL-full-runtime.md must reference modes/business-context.md exactly once"
+    )
+    assert "APPSEC_HEADLESS=1" in runtime, "the modes/business-context.md load must skip a headless run"
+    assert "SKIP_BUSINESS_CONTEXT = skip_business_context" in runtime
+    assert "`SKIP_BUSINESS_CONTEXT` is true" in runtime, "--skip-context must suppress the question"
+
+    mode = (MODES_DIR / "business-context.md").read_text(encoding="utf-8")
+    assert "Step 0 — A source was supplied" in mode, (
+        "the compact runtime delegates the --context capture to the mode file"
+    )
+    assert "load_business_context.py" in mode
+    assert "business-context question" in router, (
+        "SKILL.md must sanction the business-context AskUserQuestion, or the hard rule suppresses it"
+    )
+
+
 def test_skill_impl_stage2_tail_lazy_loaded():
     """Context-budget fix (2026-06-23): the orchestrator must read SKILL-impl.md only
     through the LAZY-LOAD BOUNDARY during initial load (Stage 1 core), deferring the

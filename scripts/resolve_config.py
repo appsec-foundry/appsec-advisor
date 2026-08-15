@@ -1558,7 +1558,15 @@ def resolve_business_context(ns: argparse.Namespace, cfg: dict) -> dict:
     every context edit outweighs the drift.
     """
     source = getattr(ns, "context", None)
-    out: dict[str, Any] = {"business_context_source": None, "business_context_note": None}
+    skip = bool(getattr(ns, "skip_context", False))
+    out: dict[str, Any] = {
+        "business_context_source": None,
+        "business_context_note": None,
+        "skip_business_context": skip,
+    }
+
+    if source and skip:
+        raise SystemExit("Error: --context and --skip-context contradict each other. Pass one of them.")
 
     if source:
         if str(source).lower().startswith(("http://", "https://")):
@@ -1677,6 +1685,8 @@ def build_parser() -> argparse.ArgumentParser:
     # given here is used for this run only and is not persisted to the
     # repository — that write belongs to a human, not to a pipeline.
     p.add_argument("--context", default=None)
+    # Run without business context and without being asked for it.
+    p.add_argument("--skip-context", dest="skip_context", action="store_true")
     # Models / depth
     p.add_argument(
         "--reasoning-model", choices=("sonnet", "opus-cheap", "opus", "sonnet-economy", "haiku-economy")

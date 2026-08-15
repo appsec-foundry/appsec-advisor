@@ -460,6 +460,8 @@ Captured text is stored, never followed. The URL goes through the SSRF policy
 of a raw export, and a source carrying a credential is refused rather than written into
 your repository.
 
+`--skip-context` runs without business context and without the question.
+
 Headless runs are never asked. `--context <url|path>` supplies context for that run
 only — it is not written to `docs/business-context.md`, because committing a file to a
 repository is a decision for a person, not a pipeline. The value takes no spaces; put

@@ -87,6 +87,8 @@ PENTEST_TARGET_URL = pentest_target
 WRITE_THREATDRAGON = write_threatdragon
 CHECK_REQUIREMENTS = check_requirements
 REQUIREMENTS_URL_OVERRIDE = requirements_url_override
+BUSINESS_CONTEXT_SOURCE = business_context_source
+SKIP_BUSINESS_CONTEXT = skip_business_context
 INCREMENTAL = incremental
 RECON_REUSE_ELIGIBLE = reuse_recon_eligible
 REBUILD = rebuild
@@ -183,6 +185,12 @@ These lines are required even when the subagent environment would normally
 inherit a value. Explicit forwarding preserves model routing and makes a
 cutoff/resume dispatch identical to the original.
 
+### 3a. Business context (before Stage 1)
+
+Skip when `SKIP_BUSINESS_CONTEXT` is true, or when `APPSEC_HEADLESS=1` and
+`BUSINESS_CONTEXT_SOURCE` is empty. Otherwise read
+`<base-dir>/modes/business-context.md` and follow it here, before Stage 1.
+
 ## 4. Start marker and stage tasks
 
 Write the durable run-start marker:
@@ -260,8 +268,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" \
 
 Load `TaskStop` before its first use and pass `task_id`, never `taskId`.
 
-The controller already performed configuration, cleanup, lock acquisition,
-prepasses, requirements fetch, and task bootstrap. Do not repeat them.
+Do not repeat what §1 lists as already done by the controller.
 
 ## 6. Stage 2 onward
 
@@ -288,16 +295,12 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
   next --output-dir "$OUTPUT_DIR"
 ```
 
-This call now **composes `threat-model.md` deterministically** from the on-disk
-render fragments whenever they are present but the report was never composed —
-the 2026-07-02 gap where the parallel-render agents authored the fragments and
-the orchestrator then ended (turn budget / skipped step) before invoking
-`compose_threat_model.py`, leaving `threat-model.yaml` + a full `.fragments/`
-set but no report. Honor the returned `action`/`stage`:
+This call **composes `threat-model.md` deterministically** from the on-disk
+render fragments whenever they are present but the report was never composed.
+Honor the returned `action`/`stage`:
 
 - `stage=stage2` → the report still does not exist **and** the render fragments
-  are missing; (re-)dispatch Stage 2. **Never emit a completion summary in this
-  state.**
+  are missing; (re-)dispatch Stage 2.
 - `stage=stage3` → run the Stage-3 safety slice and any enabled QA work.
 - `stage=stage4` → run the Stage-3 safety slice first if it has not run for
   this report, then proceed with Stage 4.
@@ -306,6 +309,5 @@ set but no report. Honor the returned `action`/`stage`:
 
 **Hard invariant:** never emit an "Assessment complete" summary while
 `$OUTPUT_DIR/threat-model.md` is absent. After each major agent return the
-filesystem is authoritative — if context was compacted or a return is
-ambiguous, run the same `next` call and use its action to re-establish the
-current stage. Never infer a completed stage solely from conversation memory.
+filesystem is authoritative: if context was compacted or a return is ambiguous,
+run `next` again and follow its action — never infer a completed stage from memory.
