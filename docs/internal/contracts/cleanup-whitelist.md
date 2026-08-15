@@ -29,11 +29,13 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .coverage-gaps.json
 .dispatch-waves.json
 .stride-attempts/
+.producer-repair/
 .stride-repository-registry.json
 .route-inventory.json
 .db-privilege-separation.json
 .architecture-coverage.json
 .arch-coverage-threats.json
+.producer-retries.json
 .scan-manifest.txt
 .triage-ranking.json
 .trust-boundary-assessment-input.json

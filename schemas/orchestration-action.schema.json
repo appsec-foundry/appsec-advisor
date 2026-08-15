@@ -189,6 +189,22 @@
     "semantic_role": {
       "$ref": "#/$defs/semantic_role"
     },
+    "next_boundary": {
+      "type": "string",
+      "enum": [
+        "context-v2-post-recon",
+        "context-v2-post-actors",
+        "context-v2-post-architecture",
+        "context-v2-post-boundary",
+        "context-v2-prepare-stride",
+        "context-v2-post-stride",
+        "context-v2-post-merge",
+        "context-v2-post-evidence",
+        "context-v2-post-triage",
+        "context-v2-finalize",
+        "finalize-abuse"
+      ]
+    },
     "dispatch_jobs": {
       "type": "array",
       "minItems": 1,

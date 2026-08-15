@@ -57,21 +57,11 @@ Exit `75`: repeat unchanged (deadline persists). `0`/`1`: call
 `context-v2-post-stride`. `2`: abort. It rejects seeds and future waves; never
 re-dispatch or end here.
 
-The command order is fixed:
-
-| At | Command | Dispatches |
-|---|---|---|
-| Start | `context-v2-begin` | recon |
-| Recon | `context-v2-post-recon` | actor/architecture |
-| Actors | `context-v2-post-actors` | architecture |
-| Architecture | `context-v2-post-architecture` | boundary |
-| Boundary | `context-v2-post-boundary` | controls |
-| Controls | `context-v2-prepare-stride` | STRIDE |
-| STRIDE | `context-v2-post-stride` | merger |
-| Merge | `context-v2-post-merge` | evidence |
-| Evidence | `context-v2-post-evidence` | triage |
-| Triage | `context-v2-post-triage` | synthesis |
-| Synthesis | `context-v2-finalize` | finish |
+`context-v2-begin` opens the chain. After that, once the dispatched jobs
+return, the next command is always the returned action's `next_boundary`,
+invoked verbatim. Never derive it from the run's shape — the chain branches by
+depth — and never re-invoke a boundary whose dispatch already ran; that aborts
+the run. `context-v2-finalize` ends it.
 
 ## Dispatch prompt
 

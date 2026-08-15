@@ -1022,3 +1022,34 @@ def test_context_v2_architecture_agent_uses_bounded_data_classification_vocabula
     assert "`Restricted` as the data classification" in text
     assert re.search(r"replaces the\s+provisional fingerprint", text)
     assert "reserve_ids.py asset --count <N> --output-dir" in text
+
+
+def test_recon_signal_prompt_states_the_coupling_the_validator_enforces():
+    """The producer prompt must carry both directions of the signal/status rule.
+
+    `validate_intermediate.py` gained `true => supporting` on 2026-08-09 while
+    the prompt kept stating only `supporting => true`. A producer that followed
+    the prompt literally could set a boolean true with `status: "none"`, which
+    the controller gate then rejected — one aborted run per occurrence, six
+    minutes in. Whenever the enforced coupling changes, this test fails until
+    the prompt says the same thing.
+    """
+    validator = (AGENTS_DIR.parent / "scripts" / "validate_intermediate.py").read_text(encoding="utf-8")
+    forward = "must be 'supporting' when the signal is true"
+    reverse = "cannot be 'supporting' when the signal is false"
+    assert forward in validator and reverse in validator, (
+        "the enforced recon-signal coupling moved; update this test and the producer prompt together"
+    )
+
+    prompt = (AGENTS_DIR / "appsec-recon-scanner.md").read_text(encoding="utf-8")
+    rules = prompt.split("**Signal assignment rules:**", 1)[1]
+    assert "a `true` boolean requires `supporting`" in rules, (
+        "the prompt must state that a true signal requires supporting evidence"
+    )
+    assert "`supporting` requires the boolean to be `true`" in rules, (
+        "the prompt must state that supporting evidence requires a true signal"
+    )
+    assert "set the boolean `false`" in rules, (
+        "the prompt must name the compliant way out when no location was observed"
+    )
+    assert "never invent a location" in rules, "the way out must not be fabricated evidence"

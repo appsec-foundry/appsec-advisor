@@ -456,6 +456,76 @@ class ControllerError(RuntimeError):
         self.exit_code = exit_code
 
 
+class ProducerContractError(ControllerError):
+    """An LLM-written artifact violates its contract.
+
+    Distinct from every other gate failure because it is the one class a
+    redispatch can fix: the producer wrote the wrong shape, the errors name
+    exactly what is wrong, and nothing upstream is broken. Deterministic
+    producers never raise it — a script that writes an invalid artifact is a
+    defect, and repeating it would only hide that.
+    """
+
+    def __init__(self, message: str, errors: list[str] | None = None):
+        super().__init__(message)
+        self.errors = errors or [message]
+
+
+#: One retry per producer artifact. A second identical failure is no longer
+#: variance, and a run must not spend its budget rediscovering that.
+MAX_PRODUCER_RETRIES = 1
+PRODUCER_RETRY_LEDGER = ".producer-retries.json"
+PRODUCER_REPAIR_DIR = ".producer-repair"
+
+
+def _claim_producer_retry(output_dir: Path, key: str) -> int | None:
+    """Return the attempt number for a retry, or None when the budget is spent.
+
+    The ledger is persisted because each boundary command is its own process:
+    without it every invocation would believe it holds the first retry.
+    """
+    path = output_dir / PRODUCER_RETRY_LEDGER
+    try:
+        ledger = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(ledger, dict):
+            ledger = {}
+    except (OSError, ValueError):
+        ledger = {}
+    spent = ledger.get(key)
+    spent = spent if isinstance(spent, int) and spent >= 0 else 0
+    if spent >= MAX_PRODUCER_RETRIES:
+        return None
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+
+    ledger[key] = spent + 1
+    atomic_write_json(path, ledger, sort_keys=True)
+    return spent + 2
+
+
+def _write_producer_repair_brief(output_dir: Path, artifact: str, errors: list[str]) -> str:
+    """Persist the validator errors the retry has to fix, and name its path."""
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+
+    name = f"{PRODUCER_REPAIR_DIR}/{artifact.lstrip('.')}"
+    (output_dir / PRODUCER_REPAIR_DIR).mkdir(exist_ok=True)
+    atomic_write_json(
+        output_dir / name,
+        {
+            "schema_version": 1,
+            "artifact": artifact,
+            "errors": errors[:32],
+            "instruction": (
+                "Your previous write of this artifact was rejected. Fix exactly these "
+                "contract violations and write the artifact again. Do not invent evidence "
+                "to satisfy a rule; where no observation supports a value, choose the "
+                "value the contract allows for an unobserved case."
+            ),
+        },
+        sort_keys=True,
+    )
+    return name
+
+
 def _canonical_json_bytes(value: Any) -> bytes:
     try:
         return json.dumps(
@@ -1911,7 +1981,10 @@ def _validate_recon_signals(path: Path, repo_root: Path) -> dict[str, Any]:
     )
     valid, semantic_errors = intermediate_contract.validate_recon_signals(value, repo_root=repo_root)
     if not valid:
-        raise ControllerError(f"recon-signals-v2 {semantic_errors[0]}")
+        raise ProducerContractError(
+            f"recon-signals-v2 {semantic_errors[0]}",
+            [f"signal_evidence: {error}" for error in semantic_errors],
+        )
     return value
 
 
@@ -2701,12 +2774,27 @@ def _validate_stride_component_context_plan(
         raise ControllerError("stride analyzer component context plan is stale for the dispatch manifest")
 
 
+def _checked_next_boundary(command: str) -> str:
+    """Return the successor boundary command, rejecting an unknown name.
+
+    The caller must not derive the successor from the depth-dependent shape of
+    the run: quick depth skips actor discovery, so the boundary after recon is
+    ``context-v2-post-architecture`` there and ``context-v2-post-actors``
+    otherwise. Only the controller knows which job it just dispatched, so it
+    names the successor and the caller invokes it verbatim.
+    """
+    if command not in _SEMANTIC_RETURN_COMMANDS:
+        raise ControllerError(f"unknown successor boundary: {command!r}")
+    return command
+
+
 def _context_v2_dispatch(
     output_dir: Path,
     cfg: dict[str, Any],
     *,
     role: str,
     job_id: str,
+    next_boundary: str,
     input_artifacts: list[str],
     output_artifacts: list[str],
     decision_keys: list[str],
@@ -2717,6 +2805,7 @@ def _context_v2_dispatch(
         **_context_v2_common(output_dir, cfg),
         "action": "dispatch_agent",
         "semantic_role": role,
+        "next_boundary": _checked_next_boundary(next_boundary),
         "dispatch_jobs": [
             {
                 "schema_version": 1,
@@ -3184,11 +3273,64 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
         {
             **_context_v2_common(output_dir, cfg),
             "action": "dispatch_parallel",
+            "next_boundary": _checked_next_boundary("context-v2-post-recon"),
             "dispatch_jobs": jobs,
             "artifact_receipts": structured,
             "receipts": ["Context-v2 Phase-1/2 pre-passes complete", *receipts],
         }
     )
+
+
+def _recon_producer_retry(
+    output_dir: Path,
+    cfg: dict[str, Any],
+    artifact: str,
+    exc: ProducerContractError,
+) -> dict[str, Any] | None:
+    """Redispatch the recon producer once with the errors it has to fix.
+
+    Returns None when the retry budget is spent, which restores the terminal
+    abort. The job id carries the attempt so the effective plan sees a new
+    action rather than a replay of the one already recorded.
+    """
+    attempt = _claim_producer_retry(output_dir, f"recon_scanner:{artifact}")
+    if attempt is None:
+        return None
+    brief = _write_producer_repair_brief(output_dir, artifact, exc.errors)
+    _append_event(
+        output_dir,
+        "PRODUCER_CONTRACT_RETRY",
+        f"role=recon_scanner artifact={artifact} attempt={attempt} errors={len(exc.errors)} reason={exc}",
+        level="WARN",
+    )
+    # The summary already passed its own gate; naming it an input both keeps the
+    # producer's earlier observations available and protects it from the output
+    # clearing below. Only the rejected artifact is rewritten.
+    inputs = [".skill-config.json", ".recon-summary.md", brief]
+    if (output_dir / ".recon-patterns.json").is_file():
+        inputs.append(".recon-patterns.json")
+    jobs = [
+        {
+            "schema_version": 1,
+            "job_id": f"phase2-recon:attempt-{attempt}",
+            "semantic_role": "recon_scanner",
+            **_context_v2_job_metadata(cfg, "recon_scanner"),
+            "input_artifacts": inputs,
+            "output_artifacts": [artifact],
+            "unresolved_decision_keys": [],
+        }
+    ]
+    action = {
+        **_context_v2_common(output_dir, cfg),
+        "action": "dispatch_parallel",
+        "next_boundary": _checked_next_boundary("context-v2-post-recon"),
+        "dispatch_jobs": jobs,
+        "artifact_receipts": [],
+        "receipts": [f"recon producer redispatched to repair {artifact} (attempt {attempt})"],
+    }
+    context_routing.assert_action_not_replayed(action, output_dir)
+    _prepare_context_v2_dispatch_outputs(output_dir, jobs)
+    return _validate_action(action)
 
 
 def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> dict[str, Any]:
@@ -3229,7 +3371,13 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
             f"lines={recon_line_count} target={TARGET_RECON_SUMMARY_LINES}",
             level="WARN",
         )
-    _validate_recon_signals(output_dir / ".recon-signals.json", Path(repo_root))
+    try:
+        _validate_recon_signals(output_dir / ".recon-signals.json", Path(repo_root))
+    except ProducerContractError as exc:
+        retry = _recon_producer_retry(output_dir, cfg, ".recon-signals.json", exc)
+        if retry is not None:
+            return retry
+        raise
 
     # Phase 2.5b — run the catalog scan deterministically before schema
     # validation. Context-v2 does not dispatch a model for this mechanical
@@ -3348,6 +3496,7 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
         cfg,
         role="actor_discoverer",
         job_id="phase2_7-actors",
+        next_boundary="context-v2-post-actors",
         input_artifacts=[
             ".actors-merged-static.json",
             ".dispatch-context/architecture/recon-summary-context.json",
@@ -3504,6 +3653,7 @@ def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], rec
         cfg,
         role="architecture_analyst",
         job_id="phase3-6-architecture",
+        next_boundary="context-v2-post-architecture",
         input_artifacts=[
             ".dispatch-context/architecture/recon-summary-context.json",
             ".dispatch-context/architecture/route-context.json",
@@ -3583,6 +3733,7 @@ def context_v2_post_architecture(output_dir: Path) -> dict[str, Any]:
         cfg,
         role="trust_boundary_analyst",
         job_id="phase7-boundary",
+        next_boundary="context-v2-post-boundary",
         input_artifacts=[".trust-boundary-assessment-input.json"],
         output_artifacts=[".trust-boundary-candidates.json"],
         decision_keys=["trust_boundary_candidates"],
@@ -3633,6 +3784,7 @@ def context_v2_post_boundary(output_dir: Path) -> dict[str, Any]:
         cfg,
         role="control_analyst",
         job_id="phase8-controls",
+        next_boundary="context-v2-prepare-stride",
         input_artifacts=inputs,
         output_artifacts=[".security-controls.json", ".stride-analyst-context.json"],
         decision_keys=["security_controls", "stride_semantic_context"],
@@ -3940,6 +4092,7 @@ def _context_v2_stride_wave_action(
     action = {
         **_context_v2_common(output_dir, cfg),
         "action": "dispatch_parallel",
+        "next_boundary": _checked_next_boundary("context-v2-post-stride"),
         "dispatch_jobs": jobs,
         "artifact_receipts": structured,
         "receipts": [
@@ -4140,6 +4293,7 @@ def _context_v2_after_merge(output_dir: Path, cfg: dict[str, Any]) -> dict[str, 
             cfg,
             role="evidence_verifier",
             job_id="phase10a-evidence",
+            next_boundary="context-v2-post-evidence",
             input_artifacts=[".dispatch-context/post-stride/evidence-sample.json"],
             output_artifacts=[".evidence-verification.json"],
             decision_keys=["sampled_evidence_verdicts"],
@@ -4256,6 +4410,7 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
             cfg,
             role="triage_validator",
             job_id="phase10b-triage-repair",
+            next_boundary="context-v2-post-triage",
             input_artifacts=inputs,
             output_artifacts=[".triage-flags.json", ".threats-merged.json"],
             decision_keys=["triage_ranking"],
@@ -4293,6 +4448,7 @@ def _context_v2_after_triage(output_dir: Path, cfg: dict[str, Any]) -> dict[str,
             cfg,
             role="post_stride_synthesizer",
             job_id="phase10b-root-causes",
+            next_boundary="context-v2-finalize",
             input_artifacts=[
                 ".dispatch-context/post-stride/generated-threats.json",
                 ".dispatch-context/post-stride/proposed-mitigations.json",
@@ -4412,6 +4568,7 @@ def context_v2_post_stride(output_dir: Path) -> dict[str, Any]:
             cfg,
             role="threat_merger",
             job_id="phase9-merge-review",
+            next_boundary="context-v2-post-merge",
             input_artifacts=[".merge-context/candidates.json"],
             output_artifacts=[".merge-decisions.json"],
             decision_keys=group_ids,

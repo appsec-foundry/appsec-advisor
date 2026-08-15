@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A scan no longer ends when an analysis agent writes a malformed artifact: the controller asks that agent once to correct it, naming the exact contract violations, and stops only if the second attempt fails too.
+- Quick-depth scans no longer abort after the architecture stage: each dispatch now names the boundary that follows it, so the run never has to infer one from a depth-dependent command table.
 - Agent lifecycle outcomes, usage, turn budgets, and STRIDE depth telemetry now remain bound to the dispatched call and current controller claim across shared sessions and parallel waves.
 - Live progress now reports one start and one outcome per agent, and names any disagreement between accepted output, lifecycle state, turn budget, and recorded usage.
 - An interrupted or failed run now releases its lock and reports its abort immediately instead of showing an unknown phase until the heartbeat ages out.

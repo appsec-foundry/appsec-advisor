@@ -1467,10 +1467,12 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.dispatch-waves.json` | bounded STRIDE wave schedule and retry checkpoint |
 | `$OUTPUT_DIR/.stride-repository-registry.json` | context-v2 local related-repository roots used only for STRIDE admission |
 | `$OUTPUT_DIR/.stride-attempts/` | context-v2 attempt-qualified STRIDE outputs promoted to canonical component artifacts before merge |
+| `$OUTPUT_DIR/.producer-repair/` | validator errors handed to a redispatched producer |
 | `$OUTPUT_DIR/.route-inventory.json` | deterministic route-extractor MVP (arch.md) — feeds Phase 6 `attack_surface[]` and architecture-coverage engine |
 | `$OUTPUT_DIR/.db-privilege-separation.json` | thorough-only database principal-separation evidence sidecar consumed by architecture coverage |
 | `$OUTPUT_DIR/.architecture-coverage.json` | always-on architecture-coverage rule evaluations (arch.md) — feeds `security_controls[]` / `threat_hypotheses[]` / Phase-9 bridge |
 | `$OUTPUT_DIR/.arch-coverage-threats.json` | Phase-9 bridge candidates from `arch_coverage_to_threats.py emit` — transient pre-merge buffer |
+| `$OUTPUT_DIR/.producer-retries.json` | bounded producer-retry accounting for this run |
 | `$OUTPUT_DIR/.scan-manifest.txt` | optional scan manifest intermediate |
 | `$OUTPUT_DIR/.triage-ranking.json` | deterministic triage ranking intermediate |
 | `$OUTPUT_DIR/.trust-boundary-assessment-input.json` | bounded Stage-1b input handoff; durable coverage and canonical boundaries remain |

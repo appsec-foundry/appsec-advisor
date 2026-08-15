@@ -82,12 +82,14 @@ EXPECTED_WHITELIST_FILES = {
     ".db-privilege-separation.json",
     ".architecture-coverage.json",
     ".arch-coverage-threats.json",
+    ".producer-retries.json",
 }
 EXPECTED_WHITELIST_DIRS = {
     ".progress",
     ".taxonomy-slices",
     ".dispatch-context",
     ".stride-attempts",
+    ".producer-repair",
     ".merge-context",
     # M3.6 — per-tool-call markers; sub-agent calls without a propagating
     # PostToolUse may leave stale entries that the post-run cleanup wipes.

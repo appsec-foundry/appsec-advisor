@@ -57,6 +57,8 @@ to touch — each row names them. One row is one decision and carries everything
 | OR-8 | Every non-clean exit converges on one terminal state through a single terminator, which releases only a lock its own run holds | `test_interrupt_converges_every_terminal_surface`, `test_a_live_foreign_lock_is_left_alone` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-9 | Host hook payloads are read through one adapter that fails open and names a missing key, and host sequences are replayed against pinned per-version payload fixtures | `tests/test_hook_payload.py`, `tests/test_hook_payload_contract.py` | `agents/shared/logging-standard.md` |
 | OR-10 | An undeterminable stop reason defers the call outcome instead of recording a failure; the Agent return then terminalizes the call and supplies its usage | `test_a_stop_without_a_transcript_defers_the_outcome` | `agents/shared/logging-standard.md` |
+| OR-11 | Every dispatching action names its successor boundary in `next_boundary`; the caller invokes that name and never derives the sequence, which branches by depth | `tests/test_orchestration_controller.py::TestContextV2NextBoundary` | `docs/internal/contracts/orchestration-actions.md` |
+| OR-12 | A contract violation in an LLM-written artifact buys one redispatch carrying the validator errors; a deterministic producer's failure and a second identical violation stay terminal | `tests/test_orchestration_controller.py::TestProducerContractRetry` | `docs/internal/contracts/orchestration-actions.md` |
 
 ## Repair
 

@@ -1699,6 +1699,7 @@ def test_context_v2_dispatch_clears_prior_output_but_preserves_in_place_input(tm
         _cfg(tmp_path),
         role="architecture_analyst",
         job_id="architecture",
+        next_boundary="context-v2-post-architecture",
         input_artifacts=[".recon-summary.md"],
         output_artifacts=[".components.json"],
         decision_keys=["components"],
@@ -1713,6 +1714,7 @@ def test_context_v2_dispatch_clears_prior_output_but_preserves_in_place_input(tm
         _cfg(tmp_path),
         role="triage_validator",
         job_id="triage-repair",
+        next_boundary="context-v2-post-triage",
         input_artifacts=[".triage-flags.json"],
         output_artifacts=[".triage-flags.json"],
         decision_keys=["triage"],
@@ -1729,6 +1731,7 @@ def test_context_v2_replay_is_rejected_before_fresh_producer_output_is_cleared(t
         cfg,
         role="context_resolver",
         job_id="phase1-context",
+        next_boundary="context-v2-post-recon",
         input_artifacts=[".skill-config.json"],
         output_artifacts=[".threat-modeling-context.md"],
         decision_keys=[],
@@ -1749,6 +1752,7 @@ def test_context_v2_replay_is_rejected_before_fresh_producer_output_is_cleared(t
             cfg,
             role="context_resolver",
             job_id="phase1-context",
+            next_boundary="context-v2-post-recon",
             input_artifacts=[".skill-config.json"],
             output_artifacts=[".threat-modeling-context.md"],
             decision_keys=[],
@@ -4439,9 +4443,18 @@ class TestContextV2PostRecon:
             "status": "supporting",
             "locations": [{"file": "invented/auth.ts", "line": 1}],
         }
-        (output / ".recon-signals.json").write_text(json.dumps(signals), encoding="utf-8")
+        rejected = json.dumps(signals)
+        (output / ".recon-signals.json").write_text(rejected, encoding="utf-8")
         monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
 
+        # Invented evidence is a producer contract violation, so it buys one
+        # redispatch — but it is never admitted: the artifact is cleared, and a
+        # producer that repeats it ends the run.
+        action = controller.context_v2_post_recon(output)
+        assert action["dispatch_jobs"][0]["job_id"] == "phase2-recon:attempt-2"
+        assert not (output / ".recon-signals.json").exists()
+
+        (output / ".recon-signals.json").write_text(rejected, encoding="utf-8")
         with pytest.raises(controller.ControllerError, match="missing or unsafe file"):
             controller.context_v2_post_recon(output)
 
@@ -4920,3 +4933,140 @@ class TestIacSurfaceDetection:
         (tmp_path / "a.txt").write_text("x", encoding="utf-8")
         monkeypatch.setattr(controller, "_IAC_WALK_MAX_ENTRIES", 0)
         assert controller._has_iac_surface(tmp_path) is True
+
+
+class TestContextV2NextBoundary:
+    """The controller names the successor boundary; the caller never derives it.
+
+    The 2026-08-15 juice-shop abort: quick depth dispatched architecture
+    straight from `context-v2-post-recon`, the parent read the fixed command
+    table and called `context-v2-post-actors`, and that boundary re-issued the
+    architecture dispatch the replay guard had already recorded.
+    """
+
+    def _prepare(self, tmp_path, **overrides):
+        output = _context_v2_run(tmp_path, **overrides)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+        (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
+        _write_architecture_receipt_inputs(output)
+        return output
+
+    def test_quick_depth_names_architecture_not_actors(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path, assessment_depth="quick")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        action = controller.context_v2_post_recon(output)
+        assert action["semantic_role"] == "architecture_analyst"
+        assert action["next_boundary"] == "context-v2-post-architecture"
+
+    def test_actor_discovery_names_the_actor_boundary(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        _write_architecture_receipt_inputs(output, discovery_enabled=True)
+
+        def fake_script(name, args, **kwargs):
+            if name == "actor_discovery_cache.py":
+                return _completed("cache-key-1" if args[0] == "compute" else "miss")
+            return _completed()
+
+        monkeypatch.setattr(controller, "_run_script", fake_script)
+        action = controller.context_v2_post_recon(output)
+        assert action["semantic_role"] == "actor_discoverer"
+        assert action["next_boundary"] == "context-v2-post-actors"
+
+    def test_every_dispatching_boundary_names_a_known_successor(self):
+        """No dispatch may leave the caller without a successor to invoke."""
+        source = (ROOT / "scripts/orchestration_controller.py").read_text(encoding="utf-8")
+        named = set(re.findall(r'next_boundary=[\'"]([a-z0-9-]+)[\'"]', source))
+        named |= set(re.findall(r'_checked_next_boundary\([\'"]([a-z0-9-]+)[\'"]\)', source))
+        assert named, "no successor boundary is declared anywhere"
+        assert named <= controller._SEMANTIC_RETURN_COMMANDS
+        assert "context-v2-post-architecture" in named
+        assert "context-v2-post-actors" in named
+
+    def test_an_unknown_successor_is_rejected(self):
+        with pytest.raises(controller.ControllerError, match="unknown successor boundary"):
+            controller._checked_next_boundary("context-v2-post-nowhere")
+
+    def test_schema_admits_only_registry_boundaries(self):
+        schema = json.loads((ROOT / "schemas/orchestration-action.schema.json").read_text(encoding="utf-8"))
+        assert set(schema["properties"]["next_boundary"]["enum"]) == set(controller._SEMANTIC_RETURN_COMMANDS)
+
+
+class TestProducerContractRetry:
+    """A producer's contract violation is repairable once, then terminal.
+
+    The 2026-08-15 juice-shop run died six minutes in because the recon
+    producer wrote six true signals with `status: "none"`. Nothing upstream was
+    broken and the validator named every violation, so the run had everything
+    it needed to ask for a corrected write instead of ending.
+    """
+
+    def _prepare(self, tmp_path, **overrides):
+        output = _context_v2_run(tmp_path, **overrides)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+        signals = _valid_recon_signals()
+        signals["signal_evidence"]["has_public_routes"] = {"status": "none", "locations": []}
+        signals["signals"]["has_public_routes"] = True
+        (output / ".recon-signals.json").write_text(json.dumps(signals), encoding="utf-8")
+        _write_architecture_receipt_inputs(output)
+        return output
+
+    def test_a_rejected_artifact_is_redispatched_with_its_errors(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        action = controller.context_v2_post_recon(output)
+
+        assert action["action"] == "dispatch_parallel"
+        job = action["dispatch_jobs"][0]
+        assert job["semantic_role"] == "recon_scanner"
+        assert job["job_id"] == "phase2-recon:attempt-2", "a retry must not replay the recorded action id"
+        assert job["output_artifacts"] == [".recon-signals.json"], "only the rejected artifact is rewritten"
+        assert ".recon-summary.md" in job["input_artifacts"], "the accepted summary must survive the retry"
+
+        brief_name = next(name for name in job["input_artifacts"] if name.startswith(".producer-repair/"))
+        brief = json.loads((output / brief_name).read_text(encoding="utf-8"))
+        assert brief["artifact"] == ".recon-signals.json"
+        assert any("has_public_routes" in error for error in brief["errors"])
+        assert "Do not invent evidence" in brief["instruction"]
+
+    def test_the_accepted_summary_survives_the_retry(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        controller.context_v2_post_recon(output)
+        assert (output / ".recon-summary.md").is_file()
+
+    def test_the_second_failure_aborts(self, tmp_path, monkeypatch):
+        """The budget is spent once; an unchanged artifact must not loop."""
+        output = self._prepare(tmp_path)
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        rejected = (output / ".recon-signals.json").read_text(encoding="utf-8")
+        controller.context_v2_post_recon(output)
+
+        # The retry cleared the artifact; stand in for a producer that repeats
+        # the same violation.
+        (output / ".recon-signals.json").write_text(rejected, encoding="utf-8")
+        with pytest.raises(controller.ProducerContractError, match="has_public_routes"):
+            controller.context_v2_post_recon(output)
+
+    def test_the_budget_is_persisted_across_processes(self, tmp_path):
+        output = _context_v2_run(tmp_path)
+        assert controller._claim_producer_retry(output, "recon_scanner:.recon-signals.json") == 2
+        assert controller._claim_producer_retry(output, "recon_scanner:.recon-signals.json") is None
+        ledger = json.loads((output / controller.PRODUCER_RETRY_LEDGER).read_text(encoding="utf-8"))
+        assert ledger["recon_scanner:.recon-signals.json"] == 1
+
+    def test_a_valid_artifact_never_claims_a_retry(self, tmp_path, monkeypatch):
+        output = _context_v2_run(tmp_path)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+        (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
+        _write_architecture_receipt_inputs(output)
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+        controller.context_v2_post_recon(output)
+        assert not (output / controller.PRODUCER_RETRY_LEDGER).exists()
+
+    def test_a_deterministic_failure_is_not_a_producer_contract_error(self):
+        """Only LLM-written artifacts may be retried; scripts failing is a defect."""
+        assert issubclass(controller.ProducerContractError, controller.ControllerError)
+        assert not isinstance(controller.ControllerError("boom"), controller.ProducerContractError)

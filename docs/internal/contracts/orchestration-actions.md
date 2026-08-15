@@ -229,6 +229,18 @@ deterministic owners. The commands run the boundary chain in order:
 `context-v2-post-architecture`, `context-v2-post-boundary`,
 `context-v2-prepare-stride`, then the `context-v2-post-*` post-STRIDE chain.
 
+When an LLM-written artifact fails its contract, the boundary returns one
+redispatch of the producing role instead of aborting. The retry carries the
+validator errors as an input artifact, uses an attempt-qualified job id, and is
+budgeted at one per artifact; the second violation aborts as before. A
+deterministic producer's invalid output is never retried.
+
+Every dispatching action carries `next_boundary`, the command the caller must
+invoke once those jobs return. The caller invokes it verbatim and never derives
+the successor from the run's shape: quick depth skips actor discovery, so the
+boundary after recon differs by depth. Re-invoking a boundary whose semantic
+dispatch already ran is rejected as a replay and aborts the run.
+
 The generation is the default for eligible full/rebuild runs. `prepare` returns
 the plugin-owned `SKILL-thin-stage1-v2.md` instruction path, and the compact
 parent runtime loads that returned path rather than choosing a Stage-1 producer

@@ -179,9 +179,13 @@ ALWAYS_FILES = [
     ".db-privilege-separation.json",
     ".architecture-coverage.json",
     ".arch-coverage-threats.json",
+    # Bounded producer-retry accounting; the run it belongs to is over.
+    ".producer-retries.json",
 ]
 ALWAYS_DIRS = [
     ".progress",
+    # Validator errors handed to a redispatched producer.
+    ".producer-repair",
     ".taxonomy-slices",
     # Component-scoped volatile JSON slices passed to STRIDE analyzers by path
     # instead of inline prompt blobs.

@@ -283,21 +283,16 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     assert "`THREAT_TAXONOMY_PATH`" in text
     assert "`THREAT_TAXONOMY_SHA256`" in text
 
-    # Every landed boundary command must be reachable from this runtime.
-    for command in (
-        "context-v2-begin",
-        "context-v2-post-recon",
-        "context-v2-post-actors",
-        "context-v2-post-architecture",
-        "context-v2-post-boundary",
-        "context-v2-prepare-stride",
-        "context-v2-post-stride",
-        "context-v2-post-merge",
-        "context-v2-post-evidence",
-        "context-v2-post-triage",
-        "context-v2-finalize",
-    ):
+    # The runtime names the chain's two ends and the STRIDE join it owns. It must
+    # not enumerate the boundaries in between: the controller returns the
+    # successor in `next_boundary`, and a static sequence here is what let a
+    # quick-depth run call `context-v2-post-actors` after the architecture
+    # dispatch that skipped actor discovery (2026-08-15 juice-shop abort).
+    for command in ("context-v2-begin", "context-v2-post-stride", "context-v2-finalize"):
         assert command in text, command
+    assert "`next_boundary`" in text
+    for derived in ("context-v2-post-recon", "context-v2-post-actors", "context-v2-post-architecture"):
+        assert derived not in text, derived
 
     # It must not carry the legacy generation's stage machinery.
     assert "SKILL-thin-stage1.md" in text  # names it only to forbid mixing
