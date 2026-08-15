@@ -245,8 +245,13 @@ def main() -> int:
             w(f"    {mark} {agent_name} {state} — {detail}")
 
         elif event == "SCAN_END":
+            # Publication milestone, not a lifecycle terminal: the producer has
+            # written its artifacts, but the call is closed by the hook
+            # lifecycle (AGENT_DONE / AGENT_FAILED) alone. Rendering this as
+            # "done" showed two completions for one call — and, when the
+            # lifecycle disagreed, a success and a failure for the same call.
             owner = comp or "scan"
-            w(f"    ✓ {owner} done — {detail}")
+            w(f"      · {owner} output ready — {detail}")
 
         elif event in ("STEP_START", "STEP_END"):
             mark = "·" if event == "STEP_START" else "✓"
@@ -304,7 +309,7 @@ def main() -> int:
             w(f"    ⛔ aborted mid-run — {detail}")
         elif event == "BUDGET_CRITICAL":
             w(f"    ⛔ budget critical — {detail}")
-        elif event in ("BUDGET_WARN", "MAX_TURNS", "AGENT_ERROR", "RENDER_FAILED"):
+        elif event in ("BUDGET_WARN", "MAX_TURNS", "AGENT_ERROR", "RENDER_FAILED", "TELEMETRY_MISMATCH"):
             w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "PARALLEL_STRIDE_RESOLVED":
             w(f"   config · {detail}")

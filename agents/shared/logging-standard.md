@@ -21,7 +21,7 @@ All agents (orchestrator + sub-agents) MUST follow this logging standard. Replac
 
 | Scope | Events |
 |-------|--------|
-| Controller / skill / legacy orchestrator only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT` |
+| Controller / skill / legacy orchestrator only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT`, `TELEMETRY_MISMATCH` |
 | Hook lifecycle | `AGENT_SPAWN`, `AGENT_RUNNING`, `AGENT_USAGE`, `AGENT_DONE`, `AGENT_FAILED`, `AGENT_LIFECYCLE_REJECTED` |
 | Semantic agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `WRAP_UP_TRIGGERED` |
 | Watchdog-emitted | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog counts only a concrete running `agent_call_id`. SubagentStop reconciles the distinct tool-use count, terminalizes the call, and retires its budget; a later PostToolUse is idempotent. Parent tools and shared sessions never select a budget owner. |
@@ -30,8 +30,18 @@ Claude Code may assign the parent session ID to multiple Agent dispatches. The
 host `tool_use_id` is the immutable call identity, and the host `agent_id`
 connects SubagentStart/SubagentStop usage to that call. Telemetry without either
 identity is labeled `shared-session` or `AGENT_USAGE_UNATTRIBUTED`; it must not
-use the most recently registered role. `.session-agent-map` is observational.
+use the most recently registered role. SubagentStop reads stop reason, usage,
+and tool-use IDs from the host's child-specific `agent_transcript_path`; the
+common `transcript_path` names the parent session. `.session-agent-map` is
+observational.
 | Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
+
+`AGENT_DONE` and `AGENT_FAILED` are the only terminal outcome of a call. A
+semantic event such as `SCAN_END` publishes output and never closes a call, so
+no view may present it as a completion. `TELEMETRY_MISMATCH` names a
+disagreement between accepted output, lifecycle state, budget retirement, and
+stage stats for one call; it is observational unless `APPSEC_TELEMETRY_STRICT`
+is set.
 
 ## Budget wrap-up signal (read at every phase boundary)
 

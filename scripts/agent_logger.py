@@ -2615,7 +2615,23 @@ def _tool_uses_from_transcript(transcript_path: str) -> int:
     return len(tool_ids)
 
 
+def _stop_transcript_path(data: dict, event_name: str) -> str:
+    """Return the transcript owned by the session that is stopping.
+
+    ``SubagentStop`` carries both the parent session's ``transcript_path`` and
+    the child's ``agent_transcript_path``. Lifecycle, usage, and tool totals
+    belong to the child call, so the child-specific path must win. The common
+    path remains a compatibility fallback for older hook payloads.
+    """
+    key = "agent_transcript_path" if event_name == "SubagentStop" else "transcript_path"
+    value = data.get(key)
+    if not isinstance(value, str) or not value:
+        value = data.get("transcript_path")
+    return value if isinstance(value, str) else ""
+
+
 def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
+    transcript = _stop_transcript_path(data, event_name)
     reason = data.get("stop_reason", "") or ""
     if not reason:
         # The Claude Code Stop/SubagentStop payload carries no `stop_reason`
@@ -2629,7 +2645,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         # The transcript does carry it, and it discriminates cleanly: a
         # session that finished ends on `end_turn`, one cut off mid-tool-loop
         # ends on `tool_use`.
-        reason = _stop_reason_from_transcript(data.get("transcript_path", "")) or "unknown"
+        reason = _stop_reason_from_transcript(transcript) or "unknown"
     level = "ERROR" if reason == "max_turns" else "INFO "
 
     # ------------------------------------------------------------------
@@ -2641,7 +2657,6 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     # Payload usage is kept as a fallback for the unlikely case where the
     # transcript path is not provided or the file is unreadable.
     # ------------------------------------------------------------------
-    transcript = data.get("transcript_path", "")
     usage = _usage_from_transcript(transcript) if transcript else {}
     usage_source = "transcript" if usage else ""
 

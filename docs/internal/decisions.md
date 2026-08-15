@@ -52,6 +52,8 @@ to touch — each row names them. One row is one decision and carries everything
 | OR-3 | A stage refuses to proceed on a missing upstream artifact | `test_post_stage1_fails_closed_on_missing_artifact` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-4 | Rebuild archives before it clears, and fails closed if archiving fails | `test_rebuild_mode_archive_is_fail_closed` | `docs/internal/contracts/audit-artifacts.md` |
 | OR-5 | Serial STRIDE dispatch is detected and reported as a defect; parallel is the intended shape | `tests/test_stride_serial_dispatch_detection.py` *(guards the detector, not the prohibition)* | `AGENTS.md` → Orchestration |
+| OR-6 | Only the call-scoped hook lifecycle terminalizes a call; a semantic event such as `SCAN_END` publishes output and is never presented as an outcome | `test_postfix6_recon_sequence_renders_one_start_and_one_terminal_outcome` | `agents/shared/logging-standard.md` |
+| OR-7 | Call telemetry stays observational: a disagreement between accepted output, lifecycle, budget, and stage stats is reported, and blocks only under `APPSEC_TELEMETRY_STRICT` | `test_boundary_reports_by_default_and_aborts_only_under_strict` | `docs/internal/contracts/orchestration-actions.md` |
 
 ## Repair
 

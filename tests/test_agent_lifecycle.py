@@ -225,6 +225,68 @@ def test_subagent_stop_closes_missing_post_and_late_duplicate_post_is_idempotent
     assert "AGENT_INVOKE" not in log
 
 
+def test_subagent_stop_reads_child_transcript_not_parent_transcript(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    events = lifecycle.register_call(tmp_path, _identity("toolu_child", max_turns=36))
+    lifecycle.append_events(tmp_path, events)
+    call = lifecycle.bind_runtime_agent_id(tmp_path, "toolu_child", "agent-child")
+    assert call is not None
+    budget.open_call(call, tmp_path)
+
+    parent_transcript = tmp_path / "parent.jsonl"
+    parent_transcript.write_text(
+        json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "stop_reason": "tool_use",
+                    "usage": {"input_tokens": 900, "output_tokens": 800},
+                    "content": [{"type": "tool_use", "id": "toolu_parent"}],
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    child_transcript = tmp_path / "child.jsonl"
+    child_transcript.write_text(
+        json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                    "content": [{"type": "tool_use", "id": "toolu_child_read"}],
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    agent_logger.handle_stop(
+        {
+            "agent_id": "agent-child",
+            "transcript_path": str(parent_transcript),
+            "agent_transcript_path": str(child_transcript),
+        },
+        "shared01",
+        "SubagentStop",
+    )
+
+    state = json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))
+    finished = next(row for row in state["calls"] if row["agent_call_id"] == "toolu_child")
+    assert finished["state"] == "done"
+    assert finished["usage"]["input_tokens"] == 100
+    assert finished["usage"]["output_tokens"] == 20
+    assert finished["usage"]["tool_uses"] == 1
+    assert _budget_state(tmp_path)["calls"] == {}
+    log = (tmp_path / ".hook-events.log").read_text(encoding="utf-8")
+    assert "AGENT_DONE" in log
+    assert "AGENT_FAILED" not in log
+    assert "stop_reason=end_turn" in log
+
+
 def test_reordered_post_before_spawn_is_rejected_without_a_start(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
     agent_logger.handle_post_tool_use(

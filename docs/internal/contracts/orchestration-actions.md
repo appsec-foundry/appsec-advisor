@@ -28,9 +28,11 @@ under `.active-tool-calls/agent-lifecycle.json` and permits only
 `AGENT_SPAWN -> AGENT_RUNNING -> AGENT_DONE | AGENT_FAILED`. Replayed terminal
 events are no-ops; missing, reordered, or conflicting transitions emit
 `AGENT_LIFECYCLE_REJECTED`. The host `agent_id` binds SubagentStart and
-SubagentStop usage to the call. SubagentStop terminalizes the concrete call and
-retires its budget; a missing or later Agent PostToolUse cannot reopen it. A run
-or session ID alone never assigns a role, usage record, or turn counter.
+SubagentStop usage to the call. SubagentStop reads the child-specific
+`agent_transcript_path`, terminalizes the concrete call, and retires its budget;
+a missing or later Agent PostToolUse cannot reopen it. The common
+`transcript_path` belongs to the parent session. A run or session ID alone never
+assigns a role, usage record, or turn counter.
 
 Context-v2 semantic prompts carry the controller action and job IDs. STRIDE
 calls also carry their component and attempt-qualified job, while depth and
@@ -48,6 +50,14 @@ inert. Consumers use `budget_watchdog.py active-critical`; they never branch on
 marker-file existence. Terminal cleanup first emits `AGENT_FAILED` for any
 remaining calls, retires their counters and markers, then removes
 `.active-tool-calls/`.
+
+Each context-v2 boundary that runs after a producer returned first cross-checks
+the surfaces describing the calls of the most recent dispatch action: accepted
+output, lifecycle terminal state, child usage attribution, budget retirement,
+and stage-stats tokens. A disagreement emits `TELEMETRY_MISMATCH` and the run
+continues, because these surfaces stay observational. `APPSEC_TELEMETRY_STRICT=1`
+aborts the boundary instead, so an acceptance run cannot pass on telemetry its
+own producers contradict.
 
 Context-v2 STRIDE progress uses schema version 2 in
 `schemas/stride-progress.schema.json`. Its producer resolves the one running

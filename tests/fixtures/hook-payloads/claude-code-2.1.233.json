@@ -1,0 +1,74 @@
+{
+  "host": {
+    "product": "Claude Code",
+    "version": "2.1.233",
+    "captured_at": "2026-08-15",
+    "note": "Sanitized payloads for one Agent call. Keys and types follow the hook input schema of the pinned host version; identifiers, paths, and prompt text are anonymized. `SubagentStop` carries neither `stop_reason` nor `usage` — both are derived from `agent_transcript_path`."
+  },
+  "base_keys": {
+    "required": ["session_id", "transcript_path", "cwd", "hook_event_name"],
+    "optional": ["prompt_id", "permission_mode", "agent_id", "agent_type", "effort"]
+  },
+  "events": {
+    "PreToolUse": {
+      "session_id": "3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33",
+      "transcript_path": "/home/example/.claude/projects/-workspace-target/3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33.jsonl",
+      "cwd": "/workspace/target",
+      "permission_mode": "acceptEdits",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "Agent",
+      "tool_use_id": "toolu_01ExampleReconCallIdentity",
+      "tool_input": {
+        "subagent_type": "appsec-advisor:appsec-recon-scanner",
+        "description": "Reconnaissance",
+        "model": "sonnet",
+        "run_in_background": false,
+        "prompt": "REPO_ROOT=/workspace/target\nOUTPUT_DIR=/workspace/target/docs/security\nCLAUDE_PLUGIN_ROOT=/opt/appsec-advisor\nMODEL_ID=sonnet\nACTION_ID=stage1c:b078fb4269a6b5c5\nJOB_ID=phase2-recon\nMAX_TURNS=36\n"
+      }
+    },
+    "SubagentStart": {
+      "session_id": "3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33",
+      "transcript_path": "/home/example/.claude/projects/-workspace-target/3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33.jsonl",
+      "cwd": "/workspace/target",
+      "permission_mode": "acceptEdits",
+      "hook_event_name": "SubagentStart",
+      "agent_id": "agent_01ExampleReconRuntimeIdentity",
+      "agent_type": "appsec-advisor:appsec-recon-scanner"
+    },
+    "SubagentStop": {
+      "session_id": "3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33",
+      "transcript_path": "/home/example/.claude/projects/-workspace-target/3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33.jsonl",
+      "cwd": "/workspace/target",
+      "permission_mode": "acceptEdits",
+      "hook_event_name": "SubagentStop",
+      "stop_hook_active": false,
+      "agent_id": "agent_01ExampleReconRuntimeIdentity",
+      "agent_type": "appsec-advisor:appsec-recon-scanner",
+      "agent_transcript_path": "/home/example/.claude/projects/-workspace-target/agent_01ExampleReconRuntimeIdentity.jsonl",
+      "last_assistant_message": "Reconnaissance complete."
+    },
+    "PostToolUse": {
+      "session_id": "3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33",
+      "transcript_path": "/home/example/.claude/projects/-workspace-target/3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33.jsonl",
+      "cwd": "/workspace/target",
+      "permission_mode": "acceptEdits",
+      "hook_event_name": "PostToolUse",
+      "tool_name": "Agent",
+      "tool_use_id": "toolu_01ExampleReconCallIdentity",
+      "duration_ms": 226412,
+      "tool_input": {
+        "subagent_type": "appsec-advisor:appsec-recon-scanner",
+        "description": "Reconnaissance",
+        "model": "sonnet",
+        "run_in_background": false,
+        "prompt": "REPO_ROOT=/workspace/target\nOUTPUT_DIR=/workspace/target/docs/security\nCLAUDE_PLUGIN_ROOT=/opt/appsec-advisor\nMODEL_ID=sonnet\nACTION_ID=stage1c:b078fb4269a6b5c5\nJOB_ID=phase2-recon\nMAX_TURNS=36\n"
+      },
+      "tool_response": {
+        "content": [{"type": "text", "text": "Reconnaissance complete."}],
+        "totalDurationMs": 226412,
+        "totalTokens": 105755,
+        "totalToolUseCount": 31
+      }
+    }
+  }
+}

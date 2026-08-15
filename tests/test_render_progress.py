@@ -206,13 +206,38 @@ def test_context_v2_agent_spawn_anchors_later_heartbeat_to_phase():
     assert "still in Phase 3/11 Architecture — 5m" in out
 
 
-def test_scan_end_is_visible_as_agent_completion():
+def test_scan_end_is_a_publication_milestone_not_a_terminal_outcome():
     out = _render(
         [
             "2026-06-06T17:21:26Z  [--------]  INFO   recon-scanner  SCAN_END  Reconnaissance complete",
         ]
     )
-    assert "✓ recon-scanner done — Reconnaissance complete" in out
+    assert "· recon-scanner output ready — Reconnaissance complete" in out
+    assert "done" not in out
+
+
+def test_postfix6_recon_sequence_renders_one_start_and_one_terminal_outcome():
+    """Replay of the postfix6 order: spawn, semantic publication, SubagentStop
+    terminal, delayed PostToolUse acknowledgement. `SCAN_END` publishes output
+    and `AGENT_INVOKE` acknowledges a return — only the call-scoped hook
+    lifecycle may render a terminal agent outcome, and only once."""
+    out = _render(
+        [
+            "2026-08-15T04:43:42Z  [b0ba1e2f]  INFO   AGENT_SPAWN"
+            "  agent_call_id=toolu_01TkvNUF1iKrgk6L5basHv3Y"
+            "  agent_type=appsec-advisor:appsec-recon-scanner  model=sonnet  background=false"
+            "  description=Reconnaissance",
+            "2026-08-15T04:47:28Z  [--------]  INFO   recon-scanner  SCAN_END  Reconnaissance complete",
+            "2026-08-15T04:47:36Z  [b0ba1e2f]  INFO   AGENT_DONE"
+            "  agent_call_id=toolu_01TkvNUF1iKrgk6L5basHv3Y"
+            "  agent_type=appsec-advisor:appsec-recon-scanner  stop_reason=end_turn",
+            "2026-08-15T04:47:40Z  [b0ba1e2f]  INFO   AGENT_INVOKE  agent_call_id=toolu_01TkvNUF1iKrgk6L5basHv3Y",
+        ]
+    )
+    assert out.count("↳ appsec-recon-scanner") == 1
+    assert out.count("recon-scanner done") == 1
+    assert "output ready" in out
+    assert "failed" not in out
 
 
 def test_agent_spawn_surfaces_stride_tier_from_stripped_param_block():

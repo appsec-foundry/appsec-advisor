@@ -65,6 +65,7 @@ import ensure_output_gitignore  # noqa: E402
 import merge_threats as merge_decision_contract  # noqa: E402
 import resolve_config  # noqa: E402
 import stride_dispatch_waves  # noqa: E402
+import telemetry_consistency  # noqa: E402
 import validate_intermediate as intermediate_contract  # noqa: E402
 import validate_recon_summary as recon_summary_contract  # noqa: E402
 import validate_threat_modeling_context as context_document_contract  # noqa: E402
@@ -5598,6 +5599,48 @@ def _aggregate_issues_on_abort(output_dir: Any, reason: str, repo_root: Any = No
                 pass
 
 
+#: Boundaries that run after a semantic producer returned and its output was
+#: accepted. Each is a point where the call-scoped telemetry surfaces must
+#: already agree about the dispatch that just closed.
+_SEMANTIC_RETURN_COMMANDS = frozenset(
+    {
+        "context-v2-post-recon",
+        "context-v2-post-actors",
+        "context-v2-post-architecture",
+        "context-v2-post-boundary",
+        "context-v2-prepare-stride",
+        "context-v2-post-stride",
+        "context-v2-post-merge",
+        "context-v2-post-evidence",
+        "context-v2-post-triage",
+        "context-v2-finalize",
+        "finalize-abuse",
+    }
+)
+
+
+def _check_returned_call_telemetry(output_dir: Path) -> None:
+    """Report where accepted output, lifecycle, budget, and stage stats disagree.
+
+    Observational by default: a mismatch is a telemetry defect, not a reason to
+    stop a production run. ``APPSEC_TELEMETRY_STRICT=1`` aborts instead, so an
+    acceptance run cannot pass on evidence its own producers contradict.
+    """
+    try:
+        findings = telemetry_consistency.check_returned_calls(output_dir)
+    except Exception as exc:  # noqa: BLE001 — an observational check never stops a run
+        if telemetry_consistency.strict_enabled():
+            raise ControllerError(f"telemetry consistency check failed: {exc}") from exc
+        return
+    for finding in findings:
+        _append_event(output_dir, "TELEMETRY_MISMATCH", telemetry_consistency.format_detail(finding), level="WARN")
+    if findings and telemetry_consistency.strict_enabled():
+        raise ControllerError(
+            "telemetry mismatch at a semantic boundary: "
+            + "; ".join(f"{finding['code']} on {finding['job_id']}" for finding in findings)
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -5652,6 +5695,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
+        if args.command in _SEMANTIC_RETURN_COMMANDS:
+            _check_returned_call_telemetry(Path(args.output_dir))
         if args.command == "route":
             action = route(_split_remainder(args.arguments))
         elif args.command == "prepare":
