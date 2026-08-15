@@ -25,7 +25,9 @@ import json
 import os
 import re
 import socket
+import urllib.error
 import urllib.parse
+import urllib.request
 from typing import Iterable, NamedTuple
 
 _ALLOWED_SCHEMES = ("http", "https")
@@ -188,6 +190,23 @@ def validate_target_url(url: str, *, strict: bool = False, check_ip_safety: bool
             )
 
     return ValidationResult(True, "ok", str(addresses[0]))
+
+
+def validated_opener(*, check_ip_safety: bool = True) -> urllib.request.OpenerDirector:
+    """Return an opener that re-applies the URL policy to every redirect target.
+
+    A validated URL only covers the first hop; without this, a redirect moves the
+    fetch to a host the policy never saw.
+    """
+
+    class _ValidatedRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401, ARG002, N802
+            verdict = validate_target_url(newurl, check_ip_safety=check_ip_safety)
+            if not verdict.ok:
+                raise urllib.error.HTTPError(newurl, code, f"redirect rejected: {verdict.reason}", headers, fp)
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    return urllib.request.build_opener(_ValidatedRedirectHandler())
 
 
 def same_host(url_a: str, url_b: str) -> bool:

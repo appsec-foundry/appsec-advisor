@@ -296,6 +296,7 @@ _REBUILD_NAMES = {
     "pentest-tasks.yaml",
     ".architect-review.md",
     ".threat-modeling-context.md",
+    ".business-context-input.md",
     ".recon-summary.md",
     ".recon-signals.json",
     ".sca-practice-findings.json",

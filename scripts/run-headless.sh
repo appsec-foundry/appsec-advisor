@@ -16,6 +16,8 @@
 #   --requirements [<src>]   Enable requirements check (optionally from an
 #                            http(s):// URL or a local file path)
 #   --no-requirements        Skip requirements even when enabled in config
+#   --context <src>          Business context for this run: an http(s):// URL or
+#                            a file path (optional; used for this run only)
 #   --dry-run               Preview scope without running the full pipeline
 #   --incremental           Force delta analysis based on git diff
 #   --full                  Force full scan even when prior output exists
@@ -96,6 +98,9 @@ Options:
   --requirements [<src>]     Enable requirements check, optionally from an
                              http(s):// URL or a local file path
   --no-requirements          Skip requirements even when enabled in config
+  --context <src>            Business context for this run: an http(s):// URL or
+                             a file path. Optional; applies to this run only —
+                             persist it by committing docs/business-context.md
   --dry-run                  Preview scope without running the full pipeline
   --incremental              Force delta analysis based on git diff
   --full                     Force full scan even when prior output exists
@@ -241,6 +246,15 @@ while [ $# -gt 0 ]; do
             REPO_PATH="$2"; shift 2 ;;
         --output)
             OUTPUT_PATH="$2"; shift 2 ;;
+        --context)
+            # Business context for this run: an http(s) URL or a file path. The
+            # skill invocation travels as one prompt string, so a value with
+            # whitespace would be split — reject it instead of mangling it.
+            case "${2:-}" in
+                ""|*[[:space:]]*)
+                    die "--context takes an http(s) URL or a file path (no spaces). Put pasted text in a file." ;;
+            esac
+            SKILL_FLAGS="$SKILL_FLAGS --context $2"; shift 2 ;;
         --resume)
             RESUME_REQUESTED=1
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;

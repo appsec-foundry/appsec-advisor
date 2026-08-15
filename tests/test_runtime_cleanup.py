@@ -83,6 +83,7 @@ EXPECTED_WHITELIST_FILES = {
     ".architecture-coverage.json",
     ".arch-coverage-threats.json",
     ".producer-retries.json",
+    ".business-context-input.md",
 }
 EXPECTED_WHITELIST_DIRS = {
     ".progress",

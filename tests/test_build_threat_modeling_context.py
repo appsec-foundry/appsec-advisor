@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import _url_guard  # noqa: E402
 import build_threat_modeling_context as builder  # noqa: E402
 from validate_threat_modeling_context import validate_threat_modeling_context  # noqa: E402
 
@@ -52,6 +54,22 @@ def test_builds_valid_bounded_context_for_the_requested_repository(tmp_path):
     assert len(path.read_bytes()) <= builder.MAX_CONTEXT_BYTES
     assert (output / ".related-repos-loaded.json").is_file()
     assert (output / ".cross-repo-register.json").is_file()
+
+
+def test_run_only_business_context_replaces_the_repository_file(tmp_path):
+    repo = _repo(tmp_path)
+    output = tmp_path / "output"
+    output.mkdir()
+    plugin = _plugin(tmp_path)
+    (repo / "docs" / "business-context.md").write_text("Stored context.\n", encoding="utf-8")
+    (output / ".business-context-input.md").write_text("This run only.\n", encoding="utf-8")
+
+    path = builder.build(repo, output, plugin)
+
+    text = path.read_text(encoding="utf-8")
+    assert '<untrusted-data source=".business-context-input.md">' in text
+    assert "This run only." in text
+    assert "Stored context." not in text
 
 
 def test_does_not_follow_repository_symlinks(tmp_path):
@@ -148,11 +166,12 @@ def test_preserves_schema_valid_known_threats_as_fenced_input(tmp_path):
 
 def test_external_context_redirects_are_revalidated(monkeypatch):
     monkeypatch.setattr(
-        builder,
+        _url_guard,
         "validate_target_url",
         lambda *_a, **_k: type("Verdict", (), {"ok": False, "reason": "redirect host denied"})(),
     )
-    handler = builder._ValidatedRedirectHandler()  # noqa: SLF001
+    opener = _url_guard.validated_opener(check_ip_safety=False)
+    handler = next(h for h in opener.handlers if isinstance(h, urllib.request.HTTPRedirectHandler))
     request = builder.urllib.request.Request("https://context.example.test/v1")
 
     with pytest.raises(builder.urllib.error.HTTPError, match="redirect host denied"):

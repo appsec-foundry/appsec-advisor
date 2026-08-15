@@ -31,6 +31,7 @@ Whitelist (pinned — also tested by tests/test_runtime_cleanup.py):
     .stage1-resume-count
     .skill-config.json
     .recon-patterns.json
+    .business-context-input.md       run-only business context (never carried forward)
     .route-inventory.json
     .architecture-coverage.json
     .arch-coverage-threats.json
@@ -181,6 +182,9 @@ ALWAYS_FILES = [
     ".arch-coverage-threats.json",
     # Bounded producer-retry accounting; the run it belongs to is over.
     ".producer-retries.json",
+    # Business context the user supplied for this run without persisting it.
+    # Keeping it would silently shape the next scan (see load_business_context.py).
+    ".business-context-input.md",
 ]
 ALWAYS_DIRS = [
     ".progress",

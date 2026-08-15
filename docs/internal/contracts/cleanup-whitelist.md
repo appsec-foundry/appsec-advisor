@@ -43,7 +43,12 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .qa-prepass.json
 .appsec-progress.json
 .skill-watchdog.tick
+.business-context-input.md
 ```
+
+`.business-context-input.md` is business context the user supplied for one run
+without persisting it to `docs/business-context.md`. It is cleaned like any other
+run input so it cannot shape a later scan unnoticed.
 
 ## Opt-outs
 

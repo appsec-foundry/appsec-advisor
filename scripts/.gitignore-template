@@ -12,6 +12,7 @@ docs/security/.requirements.yaml
 docs/security/.verify-diff.json
 docs/security/.requirements-verification.json
 docs/security/.threat-modeling-context.md
+docs/security/.business-context-input.md
 docs/security/.appsec-lock
 docs/security/.appsec-checkpoint
 docs/security/.phase-epoch

@@ -218,6 +218,25 @@ def test_rebuild_wipe_lazy_loaded_not_inline():
     assert "only when `REBUILD=true`" in impl, "the modes/rebuild-wipe.md load must be explicitly gated on rebuild mode"
 
 
+def test_business_context_prompt_lazy_loaded_not_inline():
+    """The interactive business-context question only applies to a fresh interactive
+    analysis. Its body lives in modes/business-context.md and loads just-in-time;
+    SKILL-impl.md keeps one gated pointer plus the headless capture call."""
+    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
+    mode = (MODES_DIR / "business-context.md").read_text(encoding="utf-8")
+
+    gate = "Step 2 — Ask"
+    assert gate not in impl, "business-context prompt body must NOT be inline in SKILL-impl.md (lazy-load it)"
+    assert gate in mode, "business-context prompt body must live verbatim in modes/business-context.md"
+
+    assert impl.count("modes/business-context.md") == 1, (
+        "SKILL-impl.md must reference modes/business-context.md exactly once (single lazy-load pointer)"
+    )
+    assert "`APPSEC_HEADLESS` is not\n`1`" in impl or "`APPSEC_HEADLESS` is not `1`" in impl, (
+        "the modes/business-context.md load must be explicitly gated on an interactive run"
+    )
+
+
 def test_skill_impl_stage2_tail_lazy_loaded():
     """Context-budget fix (2026-06-23): the orchestrator must read SKILL-impl.md only
     through the LAZY-LOAD BOUNDARY during initial load (Stage 1 core), deferring the

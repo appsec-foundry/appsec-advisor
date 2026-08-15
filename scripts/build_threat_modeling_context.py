@@ -21,10 +21,11 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import build_cross_repo_register
+import load_business_context
 import load_related_repos
 import yaml
 from _atomic_io import atomic_write_json, atomic_write_text
-from _url_guard import validate_target_url
+from _url_guard import validate_target_url, validated_opener
 from validate_intermediate import validate_known_threats
 from validate_threat_modeling_context import validate_threat_modeling_context
 
@@ -138,7 +139,7 @@ def _external_context(plugin_root: Path, repo_id: str) -> tuple[str, str]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    opener = urllib.request.build_opener(_ValidatedRedirectHandler())
+    opener = validated_opener(check_ip_safety=False)
     try:
         with opener.open(request, timeout=15) as response:  # noqa: S310 - URL was policy-validated
             raw = response.read(65_537)
@@ -154,16 +155,6 @@ def _external_context(plugin_root: Path, repo_id: str) -> tuple[str, str]:
     except json.JSONDecodeError:
         pass
     return "provided", text[: MAX_SOURCE_CHARS * 2]
-
-
-class _ValidatedRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """Apply the external-context URL policy to every redirect target."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401, ARG002, N802
-        verdict = validate_target_url(newurl, check_ip_safety=False)
-        if not verdict.ok:
-            raise urllib.error.HTTPError(newurl, code, f"redirect rejected: {verdict.reason}", headers, fp)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _requirements_status(output_dir: Path) -> str:
@@ -378,7 +369,12 @@ def build(repo_root: Path, output_dir: Path, plugin_root: Path) -> Path:
 
     repo_id = _repo_id(repo_root)
     external_status, external = _external_context(plugin_root, repo_id)
-    business_path = _contained_file(repo_root, "docs/business-context.md")
+    business_path = load_business_context.effective_source(repo_root, output_dir)
+    business_source = (
+        load_business_context.RUN_ONLY_NAME
+        if business_path is not None and business_path.name == load_business_context.RUN_ONLY_NAME
+        else load_business_context.REPO_RELATIVE
+    )
     business = _bounded_lines(business_path, 200) or "docs/business-context.md not present in this repository."
     security_found = _first(
         repo_root,
@@ -425,7 +421,7 @@ def build(repo_root: Path, output_dir: Path, plugin_root: Path) -> Path:
 
 ## Business Context
 
-{_fenced("docs/business-context.md", business)}
+{_fenced(business_source, business)}
 
 ## Security Policy
 

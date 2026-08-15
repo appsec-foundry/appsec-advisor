@@ -1473,6 +1473,7 @@ If any condition is not met, leave every transient file in place — the user is
 | `$OUTPUT_DIR/.architecture-coverage.json` | always-on architecture-coverage rule evaluations (arch.md) — feeds `security_controls[]` / `threat_hypotheses[]` / Phase-9 bridge |
 | `$OUTPUT_DIR/.arch-coverage-threats.json` | Phase-9 bridge candidates from `arch_coverage_to_threats.py emit` — transient pre-merge buffer |
 | `$OUTPUT_DIR/.producer-retries.json` | bounded producer-retry accounting for this run |
+| `$OUTPUT_DIR/.business-context-input.md` | business context supplied for this run only, never carried forward |
 | `$OUTPUT_DIR/.scan-manifest.txt` | optional scan manifest intermediate |
 | `$OUTPUT_DIR/.triage-ranking.json` | deterministic triage ranking intermediate |
 | `$OUTPUT_DIR/.trust-boundary-assessment-input.json` | bounded Stage-1b input handoff; durable coverage and canonical boundaries remain |

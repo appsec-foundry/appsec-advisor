@@ -318,6 +318,8 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("rerender", "incremental", "--rerender reuses Stage-1 outputs; --incremental re-analyzes a delta. Pick one."),
     ("rerender", "rebuild", "--rerender reuses existing artifacts; --rebuild wipes them. Pick one."),
     ("rerender", "resume", "--rerender starts a fresh render; --resume continues a checkpoint. Pick one."),
+    ("context", "rerender", "--rerender re-renders an existing analysis; --context only affects a new one."),
+    ("context", "resume", "--resume continues a run whose context was already resolved; --context comes too late."),
     (
         "architect_review",
         "no_architect_review",
@@ -1514,6 +1516,83 @@ def _extract_baseline_check_requirements(output_dir: Path) -> Optional[bool]:
     return None
 
 
+def _load_business_context_module():
+    """Load the business-context helper lazily (resolve() runs on every command)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "load_business_context",
+        Path(__file__).resolve().parent / "load_business_context.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _extract_baseline_business_context(output_dir: Path) -> Optional[str]:
+    """Return ``meta.business_context_sha256`` from the prior baseline.
+
+    Same root-aligned line match as the sibling extractors. ``None`` means the
+    field is absent (pre-feature baselines) — treated as "unknown, do not warn";
+    ``"null"`` means the prior run ran without business context.
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+    if yaml_path.is_file():
+        try:
+            text = yaml_path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        m = re.search(r"(?m)^\s{2}business_context_sha256:\s*\"?([0-9a-f]{64}|null|~)\"?\s*$", text)
+        if m:
+            return "null" if m.group(1) in ("null", "~") else m.group(1)
+    return None
+
+
+def resolve_business_context(ns: argparse.Namespace, cfg: dict) -> dict:
+    """Validate ``--context`` and flag context an incremental run cannot apply.
+
+    An incremental scan re-rates only changed components, so a changed business
+    context would leave carried-forward findings rated against the old one. That
+    is a recommendation, not a forced full scan: the cost of a forced full run on
+    every context edit outweighs the drift.
+    """
+    source = getattr(ns, "context", None)
+    out: dict[str, Any] = {"business_context_source": None, "business_context_note": None}
+
+    if source:
+        if str(source).lower().startswith(("http://", "https://")):
+            out["business_context_source"] = str(source)
+        else:
+            path = Path(str(source)).expanduser()
+            if not path.is_file():
+                raise SystemExit(
+                    f"Error: --context {source} is neither an http(s) URL nor a readable file.\n"
+                    f"  Pass a URL that serves Markdown or plain text, or a path to a local file."
+                )
+            out["business_context_source"] = str(path.resolve())
+
+    if not cfg.get("incremental"):
+        return out
+
+    baseline_digest = _extract_baseline_business_context(Path(cfg["output_dir"]))
+    if baseline_digest is None:
+        return out
+    if out["business_context_source"]:
+        changed = True  # the supplied context is loaded after this resolution
+    else:
+        digest = _load_business_context_module().context_digest
+        current = digest(Path(cfg["repo_root"]), Path(cfg["output_dir"]))
+        changed = (current or "null") != baseline_digest
+    if changed:
+        out["business_context_note"] = (
+            "Note: the business context changed since the existing model was built. "
+            "This incremental scan re-rates only changed components — run --full to "
+            "apply the new context to every finding."
+        )
+    return out
+
+
 def read_requirements_config(plugin_root: Path) -> bool:
     """Return ``requirements_source.enabled`` from the audit-security-requirements
     skill config. Missing file / unparseable JSON → ``False``."""
@@ -1593,6 +1672,11 @@ def build_parser() -> argparse.ArgumentParser:
     # Paths
     p.add_argument("--repo", default=None)
     p.add_argument("--output", default=None)
+    # Business context for this run: an http(s) URL or a path to a Markdown /
+    # plain-text file. Interactive runs ask instead (SKILL-impl.md); a value
+    # given here is used for this run only and is not persisted to the
+    # repository — that write belongs to a human, not to a pipeline.
+    p.add_argument("--context", default=None)
     # Models / depth
     p.add_argument(
         "--reasoning-model", choices=("sonnet", "opus-cheap", "opus", "sonnet-economy", "haiku-economy")
@@ -2069,6 +2153,9 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
             cur_check_requirements=cfg.get("check_requirements"),
         )
     )
+
+    # Business context (--context) — needs the resolved paths and the mode.
+    cfg.update(resolve_business_context(ns, cfg))
 
     # M11 — wall-time deadline parsing. Accept "3600" (s), "60m", "1h".
     cfg["max_wall_time_seconds"] = _parse_duration(ns.max_wall_time) if ns.max_wall_time else None
@@ -3478,6 +3565,8 @@ def _configuration_post_summary_notes(cfg: dict) -> list[str]:
         post_lines.append("Note: output directory is outside the repository — .gitignore entries will be skipped.")
     if cfg.get("post_summary_note"):
         post_lines.append(cfg["post_summary_note"])
+    if cfg.get("business_context_note"):
+        post_lines.append(cfg["business_context_note"])
     if cfg.get("mode") == "incremental":
         post_lines.append(
             f"Recommendation: Run with --full periodically to ensure "

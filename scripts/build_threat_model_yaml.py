@@ -61,6 +61,7 @@ except ImportError:
 _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
+import load_business_context  # noqa: E402
 from _atomic_io import atomic_write_text  # noqa: E402
 from _boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from _boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
@@ -801,6 +802,13 @@ def _output_mode(skill_cfg: dict) -> str:
     return "incremental" if str(skill_cfg.get("mode") or "full").lower() == "incremental" else "full"
 
 
+def _business_context_digest(skill_cfg: dict, repo_root: Path) -> str | None:
+    output_dir = skill_cfg.get("output_dir")
+    if not output_dir:
+        return None
+    return load_business_context.context_digest(repo_root, Path(output_dir))
+
+
 def build_meta(
     *,
     skill_cfg: dict,
@@ -866,6 +874,10 @@ def build_meta(
         # renderer omits the Run-Statistics row. meta has additionalProperties:true
         # so no schema bump is needed.
         "stride_per_category_cap": (skill_cfg.get("stride_profile") or {}).get("max_threats_per_category"),
+        # Digest of the business context this model was rated against. The next
+        # run compares it: an incremental scan re-rates only changed components,
+        # so changed context is surfaced as a full-scan recommendation.
+        "business_context_sha256": _business_context_digest(skill_cfg, repo_root),
     }
 
 

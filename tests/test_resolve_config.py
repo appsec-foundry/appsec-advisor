@@ -2795,3 +2795,86 @@ class TestRuntimeGeneration:
         assert cfg["runtime_artifact_schema_versions"]["stride-dispatch-manifest"] == 2
         assert cfg["runtime_artifact_schema_versions"]["stride-component-architecture-context"] == 1
         assert cfg["runtime_artifact_schema_versions"]["stride-component-security-context"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Business context (--context) and the incremental context-change note
+# ---------------------------------------------------------------------------
+
+
+class TestBusinessContext:
+    def _ns(self, *argv):
+        return rc.build_parser().parse_args(list(argv))
+
+    def test_context_conflicts_with_rerender_and_resume(self):
+        assert "--rerender" in (rc.detect_conflicts(self._ns("--context", "x", "--rerender")) or "")
+        assert "--resume" in (rc.detect_conflicts(self._ns("--context", "x", "--resume")) or "")
+
+    def test_url_value_is_carried_through(self, tmp_path):
+        cfg = {"incremental": False, "repo_root": str(tmp_path), "output_dir": str(tmp_path)}
+        out = rc.resolve_business_context(self._ns("--context", "https://ctx.example.test/a.md"), cfg)
+        assert out["business_context_source"] == "https://ctx.example.test/a.md"
+
+    def test_file_value_is_resolved_to_an_absolute_path(self, tmp_path, monkeypatch):
+        source = tmp_path / "context.md"
+        source.write_text("Checkout handles card data.\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        cfg = {"incremental": False, "repo_root": str(tmp_path), "output_dir": str(tmp_path)}
+
+        out = rc.resolve_business_context(self._ns("--context", "context.md"), cfg)
+
+        assert out["business_context_source"] == str(source.resolve())
+
+    def test_unusable_value_is_rejected(self, tmp_path):
+        cfg = {"incremental": False, "repo_root": str(tmp_path), "output_dir": str(tmp_path)}
+        with pytest.raises(SystemExit, match="neither an http"):
+            rc.resolve_business_context(self._ns("--context", "ftp://host/ctx.md"), cfg)
+
+    def _incremental_cfg(self, tmp_path, baseline_digest: str) -> dict:
+        repo = tmp_path / "repo"
+        (repo / "docs").mkdir(parents=True)
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "threat-model.yaml").write_text(
+            f"meta:\n  mode: incremental\n  business_context_sha256: {baseline_digest}\n",
+            encoding="utf-8",
+        )
+        return {"incremental": True, "repo_root": str(repo), "output_dir": str(out)}
+
+    def test_changed_context_is_flagged_on_an_incremental_run(self, tmp_path):
+        cfg = self._incremental_cfg(tmp_path, "0" * 64)
+        (Path(cfg["repo_root"]) / "docs" / "business-context.md").write_text("New context.\n", encoding="utf-8")
+
+        note = rc.resolve_business_context(self._ns(), cfg)["business_context_note"]
+
+        assert note and "--full" in note
+
+    def test_unchanged_context_is_not_flagged(self, tmp_path):
+        cfg = self._incremental_cfg(tmp_path, "0" * 64)
+        context = Path(cfg["repo_root"]) / "docs" / "business-context.md"
+        context.write_text("Stable context.\n", encoding="utf-8")
+        digest = rc._load_business_context_module().context_digest(  # noqa: SLF001
+            Path(cfg["repo_root"]), Path(cfg["output_dir"])
+        )
+        cfg = self._incremental_cfg(tmp_path / "second", digest)
+        (Path(cfg["repo_root"]) / "docs" / "business-context.md").write_text("Stable context.\n", encoding="utf-8")
+
+        assert rc.resolve_business_context(self._ns(), cfg)["business_context_note"] is None
+
+    def test_a_baseline_without_the_field_never_warns(self, tmp_path):
+        repo = tmp_path / "repo"
+        (repo / "docs").mkdir(parents=True)
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "threat-model.yaml").write_text("meta:\n  mode: incremental\n", encoding="utf-8")
+        (repo / "docs" / "business-context.md").write_text("Context.\n", encoding="utf-8")
+        cfg = {"incremental": True, "repo_root": str(repo), "output_dir": str(out)}
+
+        assert rc.resolve_business_context(self._ns(), cfg)["business_context_note"] is None
+
+    def test_supplied_context_is_flagged_on_an_incremental_run(self, tmp_path):
+        cfg = self._incremental_cfg(tmp_path, "null")
+
+        out = rc.resolve_business_context(self._ns("--context", "https://ctx.example.test/a.md"), cfg)
+
+        assert out["business_context_note"]

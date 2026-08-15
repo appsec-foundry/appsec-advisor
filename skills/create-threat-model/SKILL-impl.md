@@ -740,6 +740,7 @@ Parse the user's arguments for the following flags:
 | `--requirements` | `CHECK_REQUIREMENTS=true` | from config `enabled` |
 | `--requirements <url>` | `CHECK_REQUIREMENTS=true`, `REQUIREMENTS_URL_OVERRIDE=<url>` | from config `enabled` |
 | `--no-requirements` | `CHECK_REQUIREMENTS=false` | from config `enabled` |
+| `--context <url\|path>` | `BUSINESS_CONTEXT_SOURCE=<value>` — business context captured for this run only via `scripts/load_business_context.py` (see Business context). Optional; an interactive full/rebuild run is asked instead. Conflicts with `--rerender` and `--resume`. | (none — asked interactively) |
 | `--dry-run` | `DRY_RUN=true` | `false` |
 | `--no-confirm` / `--yes` | `NO_CONFIRM=true` — skip confirmation prompts for destructive cleanup modes. | `false` |
 | `--resume` | Resume from last checkpoint | n/a |
@@ -872,6 +873,7 @@ The JSON contains, among others:
 | ``write_yaml`` / ``write_sarif`` / ``write_pentest_tasks`` / ``write_threatdragon`` | bool | |
 | ``check_requirements`` / ``requirements_url_override`` / ``requirements_label`` | bool / str | |
 | ``repo_root`` / ``output_dir`` / ``output_outside_repo`` | str / bool | |
+| ``business_context_source`` / ``business_context_note`` | str or null | ``--context`` value; note when an incremental run meets changed context |
 | ``baseline_state`` | str | ``"empty"`` \| ``"legacy"`` \| ``"structured"`` |
 | ``post_summary_note`` | str or null | | 
 | ``plugin_version`` / ``analysis_version`` | str / int | |
@@ -885,6 +887,9 @@ MODE=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.s
 INCREMENTAL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['incremental']).lower())")
 REBUILD=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin)['rebuild']).lower())")
 RERENDER=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('rerender',False)).lower())")
+# --context <url|path>, already validated by resolve_config. Empty on an
+# interactive run, which is asked instead (see "Business context" below).
+BUSINESS_CONTEXT_SOURCE=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('business_context_source') or '')")
 # Auto-upgraded-full recon reuse: set by resolve_config on the depth-increase /
 # requirements-added overrides (NOT on explicit --full or first run). Tells the
 # recon gate it may skip Phase 2 when the tree is git-provably clean. See
@@ -1703,6 +1708,32 @@ echo "  Removed $WIPED_COUNT stale intermediate files + .progress/ + .fragments/
 If `$OUTPUT_DIR` does not exist or `find` fails, treat as no-op.
 
 **Why this matters.** Without this step, a `--full` run against a directory that held, say, `T-001..T-055` from a prior session can see its Phase 9 merge step read a mix of fresh per-component STRIDE outputs and a stale `.threats-merged.json` from the previous session, leading to cross-run ID drift (e.g. `T-003` surviving as a YAML/JSON phantom after the current MD dropped it during consolidation). This is the root cause behind the architect-review findings W-02 / W-03 / W-08 seen on the 2026-04-18 thorough run.
+
+### Business context (new analysis and `--rebuild`)
+
+Runs here — after both pre-flight wipes, before Stage 1 — because
+`repository_fingerprint` hashes every dirty file: context written later invalidates
+the evidence bundles it is part of.
+
+A supplied `--context` is captured for this run only; persisting it into the
+repository is a human's decision, not a pipeline's.
+
+```bash
+if [ -n "$BUSINESS_CONTEXT_SOURCE" ] && [ "$DRY_RUN" != "true" ]; then
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/load_business_context.py" \
+      --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR" \
+      --source "$BUSINESS_CONTEXT_SOURCE" --run-only \
+    || printf 'Continuing without the supplied business context.\n' >&2
+fi
+```
+
+**Lazy-load — only when `BUSINESS_CONTEXT_SOURCE` is empty, `APPSEC_HEADLESS` is not
+`1`, `DRY_RUN=false`, and `MODE` is `full` or `rebuild`.** Then read
+`<base-dir>/modes/business-context.md` (base-dir is the skill dir on the
+`Base directory for this skill:` invocation line) and follow it: it asks whether to
+add or refresh business context and captures the answer. **On any other run
+(incremental, resume, rerender, dry-run, headless) do NOT read it** — the question
+has no effect there.
 
 ### Skill-layer lock acquisition (M3.2 — heartbeat fix)
 

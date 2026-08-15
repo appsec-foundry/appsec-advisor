@@ -140,6 +140,9 @@ TARGET & SCAN
   --no-requirements            Skip requirements check even if configured
                                Deprecated aliases: --with-requirements,
                                --ignore-requirements, --requirements-url <url>
+  --context <url|path>         Business context for this run, from a raw
+                               Markdown/text URL or a file (optional; a new
+                               interactive analysis asks for it instead)
 
 INCREMENTAL / CI
   --incremental                Re-analyze only components changed since last run
