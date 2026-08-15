@@ -307,10 +307,14 @@ def main() -> int:
             w(f"    ⚠ non-empty session at scan start — {detail}")
         elif event == "SESSION_ABORTED_MIDRUN":
             w(f"    ⛔ aborted mid-run — {detail}")
-        elif event == "BUDGET_CRITICAL":
-            w(f"    ⛔ budget critical — {detail}")
+        elif event in ("BUDGET_WARN", "BUDGET_CRITICAL"):
+            # Turn consumption is not something an operator can act on mid-run,
+            # and it crosses 75% on healthy agents that go on to finish. Shown
+            # as plain progress so ⚠ and ⛔ keep meaning "look at this now".
+            # The event itself is unchanged in the log and in run issues, and
+            # MAX_TURNS — an agent that actually died — still carries a glyph.
+            w(f"   budget · {detail}")
         elif event in (
-            "BUDGET_WARN",
             "MAX_TURNS",
             "AGENT_ERROR",
             "RENDER_FAILED",

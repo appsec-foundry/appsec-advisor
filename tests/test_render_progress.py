@@ -146,7 +146,12 @@ def test_substep2_idle_hard_limit_is_rendered():
 def test_budget_and_agent_error_events_are_rendered():
     """Budget kills, maxTurns terminations and agent errors reach the live
     monitor via the tailed logs but had no handler — they were silently dropped
-    because render matches event names and ignores the WARN/ERROR column."""
+    because render matches event names and ignores the WARN/ERROR column.
+
+    Budget thresholds are reported without a glyph: they are consumption
+    notices an operator cannot act on, and a healthy agent crosses 75% on its
+    way to finishing. A glyph that fires on the normal case teaches the
+    operator to ignore the glyph that does not."""
     out = _render(
         [
             "2026-06-20T15:05:00Z  [abcdef12]  WARN   budget-watchdog   BUDGET_CRITICAL  90% budget consumed  turns=250",
@@ -155,8 +160,10 @@ def test_budget_and_agent_error_events_are_rendered():
             "2026-06-20T15:08:00Z  [abcdef12]  ERROR  evidence-verifier  AGENT_ERROR  all sampled findings failed verification",
         ]
     )
-    assert "⛔ budget critical —" in out
-    assert "⚠ budget warn —" in out
+    assert "budget · 90% budget consumed" in out
+    assert "budget · 75% budget consumed" in out
+    assert "⛔" not in out
+    assert "⚠ budget" not in out
     assert "⚠ max turns —" in out
     assert "⚠ agent error —" in out
     assert "turns=250" in out
