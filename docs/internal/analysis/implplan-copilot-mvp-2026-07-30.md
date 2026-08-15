@@ -219,7 +219,7 @@ that list for complete coverage. Review it when it grows.
 
 ## Implementation phases
 
-### Phase 0 — Capability spike and compatibility record
+### Phase 0 — Capability assessment and compatibility record
 
 Part of this is already answered. The following was read from GitHub Copilot
 CLI 1.0.76 itself, not from documentation, and holds for that version:
@@ -245,7 +245,7 @@ than loose `.github/` files. In the checkout used here `copilot plugins list`
 reported the command as unavailable, so confirm whether the subsystem is gated
 before designing against it.
 
-What remains open, and what the spike must still establish:
+What remains open and must be established before implementation:
 
 1. Where custom agents are discovered from, and whether a skill can invoke a
    named one programmatically rather than the user selecting it with
@@ -273,33 +273,18 @@ What remains open, and what the spike must still establish:
    actually needs, at both `--context` tiers.
 
 Phase 0 measures capacity, not only capability. A yes on every feature above
-still leaves the MVP unbuildable if a stage's instructions do not fit.
-
-**The decisive experiment** is specified in
-`plan-copilot-capacity-spike-2026-07-30.md` and built in `spike/`: architecture
-modeling over the synthetic fixture, run at three instruction sizes with
-`./spike/run.sh A|B|C`, gated by `scripts/validate_fragment.py` and compared
-against the Claude sidecar for the same fixture. It answers dispatch, tool
-scoping, capacity and output quality in one pass, and the gap between its tiers
-is what the stop threshold is set from. Run it before any production change.
-
-One number from building it already bears on the plan: of Phase 3's 66,000
-characters only about 11,000 concern component enumeration, and the remainder
-specifies diagrams, layer tables and section themes that this MVP assigns to
-the render stage. If that ratio holds for the other stages, the per-agent
-instruction volume is a fraction of the phase-group sizes, and the capacity
-question is far less binding than those totals suggest. The spike is what
-turns that from an observation into a measurement.
+still leaves the MVP unbuildable if a stage's instructions do not fit. Record
+the assessment method and results in the compatibility note before making a
+production change.
 
 Record the exact supported capability, fallback, and version in a concise
 internal compatibility note. Do not assume that custom-agent availability
 implies programmable subagent fan-out.
 
-**Exit criterion:** the spike has run at all three tiers and its numbers are
-recorded, and a checked-in design decision names the supported Copilot
-execution mode, the serial fallback, the tool scope a scripted run gets, the
-stop threshold, and the owner. No MVP work may depend on unverified subagent
-dispatch semantics.
+**Exit criterion:** the capability and capacity results are recorded, and a
+checked-in design decision names the supported Copilot execution mode, the
+serial fallback, the tool scope a scripted run gets, the stop threshold, and
+the owner. No MVP work may depend on unverified subagent dispatch semantics.
 
 ### Phase 1 — Make the deterministic core host-neutral
 
@@ -776,7 +761,8 @@ Expected capability levels are:
 | Whole product feature set | about 65% | about 80–85% |
 
 These are planning estimates, not release claims. The fixture replay and
-capability spike determine whether the measured implementation meets them.
+capability assessment determine whether the measured implementation meets
+them.
 
 ## Decision gate and stop criterion
 

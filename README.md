@@ -300,7 +300,7 @@ For the contributor-level path map and the tests required for each kind of chang
 
 Nothing here carries a date, and the order is rough intent rather than a commitment.
 
-- **Other coding agents**: a scan needs Claude Code today. GitHub Copilot CLI is the first alternative — the Python core, schemas, and gates stay the same, only the agent layer around them is new, and each report names the agent that produced it. Whether a Copilot session has the context capacity for the pipeline is the open question; a [spike](docs/internal/analysis/plan-copilot-capacity-spike-2026-07-30.md) answers it before any of this reaches a release, and the [implementation plan](docs/internal/analysis/implplan-copilot-mvp-2026-07-30.md) covers the rest.
+- **Other coding agents**: a scan needs Claude Code today. GitHub Copilot CLI is the first alternative — the Python core, schemas, and gates stay the same, only the agent layer around them is new, and each report names the agent that produced it. Whether a Copilot session has the context capacity for the pipeline remains an open question in the [implementation plan](docs/internal/analysis/implplan-copilot-mvp-2026-07-30.md).
 
 - **Change-scoped scans**: a threat-model update for a branch, pull request, or merge request, so a change can be assessed before it merges. The [developer-time tools](docs/dev-security-helper-usage.md) that already review a diff are experimental and become supported on the way.
 
