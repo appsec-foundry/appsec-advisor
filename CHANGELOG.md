@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Agent lifecycle outcomes, usage, turn budgets, and STRIDE depth telemetry now remain bound to the dispatched call and current controller claim across shared sessions and parallel waves.
 - Live progress now reports one start and one outcome per agent, and names any disagreement between accepted output, lifecycle state, turn budget, and recorded usage.
+- An interrupted or failed run now releases its lock and reports its abort immediately instead of showing an unknown phase until the heartbeat ages out.
 - Final QA now counts rendered finding cards instead of stray global anchors, ignores inactive merged findings, and preserves F/T cross-references when finding IDs have gaps.
 - Run diagnostics now parse the hook log format correctly, include non-passing architecture reviews, and clear stale recovery markers after successful progress.
 - Duplicate findings from overlapping component scans now merge even when their trust-boundary annotations exceed the per-finding display cap.

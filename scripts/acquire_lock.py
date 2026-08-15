@@ -194,6 +194,28 @@ def _read_run_id(lock_path: Path) -> str:
     return lines[2].strip() if len(lines) >= 3 else ""
 
 
+def release_lock(lock_path: Path, run_id: str = "") -> str:
+    """Remove a lock this run owns. Returns ``absent``, ``released``,
+    ``held-by-other``, or ``error``.
+
+    Ownership is the whole point: a lock whose holder is still alive and whose
+    run id is not ours belongs to a concurrent assessment, and removing it would
+    hand two runs the same output directory. A dead holder is ours to clear —
+    that is the operator-interrupt case, where the process that took the lock no
+    longer exists to release it.
+    """
+    if not lock_path.is_file():
+        return "absent"
+    pid, _ = _parse_lock(lock_path)
+    if not (run_id and _read_run_id(lock_path) == run_id) and pid is not None and _pid_alive(pid):
+        return "held-by-other"
+    try:
+        lock_path.unlink()
+    except OSError:
+        return "error"
+    return "released"
+
+
 def _read_phase_from_checkpoint(output_dir: Path) -> tuple[str | None, str | None]:
     """Best-effort: parse ``.appsec-checkpoint`` for phase + depth context.
 

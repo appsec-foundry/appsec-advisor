@@ -48,15 +48,32 @@ def test_failure_branch_surfaces_run_issues() -> None:
     LLM Completion turn, which never runs on an abort/kill. The shell must
     regenerate .run-issues.json from the logs and render it deterministically so
     the operator sees WHAT failed, not just `exited with code N`.
+
+    The refresh is now one step of ``terminate_run.py``, which also closes the
+    lock and checkpoint the failed run left open. The invariant is unchanged:
+    the file is regenerated before it is rendered.
     """
     body = _body()
     assert "--issues-only" in body, "failure branch must render the Run Issues block"
-    # Must regenerate the file first — on a hard kill it is stale or absent.
-    assert "aggregate_run_issues.py" in body, (
+    assert "terminate_run.py" in body, (
         "failure branch must refresh .run-issues.json from the logs before rendering"
+    )
+    assert body.index("terminate_run.py") < body.index("--issues-only"), (
+        "the run issues must be regenerated before they are rendered"
     )
     # Gated on the log existing so it is a no-op for pre-dispatch failures.
     assert '[ -f "$RESULT_DIR/.agent-run.log" ]' in body
+
+
+def test_every_non_clean_exit_class_reaches_the_terminator() -> None:
+    """An interrupt and a failed exit both have to leave one terminal state.
+    Without this the lock stays held and live status reports an unknown phase
+    until the heartbeat ages out."""
+    body = _body()
+    assert "--outcome interrupt" in body
+    assert "--outcome failure" in body
+    interrupt_branch = body.index('if [ "$SIGINT_COUNT" -gt 0 ]; then')
+    assert interrupt_branch < body.index("--outcome interrupt") < body.index('exit "$EXIT_CODE"')
 
 
 def test_failure_branch_prints_full_recovery_command() -> None:

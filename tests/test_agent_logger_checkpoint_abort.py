@@ -43,25 +43,25 @@ def _write_checkpoint(tmp_path: Path, content: str) -> Path:
 
 
 def test_no_checkpoint_no_op(tmp_path: Path, agent_logger):
-    agent_logger._mark_checkpoint_aborted_if_dirty("unknown")
+    agent_logger.mark_checkpoint_aborted_if_dirty("unknown")
     assert not (tmp_path / ".appsec-checkpoint").exists()
 
 
 def test_clean_stop_reason_noop(tmp_path: Path, agent_logger):
     cp = _write_checkpoint(tmp_path, "phase=5 status=started timestamp=x\n")
-    agent_logger._mark_checkpoint_aborted_if_dirty("end_turn")
+    agent_logger.mark_checkpoint_aborted_if_dirty("end_turn")
     assert "status=started" in cp.read_text()
 
 
 def test_stop_sequence_also_clean(tmp_path: Path, agent_logger):
     cp = _write_checkpoint(tmp_path, "phase=5 status=started\n")
-    agent_logger._mark_checkpoint_aborted_if_dirty("stop_sequence")
+    agent_logger.mark_checkpoint_aborted_if_dirty("stop_sequence")
     assert "status=started" in cp.read_text()
 
 
 def test_already_completed_never_overwritten(tmp_path: Path, agent_logger):
     cp = _write_checkpoint(tmp_path, "phase=11 status=completed timestamp=x\n")
-    agent_logger._mark_checkpoint_aborted_if_dirty("unknown")
+    agent_logger.mark_checkpoint_aborted_if_dirty("unknown")
     assert "status=completed" in cp.read_text()
     assert "status=aborted" not in cp.read_text()
 
@@ -72,7 +72,7 @@ def test_already_aborted_not_double_rewritten(tmp_path: Path, agent_logger):
         tmp_path,
         "phase=5 status=aborted reason=unknown aborted_at=2026-04-24T12:00:00Z\n",
     )
-    agent_logger._mark_checkpoint_aborted_if_dirty("max_turns")
+    agent_logger.mark_checkpoint_aborted_if_dirty("max_turns")
     text = cp.read_text()
     # First reason is preserved
     assert "reason=unknown" in text
@@ -86,7 +86,7 @@ def test_already_aborted_not_double_rewritten(tmp_path: Path, agent_logger):
 
 def test_unclean_stop_rewrites_started_to_aborted(tmp_path: Path, agent_logger):
     cp = _write_checkpoint(tmp_path, "phase=5 status=started timestamp=x\n")
-    agent_logger._mark_checkpoint_aborted_if_dirty("max_turns")
+    agent_logger.mark_checkpoint_aborted_if_dirty("max_turns")
     text = cp.read_text()
     assert "status=aborted" in text
     assert "reason=max_turns" in text
@@ -96,19 +96,19 @@ def test_unclean_stop_rewrites_started_to_aborted(tmp_path: Path, agent_logger):
 
 def test_unknown_reason_is_preserved_verbatim(tmp_path: Path, agent_logger):
     cp = _write_checkpoint(tmp_path, "phase=3 status=started\n")
-    agent_logger._mark_checkpoint_aborted_if_dirty("cancelled_by_user")
+    agent_logger.mark_checkpoint_aborted_if_dirty("cancelled_by_user")
     assert "reason=cancelled_by_user" in cp.read_text()
 
 
 def test_phase_number_is_carried_over(tmp_path: Path, agent_logger):
     cp = _write_checkpoint(tmp_path, "phase=9 status=started\n")
-    agent_logger._mark_checkpoint_aborted_if_dirty("unknown")
+    agent_logger.mark_checkpoint_aborted_if_dirty("unknown")
     assert "phase=9 status=aborted" in cp.read_text()
 
 
 def test_missing_phase_field_uses_question_mark(tmp_path: Path, agent_logger):
     cp = _write_checkpoint(tmp_path, "status=started\n")
-    agent_logger._mark_checkpoint_aborted_if_dirty("unknown")
+    agent_logger.mark_checkpoint_aborted_if_dirty("unknown")
     assert "phase=?" in cp.read_text()
 
 
@@ -119,7 +119,7 @@ def test_missing_phase_field_uses_question_mark(tmp_path: Path, agent_logger):
 
 def test_empty_checkpoint_is_left_alone(tmp_path: Path, agent_logger):
     cp = _write_checkpoint(tmp_path, "")
-    agent_logger._mark_checkpoint_aborted_if_dirty("unknown")
+    agent_logger.mark_checkpoint_aborted_if_dirty("unknown")
     assert cp.read_text() == ""
 
 
@@ -135,7 +135,7 @@ def test_never_raises_on_missing_dir(tmp_path: Path, monkeypatch):
     with contextlib.redirect_stderr(io.StringIO()):
         spec.loader.exec_module(module)
     # No exception even though dir is missing
-    module._mark_checkpoint_aborted_if_dirty("unknown")
+    module.mark_checkpoint_aborted_if_dirty("unknown")
 
 
 # ---------------------------------------------------------------------------
@@ -145,23 +145,23 @@ def test_never_raises_on_missing_dir(tmp_path: Path, monkeypatch):
 
 def test_returns_phase_on_active_rewrite(tmp_path: Path, agent_logger):
     _write_checkpoint(tmp_path, "phase=9 status=started\n")
-    assert agent_logger._mark_checkpoint_aborted_if_dirty("max_turns") == "9"
+    assert agent_logger.mark_checkpoint_aborted_if_dirty("max_turns") == "9"
 
 
 def test_returns_question_mark_when_phase_missing(tmp_path: Path, agent_logger):
     _write_checkpoint(tmp_path, "status=started\n")
-    assert agent_logger._mark_checkpoint_aborted_if_dirty("unknown") == "?"
+    assert agent_logger.mark_checkpoint_aborted_if_dirty("unknown") == "?"
 
 
 def test_returns_none_on_clean_stop_reason(tmp_path: Path, agent_logger):
     _write_checkpoint(tmp_path, "phase=5 status=started\n")
-    assert agent_logger._mark_checkpoint_aborted_if_dirty("end_turn") is None
+    assert agent_logger.mark_checkpoint_aborted_if_dirty("end_turn") is None
 
 
 def test_returns_none_when_no_checkpoint(tmp_path: Path, agent_logger):
-    assert agent_logger._mark_checkpoint_aborted_if_dirty("unknown") is None
+    assert agent_logger.mark_checkpoint_aborted_if_dirty("unknown") is None
 
 
 def test_returns_none_when_already_terminal(tmp_path: Path, agent_logger):
     _write_checkpoint(tmp_path, "phase=11 status=completed\n")
-    assert agent_logger._mark_checkpoint_aborted_if_dirty("unknown") is None
+    assert agent_logger.mark_checkpoint_aborted_if_dirty("unknown") is None

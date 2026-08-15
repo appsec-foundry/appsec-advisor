@@ -1082,6 +1082,15 @@ fi
 # artifact parsing — the user asked to abort.
 if [ "$SIGINT_COUNT" -gt 0 ]; then
     warn "Run aborted by user (exit $EXIT_CODE). Skipping post-run parsing."
+    # Post-run parsing is skipped, but the run still has to reach one terminal
+    # state. Without this the lock stays held, the checkpoint stays mid-flight
+    # and `appsec_status.py --live` reports an unknown phase until the
+    # heartbeat ages out — the process that took the lock is already gone.
+    python3 "$PLUGIN_DIR/scripts/terminate_run.py" \
+        --output-dir "${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}" \
+        --outcome interrupt --reason "operator interrupt (exit $EXIT_CODE)" \
+        --repo-root "${REPO_PATH:-.}" --depth "${ASSESSMENT_DEPTH:-standard}" \
+        >/dev/null 2>&1 || true
     echo ""
     print_usage_summary
     print_recovery_hint
@@ -1210,8 +1219,12 @@ else
     if [ "$SKILL" = "create-threat-model" ] && [ -f "$RESULT_DIR/.agent-run.log" ]; then
         PLUGIN_DEV_FLAG=""
         [ "${APPSEC_PLUGIN_DEV:-0}" = "1" ] && PLUGIN_DEV_FLAG="--plugin-dev"
-        python3 "$PLUGIN_DIR/scripts/aggregate_run_issues.py" \
-            "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \
+        # The terminator owns the aggregation on this path, and additionally
+        # releases the lock and closes the checkpoint the failed run left open.
+        # A controller abort already wrote its own verdict; that one stands.
+        python3 "$PLUGIN_DIR/scripts/terminate_run.py" \
+            --output-dir "$RESULT_DIR" --outcome failure \
+            --reason "wrapper exit $EXIT_CODE" --repo-root "${REPO_PATH:-.}" \
             --depth "${ASSESSMENT_DEPTH:-standard}" >/dev/null 2>&1 || true
         python3 "$PLUGIN_DIR/scripts/render_completion_summary.py" \
             --issues-only --output-dir "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \

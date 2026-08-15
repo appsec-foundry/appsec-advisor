@@ -235,7 +235,7 @@ class TestRecordToolExceptions:
 
 
 # ---------------------------------------------------------------------------
-# _mark_checkpoint_aborted_if_dirty — atomic-write fallback to direct write
+# mark_checkpoint_aborted_if_dirty — atomic-write fallback to direct write
 # ---------------------------------------------------------------------------
 class TestCheckpointAbortFallback:
     def test_atomic_write_failure_falls_back_to_direct(self, al, tmp_path, monkeypatch):
@@ -253,7 +253,7 @@ class TestCheckpointAbortFallback:
             return real_import(name, *a, **k)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
-        al._mark_checkpoint_aborted_if_dirty("error")
+        al.mark_checkpoint_aborted_if_dirty("error")
         assert "status=aborted" in cp.read_text()
 
 

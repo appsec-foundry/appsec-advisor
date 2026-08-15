@@ -1,0 +1,81 @@
+# Acceptance cohort for the context-v2 migration.
+#
+# One immutable definition of every paid acceptance run, so the invocation is
+# generated rather than retyped. Four pre-R10 runs were rejected because the
+# command line omitted depth, rebuild, abuse cases, or runtime preservation and
+# resolution silently produced a different run than the plan requires.
+#
+# The target repository and the output root are arguments, never entries here:
+# a cohort is defined by its configuration, not by one machine's paths.
+#
+# Read by scripts/acceptance_invocation.py. `expect` lists the resolved-config
+# fields that define cohort membership; the tool compares them against
+# `.skill-config.json` and hashes exactly those fields, so an unrelated
+# resolution change (a model alias, a label) does not invalidate the cohort.
+
+schema_version: 1
+
+members:
+  r10:
+    description: >-
+      The single quick rebuild checkpoint that must prove the full lifecycle,
+      concurrency, claim, post-STRIDE, rendering, and cleanup path.
+    flags:
+      - --assessment-depth
+      - quick
+      - --rebuild
+      - --abuse-cases
+      - --keep-runtime-files
+    env: {}
+    expect:
+      assessment_depth: quick
+      mode: rebuild
+      rebuild: true
+      incremental: false
+      resume: false
+      keep_runtime_files: true
+      skip_abuse_case_verification: false
+      runtime_generation: context-v2
+
+  ab-baseline-1: &ab_baseline
+    description: >-
+      Legacy producer arm of the fixed thorough A/B cohort. Three runs; the
+      700-turn and 20% cost gates are read from cohort medians.
+    flags:
+      - --assessment-depth
+      - thorough
+      - --rebuild
+      - --keep-runtime-files
+    env:
+      APPSEC_CONTEXT_V2: "0"
+    expect:
+      assessment_depth: thorough
+      mode: rebuild
+      rebuild: true
+      incremental: false
+      resume: false
+      keep_runtime_files: true
+      runtime_generation: legacy
+  ab-baseline-2: *ab_baseline
+  ab-baseline-3: *ab_baseline
+
+  ab-context-v2-1: &ab_context_v2
+    description: >-
+      Context-v2 arm of the fixed thorough A/B cohort. Same depth, mode, and
+      preservation as the baseline arm; only the producer generation differs.
+    flags:
+      - --assessment-depth
+      - thorough
+      - --rebuild
+      - --keep-runtime-files
+    env: {}
+    expect:
+      assessment_depth: thorough
+      mode: rebuild
+      rebuild: true
+      incremental: false
+      resume: false
+      keep_runtime_files: true
+      runtime_generation: context-v2
+  ab-context-v2-2: *ab_context_v2
+  ab-context-v2-3: *ab_context_v2

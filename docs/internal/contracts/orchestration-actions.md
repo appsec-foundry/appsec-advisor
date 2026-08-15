@@ -51,6 +51,14 @@ marker-file existence. Terminal cleanup first emits `AGENT_FAILED` for any
 remaining calls, retires their counters and markers, then removes
 `.active-tool-calls/`.
 
+A run that does not finish cleanly still reaches one terminal state.
+`scripts/terminate_run.py` is that single terminator: it records `RUN_ABORTED`
+unless a controller verdict already stands, closes the checkpoint, terminalizes
+remaining calls, removes live markers, aggregates run issues, and releases the
+lock when the run owns it. A lock whose holder is alive under a different run
+ID is never released. The headless wrapper calls it on operator interrupt and
+on a failed exit.
+
 Each context-v2 boundary that runs after a producer returned first cross-checks
 the surfaces describing the calls of the most recent dispatch action: accepted
 output, lifecycle terminal state, child usage attribution, budget retirement,

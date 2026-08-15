@@ -223,8 +223,12 @@ def _trace_path() -> str:
 _CLEAN_STOP_REASONS = {"end_turn", "stop_sequence"}
 
 
-def _mark_checkpoint_aborted_if_dirty(stop_reason: str) -> str | None:
-    """Rewrite `$OUTPUT_DIR/.appsec-checkpoint` to status=aborted on unclean stop.
+def mark_checkpoint_aborted_if_dirty(stop_reason: str, output_dir: str | Path | None = None) -> str | None:
+    """Rewrite `.appsec-checkpoint` to status=aborted on unclean stop.
+
+    ``output_dir`` defaults to the hook's own resolution; the run terminator
+    passes it explicitly, so checkpoint ownership stays in one function instead
+    of being restated per exit class.
 
     Returns the ``phase`` of the checkpoint it transitioned to ``aborted`` (so
     the caller can emit a SESSION_ABORTED_MIDRUN event), or ``None`` when it made
@@ -242,7 +246,8 @@ def _mark_checkpoint_aborted_if_dirty(stop_reason: str) -> str | None:
     if stop_reason in _CLEAN_STOP_REASONS:
         return None
     try:
-        cp_path = os.path.join(_output_dir(), ".appsec-checkpoint")
+        base = os.fspath(output_dir) if output_dir is not None else _output_dir()
+        cp_path = os.path.join(base, ".appsec-checkpoint")
         if not os.path.isfile(cp_path):
             return None
         with open(cp_path, encoding="utf-8", errors="replace") as fh:
@@ -2794,7 +2799,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         # a sub-agent name being registered — e.g. context-compaction kills the
         # outer session between Stage 1 return and Stage 2 dispatch).
         if assessment_owner or not registrations:
-            aborted_phase = _mark_checkpoint_aborted_if_dirty(reason)
+            aborted_phase = mark_checkpoint_aborted_if_dirty(reason)
             if aborted_phase is not None:
                 # The outer session ended uncleanly while a run was mid-flight.
                 # Log it as a first-class event so post-hoc analysis can find it
