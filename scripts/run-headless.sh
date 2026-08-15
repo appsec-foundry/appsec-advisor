@@ -786,7 +786,7 @@ cleanup_headless_runtime() {
 # terminate one process while the wrapper reliably tears down the entire tree.
 start_progress_monitor() {
     "$SCRIPT_DIR/run-interruptible.sh" /dev/null \
-        sh -c 'tail -F "$1" "$2" 2>/dev/null | python3 "$3"' \
+        sh -c 'tail -n 0 -F "$1" "$2" 2>/dev/null | python3 "$3"' \
         appsec-progress-monitor "$LOG_FILE" "$RUN_LOG_FILE" "$SCRIPT_DIR/render_progress.py" >&2 &
     PROGRESS_PID=$!
 }

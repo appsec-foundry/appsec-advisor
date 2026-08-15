@@ -74,6 +74,25 @@ def cohort_hash(expect: dict) -> str:
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
+def assert_clean_target(target: Path) -> None:
+    """Refuse a target that already holds a run.
+
+    A cohort member gets its own directory. Pointing one at a directory that
+    already holds another run mixes two runs into the appended event logs and,
+    with `--rebuild`, clears the artifacts that were being preserved as
+    evidence — which is how a reserved postfix path was overwritten twice
+    before. This is the last moment it is free to catch.
+    """
+    if not target.exists():
+        return
+    occupied = sorted(p.name for p in target.iterdir())
+    if occupied:
+        raise CohortError(
+            f"{target} already holds a run ({len(occupied)} entries, e.g. {', '.join(occupied[:3])}). "
+            "Move it aside and use an empty directory; --rebuild would clear it and the event logs would mix."
+        )
+
+
 def invocation(member: dict, name: str, repo: Path, output_root: Path) -> str:
     """The exact shell line for one member, ready to paste."""
     env = "".join(f"{key}={shlex.quote(str(value))} " for key, value in sorted(member.get("env", {}).items()))
@@ -113,6 +132,11 @@ def main(argv: list[str] | None = None) -> int:
     printer.add_argument("--member", required=True)
     printer.add_argument("--repo", required=True, help="target repository to assess")
     printer.add_argument("--output-root", required=True, help="directory that receives one subdirectory per member")
+    printer.add_argument(
+        "--allow-existing",
+        action="store_true",
+        help="emit the invocation even though the member's directory already holds a run",
+    )
 
     verifier = sub.add_parser("verify", help="check a started run against the manifest")
     verifier.add_argument("--member", required=True)
@@ -123,7 +147,10 @@ def main(argv: list[str] | None = None) -> int:
         manifest = load_manifest()
         member = member_of(manifest, args.member)
         if args.command == "print":
-            print(invocation(member, args.member, Path(args.repo), Path(args.output_root)))
+            output_root = Path(args.output_root)
+            if not args.allow_existing:
+                assert_clean_target(output_root / args.member)
+            print(invocation(member, args.member, Path(args.repo), output_root))
             print(f"# cohort={args.member} hash={cohort_hash(member['expect'])}", file=sys.stderr)
             return 0
         mismatches = verify(member, Path(args.output_dir))

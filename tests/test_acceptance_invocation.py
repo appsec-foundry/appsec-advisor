@@ -123,6 +123,31 @@ def test_a_malformed_manifest_is_refused(tmp_path: Path, broken: dict) -> None:
         cohort.load_manifest(path)
 
 
+def test_print_refuses_a_target_that_already_holds_a_run(tmp_path: Path, capsys) -> None:
+    """A reserved postfix path was overwritten twice before: --rebuild clears
+    the preserved artifacts and the appended event logs then mix two runs."""
+    target = tmp_path / "r10"
+    target.mkdir()
+    (target / ".hook-events.log").write_text("prior run\n", encoding="utf-8")
+
+    assert cohort.main(["print", "--member", "r10", "--repo", "/repo", "--output-root", str(tmp_path)]) == 1
+    err = capsys.readouterr().err
+    assert "already holds a run" in err
+    assert ".hook-events.log" in err
+
+    assert (
+        cohort.main(["print", "--member", "r10", "--repo", "/repo", "--output-root", str(tmp_path), "--allow-existing"])
+        == 0
+    )
+    assert "run-headless.sh" in capsys.readouterr().out
+
+
+def test_an_empty_or_absent_target_is_accepted(tmp_path: Path) -> None:
+    cohort.assert_clean_target(tmp_path / "absent")
+    (tmp_path / "empty").mkdir()
+    cohort.assert_clean_target(tmp_path / "empty")
+
+
 def test_cli_print_and_verify(tmp_path: Path, capsys) -> None:
     assert cohort.main(["print", "--member", "r10", "--repo", "/repo", "--output-root", str(tmp_path)]) == 0
     assert "run-headless.sh" in capsys.readouterr().out

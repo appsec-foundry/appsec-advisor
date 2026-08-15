@@ -63,6 +63,15 @@ def test_failure_branch_surfaces_run_issues() -> None:
     assert '[ -f "$RESULT_DIR/.agent-run.log" ]' in body
 
 
+def test_progress_monitor_never_replays_a_previous_runs_log() -> None:
+    """`.hook-events.log` is appended across runs in one output directory, so a
+    bare `tail -F` prints the previous run's last lines before the new run's
+    first — which read as a fresh failure, with that run's timestamps."""
+    body = _body()
+    assert 'tail -n 0 -F "$1" "$2"' in body
+    assert 'tail -F "$1"' not in body
+
+
 def test_every_non_clean_exit_class_reaches_the_terminator() -> None:
     """An interrupt and a failed exit both have to leave one terminal state.
     Without this the lock stays held and live status reports an unknown phase
