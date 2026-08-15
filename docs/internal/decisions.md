@@ -56,6 +56,7 @@ to touch — each row names them. One row is one decision and carries everything
 | OR-7 | Call telemetry stays observational: a disagreement between accepted output, lifecycle, budget, and stage stats is reported, and blocks only under `APPSEC_TELEMETRY_STRICT` | `test_boundary_reports_by_default_and_aborts_only_under_strict` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-8 | Every non-clean exit converges on one terminal state through a single terminator, which releases only a lock its own run holds | `test_interrupt_converges_every_terminal_surface`, `test_a_live_foreign_lock_is_left_alone` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-9 | Host hook payloads are read through one adapter that fails open and names a missing key, and host sequences are replayed against pinned per-version payload fixtures | `tests/test_hook_payload.py`, `tests/test_hook_payload_contract.py` | `agents/shared/logging-standard.md` |
+| OR-10 | An undeterminable stop reason defers the call outcome instead of recording a failure; the Agent return then terminalizes the call and supplies its usage | `test_a_stop_without_a_transcript_defers_the_outcome` | `agents/shared/logging-standard.md` |
 
 ## Repair
 

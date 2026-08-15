@@ -2684,6 +2684,11 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         # session that finished ends on `end_turn`, one cut off mid-tool-loop
         # ends on `tool_use`.
         reason = _stop_reason_from_transcript(transcript) or "unknown"
+    # A headless session persists no transcript at all — the host still supplies
+    # a path, it just never names a file — so neither source can answer how the
+    # child ended. That is missing evidence, not evidence of failure, and the
+    # terminal transition below refuses to invent one.
+    reason_known = reason != "unknown"
     level = "ERROR" if reason == "max_turns" else "INFO "
 
     # ------------------------------------------------------------------
@@ -2716,8 +2721,11 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         # this parser does not recognize. Say which — a completed call that
         # reports nothing is the postfix6 signature, and the next reader needs
         # the evidence, not the symptom.
+        # INFO, not WARN: on a headless host this is every call, and a warning
+        # that always fires is one nobody reads. The telemetry cross-check at
+        # the semantic boundary is what turns it into a finding when it matters.
         _write(
-            "WARN ",
+            "INFO ",
             "AGENT_USAGE_UNAVAILABLE",
             f"transcript={transcript or '<none>'}  {_transcript_diagnosis(transcript)}",
             sid,
@@ -2767,17 +2775,32 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     # by the controller waiter, not by this telemetry transition.
     if runtime_call is not None:
         try:
-            clean = reason in _CLEAN_STOP_REASONS
-            events = (
-                agent_lifecycle.finish_call(_output_dir(), runtime_call["agent_call_id"])
-                if clean
-                else agent_lifecycle.fail_call(
-                    _output_dir(),
-                    runtime_call["agent_call_id"],
-                    f"subagent_stop:{reason}",
+            if reason_known:
+                clean = reason in _CLEAN_STOP_REASONS
+                events = (
+                    agent_lifecycle.finish_call(_output_dir(), runtime_call["agent_call_id"])
+                    if clean
+                    else agent_lifecycle.fail_call(
+                        _output_dir(),
+                        runtime_call["agent_call_id"],
+                        f"subagent_stop:{reason}",
+                    )
                 )
-            )
-            agent_lifecycle.append_events(_output_dir(), events)
+                agent_lifecycle.append_events(_output_dir(), events)
+            else:
+                # The child has stopped — that is what this event proves — but
+                # how it ended is unknown. Recording a failure here turned every
+                # completed headless call into `AGENT_FAILED`. Leave the outcome
+                # to the Agent PostToolUse, which knows whether the tool call
+                # succeeded; terminal cleanup still fails it if none arrives.
+                _write(
+                    "INFO ",
+                    "AGENT_OUTCOME_DEFERRED",
+                    f"agent_call_id={runtime_call['agent_call_id']}  reason=stop_reason_unavailable",
+                    sid,
+                )
+            # The budget retires either way: the child is no longer running, so
+            # later parent tools must not be charged to it.
             from budget_watchdog import close_call
 
             close_call(runtime_call["agent_call_id"], _output_dir())
@@ -2933,6 +2956,67 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                 pass
 
 
+_USAGE_TOKEN_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+)
+
+
+def _agent_return_usage(value: object) -> tuple[dict[str, int], int | None] | None:
+    """Per-call usage from the Agent tool's return, or ``None``.
+
+    A headless session persists no transcript, so this is the only per-call
+    source there. The shape is captured from the supported host: the return
+    carries a ``usage`` block alongside ``totalToolUseCount``.
+    """
+    if not isinstance(value, dict):
+        return None
+    usage = value.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    counters: dict[str, int] = {}
+    for key in _USAGE_TOKEN_KEYS:
+        candidate = usage.get(key)
+        counters[key] = candidate if isinstance(candidate, int) and not isinstance(candidate, bool) else 0
+    if not any(counters.values()):
+        return None
+    tool_uses = value.get("totalToolUseCount")
+    return counters, tool_uses if isinstance(tool_uses, int) and not isinstance(tool_uses, bool) else None
+
+
+def _call_has_usage(call_id: str) -> bool:
+    """Whether the lifecycle already recorded usage for this call."""
+    if not call_id:
+        return False
+    try:
+        state = json.loads(agent_lifecycle.state_path(_output_dir()).read_text(encoding="utf-8"))
+        for call in state.get("calls", []):
+            if call.get("agent_call_id") == call_id:
+                return bool((call.get("usage") or {}).get("output_tokens"))
+    except (OSError, ValueError, AttributeError):
+        return False
+    return False
+
+
+def _response_fields(value: object, depth: int = 0) -> str:
+    """Field names of a tool response, never its content."""
+    if isinstance(value, dict):
+        names = sorted(str(key) for key in value)[:16]
+        nested = ""
+        if depth == 0:
+            parts = [
+                f"{key}[{_response_fields(value[key], depth + 1)}]" for key in names if isinstance(value[key], dict)
+            ]
+            nested = "  " + "  ".join(parts) if parts else ""
+        return f"fields={','.join(names)}{nested}" if depth == 0 else ",".join(names)
+    if isinstance(value, list):
+        kinds = sorted({type(item).__name__ for item in value})
+        return f"list<{','.join(kinds)}>[{len(value)}]" if depth else f"fields=list<{','.join(kinds)}>[{len(value)}]"
+    return f"type={type(value).__name__}" if depth == 0 else type(value).__name__
+
+
 def handle_post_tool_use(data: dict, sid: str) -> None:
     event = _hook_event(data, "PostToolUse", sid)
     tool = event.tool_name
@@ -2957,6 +3041,23 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         pairs = "  ".join(f"{k}={v}" for k, v in params.items())
 
         call_id = event.tool_use_id
+        if not _call_has_usage(call_id):
+            # The transcript answered nothing for this call, so the Agent return
+            # is the only remaining per-call source.
+            returned = _agent_return_usage(resp)
+            if returned is not None:
+                try:
+                    agent_lifecycle.append_events(
+                        _output_dir(),
+                        agent_lifecycle.record_call_usage(_output_dir(), call_id, returned[0], tool_uses=returned[1]),
+                    )
+                except agent_lifecycle.LifecycleError:
+                    pass
+            else:
+                # Field names only — the response body is model output and does
+                # not belong in a log. This is the evidence the next reader
+                # needs if the return shape changes again.
+                _write("INFO ", "AGENT_RETURN_FIELDS", f"agent_call_id={call_id}  {_response_fields(resp)}", sid)
         try:
             runtime_agent_id = _runtime_agent_id(resp)
             if runtime_agent_id:

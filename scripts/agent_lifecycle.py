@@ -469,6 +469,17 @@ def _record_usage_for_call(
         return [LifecycleEvent("AGENT_USAGE", dict(call))]
 
 
+def record_call_usage(
+    output_dir: str | Path,
+    call_id: str,
+    usage: dict[str, Any],
+    *,
+    tool_uses: int | None = None,
+) -> list[LifecycleEvent]:
+    """Attribute usage to a call by its own ID, for a source that knows it."""
+    return _record_usage_for_call(output_dir, call_id, usage, tool_uses=tool_uses)
+
+
 def record_runtime_usage(
     output_dir: str | Path,
     runtime_agent_id: str,

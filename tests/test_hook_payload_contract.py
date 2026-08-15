@@ -152,7 +152,7 @@ class Run:
         self.spawn(call_id, agent_type, job_id)
         self.deliver("SubagentStart", agent_id=agent_id, agent_type=agent_type)
         self.stop(agent_id, agent_type, **child)
-        self.post(call_id, agent_type, job_id)
+        self.post(call_id, agent_type, job_id, agent_id)
 
     def spawn(self, call_id: str, agent_type: str, job_id: str, background: bool = False, claimed: bool = True) -> None:
         if claimed:
@@ -176,10 +176,28 @@ class Run:
             agent_transcript_path=self.child(agent_id, **child),
         )
 
-    def post(self, call_id: str, agent_type: str, job_id: str) -> None:
+    def stop_without_transcript(self, agent_id: str, agent_type: str) -> None:
+        """The headless shape: a path is supplied, no file is ever written."""
+        self.deliver(
+            "SubagentStop",
+            agent_id=agent_id,
+            agent_type=agent_type,
+            agent_transcript_path=str(self.tmp_path / "subagents" / f"agent-{agent_id}.jsonl"),
+        )
+
+    def post(self, call_id: str, agent_type: str, job_id: str, agent_id: str = "") -> None:
+        # The return names the runtime agent it belongs to; a replay that left
+        # the fixture's identity in place would bind one runtime id to every
+        # call of a wave.
+        response = {
+            **self.events["PostToolUse"]["tool_response"],
+            "agentId": agent_id or f"agent-{call_id}",
+            "agentType": agent_type,
+        }
         self.deliver(
             "PostToolUse",
             tool_use_id=call_id,
+            tool_response=response,
             tool_input={
                 **self.events["PostToolUse"]["tool_input"],
                 "subagent_type": agent_type,
@@ -237,8 +255,8 @@ def test_a_parallel_wave_terminalizes_every_job_once(run: Run) -> None:
         run.deliver("SubagentStart", agent_id=agent_id, agent_type=agent_type)
     for _, agent_id, _ in jobs:
         run.stop(agent_id, agent_type)
-    for call_id, _, job_id in jobs:
-        run.post(call_id, agent_type, job_id)
+    for call_id, agent_id, job_id in jobs:
+        run.post(call_id, agent_type, job_id, agent_id)
 
     assert len(run.calls()) == 3
     assert {call["state"] for call in run.calls()} == {"done"}
@@ -307,6 +325,54 @@ def test_a_long_running_child_crosses_its_turn_budget_on_return(run: Run) -> Non
     assert "BUDGET_" in run.log
     assert run.calls()[0]["usage"]["tool_uses"] == 30
     assert run.calls()[0]["state"] == "done"
+
+
+def test_a_stop_without_a_transcript_defers_the_outcome(run: Run) -> None:
+    """A headless session persists no transcript, so `SubagentStop` cannot say
+    how the child ended — the host supplies a path that never names a file.
+    Recording a failure there turned every completed headless call into
+    `AGENT_FAILED` while its output had already been accepted."""
+    agent_type = "appsec-advisor:appsec-recon-scanner"
+    run.spawn("toolu_a", agent_type, "phase2-recon")
+    run.deliver("SubagentStart", agent_id="agent_a", agent_type=agent_type)
+    run.stop_without_transcript("agent_a", agent_type)
+
+    assert run.calls()[0]["state"] == "running"
+    assert "AGENT_FAILED" not in run.log
+    assert "AGENT_OUTCOME_DEFERRED" in run.log
+    assert "reason=unreadable" in run.log
+    # The child has stopped even though its outcome is unknown, so later parent
+    # tools must not be charged to it.
+    assert run.budget_calls() == {}
+
+    # The Agent PostToolUse knows whether the tool call succeeded, and carries
+    # the per-call usage the absent transcript could not.
+    run.post("toolu_a", agent_type, "phase2-recon", "agent_a")
+    call = run.calls()[0]
+    assert call["state"] == "done"
+    assert call["usage"]["output_tokens"] == 8369
+    assert call["usage"]["cache_read_input_tokens"] == 897511
+    assert call["usage"]["tool_uses"] == 31
+    assert "AGENT_RETURN_FIELDS" not in run.log
+
+
+def test_an_agent_return_without_usage_records_its_shape_instead(run: Run) -> None:
+    """If the return stops carrying usage, the log names the fields it does
+    carry — the next reader needs the evidence, not a silent zero."""
+    agent_type = "appsec-advisor:appsec-recon-scanner"
+    run.spawn("toolu_a", agent_type, "phase2-recon")
+    run.deliver("SubagentStart", agent_id="agent_a", agent_type=agent_type)
+    run.stop_without_transcript("agent_a", agent_type)
+    run.deliver(
+        "PostToolUse",
+        tool_use_id="toolu_a",
+        tool_input={**run.events["PostToolUse"]["tool_input"], "subagent_type": agent_type},
+        tool_response={"content": [{"type": "text", "text": "done"}], "status": "completed"},
+    )
+
+    assert "AGENT_RETURN_FIELDS" in run.log
+    assert "fields=content,status" in run.log
+    assert "done" not in run.log.split("AGENT_RETURN_FIELDS")[1].split("\n")[0]
 
 
 def test_a_call_outside_the_current_claim_gets_no_turn_budget(run: Run) -> None:

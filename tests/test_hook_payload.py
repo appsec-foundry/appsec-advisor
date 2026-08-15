@@ -101,3 +101,17 @@ def test_transcript_diagnosis_names_why_nothing_was_read(tmp_path) -> None:
     assert "reason=no_assistant_usage" in diagnosis
     assert "records=1" in diagnosis
     assert "assistant_records=0" in diagnosis
+
+
+def test_response_fields_names_shape_never_content() -> None:
+    """The Agent return is the only per-call source left when no transcript
+    exists — but its body is model output and must not reach a log."""
+    import agent_logger
+
+    rendered = agent_logger._response_fields(
+        {"content": [{"type": "text", "text": "a secret the model wrote"}], "totalTokens": 105755}
+    )
+    assert "fields=content,totalTokens" in rendered
+    assert "secret" not in rendered
+    assert agent_logger._response_fields("plain") == "type=str"
+    assert agent_logger._response_fields([1, "a"]) == "fields=list<int,str>[2]"

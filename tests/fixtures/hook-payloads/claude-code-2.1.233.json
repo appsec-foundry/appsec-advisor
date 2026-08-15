@@ -3,7 +3,7 @@
     "product": "Claude Code",
     "version": "2.1.233",
     "captured_at": "2026-08-15",
-    "note": "Sanitized payloads for one Agent call. Keys and types follow the hook input schema of the pinned host version; identifiers, paths, and prompt text are anonymized. `SubagentStop` carries neither `stop_reason` nor `usage` — both are derived from `agent_transcript_path`."
+    "note": "Sanitized payloads for one Agent call. Keys follow the pinned host version: the input schema for the payloads, and a live capture (AGENT_RETURN_FIELDS) for the Agent `tool_response`. Identifiers, paths, prompt text and counters are anonymized. Two facts this fixture exists to hold: `SubagentStop` carries neither `stop_reason` nor `usage`, and in a headless session `agent_transcript_path` names a file that is never written — so per-call usage comes from the Agent return's `usage` block and `totalToolUseCount`."
   },
   "base_keys": {
     "required": ["session_id", "transcript_path", "cwd", "hook_event_name"],
@@ -64,10 +64,31 @@
         "prompt": "REPO_ROOT=/workspace/target\nOUTPUT_DIR=/workspace/target/docs/security\nCLAUDE_PLUGIN_ROOT=/opt/appsec-advisor\nMODEL_ID=sonnet\nACTION_ID=stage1c:b078fb4269a6b5c5\nJOB_ID=phase2-recon\nMAX_TURNS=36\n"
       },
       "tool_response": {
+        "agentId": "agent_01ExampleReconRuntimeIdentity",
+        "agentType": "appsec-advisor:appsec-recon-scanner",
         "content": [{"type": "text", "text": "Reconnaissance complete."}],
+        "prompt": "REPO_ROOT=/workspace/target\n",
+        "resolvedModel": "claude-haiku-4-5",
+        "status": "completed",
+        "toolStats": {
+          "bashCount": 9,
+          "editFileCount": 0,
+          "linesAdded": 0,
+          "linesRemoved": 0,
+          "otherToolCount": 4,
+          "readCount": 12,
+          "searchCount": 6
+        },
         "totalDurationMs": 226412,
         "totalTokens": 105755,
-        "totalToolUseCount": 31
+        "totalToolUseCount": 31,
+        "usage": {
+          "cache_creation_input_tokens": 74490,
+          "cache_read_input_tokens": 897511,
+          "input_tokens": 23,
+          "output_tokens": 8369,
+          "service_tier": "standard"
+        }
       }
     }
   }
