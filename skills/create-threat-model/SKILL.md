@@ -57,9 +57,9 @@ for i in "${!_args[@]}"; do
   fi
 done
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
-  CLAUDE_PLUGIN_ROOT=$(find /root /home /opt -maxdepth 6 \
-    -path "*/appsec-advisor/skills/create-threat-model/SKILL.md" \
-    2>/dev/null | head -1 | xargs -r dirname | xargs -r dirname | xargs -r dirname)
+  # <base-dir> from the invocation line. Never search the filesystem: several
+  # checkouts may exist and the first hit is arbitrary.
+  CLAUDE_PLUGIN_ROOT=$(cd "<base-dir>/../.." && pwd)
 fi
 export CLAUDE_PLUGIN_ROOT
 if [ -z "$CLAUDE_PLUGIN_ROOT" ] || [ ! -d "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -138,8 +138,8 @@ Sonnet-5 or an Opus session on a normal-sized repo), and is skipped under
 is a one-line hint, not a choice.
 
 **Sanctioned exception 2 — the business-context question.** An interactive
-full/rebuild run asks once whether to add business context, between the Pre-flight
-summary and Stage 1. Do not suppress it.
+full/rebuild run asks once whether to add business context, before the Pre-flight
+summary. Do not suppress it.
 
 In particular do **not** announce your own actions — the following are all
 contract violations, even though they are *true*: "I've read through to the

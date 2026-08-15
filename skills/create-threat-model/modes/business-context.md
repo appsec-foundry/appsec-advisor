@@ -1,8 +1,10 @@
 # Business Context Capture (interactive full / rebuild runs)
 
 > **Lazy-loaded mode file.** Read at the "Business context" anchor of the runtime in
-> use — `SKILL-full-runtime.md` §3a on the default full/rebuild path,
-> `SKILL-impl.md` on the legacy path — after the pre-flight wipes, before Stage 1.
+> use — `SKILL-full-runtime.md` §2b, before the run plan, on the default full/rebuild
+> path; `SKILL-impl.md` on the legacy path, after the pre-flight wipes. The run plan
+> is computed before the answer and does not change with it; the answer feeds the
+> analysis.
 > `SKILL-impl.md` reads it only for the question (`BUSINESS_CONTEXT_SOURCE` empty,
 > `APPSEC_HEADLESS` not `1`, `DRY_RUN=false`, `MODE` `full` or `rebuild`) because it
 > captures a supplied source itself; the compact runtime reads it for both.

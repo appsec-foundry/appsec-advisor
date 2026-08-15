@@ -44,9 +44,10 @@ The controller has already:
 
 Emit `ACTION.preflight_status` once when non-empty. Then, **if
 `ACTION.orchestrator_prompt_needed` is `true`, run §2a before the run plan** (the
-model choice is a cost gate → first). Otherwise emit `ACTION.run_plan` verbatim as
-response text — no summary, no controller receipts. When the prompt fires the
-controller has already stripped the redundant session advisories from the run plan.
+model choice is a cost gate → first), then §2b. Otherwise run §2b and emit
+`ACTION.run_plan` verbatim as response text — no summary, no controller receipts.
+When the prompt fires the controller has already stripped the redundant session
+advisories from the run plan.
 
 ### 2a. Interactive orchestrator-model selection (before the run plan)
 
@@ -66,6 +67,12 @@ On the answer, before the run plan / Stage 1:
 - resolves to a **different** model → do NOT continue: `rm -f "$OUTPUT_DIR/.appsec-lock"`, then print the switch instructions and stop. Prefer the in-session path (no relaunch flags needed): `run /clear then /model <choice>, then re-run the skill`. For a fresh terminal, add: `claude --model <choice>` **plus the launch flags this session started with** (e.g. `--plugin-dir <dir>`) — fill those in from how the session was launched; a bare `claude --model <choice>` would drop the plugin.
 
 Never binding — the prompt exists so the user chooses.
+
+### 2b. Business context
+
+Skip when `skip_business_context` is true, or `APPSEC_HEADLESS=1` with an empty
+`business_context_source`. Otherwise bind both (§3), read
+`<base-dir>/modes/business-context.md`, follow it, then emit the run plan.
 
 ## 3. Bind compact state
 
@@ -184,12 +191,6 @@ operative contract here:
 These lines are required even when the subagent environment would normally
 inherit a value. Explicit forwarding preserves model routing and makes a
 cutoff/resume dispatch identical to the original.
-
-### 3a. Business context (before Stage 1)
-
-Skip when `SKIP_BUSINESS_CONTEXT` is true, or when `APPSEC_HEADLESS=1` and
-`BUSINESS_CONTEXT_SOURCE` is empty. Otherwise read
-`<base-dir>/modes/business-context.md` and follow it here, before Stage 1.
 
 ## 4. Start marker and stage tasks
 

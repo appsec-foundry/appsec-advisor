@@ -251,7 +251,10 @@ def test_business_context_reaches_the_default_full_runtime():
     )
     assert "APPSEC_HEADLESS=1" in runtime, "the modes/business-context.md load must skip a headless run"
     assert "SKIP_BUSINESS_CONTEXT = skip_business_context" in runtime
-    assert "`SKIP_BUSINESS_CONTEXT` is true" in runtime, "--skip-context must suppress the question"
+    assert "skip_business_context` is true" in runtime, "--skip-context must suppress the question"
+    assert runtime.index("modes/business-context.md") < runtime.index("## 3. Bind compact state"), (
+        "the question must be asked before the run plan, not after it"
+    )
 
     mode = (MODES_DIR / "business-context.md").read_text(encoding="utf-8")
     assert "Step 0 — A source was supplied" in mode, (
