@@ -4326,3 +4326,54 @@ def test_mermaid_owner_returns_none_without_fragments_dir(tmp_path: Path):
     )
     raw = "mermaid block #1 (starts at line ~1): authoritative parse failed"
     assert qa._fragment_owning_mermaid_block(tmp_path / "threat-model.md", raw) is None
+
+
+# --- CLI argument guard (mirrors log_event.py's guard, same failure class) ---
+
+
+def test_option_in_a_positional_slot_is_named_as_an_option(tmp_path: Path):
+    """A flag the CLI does not have must not be reported as a missing path.
+
+    The run that motivated this spent three attempts correcting the path
+    because `--output-dir` was echoed back as "not found".
+    """
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "gate", "--output-dir", str(tmp_path)],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 2
+    assert "unknown option" in r.stderr
+    assert "--output-dir" in r.stderr
+    assert "not found" not in r.stderr
+
+
+def test_empty_positional_argument_is_rejected(tmp_path: Path):
+    """An unset shell variable arrives as "" and Path("") is the CWD."""
+    md = tmp_path / "threat-model.md"
+    md.write_text("# t\n", encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "gate", str(md), "", str(tmp_path)],
+        capture_output=True,
+        text=True,
+        # Path("") is the working directory. Run from a throwaway one so a
+        # regression writes its stray artifact there and not into the checkout.
+        cwd=str(tmp_path),
+    )
+    assert r.returncode == 2
+    assert "is empty" in r.stderr
+    assert not (tmp_path / ".qa-repair-plan.json").exists()
+
+
+def test_the_guard_leaves_a_valid_positional_call_alone(tmp_path: Path):
+    """The guard must not reject the documented positional form."""
+    md = tmp_path / "threat-model.md"
+    md.write_text("# t\n", encoding="utf-8")
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), "heading_hygiene", str(md)],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode in (0, 1)
+    assert "unknown option" not in r.stderr
+

@@ -10960,6 +10960,22 @@ def main(argv: list[str]) -> int:
         print(__doc__)
         return 2
     sub = argv[1]
+
+    # Every subcommand below is positional. An option name in a positional slot
+    # therefore means the caller guessed a flag interface that does not exist,
+    # and the path checks downstream would report it as a missing file — which
+    # reads as a wrong path and sends the caller correcting the wrong thing. An
+    # empty argument has the same origin, an unset variable, and `Path("")` is
+    # the current directory rather than an error. Name both for what they are.
+    # Same guard as `log_event.py`, for the same reason.
+    for index, value in enumerate(argv[2:], start=2):
+        if value.startswith("-"):
+            print(f"{argv[0]}: unknown option {value!r} — `{sub}` takes positional arguments only", file=sys.stderr)
+            return 2
+        if not value.strip():
+            print(f"{argv[0]}: argument {index - 1} is empty — is the variable exported?", file=sys.stderr)
+            return 2
+
     if sub == "links":
         if len(argv) != 4:
             print("usage: qa_checks.py links <md> <repo-root>", file=sys.stderr)
