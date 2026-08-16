@@ -964,3 +964,25 @@ def test_the_llm_signal_is_part_of_the_recon_contract():
     prompt = (REPO_ROOT / "agents" / "appsec-recon-scanner.md").read_text(encoding="utf-8")
     assert "has_llm_surface" in prompt
     assert "A declared dependency alone is not enough" in prompt, "the tag needs its false-positive exclusion"
+
+
+def _prompt_injection_control_patterns():
+    import yaml
+
+    library = yaml.safe_load((REPO_ROOT / "data" / "abuse-cases" / "default-library.yaml").read_text(encoding="utf-8"))
+    case = next(row for row in library["abuse_cases"] if row["id"] == "AC-T-007")
+    return case["chain"][0]["probe"]["control_patterns"]
+
+
+def test_a_prompt_level_guardrail_is_not_a_control_for_prompt_injection():
+    """A rule that exists only as prompt text is not a boundary, so the word
+    `guardrail` in a controls description must not mark the step guarded and
+    blunt the finding. Controls that live outside the prompt still count."""
+    patterns = _prompt_injection_control_patterns()
+    step = _step(1, "prompt.*inject", controls=patterns)
+    prompt_only = _finding("T-001", "prompt injection sink", controls="System prompt states a guardrail")
+    assert mac.match_step(step, [prompt_only])["controls_found"] == []
+
+    for real_control in ("Input is sanitized before assembly", "Instruction hierarchy separates the channels"):
+        finding = _finding("T-002", "prompt injection sink", controls=real_control)
+        assert mac.match_step(step, [finding])["controls_found"], real_control

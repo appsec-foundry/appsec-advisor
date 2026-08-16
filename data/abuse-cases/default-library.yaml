@@ -467,7 +467,10 @@ abuse_cases:
             - "(?i)messages\\.push|messages\\s*=\\s*\\["
             - CWE-(1427|94)
           control_patterns:
-            - "(?i)(sanitiz|delimit|guardrail|content.?filter|instruction.?hierarch)"
+            # `guardrail` deliberately absent: it matches prose describing a
+            # system-prompt instruction, which is not a boundary. The remaining
+            # patterns name controls that live outside the prompt.
+            - "(?i)(sanitiz|delimit|content.?filter|instruction.?hierarch)"
           control_sufficiency: any
       - step: 2
         label: The model may call tools without a second authorization check

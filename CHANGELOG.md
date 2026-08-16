@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A guardrail named only in a system prompt no longer counts as a control against the prompt-injection abuse case.
 - Cross-repository expectation mismatches now remain hypotheses until target-repository evidence supports a finding.
 - An endpoint that reaches a language model is now always modelled: reconnaissance records the call as a structured signal, marks the route, and matches a prompt-injection abuse case.
 - A scan no longer ends when an analysis agent writes a malformed artifact: the controller asks that agent once to correct it, naming the exact contract violations.
