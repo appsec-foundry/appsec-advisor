@@ -1040,6 +1040,53 @@ def test_prepare_abuse_still_dispatches_a_partially_finalized_verdict(tmp_path, 
     assert action["candidates"] == ["AC-T-001"]
 
 
+def _failing_matcher(stderr: str):
+    def fake_script(name, args, **kwargs):
+        if args and args[0] == "match":
+            return subprocess.CompletedProcess(["test"], 1, stdout="", stderr=stderr)
+        return _completed()
+
+    return fake_script
+
+
+def test_prepare_abuse_aborts_when_an_explicitly_named_case_file_is_rejected(tmp_path, monkeypatch):
+    # The matcher exits before writing any match, so degrading to a receipt
+    # would run the stage as "0 candidates" and silently drop the file the
+    # operator named.
+    output = _abuse_output(tmp_path)
+    cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+    cfg["abuse_case_files"] = ["security/payments.yaml"]
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+    monkeypatch.setattr(controller, "_run_script", _failing_matcher("ERROR: payments.yaml: cannot parse"))
+    with pytest.raises(controller.ControllerError, match="per-scan abuse-case selection"):
+        controller.prepare_abuse(output)
+
+
+def test_prepare_abuse_aborts_when_a_selected_case_id_is_not_active(tmp_path, monkeypatch):
+    output = _abuse_output(tmp_path)
+    cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+    cfg["only_abuse_case_ids"] = ["REPO-AC-010"]
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+    monkeypatch.setattr(
+        controller, "_run_script", _failing_matcher("ERROR: selected abuse-case id 'REPO-AC-010' is not active")
+    )
+    with pytest.raises(controller.ControllerError, match="REPO-AC-010"):
+        controller.prepare_abuse(output)
+
+
+def test_prepare_abuse_still_degrades_a_matcher_failure_without_a_selection(tmp_path, monkeypatch):
+    # Without an explicit selection the case set is best-effort library content:
+    # a partial match stays a receipt rather than ending the run.
+    output = _abuse_output(tmp_path)
+
+    monkeypatch.setattr(controller, "_run_script", _failing_matcher("WARN: one case skipped"))
+    action = controller.prepare_abuse(output)
+    assert action["action"] == "run_gate"
+    assert any("matcher returned 1" in receipt for receipt in action["receipts"])
+
+
 def test_finalize_abuse_aborts_when_yaml_rebuild_fails_schema_validation(tmp_path, monkeypatch):
     # build_threat_model_yaml.py writes the yaml BEFORE validating it, so exit 5
     # leaves an invalid model on disk — it must not degrade to a receipt.

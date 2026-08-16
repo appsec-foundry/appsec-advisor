@@ -5170,6 +5170,15 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
     if org_profile := str(cfg.get("org_profile_path") or ""):
         args += ["--org-profile", org_profile]
     match = _run_script("match_abuse_cases.py", args, acceptable=(0, 1, 2))
+    # A failed matcher normally degrades to a receipt — the library case set is
+    # best-effort. Cases this run was explicitly given are not: an unreadable
+    # file or an unknown id aborts the matcher before it writes any match, so
+    # degrading here would silently drop exactly what the operator asked for.
+    if match.returncode != 0 and (cfg.get("abuse_case_files") or cfg.get("only_abuse_case_ids")):
+        detail = (match.stderr or match.stdout or "").strip()
+        raise ControllerError(
+            f"match_abuse_cases.py rejected the per-scan abuse-case selection (exit {match.returncode}): {detail}"
+        )
     listed = _run_script(
         "match_abuse_cases.py",
         ["list-candidates", "--output-dir", str(output_dir)],

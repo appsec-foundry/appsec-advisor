@@ -122,6 +122,7 @@ def resolve_abuse_cases(
 
     cases: list[dict] = []
     errors: list[str] = []
+    loaded_paths: set[Path] = set()
 
     library = plugin_root / "data" / "abuse-cases" / "default-library.yaml"
     if inherit and library.exists():
@@ -146,6 +147,7 @@ def resolve_abuse_cases(
                 file_cases, file_errors = _load_case_file(path, schema)
                 cases += file_cases
                 errors += file_errors
+                loaded_paths.add(path.resolve())
 
     # Explicit per-scan files are constrained to the target repository. They
     # are untrusted data, not arbitrary host-file reads. Unlike the automatic
@@ -166,6 +168,11 @@ def resolve_abuse_cases(
                 if candidate.suffix not in {".yaml", ".yml"} or not candidate.is_file():
                     errors.append(f"explicit abuse-case file {path!s} is not a readable YAML file")
                     continue
+                # Naming a file the repo-local layer already picked up is a
+                # redundant argument, not a duplicate definition — load it once.
+                if candidate in loaded_paths:
+                    continue
+                loaded_paths.add(candidate)
                 file_cases, file_errors = _load_case_file(candidate, schema)
                 cases += file_cases
                 errors += file_errors

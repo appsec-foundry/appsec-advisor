@@ -13,13 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New context-v2 analysis runtime projects only the facts each component needs instead of a shared prompt context; full and rebuild scans use it by default, `APPSEC_CONTEXT_V2=0` keeps the legacy producer. See `docs/threat-modeler.md`.
 - A new or rebuilt analysis now takes optional business context from pasted text or a URL, interactively, through `--context`, or not at all with `--skip-context`. See `docs/threat-modeler.md`.
-- Named sensitive assets in `docs/business-context.md` now mark the components that handle them for full-depth analysis.
 - An organization profile can declare an `llm_policy` of permitted data classes and approval-required actions. See `docs/org-profiles.md`.
 - The LLM lens now asks four questions the OWASP Top 10 leaves out, from prompt-only guardrails to permitted data classes.
+- Named sensitive assets in `docs/business-context.md` now mark the components that handle them for full-depth analysis.
 - New alpha export: `--formats threatdragon` writes OWASP Threat Dragon v2 JSON, which also imports into OWASP ThreatAtlas; `create-threat-model --threatdragon` writes it during a scan. See `docs/threat-dragon-export.md`.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
 - New `install-baseline`, `verify-baseline` and `remove-baseline` skills manage a secure-coding baseline in Claude Code's instruction files, with `verify-baseline --enforce` as a CI gate.
 - New `help` skill lists available commands and the context, profile, and coach configuration in effect.
+- New `examples/abuse-cases.yaml` is a commented, ready-to-adapt abuse case for `--abuse-case-file` and `<repo>/.appsec/abuse-cases/`. See `docs/org-profiles.md`.
 - Sessions now open with a status banner naming the plugin, threat model, and loaded baseline; `APPSEC_BANNER=0` disables it.
 - Organization profiles can ship custom skills, a secure-coding baseline, and a banner, and disable shipped skills.
 - A run that recorded an error now points at `/appsec-advisor:report-error`, which builds a local anonymised bundle and sends nothing.
@@ -28,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A scan records per-agent token usage again, and says so when part of its compute went unrecorded.
+- An abuse-case file or case id named for a single scan now runs at any depth, and a scan that cannot use it says so instead of skipping it silently.
 - The findings register lists an unrestricted CI/CD workflow token permission once instead of twice.
 - A guardrail named only in a system prompt no longer counts as a control against the prompt-injection abuse case.
 - Cross-repository expectation mismatches now remain hypotheses until target-repository evidence supports a finding.

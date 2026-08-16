@@ -667,7 +667,11 @@ The plugin loads cases in this order:
    automatically. Use the `REPO-AC-NNN` ID prefix. IDs must be unique.
 4. **One scan** — `--abuse-case-file <repo-relative-path>` adds a YAML file
    below the target repository. Repeat `--only-abuse-case <ID>` to run selected
-   cases only.
+   cases only. Either flag runs abuse-case verification at any depth, and an
+   unreadable file or an unknown id is reported rather than silently skipped.
+
+`examples/abuse-cases.yaml` is a commented, schema-valid case to copy and
+adapt — it documents every field and the vocabulary each one accepts.
 
 Example repo-local case (`<repo>/.appsec/abuse-cases/payments.yaml`):
 

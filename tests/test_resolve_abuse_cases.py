@@ -214,6 +214,41 @@ def test_default_library_file_is_self_consistent():
     assert len(cases) == len(_LIBRARY_IDS)
 
 
+def test_explicit_file_already_loaded_from_the_repo_layer_is_not_a_duplicate(tmp_path: Path):
+    """Pointing --abuse-case-file at a file `.appsec/abuse-cases/` already picks
+    up names it twice; it does not define its ids twice."""
+    repo = tmp_path / "repo"
+    (repo / ".appsec" / "abuse-cases").mkdir(parents=True)
+    (repo / ".appsec" / "abuse-cases" / "c.yaml").write_text(_VALID_CASE, encoding="utf-8")
+    cases, errors = rac.resolve_abuse_cases(
+        {"abuse_cases": {"inherit_defaults": False}},
+        None,
+        repo_root=repo,
+        extra_case_files=[Path(".appsec/abuse-cases/c.yaml")],
+    )
+    assert errors == [], errors
+    assert len(cases) == 1
+
+
+def test_example_case_file_loads_the_way_a_user_would_pass_it(tmp_path: Path):
+    """examples/abuse-cases.yaml is what users copy — it must survive the same
+    path a `--abuse-case-file` argument takes, not just a schema check."""
+    repo = tmp_path / "repo"
+    (repo / ".appsec").mkdir(parents=True)
+    (repo / ".appsec" / "my-case.yaml").write_text(
+        (REPO_ROOT / "examples" / "abuse-cases.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    cases, errors = rac.resolve_abuse_cases(
+        {"abuse_cases": {"inherit_defaults": False}},
+        None,
+        repo_root=repo,
+        extra_case_files=[Path(".appsec/my-case.yaml")],
+    )
+    assert errors == [], errors
+    assert [c["id"] for c in cases] == ["REPO-AC-001"]
+
+
 # ---------------------------------------------------------------------------
 # _load_case_file error paths
 # ---------------------------------------------------------------------------

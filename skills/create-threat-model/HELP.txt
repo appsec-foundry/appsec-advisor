@@ -224,8 +224,10 @@ ADVANCED
                                not-applicable catalog, no chain elevation)
   --abuse-case-file <path>     Add a YAML abuse-case file below the target
                                repository for this scan; may be repeated
+                               (turns Stage 1d on at any depth)
   --only-abuse-case <ID>       Verify only the named active abuse case; may be
-                               repeated (unknown IDs fail the stage)
+                               repeated (unknown IDs fail the stage; turns
+                               Stage 1d on at any depth)
   --max-resumes <N>            Cap on Stage 1 auto-resume dispatches (default: 1;
                                0 disables resume)
   --max-wall-time <DURATION>   Hard wall-time deadline; watchdog aborts the run

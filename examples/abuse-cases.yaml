@@ -1,0 +1,157 @@
+# examples/abuse-cases.yaml — a repository's own abuse case
+#
+# An abuse case is an end-to-end attack scenario. The pipeline matches its
+# steps against the findings of the run, dispatches a verifier that confirms
+# each step against the source, and renders the result as a chain in §9 of the
+# report. A chain that verifies end to end can elevate the findings it rests on.
+#
+# Three ways to use this file:
+#
+#   1. Copy it to `<repo>/.appsec/abuse-cases/<name>.yaml` in the repository
+#      being analyzed. Every run picks it up, no flag needed. This is the
+#      normal case — the scenario is versioned with the code it describes.
+#   2. Pass it for a single scan: `--abuse-case-file .appsec/my-case.yaml`
+#      (repository-relative; a path outside the repository is rejected).
+#      This also switches abuse-case verification on at quick depth. Use it for
+#      a case you do not want on every run — a file already in
+#      `.appsec/abuse-cases/` is loaded either way.
+#   3. Ship it from an org profile via `abuse_cases.add`, using `ORG-AC-NNN`
+#      ids. See docs/org-profiles.md.
+#
+# Validated against schemas/abuse-cases.schema.yaml. An unparseable file, a
+# schema violation, or a `requires` no earlier step grants fails the run.
+
+schema_version: 1
+
+abuse_cases:
+
+  # Adapt this case: keep the shape, replace the patterns with the ones your
+  # codebase actually uses. Ids are `REPO-AC-NNN` for a repository-local file
+  # and must be unique across the standard library and the org profile.
+  - id: REPO-AC-001
+    title: Cross-tenant data export via unscoped record lookup
+
+    # `mandatory` — evaluated against the repository on every run, and its
+    # resolution confirmed each time rather than carried forward. This is what
+    # a hand-written case wants; `discovered` is reserved for generated cases.
+    source: mandatory
+
+    # How much of the chain the report renders: minimal | standard | full.
+    detail_level: standard
+
+    attacker:
+      # An actor id from the model's actor table, or a name that describes the
+      # role. It appears verbatim in the report.
+      actor_id: authenticated-tenant-user
+      # unauthenticated | authenticated_low_priv | authenticated_high_priv | physical
+      initial_access: authenticated_low_priv
+      # Free prose — what the attacker must already have. Rendered as-is.
+      prerequisite: >-
+        Attacker holds a valid account in one tenant and can call the
+        application's own API with it.
+
+    goal: >-
+      Read and export records belonging to a tenant the account has no
+      membership in.
+
+    # Gate the case to repositories where it can be true at all. Without this,
+    # an irrelevant codebase produces a `not_applicable` verdict rather than a
+    # false positive — but the gate keeps it out of the verifier fan-out and
+    # saves the run the work.
+    scope_qualifier:
+      # Signals from reconnaissance. Available: has_public_routes,
+      # has_auth_surface, has_role_concept, has_secrets_in_repo,
+      # has_ci_pipeline, has_external_apis, has_client_storage,
+      # has_multi_tenancy_signal, has_open_self_registration, has_llm_surface.
+      required_signals: [has_auth_surface, has_multi_tenancy_signal]
+      # Optional: at least one glob must match a regular file in the
+      # repository. Repository-relative; traversal and absolute paths never
+      # match.
+      path_patterns: ["src/**/*.ts", "app/**/*.py"]
+
+    # The chain. Each step must be reachable from the one before it:
+    # `requires` names attacker state an earlier step's `grants` produced.
+    # Step 1 may require an external precondition (the `prerequisite` above).
+    chain:
+      - step: 1
+        label: Record id accepted from the request without an ownership check
+        grants: arbitrary_record_read
+        # Optional. Only used when the step was found by a direct source probe
+        # AND the verifier confirmed it — then it becomes a normal finding with
+        # an evidence binding. A regex hit alone never creates a finding.
+        finding:
+          title: Record lookup trusts a client-supplied identifier
+          cwe: CWE-639
+          stride: Elevation of Privilege
+          severity: High
+          mitigation_title: Scope every record lookup to the caller's tenant
+          remediation: >-
+            Derive the tenant from the authenticated session and add it to the
+            query predicate; never accept it from the request.
+        description: >-
+          The handler reads the identifier from the request and loads the
+          record without constraining the query to the caller's tenant.
+        # `false` marks a step the chain can survive without — the chain then
+        # verifies as partially blocked instead of failing outright.
+        required: true
+        probe:
+          # Narrows where the verifier looks. Both lists are optional.
+          entry_points:
+            endpoint_patterns: ["/api/.*/records/", "/api/.*/export"]
+            file_hints: ["*controller*", "*handler*", "*repository*"]
+          # Required. Regex or literal, matched against findings and source.
+          # These are what a vulnerable implementation looks like.
+          sink_patterns:
+            - "findByPk\\("
+            - "findOne\\(\\s*\\{\\s*where:\\s*\\{\\s*id"
+            - "\\.get\\(pk=request\\."
+          # What a correct implementation looks like. A hit here blocks the
+          # step — this is how the case avoids firing on a healthy repository.
+          control_patterns:
+            - "tenant_?id"
+            - "requireTenantMembership"
+            - "scopeToTenant"
+          # any — one control blocks the step. all — every listed control must
+          # be present before the step counts as blocked.
+          control_sufficiency: any
+
+      - step: 2
+        label: Export endpoint returns the record set without re-checking scope
+        grants: bulk_tenant_data
+        requires: arbitrary_record_read
+        finding:
+          title: Export path omits the tenant filter applied elsewhere
+          cwe: CWE-200
+          stride: Information Disclosure
+          severity: High
+          mitigation_title: Apply the tenant filter in the export query
+          remediation: >-
+            Run the export through the same scoped repository method the
+            regular read path uses instead of a separate raw query.
+        description: >-
+          The export builds its own query and does not repeat the tenant
+          predicate, so the ids from step 1 come back in bulk.
+        required: true
+        probe:
+          sink_patterns:
+            - "raw\\(|rawQuery|createQueryBuilder"
+            - "to_csv\\(|writeCsv|stream.*export"
+          control_patterns: ["tenant_?id", "scopeToTenant"]
+          control_sufficiency: any
+          # Optional: pin the step to a place you already know. The verifier
+          # confirms the pattern is there; a stale anchor does not invent one.
+          anchors:
+            - file: src/export/export.service.ts
+              pattern: "createQueryBuilder"
+
+    # Why the chain is worth more than its steps. Rendered into §9.
+    combined_risk_rationale: >-
+      Each step alone reads as a scoping bug in one handler. Together they turn
+      a single valid account into a bulk read across every tenant, which is the
+      failure the tenancy model exists to prevent.
+
+    # Optional, off by default. A case can fail a run only when it names the
+    # verdict itself. Uncomment to make a verified chain block a pipeline.
+    # release_gate:
+    #   fail_on: [fully_viable]              # or: [fully_viable, partially_blocked]
+    #   applies_to_presets: [ci-blocking]    # omit to apply to every preset

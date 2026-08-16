@@ -1062,6 +1062,32 @@ class TestCLI:
         assert cfg["abuse_case_files"] == ["security/payments.yaml"]
         assert cfg["only_abuse_case_ids"] == ["REPO-AC-010"]
 
+    def test_per_scan_case_file_enables_verification_at_quick_depth(self, tmp_path, monkeypatch):
+        """Naming a case file is a request to verify it — it must not resolve
+        into a stage the quick-depth default switched off."""
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--quick", "--abuse-case-file", "security/payments.yaml")
+        cfg = json.loads(r.stdout)
+        assert cfg["skip_abuse_case_verification"] is False
+        assert cfg["abuse_case_label"] == "enabled (per-scan case selection)"
+
+    def test_per_scan_case_id_enables_verification_at_quick_depth(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cfg = json.loads(self._run("--quick", "--only-abuse-case", "AC-T-001").stdout)
+        assert cfg["skip_abuse_case_verification"] is False
+
+    def test_per_scan_case_file_conflicts_with_no_abuse_cases(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--abuse-case-file", "security/payments.yaml", "--no-abuse-cases")
+        assert r.returncode == 1
+        assert "--abuse-case-file" in r.stderr
+
+    def test_per_scan_case_id_conflicts_with_no_abuse_cases(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--only-abuse-case", "AC-T-001", "--no-abuse-cases")
+        assert r.returncode == 1
+        assert "--only-abuse-case" in r.stderr
+
     # -- summary "show only when active" rules ------------------------------
 
     def test_summary_default_quiet_no_optional_rows(self, tmp_path, monkeypatch):

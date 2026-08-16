@@ -328,6 +328,16 @@ CONFLICT_PAIRS: list[tuple[str, str, str]] = [
     ("quick", "thorough", "--quick and --thorough cannot be used together."),
     ("enrich_arch", "no_enrich_arch", "--enrich-arch and --no-enrich-arch cannot be used together."),
     ("abuse_cases", "no_abuse_cases", "--abuse-cases and --no-abuse-cases cannot be used together."),
+    (
+        "abuse_case_file",
+        "no_abuse_cases",
+        "--abuse-case-file names cases to verify; --no-abuse-cases turns verification off. Pick one.",
+    ),
+    (
+        "only_abuse_case",
+        "no_abuse_cases",
+        "--only-abuse-case selects cases to verify; --no-abuse-cases turns verification off. Pick one.",
+    ),
     ("cheap_stride", "no_cheap_stride", "--cheap-stride and --no-cheap-stride cannot be used together."),
 ]
 
@@ -562,12 +572,20 @@ def resolve_abuse_case_verification(ns: argparse.Namespace, depth: str) -> dict:
     (matcher + haiku/sonnet verifiers + chain fold), the most expensive part of
     Stage 1d. ``--abuse-cases`` forces it on at any depth (incl. quick);
     ``--no-abuse-cases`` forces it off at any depth (incl. standard/thorough).
-    The two flags are mutually exclusive (see ``CONFLICT_PAIRS``).
+    ``--abuse-case-file`` / ``--only-abuse-case`` name the cases this run is to
+    verify, so they force it on the same way — otherwise the named cases would
+    be resolved into a stage that never runs. Conflicting combinations are
+    rejected up front (see ``CONFLICT_PAIRS``).
     """
     if getattr(ns, "no_abuse_cases", False):
         return {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (--no-abuse-cases)"}
     if getattr(ns, "abuse_cases", False):
         return {"skip_abuse_case_verification": False, "abuse_case_label": "enabled (--abuse-cases)"}
+    if getattr(ns, "abuse_case_file", None) or getattr(ns, "only_abuse_case", None):
+        return {
+            "skip_abuse_case_verification": False,
+            "abuse_case_label": "enabled (per-scan case selection)",
+        }
     if depth == "quick":
         return {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (auto - quick depth)"}
     return {"skip_abuse_case_verification": False, "abuse_case_label": "enabled"}
@@ -3478,10 +3496,11 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     if cfg.get("architect_review"):
         extras.append(f"architect review ({cfg['architect_label']})")
     # Abuse-case verification (Stage 1d) forced ON where it would otherwise be
-    # off — i.e. explicit --abuse-cases at quick depth. The default-on
-    # standard/thorough case is silent (not a deviation).
-    if cfg.get("abuse_case_label") == "enabled (--abuse-cases)":
-        extras.append("abuse-case verification (--abuse-cases)")
+    # off — i.e. --abuse-cases or a per-scan case selection at quick depth. The
+    # default-on standard/thorough case is silent (not a deviation).
+    abuse_label = cfg.get("abuse_case_label") or ""
+    if abuse_label.startswith("enabled ("):
+        extras.append(f"abuse-case verification {abuse_label[len('enabled '):]}")
     if extras:
         rows.append(("Extras", ", ".join(extras)))
 
