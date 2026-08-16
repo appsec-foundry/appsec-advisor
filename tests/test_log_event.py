@@ -275,6 +275,21 @@ class TestMainArgErrors:
         assert rc == 2
         assert "usage:" in capsys.readouterr().err
 
+    def test_empty_output_dir_is_rejected(self, capsys, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        rc = log_event.main(["log_event.py", "", "step-end", "AGENT_END component=x"])
+        assert rc == 2
+        assert "$OUTPUT_DIR" in capsys.readouterr().err
+        assert not (tmp_path / ".appsec-progress.json").exists()
+        assert not (tmp_path / ".agent-run.log").exists()
+
+    def test_option_in_output_dir_slot_is_rejected(self, capsys, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        rc = log_event.main(["log_event.py", "--event", "step-end", "detail"])
+        assert rc == 2
+        assert "looks like an option" in capsys.readouterr().err
+        assert not (tmp_path / "--event").exists()
+
     def test_info_requires_event_and_detail(self, capsys, tmp_path):
         rc = log_event.main(["log_event.py", str(tmp_path), "info", "ONLY_EVENT"])
         assert rc == 2

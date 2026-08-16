@@ -56,6 +56,7 @@ import sys
 import time
 from pathlib import Path
 
+import agent_lifecycle
 from event_log import format_line
 from jsonschema import ValidationError
 from write_stride_progress import authoritative_call
@@ -72,6 +73,15 @@ _PHASE_RE = re.compile(r"\[Phase\s+(\d+)/(\d+)\]")
 _PHASE_LOOSE_RE = re.compile(r"\[Phase\s+([0-9]+b?|[0-9]+(?:\.[0-9]+)?)(?:/(\d+))?\]")
 _STEP_RE = re.compile(r"(?:\[Phase\s+[0-9]+b?(?:/\d+)?\]\s*)?\[(\d+)/(\d+)\]")
 _DEPTH_TOKEN_RE = re.compile(r"(?i)(?:analysis_)?depth\s*[:=]\s*[^\s,;)\]]+")
+_COMPONENT_TOKEN_RE = re.compile(r"\bcomponent\s*[:=]\s*([a-z0-9][a-z0-9-]{0,99})\b")
+
+
+def _is_dispatched_component(output_dir: Path, component_id: str) -> bool:
+    """Whether a dispatched Agent call currently owns this component."""
+    try:
+        return any(call.get("component_id") == component_id for call in agent_lifecycle.running_calls(output_dir))
+    except Exception:
+        return False
 
 
 def _now_iso() -> str:
@@ -225,6 +235,19 @@ def main(argv: list[str]) -> int:
         print(f"usage: {argv[0]} <output_dir> <kind> <detail> [<event>]", file=sys.stderr)
         return 2
 
+    # An unset `$OUTPUT_DIR` reaches us as an empty argument, and `Path("")` is
+    # the current directory — the target repository root for an agent. Writing
+    # `.appsec-progress.json` there changes the worktree fingerprint that
+    # evidence bundles are bound to and aborts the run at the next dispatch
+    # gate. An option name in this slot means the arguments shifted for the
+    # same reason. Refuse both instead of logging to an arbitrary directory.
+    if not argv[1].strip():
+        print(f"{argv[0]}: <output_dir> is empty — is $OUTPUT_DIR exported?", file=sys.stderr)
+        return 2
+    if argv[1].startswith("-"):
+        print(f"{argv[0]}: <output_dir> looks like an option: {argv[1]!r}", file=sys.stderr)
+        return 2
+
     output_dir = Path(argv[1])
     kind = argv[2]
     if kind not in _CANONICAL_EVENTS:
@@ -242,10 +265,19 @@ def main(argv: list[str]) -> int:
         event = _CANONICAL_EVENTS[kind]
         detail = argv[3]
 
-    if agent == "stride-analyzer-v2":
-        if not component_id:
-            print(f"{argv[0]}: stride-analyzer-v2 logging requires --component-id", file=sys.stderr)
-            return 2
+    if agent == "stride-analyzer-v2" and not component_id:
+        print(f"{argv[0]}: stride-analyzer-v2 logging requires --component-id", file=sys.stderr)
+        return 2
+    if not component_id:
+        # A depth claim about a named component is validated whoever writes it.
+        # Keying the check on the caller naming itself made it opt-out: a line
+        # logged under the default agent kept whatever depth its author chose,
+        # and a `light` component was recorded as `full`.
+        named = _COMPONENT_TOKEN_RE.search(detail)
+        if named and _DEPTH_TOKEN_RE.search(detail) and _is_dispatched_component(output_dir, named.group(1)):
+            component_id = named.group(1)
+
+    if component_id:
         try:
             call = authoritative_call(output_dir, component_id, Path(__file__).resolve().parent.parent)
         except (OSError, ValueError, json.JSONDecodeError, ValidationError) as exc:

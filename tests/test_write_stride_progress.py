@@ -88,6 +88,30 @@ def _claim(output_dir: Path, depth: str, *, attempt: int = 1, call_depth: str | 
     return {"action_id": action_id, "job_id": job_id, "attempt": attempt}
 
 
+def test_depth_claim_is_validated_even_without_the_stride_agent_flag(tmp_path: Path) -> None:
+    """The 2026-08-16 run logged `depth=full` for a `light` component.
+
+    The guard used to run only when the caller named itself
+    `--agent stride-analyzer-v2`, so omitting the flags bypassed it entirely.
+    """
+    _plan(tmp_path, "light")
+    _claim(tmp_path, "light")
+
+    rc = log_event.main(["log_event.py", str(tmp_path), "info", "AGENT_START", "component=api depth=full"])
+
+    assert rc == 0
+    logged = (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
+    assert "depth=light" in logged
+    assert "depth=full" not in logged
+
+
+def test_a_depth_line_naming_no_dispatched_component_is_left_alone(tmp_path: Path) -> None:
+    rc = log_event.main(["log_event.py", str(tmp_path), "info", "ORCHESTRATION_READY", "mode=full depth=standard"])
+
+    assert rc == 0
+    assert "depth=standard" in (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("depth", ["full", "light"])
 def test_progress_depth_comes_only_from_validated_context_plan(tmp_path: Path, depth: str) -> None:
     _plan(tmp_path, depth)
