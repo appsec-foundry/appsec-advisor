@@ -1,7 +1,7 @@
 # Proposal — a mandatory STRIDE check catalogue with a deterministic coverage receipt
 
 **Status:** OPEN / design. Analysis only; no code until reviewed. Anchors are
-`file:line` at the time of writing.
+`file:line`, re-verified against `e4a7eb19` on 2026-08-15.
 
 ## What triggered this
 
@@ -24,8 +24,14 @@ the cheap-stride tier (`scripts/build_stride_dispatch_manifest.py:1251`). What
 - The analyzer pre-seeds `.stride-<COMPONENT_ID>.json` with all six letters in
   `skipped_categories` and clears them on completion
   (`agents/appsec-stride-analyzer.md:213`, `agents/appsec-stride-analyzer-v2.md:262`).
-- The dispatch gate looks for the literal log line `All six STRIDE categories
-  complete` (`scripts/check_stride_dispatch.py:321`).
+- The wave gate accepts a component on the artifact's own word: `partial: false`,
+  no `seed_only`, empty `skipped_categories` (`scripts/stride_dispatch_waves.py:292`).
+  Every one of those fields is written by the analyzer being judged.
+- The literal log line `All six STRIDE categories complete`
+  (`scripts/check_stride_dispatch.py:321`) is not that gate. It feeds
+  serial-dispatch detection, sits there as an alternative to `AGENT_END`, and no
+  producer emits the string — the analyzer logs `Completed all six STRIDE
+  categories for <COMPONENT_NAME>` (`agents/appsec-stride-analyzer-v2.md:264`).
 - Per-category coverage is judged post-hoc and only in the dev-only eval skill
   (`scripts/eval_threat_model.py:64`, `:310`; `agents/appsec-eval-judge.md:56`).
 
@@ -115,7 +121,7 @@ cannot enter as abuse cases in the shipped sense.
   mapping, required evidence. Today it binds the deterministic scanners. The
   proposal extends the same contract to the LLM STRIDE pass.
 - `not_applicable` as a first-class outcome has precedent: decision SA-1
-  (`docs/internal/decisions.md:146`) states that absence of signal yields
+  (`docs/internal/decisions.md:154`) states that absence of signal yields
   `not_applicable`, never a negative rating, enforced through
   `data/architecture-coverage-rules.yaml`.
 - Coverage-gap findings already exist as a class that carries no CVSS, so
@@ -134,8 +140,9 @@ more trustworthy. Use a distinct prefix (`STR-T01`).
 decides which of the 24 block-B checks apply, the receipt is another self-report
 and the whole prompt has to carry all of them.
 `build_stride_dispatch_manifest.py` already
-computes per-component predicates (`_is_llm:335`, `_is_auth` / `_is_frontend`
-around `:546`, exposure and zone flags). Deriving applicability there bounds the
+computes per-component predicates (`_is_auth:250`, `_is_frontend:255`,
+`_is_llm:335`, `_is_exposed:420`, combined in `_in_scope:544`). Deriving
+applicability there bounds the
 prompt to the applicable subset and makes the receipt checkable against an
 input the agent did not write.
 
@@ -148,25 +155,36 @@ is a coverage statement — this check applied, could not be decided, here is wh
 **4. Where the receipt lives.** `checks[]` next to `skipped_categories` in
 `.stride-<COMPONENT_ID>.json` (`schemas/stride.schema.yaml:105`), with a schema
 entry, a validator script, and a blocking gate at the phase boundary. Anything
-looser reproduces the log-line check that exists today.
+looser reproduces the self-reported `skipped_categories` that exists today.
 
 **5. Where outcomes surface.** Per-component, per-category coverage is the
 threat-model-shaped half of the output. It has to reach the report, or the
 catalogue only makes the run more expensive.
 
+**6. How far the configuration layers may go.** Two limits need a ruling before
+the resolver exists. Whether `threat_checks.inherit_defaults: false` is offered
+at all — for abuse cases it is harmless, here it empties the coverage claim the
+catalogue was built to make. And whether an org can mark a check as not
+disableable by the repo layer, the way an enterprise actor disable is already
+terminal against the repo layer (`schemas/org-profile.schema.yaml` →
+`actors.disable`). My reading: offer `inherit_defaults` for block A only, and
+let an org mark checks the repo layer cannot disable, because layer 3 belongs to
+the team being assessed.
+
 ## How it plugs in
 
-**The catalogue is data, not prompt text.** `data/stride-check-catalogue.yaml`,
-one entry per check: id, letter, title, applicability predicate, signals and
-paths, pass/fail conditions, false-positive exclusions, required evidence, and
-the CWE/type mapping a `failed` outcome inherits. Same shape as
-`data/architecture-coverage-rules.yaml` and `data/severity-caps.yaml`, with a
-schema and a drift test. Editing a check must not mean editing an agent.
+**The catalogue is data, not prompt text.** `data/threat-checks/default-catalogue.yaml`
+carries all four blocks, one entry per check: id, block, letter, the question in
+one plain sentence, applicability predicate, signals and paths, pass/fail
+conditions, false-positive exclusions, required evidence, and the CWE/type
+mapping a `failed` outcome inherits. It has a schema and a drift test. Editing a
+check must not mean editing an agent. Who may edit it and how is the next
+section.
 
 **Applicability is resolved in the manifest.**
 `scripts/build_stride_dispatch_manifest.py` evaluates each check's predicate
-against the per-component flags it already computes (`_is_llm:335`, `_is_auth` /
-`_is_frontend` around `:546`, exposure and zone derivation) and writes
+against the per-component flags it already computes (`_is_auth:250`,
+`_is_frontend:255`, `_is_llm:335`, `_is_exposed:420`, zone derivation) and writes
 `applicable_checks: ["STR-T01", …]` into the component's manifest entry. The
 agent never decides what applies to it, so the receipt can be checked against an
 input it did not author.
@@ -188,8 +206,10 @@ produced. Every id in `applicable_checks` must appear exactly once.
 manifest, catalogue and receipts and enforces the coupling: `failed` needs
 evidence or a linked threat, `passed` needs the evidence the catalogue demands,
 `not_applicable` needs a false predicate or a stated reason, `not_verifiable`
-needs a reason. It replaces the log-line grep in
-`scripts/check_stride_dispatch.py:321` as what "category complete" means.
+needs a reason. It becomes what "category complete" means in
+`scripts/stride_dispatch_waves.py:292`, beside the `partial` and `seed_only`
+checks that stay. The log-line branch in `scripts/check_stride_dispatch.py:321`
+belongs to serial-dispatch detection and is out of scope.
 
 **Failure must not kill the run.** A component with an incomplete receipt gets
 one targeted re-dispatch carrying only the missing checks; if it comes back
@@ -207,20 +227,92 @@ content rather than leaving it in an artifact.
 
 **Sequencing.** Each step is shippable and reversible on its own.
 
-1. Catalogue file, schema, tests. No runtime change.
+1. Catalogue file, schema, tests, and `resolve_threat_checks.py --list`. No
+   runtime change, and the questions are already readable from the plugin.
 2. Manifest emits `applicable_checks`. No agent change. Measure the subset size
    per component on the fixtures before going further.
 3. `checks[]` in the schema, the agent contract, and the validator in warn-only
    mode. This is where the real cost shows up.
-4. Flip the validator to a gate and retire the log-line meaning.
+4. Flip the validator to a gate and retire the self-reported `skipped_categories`
+   as the meaning of complete.
 5. Surface coverage in the report.
-6. Add the block-D LLM-conditional checks.
-7. Block A, wired to the existing weight consumers — crown-jewel marking, actor
+6. Org and repo layers. They come after step 5 so that a disabled check is
+   visible in the report the first moment it can be disabled.
+7. Add the block-D LLM-conditional checks.
+8. Block A, wired to the existing weight consumers — crown-jewel marking, actor
    relevance, severity caps — not to a new report section.
-8. Block C as targeting for block B — no new case class, no new chain layer.
+9. Block C as targeting for block B — no new case class, no new chain layer.
 
 Blocks A and C come last because they change how findings are weighted and named,
 and doing that before the receipt is trustworthy makes both harder to judge.
+
+## Where the questions live and who may change them
+
+The questions are the product here, not an implementation detail. They have to be
+readable without reading Python, editable without touching an agent, and
+extendable by an organization without forking the plugin. Three properties, and
+the repository already has the machinery for all three.
+
+**One file, plain sentences.** Every question is one entry in
+`data/threat-checks/default-catalogue.yaml`, written as a sentence an engineer
+can argue with. The same sentence is what the report prints as the coverage line,
+so there is no second wording to keep in sync.
+
+```yaml
+- id: STR-E03
+  block: stride
+  letter: E
+  question: >-
+    Is the owner identity part of the query, and does it come from the session
+    rather than a parameter?
+  applies_when: component.persists_records and system.multi_tenant
+  signals: [data-access sites, query construction, origin of the identity]
+  pass: Every read and write of a user-owned record is constrained by an identity the caller cannot set.
+  fail: An access path takes the owner from a request parameter, or applies no owner predicate.
+  not_verifiable_when: The data layer is generated or indirect enough that the predicate cannot be read from source.
+  exclusions: [ORM scope or middleware applying the predicate centrally, genuinely global records]
+  evidence: [data-access site, origin of the identity]
+  on_fail: {cwe: CWE-639, type: authorization}
+```
+
+**Four layers, the same shape the plugin already uses.**
+`scripts/resolve_threat_checks.py` merges them the way `resolve_abuse_cases.py`
+and `resolve_actors.py` merge theirs, stamps `_provenance.source_file` per entry
+and writes one resolved set:
+
+1. the plugin catalogue, unless `threat_checks.inherit_defaults: false`;
+2. the org profile — `threat_checks.add` (a glob relative to the profile
+   directory, validated against the catalogue schema) and `threat_checks.disable`
+   (ids, each with a reason);
+3. `<repo>/.appsec/threat-checks.yaml` for the team being assessed;
+4. nothing else. Neither depth, nor preset, nor a CLI flag adds or removes a
+   question.
+
+**Readable from the outside.** `resolve_threat_checks.py --list` prints the
+active questions with their block, id and provenance — the precedent is
+`resolve_abuse_cases.py --list-ids`. `docs/threat-checks.md` carries the shipped
+catalogue as a table, and the org-profile block is documented in
+`docs/org-profiles.md` next to `abuse_cases` and `actors`.
+
+**Namespaces stay separate.** Shipped ids are `CTX-`, `STR-`, `ABU-`, `LLM-`;
+anything added by an org or a repo is `ORG-…`, the way `ORG-AC-NNN` already works
+for abuse cases. A layer may never redefine a shipped id — it disables it and
+adds its own.
+
+**A disable is a coverage statement, not a deletion.** The point of the catalogue
+is honest coverage, so a disabled check appears in the report as not evaluated,
+with the layer that disabled it and the reason. This is also what keeps layer 3
+safe: the repository being assessed may state why a check does not apply to it,
+and it may not make the question disappear from the output. Silent removal turns
+the receipt into self-certification.
+
+**Imported text is data.** Questions from layers 2 and 3 reach an agent prompt,
+so they are untrusted content in the sense AGENTS.md already uses: length-capped,
+never able to choose a path, command, tool or permission, and never carrying
+instructions to the agent. `applies_when` is not free text — it resolves against
+the manifest's existing named predicates and nothing else. `security_coach`
+(`schemas/org-profile.schema.yaml`) is the precedent for org text injected as
+advisory context under a cap.
 
 ## What a single check looks like
 
@@ -232,10 +324,10 @@ quality argument and the largest single saving in prompt cost.
 
 | Check | Existing owner |
 |---|---|
-| I-01 secrets in code and configuration | `scripts/secret_scan.py`, `scripts/postscan_secret_check.py` |
-| T-03 integrity of configuration and artifacts | `scripts/config_iac_scanner.py` |
-| E-01 object and function authorization | `scripts/source_auth_scanner.py` |
-| T-02 manipulation of persisted objects | `scripts/mass_assignment_scanner.py` (partial) |
+| STR-I01 secrets in code and configuration | `scripts/secret_scan.py`, `scripts/postscan_secret_check.py` |
+| STR-T03 pinning and integrity of dependencies and artifacts | `scripts/assess_supply_chain_controls.py`; `scripts/config_iac_scanner.py` for the configuration half |
+| STR-E01 object and function authorization | `scripts/source_auth_scanner.py` |
+| STR-T02 manipulation of persisted objects | `scripts/mass_assignment_scanner.py` (partial) |
 
 The rest have no deterministic owner today and fall to the agent. Three worked
 examples, spanning the range:
@@ -295,13 +387,14 @@ checks that would run anyway.
 
 Checked against `data/abuse-cases/default-library.yaml` and decisions AC-1…AC-5.
 
-The shipped library is six technical chains — AC-T-001 account takeover via
+The shipped library is seven technical chains — AC-T-001 account takeover via
 stored XSS, AC-T-002 bulk exfiltration via broken object authorization, AC-T-003
 JWT algorithm confusion, AC-T-004 mass assignment on registration, AC-T-005
-exposed secret material, AC-T-006 server-side injection. Every step carries a
+exposed secret material, AC-T-006 server-side injection, AC-T-007 a privileged
+action via prompt injection into a tool-calling model. Every step carries a
 CWE and a `probe` with `sink_patterns` and `control_patterns`, gated by
-`scope_qualifier.required_signals`. Nothing in it models misuse of a working
-feature.
+`scope_qualifier.required_signals` (AC-T-006 alone is ungated). Nothing in it
+models misuse of a working feature.
 
 So block C does not duplicate the library by subject. It cannot ride its
 mechanism either: AC-1 promotes only a confirmed probe, and business misuse has
@@ -353,11 +446,87 @@ already computable: `_is_llm` (`scripts/build_stride_dispatch_manifest.py:335`)
 and `KNOWN_LLM_PATTERNS` decide who gets them, with the agentic subset gated the
 way the ASI lens is gated today.
 
-LLM-D3 has no equivalent anywhere in the current pipeline and is the most useful
-of the four: a system prompt saying "never reveal the API key" is a control the
-report has no way to call inadequate today. LLM-D2 is the one that needs block A
+LLM-D3 is the most useful of the four, and the pipeline currently works against
+it. AC-T-007 step 1 lists `guardrail` and `instruction.?hierarch` among its
+`probe.control_patterns` with `control_sufficiency: any`, so a prompt saying
+"never reveal the API key" marks the step control-guarded
+(`scripts/match_abuse_cases.py:33`). LLM-D3 is the check that disputes exactly
+that: a prompt instruction is not an enforced boundary. Adding it means deciding
+what happens to that pattern list. LLM-D2 is the one that needs block A
 — whether a delegated decision is consequential is a business question, not a
 code question.
+
+## Risks of the changeover
+
+Ranked by what they cost if they land. The first three decide whether this is
+buildable at all; the rest are design work that has to happen before step 3.
+
+**1. The receipt asks for more verdicts than the budget has turns.** A component
+at standard/moderate gets 22 turns, a screened one gets 8
+(`build_stride_dispatch_manifest.py:78`, `:701`), against 24 block-B checks plus
+up to four conditional ones. The precedent is recorded in
+`classify_component._footprint_turn_floor:229`: on 2026-07-20 juice-shop's
+`data-persistence` needed 24 model file reads plus 8 mandatory context reads, and
+both dispatch attempts died at the 40-call ceiling having completed zero STRIDE
+categories. Mandating a per-check verdict moves every component toward that
+shape. The subset size per component has to be measured on the fixtures at step 2,
+before anything depends on it.
+
+**2. It pushes into the model loop what the current direction pulls out.** The
+execution rule of `implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`
+is turn admission: status, fixed routing, successful validation and mechanical
+normalization must not enter a model loop. Twenty-four model-authored verdicts
+per component is the opposite motion on the most expensive stage of the run.
+Only the deterministic owners make the two compatible, so their share is not a
+nice-to-have — it is the condition.
+
+**3. A well-shaped receipt can still be an empty one.** The validator can check
+that every applicable id carries an outcome, a reason and the demanded evidence.
+It cannot check that the model looked. Under turn pressure the cheapest
+compliant strategy is `not_verifiable` everywhere, and the fail-safe in
+"Failure must not kill the run" writes exactly that outcome by design. Silence
+today is honest; a full receipt of unexamined checks is worse, because the report
+now claims coverage on it. A component whose receipt is mostly `not_verifiable`
+has to be reported as not covered, not as checked.
+
+**4. A deterministic owner that did not run.** Four checks are answered by
+scanners, and not every scanner runs in every mode — the config/IaC pass is
+conditional and quick mode drops stages. If the owner never ran, an empty finding
+set reads as `passed`. The receipt has to record which producer answered a check,
+and an absent owner must resolve to `not_verifiable`.
+
+**5. The same weakness twice.** STR-I01 inherits the secret-scan finding rather
+than authoring one, and per-instance findings stay separate by default, so a
+check that emits its own threat produces a second F-ID for the same evidence.
+This is the first open question at the end of this document, and it belongs in
+the validator rather than in prompt wording.
+
+**6. Coverage output can drown the findings.** Per component and per check, a
+ten-component model produces roughly 250 outcome rows. Whether the report carries
+outcomes per check or aggregates them per category — six rows per component — is
+a decision to make before step 5, not after, because it changes the sections
+contract and the QA rules with it.
+
+**7. Incremental runs have no answer yet.** A carried-forward `passed` masks new
+code in a changed component; recomputing every outcome removes the point of an
+incremental run. T/F identity is contractually preserved across runs and check
+outcomes have no such contract, so this needs one before the gate flips.
+
+**8. A fifth public ID class.** `agents/shared/qa-crossref-rules.md` enumerates
+`T-NNN`, `M-NNN`, `F-NNN`, `TH-NN` and `C-NN` explicitly, and reference formats,
+anchors and deep links hang off that list. `STR-…` and `ORG-…` in the report mean
+touching that contract, the sections contract and the QA cross-reference checks
+in one change.
+
+**9. Attempt accounting.** `stride_dispatch_waves.py:94` allows two attempts per
+component, and the wave plan persists attempt counts strictly enough to raise on
+a mismatch. The targeted re-dispatch for an incomplete receipt is a third attempt
+unless it is planned inside that budget.
+
+**10. Two profiles, two meanings.** With the configuration layers, the same
+repository under two org profiles produces different coverage claims under
+identical section titles. The provenance and the visible-disable rule only work
+if the report prints both.
 
 ## Option B — rename instead of building
 

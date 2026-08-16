@@ -129,25 +129,10 @@ An internal build is produced by `scripts/package_internal_plugin.py` from an
 org profile plus an optional package policy. This is the whole surface — an
 organization extends the plugin through these, never by editing core files.
 
-`org-profile.yaml`, validated by `schemas/org-profile.schema.yaml`:
-
-| Block | What it adds or changes |
-|---|---|
-| `organization`, `api_version`, `compatibility` | Identity and the core-version range the profile accepts |
-| `default_preset`, `presets` | Scan defaults: depth, outputs, incremental, quality, verification, guardrails |
-| `policy` | `disable_opus`, `url_allowlist` for every remote fetch |
-| `branding` | Report cover title, contact, logo |
-| `banner` | Session-start line: `headline`, `url`, or `enabled: false` |
-| `baseline` | The organization's own secure-coding baseline, by http(s) `url` or `git`, under its own `id`; `enforce` makes the check a gate |
-| `requirements` | Requirements catalog source, fail mode, and gate defaults |
-| `llm_context` | Org markdown documents loaded as analysis context |
-| `security_coach` | Prompt-time steering: own baseline text and topics |
-| `actors` | Add actor definitions, disable default actor classes |
-| `abuse_cases` | Add abuse cases, disable library ones |
-| `skills` | Add the organization's own skills (`skills.add` glob) |
-| `skill_toggles` | Disable a skill at runtime with a reason, enforced by `skill-policy-gate` |
-| `hooks` | The organization's own Claude Code hooks |
-| `mcp` | The organization's own MCP servers, emitted as the plugin's `.mcp.json` |
+`schemas/org-profile.schema.yaml` is the list of blocks a profile may carry and
+what each one accepts; `docs/org-profiles.md` explains them. Adding a block
+means changing both, plus the layer routing in
+`docs/internal/contracts/org-profile-invariants.md`.
 
 `package-policy.yaml` decides what the build ships: `plugin_surface.skills`,
 `.hooks` and `.mcp_servers` each take an `include` **or** an `exclude` list.
