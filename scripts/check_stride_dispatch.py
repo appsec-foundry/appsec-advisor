@@ -104,7 +104,10 @@ from stride_outputs import stride_output_files
 # Extracts the dispatched component from a hook line's trailing
 # ``[… COMPONENT_ID=<id> …]`` payload. Both AGENT_SPAWN and AGENT_INVOKE
 # carry it (agent_logger.py propagates COMPONENT_ID into the pair block).
-_COMPONENT_ID_RE = re.compile(r"COMPONENT_ID=([^\s\]]+)")
+# The hook writes `component_id=web-frontend`; older bracketed rows carry
+# `[COMPONENT_ID=backend-api]`. Matching only the upper-case form left this
+# detector reading an empty set on every real context-v2 run.
+_COMPONENT_ID_RE = re.compile(r"(?i)\bcomponent_id=([^\s\]]+)")
 
 # A threat is a trivial-skip stub placeholder when its text carries this
 # marker (see phase-group-threats.md "Trivial-component skip (M24)").
@@ -318,7 +321,11 @@ def _context_v2_completion_events(output_dir: Path, component_ids: set[str]) -> 
         return []
     events: list[tuple[str, set[str]]] = []
     for line in text.splitlines():
-        if "AGENT_END" not in line and "All six STRIDE categories complete" not in line:
+        # AGENT_USAGE is the controller's own completion row and carries the
+        # component. The agent-written AGENT_END is kept as a signal but cannot
+        # be relied on alone: an analyzer that never emits it would otherwise
+        # leave this detector with nothing to compare.
+        if not any(marker in line for marker in ("AGENT_USAGE", "AGENT_END", "All six STRIDE categories complete")):
             continue
         timestamp = line.split("  ", 1)[0].strip()
         named = {

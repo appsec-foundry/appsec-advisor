@@ -31,19 +31,33 @@ from stride_outputs import stride_output_files  # noqa: E402
 
 
 def _read_phase_9_start(log_path: Path) -> int | None:
-    """Return Unix-epoch seconds of the most recent Phase 9 PHASE_START line."""
+    """Return Unix-epoch seconds where Phase 9 began.
+
+    Prefers the bracketed ``PHASE_START [Phase 9/…]`` boundary. The context-v2
+    runtime logs phase boundaries without that bracket, so a run that analyzed
+    seven components in two waves produced no match at all and this module
+    returned early without recording anything. The first STRIDE dispatch is the
+    controller's own, canonical marker for the same instant.
+    """
     if not log_path.is_file():
         return None
     pattern = re.compile(r"^(\S+)\s+.*PHASE_START\s+\[Phase 9/", re.IGNORECASE)
     last_ts = None
+    first_dispatch = None
     try:
         with log_path.open() as fh:
             for line in fh:
                 m = pattern.match(line)
                 if m:
                     last_ts = m.group(1)
+                    continue
+                m = _AGENT_SPAWN_RE.match(line)
+                if m and first_dispatch is None:
+                    first_dispatch = m.group(1)
     except OSError:
         return None
+    if not last_ts:
+        last_ts = first_dispatch
     if not last_ts:
         return None
     try:
@@ -54,6 +68,14 @@ def _read_phase_9_start(log_path: Path) -> int | None:
         return None
 
 
+# The controller stamps both of these from its own clock and tags them with the
+# component, so they pair correctly under parallel fan-out. AGENT_SPAWN marks
+# dispatch; AGENT_USAGE is written when the agent's result comes back and is the
+# only controller event that marks real completion — AGENT_INVOKE, AGENT_RUNNING
+# and AGENT_DONE all fire at dispatch, within a second of the spawn.
+_AGENT_SPAWN_RE = re.compile(r"^(\S+)\s+.*?\sAGENT_SPAWN\s+.*?\bcomponent_id=(?P<comp>[a-z0-9][a-z0-9\-]*)")
+_AGENT_USAGE_RE = re.compile(r"^(\S+)\s+.*?\sAGENT_USAGE\s+.*?\bcomponent_id=(?P<comp>[a-z0-9][a-z0-9\-]*)")
+
 _AGENT_INVOKE_RE = re.compile(
     r"^(\S+)\s+.*?stride-analyzer\s+AGENT_INVOKE\s+STRIDE analysis:\s+"
     r"(?P<comp>[a-z0-9\-]+)"
@@ -62,6 +84,45 @@ _AGENT_DONE_RE = re.compile(
     r"^(\S+)\s+.*?stride-analyzer\s+AGENT_DONE\s+STRIDE analysis:\s+"
     r"(?P<comp>[a-z0-9\-]+)"
 )
+
+
+def _controller_dispatch_durations(log_path: Path) -> dict[str, int]:
+    """Per-component duration from the controller's own AGENT_SPAWN → AGENT_USAGE.
+
+    This is the canonical source. Both events carry ``component_id=`` and are
+    stamped by the controller, so they stay correct under parallel fan-out and
+    cannot be misreported by the agent being measured.
+    """
+    if not log_path.is_file():
+        return {}
+    starts: dict[str, int] = {}
+    ends: dict[str, int] = {}
+    try:
+        with log_path.open() as fh:
+            for line in fh:
+                m = _AGENT_SPAWN_RE.match(line)
+                if m:
+                    epoch = _parse_ts(m.group(1))
+                    comp = m.group("comp")
+                    if epoch and comp not in starts:
+                        starts[comp] = epoch
+                    continue
+                m = _AGENT_USAGE_RE.match(line)
+                if m:
+                    epoch = _parse_ts(m.group(1))
+                    if epoch:
+                        ends[m.group("comp")] = epoch
+    except OSError:
+        return {}
+    durations: dict[str, int] = {}
+    for comp, start_epoch in starts.items():
+        end_epoch = ends.get(comp)
+        if end_epoch is None:
+            continue
+        delta = end_epoch - start_epoch
+        if 0 <= delta <= 7200:
+            durations[comp] = delta
+    return durations
 
 
 def _per_component_marker_pairs(log_path: Path) -> dict[str, int]:
@@ -167,14 +228,21 @@ def _self_reported_durations(output_dir: Path) -> dict[str, int]:
 def _stride_durations(output_dir: Path, phase_9_start: int) -> dict[str, int]:
     """Map component_id → wall-clock seconds, in priority order:
 
-    1. Self-reported `started_at` / `analyzed_at` from `.stride-<comp>.json`
-       (Fix #8 root cause — captured by the agent's own clock).
-    2. AGENT_INVOKE / AGENT_DONE markers in `.agent-run.log` (Fix #8
-       symptom-patch — accurate when sub-agents dispatched sequentially;
-       collapses to identical values under parallelism).
-    3. mtime delta against ``phase_9_start`` (legacy fallback — accurate
+    1. The controller's AGENT_SPAWN → AGENT_USAGE span per component — stamped
+       by the controller's clock, correct under parallel fan-out.
+    2. Self-reported `started_at` / `analyzed_at` from `.stride-<comp>.json`,
+       kept only for a run whose log predates the controller events. An agent
+       cannot read a clock, so these values are frequently invented and must
+       never outrank a measurement.
+    3. AGENT_INVOKE / AGENT_DONE markers in `.agent-run.log` (accurate only
+       when sub-agents were dispatched sequentially; all three of those events
+       now fire at dispatch, so the span collapses under parallelism).
+    4. mtime delta against ``phase_9_start`` (legacy fallback — accurate
        only when STRIDE analyzers were dispatched sequentially).
     """
+    durations = _controller_dispatch_durations(output_dir / ".agent-run.log")
+    if durations:
+        return durations
     durations = _self_reported_durations(output_dir)
     if durations:
         return durations

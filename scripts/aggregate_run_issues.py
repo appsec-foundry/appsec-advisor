@@ -207,7 +207,10 @@ def _run_used_economy_model(output_dir: Path) -> bool:
 
 
 _MODEL_FAMILY_RE = re.compile(r"(opus|sonnet|haiku)", re.IGNORECASE)
-_STRIDE_INVOKE_MODEL_RE = re.compile(r"AGENT_INVOKE.*appsec-stride-analyzer.*\bmodel=(\S+)")
+# context-v2 dispatches through the hook and emits AGENT_SPAWN; AGENT_INVOKE
+# appears on the legacy path only. Keying on AGENT_INVOKE alone left this
+# advisory silent on every context-v2 run — the runs it exists to check.
+_STRIDE_INVOKE_MODEL_RE = re.compile(r"AGENT_(?:INVOKE|SPAWN).*appsec-stride-analyzer.*\bmodel=(\S+)")
 
 
 def _model_family(value: str) -> str:

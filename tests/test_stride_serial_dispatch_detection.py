@@ -248,3 +248,111 @@ def test_context_v2_serial_wave_is_detected_from_production_event_shapes(tmp_pat
     assert check_stride_dispatch.detect_serial_dispatch(out) == components, (
         "OR-5: the detector must consume the context-v2 producer's real event shapes"
     )
+
+
+# ---------------------------------------------------------------------------
+# Production event shapes — the 2026-08-16 juice-shop run
+#
+# `_COMPONENT_ID_RE` used to match only `COMPONENT_ID=`, while the hook writes
+# `component_id=`. Every fixture above invented the upper-case spelling, so the
+# suite stayed green while the detector read an empty set on every real run and
+# reported "parallel" no matter what the orchestrator did.
+# ---------------------------------------------------------------------------
+
+
+def _v2_spawn(ts: str, cid: str) -> str:
+    return (
+        f"{ts}  [aa40ceb8]  INFO   AGENT_SPAWN         "
+        f"agent_call_id=toolu_{cid}  agent_type=appsec-advisor:appsec-stride-analyzer-v2  "
+        f"model=sonnet  background=false  action_id=stage1c:9536d86a2e3258d2  "
+        f"job_id=stride:{cid}:attempt-1  component_id={cid}  attempt=1  "
+        f"analysis_depth=full  description=STRIDE (full): {cid}"
+    )
+
+
+def _v2_usage(ts: str, cid: str) -> str:
+    return (
+        f"{ts}  [aa40ceb8]  INFO   stride-analyzer-v2  AGENT_USAGE         "
+        f"agent_call_id=toolu_{cid}  component_id={cid}  attempt=1  "
+        f"in=48  out=67284  cache_write=133025  cache_read=2126193  tool_uses=33"
+    )
+
+
+def _write_v2_run(out_dir: Path, spans: dict[str, tuple[str, str]]) -> Path:
+    out = out_dir / "security"
+    out.mkdir(exist_ok=True)
+    (out / ".stride-dispatch-manifest.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-08-16T06:59:08Z",
+                "components": [{"component_id": cid} for cid in spans],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out / ".hook-events.log").write_text(
+        "\n".join(_v2_spawn(start, cid) for cid, (start, _) in spans.items()) + "\n",
+        encoding="utf-8",
+    )
+    (out / ".agent-run.log").write_text(
+        "\n".join(_v2_usage(end, cid) for cid, (_, end) in spans.items()) + "\n",
+        encoding="utf-8",
+    )
+    return out
+
+
+def test_production_parallel_wave_is_read_and_not_flagged(tmp_path: Path) -> None:
+    """The real wave: spawns seconds apart, each analyzer running for minutes."""
+    out = _write_v2_run(
+        tmp_path,
+        {
+            "web-frontend": ("2026-08-16T07:02:59Z", "2026-08-16T07:16:20Z"),
+            "api-server": ("2026-08-16T07:03:27Z", "2026-08-16T07:13:50Z"),
+            "auth-service": ("2026-08-16T07:03:52Z", "2026-08-16T07:19:19Z"),
+            "sqlite-db": ("2026-08-16T07:04:16Z", "2026-08-16T07:17:09Z"),
+            "ci-cd-pipeline": ("2026-08-16T07:04:40Z", "2026-08-16T07:10:39Z"),
+        },
+    )
+    # The detector must actually see the wave, not merely stay silent about it.
+    assert set(check_stride_dispatch._context_v2_dispatch_starts(out, None)) == {
+        "web-frontend",
+        "api-server",
+        "auth-service",
+        "sqlite-db",
+        "ci-cd-pipeline",
+    }
+    assert check_stride_dispatch.detect_serial_dispatch(out) == []
+
+
+def test_production_serial_wave_is_detected(tmp_path: Path) -> None:
+    """Each analyzer returns before the next is dispatched — the defect."""
+    out = _write_v2_run(
+        tmp_path,
+        {
+            "web-frontend": ("2026-08-16T07:02:59Z", "2026-08-16T07:16:20Z"),
+            "api-server": ("2026-08-16T07:16:40Z", "2026-08-16T07:27:10Z"),
+            "auth-service": ("2026-08-16T07:27:30Z", "2026-08-16T07:39:00Z"),
+        },
+    )
+    assert check_stride_dispatch.detect_serial_dispatch(out) == [
+        "web-frontend",
+        "api-server",
+        "auth-service",
+    ]
+
+
+def test_production_serial_wave_is_detected_without_agent_written_events(tmp_path: Path) -> None:
+    """Four of five analyzers wrote no AGENT_END at all on 2026-08-16.
+
+    Completion must come from the controller's own row, or a non-compliant
+    analyzer silently disables the guard.
+    """
+    out = _write_v2_run(
+        tmp_path,
+        {
+            "web-frontend": ("2026-08-16T07:02:59Z", "2026-08-16T07:16:20Z"),
+            "api-server": ("2026-08-16T07:16:40Z", "2026-08-16T07:27:10Z"),
+        },
+    )
+    assert "AGENT_END" not in (out / ".agent-run.log").read_text(encoding="utf-8")
+    assert check_stride_dispatch.detect_serial_dispatch(out) == ["web-frontend", "api-server"]
