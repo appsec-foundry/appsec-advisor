@@ -1220,6 +1220,80 @@ def test_finding_cell_component_already_canonical_passes_through(tmp_path: Path)
     assert "**Component:** [C-01](#c-01) — REST API" in cell
 
 
+def test_classification_line_carries_the_stride_category(tmp_path: Path) -> None:
+    """The STRIDE category sits on the finding itself, not only in a §3
+    walkthrough or a §7 weakness row. It renders next to the weakness class —
+    both answer "what kind of weakness" — and before the external CWE/OWASP
+    references."""
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="C-01")
+    threat["_category"] = "TH-05"
+    cell = compose._build_threat_card(
+        t=threat,
+        sev="critical",
+        taxonomy={"TH-05": {"title": "Injection"}},
+        components={"C-01": {"name": "REST API"}},
+        repo_root=None,
+        ctx=ctx,
+    )
+    assert "**Classification:** Injection · STRIDE: Tampering · [CWE-89](" in cell, (
+        "expected the STRIDE category between the weakness class and the CWE link; cell was:\n" + cell
+    )
+
+
+def test_classification_line_omits_stride_when_the_threat_has_none(tmp_path: Path) -> None:
+    """No category, no segment — never an empty one and never `n/a`."""
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="C-01")
+    threat.pop("stride")
+    threat.pop("stride_category")
+    cell = compose._build_threat_card(
+        t=threat,
+        sev="critical",
+        taxonomy={},
+        components={"C-01": {"name": "REST API"}},
+        repo_root=None,
+        ctx=ctx,
+    )
+    assert "STRIDE:" not in cell
+    assert "**Classification:** [CWE-89](" in cell
+
+
+def test_classification_line_falls_back_to_the_legacy_stride_category_key(tmp_path: Path) -> None:
+    """Pre-merge artifacts carry `stride_category` instead of `stride`."""
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=tmp_path,
+    )
+    threat = _make_threat_for_cell("Login concatenates email into SQL.", comp_id="C-01")
+    threat.pop("stride")
+    threat["stride_category"] = "Information Disclosure"
+    cell = compose._build_threat_card(
+        t=threat,
+        sev="critical",
+        taxonomy={},
+        components={"C-01": {"name": "REST API"}},
+        repo_root=None,
+        ctx=ctx,
+    )
+    assert "STRIDE: Information Disclosure" in cell
+
+
 def _canonical_boundary(number: int, name: str | None = None) -> dict:
     return {
         "id": f"tb-{number}",

@@ -695,7 +695,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Fix:** ● [M-002](#m-002) — Externalize RSA key
 
-**Classification:** Cryptographic Failures · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
+**Classification:** Cryptographic Failures · STRIDE: Spoofing · [OWASP A04:2025](https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/)
 
 <a id="t-001"></a><a id="f-001"></a>
 #### F-001 · SQL injection in product search
@@ -706,7 +706,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Fix:** ● [M-001](#m-001) — Parameterize SQL queries
 
-**Classification:** Injection · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
+**Classification:** Injection · STRIDE: Tampering · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
 
 <a id="t-002"></a><a id="f-002"></a>
 #### F-002 · SQL injection in login
@@ -717,7 +717,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Fix:** ● [M-001](#m-001) — Parameterize SQL queries
 
-**Classification:** Injection · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
+**Classification:** Injection · STRIDE: Tampering · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
 
 ### 🟠 High (1)
 
@@ -730,7 +730,7 @@ Findings are grouped by severity (Critical → High → Medium → Low); within 
 
 **Fix:** ◕ [M-003](#m-003) — Remove DomSanitizer bypasses
 
-**Classification:** Cross-Site Scripting (XSS) · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
+**Classification:** Cross-Site Scripting (XSS) · STRIDE: Tampering · [OWASP A05:2025](https://owasp.org/Top10/2025/A05_2025-Injection/)
 
 ---
 

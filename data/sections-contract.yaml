@@ -1499,7 +1499,7 @@ sections:
     #   **Root cause:** …                (attack-class taxonomy description)
     #   **Evidence:** <✓|◌|↻> … (+ fenced code snippet when one exists)
     #   **Fix:** <plain remediation> → [M-NNN]
-    #   **Classification:** Category · [CWE-NNN](cwe.mitre.org) · [OWASP A0X:2021](owasp.org)
+    #   **Classification:** Category · STRIDE: <category> · [CWE-NNN](cwe.mitre.org) · [OWASP A0X:2025](owasp.org)
     # History: pre-2026-05 was a 9-col then 4-col flat table (Story Card in the
     # Finding cell); the table was retired for cards on 2026-05-30.
     card_fields: [severity, component, location, issue, root_cause, evidence, fix, classification]

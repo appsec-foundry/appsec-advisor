@@ -14543,7 +14543,7 @@ def _build_threat_card(
         <details><summary>Evidence code · file:line</summary><pre>…</pre></details>
         **Impact:** <one-sentence consequence>                      (always rendered for Critical/High)
         **Fix:** [M-NNN](#m-nnn) — <mitigation title>
-        **Classification:** [TH-NN — …](#th-nn) · [CWE-NNN](…) · [OWASP A0X:2021](…)
+        **Classification:** <Weakness class> · STRIDE: <Category> · [CWE-NNN](…) · [OWASP A0X:2025](…)
 
     Design choices (R-7 — replaces the R-5 / R-6 sequence):
 
@@ -14572,8 +14572,8 @@ def _build_threat_card(
         ~90% of findings). At Medium/Low the dedup still applies because
         an empty Impact column is acceptable for lower-priority findings
         where the Issue text already conveys the consequence.
-      * **Classification** uses the `**Classification:** TH-NN · CWE ·
-        OWASP` LABEL form (R-7) — was italic-only `_TH · CWE · OWASP_`
+      * **Classification** uses the `**Classification:** class · STRIDE ·
+        CWE · OWASP` LABEL form (R-7) — was italic-only `_TH · CWE · OWASP_`
         in R-5. The label keeps the line readable as part of the
         structured form rather than a citation footer.
       * Code snippets remain CWE-gated (``_FINDING_SKIP_SNIPPET_CWES``)
@@ -14957,6 +14957,14 @@ def _build_threat_card(
         if cat_title:
             refs_parts.append(cat_title)
         # else: omit — no useful text left without an anchor target.
+    # STRIDE sits next to the category name: both answer "what kind of
+    # weakness", while CWE and OWASP are external references. Written out —
+    # the `(T·I)` shorthand in §7 works because a legend sits under that
+    # table, and a card has none. Enum-constrained title case
+    # (`triage_validate_ratings._VALID_STRIDE`), so it renders as stored.
+    stride_name = (t.get("stride") or t.get("stride_category") or "").strip()
+    if stride_name:
+        refs_parts.append(f"STRIDE: {stride_name}")
     if cwe_norm:
         cwe_num = cwe_norm.split("-", 1)[-1] if "-" in cwe_norm else cwe_norm
         refs_parts.append(f"[CWE-{cwe_num}](https://cwe.mitre.org/data/definitions/{cwe_num}.html)")
@@ -15008,7 +15016,7 @@ def _build_threat_card(
     #   **Root cause:** …
     #   **Evidence:** <glyph> <status> — … (+ fenced snippet)
     #   **Fix:** <plain remediation> → [M-NNN]
-    #   **Classification:** Category · [CWE](…) · [OWASP](…) [· walkthrough]
+    #   **Classification:** Category · STRIDE: … · [CWE](…) · [OWASP](…) [· walkthrough]
     tid = (t.get("t_id") or t.get("id") or "-").strip()
     m_id = re.match(r"^T-(\d+)$", tid, re.IGNORECASE)
     digits = m_id.group(1) if m_id else None
