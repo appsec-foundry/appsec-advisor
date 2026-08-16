@@ -2,6 +2,8 @@
 
 `prepare` selects this for context-v2; never mix `SKILL-thin-stage1.md`.
 
+**No meta-narration.** Report outcomes; never name a command, boundary, or id.
+
 ## Invariants
 
 - Execute only controller calls and each job's `semantic_role`. Never substitute
