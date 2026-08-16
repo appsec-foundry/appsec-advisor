@@ -421,8 +421,25 @@ def _is_exposed(c: dict) -> bool:
     return bool(_zones(c) & EXPOSED_ZONES)
 
 
+def _business_assets(c: dict) -> list:
+    """Assets the declared business context says this component handles.
+
+    Written by the control analyst from `docs/business-context.md` into
+    `.stride-analyst-context.json` (`business_context.sensitive_assets`), so it
+    exists only where a human stated it. `handles_sensitive_data` is an
+    inventory judgement and over-tags; a named asset is a stated fact.
+    """
+    ctx = c.get("business_context")
+    if not isinstance(ctx, dict):
+        return []
+    assets = ctx.get("sensitive_assets")
+    return [a for a in assets if isinstance(a, str) and a.strip()] if isinstance(assets, list) else []
+
+
 def _is_crown_jewel(c: dict) -> bool:
-    return bool(c.get("handles_sensitive_data"))
+    # Union, never a replacement: declared assets add components the inventory
+    # flag missed, and removing the flag would silently narrow selection.
+    return bool(c.get("handles_sensitive_data")) or bool(_business_assets(c))
 
 
 def _is_internal_only(c: dict) -> bool:
@@ -527,7 +544,11 @@ def _selection_reasons(c: dict, depth: str) -> list:
     if depth != "quick" and _is_cicd(c):
         reasons.append("ci-cd / deployment (supply-chain boundary)")
     if depth != "quick" and _is_crown_jewel(c):
-        reasons.append("crown-jewel (credentials/PII/payment/secrets)")
+        assets = _business_assets(c)
+        if assets and not c.get("handles_sensitive_data"):
+            reasons.append(f"crown-jewel (declared business assets: {', '.join(assets[:3])})")
+        else:
+            reasons.append("crown-jewel (credentials/PII/payment/secrets)")
     if depth != "quick" and _is_datastore(c) and not _is_crown_jewel(c):
         reasons.append("data-store (SQLi/tampering/info-disclosure — type anchor, sensitive-flag-independent)")
     if depth != "quick" and _is_file_upload(c):
@@ -1119,6 +1140,27 @@ def _path_owns(paths: list, fpath: str) -> bool:
     return False
 
 
+def _seed_business_context(components: list, analyst_context: dict) -> list:
+    """Make declared business assets visible to the selection predicates.
+
+    Same reason as `_seed_llm_role`: build() merges analyst-context fields into
+    the OUTPUT component long after selection decided scope, so a component the
+    inventory did not flag but whose business context names funds, personal
+    data, or credentials would never reach `_is_crown_jewel`.
+
+    Mutates and returns `components`."""
+    if not isinstance(analyst_context, dict):
+        return components
+    for c in components:
+        if not isinstance(c, dict) or not c.get("id"):
+            continue
+        ctx = analyst_context.get(c["id"])
+        business = ctx.get("business_context") if isinstance(ctx, dict) else None
+        if isinstance(business, dict) and business and not c.get("business_context"):
+            c["business_context"] = business
+    return components
+
+
 def _seed_llm_role(components: list, output_dir: Path, analyst_context: dict) -> list:
     """Make the LLM role visible to the selection predicates BEFORE the analyst-
     context merge runs (build() merges `known_llm_patterns` only into the OUTPUT
@@ -1299,6 +1341,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     # Seed the LLM role onto components from analyst-context / Cat-13 recon
     # BEFORE selection, so a folded chatbot is floored into STRIDE scope.
     all_components = _seed_llm_role(all_components, output_dir, analyst_context)
+    all_components = _seed_business_context(all_components, analyst_context)
 
     # Actor slices depend on the finalized Phase-3 inventory, so Phase 2.7
     # cannot produce them correctly. Build them here, after reconciliation and

@@ -467,5 +467,60 @@ def test_main_write_failure_returns_1(monkeypatch, tmp_path):
     assert _run_main(monkeypatch, tmp_path) == 1
 
 
+# ---------------------------------------------------------------------------
+# Step 5b — business-impact alignment
+# ---------------------------------------------------------------------------
+
+_DECLARED = {"comp-api": {"sensitive_assets": ["customer payment mandates", "session tokens"]}}
+
+
+def test_step5b_flags_low_impact_where_context_declares_assets():
+    flags = tvr._step5b_business_impact_alignment([_threat(impact="Low")], _DECLARED, "standard")
+    assert len(flags) == 1
+    assert flags[0]["type"] == "business-impact"
+    assert flags[0]["severity"] == "info"
+    assert "customer payment mandates" in flags[0]["message"]
+    assert "caps still bind" in flags[0]["suggested_action"].lower()
+
+
+def test_step5b_silent_without_declared_context():
+    threats = [_threat(impact="Low")]
+    assert tvr._step5b_business_impact_alignment(threats, {}, "standard") == []
+    assert tvr._step5b_business_impact_alignment(threats, {"other": {"sensitive_assets": ["x"]}}, "standard") == []
+
+
+def test_step5b_ignores_impacts_above_low():
+    for impact in ("Medium", "High", "Critical"):
+        assert tvr._step5b_business_impact_alignment([_threat(impact=impact)], _DECLARED, "standard") == []
+
+
+def test_step5b_skipped_at_quick_depth():
+    assert tvr._step5b_business_impact_alignment([_threat(impact="Low")], _DECLARED, "quick") == []
+
+
+def test_step5b_accepts_impact_prose_without_assets():
+    declared = {"comp-api": {"impact_if_compromised": "Deliveries are settled against the wrong meter."}}
+    flags = tvr._step5b_business_impact_alignment([_threat(impact="Low")], declared, "standard")
+    assert len(flags) == 1
+    assert "wrong meter" in flags[0]["message"]
+
+
+def test_step5b_purpose_alone_produces_nothing():
+    declared = {"comp-api": {"business_purpose": "settles invoices"}}
+    assert tvr._step5b_business_impact_alignment([_threat(impact="Low")], declared, "standard") == []
+
+
+def test_declared_business_context_reads_analyst_artifact(tmp_path):
+    (tmp_path / ".stride-analyst-context.json").write_text(
+        json.dumps({"comp-api": {"business_context": {"sensitive_assets": ["funds"]}}, "comp-ui": {"controls": "n/a"}}),
+        encoding="utf-8",
+    )
+    assert tvr._declared_business_context(tmp_path) == {"comp-api": {"sensitive_assets": ["funds"]}}
+
+
+def test_declared_business_context_missing_file_is_empty(tmp_path):
+    assert tvr._declared_business_context(tmp_path) == {}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

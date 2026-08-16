@@ -14,6 +14,7 @@ Checks performed:
   3. Priority validation (P1/P2)   — Critical RCE/injection on public files
   4. Rating completeness           — mandatory fields + Likelihood×Impact matrix
   5. CVSS scope validation         — eligibility list + required/forbidden rules
+  5b. Business-impact alignment    — Low impact where business context declares stakes
 
 Output:
   Appends flags into `$OUTPUT_DIR/.triage-flags.json` (creating it if absent,
@@ -449,6 +450,67 @@ def _step4_rating_completeness(threats: list[dict]) -> list[dict]:
     return flags
 
 
+def _declared_business_context(output_dir: Path) -> dict[str, dict]:
+    """Per-component business context the control analyst derived from the
+    repository's `docs/business-context.md`. Absent file, absent block, or an
+    unreadable one all mean the same thing: nothing was declared."""
+    try:
+        raw = json.loads((output_dir / ".stride-analyst-context.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict] = {}
+    for cid, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        business = entry.get("business_context")
+        if isinstance(business, dict) and business:
+            out[str(cid)] = business
+    return out
+
+
+def _step5b_business_impact_alignment(threats: list[dict], business: dict[str, dict], depth: str) -> list[dict]:
+    """Step 5b: a Low impact on a component whose business context declares what
+    is at stake.
+
+    Declared context is a stated fact about loss, so a Low impact next to it is
+    either wrong or worth a sentence. The flag never proposes a rating: the
+    severity caps stay authoritative and the triage agent decides. Components
+    without declared context produce nothing, which is why this cannot inflate
+    a model that ships no business context."""
+    if depth == "quick" or not business:
+        return []
+
+    flags: list[dict] = []
+    for t in threats:
+        if t.get("impact") != "Low":
+            continue
+        declared = business.get(str(t.get("component_id") or ""))
+        if not declared:
+            continue
+        assets = [a for a in (declared.get("sensitive_assets") or []) if isinstance(a, str)]
+        harm = declared.get("impact_if_compromised") if isinstance(declared.get("impact_if_compromised"), str) else ""
+        if not assets and not harm:
+            continue
+        stated = ", ".join(assets[:3]) if assets else harm.strip()[:160]
+        flags.append(
+            {
+                "type": "business-impact",
+                "severity": "info",
+                "threat_ids": [t.get("t_id", "?")],
+                "message": (
+                    f"Impact is Low on {t.get('component_id')}, whose declared business context names: {stated}."
+                ),
+                "suggested_action": (
+                    "Re-rate impact against the declared context, or state why it does not apply to this threat. "
+                    "Severity caps still bind."
+                ),
+            }
+        )
+    return flags
+
+
 def _step5_cvss_scope(threats: list[dict], eligible_cwes: frozenset[str], depth: str) -> list[dict]:
     """Step 5: CVSS v4 eligibility rules."""
     flags: list[dict] = []
@@ -629,6 +691,9 @@ def main() -> int:
 
     print("[triage-pre]   ↳ Step 5/5 — CVSS scope validation…")
     all_flags.extend(_step5_cvss_scope(threats, eligible_cwes, depth))
+
+    print("[triage-pre]   ↳ Step 5b — Business-impact alignment…")
+    all_flags.extend(_step5b_business_impact_alignment(threats, _declared_business_context(output_dir), depth))
 
     # ------------------------------------------------------------------
     # Load or create .triage-flags.json and merge new flags in

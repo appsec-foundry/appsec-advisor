@@ -444,9 +444,29 @@ Four optional files add team-owned context. None of them can suppress a finding 
 
 ### Business context — `docs/business-context.md`
 
-Use this Markdown file for facts the code cannot show. Write the business or
-user purpose, concrete compromise impact, sensitive assets, applicable
-security obligations, and explicit assumptions. The first 200 lines are read.
+Use this Markdown file for facts the code cannot show. The analysis projects
+five things per component, so write those five:
+
+```markdown
+## Business purpose
+What the system does for the business or its users.
+
+## Impact if compromised
+Concrete harm from loss of confidentiality, integrity, or availability.
+
+## Sensitive assets
+Data, funds, credentials, decisions, or operations the system handles.
+
+## Security obligations
+Applicable policy, contractual, legal, or regulatory duties.
+
+## Security assumptions
+Conditions you are assuming rather than enforcing in code.
+```
+
+Partial answers are fine, and the headings are a guide rather than a parsed
+format. Named sensitive assets also mark the components that handle them for
+full-depth analysis. The first 200 lines are read.
 
 You can write the file yourself, or let the run capture it. A fresh interactive
 analysis — a first run or `--rebuild` — asks once whether to add context, and takes

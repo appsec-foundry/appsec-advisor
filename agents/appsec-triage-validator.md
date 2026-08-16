@@ -68,7 +68,7 @@ This agent is a **validator + reconciliation owner.** The raw severity fields re
 
 ## Task — Step 6 only (Ranking & Effective Severity)
 
-After startup logging, perform **only Step 6**. Steps 1–5 (cross-component consistency, severity plausibility, priority validation, rating completeness, CVSS scope) have already been executed by `scripts/triage_validate_ratings.py` before this agent was dispatched. Their flags are already written into `.triage-flags.json`.
+After startup logging, perform **only Step 6**. Steps 1–5 (cross-component consistency, severity plausibility, priority validation, rating completeness, CVSS scope) and Step 5b (business-impact alignment) have already been executed by `scripts/triage_validate_ratings.py` before this agent was dispatched. Their flags are already written into `.triage-flags.json`.
 
 Read `.triage-flags.json` once at startup to load the existing flags, then proceed to Step 6.
 
@@ -377,7 +377,7 @@ Write the flags file. The schema carries a `version` field; `v1` is the legacy f
   "flags": [
     {
       "flag_id": "TF-001",
-      "type": "consistency | plausibility | priority | completeness | cvss_missing | cvss_scope_violation | cvss_band_mismatch",
+      "type": "consistency | plausibility | priority | completeness | cvss_missing | cvss_scope_violation | cvss_band_mismatch | business-impact",
       "severity": "warning | info",
       "threat_ids": ["F-003", "F-007"],
       "message": "Human-readable description of the flag",

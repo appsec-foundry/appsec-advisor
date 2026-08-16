@@ -2115,3 +2115,44 @@ def test_format_selection_console_passthrough_shape():
     assert "mode=passthrough" in out
     assert "ANALYZED (2): a, b" in out
     assert "SKIPPED (0):" in out
+
+
+# ---------------------------------------------------------------------------
+# Declared business context → crown-jewel selection
+# ---------------------------------------------------------------------------
+
+
+def test_declared_business_assets_make_a_component_crown_jewel():
+    """A component the inventory did not flag, but whose declared business
+    context names assets, still earns crown-jewel selection and says why."""
+    comp = _c("ledger-worker", zones=["internal-network"])
+    comp["business_context"] = {"sensitive_assets": ["customer payment mandates", "settlement balances"]}
+    selected, report = bm.select_stride_components([comp], "standard")
+    assert [c["id"] for c in selected] == ["ledger-worker"]
+    reasons = report["selected"][0]["reasons"]
+    assert any("declared business assets" in r for r in reasons)
+    assert any("customer payment mandates" in r for r in reasons)
+
+
+def test_business_context_without_assets_does_not_widen_selection():
+    """Purpose or impact prose alone is not an asset claim — an internal
+    component stays out of scope, so the widening cannot be triggered by
+    boilerplate the analyst writes for every component."""
+    comp = _c("ledger-worker", zones=["internal-network"])
+    comp["business_context"] = {"business_purpose": "posts nightly ledger entries"}
+    selected, _ = bm.select_stride_components([comp], "standard")
+    assert selected == []
+
+
+def test_inventory_flag_keeps_its_own_reason():
+    """The union must not relabel a component the inventory flagged."""
+    comp = _c("token-store", zones=["internal-network"], sensitive=True)
+    _, report = bm.select_stride_components([comp], "standard")
+    assert any("credentials/PII/payment/secrets" in r for r in report["selected"][0]["reasons"])
+
+
+def test_seed_business_context_copies_analyst_context_before_selection():
+    comps = [{"id": "ledger-worker", "name": "w", "paths": ["w/**"]}]
+    seeded = bm._seed_business_context(comps, {"ledger-worker": {"business_context": {"sensitive_assets": ["funds"]}}})
+    assert seeded[0]["business_context"] == {"sensitive_assets": ["funds"]}
+    assert bm._is_crown_jewel(seeded[0]) is True

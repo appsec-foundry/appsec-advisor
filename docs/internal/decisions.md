@@ -135,6 +135,7 @@ Removing an entry means listing it here in the same change.
 | FE-4 | Findings require target evidence from source, configuration, git history or target-owned declarations; validated external context may seed only an unverified hypothesis, and walkthroughs, solution guides or bundled vulnerability prose seed nothing | `test_cross_repo_mismatch_requires_target_evidence` | `AGENTS.md` → Protect trust and compatibility |
 | FE-5 | Supply-chain analysis is passive: files and git history only, no package manager, no network CVE scanner | — *(no guard written)* | `AGENTS.md` → Sources and merge behavior; see `docs/internal/analysis/analysis-supply-chain-coverage-improvement.md` |
 | FE-6 | Every remote fetch goes through a URL allow-list and an SSRF guard | `tests/test_url_guard.py`, see TR-4 | `schemas/org-profile.schema.yaml` → `policy.url_allowlist` |
+| FE-7 | Declared business context weights and flags; it never sets or raises a severity. It may mark a component crown-jewel and it may raise a triage flag, and the severity caps stay authoritative | `test_step5b_flags_low_impact_where_context_declares_assets`, `test_declared_business_assets_make_a_component_crown_jewel` | `scripts/triage_validate_ratings.py`; `scripts/build_stride_dispatch_manifest.py`; `data/severity-caps.yaml` |
 
 ## Weaknesses
 
@@ -201,6 +202,7 @@ Removing an entry means listing it here in the same change.
 |---|---|---|---|
 | IN-1 | Reuse is authorised by a fingerprint match on an unchanged tree; a cache is validated, never assumed fresh | `test_check_fingerprint_matches_unchanged_repo`, `test_validate_accepts_fresh_cache` | `phase-group-recon.md` → Incremental fingerprint skip |
 | IN-2 | A shallower rescan carries an unverified prior finding; an equal-or-deeper rescan records a non-reproduced finding as resolved with its prior identity and reason instead of dropping its history | `test_reconcile_carries_dropped_prior_threat_at_shallower_depth`, `test_reconcile_no_carry_at_equal_depth` | `scripts/build_threat_model_yaml.py`; see `docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md` |
+| IN-3 | Changed business context recommends a full run, it never forces one — unlike a requirements toggle, because re-rating every finding on every context edit costs more than the drift | `test_changed_context_is_flagged_on_an_incremental_run`, `test_unchanged_context_is_not_flagged` | `scripts/resolve_config.py::resolve_business_context`; `meta.business_context_sha256` |
 
 ## Exports
 

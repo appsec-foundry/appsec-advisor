@@ -73,6 +73,11 @@ A second `AskUserQuestion`, header `Context`: ask the user to enter the text (or
 URL) through the **Other** option, since that is the only free-text field available
 mid-run. Offer one option, `Cancel — continue without context`, as the way out.
 
+Name what to write, because the analysis projects exactly these five per component
+and free-form prose maps onto them unevenly: the business purpose, the concrete harm
+if the component is compromised, the sensitive assets it handles, applicable
+obligations, and the security assumptions being made. Partial answers are fine.
+
 Cancelled or empty answer → print one line and return.
 
 ## Step 4 — Capture it

@@ -771,7 +771,7 @@ When `VERBOSE_REPORT=false` (default), the Run Statistics appendix is omitted en
 3. **Assessment scope:** the N STRIDE-analyzed components (backticked names) and the Architecture complexity tier (Simple / Moderate / Complex) with the one-sentence reason.
 4. **Security posture:** severity emoji + one sentence with concrete Critical/High counts from the register. List the absent framework-level controls as a comma list (auth, authz, CSRF, CSP, …). Close with one sentence on production fitness.
 5. **Public secrets exposure:** only when Phase 8 / recon flagged committed secrets — name the secret classes (not individual file paths) and state that they are permanently compromised.
-6. **Context sources:** name the cache hit / external endpoint / business-context file that fed Phase 1, or `none available` explicitly.
+6. **Context sources:** name the cache hit / external endpoint / business-context file that fed Phase 1, or `none available` explicitly. When no business context was declared, add one sentence stating that severity therefore rests on technical evidence alone and that `docs/business-context.md` would change it.
 
 **Anti-patterns (auto-flagged by QA):** paragraph-form prose without bold labels; restating the Management Summary verdict; embedding product-internal enum values like `LEVEL_1`, `LEVEL_7`, or tier-range annotations `(LEVEL_1–N)` in the section body; naming the §6 domains or §8 threats one by one (those sections do it themselves); generic closing statements like *"appropriate for its stated purpose as a training platform"* (too vague, say it in one word).
 
