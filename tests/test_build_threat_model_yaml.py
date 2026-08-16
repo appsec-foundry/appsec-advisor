@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "build_threat_model_yaml.py"
 
@@ -168,6 +170,71 @@ def test_clean_title_long_with_locator_stays_schema_valid():
 #          bare hyphen, not just spaced dash separators).
 #   Bug 3: a long file path in the suffix crushed the weakness wording to
 #          "Stored and Refl…" because body_cap = 80 - len(full_path).
+
+
+# --- `@` in a title aborted the whole run (2026-08-16 juice-shop) --------
+# The schema forbids `@` in the title body, `_clean_title` owns making a
+# merged title conform, and it handled backticks and parens but not `@`. One
+# CI finding named a git ref and Phase 10 failed schema validation, ending a
+# 58-minute run that had already produced 65 threats.
+
+
+@pytest.mark.parametrize(
+    ("raw", "must_contain"),
+    [
+        ("Unpinned CI action at mutable @main tag (image_actions.yml:33)", "main tag"),
+        ("Prototype pollution in @angular/core resolver", "angular/core"),
+        ("Decorator @Injectable exposes provider scope", "Injectable"),
+    ],
+)
+def test_clean_title_strips_a_technical_at_token(raw, must_contain):
+    out = b._clean_title(raw)
+
+    assert re.match(_title_pattern(), out), f"title not schema-valid: {out!r}"
+    assert must_contain in out
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Remote code execution via eval( in coupon handler",
+        "`Backticked` title with (nested (parens)) and @ref",
+        "Unpinned CI action at mutable @main tag (image_actions.yml:33)",
+        "JWT accepts alg:none tokens (lib/insecurity.ts:12)",
+        "XML parser with noent:true enables entity expansion",
+        "Install runs with package-lock=false in CI",
+        "Sanitiser calls bypassSecurityTrustHtml on user input",
+        "Password hashing uses crypto.createHash md5",
+        "Search endpoint uses models.sequelize.query with interpolation",
+        "Vulnerable dependency (CVE-2021-23337) reaches the parser",
+        "lowercase start of a title that is long enough",
+        "Stored and Reflected XSS (frontend/src/app/search-result/search-result.component.ts:132)",
+    ],
+)
+def test_the_cleaner_satisfies_every_title_constraint_it_owns(raw):
+    """`_clean_title` exists to make a merged title schema-valid.
+
+    It enforced backticks, spaced dashes and the blocklist, but not `@` and not
+    a stray or nested paren — so a single analyzer title aborted a 58-minute
+    run at Phase 10. Any constraint the schema states about a title body is
+    this function's to satisfy.
+    """
+    out = b._clamp_title(b._clean_title(raw))
+
+    assert re.match(_title_pattern(), out), f"title not schema-valid: {out!r}"
+    assert len(out) <= 80
+    assert "@" not in out
+    assert "`" not in out
+    assert out.count("(") == out.count(")") <= 1
+
+
+def test_clean_title_drops_a_version_pin_whole():
+    """`@\\d` is removed as a unit — stripping only the `@` would leave junk."""
+    out = b._clean_title("Outdated jsonwebtoken@0.4.0 permits algorithm confusion")
+
+    assert re.match(_title_pattern(), out), f"title not schema-valid: {out!r}"
+    assert "jsonwebtoken" in out
+    assert "0.4.0" not in out
 
 
 def test_clean_title_preserves_intra_word_hyphen_in_path():

@@ -995,9 +995,20 @@ def _clean_title(raw: str) -> str:
                 s = pat.sub("", s)
             else:
                 s = pat.sub(repl, s)
+    # Any `@` left after the version-suffix rule above is an ordinary technical
+    # token — a git ref (`@main`), a scoped package (`@angular/core`), a
+    # decorator. The schema forbids the character outright, and this cleaner
+    # already owns backticks and parens, so it owns this too. Without it a
+    # single such title aborts the whole run at Phase 10 (juice-shop
+    # 2026-08-16: "Unpinned CI action at mutable @main tag").
+    s = s.replace("@", "")
     # Pull parens out — drop empty ones; keep the most specific (last non-empty).
     parens = [p for p in _TITLE_PARENS_RE.findall(s) if p.strip()]
     s = _TITLE_PARENS_RE.sub("", s).strip()
+    # The extraction above only matches a balanced `(...)`. An unclosed paren
+    # (`eval(`) or a nested one survives it and then violates the very pattern
+    # this function exists to satisfy, so drop whatever is left in the body.
+    s = s.replace("(", "").replace(")", "")
     s = _TITLE_WS_RE.sub(" ", s)
     if s and not s[0].isupper():
         s = s[0].upper() + s[1:]
@@ -1007,7 +1018,9 @@ def _clean_title(raw: str) -> str:
     # (`frontend/src/app/search-result/search-result.component.ts:132`) was
     # crushing the description to "Stored and Refl…"; the full path still lives
     # in evidence_file / location (juice-shop 2026-06-11).
-    suffix_inner = parens[-1] if parens else ""
+    # The trailing suffix must itself be paren-free: the schema allows exactly
+    # one `(...)` group and no nesting inside it.
+    suffix_inner = (parens[-1] if parens else "").replace("(", "").replace(")", "").strip()
     suffix = f" ({suffix_inner})" if suffix_inner else ""
     if suffix_inner and "/" in suffix_inner and len(s) + len(suffix) > 80:
         suffix_inner = suffix_inner.rsplit("/", 1)[-1]
