@@ -112,6 +112,16 @@ def parse_line(line: str) -> ParsedEventLine | None:
         candidates.append((None, legacy_parts[0].strip(), legacy_parts[1]))
     elif len(legacy_parts) == 3:
         candidates.append((legacy_parts[0].strip() or None, legacy_parts[1].strip(), legacy_parts[2]))
+    # An event name longer than EVENT_WIDTH overflows its column — format_line
+    # pads but never truncates — so neither fixed-width offset lands on it. Read
+    # the leading field as the event when it looks like one, which also covers a
+    # detail that itself contains a double space.
+    head = re.split(r" {2,}", rest, maxsplit=1)
+    if len(head) == 2:
+        candidates.append((None, head[0].strip(), head[1]))
+        tail = re.split(r" {2,}", head[1], maxsplit=1)
+        if len(tail) == 2:
+            candidates.append((head[0].strip() or None, tail[0].strip(), tail[1]))
     for component, event, detail in candidates:
         if _EVENT_RE.fullmatch(event):
             sid = match.group("sid").strip()

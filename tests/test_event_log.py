@@ -10,6 +10,7 @@ edit to any one emitter cannot silently re-introduce format drift.
 import re
 
 import event_log
+import pytest
 from event_log import format_line
 
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
@@ -98,6 +99,28 @@ def test_parse_line_recovers_exact_event_column_for_both_shapes():
     assert (component.component, component.event, component.detail) == ("controller", "RUN_ABORTED", "contract failure")
     assert hook is not None
     assert (hook.component, hook.event, hook.detail) == (None, "SESSION_STOP", "reason=end_turn")
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["AGENT_USAGE_UNAVAILABLE", "AGENT_RETURN_FIELDS", "YAML_INVARIANT_DRIFT", "STEP_END"],
+)
+@pytest.mark.parametrize("component", [None, "threat-analyst"])
+def test_an_event_name_wider_than_its_column_survives_a_roundtrip(event, component):
+    """Writing a name is not enough — every consumer has to read it back.
+
+    `format_line` pads to EVENT_WIDTH but never truncates, so a longer name
+    overflows the column both fixed-width offsets key on. `.hook-events.log`
+    carried two such events and 69 of its lines were unreadable.
+    """
+    line = format_line(event, "agent_call_id=toolu_x  fields=a,b", component=component, sid="abc12345")
+
+    parsed = event_log.parse_line(line)
+
+    assert parsed is not None, f"{event!r} became unparseable"
+    assert parsed.event == event
+    assert parsed.component == component
+    assert parsed.detail == "agent_call_id=toolu_x  fields=a,b"
 
 
 def test_parse_line_does_not_promote_event_name_from_detail():
