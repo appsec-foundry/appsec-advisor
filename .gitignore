@@ -135,3 +135,5 @@ dist/
 # ----------------------------------------------------------------------------
 *.log
 npm-debug.log*
+# Recorded log samples under tests/fixtures/logs/ are fixtures, not run output.
+!tests/fixtures/logs/*.log

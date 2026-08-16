@@ -1,0 +1,22 @@
+2026-08-16T06:30:33Z  [--------]  INFO   skill-controller    ORCHESTRATION_READY  mode=full depth=standard runtime=thin-full
+2026-08-16T06:31:41Z  [--------]  INFO   skill-watchdog      WATCHDOG_START      interval=60s  stride_stale=900s  canary=180s
+2026-08-16T06:32:21Z  [--------]  INFO   skill-controller    CONTEXT_V2_RECON_WAVE  jobs=1 context_source=deterministic recon_skip=false
+2026-08-16T06:32:21Z  [--------]  INFO   skill-controller    CONTEXT_ROUTING_ACTIVE  revision=1 actions=1 deliveries=5
+2026-08-16T06:32:56Z  [aa40ceb8]  INFO   AGENT_SPAWN         agent_call_id=toolu_recon  agent_type=appsec-advisor:appsec-recon-scanner  model=haiku  background=false  action_id=stage1c:aaaa  job_id=phase2-recon  description=Recon scanner
+2026-08-16T06:32:56Z  [aa40ceb8]  INFO   AGENT_RETURN_FIELDS  agent_call_id=toolu_recon  fields=content,usage
+2026-08-16T06:33:19Z  [--------]  INFO   recon-scanner  SCAN_START   reconnaissance-scan
+2026-08-16T06:33:30Z  [aa40ceb8]  INFO   AGENT_USAGE_UNAVAILABLE  transcript=<redacted>  agent_call_id=toolu_recon
+2026-08-16T06:36:04Z  [--------]  INFO   recon-scanner  SCAN_END   reconnaissance-scan-complete
+2026-08-16T06:48:21Z  [--------]  INFO   threat-analyst      PHASE_START         trust-boundary-analyst
+2026-08-16T06:49:23Z  [--------]  INFO   threat-analyst      PHASE_END           trust-boundary-analyst
+2026-08-16T06:59:11Z  [--------]  INFO   skill-controller    CONTEXT_ROUTING_ACTIVE  revision=6 actions=6 deliveries=118
+2026-08-16T07:02:59Z  [aa40ceb8]  INFO   AGENT_SPAWN         agent_call_id=toolu_wf  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  background=false  action_id=stage1c:9536  job_id=stride:web-frontend:attempt-1  component_id=web-frontend  attempt=1  analysis_depth=full  description=STRIDE (full): web-frontend
+2026-08-16T07:02:59Z  [aa40ceb8]  INFO   AGENT_RUNNING       agent_call_id=toolu_wf  agent_type=appsec-advisor:appsec-stride-analyzer-v2  component_id=web-frontend  attempt=1
+2026-08-16T07:03:00Z  [aa40ceb8]  INFO   AGENT_DONE          agent_call_id=toolu_wf  agent_type=appsec-advisor:appsec-stride-analyzer-v2  component_id=web-frontend  attempt=1
+2026-08-16T07:03:27Z  [aa40ceb8]  INFO   AGENT_SPAWN         agent_call_id=toolu_api  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  background=false  action_id=stage1c:9536  job_id=stride:api-server:attempt-1  component_id=api-server  attempt=1  analysis_depth=full  description=STRIDE (full): api-server
+2026-08-16T07:04:40Z  [aa40ceb8]  INFO   AGENT_SPAWN         agent_call_id=toolu_ci  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  background=false  action_id=stage1c:9536  job_id=stride:ci-cd-pipeline:attempt-1  component_id=ci-cd-pipeline  attempt=1  analysis_depth=light  description=STRIDE (light): ci-cd-pipeline
+2026-08-16T07:10:39Z  [aa40ceb8]  INFO   stride-analyzer-v2  AGENT_USAGE         agent_call_id=toolu_ci  component_id=ci-cd-pipeline  attempt=1  in=33  out=17449  cache_write=90242  cache_read=1272250  tool_uses=22
+2026-08-16T07:13:50Z  [aa40ceb8]  INFO   stride-analyzer-v2  AGENT_USAGE         agent_call_id=toolu_api  component_id=api-server  attempt=1  in=5023  out=35335  cache_write=172509  cache_read=2211434  tool_uses=36
+2026-08-16T07:16:20Z  [aa40ceb8]  INFO   stride-analyzer-v2  AGENT_USAGE         agent_call_id=toolu_wf  component_id=web-frontend  attempt=1  in=48  out=67284  cache_write=133025  cache_read=2126193  tool_uses=33
+2026-08-16T07:19:38Z  [--------]  WARN   skill-controller    RUN_ABORTED         validate_dispatch_manifest.py failed with exit 1
+2026-08-16T07:20:39Z  [--------]  INFO   shared-session      SESSION_STOP        stop_reason=end_turn  in=165  out=81909  cache_write=348672  cache_read=8351764  cost=$5.0422
