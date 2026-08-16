@@ -225,6 +225,7 @@ Check whether `docs/business-context.md` exists in the repository root.
 
 - If it exists, read it in full (up to 200 lines) and store the content **verbatim**. This file is purpose-written to inform threat modeling; summarizing it loses the precise language about revenue-critical flows, regulatory drivers, and security requirements that threat analysts need. If the file exceeds 200 lines, read the first 200 lines and append a note: `_(truncated at 200 lines)_`.
   **Print now:** `[context-resolver]   ↳ business-context.md: found — <word count> words`
+  Record `business_context_file: "found (docs/business-context.md)"` for the header table.
 - If it does not exist, record `business_context_file: "not found"` and continue.
   **Print now:** `[context-resolver]   ↳ business-context.md: not found`
 
@@ -607,6 +608,7 @@ Create `$OUTPUT_DIR` if it does not exist. Write `$OUTPUT_DIR/.threat-modeling-c
 | Repository | <REPO_ID> |
 | Repo Root | <REPO_ROOT> |
 | External Context | <provided | not configured | disabled | unavailable> |
+| Business Context File | <found (docs/business-context.md) | not found> |
 | Requirements YAML | <remote | cached | fallback | disabled | unavailable> |
 | Known Threats | <n entries | not found | invalid> |
 | Related Repos | <n declared, n with findings | not declared> |

@@ -376,6 +376,10 @@ def build(repo_root: Path, output_dir: Path, plugin_root: Path) -> Path:
         else load_business_context.REPO_RELATIVE
     )
     business = _bounded_lines(business_path, 200) or "docs/business-context.md not present in this repository."
+    # The report names its context sources from this row, so it carries the
+    # file that was actually read — a run-only source is not the repository
+    # file and must not be cited as one.
+    business_status = f"found ({business_source})" if business_path is not None else "not found"
     security_found = _first(
         repo_root,
         ("SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md", "docs/security/SECURITY.md"),
@@ -407,6 +411,7 @@ def build(repo_root: Path, output_dir: Path, plugin_root: Path) -> Path:
 | Repository | {_table_cell(repo_id)} |
 | Repo Root | {_table_cell(repo_root)} |
 | External Context | {external_status} |
+| Business Context File | {business_status} |
 | Requirements YAML | {_requirements_status(output_dir)} |
 | Known Threats | {known_status} |
 | Related Repos | {related_status} |

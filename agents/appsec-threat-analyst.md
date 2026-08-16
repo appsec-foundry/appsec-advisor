@@ -946,7 +946,7 @@ Use the formatted string (e.g. `"4 min 22 s"`) for the MD `Analysis Duration` fi
 
 **Context source tracking:** After Phase 1 completes, read `$OUTPUT_DIR/.threat-modeling-context.md` and check the `External Context` and `Business Context File` fields in its header table. Derive the context sources list from those values:
 - External Context `provided` → add: `External Context Endpoint — <rest_url>`
-- Business Context File `found` → add: `docs/business-context.md`
+- Business Context File `found (<file>)` → add that file name verbatim; a run-only `.business-context-input.md` is not `docs/business-context.md`.
 - If neither is available, record as `None`
 This list goes into the metadata table and the System Overview.
 

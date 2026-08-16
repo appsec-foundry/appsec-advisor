@@ -600,7 +600,7 @@ This table lists the flags `run-headless.sh` accepts.
 | `--dry-run` | Preview scope without running the full pipeline |
 | `--resume` | Continue from last checkpoint |
 | `--restore-from <path>` | Restore `$OUTPUT_DIR` from a prior run before starting |
-| `--context <url\|path>` | Business context for this run: an http(s) URL or a file path, never written to the repository |
+| `--context <url\|path>` | Business context for this run: an http(s) URL or a file path, never written to the repository. Applies to a new or rebuilt analysis; refused on a run that cannot read it |
 
 ### Output formats
 

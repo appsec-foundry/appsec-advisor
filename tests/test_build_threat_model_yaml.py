@@ -461,6 +461,65 @@ def test_build_meta_stride_cap_propagated_when_active():
     assert m["stride_per_category_cap"] == 2
 
 
+def _business_meta(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True, exist_ok=True)
+    output = tmp_path / "out"
+    output.mkdir(exist_ok=True)
+    return repo, output
+
+
+def test_build_meta_records_which_file_the_context_digest_came_from(tmp_path):
+    """The run-only file is cleaned up with its run, so a later scan sees the
+    digest go missing. Without the source name that reads as an edit."""
+    repo, output = _business_meta(tmp_path)
+    (output / ".business-context-input.md").write_text("This run only.\n", encoding="utf-8")
+
+    m = b.build_meta(
+        skill_cfg={"output_dir": str(output)},
+        org=None,
+        recon_project=None,
+        plugin_root=ROOT,
+        repo_root=repo,
+        prior_yaml=None,
+    )
+
+    assert m["business_context_source"] == ".business-context-input.md"
+    assert m["business_context_sha256"]
+
+
+def test_build_meta_records_the_repository_file_as_its_own_source(tmp_path):
+    repo, output = _business_meta(tmp_path)
+    (repo / "docs" / "business-context.md").write_text("Stored context.\n", encoding="utf-8")
+
+    m = b.build_meta(
+        skill_cfg={"output_dir": str(output)},
+        org=None,
+        recon_project=None,
+        plugin_root=ROOT,
+        repo_root=repo,
+        prior_yaml=None,
+    )
+
+    assert m["business_context_source"] == "docs/business-context.md"
+
+
+def test_build_meta_leaves_the_context_source_empty_without_context(tmp_path):
+    repo, output = _business_meta(tmp_path)
+
+    m = b.build_meta(
+        skill_cfg={"output_dir": str(output)},
+        org=None,
+        recon_project=None,
+        plugin_root=ROOT,
+        repo_root=repo,
+        prior_yaml=None,
+    )
+
+    assert m["business_context_source"] is None
+    assert m["business_context_sha256"] is None
+
+
 def test_build_meta_stride_cap_none_when_full():
     """No cap (full profile or missing) → None, renderer omits the row."""
     assert _meta()["stride_per_category_cap"] is None

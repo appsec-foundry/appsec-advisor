@@ -809,6 +809,24 @@ def _business_context_digest(skill_cfg: dict, repo_root: Path) -> str | None:
     return load_business_context.context_digest(repo_root, Path(output_dir))
 
 
+def _business_context_source(skill_cfg: dict, repo_root: Path) -> str | None:
+    """The file name the digest was taken from, or None without context.
+
+    A run-only source is cleaned up with its run, so the digest alone cannot
+    say later whether the context was edited or was never stored. The name can.
+    """
+    output_dir = skill_cfg.get("output_dir")
+    if not output_dir:
+        return None
+    path = load_business_context.effective_source(repo_root, Path(output_dir))
+    if path is None:
+        return None
+    # Same two labels the context artifact fences the block with.
+    if path.name == load_business_context.RUN_ONLY_NAME:
+        return load_business_context.RUN_ONLY_NAME
+    return load_business_context.REPO_RELATIVE
+
+
 def build_meta(
     *,
     skill_cfg: dict,
@@ -878,6 +896,9 @@ def build_meta(
         # run compares it: an incremental scan re-rates only changed components,
         # so changed context is surfaced as a full-scan recommendation.
         "business_context_sha256": _business_context_digest(skill_cfg, repo_root),
+        # The file behind that digest. A run-only source is gone by the next
+        # scan, so without the name the missing digest reads as an edit.
+        "business_context_source": _business_context_source(skill_cfg, repo_root),
     }
 
 

@@ -487,9 +487,17 @@ only — it is not written to `docs/business-context.md`, because committing a f
 repository is a decision for a person, not a pipeline. The value takes no spaces; put
 pasted text in a file and pass its path.
 
+`--context` applies to a new or rebuilt analysis. A run that cannot read a supplied
+source — an incremental scan, a dry run, a run under `--deadline` or `--max-cost`,
+or one of the runtime opt-outs — refuses the flag and says which combination works,
+rather than scanning as if nothing had been passed. Context that should reach every
+kind of run belongs in `docs/business-context.md`.
+
 Changing the context does not by itself re-rate an existing model. An incremental run
 that meets changed context says so and recommends `--full`, which applies the new
-context to every finding.
+context to every finding. A model rated against a run-only source is the exception:
+that file is gone by the next scan, so the run says the context is missing and asks
+for it again rather than reporting an edit.
 
 Context-v2 projects only facts that apply to each component before STRIDE
 analysis. It does not expose the complete Markdown document to every component

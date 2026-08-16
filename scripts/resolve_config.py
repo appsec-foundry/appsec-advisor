@@ -1549,6 +1549,25 @@ def _extract_baseline_business_context(output_dir: Path) -> Optional[str]:
     return None
 
 
+def _extract_baseline_business_context_source(output_dir: Path) -> Optional[str]:
+    """Return ``meta.business_context_source`` from the prior baseline.
+
+    The file name the prior run rated against, so a missing digest can be told
+    apart from an edited one. ``None`` for a baseline written before the field
+    existed or by a run without business context.
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+    if yaml_path.is_file():
+        try:
+            text = yaml_path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        m = re.search(r"(?m)^\s{2}business_context_source:\s*\"?([^\"\n]+?)\"?\s*$", text)
+        if m and m.group(1) not in ("null", "~"):
+            return m.group(1)
+    return None
+
+
 def resolve_business_context(ns: argparse.Namespace, cfg: dict) -> dict:
     """Validate ``--context`` and flag context an incremental run cannot apply.
 
@@ -1556,6 +1575,11 @@ def resolve_business_context(ns: argparse.Namespace, cfg: dict) -> dict:
     context would leave carried-forward findings rated against the old one. That
     is a recommendation, not a forced full scan: the cost of a forced full run on
     every context edit outweighs the drift.
+
+    A model rated against a run-only source is the one case the digest cannot
+    describe as a change: that file is cleaned up with its run, so every later
+    scan sees it missing. Say what actually happened instead of reporting an
+    edit nobody made.
     """
     source = getattr(ns, "context", None)
     skip = bool(getattr(ns, "skip_context", False))
@@ -1586,13 +1610,18 @@ def resolve_business_context(ns: argparse.Namespace, cfg: dict) -> dict:
     baseline_digest = _extract_baseline_business_context(Path(cfg["output_dir"]))
     if baseline_digest is None:
         return out
-    if out["business_context_source"]:
-        changed = True  # the supplied context is loaded after this resolution
+    module = _load_business_context_module()
+    current = module.context_digest(Path(cfg["repo_root"]), Path(cfg["output_dir"]))
+    if (current or "null") == baseline_digest:
+        return out
+    baseline_source = _extract_baseline_business_context_source(Path(cfg["output_dir"]))
+    if current is None and baseline_source == module.RUN_ONLY_NAME:
+        out["business_context_note"] = (
+            "Note: the existing model was rated against business context supplied for that "
+            "run only, which is not stored in the repository. This scan has none — pass "
+            "--full --context <url|path> to rate every finding against it again."
+        )
     else:
-        digest = _load_business_context_module().context_digest
-        current = digest(Path(cfg["repo_root"]), Path(cfg["output_dir"]))
-        changed = (current or "null") != baseline_digest
-    if changed:
         out["business_context_note"] = (
             "Note: the business context changed since the existing model was built. "
             "This incremental scan re-rates only changed components — run --full to "
@@ -2188,6 +2217,19 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # deadline, cost cap, live-phase run, or explicit compact-runtime opt-out
     # retains both the legacy runtime and the legacy producer generation.
     cfg.update(resolve_runtime_generation(cfg["mode"], compact_eligible=compact_runtime_eligible(cfg)))
+
+    # Only the context-v2 producer reads a supplied document: it is the one
+    # that builds the context artifact from `.business-context-input.md`. On
+    # every other producer the file is written and never read, so refuse the
+    # combination instead of running a scan the context never reaches.
+    if cfg.get("business_context_source") and cfg["runtime_generation"] != "context-v2":
+        raise SystemExit(
+            "Error: --context has no effect on this run.\n"
+            f"  This run resolved to {cfg['runtime_generation_label']}, and only the\n"
+            "  context-v2 producer reads the supplied document.\n"
+            "  Run --full --context <url|path> to apply it, or write the context to\n"
+            "  docs/business-context.md, which every producer reads."
+        )
 
     # Opus ceiling — MUST be the last model step. Sourced from (CLI --no-opus)
     # OR (env APPSEC_DISABLE_OPUS) OR (org-profile policy.disable_opus, merged

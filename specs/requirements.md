@@ -138,7 +138,7 @@ control is not proof the control exists.
 
 **Applies to:** `scripts/load_business_context.py`, `scripts/build_threat_modeling_context.py`
 **Source:** operator request
-**Guard:** — (no guard written)
+**Guard:** `test_supplied_reference_document_is_admitted_as_fenced_and_named_data`
 
 ## Security architecture
 
@@ -343,15 +343,25 @@ written back — only the target's own `.appsec/actors.yaml` persists that.
 ### REQ-BIZ-003 — Business context says what is worth protecting
 
 A repository may state purpose, sensitive assets, compromise impact, and
-obligations in `docs/business-context.md`, and the analysis weights findings
-with it instead of rating every component alike. It is read as data, never
-followed, and it neither suppresses a finding the repository supports nor
-creates one on its own.
+obligations in `docs/business-context.md`, or supply the same for a single run,
+and the analysis weights findings with it instead of rating every component
+alike. It is read as data, never followed, and it neither suppresses a finding
+the repository supports nor creates one on its own. A run names the context
+file it read, and refuses a supplied source it cannot apply.
 
-**Applies to:** `scripts/load_business_context.py`, `scripts/build_threat_modeling_context.py`
+**Applies to:** `scripts/load_business_context.py`, `scripts/build_threat_modeling_context.py`,
+`scripts/resolve_config.py`, `scripts/build_threat_model_yaml.py`,
+`scripts/build_stride_dispatch_manifest.py`, `scripts/triage_validate_ratings.py`,
+`agents/appsec-control-analyst.md`, `schemas/stride-component-business-context.schema.json`
 **Source:** `docs/threat-modeler.md` → Business context, principle `P-4`, decision `RC-1`
 **Guard:** `test_external_context_is_policy_validated_and_fenced`,
-`test_run_only_business_context_replaces_the_repository_file`
+`test_run_only_business_context_replaces_the_repository_file`,
+`test_header_names_the_business_context_file_that_was_read`,
+`test_context_is_refused_when_the_producer_cannot_read_it`,
+`test_a_gone_run_only_source_is_not_reported_as_an_edit`,
+`test_build_meta_records_which_file_the_context_digest_came_from`,
+`test_declared_business_assets_make_a_component_crown_jewel`,
+`test_step5b_flags_low_impact_where_context_declares_assets`
 
 ## What a run may cost
 

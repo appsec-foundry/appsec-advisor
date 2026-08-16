@@ -72,6 +72,52 @@ def test_run_only_business_context_replaces_the_repository_file(tmp_path):
     assert "Stored context." not in text
 
 
+def test_header_names_the_business_context_file_that_was_read(tmp_path):
+    """The report derives its context sources from this row. Without it the
+    analyst had no field to read and cited `docs/business-context.md` for a
+    document that never was that file."""
+    repo = _repo(tmp_path)
+    output = tmp_path / "output"
+    output.mkdir()
+    plugin = _plugin(tmp_path)
+
+    absent = builder.build(repo, output, plugin).read_text(encoding="utf-8")
+    assert "| Business Context File | not found |" in absent
+
+    (repo / "docs" / "business-context.md").write_text("Stored context.\n", encoding="utf-8")
+    stored = builder.build(repo, output, plugin).read_text(encoding="utf-8")
+    assert "| Business Context File | found (docs/business-context.md) |" in stored
+
+    (output / ".business-context-input.md").write_text("This run only.\n", encoding="utf-8")
+    run_only = builder.build(repo, output, plugin).read_text(encoding="utf-8")
+    assert "| Business Context File | found (.business-context-input.md) |" in run_only
+    assert "found (docs/business-context.md)" not in run_only
+
+
+def test_supplied_reference_document_is_admitted_as_fenced_and_named_data(tmp_path):
+    """REQ-MOD-008: a document the operator hands to the run is analyzed like a
+    declared input and carries its own source, and a control it claims arrives
+    as text inside the untrusted fence rather than as a finding."""
+    repo = _repo(tmp_path)
+    output = tmp_path / "output"
+    output.mkdir()
+    plugin = _plugin(tmp_path)
+    (output / ".business-context-input.md").write_text(
+        "# Design specification\nAll admin routes are protected by SSO.\n",
+        encoding="utf-8",
+    )
+
+    path = builder.build(repo, output, plugin)
+
+    text = path.read_text(encoding="utf-8")
+    validate_threat_modeling_context(path)
+    assert "| Business Context File | found (.business-context-input.md) |" in text
+    block = text.split("## Business Context", 1)[1].split("\n## ", 1)[0]
+    assert '<untrusted-data source=".business-context-input.md">' in block
+    assert "All admin routes are protected by SSO." in block
+    assert "</untrusted-data>" in block
+
+
 def test_does_not_follow_repository_symlinks(tmp_path):
     repo = _repo(tmp_path)
     output = tmp_path / "output"

@@ -142,7 +142,9 @@ TARGET & SCAN
                                --ignore-requirements, --requirements-url <url>
   --context <url|path>         Business context for this run, from a raw
                                Markdown/text URL or a file (optional; a new
-                               interactive analysis asks for it instead)
+                               interactive analysis asks for it instead).
+                               Applies to a new or rebuilt analysis; refused
+                               on a run that cannot read it
   --skip-context               Run without business context and without the
                                question
 

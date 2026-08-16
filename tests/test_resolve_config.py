@@ -2883,9 +2883,69 @@ class TestBusinessContext:
 
         assert rc.resolve_business_context(self._ns(), cfg)["business_context_note"] is None
 
-    def test_supplied_context_is_flagged_on_an_incremental_run(self, tmp_path):
-        cfg = self._incremental_cfg(tmp_path, "null")
+    def test_a_gone_run_only_source_is_not_reported_as_an_edit(self, tmp_path):
+        """The run-only file is cleaned up with its run, so a later scan always
+        finds it missing. Reporting that as a changed context sent every later
+        incremental run to --full for an edit nobody made."""
+        cfg = self._incremental_cfg(tmp_path, "0" * 64)
+        (Path(cfg["output_dir"]) / "threat-model.yaml").write_text(
+            "meta:\n"
+            "  mode: incremental\n"
+            f"  business_context_sha256: {'0' * 64}\n"
+            '  business_context_source: ".business-context-input.md"\n',
+            encoding="utf-8",
+        )
 
-        out = rc.resolve_business_context(self._ns("--context", "https://ctx.example.test/a.md"), cfg)
+        note = rc.resolve_business_context(self._ns(), cfg)["business_context_note"]
 
-        assert out["business_context_note"]
+        assert note and "that run only" in note
+        assert "changed" not in note
+        assert "--context" in note
+
+    def test_a_gone_repository_file_still_reports_a_change(self, tmp_path):
+        """Deleting the stored file is an edit; only the run-only case is not."""
+        cfg = self._incremental_cfg(tmp_path, "0" * 64)
+        (Path(cfg["output_dir"]) / "threat-model.yaml").write_text(
+            "meta:\n"
+            "  mode: incremental\n"
+            f"  business_context_sha256: {'0' * 64}\n"
+            '  business_context_source: "docs/business-context.md"\n',
+            encoding="utf-8",
+        )
+
+        note = rc.resolve_business_context(self._ns(), cfg)["business_context_note"]
+
+        assert note and "changed" in note
+
+    def test_context_is_refused_when_the_producer_cannot_read_it(self, tmp_path):
+        """Only context-v2 reads the supplied document. On every other producer
+        the run-only file is written and never read, so the scan would silently
+        ignore the context the user passed."""
+        source = tmp_path / "context.md"
+        source.write_text("Checkout handles card data.\n", encoding="utf-8")
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "threat-model.yaml").write_text("meta:\n  assessment_depth: standard\n", encoding="utf-8")
+        base = ["--repo", str(tmp_path), "--output", str(out), "--context", str(source)]
+
+        with pytest.raises(SystemExit, match="no effect on this run"):
+            rc.resolve([*base, "--incremental"], REPO_ROOT)
+
+    def test_context_is_refused_when_the_compact_runtime_is_opted_out(self, tmp_path, monkeypatch):
+        source = tmp_path / "context.md"
+        source.write_text("Checkout handles card data.\n", encoding="utf-8")
+        monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "0")
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out"), "--context", str(source)]
+
+        with pytest.raises(SystemExit, match="no effect on this run"):
+            rc.resolve(base, REPO_ROOT)
+
+    def test_context_survives_a_full_run(self, tmp_path):
+        source = tmp_path / "context.md"
+        source.write_text("Checkout handles card data.\n", encoding="utf-8")
+        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out"), "--context", str(source)]
+
+        cfg = rc.resolve([*base, "--full"], REPO_ROOT)
+
+        assert cfg["runtime_generation"] == "context-v2"
+        assert cfg["business_context_source"] == str(source.resolve())
