@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -160,51 +161,92 @@ def _git_output(repo_root: Path, *args: str) -> bytes:
     return completed.stdout if completed.returncode == 0 else b""
 
 
-def repository_fingerprint(repo_root: Path, *, excluded_root: Path | None = None) -> tuple[str, str]:
-    """Bind a repository to HEAD and the exact bytes of every dirty file."""
+def repository_fingerprint(
+    repo_root: Path,
+    *,
+    cited_paths: Iterable[str],
+    excluded_root: Path | None = None,
+) -> tuple[str, str]:
+    """Bind a repository to HEAD and the exact bytes of the files a bundle cites.
+
+    Scope is the evidence-bearing set, never the whole worktree. A bundle makes
+    no claim about a file it does not cite, so an unrelated edit during the
+    STRIDE phase — an editor save, a watcher, a build in the analyzed
+    repository — must not invalidate it. A change to a cited file still does.
+    """
     repo_root = repo_root.resolve()
     commit_raw = _git_output(repo_root, "rev-parse", "HEAD").strip().lower()
     commit = commit_raw.decode("ascii", errors="ignore")
     if len(commit) < 40 or any(char not in "0123456789abcdef" for char in commit):
         commit = "unversioned"
 
-    dirty = hashlib.sha256()
-    worktree_names = _git_output(
-        repo_root,
-        "ls-files",
-        "-m",
-        "-o",
-        "--exclude-standard",
-        "-z",
-    ).split(b"\0")
-    index_names = _git_output(repo_root, "diff", "--cached", "--name-only", "-z").split(b"\0")
-    names = {name for name in [*worktree_names, *index_names] if name}
-    for raw_name in sorted(names):
-        try:
-            relative = raw_name.decode("utf-8")
-        except UnicodeDecodeError:
-            relative = raw_name.decode("utf-8", errors="surrogateescape")
+    digest = hashlib.sha256()
+    for relative in sorted(dict.fromkeys(cited_paths)):
+        digest.update(relative.encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
         try:
             path = _canonical_under(repo_root, relative)
-            if excluded_root is not None:
-                try:
-                    path.relative_to(excluded_root.resolve())
-                except ValueError:
-                    pass
-                else:
-                    continue
-            dirty.update(raw_name)
-            dirty.update(b"\0")
-            if path.is_file():
+            if excluded_root is not None and _is_within(path, excluded_root):
+                # Run-owned output is not repository evidence; hashing it would
+                # let the run invalidate its own bundles as it writes.
+                digest.update(b"<excluded>")
+            elif path.is_file():
                 with path.open("rb") as handle:
                     for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        dirty.update(chunk)
+                        digest.update(chunk)
+            else:
+                digest.update(b"<absent>")
         except (BundleError, OSError, UnicodeError):
-            dirty.update(raw_name)
-            dirty.update(b"\0")
-            dirty.update(b"<unreadable>")
-        dirty.update(b"\0")
-    return commit, dirty.hexdigest()
+            digest.update(b"<unreadable>")
+        digest.update(b"\0")
+    return commit, digest.hexdigest()
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def bundle_citation_paths(
+    source_slices: Any,
+    evidence: Any,
+    registry: dict[str, Path],
+) -> dict[str, list[str]]:
+    """Group the files a bundle makes claims about, by repository.
+
+    Builder and validator both derive this from the bundle's own admitted
+    content — the bounded evidence and the retained slices — so the two sides
+    cannot disagree about what was fingerprinted.
+    """
+    cited: dict[str, set[str]] = {}
+    if isinstance(source_slices, list):
+        for row in source_slices:
+            if not isinstance(row, dict):
+                continue
+            repository_id = row.get("repository_id")
+            path = row.get("path")
+            if isinstance(repository_id, str) and isinstance(path, str):
+                cited.setdefault(repository_id, set()).add(path)
+    for path in _referenced_primary_paths(evidence):
+        cited.setdefault("primary", set()).add(path)
+
+    resolved: dict[str, list[str]] = {}
+    for repository_id, paths in cited.items():
+        root = registry.get(repository_id)
+        if root is None:
+            continue
+        keep: set[str] = set()
+        for relative in paths:
+            try:
+                _canonical_under(root, relative)
+            except BundleError:
+                continue
+            keep.add(relative.rstrip("/"))
+        resolved[repository_id] = sorted(keep)
+    return resolved
 
 
 def _declared_related_repositories(repo_root: Path) -> dict[str, str]:
@@ -1402,11 +1444,13 @@ def build_bundle(
         raise BundleError(
             "component source slices name unknown repositories: " + ", ".join(sorted(unknown_repository_ids))
         )
+    citation_paths = bundle_citation_paths(source_slices, evidence, registry)
     repository_state = []
     for repository_id in sorted(admitted_repository_ids):
         root = registry[repository_id]
         commit, dirty = repository_fingerprint(
             root,
+            cited_paths=citation_paths.get(repository_id, []),
             excluded_root=output_dir if repository_id == "primary" else None,
         )
         repository_state.append(
@@ -1548,17 +1592,24 @@ def validate_bundle_bytes(
         raise BundleError("evidence-bundle repository state contains duplicate repository ids")
     if set(state_by_id) != required_repository_ids:
         raise BundleError("evidence-bundle repository state does not match its admitted source slices")
+    citation_paths = bundle_citation_paths(bundle["source_slices"], bundle["evidence"], registry)
     for repository_id in sorted(required_repository_ids):
         root = registry[repository_id]
-        commit, dirty = repository_fingerprint(
+        _commit, dirty = repository_fingerprint(
             root,
+            cited_paths=citation_paths.get(repository_id, []),
             excluded_root=excluded_root if repository_id == "primary" else None,
         )
         state = state_by_id[repository_id]
         expected_kind = "primary" if repository_id == "primary" else "related"
         if state["kind"] != expected_kind:
             raise BundleError(f"evidence-bundle repository kind is invalid for: {repository_id}")
-        if state["commit_sha"] != commit or state["dirty_worktree_sha256"] != dirty:
+        # Only the cited bytes decide staleness. `commit_sha` stays in the
+        # artifact for audit but is not compared: a commit made in the analyzed
+        # repository during a long STRIDE phase moves HEAD without changing a
+        # single cited line, and failing the run for that punishes an actively
+        # developed repository for being one.
+        if state["dirty_worktree_sha256"] != dirty:
             raise BundleError(f"evidence bundle is stale for repository: {repository_id}")
 
     seen: set[tuple[Any, ...]] = set()

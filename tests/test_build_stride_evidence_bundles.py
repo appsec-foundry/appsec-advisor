@@ -927,6 +927,7 @@ def test_bundle_becomes_stale_when_source_bytes_change(tmp_path):
 
 def test_bundle_becomes_stale_when_source_change_is_staged(tmp_path):
     repo, output = _repo(tmp_path)
+    _write_signal(output)
     manifest = bundles.build_all(output, repo, _manifest())
     component = manifest["components"][0]
     bundle_path = output / component["evidence_bundle_path"]
@@ -940,6 +941,97 @@ def test_bundle_becomes_stale_when_source_change_is_staged(tmp_path):
             expected_sha256=component["evidence_bundle_sha256"],
             output_dir=output,
         )
+
+
+def test_unrelated_repository_churn_does_not_invalidate_a_bundle(tmp_path):
+    """Files the bundle never cites must not abort a run when they change.
+
+    A long STRIDE phase runs against a live checkout: editors save, watchers
+    write, builds emit. None of that touches what the bundle asserts.
+    """
+    repo, output = _repo(tmp_path)
+    _write_signal(output)
+    manifest = bundles.build_all(output, repo, _manifest())
+    component = manifest["components"][0]
+    bundle_path = output / component["evidence_bundle_path"]
+
+    (repo / "UNRELATED.md").write_text("noise\n", encoding="utf-8")
+    (repo / "src" / "other.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "add", "src/other.py")
+    (repo / ".appsec-progress.json").write_text('{"event": "STEP_END"}\n', encoding="utf-8")
+
+    bundle = bundles.validate_bundle(
+        bundle_path,
+        {"primary": repo},
+        expected_sha256=component["evidence_bundle_sha256"],
+        output_dir=output,
+    )
+    assert bundle["component"]["id"] == component["component_id"]
+
+
+def test_a_commit_that_leaves_cited_bytes_alone_does_not_invalidate(tmp_path):
+    """An actively developed repository must not lose a run to its own history."""
+    repo, output = _repo(tmp_path)
+    _write_signal(output)
+    manifest = bundles.build_all(output, repo, _manifest())
+    component = manifest["components"][0]
+
+    (repo / "CHANGELOG.md").write_text("unrelated\n", encoding="utf-8")
+    _git(repo, "add", "CHANGELOG.md")
+    _git(repo, "commit", "-m", "unrelated work during the scan")
+
+    bundles.validate_bundle(
+        output / component["evidence_bundle_path"],
+        {"primary": repo},
+        expected_sha256=component["evidence_bundle_sha256"],
+        output_dir=output,
+    )
+
+
+def test_a_commit_that_rewrites_a_cited_file_still_invalidates(tmp_path):
+    repo, output = _repo(tmp_path)
+    _write_signal(output)
+    manifest = bundles.build_all(output, repo, _manifest())
+    component = manifest["components"][0]
+
+    (repo / "src" / "app.py").write_text("def login(user):\n    return None\n", encoding="utf-8")
+    _git(repo, "add", "src/app.py")
+    _git(repo, "commit", "-m", "touch the cited file")
+
+    with pytest.raises(bundles.BundleError, match="stale for repository"):
+        bundles.validate_bundle(
+            output / component["evidence_bundle_path"],
+            {"primary": repo},
+            expected_sha256=component["evidence_bundle_sha256"],
+            output_dir=output,
+        )
+
+
+def test_fingerprint_covers_only_the_cited_files(tmp_path):
+    repo, output = _repo(tmp_path)
+    cited = ["src/app.py"]
+    _, before = bundles.repository_fingerprint(repo, cited_paths=cited, excluded_root=output)
+
+    (repo / "src" / "other.py").write_text("x = 1\n", encoding="utf-8")
+    _, unrelated = bundles.repository_fingerprint(repo, cited_paths=cited, excluded_root=output)
+    assert unrelated == before
+
+    (repo / "src" / "app.py").write_text("def login(user):\n    return None\n", encoding="utf-8")
+    _, changed = bundles.repository_fingerprint(repo, cited_paths=cited, excluded_root=output)
+    assert changed != before
+
+
+def test_fingerprint_ignores_citations_inside_the_output_directory(tmp_path):
+    """Run-owned output must never bind a bundle, whatever cites it."""
+    repo, output = _repo(tmp_path)
+    summary = output / ".recon-summary.md"
+    summary.write_text("first\n", encoding="utf-8")
+    cited = ["docs/security/.recon-summary.md"]
+
+    _, before = bundles.repository_fingerprint(repo, cited_paths=cited, excluded_root=output)
+    summary.write_text("rewritten mid-run\n", encoding="utf-8")
+    _, after = bundles.repository_fingerprint(repo, cited_paths=cited, excluded_root=output)
+    assert after == before
 
 
 def test_bundle_rejects_changed_bundle_bytes(tmp_path):
