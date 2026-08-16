@@ -122,6 +122,22 @@ groups:
       - cwe: [CWE-829, CWE-1357]
         title_pattern: '(?i)\b(workflow|ci\.yml|ci\/cd|pipeline)\b.*\b(inject|pin|supply|install)\b'
 
+  # ci-workflow-permissions: the config scanner and the STRIDE analyzer both
+  # report an absent workflow `permissions:` block, at the same file and line,
+  # under different CWEs — CWE-732 (incorrect permission assignment) and
+  # CWE-284 (improper access control, its parent). `_dedupe_evidence` keys on
+  # (file, line, CWE) and additionally skips any member carrying no
+  # threat_category_id, which a config-scan finding does not, so neither
+  # deterministic path reunites them and the register showed one missing
+  # control twice. Narrow on purpose: the pattern names the permissions block
+  # itself, so the separate GITHUB_TOKEN-scope check keeps its own row.
+  - id: ci-workflow-permissions
+    title: "CI/CD Workflow Token Permissions Not Restricted"
+    scope: per-component
+    match_any:
+      - cwe: [CWE-732, CWE-284]
+        title_pattern: '(?i)\bworkflow[- ]?(?:level[- ])?permissions?\b|\bpermissions?[- ]block\b'
+
   # absent-dependency-tooling: "no lockfile", "Renovate not present",
   # "Dependabot npm ecosystem not configured" are three symptoms of ONE missing
   # control: automated dependency tracking. They share a single remediation

@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A scan records per-agent token usage again, and says so when part of its compute went unrecorded.
+- The findings register lists an unrestricted CI/CD workflow token permission once instead of twice.
 - A guardrail named only in a system prompt no longer counts as a control against the prompt-injection abuse case.
 - Cross-repository expectation mismatches now remain hypotheses until target-repository evidence supports a finding.
 - An endpoint that reaches a language model is now always modelled: reconnaissance records the call as a structured signal, marks the route, and matches a prompt-injection abuse case.

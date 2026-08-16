@@ -1110,6 +1110,61 @@ class TestConsolidateByGroup:
         assert "routes/address.ts" in s["affected_files"]
         assert "routes/wallet.ts" in s["affected_files"]
 
+    def test_workflow_permissions_consolidates_across_producers(self, mt):
+        """The config scanner and STRIDE report one missing control, under two CWEs.
+
+        Both name the absent workflow `permissions:` block at the same file and
+        line, as CWE-732 and as its parent CWE-284. `_dedupe_evidence` keys on
+        (file, line, CWE) and skips a member carrying no threat_category_id,
+        which a config-scan finding does not, so the register showed the same
+        control twice (2026-08-15 juice-shop, T-021 and T-031).
+        """
+        rows = [
+            _threat(
+                cwe="CWE-732",
+                title="GitHub Actions workflow-level permissions block",
+                source="config-scan",
+                threat_category_id=None,
+                component_id="ci-cd-pipeline",
+                evidence={"file": ".github/workflows/ci.yml", "line": 1},
+            ),
+            _threat(
+                cwe="CWE-284",
+                title="Missing Workflow Permissions Block (.github/workflows/ci.yml:1)",
+                threat_category_id="TH-06",
+                component_id="ci-cd-pipeline",
+                evidence={"file": ".github/workflows/ci.yml", "line": 1},
+            ),
+        ]
+
+        out = mt._consolidate_by_group([dict(r) for r in rows])
+        survivors = [t for t in out if t.get("consolidation_group") == "ci-workflow-permissions"]
+        assert len(survivors) == 1
+        assert survivors[0]["instance_count"] == 2
+
+    def test_github_token_scope_keeps_its_own_row(self, mt):
+        """Token scope is a separate control from the presence of a permissions block."""
+        rows = [
+            _threat(
+                cwe="CWE-732",
+                title="GitHub Actions workflow-level permissions block",
+                source="config-scan",
+                threat_category_id=None,
+                component_id="ci-cd-pipeline",
+                evidence={"file": ".github/workflows/ci.yml", "line": 1},
+            ),
+            _threat(
+                cwe="CWE-732",
+                title="GITHUB_TOKEN scope minimization",
+                source="config-scan",
+                threat_category_id=None,
+                component_id="ci-cd-pipeline",
+                evidence={"file": ".github/workflows/ci.yml", "line": 1},
+            ),
+        ]
+
+        assert len(mt._consolidate_by_group([dict(r) for r in rows])) == 2
+
     def test_idor_without_shared_control_scope_stays_per_component(self, mt):
         """CWE-639 alone cannot prove two services share one authz control."""
         rows = [
