@@ -1055,6 +1055,52 @@ class TestRenderRunStatistics:
         # Default (non-verbose) stops at the timing headline — no per-stage rows.
         assert "Stage 1" not in out
 
+    def test_net_compute_is_labelled_partial_when_dispatches_are_unrecorded(self):
+        """A net compute covering some agents must not read as the whole run.
+
+        `record_stage_stats.py` runs per wave and fails non-blocking, so a run
+        can lose the call and report a fraction of its real compute. The
+        2026-08-15 juice-shop run recorded 5 of 23 dispatches and presented the
+        partial sum as its net compute.
+        """
+        stats = {
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [("1", "", "Assess", "ta", "sonnet", 100)],
+            "agents": {},
+            "total_secs_from_stages": 100,
+            "wall_secs": 200,
+            "timing": {"net_compute_secs": 100, "wall_secs": 200, "standby_secs": 0},
+            "recorded_dispatches": 5,
+            "spawned_dispatches": 23,
+        }
+        out = "\n".join(rcs.render_run_statistics(stats, None, verbose=False))
+        assert "PARTIAL — covers 5 of 23 dispatched agents" in out
+        assert "Cost accounting     : incomplete" in out
+        # `wall - net` would bill every unrecorded agent's runtime as idle time.
+        assert "Idle / standby" not in out
+        assert "Total elapsed (wall)" in out, "the wall-clock stays — it is measured, not derived"
+
+    def test_net_compute_stays_unqualified_when_every_dispatch_is_recorded(self):
+        stats = {
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [("1", "", "Assess", "ta", "sonnet", 100)],
+            "agents": {},
+            "total_secs_from_stages": 100,
+            "wall_secs": 200,
+            "timing": {"net_compute_secs": 100, "wall_secs": 200, "standby_secs": 0},
+            "recorded_dispatches": 7,
+            "spawned_dispatches": 7,
+        }
+        out = "\n".join(rcs.render_run_statistics(stats, None, verbose=False))
+        assert "sum of per-stage agent time" in out
+        assert "PARTIAL" not in out
+
     def test_verbose_stage_breakdown_and_agents(self):
         stats = {
             "assess_secs": None,

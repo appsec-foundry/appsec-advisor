@@ -2090,34 +2090,6 @@ def _is_sanctioned_background_watchdog(cmd: str) -> bool:
     return True
 
 
-def _context_v2_parallel_foreground_reason(event: hook_payload.HookEvent) -> str | None:
-    """Reject a blocking Agent call that would serialize a context-v2 wave."""
-    if not event.is_agent_call:
-        return None
-    tool_input = event.tool_input
-    subtype = tool_input.get("subagent_type")
-    waiters = {
-        "appsec-advisor:appsec-stride-analyzer-v2": ("STRIDE", "wait_stride_progress.py"),
-        "appsec-advisor:appsec-abuse-case-verifier": ("abuse verifier", "wait_abuse_progress.py"),
-    }
-    if subtype not in waiters:
-        return None
-    if tool_input.get("run_in_background") is True:
-        return None
-    try:
-        config = json.loads(Path(_output_dir(), ".skill-config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if config.get("runtime_generation") != "context-v2":
-        return None
-    wave, waiter = waiters[subtype]
-    return (
-        f"Context-v2 {wave} jobs must use run_in_background:true. "
-        "A foreground Agent call serializes the controller's dispatch_parallel wave; "
-        f"launch every job before entering {waiter}."
-    )
-
-
 def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | None:
     """Require controller and call identity on context-v2 semantic dispatches."""
     if not event.is_agent_call:
@@ -2273,11 +2245,15 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         _emit_pretool_denial(abort_reason)
         return
 
-    serial_reason = _context_v2_parallel_foreground_reason(event)
-    if serial_reason is not None:
-        _emit_pretool_denial(serial_reason)
-        return
-
+    # A gate used to sit here demanding `run_in_background: true` on STRIDE and
+    # abuse-verifier dispatches. Claude Code >=2.x dropped that parameter from
+    # the Agent tool schema, so no compliant caller can set it and the gate
+    # denied every dispatch of both roles — the wave never started. Concurrency
+    # now follows from issuing the wave in one assistant message, which a
+    # PreToolUse hook sees one call at a time and cannot verify. The invariant
+    # is still enforced where the evidence exists: check_stride_dispatch.py
+    # fails the run on an inline-shortcut bypass and reports a serial wave as
+    # DEGRADED.
     identity_reason = _context_v2_agent_identity_reason(event)
     if identity_reason is not None:
         _emit_pretool_denial(identity_reason)
@@ -2736,7 +2712,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, event.agent_type)
     tool_uses = _tool_uses_from_transcript(transcript) if runtime_agent_id and transcript else 0
     runtime_call = (
-        agent_lifecycle.running_call_by_runtime_agent_id(_output_dir(), runtime_agent_id) if runtime_agent_id else None
+        agent_lifecycle.call_by_runtime_agent_id(_output_dir(), runtime_agent_id) if runtime_agent_id else None
     )
     if runtime_call is not None:
         try:

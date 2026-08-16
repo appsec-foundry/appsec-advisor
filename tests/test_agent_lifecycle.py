@@ -106,6 +106,41 @@ def test_missing_late_and_reordered_transitions_are_visible_or_noops(tmp_path: P
     assert lifecycle.finish_call(tmp_path, "toolu_old") == []
 
 
+def test_subagent_stop_usage_lands_on_an_already_terminal_call(tmp_path: Path) -> None:
+    """SubagentStop always arrives after the Agent tool has returned.
+
+    Claude Code >=2.x answers an Agent call with an async handle the moment the
+    agent launches, so PostToolUse closes the call long before the subagent
+    stops. A running-only lookup therefore rejected every usage record on the
+    2026-08-15 juice-shop run (23 x `no_running_agent_call`), which is what left
+    the run with no per-call usage and blinded cost accounting.
+    """
+    lifecycle.register_call(tmp_path, _identity("toolu_stride", max_turns=10))
+    _running(tmp_path, "toolu_stride")
+    lifecycle.bind_runtime_agent_id(tmp_path, "toolu_stride", "a1b2c3d4e5f60718")
+    lifecycle.finish_call(tmp_path, "toolu_stride")
+
+    events = lifecycle.record_runtime_usage(
+        tmp_path,
+        "a1b2c3d4e5f60718",
+        {
+            "input_tokens": 900,
+            "output_tokens": 400,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 12_000,
+        },
+        tool_uses=9,
+    )
+
+    assert [event.event for event in events] == ["AGENT_USAGE"]
+    stored = json.loads((tmp_path / ".active-tool-calls" / lifecycle.STATE_FILENAME).read_text(encoding="utf-8"))
+    call = next(row for row in stored["calls"] if row["agent_call_id"] == "toolu_stride")
+    assert call["usage"]["output_tokens"] == 400
+    assert call["usage"]["tool_uses"] == 9
+    # Attribution stays single-shot even though the call is terminal.
+    assert lifecycle.record_runtime_usage(tmp_path, "a1b2c3d4e5f60718", {"output_tokens": 1}) == []
+
+
 def test_sequential_roles_sharing_one_session_keep_usage_and_budget_separate(tmp_path: Path) -> None:
     lifecycle.register_call(tmp_path, _identity("toolu_recon", max_turns=10))
     recon = _running(tmp_path, "toolu_recon")

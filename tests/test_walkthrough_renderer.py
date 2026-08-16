@@ -346,6 +346,54 @@ class TestWalkthroughCap:
 
         assert [pick["id"] for pick in picks] == ["T-002"]
 
+    def test_elevated_findings_never_displace_a_base_critical(self):
+        """Diversity must not spend the cap on triage-elevated findings.
+
+        §8 and the headline count base `risk`, and `check_walkthrough_coverage`
+        feeds only base Criticals into this same function. When elevated
+        findings carry categories the base Criticals do not, category novelty
+        used to win: they filled the cap, base Criticals sharing an
+        already-covered category never reached the risk-order phase, and the
+        QA gate then blocked on walkthroughs nobody had rendered. Observed on
+        the 2026-08-15 juice-shop run (T-001/T-007/T-012 lost to
+        T-028/T-027/T-003).
+        """
+
+        def threat(tid, category, cwe, risk):
+            return {
+                "id": tid,
+                "title": f"Finding {tid}",
+                "threat_category_id": category,
+                "cwe": cwe,
+                "risk": risk,
+                "effective_severity": "Critical",
+                "likelihood": "High",
+                "impact": "Critical" if risk == "Critical" else "High",
+            }
+
+        # Four base Criticals across only two categories, plus three elevated
+        # findings each carrying a category of its own.
+        threats = [
+            threat("T-001", "TH-01", "CWE-89", "Critical"),
+            threat("T-002", "TH-01", "CWE-89", "Critical"),
+            threat("T-003", "TH-02", "CWE-347", "Critical"),
+            threat("T-004", "TH-02", "CWE-347", "Critical"),
+            threat("T-050", "TH-11", "CWE-79", "High"),
+            threat("T-051", "TH-07", "CWE-22", "Medium"),
+            threat("T-052", "TH-05", "CWE-94", "High"),
+        ]
+
+        picks = renderer.select_walkthrough_picks({"threats": threats}, cap=4)
+        ids = {pick["id"] for pick in picks}
+
+        assert ids == {"T-001", "T-002", "T-003", "T-004"}
+        # The gate derives its expectation from the base tier alone; the two
+        # calls must agree or the run blocks on a walkthrough nobody rendered.
+        base_only = renderer.select_walkthrough_picks(
+            {"threats": [t for t in threats if t["risk"] == "Critical"]}, cap=4
+        )
+        assert {pick["id"] for pick in base_only} == ids
+
 
 class TestAttackStepsFallbackWhenNoScenario:
     """When `scenario` is missing the renderer still produces clean steps."""

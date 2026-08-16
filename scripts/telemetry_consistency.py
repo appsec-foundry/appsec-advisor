@@ -145,7 +145,25 @@ def check_returned_calls(output_dir: str | Path) -> list[dict[str, str]]:
 
     open_budget = _open_budget_calls(output_dir)
     stats_tokens = _stage_stats_tokens(output_dir)
+    # Per-call usage only exists when the host returns a `usage` block on an
+    # Agent return. Claude Code >=2.x returns an async-shaped result
+    # (`agentId`, `isAsync`, `outputFile`, `status`) carrying no usage for every
+    # Agent call, so flagging each call would name the whole run — 22 of 22 jobs
+    # on the 2026-08-15 juice-shop run — while saying nothing about any single
+    # call. When one call does carry usage the source works and a call missing
+    # it is a real gap; when none does, the source is absent. Say which.
+    host_reports_usage = any(int((call.get("usage") or {}).get("output_tokens") or 0) for call in candidates)
     findings: list[dict[str, str]] = []
+    if not host_reports_usage and any(
+        call.get("state") == "done" and not call.get("background") for call in candidates
+    ):
+        findings.append(
+            _mismatch(
+                {"job_id": "-", "agent_call_id": "-", "agent_type": "-"},
+                "usage_source_absent",
+                "the host returns no per-call usage for Agent calls; stage stats are the only usage source",
+            )
+        )
     for job_id in sorted(accepted_jobs - {str(call.get("job_id") or "") for call in candidates}):
         findings.append(
             _mismatch(
@@ -175,8 +193,9 @@ def check_returned_calls(output_dir: str | Path) -> list[dict[str, str]]:
         # file, never usage, because the agent has not run yet — and no later
         # per-call source exists on the host. Wave usage is recorded in the
         # stage stats instead, so demanding it here would be demanding evidence
-        # that cannot exist.
-        if state_name == "done" and not charged and not call.get("background"):
+        # that cannot exist. The same holds for every call when the host
+        # reports no usage at all, which `usage_source_absent` already covers.
+        if state_name == "done" and not charged and not call.get("background") and host_reports_usage:
             findings.append(_mismatch(call, "usage_unattributed", "terminal call carries no child output tokens"))
         if call.get("agent_call_id") in open_budget:
             findings.append(_mismatch(call, "budget_not_retired", "turn budget still holds an entry for the call"))

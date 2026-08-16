@@ -200,8 +200,11 @@ def test_compact_stage_contracts_preserve_level0_dispatch_and_gates():
 
     assert "prepare-abuse --output-dir" in stage1d
     assert "finalize-abuse --output-dir" in stage1d
-    assert "run_in_background:true" in stage1d
-    assert "launch the whole wave before waiting" in stage1d
+    # The Agent tool has no background flag; the wave is concurrent because it
+    # is issued in one message. Instructing the removed parameter voided every
+    # dispatch in the wave.
+    assert "Pass no `run_in_background`" in stage1d
+    assert "launching the wave" in stage1d and "in ONE message" in stage1d
     assert "wait_abuse_progress.py" in stage1d
     assert "model alias" in stage1d
     assert "without reproducing evidence or artifact content" in stage1d
@@ -242,13 +245,14 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     text = (ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text(encoding="utf-8")
     flat = " ".join(text.split())
 
-    # OR-5: STRIDE waves use non-blocking fan-out plus a deterministic waiter so
-    # one-call-per-message drift cannot serialize the wave. Other semantic
-    # boundaries remain foreground and blocking.
-    assert "run_in_background: true" in text
+    # OR-5: a STRIDE wave is concurrent because it is issued in one message,
+    # plus a deterministic waiter, so one-call-per-message drift cannot
+    # serialize it. The Agent tool has no background flag — instructing the
+    # removed parameter voided every dispatch in the wave.
+    assert "in ONE assistant message" in flat
+    assert "Pass no `run_in_background`" in text
     assert "wait_stride_progress.py" in text
     assert "Never wait for one STRIDE job before launching the next" in flat
-    assert "run_in_background: false" in text
     assert "Do not end your turn after dispatching" in text
     assert "Never re-dispatch an agent that already returned" in text
     assert "filesystem is authoritative" in flat

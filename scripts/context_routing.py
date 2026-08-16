@@ -884,9 +884,16 @@ def bind_action_to_plan(action: dict[str, Any], plan: dict[str, Any], output_roo
     active = [
         row for row in plan["deliveries"] if row["action_id"] == action_id and "plan-enforced" in row["disclosures"]
     ]
-    if not active:
-        return action
-
+    # Identity is bound for every planned action, enforcement level is not the
+    # same axis. A role whose contexts are all still `shadow-only` (the catalog
+    # migration is incremental by design) used to return here unbound, so the
+    # action carried no `action_id` — while the dispatch hook requires ACTION_ID
+    # from all context-v2 roles and the runtime prompt reads
+    # `context_plan.action_id`. That gap made trust_boundary_analyst,
+    # threat_merger, config_scanner, and context_resolver structurally
+    # undispatchable. Binding always keeps `disclosures` the single place where
+    # active-vs-shadow is expressed; with no active delivery the reference
+    # simply annotates no `context_delivery_ids`.
     bound = copy.deepcopy(action)
     by_job: dict[str, list[str]] = {}
     for row in active:

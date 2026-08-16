@@ -196,8 +196,13 @@ def test_skill_forbids_sequential_wave_dispatch() -> None:
     """OR-5: context-v2 must remain parallel even if calls drift across turns."""
     text = (REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md").read_text(encoding="utf-8")
     flat = " ".join(text.split())
-    assert "run_in_background: true" in text, "OR-5: STRIDE fan-out must be non-blocking"
-    assert "wait_stride_progress.py" in text, "OR-5: background STRIDE requires a deterministic waiter"
+    # The Agent tool exposes no background flag (Claude Code >=2.x dropped it),
+    # so concurrency comes from issuing the whole wave in one assistant message.
+    assert "in ONE assistant message" in flat, "OR-5: STRIDE fan-out must be non-blocking"
+    assert "Pass no `run_in_background`" in flat, (
+        "OR-5: instructing a flag the Agent schema rejects loses the whole wave"
+    )
+    assert "wait_stride_progress.py" in text, "OR-5: a concurrent wave requires a deterministic waiter"
     assert "Never wait for one STRIDE job before launching the next" in flat, (
         "OR-5: a wave must not serialize when tool calls span assistant turns"
     )

@@ -825,7 +825,15 @@ def select_walkthrough_picks(yaml_data: dict, cap: int | None = None) -> list[di
         cap = DEFAULT_MAX_WALKTHROUGHS
     cap = max(1, min(int(cap), MAX_WALKTHROUGHS_CEILING))
     threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)]
-    crit = sorted([t for t in threats if _risk_of(t) == "critical"], key=_walkthrough_priority)
+    # A triage-elevated finding stays eligible, but never ahead of one whose own
+    # `risk` is Critical. §8 and the headline count base `risk`, so an elevated
+    # High taking a slot both titles itself Critical in §3 and crowds out a real
+    # Critical — which is how T-001/T-007/T-012 lost their walkthroughs to
+    # T-028/T-027/T-003 while the QA gate, reading base risk, still demanded them.
+    crit = sorted(
+        [t for t in threats if _risk_of(t) == "critical"],
+        key=lambda t: (_raw_risk_of(t) != "critical", _walkthrough_priority(t)),
+    )
 
     selected: list[dict] = []
     selected_ids: set[str] = set()
@@ -850,21 +858,30 @@ def select_walkthrough_picks(yaml_data: dict, cap: int | None = None) -> list[di
         if candidate is not None:
             add(candidate)
 
+    # Both remaining phases run over the base-Critical tier before the elevated
+    # one is offered any slot. Ordering the list alone is not enough: diversity
+    # ranks category novelty above severity, so elevated findings with fresh
+    # categories filled the cap while base Criticals sharing an already-covered
+    # category were still waiting for the risk-order phase that never came.
     represented_types = {_walkthrough_type(threat) for threat in selected}
-    for threat in crit:
-        if len(selected) >= cap:
-            break
-        threat_type = _walkthrough_type(threat)
-        if threat_type in represented_types:
-            continue
-        add(threat)
-        represented_types.add(threat_type)
-
-    # More Criticals than distinct categories: use the remaining risk order.
-    for threat in crit:
-        if len(selected) >= cap:
-            break
-        add(threat)
+    for tier in (
+        [t for t in crit if _raw_risk_of(t) == "critical"],
+        [t for t in crit if _raw_risk_of(t) != "critical"],
+    ):
+        for threat in tier:
+            if len(selected) >= cap:
+                break
+            threat_type = _walkthrough_type(threat)
+            if threat_type in represented_types:
+                continue
+            add(threat)
+            represented_types.add(threat_type)
+        # More Criticals in this tier than distinct categories: fall back to
+        # risk order within the tier before moving on to the next one.
+        for threat in tier:
+            if len(selected) >= cap:
+                break
+            add(threat)
 
     return sorted(selected, key=_walkthrough_priority)
 

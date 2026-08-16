@@ -281,8 +281,8 @@ def _seed_abuse_identity(tmp_path: Path) -> str:
     return f"JOB_ID={job_id} ACTION_ID={action_id}"
 
 
-def test_context_v2_foreground_stride_call_is_denied_before_marker(tmp_path, agent_logger, capsys):
-    """OR-5: the hook mechanically prevents serial context-v2 STRIDE."""
+def test_context_v2_stride_call_without_identity_is_denied_before_marker(tmp_path, agent_logger, capsys):
+    """A STRIDE call the controller did not authorize never becomes active."""
     (tmp_path / ".skill-config.json").write_text(
         json.dumps({"runtime_generation": "context-v2"}),
         encoding="utf-8",
@@ -295,8 +295,35 @@ def test_context_v2_foreground_stride_call_is_denied_before_marker(tmp_path, age
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "run_in_background:true" in payload["hookSpecificOutput"]["permissionDecisionReason"]
-    assert _read_active(tmp_path) == [], "OR-5: a denied serial call is never active"
+    assert "controller-owned" in payload["hookSpecificOutput"]["permissionDecisionReason"]
+    assert _read_active(tmp_path) == [], "a denied call is never active"
+
+
+@pytest.mark.parametrize("depth", ["full", "light"])
+def test_context_v2_stride_call_is_allowed_without_a_background_flag(tmp_path, agent_logger, capsys, depth):
+    """The production dispatch shape: authorized identity, no background flag.
+
+    The Agent tool schema dropped `run_in_background`, so a compliant caller
+    cannot set it. A gate that required it denied every STRIDE and abuse-case
+    dispatch, which is what blocked the wave from starting at all.
+    """
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+
+    agent_logger.handle_pre_tool_use(
+        _agent_call(
+            "toolu_stride",
+            "appsec-stride-analyzer-v2",
+            prompt=_seed_stride_identity(tmp_path, depth),
+        ),
+        sid="abc12345",
+    )
+
+    assert capsys.readouterr().out == "", "an authorized dispatch is not denied"
+    markers = [entry for entry in _read_active(tmp_path) if entry.get("tool_use_id")]
+    assert len(markers) == 1
 
 
 @pytest.mark.parametrize("depth", ["full", "light"])
@@ -326,8 +353,8 @@ def test_context_v2_background_stride_call_is_allowed(tmp_path, agent_logger, ca
         assert "analysis_depth=TBD" not in log
 
 
-def test_context_v2_foreground_abuse_verifier_is_denied_before_marker(tmp_path, agent_logger, capsys):
-    """A dispatch_parallel abuse wave cannot silently become serial."""
+def test_context_v2_abuse_verifier_without_identity_is_denied_before_marker(tmp_path, agent_logger, capsys):
+    """An abuse-case call the controller did not authorize never becomes active."""
     (tmp_path / ".skill-config.json").write_text(
         json.dumps({"runtime_generation": "context-v2"}),
         encoding="utf-8",
@@ -340,8 +367,25 @@ def test_context_v2_foreground_abuse_verifier_is_denied_before_marker(tmp_path, 
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "wait_abuse_progress.py" in payload["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "controller-owned" in payload["hookSpecificOutput"]["permissionDecisionReason"]
     assert _read_active(tmp_path) == []
+
+
+def test_context_v2_abuse_verifier_is_allowed_without_a_background_flag(tmp_path, agent_logger, capsys):
+    """The production abuse-wave shape: authorized identity, no background flag."""
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"runtime_generation": "context-v2"}),
+        encoding="utf-8",
+    )
+
+    agent_logger.handle_pre_tool_use(
+        _agent_call("toolu_abuse", "appsec-abuse-case-verifier", prompt=_seed_abuse_identity(tmp_path)),
+        sid="abc12345",
+    )
+
+    assert capsys.readouterr().out == "", "an authorized dispatch is not denied"
+    markers = [entry for entry in _read_active(tmp_path) if entry.get("tool_use_id")]
+    assert len(markers) == 1
 
 
 def test_context_v2_background_abuse_verifier_is_allowed(tmp_path, agent_logger, capsys):

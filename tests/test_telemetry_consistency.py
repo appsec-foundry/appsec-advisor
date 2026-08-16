@@ -87,8 +87,42 @@ def test_postfix6_shape_names_the_failed_call_and_the_missing_usage(tmp_path: Pa
     assert _codes(tmp_path) == ["lifecycle_failed_after_accepted_output"]
 
 
-def test_terminal_call_without_child_usage_is_named(tmp_path: Path) -> None:
+def test_a_run_with_no_usage_anywhere_names_the_absent_source_once(tmp_path: Path) -> None:
+    """No call carrying usage means the source is gone, not that a call lost it.
+
+    Claude Code >=2.x returns an async-shaped Agent result (`agentId`,
+    `isAsync`, `outputFile`, `status`) with no `usage` block, so every call in
+    the run looks unattributed. Naming each one produced 22 identical findings
+    on the 2026-08-15 juice-shop run and pointed at the calls instead of the
+    missing source.
+    """
     _seed(tmp_path, usage=False)
+    assert _codes(tmp_path) == ["usage_source_absent"]
+
+
+def test_a_single_call_missing_usage_is_still_named_when_the_source_works(tmp_path: Path) -> None:
+    """One call without usage is a real gap while its peers report usage."""
+    _seed(tmp_path)
+    plan = json.loads((tmp_path / ".context-routing-plan.json").read_text(encoding="utf-8"))
+    plan["actions"][0]["job_ids"].append("phase2b-config")
+    (tmp_path / ".context-routing-plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    lifecycle.register_call(
+        tmp_path,
+        {
+            "agent_call_id": "toolu_cfg",
+            "session_id": "shared01",
+            "agent": "config-scanner",
+            "agent_type": "appsec-advisor:appsec-config-scanner",
+            "model": "haiku",
+            "description": "Configuration scan",
+            "background": False,
+            "action_id": ACTION_ID,
+            "job_id": "phase2b-config",
+            "max_turns": 20,
+        },
+    )
+    lifecycle.finish_call(tmp_path, "toolu_cfg")
+
     assert _codes(tmp_path) == ["usage_unattributed"]
 
 

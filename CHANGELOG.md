@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A scan records per-agent token usage again, and says so when part of its compute went unrecorded.
 - A guardrail named only in a system prompt no longer counts as a control against the prompt-injection abuse case.
 - Cross-repository expectation mismatches now remain hypotheses until target-repository evidence supports a finding.
 - An endpoint that reaches a language model is now always modelled: reconnaissance records the call as a structured signal, marks the route, and matches a prompt-injection abuse case.
@@ -50,7 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Attack walkthroughs now balance severity and chain relevance with threat-category diversity, while reserving coverage for Critical Access Control and LLM Abuse findings when present.
+- Attack walkthroughs now balance chain relevance with threat-category diversity across the findings the register shows as Critical, reserving coverage for Critical Access Control and LLM Abuse findings when present.
 - Verified findings at a confirmed internet ingress can now be raised by one severity band, up to High, within CWE caps.
 - Findings of the same kind at different trust boundaries now stay separate instead of consolidating into one row.
 - `threat-model.yaml` now includes the report verdict.

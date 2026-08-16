@@ -433,9 +433,25 @@ def bind_runtime_agent_start(
         return dict(candidates[0])
 
 
-def running_call_by_runtime_agent_id(output_dir: str | Path, runtime_agent_id: str) -> dict[str, Any] | None:
-    matches = [call for call in running_calls(output_dir) if call.get("runtime_agent_id") == runtime_agent_id]
-    return matches[0] if len(matches) == 1 else None
+def call_by_runtime_agent_id(output_dir: str | Path, runtime_agent_id: str) -> dict[str, Any] | None:
+    """Find a call by its bound runtime id, running or already terminal.
+
+    Usage arrives on SubagentStop, which necessarily fires after the Agent tool
+    has returned. Claude Code >=2.x returns an async handle the moment the
+    agent is launched, so the call is already `done` by then and a
+    running-only lookup rejected every SubagentStop usage record on the
+    2026-08-15 juice-shop run (23 x `no_running_agent_call`), leaving the run
+    with no per-call usage at all. The binding is one-to-one and
+    `usage_recorded_at` keeps attribution single-shot, so matching a terminal
+    call is safe.
+    """
+    try:
+        with _locked(output_dir):
+            state = _read_state_unlocked(output_dir)
+            matches = [call for call in state["calls"] if call.get("runtime_agent_id") == runtime_agent_id]
+    except (OSError, ValueError, LifecycleError):
+        return None
+    return dict(matches[0]) if len(matches) == 1 else None
 
 
 def _record_usage_for_call(
@@ -447,8 +463,11 @@ def _record_usage_for_call(
 ) -> list[LifecycleEvent]:
     with _locked(output_dir):
         state = _read_state_unlocked(output_dir)
+        # Terminal calls accept usage too: SubagentStop is the only per-call
+        # usage source and always arrives after the Agent tool's async return
+        # has already closed the call. `usage_recorded_at` keeps this single-shot.
         call = next(
-            (row for row in state["calls"] if row.get("state") == "running" and row.get("agent_call_id") == call_id),
+            (row for row in state["calls"] if row.get("agent_call_id") == call_id),
             None,
         )
         if call is None or call.get("usage_recorded_at"):
@@ -487,7 +506,7 @@ def record_runtime_usage(
     *,
     tool_uses: int | None = None,
 ) -> list[LifecycleEvent]:
-    call = running_call_by_runtime_agent_id(output_dir, runtime_agent_id)
+    call = call_by_runtime_agent_id(output_dir, runtime_agent_id)
     if call is None:
         return []
     return _record_usage_for_call(

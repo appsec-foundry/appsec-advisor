@@ -939,7 +939,11 @@ def _emit(action: dict[str, Any]) -> int:
             except context_routing.ContextRoutingError as exc:
                 raise ControllerError(f"context routing action binding failed: {exc}") from exc
             action = _validate_action(action)
-            event = "CONTEXT_ROUTING_ACTIVE" if action.get("context_plan") else "CONTEXT_ROUTING_SHADOW"
+            # Every planned action now carries its identity reference, so plan
+            # presence no longer distinguishes the two modes — the enforced
+            # delivery count does.
+            enforced = any(job.get("context_delivery_ids") for job in action.get("dispatch_jobs", []))
+            event = "CONTEXT_ROUTING_ACTIVE" if enforced else "CONTEXT_ROUTING_SHADOW"
             _append_event(
                 Path(action["dispatch_values"]["output_dir"]),
                 event,

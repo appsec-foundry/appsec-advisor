@@ -812,17 +812,100 @@ def test_prior_plan_rejects_changed_catalog_hash(tmp_path, monkeypatch):
         _resolve(action, output)
 
 
-def test_controller_emit_writes_shadow_plan_without_changing_action(tmp_path, capsys):
+def test_every_context_v2_role_can_be_dispatched(tmp_path):
+    """No catalog role may be structurally undispatchable.
+
+    The dispatch hook denies any context-v2 Agent call whose prompt carries no
+    ACTION_ID, and the runtime takes that value from `context_plan.action_id`.
+    A role that cannot be bound therefore cannot run at all — which is how
+    trust_boundary_analyst and threat_merger blocked a full assessment. This
+    asserts the property for every role, so a future catalog edit that leaves a
+    role without an active context fails here instead of mid-run.
+    """
+    catalog, bindings = _contracts()
+    binding_by_id = {b["id"]: b for b in bindings["contexts"]}
+    component_id, candidate_id = "web-api", "AC-T-001"
+    checked = 0
+    for agent in bindings["agents"]:
+        role = agent["semantic_role"]
+        if role not in controller.SEMANTIC_ROLE_REGISTRY:
+            continue
+        # Declare exactly the inputs this role's catalog assignments require,
+        # so the run reaches binding rather than failing input validation.
+        contract_by_artifact: dict[str, str] = {}
+        for assignment in catalog["assignments"]:
+            if agent["id"] not in assignment["agents"] or assignment["delivery"] == "forbidden":
+                continue
+            binding = binding_by_id[assignment["context"]]
+            if binding["delivery"] != "declared" or binding["source"]["kind"] != "output_artifact":
+                continue
+            artifact = routing._render_artifact(
+                binding["source"]["artifact_pattern"], component_id, candidate_id
+            )
+            contract_by_artifact[artifact] = binding["contract"]
+        inputs = sorted(contract_by_artifact)
+        output = tmp_path / f"out-{role}"
+        output.mkdir()
+        action = _context_action(output, inputs=inputs)
+        action["semantic_role"] = role
+        action["dispatch_values"][controller.SEMANTIC_ROLE_MODEL_KEYS[role]] = "sonnet"
+        job = action["dispatch_jobs"][0]
+        job["semantic_role"] = role
+        job["agent_type"] = f"appsec-advisor:{agent['agent_type']}"
+        job["component_id"] = component_id
+        job["candidate_id"] = candidate_id
+        receipts = []
+        for relative in job["input_artifacts"]:
+            path = output / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = b"{}\n"
+            path.write_bytes(payload)
+            receipts.append(
+                {
+                    "schema_version": 1,
+                    "artifact_path": relative,
+                    "schema_id": contract_by_artifact[relative],
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "record_count": 1,
+                    "validation_status": "valid",
+                }
+            )
+        action["artifact_receipts"] = receipts
+        plan = _resolve(action, output)
+        bound = routing.bind_action_to_plan(action, plan, output)
+        assert bound.get("context_plan", {}).get("action_id"), f"{role} cannot receive an ACTION_ID"
+        routing.validate_action_plan_reference(bound, output)
+        checked += 1
+    assert checked == len(controller.SEMANTIC_ROLE_REGISTRY)
+
+
+def test_controller_emit_binds_identity_on_a_shadow_only_action(tmp_path, capsys):
+    """A role with no active context still gets its ACTION_ID.
+
+    `context_resolver` has only shadow-only contexts, as the catalog migration
+    is incremental by design. Binding used to be skipped entirely for such a
+    role, so the emitted action carried no `action_id` — while the dispatch
+    hook requires ACTION_ID from every context-v2 role and the runtime prompt
+    reads `context_plan.action_id`. That made four roles undispatchable.
+    Identity is now always bound; only enforcement stays conditional.
+    """
     output = tmp_path / "out"
     output.mkdir()
     action = _context_action(output)
     code = controller._emit(action)
     emitted = json.loads(capsys.readouterr().out)
     assert code == 0
-    assert emitted == controller._validate_action(action)
-    assert routing.PLAN_NAME not in json.dumps(emitted)
-    assert (output / routing.PLAN_NAME).is_file()
+    assert emitted["context_plan"]["action_id"]
+    assert emitted["context_plan"]["artifact_path"] == routing.PLAN_NAME
+    routing.validate_action_plan_reference(emitted, output)
+    # Shadow stays observable where it belongs: no enforced delivery is
+    # referenced, and the run log still reports the mode as shadow.
+    assert "context_delivery_ids" not in emitted["dispatch_jobs"][0]
     assert "CONTEXT_ROUTING_SHADOW" in (output / ".agent-run.log").read_text(encoding="utf-8")
+    # The shared plan is an audit artifact: it may be referenced and receipted,
+    # but must never become an agent input.
+    assert routing.PLAN_NAME not in emitted["dispatch_jobs"][0]["input_artifacts"]
+    assert (output / routing.PLAN_NAME).is_file()
 
 
 def test_inspection_is_human_readable_and_content_free(tmp_path):

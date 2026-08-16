@@ -17,8 +17,8 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; do not read Stage 1d from `S
 
 3. For `dispatch_jobs[]`, call `verify-receipts` with all receipt paths and
    SHA-256 pairs as the final filesystem action. Then launch every job as an
-   `appsec-advisor:appsec-abuse-case-verifier` call with
-   `run_in_background:true`; launch the whole wave before waiting. Description:
+   `appsec-advisor:appsec-abuse-case-verifier` call, launching the wave
+   in ONE message. Pass no `run_in_background`. Description:
    `Abuse case: <candidate_id> — <title>`; use the ID if its title is missing.
    Each prompt contains:
 

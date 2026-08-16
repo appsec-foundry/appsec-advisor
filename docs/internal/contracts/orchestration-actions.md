@@ -265,8 +265,11 @@ itself. The table is the producer contract for that path.
 
 `context-v2-prepare-stride` validates the Phase-8 outputs, builds and validates
 the v2 manifest and bundles, and returns one bounded job per selected component.
-The compact runtime launches every job with `run_in_background:true`; the
-PreToolUse gate rejects a foreground context-v2 STRIDE call before execution.
+The compact runtime issues every job of the wave as an Agent call in one
+assistant message, which is what runs them concurrently; the Agent tool exposes
+no per-call background flag, so dispatch shape is not gated at PreToolUse.
+`check_stride_dispatch.py` remains the enforcement point — it fails the run on
+an inline-shortcut bypass and reports a serially dispatched wave as DEGRADED.
 The blocking waiter applies wave completion validation, so a write-first seed
 remains pending.
 `context-v2-post-stride` runs wave verification and merge collection until it

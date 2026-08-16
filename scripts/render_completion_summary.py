@@ -526,6 +526,14 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
         "timing": run_timing.compute_timing(output_dir),
         # Scan start epoch for local-time timestamp display.
         "scan_start_epoch": None,
+        # Dispatches whose usage reached .stage-stats.jsonl, vs. dispatches the
+        # hook actually saw. `record_stage_stats.py` is called by the runtime
+        # after each wave and its failure is non-blocking, so a run that lost
+        # the call reports a net compute covering only part of its agents.
+        # Keeping both counts lets the summary say so instead of presenting a
+        # partial sum as the whole run.
+        "recorded_dispatches": 0,
+        "spawned_dispatches": 0,
     }
 
     # Total wall-clock from .stage-stats.jsonl. Lines are JSON objects with
@@ -545,6 +553,8 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
                 ms = rec.get("duration_ms")
                 if isinstance(ms, (int, float)) and ms > 0:
                     total_ms += int(ms)
+                recorded = rec.get("recorded_dispatch_count")
+                stats["recorded_dispatches"] += recorded if isinstance(recorded, int) and recorded > 0 else 1
                 stats["stage_rows"].append(
                     (
                         rec.get("stage"),
@@ -714,6 +724,7 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
     # crashed orchestrator leaves no trace there).
     hook_text = _load_text(output_dir / ".hook-events.log")
     combined = log_text + "\n" + hook_text
+    stats["spawned_dispatches"] = sum(1 for line in hook_text.splitlines() if " AGENT_SPAWN " in line)
     for m in _AGENT_INVOKE_RE.finditer(combined):
         agent = m.group("agent")
         stats["agents"][agent] = _normalize_model(m.group("model"))
@@ -1025,11 +1036,28 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
     # legacy path shows a single total line.
     net = net_compute or stats.get("total_secs_from_stages") or 0
     if net:
-        lines.append(f"  Net agent compute   : {_fmt_duration(net)}  (sum of per-stage agent time)")
+        # Say when the sum does not cover the whole run. Presenting the recorded
+        # part as the run's net compute understates it silently, which reads as
+        # a cheap run and hides the missing accounting.
+        recorded = stats.get("recorded_dispatches") or 0
+        spawned = stats.get("spawned_dispatches") or 0
+        partial = bool(recorded and spawned > recorded)
+        if partial:
+            lines.append(
+                f"  Net agent compute   : {_fmt_duration(net)}  "
+                f"(PARTIAL — covers {recorded} of {spawned} dispatched agents)"
+            )
+            lines.append("  Cost accounting     : incomplete — run verify_run_costs.py for the real figure")
+        else:
+            lines.append(f"  Net agent compute   : {_fmt_duration(net)}  (sum of per-stage agent time)")
 
         # Idle / standby breakdown — only when a wall-clock is available to
-        # compare against the net compute.
-        if wall and wall > net:
+        # compare against the net compute. Skipped when the net figure is
+        # partial: `wall - net` would bill every unrecorded agent's runtime as
+        # idle time. The 2026-08-15 juice-shop run reported 79m idle against
+        # ~37m of real orchestration gap for exactly this reason, which points
+        # diagnosis at the wrong thing.
+        if wall and wall > net and not partial:
             idle_total = wall - net
             if standby > 0:
                 # Always show the standby/suspend vs API+orchestration split —
