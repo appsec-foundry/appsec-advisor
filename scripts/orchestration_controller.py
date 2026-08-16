@@ -2969,10 +2969,11 @@ def _context_v2_dispatch(
         "unresolved_decision_keys": decision_keys,
     }
     try:
-        context_routing.assert_action_not_replayed(action, output_dir)
+        already_issued = context_routing.action_already_issued(action, output_dir)
     except context_routing.ContextRoutingError as exc:
         raise ControllerError(f"context-v2 dispatch replay rejected: {exc}") from exc
-    _prepare_context_v2_dispatch_outputs(output_dir, action["dispatch_jobs"])
+    if not already_issued:
+        _prepare_context_v2_dispatch_outputs(output_dir, action["dispatch_jobs"])
     return _validate_action(action)
 
 
@@ -3476,8 +3477,8 @@ def _recon_producer_retry(
         "artifact_receipts": [],
         "receipts": [f"recon producer redispatched to repair {artifact} (attempt {attempt})"],
     }
-    context_routing.assert_action_not_replayed(action, output_dir)
-    _prepare_context_v2_dispatch_outputs(output_dir, jobs)
+    if not context_routing.action_already_issued(action, output_dir):
+        _prepare_context_v2_dispatch_outputs(output_dir, jobs)
     return _validate_action(action)
 
 
@@ -3990,7 +3991,11 @@ def _context_v2_stride_wave_action(
     status = claim_payload.get("status")
     if status == "complete":
         return None
-    if status != "claimed":
+    # ``in_flight`` carries the wave already issued, so a boundary that is
+    # re-read answers with that dispatch instead of ending the run. The replay
+    # guard below then recognizes the identical action and skips the side
+    # effect that would delete what the first dispatch produced.
+    if status not in {"claimed", "in_flight"} or (status == "in_flight" and "wave" not in claim_payload):
         raise ControllerError(f"STRIDE wave claim returned unsupported status: {status!r}")
     wave = claim_payload.get("wave")
     claimed_components = wave.get("components") if isinstance(wave, dict) else None
@@ -4267,10 +4272,11 @@ def _context_v2_stride_wave_action(
         ],
     }
     try:
-        context_routing.assert_action_not_replayed(action, output_dir)
+        already_issued = context_routing.action_already_issued(action, output_dir)
     except context_routing.ContextRoutingError as exc:
         raise ControllerError(f"context-v2 dispatch replay rejected: {exc}") from exc
-    _prepare_context_v2_dispatch_outputs(output_dir, jobs)
+    if not already_issued:
+        _prepare_context_v2_dispatch_outputs(output_dir, jobs)
     return _validate_action(action)
 
 

@@ -63,8 +63,8 @@ re-dispatch or end here.
 `context-v2-begin` opens the chain. After that, once the dispatched jobs
 return, the next command is always the returned action's `next_boundary`,
 invoked verbatim. Never derive it from the run's shape — the chain branches by
-depth — and never re-invoke a boundary whose dispatch already ran; that aborts
-the run. `context-v2-finalize` ends it.
+depth — and never re-invoke a boundary whose dispatch already ran.
+`context-v2-finalize` ends it.
 
 ## Dispatch prompt
 

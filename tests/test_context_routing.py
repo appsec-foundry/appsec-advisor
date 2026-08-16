@@ -387,20 +387,31 @@ def test_shadow_plan_explains_delivery_omission_and_legacy_read(tmp_path):
     assert (output / routing.PLAN_RECEIPT_NAME).is_file()
 
 
-def test_effective_plan_rejects_semantic_action_replay_but_accepts_new_attempt_identity(tmp_path):
+def test_effective_plan_answers_an_identical_re_read_and_rejects_a_changed_one(tmp_path):
     output = tmp_path / "out"
     output.mkdir()
     action = _context_action(output)
-    _resolve(action, output)
+    plan = _resolve(action, output)
 
-    with pytest.raises(routing.ContextRoutingError, match="already issued"):
-        routing.assert_action_not_replayed(action, output)
-    with pytest.raises(routing.ContextRoutingError, match="already resolved"):
-        _resolve(action, output)
+    # Same identity, same content: a re-read of the row already written, so the
+    # ledger answers instead of aborting and gains no second copy of it.
+    assert routing.action_already_issued(action, output) is True
+    repeated = _resolve(action, output)
+    assert repeated["revision"] == plan["revision"]
+    assert len(repeated["actions"]) == 1
+    assert len(repeated["deliveries"]) == len(plan["deliveries"])
+
+    # Same identity, different content: a real duplicate dispatch.
+    conflicting = copy.deepcopy(action)
+    conflicting["dispatch_jobs"][0]["unresolved_decision_keys"] = ["stride:S"]
+    with pytest.raises(routing.ContextRoutingError, match="different content"):
+        routing.action_already_issued(conflicting, output)
+    with pytest.raises(routing.ContextRoutingError, match="different content"):
+        _resolve(conflicting, output)
 
     retry = copy.deepcopy(action)
     retry["dispatch_jobs"][0]["job_id"] = "phase1-context:attempt-2"
-    routing.assert_action_not_replayed(retry, output)
+    assert routing.action_already_issued(retry, output) is False
     plan = _resolve(retry, output)
     assert len(plan["actions"]) == 2
 

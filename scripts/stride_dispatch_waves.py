@@ -511,6 +511,25 @@ def _escalated_component(component: dict[str, Any]) -> dict[str, Any]:
         return component
 
 
+def _active_claim_wave(plan: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any] | None:
+    """Repeat the wave already in flight, without touching attempt accounting.
+
+    A caller that reaches the dispatch boundary twice — because it could not
+    consume the first response in one pass — must be answered with the wave it
+    already issued rather than with an abort. Returns ``None`` when the claim
+    names a component the current manifest no longer carries.
+    """
+    by_id = {component["component_id"]: component for component in _manifest_components(manifest)}
+    attempts = plan["active_claim"]["attempts"]
+    components: list[dict[str, Any]] = []
+    for component_id in plan["active_claim"]["component_ids"]:
+        component = by_id.get(component_id)
+        if component is None:
+            return None
+        components.append(_escalated_component(component) if attempts.get(component_id, 0) > 1 else component)
+    return {"components": components, "attempts": dict(attempts)}
+
+
 def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> tuple[dict[str, Any], bool]:
     """Reserve the next incomplete wave and persist per-component attempts.
 
@@ -523,11 +542,15 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
     if active_ids:
         active_status = wait_status(plan, manifest, output_dir, active_ids)
         if active_status["status"] in {"unstarted", "pending"}:
-            return {
+            payload = {
                 "status": "in_flight",
                 "component_ids": active_ids,
                 "incomplete": active_status["incomplete"],
-            }, False
+            }
+            wave = _active_claim_wave(plan, manifest)
+            if wave is not None:
+                payload["wave"] = wave
+            return payload, False
         plan["active_claim"] = {"component_ids": [], "attempts": {}}
         if active_status["status"] == "complete":
             current = status(plan, manifest, output_dir)

@@ -683,19 +683,23 @@ def _load_prior_plan(
     return plan
 
 
-def assert_action_not_replayed(action: dict[str, Any], output_root: Path) -> None:
-    """Reject a semantic dispatch that was already issued for this run.
+def action_already_issued(action: dict[str, Any], output_root: Path) -> bool:
+    """Report whether this exact semantic dispatch was already issued.
 
     The effective plan is an append-only execution ledger within one
-    context-v2 invocation. Replacing a row with the same job identity hides a
-    duplicate dispatch and, more importantly, lets dispatch preparation delete
-    the artifact just returned by the first producer. Controller-owned retries
-    therefore use a new attempt-qualified job ID instead of replaying an
-    existing action.
+    context-v2 invocation. A boundary that recomputes its answer byte for byte
+    is re-reading its own row rather than dispatching a second time, so an
+    identical action answers True and the caller skips the side effect.
+
+    A row carrying the same job identity but different content is a real
+    duplicate dispatch and still aborts: replaying it would hide the duplicate
+    and let dispatch preparation delete the artifact the first producer just
+    returned. Controller-owned retries therefore use a new attempt-qualified
+    job ID rather than replaying an existing action.
     """
     plan_path, receipt_path = _plan_paths(output_root.resolve())
     if not plan_path.exists() and not receipt_path.exists():
-        return
+        return False
     if not plan_path.is_file() or not receipt_path.is_file():
         raise ContextRoutingError("effective context plan and its receipt must exist together")
     plan = _validate_plan_receipt(plan_path, receipt_path)
@@ -710,12 +714,16 @@ def assert_action_not_replayed(action: dict[str, Any], output_root: Path) -> Non
     job_ids = sorted(job["job_id"] for job in action.get("dispatch_jobs", []))
     action_id = f"{action.get('stage', 'stage1')}:{_sha256('|'.join(job_ids).encode())[:16]}"
     prior = [row for row in plan.get("actions", []) if row.get("action_id") == action_id]
-    if prior:
-        raise ContextRoutingError(
-            "semantic dispatch was already issued for job(s) "
-            + ", ".join(job_ids)
-            + "; invoke the successor boundary instead of replaying it"
-        )
+    if not prior:
+        return False
+    action_sha = _sha256(_canonical_json_bytes(_action_basis(action)))
+    if all(row.get("action_sha256") == action_sha for row in prior):
+        return True
+    raise ContextRoutingError(
+        "semantic dispatch was already issued with different content for job(s) "
+        + ", ".join(job_ids)
+        + "; invoke the successor boundary instead of replaying it"
+    )
 
 
 def _write_plan(output_root: Path, plan: dict[str, Any]) -> None:
@@ -801,10 +809,17 @@ def resolve_action(
         "stage": action.get("stage", "stage1"),
         "job_ids": job_ids,
     }
-    if any(row.get("action_id") == action_id for row in plan["actions"]):
-        raise ContextRoutingError(
-            "semantic dispatch action identity was already resolved; retries require a new attempt-qualified job ID"
-        )
+    prior = [row for row in plan["actions"] if row.get("action_id") == action_id]
+    if prior:
+        if any(row != action_record for row in prior):
+            raise ContextRoutingError(
+                "semantic dispatch action identity was already resolved with different content; "
+                "retries require a new attempt-qualified job ID"
+            )
+        # The recomputed action equals the recorded one, so its rows already
+        # describe this dispatch. Appending them again would double every
+        # delivery and bump the revision for a read.
+        return plan
     action_receipts = {receipt["artifact_path"]: receipt for receipt in action.get("artifact_receipts", [])}
 
     deliveries: list[dict[str, Any]] = []

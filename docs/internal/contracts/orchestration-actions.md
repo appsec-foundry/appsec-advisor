@@ -242,7 +242,9 @@ Every dispatching action carries `next_boundary`, the command the caller must
 invoke once those jobs return. The caller invokes it verbatim and never derives
 the successor from the run's shape: quick depth skips actor discovery, so the
 boundary after recon differs by depth. Re-invoking a boundary whose semantic
-dispatch already ran is rejected as a replay and aborts the run.
+dispatch already ran repeats that dispatch without preparing its outputs a
+second time; only a changed action under the same job identity is rejected as a
+replay and aborts the run.
 
 The generation is the default for eligible full/rebuild runs. `prepare` returns
 the plugin-owned `SKILL-thin-stage1-v2.md` instruction path, and the compact
@@ -328,8 +330,10 @@ error.
   unique within one action. Parallel jobs cannot read an artifact another job
   writes. The canonical JSON form of an action is capped at 65,536 bytes.
 - A semantic action identity is single-use within one run. The effective plan
-  is append-only, and replay is rejected before dispatch preparation can remove
-  a producer's existing output. A controller-owned STRIDE retry uses a new
+  is append-only, so a boundary that recomputes the recorded action byte for
+  byte is answered with it and skips dispatch preparation, which would remove a
+  producer's existing output; a differing action under that identity is
+  rejected before preparation runs. A controller-owned STRIDE retry uses a new
   attempt-qualified job identity and records the bounded attempt in the action.
 - Artifact paths resolve under `dispatch_values.output_dir`. Absolute paths,
   traversal, backslashes, and symlink escapes fail before dispatch.

@@ -1778,7 +1778,7 @@ def test_context_v2_dispatch_clears_prior_output_but_preserves_in_place_input(tm
     assert repair.read_text(encoding="utf-8") == "current partial state"
 
 
-def test_context_v2_replay_is_rejected_before_fresh_producer_output_is_cleared(tmp_path):
+def test_context_v2_re_read_repeats_its_action_without_clearing_producer_output(tmp_path):
     output = _write_context_v2_config(tmp_path)
     cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
     action = controller._context_v2_dispatch(
@@ -1801,6 +1801,23 @@ def test_context_v2_replay_is_rejected_before_fresh_producer_output_is_cleared(t
     produced = output / ".threat-modeling-context.md"
     produced.write_text("fresh producer output\n", encoding="utf-8")
 
+    repeated = controller._context_v2_dispatch(
+        output,
+        cfg,
+        role="context_resolver",
+        job_id="phase1-context",
+        next_boundary="context-v2-post-recon",
+        input_artifacts=[".skill-config.json"],
+        output_artifacts=[".threat-modeling-context.md"],
+        decision_keys=[],
+        receipts=[],
+    )
+
+    assert repeated == action
+    assert produced.read_text(encoding="utf-8") == "fresh producer output\n"
+
+    # A second dispatch under the same job identity but different content is a
+    # real duplicate and still ends the boundary.
     with pytest.raises(controller.ControllerError, match="dispatch replay rejected"):
         controller._context_v2_dispatch(
             output,
@@ -1809,11 +1826,10 @@ def test_context_v2_replay_is_rejected_before_fresh_producer_output_is_cleared(t
             job_id="phase1-context",
             next_boundary="context-v2-post-recon",
             input_artifacts=[".skill-config.json"],
-            output_artifacts=[".threat-modeling-context.md"],
+            output_artifacts=[".threat-modeling-context.md", ".recon-summary.md"],
             decision_keys=[],
             receipts=[],
         )
-
     assert produced.read_text(encoding="utf-8") == "fresh producer output\n"
 
 
@@ -2794,6 +2810,72 @@ def test_context_v2_taxonomy_slice_rejects_invalid_contract(tmp_path, monkeypatc
 
     with pytest.raises(controller.ControllerError, match=message):
         controller._context_v2_taxonomy_slice(output, "api")
+
+
+def test_context_v2_prepare_stride_twice_repeats_one_wave_without_clearing_it(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path, stride_concurrency=1)
+    (output / ".stride-analyst-context.json").write_text("{}", encoding="utf-8")
+    (output / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "api"}]}),
+        encoding="utf-8",
+    )
+    bundle_dir = output / ".dispatch-context" / "api"
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "evidence-bundle.json").write_text(
+        json.dumps({"component": {"id": "api"}, "source_slices": []}),
+        encoding="utf-8",
+    )
+    manifest = {
+        "context_version": 2,
+        "generated_at": "2026-01-01T00:00:00Z",
+        "components": [
+            {
+                "component_id": "api",
+                "focus_paths": [],
+                "exclude_paths": [],
+                "evidence_bundle_path": ".dispatch-context/api/evidence-bundle.json",
+            }
+        ],
+    }
+    real_run_script = controller._run_script
+
+    def fake_script(name, args, **kwargs):
+        if name == "build_stride_dispatch_manifest.py":
+            # Byte-stable, as the real builder now is for unchanged inputs.
+            (output / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            return _completed()
+        if name == "stride_dispatch_waves.py":
+            return real_run_script(name, args, **kwargs)
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    monkeypatch.setattr(controller, "_context_v2_taxonomy_slice", _taxonomy_stub)
+
+    first = controller.context_v2_prepare_stride(output)
+    controller.context_routing.resolve_action(
+        first,
+        output,
+        semantic_roles=controller.SEMANTIC_ROLE_REGISTRY,
+        model_keys=controller.SEMANTIC_ROLE_MODEL_KEYS,
+    )
+    attempt = output / first["dispatch_jobs"][0]["output_artifacts"][0]
+    attempt.write_text("first analyzer output\n", encoding="utf-8")
+    context_before = {
+        str(path.relative_to(output)): path.read_bytes()
+        for path in sorted((output / ".dispatch-context").rglob("*"))
+        if path.is_file()
+    }
+
+    second = controller.context_v2_prepare_stride(output)
+
+    assert second == first
+    assert attempt.read_text(encoding="utf-8") == "first analyzer output\n"
+    assert {
+        str(path.relative_to(output)): path.read_bytes()
+        for path in sorted((output / ".dispatch-context").rglob("*"))
+        if path.is_file()
+    } == context_before
 
 
 def test_context_v2_prepare_stride_rejects_bundle_escape_after_external_gate(tmp_path, monkeypatch):

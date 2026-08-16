@@ -536,6 +536,9 @@ def test_claim_rejects_a_second_dispatch_before_the_active_join(tmp_path: Path) 
     assert changed_again is False
     assert second["status"] == "in_flight"
     assert plan["attempts"]["service-01"] == 1
+    # The claim already issued is repeated verbatim, so a re-read of the
+    # dispatch boundary can answer with it instead of ending the run.
+    assert second["wave"] == {"components": first["wave"]["components"], "attempts": {"service-01": 1}}
 
 
 def test_claim_retries_only_after_the_active_join_deadline(tmp_path: Path, monkeypatch) -> None:
