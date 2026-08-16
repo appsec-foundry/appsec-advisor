@@ -344,8 +344,14 @@ def _context_v2_serial_components(output_dir: Path, since: str | None) -> list[s
         return []
     ordered = sorted(starts.items(), key=lambda item: item[1])
     events = _context_v2_completion_events(output_dir, set(starts))
+    wave_of = _wave_membership(output_dir)
     serialized: set[str] = set()
     for index, ((component_id, started), (next_component, next_started)) in enumerate(zip(ordered, ordered[1:])):
+        # Waves are sequential by design: the last component of a wave always
+        # finishes before the first of the next one starts. Comparing across
+        # that boundary reports every healthy multi-wave run as serial.
+        if wave_of.get(component_id) != wave_of.get(next_component):
+            continue
         completed_before_next = any(
             started <= timestamp <= next_started and (component_id in named or (index == 0 and not named))
             for timestamp, named in events
@@ -353,6 +359,23 @@ def _context_v2_serial_components(output_dir: Path, since: str | None) -> list[s
         if completed_before_next:
             serialized.update({component_id, next_component})
     return [component_id for component_id, _timestamp in ordered if component_id in serialized]
+
+
+def _wave_membership(output_dir: Path) -> dict[str, int]:
+    """Component id → wave index, empty when the run declared no wave plan."""
+    try:
+        plan = json.loads((output_dir / stride_dispatch_waves.PLAN_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    membership: dict[str, int] = {}
+    for wave in plan.get("waves") or []:
+        if not isinstance(wave, dict):
+            continue
+        index = wave.get("index")
+        for component_id in wave.get("component_ids") or []:
+            if isinstance(component_id, str) and isinstance(index, int):
+                membership[component_id] = index
+    return membership
 
 
 def _dispatch_intervals(output_dir: Path, since: str | None = None) -> dict[str, dict[str, str]]:

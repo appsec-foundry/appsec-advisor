@@ -356,3 +356,71 @@ def test_production_serial_wave_is_detected_without_agent_written_events(tmp_pat
     )
     assert "AGENT_END" not in (out / ".agent-run.log").read_text(encoding="utf-8")
     assert check_stride_dispatch.detect_serial_dispatch(out) == ["web-frontend", "api-server"]
+
+
+# ---------------------------------------------------------------------------
+# Wave boundaries are sequential by design
+#
+# Once the detector could actually read a production log, it compared the last
+# component of one wave against the first of the next and called every healthy
+# multi-wave run serial. Its own contract forbids that: "Being blind is
+# strictly preferable to false-tripping a healthy parallel run."
+# ---------------------------------------------------------------------------
+
+
+def _write_waves(out: Path, waves: list[list[str]]) -> None:
+    (out / ".dispatch-waves.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "concurrency": 5,
+                "waves": [{"index": i, "component_ids": ids} for i, ids in enumerate(waves, start=1)],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_a_wave_boundary_is_not_a_serial_edge(tmp_path: Path) -> None:
+    """Wave 2 starts after wave 1 finished — that is the design, not a defect."""
+    out = _write_v2_run(
+        tmp_path,
+        {
+            "frontend-spa": ("2026-08-16T13:15:53Z", "2026-08-16T13:26:39Z"),
+            "backend-api": ("2026-08-16T13:15:59Z", "2026-08-16T13:25:11Z"),
+            "data-layer": ("2026-08-16T13:16:16Z", "2026-08-16T13:25:11Z"),
+            "ci-cd-pipeline": ("2026-08-16T13:28:20Z", "2026-08-16T13:36:01Z"),
+            "web3-nft": ("2026-08-16T13:28:25Z", "2026-08-16T13:37:51Z"),
+        },
+    )
+    _write_waves(out, [["frontend-spa", "backend-api", "data-layer"], ["ci-cd-pipeline", "web3-nft"]])
+
+    assert check_stride_dispatch.detect_serial_dispatch(out) == []
+
+
+def test_serialisation_inside_one_wave_is_still_detected(tmp_path: Path) -> None:
+    out = _write_v2_run(
+        tmp_path,
+        {
+            "frontend-spa": ("2026-08-16T13:15:53Z", "2026-08-16T13:25:00Z"),
+            "backend-api": ("2026-08-16T13:25:30Z", "2026-08-16T13:34:00Z"),
+            "web3-nft": ("2026-08-16T13:40:00Z", "2026-08-16T13:48:00Z"),
+        },
+    )
+    _write_waves(out, [["frontend-spa", "backend-api"], ["web3-nft"]])
+
+    assert check_stride_dispatch.detect_serial_dispatch(out) == ["frontend-spa", "backend-api"]
+
+
+def test_a_run_without_a_wave_plan_still_compares_every_pair(tmp_path: Path) -> None:
+    """No plan on disk must not silently disable the guard."""
+    out = _write_v2_run(
+        tmp_path,
+        {
+            "frontend-spa": ("2026-08-16T13:15:53Z", "2026-08-16T13:25:00Z"),
+            "backend-api": ("2026-08-16T13:25:30Z", "2026-08-16T13:34:00Z"),
+        },
+    )
+
+    assert not (out / ".dispatch-waves.json").exists()
+    assert check_stride_dispatch.detect_serial_dispatch(out) == ["frontend-spa", "backend-api"]
