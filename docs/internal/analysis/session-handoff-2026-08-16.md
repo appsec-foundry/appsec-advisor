@@ -1,8 +1,7 @@
 # Session handoff — context-v2 run integrity, 2026-08-16
 
 Three full scans of a juice-shop checkout, three aborts at three different
-places. Ten commits landed on `dev`; the working tree is clean. This note is
-enough to continue without the original session.
+places. This note is enough to continue without the original session.
 
 Findings F1–F11 are written up in
 `analysis-context-v2-stale-bundle-2026-08-16.md`. F12 onward are recorded here.
@@ -20,10 +19,12 @@ c60fb04b  test: pin log consumers against real production shapes
 bee261c3  fix: give the evidence verifier its run paths              (F12)
 3cf7d048  fix: name the failure in the abort event, on one line      (F14)
 0cd22b60  fix: keep internal boundary names out of the console
+d87c297d  fix: rebuild the dispatch manifest to the same bytes       (A)
+2a0921ac  fix: let a re-read of a dispatch boundary answer twice     (B)
 ```
 
-Full suite green (12902 passed, 28 skipped). `make lint` is red only on
-`tests/test_context_routing.py`, which is unmodified and was already failing.
+`make lint` is red only on `tests/test_context_routing.py`, at a line no fix
+here touched. It was already failing.
 
 ## The three runs
 
@@ -32,15 +33,11 @@ Full suite green (12902 passed, 28 skipped). `make lint` is red only on
 | reached | phase 9, wave 2 gate | phase 10, yaml build | phase 9, dispatch |
 | abort | evidence bundle stale | `@` in a threat title | dispatch replay rejected |
 | cost | ~$5.04 | ~$6.20 | ~$2.31 |
-| status | fixed and re-verified | fixed and re-verified | **open — see below** |
+| status | fixed and re-verified | fixed and re-verified | fixed and re-verified |
 
-Runs 1 and 2 passed the point where run 3 died, so the current blocker is
-model variance under a large payload, not a deterministic failure. Empirically
-about one in three.
+## The dispatch-replay abort
 
-## The open blocker
-
-`context-v2-prepare-stride` aborted the run with:
+`context-v2-prepare-stride` aborted run 3 with:
 
 ```
 context-v2 dispatch replay rejected: semantic dispatch was already issued for
@@ -48,56 +45,61 @@ job(s) stride:angular-spa:attempt-1, … ; invoke the successor boundary instead
 ```
 
 The orchestrator called the boundary a second time because it could not consume
-the first response in one pass (its own report). Verified chain:
+the first response in one pass (its own report).
 
-1. **The boundary destroys its own inputs.** `build_stride_evidence_bundles.build_all`
-   does `component.pop("business_context")` and `component.pop("architecture_context")`.
-   Confirmed against the live manifest: both fields are absent after the run.
-2. **So it can never recompute the same thing.** A second call derives a
-   different context plan from the emptied manifest and fails on
-   `orchestration_controller.py:2811` — "component context plan hash is stale".
-   Reproduced on a clean copy of the output directory with the ledger emptied,
-   so this is independent of the replay guard.
-3. **The replay guard cannot tell a re-read from a second dispatch.**
-   `context_routing.assert_action_not_replayed` derives `action_id` from the
-   sorted job ids; any second call with the same job set aborts the run.
-4. **The contract offers no alternative.** `SKILL-thin-stage1-v2.md` says never
-   to re-invoke a boundary whose dispatch already ran, but not what to do
-   instead when the response cannot be consumed.
+The missing property: **an operation that changes state must be able to repeat
+its answer. A guard may refuse the effect; it must not refuse the answer.**
 
-Not verified: the actual byte size of the returned payload. Every attempt to
-reproduce the call fails on exactly the non-idempotency under investigation.
-The size claim rests on the orchestrator's own report and on the plan file
-being 217 KB with 118 deliveries at that revision.
+Replaying the boundary twice on a copy of run 3's output directory found one
+non-deterministic byte range, and it was not the one this note first named:
+`generated_at`, a wall-clock stamp. It feeds `manifest_sha256`, which feeds
+every `context-plan.json`, which feeds each job's `context_plan_sha256`; and it
+feeds `stride_dispatch_waves._fingerprint`. A second call therefore discarded
+the wave plan, reset attempt accounting, re-claimed the same `attempt-1` job
+ids, and hit the replay guard.
 
-## Recommended next step
+The `build_all` pops were real but not the cause: `build_stride_dispatch_manifest.build()`
+rebuilds the manifest from `.stride-analyst-context.json` on every call, so the
+popped fields come back. What the pops did break is the builder's own CLI —
+running it twice deleted the two projections it had just written.
 
-The property that is missing: **an operation that changes state must be able to
-repeat its answer. A guard may refuse the effect; it must not refuse the
-answer.**
+What landed, in `d87c297d` and `2a0921ac`:
 
-**A — stop consuming the inputs.** Make `build_all` non-destructive: write the
-projections without removing the source fields from the manifest. Check first
-what the manifest growth affects — it is validated and hashed in several
-places. This also unblocks a per-wave evidence-bundle rebuild, which was
-rejected earlier in the day for exactly this reason.
+- **A1** — `build_all` keeps `business_context` and `architecture_context`.
+  Manifest growth is safe: the schema defines both under
+  `additionalProperties: true`, `validate_dispatch_manifest` takes the sources
+  from `.stride-analyst-context.json` rather than the manifest, `build_bundle`
+  reads only named keys so bundle bytes do not move, and there is no manifest
+  byte cap. This also unblocks a per-wave evidence-bundle rebuild, rejected
+  earlier for exactly this reason.
+- **A2** — the builder carries `generated_at` forward while the manifest is
+  otherwise unchanged.
+- **B** — `assert_action_not_replayed` became `action_already_issued` and
+  returns the recorded action when `action_sha256` matches; a differing
+  checksum still aborts. `resolve_action` needed the same rule — it re-raised
+  at the next line otherwise — and returns the existing plan rather than
+  appending a second copy of its rows. All three call sites gate
+  `_prepare_context_v2_dispatch_outputs` on the result.
+- **The wave claim** — A2 exposed a second abort behind the first. With the
+  wave plan surviving, `claim` correctly reports `in_flight`, which the
+  controller rejected as an unsupported status. It now repeats the wave already
+  issued without touching attempt accounting.
 
-**B — let the guard answer twice.** With A in place the boundary is
-deterministic, so `assert_action_not_replayed` can recompute, compare
-`action_sha256` against the recorded row, and return the action when they
-match; a differing checksum stays a real conflict and still aborts. The ledger
-already carries both fields — only `action_id` is used today. Without A this
-needs a persisted copy of the action instead, because recomputation is
-impossible; the plan schema cannot hold it (`$defs.action` is
-`additionalProperties: false`), so it would mean a sidecar artifact plus schema,
-cleanup-whitelist entry and tests.
+Verified on a copy of run 3's own artifacts, through the path `_emit` takes:
+two calls, identical action, manifest and `.dispatch-context/` byte-identical,
+ledger unchanged at one action row and 95 deliveries, and the first dispatch's
+attempt artifact intact. Each fix was reverted in place and its tests re-run.
 
-**C — do not send large payloads through the model.** Return only what dispatch
-needs (component, model, turn limit, context-plan path) and keep receipts on
-disk. Lowers the probability rather than removing the cause, and it changes the
-`orchestration-actions` contract, so it belongs in its own decision.
+**C — do not send large payloads through the model.** Still open, still its own
+decision. Return only what dispatch needs (component, model, turn limit,
+context-plan path) and keep receipts on disk. It changes the
+`orchestration-actions` contract. With A and B in place a second call is now
+harmless, so C only lowers how often one happens.
 
-Order matters: A makes B cheap.
+Never verified: the byte size of the returned payload. Every attempt to
+reproduce the call failed on the non-idempotency itself. The claim rests on the
+orchestrator's own report and on the plan file being 217 KB with 118 deliveries
+at that revision.
 
 ## Open findings
 
@@ -146,57 +148,6 @@ follow.
 
 `tests/test_log_shape_contract.py` makes this permanent for log consumers, with
 a corpus of real lines in `tests/fixtures/logs/context-v2-run.log`.
-
-## Implementation prompt for A and B
-
-Paste this into a fresh session.
-
-> Read `docs/internal/analysis/session-handoff-2026-08-16.md` first, then
-> implement fixes A and B from it. Goal: a context-v2 boundary that changes
-> state must be able to repeat its answer without ending the run.
->
-> **A — make dispatch preparation non-destructive.**
-> `scripts/build_stride_evidence_bundles.py:1745-1746` removes
-> `business_context` and `architecture_context` from each manifest component
-> after projecting them. Because of that, a second
-> `context-v2-prepare-stride` derives a different context plan and dies on
-> `orchestration_controller.py:2811` ("component context plan hash is stale").
-> Keep the source fields and make `build_all` produce byte-identical output when
-> run twice on the same inputs.
-> Before changing it, trace what the manifest growth affects: it is validated
-> against `schemas/stride-dispatch-manifest.schema.yaml`, hashed, and read by
-> `validate_dispatch_manifest.py` and `orchestration_controller.py`. If keeping
-> the fields is not viable, say so with the evidence rather than working around
-> it.
-> Verify by running `context-v2-prepare-stride` twice on a copy of a completed
-> output directory and asserting the second call returns the same action.
->
-> **B — let the replay guard answer a re-read.**
-> `scripts/context_routing.py:686 assert_action_not_replayed` derives
-> `action_id` from the sorted job ids and aborts whenever a row already exists,
-> so a re-read and a duplicate dispatch are indistinguishable. With A in place
-> the action is recomputable, so: when `action_id` matches an existing row **and**
-> the recomputed `action_sha256` equals the recorded one, return that action
-> instead of raising; when the checksum differs, keep aborting — that is a real
-> conflict.
-> The caller must then skip the side effect: all three sites call
-> `_prepare_context_v2_dispatch_outputs(output_dir, jobs)` right after the guard
-> (`orchestration_controller.py:2972/3419`, `:3479/3480`, `:4270/4273`), and
-> re-running it would delete artifacts the first dispatch already produced —
-> that is the risk the guard's own docstring names. Cover all three, not just
-> the STRIDE one.
->
-> **Tests.** Both fixes need a test that fails without them; revert each in
-> place and re-run to prove it. Cover: prepare-stride twice returns the same
-> action and leaves `.dispatch-context/` untouched; a genuinely different job
-> set still aborts; a checksum mismatch still aborts.
->
-> **Do not** shrink the returned payload in this change — that is fix C, it
-> touches `docs/internal/contracts/orchestration-actions.md`, and it belongs in
-> its own decision.
->
-> Run `make lint` and the full suite when done. `tests/test_context_routing.py`
-> already fails formatting before your change; leave it.
 
 ## Practical notes
 
