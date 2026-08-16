@@ -7340,10 +7340,11 @@ def _check_chain_rules(report: Report, heading: str, rules: dict, body: str, t_i
                     )
 
 
-def _critical_threats_from_yaml(output_dir: Path) -> list[dict]:
-    """Read `threat-model.yaml` and return the list of Critical-severity
-    threats. Returns [] when the file is missing or unreadable so the
-    coverage checker degrades to a no-op instead of false-positiving.
+def _threats_from_yaml(output_dir: Path) -> list[dict]:
+    """Every threat in `threat-model.yaml`, or [] when it cannot be read.
+
+    The walkthrough selection has to be replayed over the same pool the
+    renderer saw, not over a severity-filtered slice of it.
     """
     yaml_path = output_dir / "threat-model.yaml"
     if not yaml_path.is_file():
@@ -7352,10 +7353,16 @@ def _critical_threats_from_yaml(output_dir: Path) -> list[dict]:
         data = _fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}
     except (OSError, Exception):
         return []
+    return [t for t in (data.get("threats") or []) if isinstance(t, dict)]
+
+
+def _critical_threats_from_yaml(output_dir: Path) -> list[dict]:
+    """Read `threat-model.yaml` and return the list of Critical-severity
+    threats. Returns [] when the file is missing or unreadable so the
+    coverage checker degrades to a no-op instead of false-positiving.
+    """
     crits: list[dict] = []
-    for t in data.get("threats") or []:
-        if not isinstance(t, dict):
-            continue
+    for t in _threats_from_yaml(output_dir):
         sev = (t.get("risk") or t.get("severity") or "").strip().lower()
         if sev == "critical":
             crits.append(t)
@@ -7430,9 +7437,13 @@ def check_walkthrough_coverage(
     try:
         import walkthrough_renderer as _wr  # sibling script
 
-        # select_walkthrough_picks only walks Criticals (Highs get a 0 budget),
-        # so the Critical list alone fully determines the picks.
-        _picks = _wr.select_walkthrough_picks({"threats": crits})
+        # Replay the selection over the whole threat list, which is what the
+        # renderer passes it. Handing it the Critical slice instead hid every
+        # triage-elevated finding from this simulation, so a reserved
+        # Access-Control or LLM-Abuse slot spent on one was invisible here and
+        # the base Critical it displaced was still demanded — a disagreement
+        # between contract and fragment that this reuse exists to prevent.
+        _picks = _wr.select_walkthrough_picks({"threats": _threats_from_yaml(output_dir)})
         if _picks:
             expected = [t for t in _picks if (t.get("risk") or t.get("severity") or "").strip().lower() == "critical"]
             walkthrough_cap = len(_picks)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import textwrap
@@ -4377,3 +4378,84 @@ def test_the_guard_leaves_a_valid_positional_call_alone(tmp_path: Path):
     assert r.returncode in (0, 1)
     assert "unknown option" not in r.stderr
 
+
+class TestWalkthroughCoverageReplaysTheRendererPool:
+    """The gate must replay the selection over the pool the renderer used.
+
+    Regression for the 2026-08-16 juice-shop run: the gate simulated
+    `select_walkthrough_picks` over the Critical slice only, so a
+    triage-elevated finding (base risk High, effective severity Critical) was
+    invisible to it. That finding took the reserved LLM-Abuse slot in the real
+    render and displaced a base Critical, which the gate then demanded — a
+    failure the renderer could not satisfy at any cap.
+    """
+
+    def _yaml(self, output_dir: Path) -> None:
+        rows = [
+            "meta:\n  generated: 2026-08-16T00:00:00Z\nthreats:\n",
+        ]
+        # Eight base Criticals, distinct categories so diversity does not skew
+        # the pick order, exactly filling DEFAULT_MAX_WALKTHROUGHS.
+        for n in range(1, 9):
+            rows.append(
+                f"  - id: T-00{n}\n"
+                f"    title: Base critical {n}\n"
+                f"    risk: Critical\n"
+                f"    threat_category_id: TH-0{n}\n"
+                f"    cwe: CWE-{300 + n}\n"
+            )
+        # One triage-elevated LLM-Abuse finding: displayed Critical, base High.
+        rows.append(
+            "  - id: T-061\n"
+            "    title: Excessive agency in a tool-calling model\n"
+            "    risk: High\n"
+            "    effective_severity: Critical\n"
+            "    threat_category_id: TH-06\n"
+            "    cwe: CWE-862\n"
+            "    owasp_llm_ids:\n      - LLM06\n"
+        )
+        (output_dir / "threat-model.yaml").write_text("".join(rows), encoding="utf-8")
+
+    def _md_from_actual_picks(self, output_dir: Path) -> Path:
+        """Render §3 from what the renderer really selects for this yaml."""
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import walkthrough_renderer as wr
+        import yaml as _yaml
+
+        data = _yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))
+        picks = wr.select_walkthrough_picks(data)
+        body = []
+        for index, pick in enumerate(picks, start=2):
+            body.append(
+                f"### 3.{index} {pick['title']}\n\n"
+                f"**Source:** [{pick['id']}](#{pick['id'].lower()}) — `x.ts:1`\n\n"
+                "**Attack Steps**\n\n1. step\n"
+            )
+        md = output_dir / "threat-model.md"
+        md.write_text(
+            "## 3. Attack Walkthroughs\n\n### 3.1 Attack Chain Overview\n\nChains.\n\n"
+            + "\n".join(body)
+            + "\n\n## 4. Assets\n",
+            encoding="utf-8",
+        )
+        return md
+
+    def test_a_reserved_slot_for_an_elevated_finding_does_not_fail_the_gate(self, output_dir):
+        qa = _load_qa_checks()
+        self._yaml(output_dir)
+        md = self._md_from_actual_picks(output_dir)
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert report.issues == [], report.issues
+
+    def test_a_genuinely_absent_walkthrough_is_still_flagged(self, output_dir):
+        """The wider pool must not turn the check into a no-op."""
+        qa = _load_qa_checks()
+        self._yaml(output_dir)
+        md = self._md_from_actual_picks(output_dir)
+        text = md.read_text(encoding="utf-8")
+        first_source = re.search(r"\*\*Source:\*\* \[(T-\d+)\]", text)
+        assert first_source is not None
+        dropped = first_source.group(1)
+        md.write_text(text.replace(f"[{dropped}](#{dropped.lower()})", "[T-999](#t-999)", 1), encoding="utf-8")
+        report = qa.check_walkthrough_coverage(md, output_dir, qa.DEFAULT_CONTRACT_PATH)
+        assert any(dropped in issue for issue in report.issues), report.issues

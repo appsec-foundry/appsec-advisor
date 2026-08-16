@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The QA gate no longer demands an attack walkthrough the renderer did not select, so a report whose §3 gives a reserved slot to a triage-elevated finding passes instead of entering a repair loop.
 - A scan records per-agent token usage again, and says so when part of its compute went unrecorded.
 - An abuse-case file or case id named for a single scan now runs at any depth, and a scan that cannot use it says so instead of skipping it silently.
 - The findings register lists an unrestricted CI/CD workflow token permission once instead of twice.
