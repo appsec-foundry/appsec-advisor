@@ -176,7 +176,7 @@ class TestValidate:
         ok, errors, warnings = vdm.validate(mp, output)
 
         assert ok is True, errors
-        assert "business_context" not in manifest["components"][0]
+        assert manifest["components"][0]["business_context"] == {"business_purpose": "Authorize customer payments."}
 
     def test_context_v2_rejects_stale_business_projection(self, vdm, tmp_path):
         output = tmp_path / "out"
@@ -220,7 +220,7 @@ class TestValidate:
         ok, errors, warnings = vdm.validate(mp, output)
 
         assert ok is True, errors
-        assert "architecture_context" not in manifest["components"][0]
+        assert manifest["components"][0]["architecture_context"] == {"security_role": "Route public API requests."}
 
     def test_context_v2_rejects_stale_architecture_projection(self, vdm, tmp_path):
         output = tmp_path / "out"

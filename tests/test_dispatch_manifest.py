@@ -198,6 +198,38 @@ def _seed_output_dir(tmp_path: Path):
     )
 
 
+def test_builder_carries_generated_at_while_the_manifest_is_unchanged(tmp_path, monkeypatch):
+    _seed_output_dir(tmp_path)
+    # Three builds inside one test second would share a timestamp by accident,
+    # which would let the assertions pass without the carry-forward.
+    stamps = iter(["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "2026-01-03T00:00:00Z"])
+    real_build = bm.build
+
+    def stamped_build(*args, **kwargs):
+        manifest = real_build(*args, **kwargs)
+        manifest["generated_at"] = next(stamps)
+        return manifest
+
+    monkeypatch.setattr(bm, "build", stamped_build)
+    mpath = tmp_path / ".stride-dispatch-manifest.json"
+
+    assert bm.main([str(tmp_path), "--depth", "standard"]) == 0
+    first = mpath.read_bytes()
+    assert json.loads(first)["generated_at"] == "2026-01-01T00:00:00Z"
+
+    # Same inputs, second build: the boundary must be able to repeat its answer,
+    # so the timestamp does not move and the bytes do not change.
+    assert bm.main([str(tmp_path), "--depth", "standard"]) == 0
+    assert mpath.read_bytes() == first
+
+    # A real change still gets its own timestamp.
+    components = json.loads((tmp_path / ".components.json").read_text(encoding="utf-8"))
+    components["components"][0]["description"] = "Handles checkout requests."
+    (tmp_path / ".components.json").write_text(json.dumps(components), encoding="utf-8")
+    assert bm.main([str(tmp_path), "--depth", "standard"]) == 0
+    assert json.loads(mpath.read_bytes())["generated_at"] == "2026-01-03T00:00:00Z"
+
+
 def test_builder_roundtrip_validates(tmp_path):
     _seed_output_dir(tmp_path)
     manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
@@ -1760,10 +1792,11 @@ def test_main_context_v2_writes_fingerprinted_bundle_without_changing_selection(
         assert bundle.is_file()
         assert hashlib.sha256(bundle.read_bytes()).hexdigest() == component["evidence_bundle_sha256"]
     backend = next(row for row in manifest["components"] if row["component_id"] == "backend-api")
-    assert "business_context" not in backend
     assert (tmp_path / backend["business_context_path"]).is_file()
-    assert "architecture_context" not in backend
     assert (tmp_path / backend["architecture_context_path"]).is_file()
+    # The projected sources stay in the manifest, so a second build over it
+    # reproduces the same projections instead of deleting them.
+    assert backend["business_context"] and backend["architecture_context"]
 
 
 def test_main_returns_1_when_no_components(tmp_path, capsys):

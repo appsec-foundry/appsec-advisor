@@ -1742,8 +1742,9 @@ def build_all(
         business_context = business_context_projection(component.get("business_context"), component_id)
         architecture_context = architecture_context_projection(component.get("architecture_context"), component_id)
         security_contexts = component_security_context_projections(output_dir, component)
-        component.pop("business_context", None)
-        component.pop("architecture_context", None)
+        # The source fields stay in the manifest. Consuming them made a second
+        # build over the same manifest drop the two projections it had just
+        # written, so the boundary could not repeat its own answer.
         bundle, payload = build_bundle(output_dir, component, registry)
         bundle_dir.mkdir(parents=True, exist_ok=True)
         bundle_path = bundle_dir / "evidence-bundle.json"

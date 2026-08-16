@@ -110,6 +110,22 @@ def test_build_all_reconstructs_its_canonical_empty_routing_lists(tmp_path):
     assert second_payload == first_payload
 
 
+def test_build_all_keeps_its_context_sources_so_a_second_build_repeats_itself(tmp_path):
+    repo, output = _repo(tmp_path)
+    business = {"business_purpose": "Authorize customer payments."}
+    architecture = {"security_role": "Validate and route authenticated API requests."}
+    manifest = _manifest(_component(business_context=business, architecture_context=architecture))
+
+    first = bundles.build_all(output, repo, manifest)
+    business_payload = (output / ".dispatch-context/backend-api/business-context.json").read_bytes()
+    architecture_payload = (output / ".dispatch-context/backend-api/architecture-context.json").read_bytes()
+    second = bundles.build_all(output, repo, first)
+
+    assert second == first
+    assert (output / ".dispatch-context/backend-api/business-context.json").read_bytes() == business_payload
+    assert (output / ".dispatch-context/backend-api/architecture-context.json").read_bytes() == architecture_payload
+
+
 def test_business_context_is_normalized_and_receipted_per_component(tmp_path):
     repo, output = _repo(tmp_path)
     context = {
@@ -134,7 +150,7 @@ def test_business_context_is_normalized_and_receipted_per_component(tmp_path):
         projection["source_content_sha256"]
         == hashlib.sha256(bundles._canonical_bytes(projection["attributes"])).hexdigest()
     )
-    assert "business_context" not in component
+    assert component["business_context"] == context
     bundle = json.loads((output / component["evidence_bundle_path"]).read_text())
     assert "business_context" not in bundle
 
@@ -206,7 +222,7 @@ def test_architecture_context_is_normalized_and_receipted_per_component(tmp_path
     )
     assert projection["attributes"]["security_role"] == "Validate and route authenticated API requests."
     assert projection["attributes"]["exposed_interfaces"] == ["HTTPS API", "Internal event consumer"]
-    assert "architecture_context" not in component
+    assert component["architecture_context"] == context
     bundle = json.loads((output / component["evidence_bundle_path"]).read_text())
     assert "architecture_context" not in bundle
 
