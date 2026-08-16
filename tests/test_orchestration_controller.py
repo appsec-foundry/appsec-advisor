@@ -5194,3 +5194,53 @@ class TestOrganizationLlmPolicy:
         }
         with pytest.raises(controller.ControllerError, match="hash is stale"):
             controller._validate_stride_component_llm_policy(tmp_path, job, [receipt])
+
+
+class TestAbortEventDetail:
+    """A run died on `INVALID: threats[18].title …` and reported
+    `threats: 5 below severity floor … dropped from register` — normal
+    filtering, which sent two readers down the wrong path before anyone read
+    four lines further. The event must name the failure and stay one line."""
+
+    REAL = (
+        "build_threat_model_yaml.py failed with exit 5: "
+        "threats: 5 below severity floor (medium) dropped from register\n"
+        "  attack-surface-overrides.curations.include: kept 41/105 routes\n"
+        "FATAL: schema validation failed\n"
+        "ADVISORY: [advisory] T-014: component mismatch\n"
+        "INVALID: threats[18].title: 'Unpinned CI action at mutable @main tag' does not match\n"
+    )
+
+    def test_the_headline_names_the_failure_not_the_first_warning(self):
+        detail = controller._abort_event_detail(self.REAL)
+
+        assert "INVALID: threats[18].title" in detail
+        assert "below severity floor" not in detail
+        assert "failed with exit 5:" in detail
+
+    def test_the_event_stays_one_parseable_line(self):
+        detail = controller._abort_event_detail(self.REAL)
+        line = controller.format_line("RUN_ABORTED", detail, level="WARN", component="skill-controller")
+
+        assert line.count("\n") == 1
+        import event_log
+
+        parsed = event_log.parse_line(line)
+        assert parsed is not None
+        assert parsed.event == "RUN_ABORTED"
+
+    def test_the_dropped_lines_are_counted_not_hidden(self):
+        assert "(+4 more line(s))" in controller._abort_event_detail(self.REAL)
+
+    def test_a_traceback_headline_survives(self):
+        detail = controller._abort_event_detail(
+            "run.py failed with exit 1: warming up\nTraceback (most recent call last):\nValueError: bad"
+        )
+
+        assert "Traceback" in detail
+
+    def test_a_single_line_reason_is_passed_through(self):
+        assert controller._abort_event_detail("boom") == "boom"
+
+    def test_an_empty_reason_is_empty(self):
+        assert controller._abort_event_detail("") == ""

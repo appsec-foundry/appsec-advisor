@@ -1019,6 +1019,35 @@ def _append_event(output_dir: Path, event: str, detail: str, level: str = "INFO"
         pass
 
 
+_FAILURE_MARKERS = ("FATAL", "INVALID", "ERROR", "Traceback")
+_EXIT_LEAD_RE = re.compile(r"^(.*?failed with exit -?\d+:)")
+
+
+def _abort_event_detail(reason: str) -> str:
+    """One event-safe line whose headline names the actual failure.
+
+    A script's stderr leads with its warnings, so the first line of a failure is
+    routinely benign — a run died on `INVALID: threats[18].title …` and reported
+    `threats: 5 below severity floor … dropped from register`, which reads like
+    normal filtering and sent two readers down the wrong path. A multi-line
+    detail also breaks the one-line-per-event log format, leaving every
+    continuation line unparseable.
+    """
+    lines = [line.strip() for line in str(reason).splitlines() if line.strip()]
+    if not lines:
+        return ""
+    head = lines[0]
+    # The last marker line, not the first: a validator prints its class
+    # ("FATAL: schema validation failed") before the finding that caused it
+    # ("INVALID: threats[18].title …"), and the finding is what a reader acts on.
+    salient = next((line for line in reversed(lines[1:]) if line.startswith(_FAILURE_MARKERS)), "")
+    extra = f"  (+{len(lines) - 1} more line(s))" if len(lines) > 1 else ""
+    if not salient:
+        return f"{head}{extra}"
+    lead = _EXIT_LEAD_RE.match(head)
+    return f"{lead.group(1) if lead else head} {salient}{extra}"
+
+
 def _run_script(
     name: str,
     args: list[str],
@@ -5881,7 +5910,7 @@ def _aggregate_issues_on_abort(output_dir: Any, reason: str, repo_root: Any = No
                 repo_root = config.get("repo_root")
             except (OSError, ValueError, AttributeError):
                 repo_root = None
-        _append_event(path, "RUN_ABORTED", reason, level="WARN")
+        _append_event(path, "RUN_ABORTED", _abort_event_detail(reason), level="WARN")
         command = [sys.executable, str(SCRIPT_DIR / "aggregate_run_issues.py"), str(path)]
         if repo_root and Path(repo_root).is_dir():
             command.extend(["--repo-root", str(repo_root)])
