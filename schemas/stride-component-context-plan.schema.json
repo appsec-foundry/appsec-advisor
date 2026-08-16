@@ -44,7 +44,7 @@
     "inputs": {
       "type": "array",
       "minItems": 2,
-      "maxItems": 11,
+      "maxItems": 12,
       "allOf": [
         {
           "contains": {
@@ -133,6 +133,14 @@
           },
           "minContains": 0,
           "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {"context_id": {"const": "policy.llm_policy"}},
+            "required": ["context_id"]
+          },
+          "minContains": 0,
+          "maxContains": 1
         }
       ],
       "items": {
@@ -151,7 +159,8 @@
               "threats.known_threats",
               "trust_boundaries.component_context",
               "threats.component_taxonomy",
-              "threats.related_repositories"
+              "threats.related_repositories",
+              "policy.llm_policy"
             ]
           },
           "artifact_path": {"$ref": "#/$defs/relative_path"},

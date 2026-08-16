@@ -97,6 +97,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/stride-component-repository-roots.schema.json#v1": "repositories",
     "schemas/stride-component-architecture-context.schema.json#v1": "attributes",
     "schemas/stride-component-business-context.schema.json#v1": "attributes",
+    "schemas/stride-run-llm-policy.schema.json#v1": "attributes",
     "schemas/stride-component-security-context.schema.json#v1": "records",
     "schemas/stride-dispatch-manifest.schema.yaml#v2": "components",
     "schemas/stride-repository-registry.schema.json#v1": "repositories",
@@ -2230,6 +2231,61 @@ def _context_v2_taxonomy_slice(output_dir: Path, component_id: str) -> tuple[str
     return relative, hashlib.sha256(payload).hexdigest()
 
 
+def _run_llm_policy(output_dir: Path) -> dict[str, Any] | None:
+    """The organization's LLM policy from the resolved org profile, or None.
+
+    Read once per dispatch build. A profile without the block, an inactive
+    profile, and an unreadable file are the same answer: nothing was declared,
+    so the analyzer must not answer the two policy questions at all."""
+    try:
+        effective = json.loads((output_dir / ".org-profile-effective.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    policy = effective.get("llm_policy") if isinstance(effective, dict) else None
+    if not isinstance(policy, dict):
+        return None
+    attributes = {
+        name: [item for item in policy[name] if isinstance(item, str) and item.strip()]
+        for name in ("permitted_data_classes", "approval_required_actions")
+        if isinstance(policy.get(name), list) and policy[name]
+    }
+    attributes = {name: value for name, value in attributes.items() if value}
+    return attributes or None
+
+
+def _write_stride_component_llm_policy(
+    output_dir: Path,
+    *,
+    component_id: str,
+    attributes: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Project the run's LLM policy for one component, or nothing to project."""
+    from _atomic_io import atomic_write_json
+
+    if not attributes:
+        return None
+    relative = f".dispatch-context/{component_id}/llm-policy.json"
+    path = _resolve_artifact_path(output_dir, relative)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(
+        path,
+        {
+            "schema_version": 1,
+            "component_id": component_id,
+            "source": "org-profile-llm-policy-v1",
+            "attributes": attributes,
+        },
+        sort_keys=True,
+    )
+    receipt = _validated_json_receipt(
+        output_dir,
+        relative,
+        schema_id="schemas/stride-run-llm-policy.schema.json#v1",
+        record_count=len(attributes),
+    )
+    return relative, receipt
+
+
 def _write_stride_component_context_plan(
     output_dir: Path,
     *,
@@ -2245,6 +2301,8 @@ def _write_stride_component_context_plan(
     architecture_context_sha256: str | None = None,
     business_context_path: str | None = None,
     business_context_sha256: str | None = None,
+    llm_policy_path: str | None = None,
+    llm_policy_sha256: str | None = None,
     repository_projection_path: str | None = None,
     repository_projection_sha256: str | None = None,
     security_context_projections: list[dict[str, str]] | None = None,
@@ -2284,6 +2342,16 @@ def _write_stride_component_context_plan(
                 "context_id": "business.component_context",
                 "artifact_path": business_context_path,
                 "sha256": business_context_sha256,
+            }
+        )
+    if (llm_policy_path is None) != (llm_policy_sha256 is None):
+        raise ControllerError("component llm-policy path and hash must be supplied together")
+    if llm_policy_path is not None and llm_policy_sha256 is not None:
+        inputs.append(
+            {
+                "context_id": "policy.llm_policy",
+                "artifact_path": llm_policy_path,
+                "sha256": llm_policy_sha256,
             }
         )
     if (repository_projection_path is None) != (repository_projection_sha256 is None):
@@ -2526,6 +2594,40 @@ def _validate_stride_component_architecture_context(
     return value
 
 
+def _validate_stride_component_llm_policy(
+    output_dir: Path,
+    job: dict[str, Any],
+    artifact_receipts: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Validate the optional organization LLM policy projected for a component."""
+    component_id = job.get("component_id")
+    expected_path = f".dispatch-context/{component_id}/llm-policy.json"
+    declared_path = job.get("llm_policy_path")
+    declared_hash = job.get("llm_policy_sha256")
+    inputs = job.get("input_artifacts", [])
+    if declared_path is None and declared_hash is None:
+        if expected_path in inputs:
+            raise ControllerError("stride analyzer received an undeclared llm policy")
+        return None
+    if declared_path != expected_path or expected_path not in inputs or not isinstance(declared_hash, str):
+        raise ControllerError("stride analyzer llm-policy projection does not match its component id")
+    path = _resolve_artifact_path(output_dir, expected_path)
+    value = _validate_json_artifact(
+        path,
+        PLUGIN_ROOT / "schemas" / "stride-run-llm-policy.schema.json",
+        contract="stride-run-llm-policy-v1",
+    )
+    if hashlib.sha256(path.read_bytes()).hexdigest() != declared_hash:
+        raise ControllerError("stride analyzer llm-policy projection hash is stale")
+    attributes = value.get("attributes")
+    if value.get("component_id") != component_id or not isinstance(attributes, dict) or not attributes:
+        raise ControllerError("stride analyzer llm-policy projection has invalid component content")
+    matching_receipts = [row for row in artifact_receipts if row.get("artifact_path") == expected_path]
+    if len(matching_receipts) != 1:
+        raise ControllerError("stride analyzer llm-policy projection lacks exactly one receipt")
+    return value
+
+
 def _validate_stride_component_business_context(
     output_root: Path,
     job: dict[str, Any],
@@ -2688,12 +2790,14 @@ def _validate_stride_component_context_plan(
     )
     architecture_context = _validate_stride_component_architecture_context(output_root, job, artifact_receipts)
     business_context = _validate_stride_component_business_context(output_root, job, artifact_receipts)
+    llm_policy = _validate_stride_component_llm_policy(output_root, job, artifact_receipts)
     security_contexts = _validate_stride_component_security_contexts(output_root, job, artifact_receipts)
     expected_input_count = (
         2
         + int(repository_projection is not None)
         + int(architecture_context is not None)
         + int(business_context is not None)
+        + int(llm_policy is not None)
         + len(security_contexts)
     )
     if (
@@ -2721,6 +2825,8 @@ def _validate_stride_component_context_plan(
         expected_context_ids.add("architecture.component_context")
     if business_context is not None:
         expected_context_ids.add("business.component_context")
+    if llm_policy is not None:
+        expected_context_ids.add("policy.llm_policy")
     if repository_projection is not None:
         expected_context_ids.add("threats.related_repositories")
     expected_context_ids.update(value["context_id"] for value in security_contexts)
@@ -2744,6 +2850,12 @@ def _validate_stride_component_context_plan(
         "sha256": job.get("business_context_sha256"),
     }:
         raise ControllerError("stride analyzer business context drifted from its component context plan")
+    if llm_policy is not None and inputs["policy.llm_policy"] != {
+        "context_id": "policy.llm_policy",
+        "artifact_path": job.get("llm_policy_path"),
+        "sha256": job.get("llm_policy_sha256"),
+    }:
+        raise ControllerError("stride analyzer llm policy drifted from its component context plan")
     if inputs["threats.component_taxonomy"] != {
         "context_id": "threats.component_taxonomy",
         "artifact_path": job.get("taxonomy_slice_path"),
@@ -3865,6 +3977,7 @@ def _context_v2_stride_wave_action(
             _append_event(output_dir, "CONTEXT_V2_STRIDE_RETRY", details)
 
     repository_registry = output_dir / ".stride-repository-registry.json"
+    run_llm_policy = _run_llm_policy(output_dir)
 
     jobs: list[dict[str, Any]] = []
     structured: list[dict[str, Any]] = []
@@ -4014,6 +4127,17 @@ def _context_v2_stride_wave_action(
             "stride_profile": cfg.get("stride_profile"),
         }
         lens_ids = list(component.get("lens_ids") or [])
+        llm_policy_projection = _write_stride_component_llm_policy(
+            output_dir,
+            component_id=component_id,
+            # Only components carrying the LLM lens can answer the policy
+            # questions, so nobody else pays for the artifact.
+            attributes=run_llm_policy if "llm" in lens_ids else None,
+        )
+        llm_policy_path = llm_policy_projection[0] if llm_policy_projection is not None else None
+        llm_policy_receipt = llm_policy_projection[1] if llm_policy_projection is not None else None
+        if llm_policy_receipt is not None:
+            structured.append(llm_policy_receipt)
         repository_projection = _write_stride_component_repository_roots(
             output_dir,
             component_id=component_id,
@@ -4042,6 +4166,8 @@ def _context_v2_stride_wave_action(
             business_context_sha256=(
                 business_context_receipt["sha256"] if business_context_receipt is not None else None
             ),
+            llm_policy_path=llm_policy_path,
+            llm_policy_sha256=(llm_policy_receipt["sha256"] if llm_policy_receipt is not None else None),
             repository_projection_path=repository_projection_path,
             repository_projection_sha256=(
                 repository_projection_receipt["sha256"] if repository_projection_receipt is not None else None
@@ -4054,6 +4180,8 @@ def _context_v2_stride_wave_action(
             input_artifacts.append(architecture_context_path)
         if business_context_receipt is not None:
             input_artifacts.append(business_context_path)
+        if llm_policy_path is not None:
+            input_artifacts.append(llm_policy_path)
         if repository_projection_path is not None:
             input_artifacts.append(repository_projection_path)
         input_artifacts.extend(row["artifact_path"] for row in security_context_projections)
@@ -4092,6 +4220,9 @@ def _context_v2_stride_wave_action(
         if business_context_receipt is not None:
             jobs[-1]["business_context_path"] = business_context_path
             jobs[-1]["business_context_sha256"] = business_context_receipt["sha256"]
+        if llm_policy_receipt is not None:
+            jobs[-1]["llm_policy_path"] = llm_policy_path
+            jobs[-1]["llm_policy_sha256"] = llm_policy_receipt["sha256"]
     action = {
         **_context_v2_common(output_dir, cfg),
         "action": "dispatch_parallel",

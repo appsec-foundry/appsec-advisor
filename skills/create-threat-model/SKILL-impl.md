@@ -967,6 +967,9 @@ EVIDENCE_VERIFIER_MAX_FINDINGS=$(echo "$RESOLVED_JSON" | python3 -c "import json
 # Emit as inline JSON for the orchestrator to forward in Phase 9 dispatches.
 STRIDE_PROFILE_JSON=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('stride_profile', {'stride_profile_label':'full'})))")
 STRIDE_PROFILE_LABEL=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('stride_profile',{}).get('stride_profile_label','full'))")
+# Organization LLM policy (org profile → llm_policy): permitted data classes and
+# approval-required action classes. `none` when the organization declared none.
+LLM_POLICY_JSON=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys; p=json.load(sys.stdin).get('org_profile_llm_policy'); print(json.dumps(p) if p else 'none')")
 WRITE_SARIF=$(echo "$RESOLVED_JSON" | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_sarif',False)).lower())")
 WRITE_PDF=$(echo "$RESOLVED_JSON"   | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_pdf',False)).lower())")
 WRITE_HTML=$(echo "$RESOLVED_JSON"  | python3 -c "import json,sys;print(str(json.load(sys.stdin).get('write_html',False)).lower())")
@@ -3399,6 +3402,7 @@ Pass the following variables to the agent prompt:
 - `RENDERER_MODEL=<model>` (default `sonnet` alias → the **host session model**; Stage-2 renderer has no other knob. Passed as the Agent `model` param on the single, parallel (§7 ‖ MS), and recovery dispatches. Pin to `claude-sonnet-5` (CISO framing) via `$APPSEC_RENDERER_MODEL`.)
 - `ABUSE_VERIFIER_MODEL=<model>` (default `sonnet` alias → the **host session model**; Stage-1d abuse-case verifier fan-out. Passed as the Agent `model` param AND the `MODEL_ID` prompt field. Pin to `claude-sonnet-5` (verdict decisiveness) via `$APPSEC_ABUSE_VERIFIER_MODEL`; 4.6 reintroduces `inconclusive` verdicts so it is never the default.)
 - `STRIDE_PROFILE_JSON=<inline-json>` (depth-reduction profile; default `{"stride_profile_label":"full"}`. Read by Phase 9 dispatch in `phase-group-threats.md` and forwarded to each STRIDE analyzer in Group A. Quick + sonnet-economy contains the A-F reduction flags.)
+- `LLM_POLICY_JSON=<inline-json|none>` (organization LLM policy from the org profile; forwarded in Group A of every Phase 9 dispatch. `none` leaves the policy questions in the LLM lens unanswered rather than guessed.)
 - `REASONING_LABEL=<resolved summary>`
 - `RESUME_FROM_PHASE=<N>` (only if resuming from checkpoint)
 - `STAGE1_PHASE_LIMIT=10b` (M2.12 — Sprint 3, only set on Stage 1 dispatch — tells the orchestrator to run Phases 1–10b plus the deterministic Phase 11 Substeps 1–3 (counts, yaml write, baseline cache) and then stop cleanly without entering the LLM-heavy Substeps 4–N. See `agents/appsec-threat-analyst.md` → "STAGE1_PHASE_LIMIT — early-exit branch" for the full contract. **Mutually exclusive with `RENDER_ONLY=true`.**)

@@ -465,6 +465,28 @@ Each `llm_context.documents` file:
 - is scanned for common secret formats
 - is treated as untrusted reference data
 
+## LLM policy
+
+Two lists state what your organization allows a language model to receive and to do.
+The analysis compares each component with an LLM surface against them; without a list
+it records nothing, because neither question can be answered from code.
+
+```yaml
+llm_policy:
+  permitted_data_classes:
+    - internal-documentation
+    - pseudonymised-usage-metrics
+  approval_required_actions:
+    - payment or refund
+    - deletion of customer data
+    - outbound message to a customer
+```
+
+A data class the component sends to a prompt, tool call, retrieval index, or shared
+memory but that is not on the list becomes a finding. For each approval-required
+action, the analysis checks whether an enforced gate exists in code — an instruction
+in a system prompt does not count as one.
+
 ## Adding your own skills
 
 An organization can ship its own skills alongside the upstream ones. Put each

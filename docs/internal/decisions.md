@@ -136,6 +136,7 @@ Removing an entry means listing it here in the same change.
 | FE-5 | Supply-chain analysis is passive: files and git history only, no package manager, no network CVE scanner | — *(no guard written)* | `AGENTS.md` → Sources and merge behavior; see `docs/internal/analysis/analysis-supply-chain-coverage-improvement.md` |
 | FE-6 | Every remote fetch goes through a URL allow-list and an SSRF guard | `tests/test_url_guard.py`, see TR-4 | `schemas/org-profile.schema.yaml` → `policy.url_allowlist` |
 | FE-7 | Declared business context weights and flags; it never sets or raises a severity. It may mark a component crown-jewel and it may raise a triage flag, and the severity caps stay authoritative | `test_step5b_flags_low_impact_where_context_declares_assets`, `test_declared_business_assets_make_a_component_crown_jewel` | `scripts/triage_validate_ratings.py`; `scripts/build_stride_dispatch_manifest.py`; `data/severity-caps.yaml` |
+| FE-8 | An organization's LLM policy answers what code cannot: without a declared list the permitted-data and approval questions stay unanswered rather than guessed | `test_llm_policy_reaches_the_effective_profile`, `test_llm_policy_absent_stays_none` | `schemas/org-profile.schema.yaml` → `llm_policy`; `agents/shared/owasp-llm-top10.md` |
 
 ## Weaknesses
 

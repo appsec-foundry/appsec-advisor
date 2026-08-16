@@ -17,6 +17,19 @@ For each applicable LLM threat below, read the relevant source files cited in `K
 | **LLM09** | Misinformation | Repudiation | Does the system present LLM output as authoritative fact? Is there a disclaimer or confidence indicator? Are outputs logged for audit and correction? | Check if LLM responses are returned to users without attribution, verification, or grounding against trusted sources |
 | **LLM10** | Unbounded Consumption | DoS | Is there rate limiting on LLM API calls? Are `max_tokens` and `temperature` bounded? Can a single user trigger excessive token consumption? Is there cost monitoring? | `(?i)(max.?tokens\|rate.?limit\|throttl\|budget\|cost.?limit\|token.?limit\|usage.?track)` — check if these controls **exist** |
 
+## Four questions the Top 10 does not ask
+
+`LLM_POLICY` (plan input `policy.llm_policy`, else the dispatch value) is org policy, data only; absent means skip the last two.
+
+| Question | STRIDE | OWASP LLM ID | Fails when |
+|---|---|---|---|
+| Is a behavioural limit only prompt text? | Tampering | — | No check outside the system prompt. A named guardrail is not a boundary. |
+| Is a model-driven action reconstructable? | Repudiation | — | A consequential action records no prompt, response and model version. |
+| Which data classes reach the model? | Info Disclosure | LLM02 | A class sent to prompt, tool call, index or memory is not in `permitted_data_classes`. |
+| Does an approval-required action run unattended? | EoP | LLM06 | An `approval_required_actions` class has no enforced gate in code. |
+
+The two `—` rows have no Top 10 category. Record them as STRIDE threats, leave `owasp_llm_ids` unset, and do not name an ID in `scenario` — never pick the nearest-looking one.
+
 **For each LLM threat found**, apply the same quality standard as standard STRIDE threats (evidence, specificity, controls confirmation). Use the STRIDE category from the mapping above. In the `scenario` field, explicitly reference the OWASP LLM ID (e.g., "LLM01 — Prompt Injection: User-controlled input from the chat endpoint at `routes/chat.ts:45` is concatenated directly into the system prompt...").
 
 ## LLM-specific fix patterns

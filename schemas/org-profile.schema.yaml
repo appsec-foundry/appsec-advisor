@@ -376,6 +376,42 @@ properties:
                 type: string
                 pattern: "^[a-z0-9][a-z0-9-]{0,99}$"
 
+  llm_policy:
+    type: object
+    additionalProperties: false
+    description: |
+      What the organization allows a language model to receive and to do.
+      Both lists are policy, not analysis: the LLM lens compares the component
+      against them and reports a mismatch. Without a list the corresponding
+      question stays unanswered rather than guessed, because whether a data
+      class or an action is acceptable is not derivable from code.
+      Entries are data only — they never name a path, command, tool, or agent.
+    properties:
+      permitted_data_classes:
+        type: array
+        maxItems: 40
+        uniqueItems: true
+        description: |
+          Data classes that may reach a model prompt, tool call, retrieval
+          index, or shared memory. A class the component sends but this list
+          omits is a finding; an empty list means no class is permitted.
+        items:
+          type: string
+          minLength: 1
+          maxLength: 120
+      approval_required_actions:
+        type: array
+        maxItems: 40
+        uniqueItems: true
+        description: |
+          Action classes a model may trigger only behind human approval —
+          payments, deletions, outbound messages, privilege changes. The lens
+          checks whether an enforced gate exists in code, not in the prompt.
+        items:
+          type: string
+          minLength: 1
+          maxLength: 120
+
   security_coach:
     type: object
     additionalProperties: false

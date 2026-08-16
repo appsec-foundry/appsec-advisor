@@ -366,6 +366,7 @@ def resolve(
         "llm_context_documents": [],
         "skill_toggles": {},
         "security_coach": None,
+        "llm_policy": None,
     }
     if not profile_path:
         return base, []
@@ -448,6 +449,7 @@ def resolve(
         "llm_context_documents": manifest,
         "skill_toggles": normalize_skill_toggles(profile),
         "security_coach": coach,
+        "llm_policy": profile.get("llm_policy"),
     }
     return base, []
 

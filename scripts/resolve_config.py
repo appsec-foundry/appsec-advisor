@@ -2284,6 +2284,7 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
             "org_profile_skill_toggles": {},
             "org_profile_context_documents": [],
             "org_profile_security_coach": None,
+            "org_profile_llm_policy": None,
         }
     effective, errors = rop.resolve(
         ns.org_profile,
@@ -2305,6 +2306,7 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
         "org_profile_skill_toggles": effective.get("skill_toggles") or {},
         "org_profile_context_documents": effective.get("llm_context_documents") or [],
         "org_profile_security_coach": effective.get("security_coach"),
+        "org_profile_llm_policy": effective.get("llm_policy"),
     }
     if not effective["org_profile"].get("active"):
         return org_block
@@ -3901,6 +3903,7 @@ def main(argv: list[str] | None = None) -> int:
                 "llm_context_documents": cfg.get("org_profile_context_documents") or [],
                 "skill_toggles": cfg.get("org_profile_skill_toggles") or {},
                 "security_coach": cfg.get("org_profile_security_coach"),
+                "llm_policy": cfg.get("org_profile_llm_policy"),
             }
             (Path(cfg["output_dir"]) / ".org-profile-effective.json").write_text(
                 json.dumps(org_payload, indent=2) + "\n", encoding="utf-8"

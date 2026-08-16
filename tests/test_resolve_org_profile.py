@@ -482,3 +482,48 @@ def test_module_runs_as_script(isolated_root):
         text=True,
     )
     assert res.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# llm_policy — organization policy the LLM lens compares a component against
+# ---------------------------------------------------------------------------
+
+
+def _profile_with_llm_policy(tmp_path: Path, policy: dict) -> Path:
+    """Copy the fixture profile and append an llm_policy block."""
+    import yaml
+
+    target_dir = tmp_path / "org-profile"
+    shutil.copytree(FIXTURE_DIR, target_dir)
+    path = target_dir / "org-profile.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data["llm_policy"] = policy
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def test_llm_policy_reaches_the_effective_profile(isolated_root, tmp_path):
+    path = _profile_with_llm_policy(
+        tmp_path,
+        {"permitted_data_classes": ["internal-documentation"], "approval_required_actions": ["payment or refund"]},
+    )
+    effective, errors = rop.resolve(str(path), None, False, None, isolated_root, env={})
+    assert errors == []
+    assert effective["llm_policy"] == {
+        "permitted_data_classes": ["internal-documentation"],
+        "approval_required_actions": ["payment or refund"],
+    }
+
+
+def test_llm_policy_absent_stays_none(isolated_root):
+    """No declared policy must stay None, so the lens leaves those questions
+    unanswered instead of treating an empty list as 'nothing is permitted'."""
+    effective, errors = rop.resolve(str(FIXTURE_PATH), None, False, None, isolated_root, env={})
+    assert errors == []
+    assert effective["llm_policy"] is None
+
+
+def test_llm_policy_rejects_an_unknown_field(isolated_root, tmp_path):
+    path = _profile_with_llm_policy(tmp_path, {"permitted_actions": ["anything"]})
+    _, errors = rop.resolve(str(path), None, False, None, isolated_root, env={})
+    assert errors

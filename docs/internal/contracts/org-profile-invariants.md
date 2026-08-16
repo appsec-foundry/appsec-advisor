@@ -31,6 +31,8 @@ Profile-level policy consumed by a hook or guard bypasses `flatten_preset`. It f
 
 Examples include `security_coach.topics` consumed by `scripts/security_steering.py` and `policy.url_allowlist` consumed by `scripts/_url_guard.py`. Relevant guards include `tests/test_security_steering_units.py` and `tests/test_url_guard.py`.
 
+`llm_policy` is the one profile-level field consumed by an agent rather than by Python: `resolve()` carries it into `.org-profile-effective.json`, `resolve_config` exposes it as `org_profile_llm_policy`, the skill emits it as `LLM_POLICY_JSON`, and Phase-9 dispatch forwards it in Group A. It stays in Group A because it is identical for every component; moving it to Group B would pay for it once per dispatch.
+
 ### Preset guardrails
 
 Preset guardrails consumed by the orchestrator do pass through `flatten_preset`. For example, `guardrails.fail_on` is resolved into the effective profile and seeded by `scripts/run-headless.sh`; an explicit CLI value wins.

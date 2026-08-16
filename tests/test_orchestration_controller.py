@@ -5079,3 +5079,71 @@ class TestProducerContractRetry:
         """Only LLM-written artifacts may be retried; scripts failing is a defect."""
         assert issubclass(controller.ProducerContractError, controller.ControllerError)
         assert not isinstance(controller.ControllerError("boom"), controller.ProducerContractError)
+
+
+class TestOrganizationLlmPolicy:
+    """The org LLM policy is admitted like every other input: projected,
+    schema-checked, hashed and receipted — never read ad hoc by the agent."""
+
+    def _effective(self, output: Path, policy):
+        (output / ".org-profile-effective.json").write_text(
+            json.dumps({"org_profile": {"active": True}, "llm_policy": policy}), encoding="utf-8"
+        )
+
+    def test_declared_policy_is_read_from_the_effective_profile(self, tmp_path):
+        self._effective(tmp_path, {"permitted_data_classes": ["internal-docs"], "approval_required_actions": []})
+        assert controller._run_llm_policy(tmp_path) == {"permitted_data_classes": ["internal-docs"]}
+
+    def test_absent_or_empty_policy_is_none(self, tmp_path):
+        assert controller._run_llm_policy(tmp_path) is None
+        self._effective(tmp_path, None)
+        assert controller._run_llm_policy(tmp_path) is None
+        self._effective(tmp_path, {"permitted_data_classes": []})
+        assert controller._run_llm_policy(tmp_path) is None
+
+    def test_projection_is_written_and_receipted(self, tmp_path):
+        attributes = {"approval_required_actions": ["payment or refund"]}
+        result = controller._write_stride_component_llm_policy(tmp_path, component_id="api", attributes=attributes)
+        assert result is not None
+        relative, receipt = result
+        assert relative == ".dispatch-context/api/llm-policy.json"
+        value = json.loads((tmp_path / relative).read_text(encoding="utf-8"))
+        assert value["source"] == "org-profile-llm-policy-v1"
+        assert value["attributes"] == attributes
+        assert receipt["schema_id"] == "schemas/stride-run-llm-policy.schema.json#v1"
+
+    def test_nothing_declared_writes_nothing(self, tmp_path):
+        assert controller._write_stride_component_llm_policy(tmp_path, component_id="api", attributes=None) is None
+        assert not (tmp_path / ".dispatch-context" / "api").exists()
+
+    def test_validation_accepts_a_declared_projection(self, tmp_path):
+        relative, receipt = controller._write_stride_component_llm_policy(
+            tmp_path, component_id="api", attributes={"permitted_data_classes": ["internal-docs"]}
+        )
+        job = {
+            "component_id": "api",
+            "llm_policy_path": relative,
+            "llm_policy_sha256": receipt["sha256"],
+            "input_artifacts": [relative],
+        }
+        value = controller._validate_stride_component_llm_policy(tmp_path, job, [receipt])
+        assert value["attributes"] == {"permitted_data_classes": ["internal-docs"]}
+
+    def test_an_undeclared_artifact_is_rejected(self, tmp_path):
+        relative = ".dispatch-context/api/llm-policy.json"
+        job = {"component_id": "api", "input_artifacts": [relative]}
+        with pytest.raises(controller.ControllerError, match="undeclared llm policy"):
+            controller._validate_stride_component_llm_policy(tmp_path, job, [])
+
+    def test_a_stale_hash_is_rejected(self, tmp_path):
+        relative, receipt = controller._write_stride_component_llm_policy(
+            tmp_path, component_id="api", attributes={"permitted_data_classes": ["internal-docs"]}
+        )
+        job = {
+            "component_id": "api",
+            "llm_policy_path": relative,
+            "llm_policy_sha256": "0" * 64,
+            "input_artifacts": [relative],
+        }
+        with pytest.raises(controller.ControllerError, match="hash is stale"):
+            controller._validate_stride_component_llm_policy(tmp_path, job, [receipt])
