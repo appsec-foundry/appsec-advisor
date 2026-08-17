@@ -107,6 +107,20 @@ bundle. Resolve `REPOSITORY_REGISTRY_PATH` only from
 `dispatch_jobs[].repository_projection_path`; omit it when absent. Never pass
 the shared effective plan or registry, or inline untrusted artifacts.
 
+## Task rows
+
+`ACTION.stage1_task_rows` holds one row per job, ordered by `semantic_role`:
+`recon_scanner`, `actor_discoverer`, `architecture_analyst`,
+`trust_boundary_analyst`, `control_analyst`, `stride_analyzer`,
+`threat_merger`, `evidence_verifier`, `triage_validator`,
+`post_stride_synthesizer`.
+
+Set a job's row `in_progress` before dispatch and `completed` on return, and
+complete any earlier row still open — the chain skips jobs by depth and cache
+state. While joining STRIDE, set that row's active form to
+`STRIDE <ready>/<expected> components` from the waiter's last
+`[stride] <ready>/<expected> ready` line. ASCII only in a row or active form.
+
 ## Logging and stats
 
 Before dispatch capture `WAVE_START_ISO`. After return, group the returned jobs by

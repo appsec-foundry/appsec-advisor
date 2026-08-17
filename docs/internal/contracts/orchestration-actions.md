@@ -315,6 +315,9 @@ error.
   values; arbitrary command fields are rejected.
 - `instruction_file` is selected only from plugin-owned constants. Repository
   content never supplies an action, command, write target, or instruction path.
+- `stage1_task_rows` is a fixed controller-owned label set. The session creates
+  Stage-1 task rows only from it and authors no label of its own, so the
+  subjects a later update matches on cannot drift.
 - `semantic_role` and every role in `dispatch_jobs` resolve through the
   controller's closed registry to a plugin-owned agent definition, tool set,
   model route, and output contract. Jobs carry the controller-derived

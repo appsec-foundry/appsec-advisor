@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - New context-v2 analysis runtime projects only the facts each component needs instead of a shared prompt context; full and rebuild scans use it by default, `APPSEC_CONTEXT_V2=0` keeps the legacy producer. See `docs/threat-modeler.md`.
 - A new or rebuilt analysis now takes optional business context from pasted text or a URL, interactively, through `--context`, or not at all with `--skip-context`. See `docs/threat-modeler.md`.
+- A context-v2 scan now shows Stage 1 as one task per analysis step, with a component counter while STRIDE runs, instead of a single task for its whole duration.
 - An organization profile can declare an `llm_policy` of permitted data classes and approval-required actions. See `docs/org-profiles.md`.
 - The LLM lens now asks four questions the OWASP Top 10 leaves out, from prompt-only guardrails to permitted data classes.
 - Named sensitive assets in `docs/business-context.md` now mark the components that handle them for full-depth analysis.

@@ -199,6 +199,11 @@ def test_full_prepare_wipes_only_intermediates(monkeypatch, tmp_path):
     assert controller._validate_action(action) == action
     assert action["action"] == "dispatch_agent"
     assert action["stage"] == "stage1"
+    assert action["stage1_task_rows"] == (
+        list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
+        if action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
+        else list(controller.STAGE1_TASK_ROWS_LEGACY)
+    )
     assert "Workspace\n  Cleanup  :" in action["run_plan"]
     assert "prior deliverables and baseline preserved" in action["run_plan"]
     assert all((output / name).exists() for name in preserve)
@@ -5326,3 +5331,75 @@ class TestAbortEventDetail:
 
     def test_an_empty_reason_is_empty(self):
         assert controller._abort_event_detail("") == ""
+
+
+class TestStage1TaskRows:
+    """The session creates Stage-1 rows from the controller, not from its own
+    vocabulary, so the labels cannot drift between runs."""
+
+    SKILL = ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
+    STAGE1_V2 = ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md"
+
+    def test_context_v2_gets_one_row_per_job(self):
+        rows = controller._stage1_task_rows({"runtime_generation": "context-v2", "mode": "full"})
+
+        assert rows == list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
+        assert len(rows) > len(controller.STAGE1_TASK_ROWS_LEGACY)
+
+    def test_legacy_keeps_its_stage_rows(self):
+        rows = controller._stage1_task_rows({"runtime_generation": "legacy", "mode": "full"})
+
+        assert rows == list(controller.STAGE1_TASK_ROWS_LEGACY)
+
+    def test_an_unset_generation_is_legacy(self):
+        assert controller._stage1_task_rows({"mode": "full"}) == list(controller.STAGE1_TASK_ROWS_LEGACY)
+
+    def test_every_row_is_ascii(self):
+        # The TUI mis-measures a multi-byte dash on a partial redraw and bleeds
+        # adjacent labels together, which is why the stage subjects use
+        # hyphen-minus. A row that rewrites often is the wrong place to retest it.
+        for row in controller.STAGE1_TASK_ROWS_CONTEXT_V2 + controller.STAGE1_TASK_ROWS_LEGACY:
+            assert row.isascii(), row
+
+    def test_rows_are_unique_because_a_task_update_matches_by_subject(self):
+        rows = list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
+        assert len(set(rows)) == len(rows)
+
+    def test_the_schema_admits_the_longest_row(self):
+        schema = json.loads((ROOT / "schemas" / "orchestration-action.schema.json").read_text(encoding="utf-8"))
+        spec = schema["properties"]["stage1_task_rows"]
+        every = controller.STAGE1_TASK_ROWS_CONTEXT_V2 + controller.STAGE1_TASK_ROWS_LEGACY
+
+        assert max(len(row) for row in every) <= spec["items"]["maxLength"]
+        assert len(controller.STAGE1_TASK_ROWS_CONTEXT_V2) <= spec["maxItems"]
+
+    def test_the_runtime_reads_the_rows_from_the_action(self):
+        # A row the session invents is a row a later TaskUpdate no longer matches.
+        assert "ACTION.stage1_task_rows" in self.SKILL.read_text(encoding="utf-8")
+
+    def test_the_stage1_runtime_owns_the_row_lifecycle(self):
+        text = self.STAGE1_V2.read_text(encoding="utf-8")
+
+        assert "stage1_task_rows" in text
+        assert "in_progress" in text and "completed" in text
+
+    def test_a_context_v2_prepare_carries_its_rows(self, tmp_path, monkeypatch):
+        cfg = _cfg(tmp_path)
+        cfg["runtime_generation"] = "context-v2"
+        Path(cfg["output_dir"]).mkdir(parents=True)
+        Path(cfg["repo_root"]).mkdir(parents=True)
+        monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+        monkeypatch.setattr(
+            controller,
+            "_run_script",
+            lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"),
+        )
+        monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
+        monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+        monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "plan\n")
+
+        action = controller.prepare(["--full"])
+
+        assert controller._validate_action(action) == action
+        assert action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
+        assert action["stage1_task_rows"] == list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)

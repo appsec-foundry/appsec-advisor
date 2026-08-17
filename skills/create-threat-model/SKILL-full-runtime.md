@@ -204,18 +204,16 @@ python3 -c 'import pathlib,time,sys; pathlib.Path(sys.argv[1]).write_text(str(in
 Create Task rows in this exact order and with these exact subjects:
 
 1. `Preparing workspace`; immediately mark completed.
-2. `Stage 1a - Discovery & Architecture Modeling`
-3. `Stage 1b - Trust Boundary Analysis`
-4. `Stage 1c - Control & Threat Analysis`
-5. `Stage 1d - Abuse Case Verification` only when
+2. one row per `ACTION.stage1_task_rows` entry, in that order, verbatim;
+3. `Stage 1d - Abuse Case Verification` only when
    `SKIP_ABUSE_CASE_VERIFICATION=false`
-6. `Stage 2 - Report Rendering`
-7. `Stage 3 - QA Review` only when `SKIP_QA=false`
-8. `Stage 4 - Architect Review` only when `ARCHITECT_REVIEW=true`
-9. `Final summary` when `KEEP_RUNTIME_FILES=true`, otherwise
+4. `Stage 2 - Report Rendering`
+5. `Stage 3 - QA Review` only when `SKIP_QA=false`
+6. `Stage 4 - Architect Review` only when `ARCHITECT_REVIEW=true`
+7. `Final summary` when `KEEP_RUNTIME_FILES=true`, otherwise
    `Final summary + cleanup`
 
-Use the existing active forms:
+A `Stage 1x` row takes its active form below; any other Stage-1 row is its own.
 
 ```text
 Preparing workspace

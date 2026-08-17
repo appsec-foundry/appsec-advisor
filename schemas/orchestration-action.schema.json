@@ -36,6 +36,16 @@
       "minLength": 1,
       "maxLength": 4096
     },
+    "stage1_task_rows": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    },
     "reason": {
       "type": "string",
       "maxLength": 1000

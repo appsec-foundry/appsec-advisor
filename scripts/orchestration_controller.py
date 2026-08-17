@@ -1859,6 +1859,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "mode": cfg["mode"],
         "stage": "stage1",
         "instruction_file": str(_stage1_runtime_for(cfg)),
+        "stage1_task_rows": _stage1_task_rows(cfg),
         "preflight_status": str(cfg.get("preflight_status") or ""),
         "run_plan": run_plan,
         "config_path": str(config_path),
@@ -2168,6 +2169,40 @@ def _stage1_runtime_for(cfg: dict[str, Any]) -> Path:
     if (cfg.get("runtime_generation") or LEGACY_GENERATION) == CONTEXT_V2_GENERATION:
         return THIN_STAGE1_V2_RUNTIME
     return THIN_STAGE1_RUNTIME
+
+
+STAGE1_TASK_ROWS_CONTEXT_V2 = (
+    "Recon scan",
+    "Actor discovery",
+    "Architecture modeling",
+    "Trust boundaries",
+    "Security controls",
+    "STRIDE analysis",
+    "Threat merge",
+    "Evidence verification",
+    "Triage",
+    "Root causes",
+)
+
+STAGE1_TASK_ROWS_LEGACY = (
+    "Stage 1a - Discovery & Architecture Modeling",
+    "Stage 1b - Trust Boundary Analysis",
+    "Stage 1c - Control & Threat Analysis",
+)
+
+
+def _stage1_task_rows(cfg: dict[str, Any]) -> list[str]:
+    """The Stage-1 task rows the session creates before it dispatches.
+
+    Context-v2 returns control to the session at every job, so Stage 1 can show
+    which part of it is running instead of one row for its whole duration. The
+    legacy runtime has no comparable seam and keeps its stage rows. Naming them
+    here keeps the labels off the session's prompt budget and out of its own
+    invention.
+    """
+    if _stage1_runtime_for(cfg) == THIN_STAGE1_V2_RUNTIME:
+        return list(STAGE1_TASK_ROWS_CONTEXT_V2)
+    return list(STAGE1_TASK_ROWS_LEGACY)
 
 
 def _reject_context_v2(cfg: dict[str, Any], stage: str) -> None:
