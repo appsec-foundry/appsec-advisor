@@ -1,6 +1,6 @@
 # Threat Modeler
 
-`/appsec-advisor:create-threat-model` reads a repository, works out its implemented architecture, and applies STRIDE. This is what **code-derived threat modeling** means here: the model starts with code and configuration, not a diagram maintained by hand.
+`/appsec-advisor:create-threat-model` derives the implemented architecture from a repository and applies STRIDE. **Code-derived threat modeling** means that code and configuration are the primary evidence, rather than a manually maintained diagram.
 
 → [Back to README](../README.md)
 
@@ -20,7 +20,7 @@
 
 ## What you get
 
-A normal run writes an architecture and security report based on what it found in the repository. The report covers components, data flows, trust boundaries, STRIDE findings, affected code, suggested fixes, and diagrams. Both output files are built from the same validated data.
+An assessment generates an architecture and security report from repository evidence. The report covers components, data flows, trust boundaries, STRIDE findings, affected code, remediation guidance, and diagrams. The Markdown and YAML outputs are rendered from the same validated data.
 
 **Default outputs**
 
@@ -56,7 +56,7 @@ SARIF, pentest tasks, and Threat Dragon are generated from `threat-model.yaml`. 
 
 ## Threat model lifecycle
 
-A threat model is useful only if someone acts on it. Create it once, review the findings, and update it when the repository changes.
+Treat the threat model as a maintained review artifact. Create the initial model, review its findings, and update it as the repository changes.
 
 ```mermaid
 flowchart LR
@@ -92,7 +92,7 @@ These questions read `threat-model.yaml`; they do not scan the repository again 
 
 ### Review and decide
 
-Open `/appsec-advisor:review-threat-model` when you are ready to work through the findings. From there you can record a fix, accept or defer a risk, implement a selected fix, or create a remediation plan with owners and target dates.
+`/appsec-advisor:review-threat-model` supports finding review, fix and risk decisions, implementation of selected fixes, and remediation planning with owners and target dates.
 
 Decisions are stored separately from the generated model and survive reassessment. The workflow changes source only after an explicit implementation choice.
 
@@ -123,11 +123,11 @@ Before it runs STRIDE, the plugin maps routes, authentication flows, trust bound
 | **Threat actors** | Insider, supply-chain, partner, and adjacent-tenant threats where applicable. |
 | **Abuse cases** | Catalog scenarios selected from repository signals and verified step-by-step against code evidence. |
 
-This gives STRIDE enough context to reason about the system. It is not a replacement for SAST, SCA, secret scanning, or IaC scanning. The report only turns a hypothesis into a finding when the repository supports it, and a person still needs to review the result.
+These signals form the analysis context for STRIDE. They do not replace SAST, SCA, secret scanning, or IaC scanning. A hypothesis becomes a finding only when repository evidence supports it, and the resulting report still requires expert review.
 
 ## Trust boundaries
 
-Here, a trust boundary is the point where one component hands data or control to another and expects a security check to hold. It is a crossing, not a zone. If several connections rely on the same check, the report shows one boundary instead of repeating it for every connection.
+In this model, a trust boundary is the crossing where one component transfers data or control to another and relies on a security check. It is an enforcement point, not a zone. Connections governed by the same enforcement point are consolidated into one boundary.
 
 ### Assumptions and verdicts
 
@@ -140,17 +140,17 @@ Each boundary states the security condition it depends on. Findings determine th
 | *No finding contradicts it* | The report contains no evidence against the condition. |
 | *Not examined* | The boundary protects no component in this model. |
 
-A finding is linked only when its evidence points to that crossing. Being close to the boundary is not enough. `Unconfirmed` therefore means that the scan did not settle the question; it does not mean the control works.
+A finding is linked only when its evidence applies to that crossing. Component adjacency alone does not create a link. `Unconfirmed` indicates incomplete coverage, not an effective control.
 
 ### Effect on finding priority
 
-When a boundary is broken, an attacker may need fewer steps to reach the findings behind it. Those findings can move up in the ranking. If a finding is tied to a confirmed internet ingress, its effective severity may rise by one level, up to `High`. The usual evidence rules and CWE caps still apply. Internal, outbound, inferred, or unresolved boundaries do not cause this increase.
+A refuted boundary reduces the number of enforced crossings between an attacker and the components behind it, which can move their findings up the ranking. If a finding is linked to a confirmed internet ingress, its effective severity may rise by one level, up to `High`. Evidence requirements and per-CWE severity caps still apply. Internal, outbound, inferred, or unresolved boundaries do not trigger this increase.
 
 Declarations alone never change a rating. The next scan re-evaluates the path when a boundary finding is fixed.
 
 ### Where the catalog appears
 
-The complete boundary catalog is in `threat-model.yaml` and available through `ask-threat-model`. The Markdown report shows a shorter table, but it never omits a boundary referenced by a finding. SARIF includes the linked boundary on each result. The architecture diagram is only a summary.
+The complete boundary catalog is in `threat-model.yaml` and available through `ask-threat-model`. The Markdown report shows a shorter table, but it never omits a boundary referenced by a finding. SARIF includes the linked boundary on each result. The architecture diagram is a summary, not the canonical boundary view.
 
 ## Usage examples
 
@@ -181,7 +181,7 @@ Focus on a component or directory to reduce cost and review time:
 
 ### Large component inventories
 
-Full and rebuild scans keep every selected component in scope. By default, STRIDE handles up to eight components at a time and keeps completed results if the parent session is interrupted. Set `APPSEC_STRIDE_CONCURRENCY=1..10` if the machine needs more or less parallel work. If a component still has no valid result after a retry, the report is not published.
+Full and rebuild scans keep every selected component in scope. By default, STRIDE processes up to eight components concurrently and retains completed results across an interrupted parent session. Set `APPSEC_STRIDE_CONCURRENCY=1..10` to adjust parallelism for host capacity. Publication is blocked if a component still has no valid result after retry.
 
 ### Requirements catalog
 
@@ -205,7 +205,7 @@ For cross-repository analysis context, see [Cross-repo context](#cross-repo-cont
 
 ## Assessment depth & cost control
 
-Pick the lightest mode that is good enough for the review at hand. Each deeper mode keeps the components covered by the lighter modes and adds more.
+Select the lowest assessment depth that provides sufficient coverage for the intended review. Each deeper mode retains the component coverage of the preceding modes and adds more.
 
 | Component criterion | quick | standard | thorough |
 |---|:---:|:---:|:---:|
@@ -245,8 +245,8 @@ Authentication, frontend, LLM, internet-exposed, file-upload, real-time, data-st
 
 There are two model choices, and they affect different parts of a run:
 
-- The **Claude Code session model** runs the orchestrator. Use Sonnet 4.6 for a normal repository; the long-running session accounts for most of the cost. Repositories with at least 2,500 source files may need Sonnet 5 for its larger context window.
-- `--reasoning-model` chooses the analysis tier. The default `sonnet-economy` tier leaves STRIDE on Sonnet 4.6 and uses Sonnet 5 for the parts of a standard scan where judgment or writing matters more.
+- The **Claude Code session model** runs the orchestrator. Use Sonnet 4.6 for most repositories; the long-running session accounts for most of the cost. Repositories with at least 2,500 source files may require Sonnet 5 for its larger context window.
+- `--reasoning-model` chooses the analysis tier. The default `sonnet-economy` tier leaves STRIDE on Sonnet 4.6 and uses Sonnet 5 for semantic judgment and report authoring in a standard scan.
 
 | Tier | STRIDE · triage · merge | Use |
 |---|---|---|
@@ -281,7 +281,7 @@ Cost limits require an `ANTHROPIC_API_KEY`; time limits also work with Claude su
 
 ## Repo-local context
 
-Four optional files tell the scan what the code cannot. The plugin reads them as data. They cannot hide a finding supported by the repository.
+Four optional files provide context that cannot be derived from code. The plugin treats their contents as data, and they cannot suppress a finding supported by repository evidence.
 
 ### Business context — `docs/business-context.md`
 
@@ -327,7 +327,7 @@ Actor choices made in conversation apply only to that run. Commit `.appsec/actor
 
 ### Known threats — `docs/known-threats.yaml`
 
-Put prior pentest findings, accepted risks, or issues that every scan should revisit in this file. The scan checks the file first and stops if an entry is invalid.
+Use this file for prior pentest findings, accepted risks, or issues that each assessment should revisit. Schema validation runs before analysis, and an invalid entry stops the assessment.
 
 ```yaml
 threats:
@@ -384,7 +384,7 @@ related:
 
 `threat_model` accepts a local path or HTTPS URL. For private repositories, `auth_env` names the environment variable containing the fetch header. `interface` matches the upstream model's entry point. Optional expectations can trigger a local probe when the upstream model documents something different.
 
-The imported model is still untrusted context. It may give the scan something to check, but it cannot prove a finding, set a CVSS score, or override local evidence. Actor definitions are not imported from related repositories.
+The imported model remains untrusted context. It may produce a hypothesis for local verification, but it cannot establish a finding, assign a CVSS score, or override target-repository evidence. Actor definitions are not imported from related repositories.
 
 ## Architecture
 

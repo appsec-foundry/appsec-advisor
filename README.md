@@ -8,9 +8,9 @@
 
 > ⚠️ **Beta — not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
 
-`appsec-advisor` is a Claude Code plugin for **code-derived threat modeling**: it reads the code and configuration in a repository, builds an architecture model, and runs STRIDE against it. The findings point back to repository evidence and include suggested fixes.
+`appsec-advisor` is a Claude Code plugin for **code-derived threat modeling**: it reads the code and configuration in a repository, builds an architecture model, and runs STRIDE against it. Each finding references repository evidence and includes remediation guidance.
 
-Run it again when the code changes. It does not replace workshops or scanners. It gives reviewers an implementation-level model to work from. The plugin also includes requirements audits, change reviews, and CI gates.
+Re-run the assessment when the code changes. The result complements workshops and scanners with an implementation-level model; it does not replace either. The plugin also includes requirements audits, change reviews, and CI gates.
 
 [Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Documentation](#documentation) · [Contributing](#contributing)
 
@@ -18,17 +18,17 @@ Run it again when the code changes. It does not replace workshops or scanners. I
 
 ## Why appsec-advisor?
 
-Most threat models start in a workshop and end up as a document. The document ages as the implementation changes. Scanners catch many code, dependency, secret, and configuration problems, but they rarely describe how the parts of the system trust each other.
+Threat models produced in workshops or design reviews often become outdated as the implementation evolves. Automated tools typically identify code-level flaws, vulnerable dependencies, exposed secrets, and configuration errors, but do not model trust relationships across components.
 
 `appsec-advisor` takes the repository as its source. It looks for missing controls at trust boundaries, implicit trust between services, unauthenticated paths, and other design risks. A new scan rebuilds that view from the current code.
 
-The repository cannot explain business intent or decide which risks the organization should accept. Those decisions still belong to the people reviewing the model.
+Repository evidence cannot establish business intent, business impact, or acceptable residual risk. Those decisions remain part of the human review.
 
 ### Why this isn't a SAST tool
 
-A scanner usually points to a bad line or code path. Some security problems do not have one: an internal service may trust every caller, or a boundary may have no control at all. Those are the problems `appsec-advisor` is meant to find.
+SAST identifies vulnerabilities on concrete code paths. Architectural weaknesses may have no single vulnerable line: an internal service may trust every caller, or a trust boundary may lack an enforcement control. `appsec-advisor` is designed to identify this class of issue.
 
-The tool only sees the repository and any related repositories you configure. It cannot check runtime behavior, production-only controls, business processes, or user journeys. The report needs review before it drives remediation or risk acceptance.
+The analysis is limited to the repository and any configured related repositories. It cannot verify runtime behavior, production-only controls, business processes, or user journeys. An AppSec engineer or security architect should validate findings before they drive remediation or risk acceptance.
 
 ## Security notes
 
@@ -47,7 +47,7 @@ Python renders reports from validated structured data. If a run artifact contain
 
 Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10+, and `git` on `PATH`. Optional Mermaid dependencies provide stricter diagram validation; see the [Threat Modeler reference](docs/threat-modeler.md).
 
-For a normal repository, run the Claude Code session on Sonnet 4.6. The orchestrator stays active for the whole scan, so its model has the largest effect on cost. Agent models are routed separately: a standard scan uses Sonnet 5 for judgment and writing, while STRIDE discovery stays on Sonnet 4.6. Very large repositories may need a Sonnet 5 session for the larger context window. See [Model Selection](docs/model-selection.md).
+For most repositories, run the Claude Code session on Sonnet 4.6. The orchestration session remains active for the full assessment and therefore has the largest effect on cost. Agent models are routed separately: a standard scan uses Sonnet 5 for judgment and report authoring, while STRIDE discovery remains on Sonnet 4.6. Very large repositories may require a Sonnet 5 session for the larger context window. See [Model Selection](docs/model-selection.md).
 
 ### 1. Start Claude Code in the target repository
 
@@ -125,7 +125,7 @@ Assessments consume model tokens and usually take tens of minutes; thorough runs
 
 ## Requirements Audit
 
-`/appsec-advisor:audit-security-requirements` checks the repository against an AppSec requirements catalog. Use it when you need a quicker requirements check for a pull request, compliance dashboard, or audit.
+`/appsec-advisor:audit-security-requirements` checks the repository against an AppSec requirements catalog. It provides a faster control assessment for pull-request gates, compliance dashboards, and audit preparation.
 
 ```text
 # Use the configured catalog
@@ -161,7 +161,7 @@ Review the bundle before attaching it to a GitHub issue. The command excludes so
 
 ## Enterprise rollout
 
-AppSec and Platform teams can add their own requirements, defaults, guardrails, skills, hooks, and MCP servers. The [organization packaging template](https://github.com/matthiasrohr/appsec-advisor-packaging-template) keeps that configuration in a separate internal package built from a pinned upstream release. The core agents stay unchanged.
+AppSec and Platform teams can supply organization-specific requirements, defaults, guardrails, skills, hooks, and MCP servers. The [organization packaging template](https://github.com/matthiasrohr/appsec-advisor-packaging-template) keeps this configuration in a separate internal package built from a pinned upstream release. Core agent definitions remain upstream-owned.
 
 ![Example rollout from an upstream release to an Acme-branded plugin](docs/images/orgpackaging.svg)
 
@@ -183,7 +183,7 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 
 ## Project structure
 
-Agents read the repository and handle the parts that need security judgment. Python handles the repeatable work: validating data, rendering reports, creating exports, and enforcing gates. Schemas define what passes between the two.
+Agents inspect the repository and perform the security analysis. Deterministic Python validates structured artifacts, renders reports, generates exports, and enforces release gates. Schemas define the data exchanged between pipeline stages.
 
 The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `templates/`, and `tests/`. See the [repository layout](CONTRIBUTING.md#repository-layout) for the complete map and the tests required for each kind of change.
 
@@ -196,15 +196,15 @@ The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `template
 
 ### Comparable tools
 
-| Project | What it does | How it differs |
+| Project | Primary scope | Relation to `appsec-advisor` |
 |---|---|---|
-| [tachi](https://github.com/davidmatousek/tachi) | Runs multi-agent analysis over an architecture description. | Tachi starts with the description. `appsec-advisor` starts with code and configuration. |
-| [stride-gpt](https://github.com/mrwadams/stride-gpt) | Runs provider-independent STRIDE analysis from a description or codebase. | `stride-gpt` works with several model providers. `appsec-advisor` is tied to Claude Code and puts validation and stable IDs around the result. |
-| [OWASP pytm](https://github.com/OWASP/pytm) | Stores a threat model as Python code. | With pytm, developers write the model. `appsec-advisor` derives it from the implementation. |
-| [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/) | Provides a visual editor for threat models and data-flow diagrams. | Threat Dragon starts with a diagram drawn by a modeler. `appsec-advisor` can generate that starting point from a repository. |
-| [OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/) | Supports team workshops on shared diagrams. | ThreatAtlas records the workshop. `appsec-advisor` keeps a code-derived model current between sessions. |
-| [OWASP Precogly](https://github.com/precogly/precogly) | Manages threat models, libraries, and compliance links across a program. | Precogly is the maintained system of record. `appsec-advisor` creates a model for one repository at a time. |
-| [Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security) | Scans codebases for exploitable vulnerabilities. | Claude Security focuses on implementation flaws. `appsec-advisor` also looks for architectural gaps with no single vulnerable line. |
+| [tachi](https://github.com/davidmatousek/tachi) | Multi-agent analysis of an architecture description. | Tachi treats the description as its primary input; `appsec-advisor` derives the model from code and configuration. |
+| [stride-gpt](https://github.com/mrwadams/stride-gpt) | Provider-independent STRIDE analysis from a description or codebase. | `stride-gpt` supports several model providers; `appsec-advisor` runs in Claude Code and adds schema validation and stable finding IDs. |
+| [OWASP pytm](https://github.com/OWASP/pytm) | Threat models authored and maintained as Python code. | pytm requires developers to declare the model; `appsec-advisor` derives it from the implementation. |
+| [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/) | Visual threat modeling and editable data-flow diagrams. | Threat Dragon starts from a modeler-authored diagram; `appsec-advisor` can generate and export an initial model from a repository. |
+| [OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/) | Collaborative threat-modeling workshops on shared diagrams. | ThreatAtlas records the workshop model; `appsec-advisor` maintains a code-derived model between sessions. |
+| [OWASP Precogly](https://github.com/precogly/precogly) | Program-level threat modeling, libraries, and compliance traceability. | Precogly acts as a maintained system of record; `appsec-advisor` produces a model for an individual repository. |
+| [Claude Security](https://support.claude.com/en/articles/14661296-use-claude-security) | Enterprise scanning for exploitable codebase vulnerabilities. | Claude Security focuses on implementation flaws; `appsec-advisor` also identifies architectural gaps without a single vulnerable line. |
 
 The Threat Dragon export can carry generated models into Threat Dragon and ThreatAtlas.
 
