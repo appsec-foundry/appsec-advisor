@@ -18,11 +18,11 @@ Re-run the assessment when the code changes. The result complements workshops an
 
 ## Why appsec-advisor?
 
-Threat models produced in workshops or design reviews often become outdated as the implementation evolves. Automated tools typically identify code-level flaws, vulnerable dependencies, exposed secrets, and configuration errors, but do not model trust relationships across components.
+Classic threat modeling establishes design intent, business context, assets, trust assumptions, and acceptable risk. `appsec-advisor` does not replace that work. It adds an implementation-level view once an application has reached the stage where code and configuration exist.
 
-`appsec-advisor` takes the repository as its source. It looks for missing controls at trust boundaries, implicit trust between services, unauthenticated paths, and other design risks. A new scan rebuilds that view from the current code.
+The plugin derives this view from the repository. It looks for missing controls at trust boundaries, implicit trust between services, unauthenticated paths, and other design risks. Re-running the assessment keeps the technical model aligned with the implementation and makes this layer of threat modeling practical across a larger application portfolio.
 
-Repository evidence cannot establish business intent, business impact, or acceptable residual risk. Those decisions remain part of the human review.
+Organizations can also use `appsec-advisor` as the foundation for their own internal AppSec plugin. Organization profiles and package policies add internal requirements, context, defaults, guardrails, skills, hooks, and MCP servers without forking the core analysis pipeline. See [Enterprise rollout](#enterprise-rollout).
 
 ### Why this isn't a SAST tool
 
