@@ -1859,7 +1859,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "mode": cfg["mode"],
         "stage": "stage1",
         "instruction_file": str(_stage1_runtime_for(cfg)),
-        "stage1_task_rows": _stage1_task_rows(cfg),
+        "task_rows": _task_rows(cfg),
         "preflight_status": str(cfg.get("preflight_status") or ""),
         "run_plan": run_plan,
         "config_path": str(config_path),
@@ -2172,16 +2172,16 @@ def _stage1_runtime_for(cfg: dict[str, Any]) -> Path:
 
 
 STAGE1_TASK_ROWS_CONTEXT_V2 = (
-    "Stage 1a - Recon scan",
-    "Stage 1a - Actor discovery",
-    "Stage 1a - Architecture modeling",
-    "Stage 1b - Trust boundaries",
-    "Stage 1c - Security controls",
-    "Stage 1c - STRIDE analysis",
-    "Stage 1c - Threat merge",
-    "Stage 1c - Evidence verification",
-    "Stage 1c - Triage",
-    "Stage 1c - Root causes",
+    "Stage 1a [1/3] - Recon scan",
+    "Stage 1a [2/3] - Actor discovery",
+    "Stage 1a [3/3] - Architecture modeling",
+    "Stage 1b [1/1] - Trust boundaries",
+    "Stage 1c [1/6] - Security controls",
+    "Stage 1c [2/6] - STRIDE analysis",
+    "Stage 1c [3/6] - Threat merge",
+    "Stage 1c [4/6] - Evidence verification",
+    "Stage 1c [5/6] - Triage",
+    "Stage 1c [6/6] - Root causes",
 )
 
 STAGE1_TASK_ROWS_LEGACY = (
@@ -2196,15 +2196,35 @@ def _stage1_task_rows(cfg: dict[str, Any]) -> list[str]:
 
     Context-v2 returns control to the session at every job, so Stage 1 can show
     which part of it is running instead of one row for its whole duration. Each
-    row still names the stage it belongs to, so a truncated task list stays
-    readable next to the `Stage 1d`/`2`/`3`/`4` rows around it. The legacy
-    runtime has no comparable seam and keeps its stage rows. Naming them here
-    keeps the labels off the session's prompt budget and out of its own
-    invention.
+    row names its stage and its position within that stage's substages, so the
+    reader can tell how far the running stage has left to go. The legacy runtime
+    has no comparable seam and keeps its undivided stage rows.
     """
     if _stage1_runtime_for(cfg) == THIN_STAGE1_V2_RUNTIME:
         return list(STAGE1_TASK_ROWS_CONTEXT_V2)
     return list(STAGE1_TASK_ROWS_LEGACY)
+
+
+def _task_rows(cfg: dict[str, Any]) -> list[str]:
+    """Every task row the session creates, in creation order.
+
+    The rows a run shows depend on the abuse-case, QA and architect switches,
+    and the closing row depends on whether cleanup runs. Deciding that here
+    keeps the labels off the session's prompt budget and out of its own
+    invention: a subject the session authors is a subject a later `TaskUpdate`
+    no longer matches.
+    """
+    rows = ["Preparing workspace"]
+    rows.extend(_stage1_task_rows(cfg))
+    if not cfg.get("skip_abuse_case_verification"):
+        rows.append("Stage 1d - Abuse Case Verification")
+    rows.append("Stage 2 - Report Rendering")
+    if not cfg.get("skip_qa"):
+        rows.append("Stage 3 - QA Review")
+    if cfg.get("architect_review"):
+        rows.append("Stage 4 - Architect Review")
+    rows.append("Final summary" if cfg.get("keep_runtime_files") else "Final summary + cleanup")
+    return rows
 
 
 def _reject_context_v2(cfg: dict[str, Any], stage: str) -> None:

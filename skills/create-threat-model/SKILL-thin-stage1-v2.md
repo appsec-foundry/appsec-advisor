@@ -109,7 +109,8 @@ the shared effective plan or registry, or inline untrusted artifacts.
 
 ## Task rows
 
-`ACTION.stage1_task_rows` holds one row per job, ordered by `semantic_role`:
+The ten `Stage 1a`/`1b`/`1c` rows of `ACTION.task_rows` are one per job, in
+`semantic_role` order:
 `recon_scanner`, `actor_discoverer`, `architecture_analyst`,
 `trust_boundary_analyst`, `control_analyst`, `stride_analyzer`,
 `threat_merger`, `evidence_verifier`, `triage_validator`,
@@ -119,7 +120,7 @@ Set a job's row `in_progress` before dispatch and `completed` on return, and
 complete any earlier row still open — the chain skips jobs by depth and cache
 state. While joining STRIDE, set that row's active form to
 `STRIDE <ready>/<expected> components` from the waiter's last
-`[stride] <ready>/<expected> ready` line. ASCII only in a row or active form.
+`[stride] <ready>/<expected> ready` line. ASCII only in an active form.
 
 ## Logging and stats
 

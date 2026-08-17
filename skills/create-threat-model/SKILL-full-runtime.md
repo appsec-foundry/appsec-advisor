@@ -201,31 +201,23 @@ python3 -c 'import pathlib,time,sys; pathlib.Path(sys.argv[1]).write_text(str(in
   "$OUTPUT_DIR/.scan-start-epoch"
 ```
 
-Create Task rows in this exact order and with these exact subjects:
+Create one Task row per `ACTION.task_rows` entry, in that order and with that
+subject verbatim. The controller has already dropped the rows this run does not
+have. Mark the first row, `Preparing workspace`, completed at once.
 
-1. `Preparing workspace`; immediately mark completed.
-2. one row per `ACTION.stage1_task_rows` entry, in that order, verbatim;
-3. `Stage 1d - Abuse Case Verification` only when
-   `SKIP_ABUSE_CASE_VERIFICATION=false`
-4. `Stage 2 - Report Rendering`
-5. `Stage 3 - QA Review` only when `SKIP_QA=false`
-6. `Stage 4 - Architect Review` only when `ARCHITECT_REVIEW=true`
-7. `Final summary` when `KEEP_RUNTIME_FILES=true`, otherwise
-   `Final summary + cleanup`
-
-Three `stage1_task_rows` entries take their active forms below; ten job rows
-are each their own.
+Active forms by row; a `Stage 1a`/`1b`/`1c` row not listed here — the ten
+job rows of the context-v2 runtime — is its own active form.
 
 ```text
-Preparing workspace
-Modeling architecture
-Analyzing trust boundaries
-Analyzing controls and threats
-Verifying abuse-case chains
-Rendering threat model report
-Running QA review
-Running architect review
-Writing final summary
+Preparing workspace   -> Preparing workspace
+Stage 1a              -> Modeling architecture
+Stage 1b              -> Analyzing trust boundaries
+Stage 1c              -> Analyzing controls and threats
+Stage 1d              -> Verifying abuse-case chains
+Stage 2               -> Rendering threat model report
+Stage 3               -> Running QA review
+Stage 4               -> Running architect review
+Final summary         -> Writing final summary
 ```
 
 Do not create any other Task rows.

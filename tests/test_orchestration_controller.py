@@ -199,11 +199,12 @@ def test_full_prepare_wipes_only_intermediates(monkeypatch, tmp_path):
     assert controller._validate_action(action) == action
     assert action["action"] == "dispatch_agent"
     assert action["stage"] == "stage1"
-    assert action["stage1_task_rows"] == (
+    stage1 = (
         list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
         if action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
         else list(controller.STAGE1_TASK_ROWS_LEGACY)
     )
+    assert action["task_rows"][1 : 1 + len(stage1)] == stage1
     assert "Workspace\n  Cleanup  :" in action["run_plan"]
     assert "prior deliverables and baseline preserved" in action["run_plan"]
     assert all((output / name).exists() for name in preserve)
@@ -5367,21 +5368,75 @@ class TestStage1TaskRows:
 
     def test_the_schema_admits_the_longest_row(self):
         schema = json.loads((ROOT / "schemas" / "orchestration-action.schema.json").read_text(encoding="utf-8"))
-        spec = schema["properties"]["stage1_task_rows"]
-        every = controller.STAGE1_TASK_ROWS_CONTEXT_V2 + controller.STAGE1_TASK_ROWS_LEGACY
+        spec = schema["properties"]["task_rows"]
+        widest = controller._task_rows({"runtime_generation": "context-v2", "mode": "full", "architect_review": True})
 
-        assert max(len(row) for row in every) <= spec["items"]["maxLength"]
-        assert len(controller.STAGE1_TASK_ROWS_CONTEXT_V2) <= spec["maxItems"]
+        assert max(len(row) for row in widest) <= spec["items"]["maxLength"]
+        assert len(widest) <= spec["maxItems"]
 
     def test_the_runtime_reads_the_rows_from_the_action(self):
         # A row the session invents is a row a later TaskUpdate no longer matches.
-        assert "ACTION.stage1_task_rows" in self.SKILL.read_text(encoding="utf-8")
+        assert "ACTION.task_rows" in self.SKILL.read_text(encoding="utf-8")
 
     def test_the_stage1_runtime_owns_the_row_lifecycle(self):
         text = self.STAGE1_V2.read_text(encoding="utf-8")
 
-        assert "stage1_task_rows" in text
+        assert "ACTION.task_rows" in text
         assert "in_progress" in text and "completed" in text
+
+    def test_each_stage1_row_carries_its_position_within_its_stage(self):
+        # The reader has to see how much of the running stage is left, so a
+        # substage row names its own place in that stage, not in the run.
+        positions: dict[str, list[tuple[int, int]]] = {}
+        for row in controller.STAGE1_TASK_ROWS_CONTEXT_V2:
+            match = re.fullmatch(r"(Stage 1[a-d]) \[(\d+)/(\d+)\] - .+", row)
+            assert match is not None, row
+            positions.setdefault(match.group(1), []).append((int(match.group(2)), int(match.group(3))))
+
+        for stage, seen in positions.items():
+            total = len(seen)
+            assert seen == [(index, total) for index in range(1, total + 1)], stage
+
+    def test_the_full_row_list_covers_the_run_and_drops_what_it_skips(self):
+        cfg = {"runtime_generation": "context-v2", "mode": "full"}
+        every = controller._task_rows({**cfg, "architect_review": True})
+
+        assert every[0] == "Preparing workspace"
+        assert every[-1] == "Final summary + cleanup"
+        assert every[1 : 1 + len(controller.STAGE1_TASK_ROWS_CONTEXT_V2)] == list(
+            controller.STAGE1_TASK_ROWS_CONTEXT_V2
+        )
+        assert [row for row in every if row.startswith(("Stage 1d", "Stage 2", "Stage 3", "Stage 4"))] == [
+            "Stage 1d - Abuse Case Verification",
+            "Stage 2 - Report Rendering",
+            "Stage 3 - QA Review",
+            "Stage 4 - Architect Review",
+        ]
+
+        lean = controller._task_rows(
+            {**cfg, "skip_qa": True, "skip_abuse_case_verification": True, "keep_runtime_files": True}
+        )
+
+        assert not [row for row in lean if row.startswith(("Stage 1d", "Stage 3", "Stage 4"))]
+        assert lean[-1] == "Final summary"
+
+    def test_every_full_row_is_ascii_and_unique(self):
+        every = controller._task_rows({"runtime_generation": "context-v2", "mode": "full", "architect_review": True})
+
+        assert all(row.isascii() for row in every), every
+        assert len(set(every)) == len(every)
+
+    def test_the_rows_the_skills_update_by_subject_exist(self):
+        # A TaskUpdate that no longer matches its subject silently no-ops and
+        # hangs the row it was meant to close.
+        every = set(controller._task_rows({"mode": "full", "architect_review": True}))
+        every |= set(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
+
+        for name in ("SKILL-impl.md", "SKILL-thin-stage2.md", "SKILL-rerender-runtime.md"):
+            text = (ROOT / "skills" / "create-threat-model" / name).read_text(encoding="utf-8")
+            for raw in re.findall(r"`(Stage [1-4][a-d]? - [^`]+)`", text):
+                subject = " ".join(raw.replace("\n>", " ").split())
+                assert subject in every, f"{name}: {subject}"
 
     def test_a_context_v2_prepare_carries_its_rows(self, tmp_path, monkeypatch):
         cfg = _cfg(tmp_path)
@@ -5402,4 +5457,4 @@ class TestStage1TaskRows:
 
         assert controller._validate_action(action) == action
         assert action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
-        assert action["stage1_task_rows"] == list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
+        assert action["task_rows"][1:11] == list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
