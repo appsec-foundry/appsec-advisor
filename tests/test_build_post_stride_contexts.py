@@ -143,6 +143,52 @@ def test_evidence_application_accepts_only_selected_unique_flags(tmp_path: Path)
         contexts.apply_evidence_verification({"version": 1, "threats": copy.deepcopy(threats)}, context, verification)
 
 
+def test_evidence_verification_is_applied_detects_a_completed_application(tmp_path: Path) -> None:
+    """A re-entered boundary must recognise verdicts it already annotated."""
+    threats = [_threat("T-001", "Critical", "app.py", 10), _threat("T-002", "Low", "app.py", 20)]
+    output, repo = _write_inputs(tmp_path, threats)
+    context = contexts.build_evidence_context(
+        (output / ".threats-merged.json").read_bytes(), repo, depth="quick", noncritical_cap=20
+    )
+    sampled_ids = [row["t_id"] for row in context["samples"]]
+    verification = {
+        "version": 1,
+        "generated_at": "2026-08-09T12:00:00Z",
+        "model_id": "sonnet",
+        "depth": "quick",
+        "summary": {
+            "total_threats": 2,
+            "sampled": len(sampled_ids),
+            "verified": len(sampled_ids),
+            "refuted": 0,
+            "ambiguous": 0,
+            "unchecked": 0,
+        },
+        "flags": [
+            {
+                "flag_id": f"EV-{index:03d}",
+                "t_id": t_id,
+                "verdict": "verified",
+                "reason": "The cited sink is present.",
+                "line_excerpt": f"line {index}",
+            }
+            for index, t_id in enumerate(sampled_ids, start=1)
+        ],
+    }
+
+    pristine = {"version": 1, "threats": copy.deepcopy(threats)}
+    assert contexts.evidence_verification_is_applied(pristine, verification) is False
+
+    applied = contexts.apply_evidence_verification(pristine, context, verification)
+    assert contexts.evidence_verification_is_applied(applied, verification) is True
+
+    # A verdict the merged artifact never received keeps the answer negative, so a
+    # genuinely stale projection still reaches the staleness guard.
+    partial = copy.deepcopy(applied)
+    partial["threats"][0]["evidence_flags"] = []
+    assert contexts.evidence_verification_is_applied(partial, verification) is False
+
+
 def test_synthesis_contexts_separate_threats_from_mitigations_and_validate(tmp_path: Path) -> None:
     output, _repo = _write_inputs(tmp_path, [_threat("T-001", "High", "app.py", 10)])
 

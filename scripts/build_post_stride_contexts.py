@@ -256,6 +256,32 @@ def apply_evidence_verification(
     return merged
 
 
+def evidence_verification_is_applied(merged: dict[str, Any], verification: dict[str, Any]) -> bool:
+    """True when every verdict flag is already annotated on the merged threats.
+
+    ``reclassify_components.py`` rewrites ``.threats-merged.json`` further down
+    the same boundary, so a re-entered boundary legitimately reads a different
+    payload hash for verdicts that are already in place. Re-applying is a no-op
+    there, and treating the mismatch as staleness would drop the caller onto the
+    degraded ``--ignore-summary`` guard path for healthy evidence.
+    """
+    flags = verification.get("flags")
+    threats = merged.get("threats")
+    if not isinstance(flags, list) or not isinstance(threats, list):
+        return False
+    expected = {str(row["flag_id"]) for row in flags if isinstance(row, dict) and row.get("flag_id")}
+    if not expected or len(expected) != len(flags):
+        return False
+    applied: set[str] = set()
+    for threat in threats:
+        if not isinstance(threat, dict):
+            continue
+        for row in threat.get("evidence_flags") or []:
+            if isinstance(row, dict) and row.get("flag_id"):
+                applied.add(str(row["flag_id"]))
+    return expected <= applied
+
+
 def _component_tiers(components_payload: bytes) -> dict[str, str]:
     components = _load_object(components_payload, "components-v1").get("components")
     if not isinstance(components, list):

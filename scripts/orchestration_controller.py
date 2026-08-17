@@ -4494,26 +4494,34 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
             from _atomic_io import atomic_write_json  # noqa: PLC0415
             from build_post_stride_contexts import (  # noqa: PLC0415
                 apply_evidence_verification,
+                evidence_verification_is_applied,
                 validate_evidence_context_sources,
             )
 
             merged_path = output_dir / ".threats-merged.json"
             merged_payload = merged_path.read_bytes()
-            validate_evidence_context_sources(
-                context,
-                merged_payload,
-                Path(str(cfg.get("repo_root") or output_dir)),
-            )
             merged = _load_json_object(merged_path, contract="threats-merged-v1")
-            annotated = apply_evidence_verification(merged, context, verification)
-            staged_path = output_dir / ".dispatch-context/post-stride/threats-merged-verified.json"
-            try:
-                atomic_write_json(staged_path, annotated, sort_keys=False)
-                _run_script("validate_intermediate.py", ["threats_merged", str(staged_path)])
-                _validate_evidence_verification(output_dir / ".evidence-verification.json", staged_path)
-                staged_path.replace(merged_path)
-            finally:
-                staged_path.unlink(missing_ok=True)
+            if evidence_verification_is_applied(merged, verification):
+                # A re-entered boundary reads the artifact that reclassify_components.py
+                # rewrote below, so the payload hash no longer matches the selected
+                # sample. The verdicts are already annotated; skip without reporting
+                # staleness, which would degrade the guard for healthy evidence.
+                receipts.append("evidence verification already applied")
+            else:
+                validate_evidence_context_sources(
+                    context,
+                    merged_payload,
+                    Path(str(cfg.get("repo_root") or output_dir)),
+                )
+                annotated = apply_evidence_verification(merged, context, verification)
+                staged_path = output_dir / ".dispatch-context/post-stride/threats-merged-verified.json"
+                try:
+                    atomic_write_json(staged_path, annotated, sort_keys=False)
+                    _run_script("validate_intermediate.py", ["threats_merged", str(staged_path)])
+                    _validate_evidence_verification(output_dir / ".evidence-verification.json", staged_path)
+                    staged_path.replace(merged_path)
+                finally:
+                    staged_path.unlink(missing_ok=True)
         except ControllerError as exc:
             # Evidence verification is optional enrichment. Invalid side-channel
             # data supplies no refutation signal, while the guard still inspects
