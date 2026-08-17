@@ -224,7 +224,7 @@ The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session. Quick
 
 | Mode | Best fit | Review depth | Measured API cost and time |
 |---|---|---|---|
-| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; no abuse-case validation or final model-based QA | $25.02 and 70 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick-v0.5.2.md)) |
+| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; no abuse-case validation or final model-based QA | $15.06 and 97 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick-v0.5.2.md)) |
 | **Standard** *(default)* | Normal security reviews | Full analysis, abuse-case validation, and QA | $25.39 and 124 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.2.md)) |
 | **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $48.01 and about 138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.2.md)) |
 
