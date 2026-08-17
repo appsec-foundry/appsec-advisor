@@ -213,7 +213,8 @@ Create Task rows in this exact order and with these exact subjects:
 7. `Final summary` when `KEEP_RUNTIME_FILES=true`, otherwise
    `Final summary + cleanup`
 
-A `Stage 1x` row takes its active form below; any other Stage-1 row is its own.
+Three `stage1_task_rows` entries take their active forms below; ten job rows
+are each their own.
 
 ```text
 Preparing workspace

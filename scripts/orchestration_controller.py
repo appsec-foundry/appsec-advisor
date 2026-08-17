@@ -2172,16 +2172,16 @@ def _stage1_runtime_for(cfg: dict[str, Any]) -> Path:
 
 
 STAGE1_TASK_ROWS_CONTEXT_V2 = (
-    "Recon scan",
-    "Actor discovery",
-    "Architecture modeling",
-    "Trust boundaries",
-    "Security controls",
-    "STRIDE analysis",
-    "Threat merge",
-    "Evidence verification",
-    "Triage",
-    "Root causes",
+    "Stage 1a - Recon scan",
+    "Stage 1a - Actor discovery",
+    "Stage 1a - Architecture modeling",
+    "Stage 1b - Trust boundaries",
+    "Stage 1c - Security controls",
+    "Stage 1c - STRIDE analysis",
+    "Stage 1c - Threat merge",
+    "Stage 1c - Evidence verification",
+    "Stage 1c - Triage",
+    "Stage 1c - Root causes",
 )
 
 STAGE1_TASK_ROWS_LEGACY = (
@@ -2195,9 +2195,11 @@ def _stage1_task_rows(cfg: dict[str, Any]) -> list[str]:
     """The Stage-1 task rows the session creates before it dispatches.
 
     Context-v2 returns control to the session at every job, so Stage 1 can show
-    which part of it is running instead of one row for its whole duration. The
-    legacy runtime has no comparable seam and keeps its stage rows. Naming them
-    here keeps the labels off the session's prompt budget and out of its own
+    which part of it is running instead of one row for its whole duration. Each
+    row still names the stage it belongs to, so a truncated task list stays
+    readable next to the `Stage 1d`/`2`/`3`/`4` rows around it. The legacy
+    runtime has no comparable seam and keeps its stage rows. Naming them here
+    keeps the labels off the session's prompt budget and out of its own
     invention.
     """
     if _stage1_runtime_for(cfg) == THIN_STAGE1_V2_RUNTIME:

@@ -99,15 +99,15 @@ The same moment with boundary rows:
 ```
 ✻ STRIDE wave 2/3 - 4/7 components… (12m 51s · ↓ 88.3k tokens)
 ✔ Preparing workspace
-✔ Recon scan
-✔ Actor discovery
-✔ Architecture modeling
-✔ Trust boundaries
-◼ STRIDE analysis
-◻ Threat merge
-◻ Evidence verification
-◻ Triage
-◻ Abuse case verification
+✔ Stage 1a - Recon scan
+✔ Stage 1a - Actor discovery
+✔ Stage 1a - Architecture modeling
+✔ Stage 1b - Trust boundaries
+◼ Stage 1c - STRIDE analysis
+◻ Stage 1c - Threat merge
+◻ Stage 1c - Evidence verification
+◻ Stage 1c - Triage
+◻ Stage 1d - Abuse Case Verification
 ◻ Stage 2 - Report rendering
 ◻ Stage 3 - QA review
 ◻ Final summary + cleanup
@@ -118,9 +118,9 @@ At 20:06, with the verifier's static label:
 ```
 ✻ Verifying cited evidence… (1m 34s · ↓ 96.1k tokens)
 …
-✔ Threat merge
-◼ Evidence verification
-◻ Triage
+✔ Stage 1c - Threat merge
+◼ Stage 1c - Evidence verification
+◻ Stage 1c - Triage
 ```
 
 The blocks that remain, measured on that run: recon 8 min, actors 2 min,
