@@ -176,6 +176,7 @@ Removing an entry means listing it here in the same change.
 | RA-4 | Reference formats are fixed per context; locators are stripped, never invented | `tests/test_reference_format.py` | `schema-invariants.md` §4a, `qa-crossref-rules.md` |
 | RA-5 | Structure and integrity gates after the review stages are read-only | — *(guard not located)* | `AGENTS.md` → Validation and repair |
 | RA-6 | Audit artifacts and `.appsec-cache/baseline.json` survive normal cleanup; `--rebuild` is the only exception | `tests/test_runtime_cleanup.py` | `docs/internal/contracts/cleanup-whitelist.md` |
+| RA-7 | Every surface that shows a reader an aggregate finding tally takes it from `_severity_rollup`; a surface never counts `threats[]` itself. Triage surfaces that tally the finding list they operate on are a different basis and say so | `TestSeverityBasisMatchesTheReport`, `tests/test_severity_rollup.py` | `scripts/_severity_rollup.py` module docstring |
 
 ## Abuse cases
 

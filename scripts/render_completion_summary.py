@@ -64,6 +64,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+import _severity_rollup  # sibling script — see extract_metrics()
 import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
 from _atomic_io import atomic_write_text
 
@@ -136,14 +137,26 @@ def extract_metrics(
     stride_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Extract counts from yaml (authoritative) + md (fallback)."""
-    # Threats.
-    threats = yaml_data.get("threats") or []
-    by_sev = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
-    for t in threats:
-        sev = (t.get("risk") or t.get("severity") or "").strip()
-        sev_title = sev[:1].upper() + sev[1:].lower() if sev else ""
-        if sev_title in by_sev:
-            by_sev[sev_title] += 1
+    # Threats — Management-Summary basis, delegated to `_severity_rollup` so
+    # this console block and the report's `**Risk distribution:**` line cannot
+    # state different numbers for the same run. Tallying `threats[]` here
+    # directly was a third basis: it kept insecure-practice sites that fold
+    # into the weakness register and dropped design-risk weaknesses, which
+    # have no instance in `threats[]`. A 2026-08 juice-shop run therefore
+    # closed with "36 total | 17 High" while its own report led with
+    # "Total: 34 · High: 15". See `_severity_rollup` for the three bases.
+    counts = _severity_rollup.risk_distribution_counts(yaml_data)
+    by_sev = {
+        "Critical": counts["critical"],
+        "High": counts["high"],
+        "Medium": counts["medium"],
+        "Low": counts["low"],
+    }
+    # Informational is off the four-bucket display and surfaces only when the
+    # model carries any — otherwise the sub-counts would not reconcile with
+    # the total, exactly like the `unsafe` control bucket did in 2026-06.
+    threats_info = counts["info"]
+    threats_total = sum(counts.values())
 
     # Components — prefer yaml length.
     components = yaml_data.get("components") or []
@@ -189,8 +202,9 @@ def extract_metrics(
     mitigations = yaml_data.get("mitigations") or []
 
     return {
-        "threats_total": len(threats),
+        "threats_total": threats_total,
         "threats_by_sev": by_sev,
+        "threats_info": threats_info,
         "n_components": n_components,
         "n_stride_components": n_stride_components,
         "controls_total": len(controls),
@@ -933,11 +947,14 @@ def render_metrics(metrics: dict, cfg: dict) -> list[str]:
     lines = [""]
     lines.append("Results")
     s = metrics["threats_by_sev"]
-    lines.append(
+    threat_line = (
         f"  Threats    : {metrics['threats_total']} total | "
         f"{s['Critical']} Critical | {s['High']} High | "
         f"{s['Medium']} Medium | {s['Low']} Low"
     )
+    if metrics.get("threats_info"):
+        threat_line += f" | {metrics['threats_info']} Informational"
+    lines.append(threat_line)
     if metrics.get("n_stride_components") is not None:
         lines.append(
             f"  Components : {metrics['n_stride_components']} STRIDE-analyzed | {metrics['n_components']} modeled"
@@ -1768,11 +1785,13 @@ def render_dry_run(output_dir: Path, repo_root: Path) -> str:
     lines.append("")
     lines.append(f"  -- Metrics {SECTION_RULE[:49]}")
     lines.append("")
-    lines.append(
-        f"  Threats         : {metrics['threats_total']} total "
-        f"(Critical: {s['Critical']}, High: {s['High']}, "
-        f"Medium: {s['Medium']}, Low: {s['Low']})"
+    _sev_bits = (
+        f"Critical: {s['Critical']}, High: {s['High']}, "
+        f"Medium: {s['Medium']}, Low: {s['Low']}"
     )
+    if metrics.get("threats_info"):
+        _sev_bits += f", Informational: {metrics['threats_info']}"
+    lines.append(f"  Threats         : {metrics['threats_total']} total ({_sev_bits})")
     lines.append(
         f"  Controls        : {metrics['controls_total']} cataloged "
         f"(adequate: {cs['adequate']}, partial: {cs['partial']}, "

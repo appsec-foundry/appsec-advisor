@@ -124,6 +124,128 @@ class TestExtractMetrics:
 
 
 # ---------------------------------------------------------------------------
+# Severity basis — the console block and the report must agree
+# ---------------------------------------------------------------------------
+
+
+class TestSeverityBasisMatchesTheReport:
+    """Guard for RA-7.
+
+    The completion summary is the console mirror of the report's Management
+    Summary, so its headline tally must be the Management-Summary basis and
+    nothing else. Counting ``threats[]`` here reintroduces a third basis: a
+    2026-08 juice-shop run closed with "36 total | 17 High" while its own
+    report led with "Total: 34 · High: 15".
+    """
+
+    @staticmethod
+    def _model(threats, weaknesses=None):
+        doc = {"threats": threats}
+        if weaknesses is not None:
+            doc["weaknesses"] = weaknesses
+        return doc
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            pytest.param({}, id="empty-model"),
+            pytest.param({"threats": []}, id="no-threats"),
+            pytest.param(
+                {"threats": [{"risk": "Critical"}, {"risk": "High"}, {"risk": "Low"}]},
+                id="no-weakness-register",
+            ),
+            pytest.param(
+                {
+                    "threats": [
+                        {"risk": "Critical", "evidence_tier": "insecure-practice"},
+                        {"risk": "High", "evidence_tier": "insecure-practice"},
+                        {"risk": "High"},
+                    ],
+                    "weaknesses": [
+                        {"kind": "implementation", "severity_basis": "confirmed", "severity": "High"}
+                    ],
+                },
+                id="folded-practice-sites",
+            ),
+            pytest.param(
+                {
+                    "threats": [{"risk": "High"}],
+                    "weaknesses": [
+                        {"kind": "design", "severity_basis": "design-risk", "severity": "Critical"}
+                    ],
+                },
+                id="design-risk-weakness-has-no-threat-instance",
+            ),
+            pytest.param(
+                {"threats": [{"risk": "informational"}, {"risk": "Medium"}]},
+                id="informational-bucket",
+            ),
+        ],
+    )
+    def test_tally_is_the_shared_rollup_basis(self, model):
+        """Whatever the model's shape, the console tally is the rollup's."""
+        import _severity_rollup
+
+        counts = _severity_rollup.risk_distribution_counts(model)
+        m = rcs.extract_metrics(model, "")
+
+        assert m["threats_by_sev"] == {
+            "Critical": counts["critical"],
+            "High": counts["high"],
+            "Medium": counts["medium"],
+            "Low": counts["low"],
+        }
+        assert m["threats_info"] == counts["info"]
+        assert m["threats_total"] == sum(counts.values())
+
+    def test_folded_practice_sites_do_not_inflate_the_headline(self):
+        """The regression itself: two practice sites fold into the weakness
+        register, so the console must not count them as standalone findings."""
+        model = self._model(
+            [
+                {"risk": "High", "evidence_tier": "insecure-practice"},
+                {"risk": "High", "evidence_tier": "insecure-practice"},
+                {"risk": "High"},
+                {"risk": "Critical"},
+            ],
+            weaknesses=[{"kind": "implementation", "severity_basis": "confirmed", "severity": "High"}],
+        )
+        m = rcs.extract_metrics(model, "")
+
+        assert m["threats_by_sev"]["High"] == 1
+        assert m["threats_total"] == 2
+        rendered = "\n".join(rcs.render_metrics(m, {}))
+        assert "  Threats    : 2 total | 1 Critical | 1 High | 0 Medium | 0 Low" in rendered
+
+    def test_design_risk_weakness_is_visible_in_the_headline(self):
+        """It has no instance in threats[] and would otherwise be invisible
+        in the console while ranking in the report."""
+        model = self._model(
+            [{"risk": "Medium"}],
+            weaknesses=[{"kind": "design", "severity_basis": "design-risk", "severity": "Critical"}],
+        )
+        m = rcs.extract_metrics(model, "")
+
+        assert m["threats_by_sev"]["Critical"] == 1
+        assert m["threats_total"] == 2
+
+    def test_sub_counts_reconcile_with_the_total(self):
+        """Informational is off the four-bucket display, so it is rendered
+        when present — otherwise the line does not add up."""
+        model = self._model([{"risk": "informational"}, {"risk": "Medium"}])
+        m = rcs.extract_metrics(model, "")
+
+        assert m["threats_total"] == 2
+        rendered = "\n".join(rcs.render_metrics(m, {}))
+        assert "2 total | 0 Critical | 0 High | 1 Medium | 0 Low | 1 Informational" in rendered
+
+    def test_informational_stays_off_the_line_when_absent(self):
+        model = self._model([{"risk": "High"}])
+        rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics(model, ""), {}))
+        assert "Informational" not in rendered
+
+
+# ---------------------------------------------------------------------------
 # Change Summary extraction
 # ---------------------------------------------------------------------------
 

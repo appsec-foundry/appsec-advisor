@@ -1,18 +1,34 @@
 #!/usr/bin/env python3
 """Single source for the finding-severity tally and the finding display id.
 
-Two surfaces present the same model to the same reader and must agree:
+Three surfaces present the same model to the same reader and must agree
+(decision RA-7):
 
 * ``compose_threat_model.py`` renders the Management-Summary
   ``**Risk distribution:**`` line and the §8 Findings Register.
 * ``summarize_threat_model.py`` prints the ``show-threat-model`` overview.
+* ``render_completion_summary.py`` prints the console ``Results`` block that
+  closes a run — the mirror of the Management Summary, in the one place a
+  headless run shows anything at all.
 
 They did not agree. The overview ranked findings by ``effective_severity`` —
 the post-triage rating that carries abuse-chain elevation — while the report
 buckets its finding inventory on ``risk``. On a 2026-07 juice-shop run the
 overview reported 27 Critical against 15 in §8 and 14 in the Management
 Summary, and promoted a Medium CI/CD finding into "Top Critical". The rules
-therefore live here, in one place, and both callers use them.
+therefore live here, in one place, and every caller uses them.
+
+The completion summary was added late and counted ``threats[]`` itself, which
+is a fourth basis however plausible it looks: it keeps insecure-practice
+sites that fold into the weakness register and drops design-risk weaknesses,
+which have no instance in ``threats[]``. A 2026-08 juice-shop run closed with
+"36 total | 17 High" while its own report led with "Total: 34 · High: 15".
+A new reader-facing tally calls :func:`risk_distribution_counts`; it does not
+re-derive the rule from ``threats[]``.
+
+Triage surfaces (``review_threat_model.py``, ``query_threat_model.py``) tally
+the finding list they operate on, which is the §8 register basis and a
+deliberately different question — they are not bound by this module.
 
 Three tallies exist in the model and they are deliberately different:
 
