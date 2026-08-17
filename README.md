@@ -18,13 +18,11 @@ Re-run the assessment when the code changes. The result complements workshops an
 
 ## Why appsec-advisor?
 
-Classic threat modeling establishes design intent, business context, assets, trust assumptions, and acceptable risk. `appsec-advisor` does not replace that work. It adds an implementation-level view once an application has reached the stage where code and configuration exist.
+Traditional threat modeling brings teams together in workshops to map data flows, assets, trust boundaries, assumptions, and acceptable risks. This captures how the system is intended to work. Once code and configuration exist, `appsec-advisor` adds evidence from the implementation. It does not replace workshops, expert review, or developers thinking about threats themselves.
 
-The plugin derives this view from the repository. It looks for missing controls at trust boundaries, implicit trust between services, unauthenticated paths, and other design risks. Re-running the assessment keeps the technical model aligned with the implementation and makes this layer of threat modeling practical across a larger application portfolio.
+The plugin reads the repository and looks for missing controls at trust boundaries, implicit trust between services, unauthenticated paths, and other design risks. Run it again as the application changes to keep the threat model current. These repeatable checks help a small AppSec team cover a larger application portfolio and focus expert time on cases that need human judgment.
 
-The analysis routes context to the components and checks where it is relevant. This includes business context, requirements, known threats, trust-boundary declarations, and models from related repositories. It derives abuse cases from detected attack surfaces and verifies them against the target code. Service dependencies, package manifests, lockfiles, and build or deployment configuration provide further evidence, but do not replace evidence from the target repository.
-
-Organizations can also use `appsec-advisor` as the foundation for their own internal AppSec plugin. Organization profiles and package policies add internal requirements, context, defaults, guardrails, skills, hooks, and MCP servers without forking the core analysis pipeline. See [Enterprise rollout](#enterprise-rollout).
+Organizations can add their own requirements and tools without maintaining a fork of the core analysis pipeline. See [Enterprise rollout](#enterprise-rollout).
 
 <a id="why-this-isnt-a-sast-tool"></a>
 ### Why this isn't a SAST tool
