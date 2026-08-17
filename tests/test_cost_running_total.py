@@ -316,3 +316,149 @@ class TestBannerBranches:
         result = {"status": "ok", "total_tokens": 12_000, "cost_usd": 0.5}
         line = crt.format_banner(result)
         assert "12k tokens" in line
+
+
+# ---------------------------------------------------------------------------
+# Run boundary: the host session outlives the assessment
+# ---------------------------------------------------------------------------
+
+
+def _write_run(tmp_path, *, trailing_session_work: bool = False) -> Path:
+    """A run whose pipeline ends at 10:20, with the host session continuing."""
+    agent_lines = [
+        "2026-05-01T10:00:00Z  [abc12345]  INFO   skill-controller    ASSESSMENT_START   go",
+        "2026-05-01T10:20:00Z  [abc12345]  INFO   skill-controller    PHASE_END           [Phase 11/11] Finalization",
+        # Written after the pipeline is done — must not move the boundary.
+        "2026-05-01T10:50:00Z  [--------]  INFO   skill-watchdog      RUN_IDLE            no run activity",
+        "2026-05-01T10:55:00Z  [--------]  INFO   shared-session      SESSION_STOP        in=1 out=1",
+    ]
+    (tmp_path / ".agent-run.log").write_text("\n".join(agent_lines) + "\n")
+    hook_lines = [
+        "2026-05-01T10:10:00Z  [abc12345]  INFO   SESSION_STOP   reason=ok "
+        "in=100 out=1000 cache_write=2000 cache_read=30000 cost=$1.00",
+        "2026-05-01T10:21:00Z  [abc12345]  INFO   SESSION_STOP   reason=ok "
+        "in=200 out=2000 cache_write=4000 cache_read=60000 cost=$2.00",
+    ]
+    if trailing_session_work:
+        hook_lines.append(
+            "2026-05-01T10:52:00Z  [abc12345]  INFO   SESSION_STOP   reason=ok "
+            "in=900 out=9000 cache_write=40000 cache_read=900000 cost=$9.00"
+        )
+    (tmp_path / ".hook-events.log").write_text("\n".join(hook_lines) + "\n")
+    return tmp_path
+
+
+class TestAssessmentEnd:
+    def test_boundary_is_last_pipeline_event_plus_grace(self, tmp_path):
+        crt = _load()
+        _write_run(tmp_path)
+        # 10:20:00 + 180s — the watchdog and shared-session rows are ignored.
+        assert crt.find_assessment_end(tmp_path / ".agent-run.log") == "2026-05-01T10:23:00Z"
+
+    def test_no_pipeline_event_leaves_window_open(self, tmp_path):
+        crt = _load()
+        (tmp_path / ".agent-run.log").write_text(
+            "2026-05-01T10:50:00Z  [--------]  INFO   skill-watchdog      RUN_IDLE   idle\n"
+        )
+        assert crt.find_assessment_end(tmp_path / ".agent-run.log") is None
+
+    def test_post_run_session_work_is_not_charged_to_the_run(self, tmp_path):
+        crt = _load()
+        _write_run(tmp_path, trailing_session_work=True)
+        result = crt.aggregate_running_total(tmp_path)
+        assert result["window_end"] == "2026-05-01T10:23:00Z"
+        # The $9.00 snapshot at 10:52 belongs to the session, not the run.
+        assert result["host_cost_usd"] == pytest.approx(2.00, abs=0.001)
+
+    def test_sparse_pipeline_log_does_not_zero_the_total(self, tmp_path):
+        crt = _load()
+        # Pipeline log ends before the first snapshot: it cannot bound the run.
+        (tmp_path / ".agent-run.log").write_text(
+            "2026-05-01T10:00:00Z  [abc12345]  INFO   skill-controller    ASSESSMENT_START   go\n"
+        )
+        (tmp_path / ".hook-events.log").write_text(
+            "2026-05-01T11:00:00Z  [abc12345]  INFO   SESSION_STOP   reason=ok "
+            "in=100 out=1000 cache_write=2000 cache_read=30000 cost=$1.00\n"
+        )
+        result = crt.aggregate_running_total(tmp_path)
+        assert result["window_end"] is None
+        assert result["host_cost_usd"] == pytest.approx(1.00, abs=0.001)
+
+
+# ---------------------------------------------------------------------------
+# Sub-agent usage — the half no SESSION_STOP snapshot contains
+# ---------------------------------------------------------------------------
+
+
+class TestSubagentUsage:
+    def test_agent_usage_is_priced_per_model(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(
+            "2026-05-01T10:05:00Z  [abc]  INFO   recon-scanner  AGENT_USAGE  "
+            "agent_call_id=toolu_1  model=haiku  in=0  out=1000  cache_write=0  cache_read=0\n"
+            "2026-05-01T10:06:00Z  [abc]  INFO   stride-analyzer-v2  AGENT_USAGE  "
+            "agent_call_id=toolu_2  model=sonnet  in=0  out=1000  cache_write=0  cache_read=0\n"
+        )
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["subagent_count"] == 2
+        # 1000 haiku output at $5/M plus 1000 sonnet output at $15/M.
+        assert result["subagent_cost"] == pytest.approx(0.005 + 0.015, abs=1e-6)
+
+    def test_repeated_usage_line_counts_once(self, tmp_path):
+        crt = _load()
+        line = (
+            "2026-05-01T10:05:00Z  [abc]  INFO   recon-scanner  AGENT_USAGE  "
+            "agent_call_id=toolu_1  model=sonnet  in=0  out=1000  cache_write=0  cache_read=0\n"
+        )
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(line + line)
+        assert crt.aggregate_subagent_usage(agent_log)["subagent_count"] == 1
+
+    def test_spawn_without_usage_is_counted_as_unmetered(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(
+            "2026-05-01T10:05:00Z  [abc]  INFO   abuse-case-verifier  AGENT_SPAWN  "
+            "agent_call_id=toolu_9  model=sonnet\n"
+        )
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["subagent_count"] == 0
+        assert result["unmetered_agents"] == 1
+
+    def test_window_excludes_usage_outside_the_run(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(
+            "2026-05-01T09:00:00Z  [abc]  INFO   x  AGENT_USAGE  "
+            "agent_call_id=toolu_early  model=sonnet  in=0  out=1000  cache_write=0  cache_read=0\n"
+            "2026-05-01T12:00:00Z  [abc]  INFO   x  AGENT_USAGE  "
+            "agent_call_id=toolu_late  model=sonnet  in=0  out=1000  cache_write=0  cache_read=0\n"
+        )
+        result = crt.aggregate_subagent_usage(agent_log, "2026-05-01T10:00:00Z", "2026-05-01T11:00:00Z")
+        assert result["subagent_count"] == 0
+
+    def test_total_adds_subagents_to_the_host_session(self, tmp_path):
+        crt = _load()
+        _write_run(tmp_path)
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(
+            agent_log.read_text() + "2026-05-01T10:15:00Z  [abc12345]  INFO   stride-analyzer-v2  AGENT_USAGE  "
+            "agent_call_id=toolu_3  model=sonnet  in=0  out=1000  cache_write=0  cache_read=0\n"
+        )
+        result = crt.aggregate_running_total(tmp_path)
+        assert result["host_cost_usd"] == pytest.approx(2.00, abs=0.001)
+        assert result["subagent_cost_usd"] == pytest.approx(0.015, abs=0.001)
+        assert result["cost_usd"] == pytest.approx(2.015, abs=0.001)
+
+    def test_floor_marker_when_agents_did_not_report(self, tmp_path):
+        crt = _load()
+        _write_run(tmp_path)
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(
+            agent_log.read_text() + "2026-05-01T10:15:00Z  [abc12345]  INFO   abuse-case-verifier  AGENT_SPAWN  "
+            "agent_call_id=toolu_9  model=sonnet\n"
+        )
+        result = crt.aggregate_running_total(tmp_path)
+        assert result["cost_is_floor"] is True
+        assert "≥$" in crt.format_banner(result)

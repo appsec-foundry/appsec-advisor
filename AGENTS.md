@@ -81,6 +81,7 @@ Code and schemas define behavior. Contract documents explain it. Tests guard aga
 | Secure-coding baseline | `scripts/baseline_check.py`, `scripts/install_baseline.py`, `scripts/remove_baseline.py`, `scripts/sync_baseline.py`, `config.json` → `baseline` | `tests/test_baseline_check.py`, `tests/test_install_baseline.py`, `tests/test_remove_baseline.py`, `tests/test_sync_baseline.py` |
 | Checkpoint and resume | checkpoint producers, `scripts/check_state.py`, consuming runtime | `tests/test_check_state*.py` |
 | Run status and liveness | `scripts/appsec_status.py --live`, `scripts/watch_run.py` | `docs/internal/runbooks/checking-run-status.md` |
+| Run cost and its measurement | `scripts/cost_running_total.py`, `docs/internal/cost-model.md` | `tests/test_cost_running_total.py` |
 | Server-side dispatch and repair | `.github/workflows/`, preset JSON | `docs/internal/runbooks/server-side-dispatch.md` |
 | Runtime logging | `scripts/event_log.py`, `agents/shared/logging-standard.md` | event-log and hook tests |
 | Threat Dragon / ThreatAtlas export | `scripts/export_threat_dragon.py`, `docs/threat-dragon-export.md` | `tests/test_export_threat_dragon.py` |
