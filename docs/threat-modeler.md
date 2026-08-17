@@ -314,22 +314,23 @@ Thorough increases both component coverage and per-component analysis depth.
 
 ### Cost by depth
 
-These OWASP Juice Shop runs are all on the Claude Code session (orchestrator) on **Sonnet 4.6**, the recommended economy setup. Plugin versions: **quick on v0.5.2-dev**, standard/thorough on v0.5.1-dev (sample on v0.5.0-beta). They compare modes but do not predict the exact bill for another repository.
+These OWASP Juice Shop runs are all on the Claude Code session (orchestrator) on **Sonnet 4.6**, the recommended economy setup. Plugin versions: **quick and standard on v0.5.2-dev**, thorough on v0.5.1-dev (sample on v0.5.0-beta). They compare modes but do not predict the exact bill for another repository.
 
 | Mode | Best fit | Review depth | API cost (USD) and time |
 |---|---|---|---|
 | **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; skips abuse-case validation and final model-based QA | $25.02 and 70 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick-v0.5.md)) |
-| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $30.83 and 89 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.md)) |
+| **Standard** *(default)* | Normal threat models and security reviews | Full analysis, abuse-case validation, and QA | $25.39 and 124 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.md)) |
 | **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component analysis and architecture review | $48.01 and ~138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.md)) |
 
 > [!NOTE]
+> The standard figure is one v0.5.2-dev run that included one STRIDE analyzer retry; without it the run takes roughly 107 minutes. Its wall clock was longer again because the run outlasted a 5-hour usage window and waited for the reset — plan a standard assessment to span one.
 > Cost and runtime vary with repository size, stack, cache state, and model selection. Incremental scans commonly use 70–90% fewer tokens when a previous model is available.
 
 **Cost tracks analyzed components, not repository size.** [`insecure-spring-app`](https://github.com/matthiasrohr/insecure-spring-app), a much smaller intentionally-vulnerable Spring Boot fixture, came out close to Juice Shop at `standard` on the same setup — fewer source files, but a similarly broad attack surface and therefore a similar component count.
 
 | Repo | Stack | Mode | Plugin | Session | Threats | API cost |
 |---|---|---|---|---|---|---|
-| OWASP Juice Shop | Node/Angular | standard | v0.5.1-dev | Sonnet 4.6 | 60 | $30.83 |
+| OWASP Juice Shop | Node/Angular | standard | v0.5.2-dev | Sonnet 4.6 | 54 | $25.39 |
 | insecure-spring-app | Spring Boot | standard | v0.5.1-dev | Sonnet 4.6 | 49 | $31.32 |
 
 `--stride-cap N` limits non-Critical findings per STRIDE category and component. It is off by default. In the standard benchmark, a cap of 2 trims the finding count by roughly a third and saves roughly $4. The selected cap is recorded in the report.
