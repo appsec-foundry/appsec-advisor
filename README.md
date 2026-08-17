@@ -22,11 +22,18 @@ Classic threat modeling establishes design intent, business context, assets, tru
 
 The plugin derives this view from the repository. It looks for missing controls at trust boundaries, implicit trust between services, unauthenticated paths, and other design risks. Re-running the assessment keeps the technical model aligned with the implementation and makes this layer of threat modeling practical across a larger application portfolio.
 
+The analysis routes context to the components and checks where it is relevant. This includes business context, requirements, known threats, trust-boundary declarations, and models from related repositories. It derives abuse cases from detected attack surfaces and verifies them against the target code. Service dependencies, package manifests, lockfiles, and build or deployment configuration provide further evidence, but do not replace evidence from the target repository.
+
 Organizations can also use `appsec-advisor` as the foundation for their own internal AppSec plugin. Organization profiles and package policies add internal requirements, context, defaults, guardrails, skills, hooks, and MCP servers without forking the core analysis pipeline. See [Enterprise rollout](#enterprise-rollout).
 
+<a id="why-this-isnt-a-sast-tool"></a>
 ### Why this isn't a SAST tool
 
-SAST identifies vulnerabilities on concrete code paths. Architectural weaknesses may have no single vulnerable line: an internal service may trust every caller, or a trust boundary may lack an enforcement control. `appsec-advisor` is designed to identify this class of issue.
+SAST analyzes implementation flaws in source code and traces untrusted data through concrete code paths. `appsec-advisor` works at the architecture level: it reconstructs components, data flows, and trust boundaries, then checks whether the expected controls exist across them.
+
+The two approaches overlap in their use of code evidence, but answer different questions. SAST asks where an implementation is vulnerable. Code-derived threat modeling also asks whether the system design depends on trust or controls that the implementation does not provide.
+
+### Scope and limitations
 
 The analysis is limited to the repository and any configured related repositories. It cannot verify runtime behavior, production-only controls, business processes, or user journeys. An AppSec engineer or security architect should validate findings before they drive remediation or risk acceptance.
 
