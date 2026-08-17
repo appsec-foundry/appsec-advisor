@@ -38,10 +38,33 @@ pipeline, `PHASE_END … controller compose` through the QA gate result:
 | context compactions | 2 | 0 |
 | QA outcome | fail + repair plan | pass |
 
+Only one column of that table is attributable. **P2 is proven** — the gate was
+invoked correctly on the first try. The other two were not exercised, and one
+of them could not have been.
+
 **P3 was not load-bearing in run 5.** Replaying the old and new gate logic over
 run 5's own `threat-model.yaml` produced identical expectations — the reserved
 slots went to base Criticals, so no elevated finding displaced one. The fix is
 correct and revert-verified by test; this run simply did not exercise it.
+
+**P1 was never active in run 5, and cannot be tested on this machine.** Two
+independent reasons, both confirmed:
+
+- `APPSEC_PLUGIN_DEV=1` is set in the global `settings.json`, and `decide()`
+  lifts the gate on it in its first line. Unset the variable and the same
+  payload is denied, so the gate itself works.
+- `hooks/hooks.json` was modified at 23:11:08Z while the scan session started
+  at 21:22:11Z. Claude Code loads hooks at session start, so that session never
+  had it registered.
+
+The "0 reads under `scripts/`" in the table above is therefore not the gate's
+doing. At 04:23, near the end of the run, the orchestrator read
+`build_post_stride_contexts.py` and `orchestration_controller.py` unimpeded —
+exactly the behaviour P1 exists to stop.
+
+Proving it needs a session started *after* the hook is registered, and either
+a machine without developer mode or a session with `APPSEC_PLUGIN_DEV` unset.
+Bash reads (`cat`, `grep`) stay outside its reach in any case.
 
 ## Open, ranked by measured size
 
