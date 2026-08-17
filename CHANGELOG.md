@@ -64,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `threat-model.yaml` now includes the report verdict.
 - `show-threat-model` now reports matching finding IDs and severity counts, opens with the report verdict and worst-case scenarios, and triage warns when the model is stale.
 - The Management Summary, §1 Scope and §11 now state that the report is a code-derived threat model at implementation level, and what that does not cover.
+- The pre-flight summary states the STRIDE depth and the depth tradeoff in one line each instead of repeating what the configuration rows already show.
 
 ## 0.5.1-beta (2026-07-26)
 

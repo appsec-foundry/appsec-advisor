@@ -1366,7 +1366,7 @@ Files
 <if will_run:>Configuration
   Depth     : <depth_summary — see _format_depth_summary>
   Reasoning : <reasoning_summary>
-  STRIDE depth : <two clauses joined by "; " — see _format_stride_depth. Cap: <if stride_profile.max_threats_per_category set: ≤<N> per STRIDE category per component (Criticals always kept); else: no per-category cap (all threats kept)>. Screening: cheap-stride <cheap_stride_label> — <if cheap_stride: internal tail at screening depth (~8 turns, all 6 categories); else: every component at full depth>>
+  STRIDE depth : <per-category cap; screening state — see _format_stride_depth>
   <if PARALLEL_STRIDE=true:>STRIDE disp: bounded waves (up to <STRIDE_CONCURRENCY> concurrent; Level-0)
   <elif mode∈{full,rebuild} AND APPSEC_PARALLEL_STRIDE=0:>STRIDE disp: serial inline (disabled via APPSEC_PARALLEL_STRIDE=0)
   <if LIVE_PHASE=true:>Live phase : on (background dispatch + console phase)

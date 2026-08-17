@@ -3171,24 +3171,23 @@ def _render_depth_tradeoff(cfg: dict) -> list[str]:
     ``ℹ`` is a neutral reference at ``standard``. Returns ``[]`` at ``thorough``
     (the deepest tier — no upsell). Body paragraphs wrap to the summary width,
     matching the ``Notes`` formatter.
+
+    The callout carries the judgement the Configuration block above cannot: how
+    far the resolved depth can be trusted. What that depth costs in coverage is
+    already itemised there (``Skips``, ``STRIDE depth``) and is not restated.
     """
     depth = cfg.get("assessment_depth")
     if depth == "quick":
         header = "⚠ Depth tradeoff"
         paras = [
-            "--quick is a fast triage pass — shallow coverage (QA, "
-            "walkthroughs, abuse-case verification and §7 enrichment are "
-            "skipped, STRIDE is depth-capped).",
-            "For a dependable assessment use --standard (default) or "
-            "--thorough (deepest: deeper per-component analysis + architect "
-            "review, Opus). More depth = higher cost & time.",
+            "--quick is a triage pass, not a dependable assessment — use "
+            "--standard (default) or --thorough for one, at higher cost & time.",
         ]
     elif depth == "standard":
         header = "ℹ Depth tradeoff"
         paras = [
-            "--standard is the balanced default. --thorough digs deeper "
-            "(deeper per-component analysis + architect review, Opus "
-            "reasoning) — at correspondingly higher cost & time.",
+            "--standard is the balanced default. --thorough adds an architect "
+            "review and deeper per-component analysis, at higher cost & time.",
         ]
     else:
         return []
@@ -3455,28 +3454,29 @@ def _format_stride_depth(cfg: dict) -> str:
          per STRIDE category. Set by ``--stride-cap N`` at any depth, or
          implicitly by the quick triage profile (cap 1).
       2. ``cheap_stride`` — whether the internal tail runs at screening depth.
-         It carries its own resolved label because it is a depth-dependent
-         DEFAULT (on at quick/standard, off at thorough), so the row has to say
-         whether the user asked for it or the depth did.
+         Only an explicit ``--cheap-stride`` / ``--no-cheap-stride`` names its
+         origin; the depth-dependent default (on at quick/standard, off at
+         thorough) is already readable from the Depth row above.
 
     Both clauses print in both states: the user sees the full picture before any
     tokens are spent, and a "no cap" run can never read as "full depth" while
-    its tail is screened. Which components qualify for screening is run-invariant
-    policy — the pre-flight runs before component discovery — so that list stays
-    in ``docs/threat-modeler.md`` and ``HELP.txt`` instead of in every run's box.
+    its tail is screened. Run-invariant policy — which components qualify for
+    screening, that all six categories survive it, that Criticals outlive the
+    cap — stays in ``docs/threat-modeler.md`` and ``HELP.txt`` instead of in
+    every run's box.
     """
     cap = (cfg.get("stride_profile") or {}).get("max_threats_per_category")
     cheap = bool(cfg.get("cheap_stride"))
-    if cap:
-        cap_part = f"≤{cap} per STRIDE category per component (Criticals always kept)"
-    else:
-        cap_part = "no per-category cap (all threats kept)"
-    label = cfg.get("cheap_stride_label") or ("on" if cheap else "off")
-    if cheap:
-        depth_part = f"cheap-stride {label} — internal tail at light depth (~8 turns, all 6 categories)"
-    else:
-        depth_part = f"cheap-stride {label} — every component at full depth"
-    return f"{cap_part}; {depth_part}"
+    cap_part = f"≤{cap} per category per component" if cap else "no per-category cap"
+    label = cfg.get("cheap_stride_label") or ""
+    origin = ""
+    if "(" in label and label.endswith(")"):
+        inner = label[label.index("(") + 1 : -1]
+        if not inner.startswith("auto"):
+            origin = f" ({inner})"
+    lead = f"cheap-stride {'on' if cheap else 'off'}{origin}"
+    tail = "internal tail screened (~8 turns)" if cheap else "every component at full depth"
+    return f"{cap_part}; {lead} — {tail}"
 
 
 def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
