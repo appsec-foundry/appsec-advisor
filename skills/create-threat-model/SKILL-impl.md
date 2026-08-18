@@ -1801,7 +1801,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" \
     --component-timeout-seconds 480
 ```
 
-The skill MUST issue this Bash call with `run_in_background: true` and capture its returned `task_id` in shell scope:
+The skill MUST issue this Bash call with `run_in_background: true` and capture its returned `task_id` in shell scope. Keep the handle internal — never echo it or narrate the assignment on the console:
 
 ```
 HEARTBEAT_TASK_ID=<task_id from background bash>
