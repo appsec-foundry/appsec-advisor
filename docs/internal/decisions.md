@@ -63,6 +63,7 @@ Removing an entry means listing it here in the same change.
 | OR-10 | An undeterminable stop reason defers the call outcome instead of recording a failure; the Agent return then terminalizes the call and supplies its usage | `test_a_stop_without_a_transcript_defers_the_outcome` | `agents/shared/logging-standard.md` |
 | OR-11 | Every dispatching action names its successor boundary in `next_boundary`; the caller invokes that name and never derives the sequence, which branches by depth | `tests/test_orchestration_controller.py::TestContextV2NextBoundary` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-12 | A contract violation in LLM-written recon signals buys one redispatch carrying the validator errors; STRIDE keeps its separate persisted two-attempt component budget, and other producers follow their boundary contract | `tests/test_orchestration_controller.py::TestProducerContractRetry` | `docs/internal/contracts/orchestration-actions.md` |
+| OR-13 | An artifact a boundary regenerates and then receipts keeps its timestamp while its remaining content is unchanged, so the boundary can repeat the dispatch it already issued | `tests/test_merge_threats.py::TestBoundaryRepeatability`, `test_builder_carries_generated_at_while_the_manifest_is_unchanged` | `scripts/_artifact_stamp.py` |
 
 ## Repair
 

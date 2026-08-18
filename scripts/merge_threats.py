@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from _artifact_stamp import carry_generated_at
 from _atomic_io import atomic_write_json, atomic_write_text
 from _shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
 from jsonschema import Draft202012Validator
@@ -2329,7 +2330,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     out_path = out_dir / ".merge-candidates.json"
     # Atomic write — a crash mid-serialize would leave a truncated JSON that
     # the downstream cmd_finalize step would fail to parse, stranding the run.
-    atomic_write_json(out_path, payload, indent=2, sort_keys=False)
+    atomic_write_json(out_path, carry_generated_at(out_path, payload), indent=2, sort_keys=False)
     print(
         f"merge_threats: wrote {out_path} "
         f"({len(flat)} raw → {len(deduped)} after exact dedup, "
@@ -2969,7 +2970,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     # Atomic write — `.threats-merged.json` is a canonical intermediate
     # consumed by Phase 10+; a truncated file from a crashed run would cause
     # downstream phases to emit wrong counts or T-ID collisions.
-    atomic_write_json(out_path, payload, indent=2, sort_keys=False)
+    atomic_write_json(out_path, carry_generated_at(out_path, payload), indent=2, sort_keys=False)
     print(f"merge_threats: wrote {out_path} ({len(threats)} threats, {len(decisions)} decisions applied)")
 
     # Attack-surface coverage check: every threat must be reachable via at

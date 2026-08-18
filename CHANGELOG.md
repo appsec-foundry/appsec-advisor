@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A scan that reaches the merge step twice now repeats the dispatch it already issued instead of aborting with every STRIDE result on disk.
 - A weakness that falls back to its weakness class for a mechanism ID now gets a valid one instead of aborting the scan at merge validation.
 - The QA gate no longer demands an attack walkthrough the renderer did not select, so a report whose §3 gives a reserved slot to a triage-elevated finding passes instead of entering a repair loop.
 - A scan records per-agent token usage again, and says so when part of its compute went unrecorded.

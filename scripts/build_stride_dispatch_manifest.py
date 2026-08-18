@@ -1580,28 +1580,6 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
     }
 
 
-def _carry_generated_at(out: Path, manifest: dict) -> dict:
-    """Keep the prior timestamp when the manifest is otherwise unchanged.
-
-    ``generated_at`` feeds the component context-plan hash and the wave-plan
-    fingerprint, so a fresh timestamp alone makes an identical manifest look
-    like a new one: the dispatch boundary can no longer repeat its answer, and
-    the wave plan is rebuilt with its attempt accounting reset.
-    """
-    try:
-        prior = json.loads(out.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return manifest
-    if not isinstance(prior, dict) or not isinstance(prior.get("generated_at"), str):
-        return manifest
-    if {k: v for k, v in prior.items() if k != "generated_at"} != {
-        k: v for k, v in manifest.items() if k != "generated_at"
-    }:
-        return manifest
-    manifest["generated_at"] = prior["generated_at"]
-    return manifest
-
-
 def format_selection_console(sel: dict) -> str:
     """Render the STRIDE component selection as a human-readable console block:
     which components are analyzed (and why) and which are skipped (and why).
@@ -1714,9 +1692,11 @@ def main(argv: list[str] | None = None) -> int:
         except BundleError as exc:
             print(f"ERROR: context-v2 evidence bundle build failed: {exc}", file=sys.stderr)
             return 2
+    from _artifact_stamp import carry_generated_at
+
     sel = _read_json(ns.output_dir / ".stride-selection.json", {})
     out = ns.output_dir / ".stride-dispatch-manifest.json"
-    manifest = _carry_generated_at(out, manifest)
+    manifest = carry_generated_at(out, manifest)
     out.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(
         f"OK: wrote {out} ({len(manifest['components'])} components, depth={ns.depth}, "

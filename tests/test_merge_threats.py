@@ -784,6 +784,60 @@ class TestDecisionApplication:
 # ---------------------------------------------------------------------------
 
 
+class TestBoundaryRepeatability:
+    """Both merge artifacts are receipted into a context-v2 dispatch action, and
+    both boundaries rebuild them before receipting. A re-invoked boundary must
+    therefore write the same bytes: `context_routing.action_already_issued`
+    reads a moved receipt hash as a second, different dispatch under the same
+    job identity and ends the run at an authoritative abort, with every STRIDE
+    result already on disk (juice-shop 2026-08-17, `phase9-merge-review`).
+    """
+
+    OLD = b"2026-01-01T00:00:00Z"
+
+    def _age_stamp(self, path: Path) -> bytes:
+        """Rewrite only the timestamp, so the comparison stays byte-level."""
+        raw = path.read_bytes()
+        match = re.search(rb'"generated_at": "([^"]+)"', raw)
+        assert match is not None and len(match.group(1)) == len(self.OLD)
+        aged = raw[: match.start(1)] + self.OLD + raw[match.end(1) :]
+        path.write_bytes(aged)
+        return aged
+
+    def test_collect_repeats_its_bytes_for_unchanged_stride_output(self, mt, tmp_path):
+        _write_stride(tmp_path, "auth", [_threat()])
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        aged = self._age_stamp(tmp_path / ".merge-candidates.json")
+
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+
+        assert (tmp_path / ".merge-candidates.json").read_bytes() == aged
+
+    def test_finalize_repeats_its_bytes_for_unchanged_candidates(self, mt, tmp_path):
+        _write_stride(tmp_path, "auth", [_threat()])
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        aged = self._age_stamp(tmp_path / ".threats-merged.json")
+
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+
+        assert (tmp_path / ".threats-merged.json").read_bytes() == aged
+
+    def test_changed_stride_output_is_stamped_when_it_was_produced(self, mt, tmp_path):
+        _write_stride(tmp_path, "auth", [_threat()])
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        self._age_stamp(tmp_path / ".merge-candidates.json")
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
+
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+
+        candidates = json.loads((tmp_path / ".merge-candidates.json").read_text())
+        assert candidates["generated_at"] != self.OLD.decode()
+        assert candidates["threat_count_raw"] == 2
+
+
 class TestEndToEnd:
     def test_collect_produces_candidates_file(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat(scenario="Attacker reaches the first unsafe SQL sink.")])
