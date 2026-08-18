@@ -12,11 +12,11 @@ handoff.
    ```
 
    Require `stage=stage2` and action `dispatch_agent` or `dispatch_parallel`.
-2. Mark `Stage 2 - Report Rendering` in progress, capture `STAGE2_START_ISO`,
+2. Mark `Stage 2 - Report rendering` in progress, capture `STAGE2_START_ISO`,
    print this banner, and start the fixed heartbeat watchdog:
 
    ```text
-   ▶ Stage 2 - Report Rendering starting  (expect ~<EST_STAGE2> min, model: <RENDERER_MODEL>, renderer budget)
+   ▶ Stage 2 - Report rendering starting  (expect ~<EST_STAGE2> min, model: <RENDERER_MODEL>, renderer budget)
      ⟶ Authoring 2 LLM fragments + invoking compose_threat_model.py
      ⟶ Structural fragments prepared from YAML before rendering
    ```

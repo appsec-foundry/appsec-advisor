@@ -6,7 +6,7 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; do not read Stage 1d from `S
    and start the heartbeat:
 
    ```text
-   ▶ Stage 1d - Abuse Case Verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
+   ▶ Stage 1d - Abuse case verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
    ```
 2. Run:
 

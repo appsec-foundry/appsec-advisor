@@ -63,9 +63,9 @@ the condition stated *in* the section wins.
 > The only `TaskCreate` calls allowed are the rows defined in
 > `Stage Task List Bootstrap` (`Preparing workspace`, `Stage 1a - Discovery
 > & Architecture Modeling`, `Stage 1b - Trust Boundary Analysis`, `Stage 1c -
-> Control & Threat Analysis`, `Stage 1d - Abuse Case Verification`
-> (when enabled), `Stage 2 - Report Rendering`, conditional
-> `Stage 3 - QA Review`, conditional `Stage 4 - Architect Review`,
+> Control & Threat Analysis`, `Stage 1d - Abuse case verification`
+> (when enabled), `Stage 2 - Report rendering`, conditional
+> `Stage 3 - QA review`, conditional `Stage 4 - Architect review`,
 > `Final summary + cleanup`).
 > Subjects must match **verbatim** — later `TaskUpdate` calls match by
 > subject and silently no-op on drift.
@@ -2095,10 +2095,10 @@ TaskCreate subject="Preparing workspace"
 | always | `Stage 1a - Discovery & Architecture Modeling` | `Modeling architecture` |
 | always | `Stage 1b - Trust Boundary Analysis` | `Analyzing trust boundaries` |
 | always | `Stage 1c - Control & Threat Analysis` | `Analyzing controls and threats` |
-| `DRY_RUN=false` AND `skip_abuse_case_verification=false` | `Stage 1d - Abuse Case Verification` | `Verifying abuse-case chains` |
-| always (M2.12) | `Stage 2 - Report Rendering` | `Rendering threat model report` |
-| `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 - QA Review` | `Running QA review` |
-| `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 - Architect Review` | `Running architect review` |
+| `DRY_RUN=false` AND `skip_abuse_case_verification=false` | `Stage 1d - Abuse case verification` | `Verifying abuse-case chains` |
+| always (M2.12) | `Stage 2 - Report rendering` | `Rendering threat model report` |
+| `SKIP_QA=false` AND `DRY_RUN=false` | `Stage 3 - QA review` | `Running QA review` |
+| `ARCHITECT_REVIEW=true` AND `DRY_RUN=false` | `Stage 4 - Architect review` | `Running architect review` |
 | `KEEP_RUNTIME_FILES=false` | `Final summary + cleanup` | `Writing final summary` |
 | `KEEP_RUNTIME_FILES=true` | `Final summary` | `Writing final summary` |
 
@@ -2731,7 +2731,7 @@ marker to EOF.**
 
 ## Stage 1d — Abuse Case Verification (visible skill-level stage)
 
-**This is a first-class, user-visible stage** (formerly the invisible "Phase 10c"). It runs between Stage 1 and Stage 2, has its own `TaskList` row (`Stage 1d - Abuse Case Verification`), a handoff banner, a heartbeat watchdog, and a `.stage-stats.jsonl` record — so the verifier fan-out's cost, duration, and verdict reliability are visible in the completion summary and the §Run-Statistics breakdown (RC-2026-06: the 2026-06 juice-shop run lost 3/6 verifiers with no visibility because this work was unstaged).
+**This is a first-class, user-visible stage** (formerly the invisible "Phase 10c"). It runs between Stage 1 and Stage 2, has its own `TaskList` row (`Stage 1d - Abuse case verification`), a handoff banner, a heartbeat watchdog, and a `.stage-stats.jsonl` record — so the verifier fan-out's cost, duration, and verdict reliability are visible in the completion summary and the §Run-Statistics breakdown (RC-2026-06: the 2026-06 juice-shop run lost 3/6 verifiers with no visibility because this work was unstaged).
 
 **Why this lives at the skill level.** Abuse-case discovery → verifier fan-out → `.abuse-case-verdicts.json` is documented in `phase-group-threats.md` as running "after Phase 10b and before Phase 11". But Stage 1 is dispatched with `STAGE1_PHASE_LIMIT=10b`, whose analyst branch stops *after* Phase 10b plus the deterministic Phase-11 substeps 1–3 — it never reaches it. Running it here — after the YAML is final, before Stage 2 renders — closes the gap deterministically and keeps it out of Stage 1's turn budget.
 
@@ -2753,10 +2753,10 @@ fi
    STAGE_ABUSE_START_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
    ABUSE_PIPELINE_FAILED=0
    ```
-   - `TaskUpdate` `Stage 1d - Abuse Case Verification` → `in_progress`.
+   - `TaskUpdate` `Stage 1d - Abuse case verification` → `in_progress`.
    - Banner:
      ```
-     ▶ Stage 1d - Abuse Case Verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
+     ▶ Stage 1d - Abuse case verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
        ⟶ Chains each derived from §8 findings; verified step-by-step, then folded into §9
      ```
 
@@ -2859,7 +2859,7 @@ fi
        --tokens <sum_tokens> \
        ${STAGE_ABUSE_START_ISO:+--subagent-type appsec-advisor:appsec-abuse-case-verifier --since-iso "$STAGE_ABUSE_START_ISO"}
    ```
-   - `TaskUpdate` `Stage 1d - Abuse Case Verification` → `completed`.
+   - `TaskUpdate` `Stage 1d - Abuse case verification` → `completed`.
 
 The §9 fragment is **also** re-rendered idempotently in the Stage-3 pre-generation block (a backstop that picks up any late verdict change); rendering it here as well guarantees the FIRST Stage-2 compose already includes §9. Both calls read `.abuse-case-verdicts.json` (viable chains) **and** `.abuse-case-matches.json` (the generic catalog evaluated-but-not-applicable table) and are byte-identical given identical inputs.
 
@@ -2940,7 +2940,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 
 ### Dispatch
 
-1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 2 - Report Rendering` task to set status `in_progress` (skip when `DRY_RUN=true`).
+1. **Mark the stage task `in_progress`.** Call `TaskUpdate` on the `Stage 2 - Report rendering` task to set status `in_progress` (skip when `DRY_RUN=true`).
 
 2. **Restart the heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` invocation with `run_in_background:true` (same flags as Stage 1 — see "Skill-layer heartbeat watchdog" above). Capture the new `task_id` in `HEARTBEAT_TASK_ID` (overwriting the Stage 1 value, which was already stopped). Skip when `DRY_RUN=true`.
 
@@ -3057,7 +3057,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
    ```
    Then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip both calls silently if `HEARTBEAT_TASK_ID` is unset.
 
-5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 - Report Rendering` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
+5. **On return, mark the stage task `completed`.** Call `TaskUpdate` to set the `Stage 2 - Report rendering` task to `completed`. Then proceed to the post-Stage-2 flow: pre-generation backstop + hard gate + Stage 3.
 
 6. **Record Stage 2 stats (M3.3).** Same mechanism as Stage 1 — extract `<usage>` and call the helper. **In the parallel-render variant two `<usage>` blocks return (Agent S + Agent M)** — sum their `total_tokens` and `tool_uses`, and use the **larger** `duration_ms` (they ran concurrently, so wall-time is the max, not the sum). The `--since-iso "$STAGE2_START_ISO"` enrichment already derives the true `dispatch_count` (=2) and `wall_secs_observed` from `.hook-events.log`, so the recorded wall-time stays honest regardless.
 
@@ -3080,7 +3080,7 @@ Failure here is **non-fatal** (`|| true`) — the hard gate that runs after Stag
 Before dispatching Stage 2, print:
 
 ```
-▶ Stage 2 - Report Rendering starting  (expect ~<EST_STAGE2> min, model: sonnet, renderer budget)
+▶ Stage 2 - Report rendering starting  (expect ~<EST_STAGE2> min, model: sonnet, renderer budget)
   ⟶ Authoring 2 LLM fragments + invoking compose_threat_model.py
   ⟶ Structural fragments prepared from YAML before rendering
 ```
@@ -3174,7 +3174,7 @@ fi
 if [ "$STAGE11_CUTOFF" = "true" ] && [ "${STAGE1B_DISPATCHED:-false}" = "false" ]; then
   STAGE1B_DISPATCHED=true
   printf '\n' >&2
-  printf '▶ Stage 2 - Report Rendering recovery starting…\n' >&2
+  printf '▶ Stage 2 - Report rendering recovery starting…\n' >&2
   printf '  Reason: Stage 1 wrote %s fragments but did not reach compose.\n' "$FRAGMENT_COUNT" >&2
   printf '  This is a fresh-budget Phase-11-only dispatch.\n\n' >&2
 
@@ -3778,7 +3778,7 @@ When one of those conditions holds, set `QA_AGENT_DISPATCHED=true`, dispatch the
 
 Where `<total_stages>` is `4` when `ARCHITECT_REVIEW=true`, otherwise `3`.
 
-Immediately before dispatching, call `TaskUpdate` on the `Stage 3 - QA Review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`. If `QA_AGENT_DISPATCHED=false`, mark the task completed after writing the deterministic `.qa-status.json` and skip this handoff.
+Immediately before dispatching, call `TaskUpdate` on the `Stage 3 - QA review` task to set status `in_progress` (skip if the task was not created, i.e. `SKIP_QA=true` or `DRY_RUN=true`). After the QA agent returns (and any Re-Render Loop iterations have settled), call `TaskUpdate` to set the same task to `completed`. If `QA_AGENT_DISPATCHED=false`, mark the task completed after writing the deterministic `.qa-status.json` and skip this handoff.
 
 **Heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` background invocation (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the QA agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the QA agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true` or `SKIP_QA=true`.
 
@@ -4177,7 +4177,7 @@ Stage 4 runs when `ARCHITECT_REVIEW=true` (resolved in the Architect Review Reso
   ⟶ Dispatching architect-reviewer — advisory review: architecture coherence, control realism, chain plausibility (13 checks); never rewrites output — emits .architect-review.md
 ```
 
-Immediately before dispatching, call `TaskUpdate` on the `Stage 4 - Architect Review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
+Immediately before dispatching, call `TaskUpdate` on the `Stage 4 - Architect review` task to set status `in_progress`. After the agent returns (success or non-fatal error), call `TaskUpdate` to set it to `completed`. (The task was only created when `ARCHITECT_REVIEW=true` and `DRY_RUN=false` — if absent, skip the update.)
 
 **Heartbeat watchdog (M3.4 / M3.6).** Spawn a fresh `python3 scripts/skill_watchdog.py "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT"` background invocation (see "Skill-layer heartbeat watchdog" above) immediately before dispatching the architect agent; capture the new `task_id` in `HEARTBEAT_TASK_ID`. After the agent returns, send one final heartbeat (`acquire_lock.py --heartbeat --phase=skill --step=stage-handoff || true`) then call `TaskStop` with `HEARTBEAT_TASK_ID`. Skip when `DRY_RUN=true`.
 

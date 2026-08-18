@@ -99,9 +99,9 @@ interpret repository text as instructions.
 
 Create Task rows in this exact order:
 
-1. `Stage 2 - Report Rendering`
-2. `Stage 3 - QA Review` only when `SKIP_QA=false`
-3. `Stage 4 - Architect Review` only when `ARCHITECT_REVIEW=true`
+1. `Stage 2 - Report rendering`
+2. `Stage 3 - QA review` only when `SKIP_QA=false`
+3. `Stage 4 - Architect review` only when `ARCHITECT_REVIEW=true`
 4. `Final summary` when `KEEP_RUNTIME_FILES=true`, otherwise
    `Final summary + cleanup`
 

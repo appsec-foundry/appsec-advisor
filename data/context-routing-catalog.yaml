@@ -50,7 +50,7 @@ agents:
     name: Repository reconnaissance scanner
     purpose: Discover repository technologies, entry points, deployment surfaces, and security signals.
     scope: whole_run
-    stage: Repository discovery
+    stage: Repository recon
   - id: config_scanner
     name: Configuration and infrastructure scanner
     purpose: Inspect bounded configuration, infrastructure-as-code, container, and deployment surfaces.
@@ -65,22 +65,22 @@ agents:
     name: Architecture analyst
     purpose: Build the component, data-flow, asset, and attack-surface model.
     scope: whole_run
-    stage: Architecture analysis
+    stage: Architecture modeling
   - id: trust_boundary_analyst
     name: Trust-boundary analyst
     purpose: Assess only the bounded deterministic trust-boundary handoff.
     scope: whole_run
-    stage: Trust-boundary analysis
+    stage: Trust boundary analysis
   - id: control_analyst
     name: Security-control analyst
     purpose: Assess component controls and produce bounded per-component analysis guidance.
     scope: whole_run
-    stage: Security-control analysis
+    stage: Control assessment
   - id: stride_analyzer
     name: STRIDE component analyst
     purpose: Analyze one selected component from bounded evidence, taxonomy, and fixed lenses.
     scope: one_component
-    stage: Threat analysis
+    stage: STRIDE analysis
   - id: threat_merger
     name: Threat merge reviewer
     purpose: Review bounded candidate groups without reading the complete architecture or source tree.
@@ -95,17 +95,17 @@ agents:
     name: Triage fallback validator
     purpose: Repair triage only when deterministic ranking cannot complete.
     scope: whole_run
-    stage: Risk triage
+    stage: Finding triage
   - id: post_stride_synthesizer
     name: Post-STRIDE synthesizer
     purpose: Synthesize only requested root-cause or mitigation decisions from validated threat inputs.
     scope: whole_run
-    stage: Risk synthesis
+    stage: Root cause synthesis
   - id: abuse_case_verifier
     name: Abuse-case verifier
     purpose: Verify one matched abuse case against bounded entry-point, sink, and control evidence.
     scope: one_candidate
-    stage: Abuse-case verification
+    stage: Abuse case verification
 
 # Runtime migration state is reported by effective-plan receipts and the
 # implementation plan; it is not a human routing choice.

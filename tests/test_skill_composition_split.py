@@ -50,7 +50,7 @@ def renderer_text() -> str:
 
 
 def test_bootstrap_table_includes_composition_stage_always(skill_impl_text):
-    assert "Stage 2 - Report Rendering" in skill_impl_text, (
+    assert "Stage 2 - Report rendering" in skill_impl_text, (
         "Bootstrap table must list Stage 2 (Report Rendering) as an always-created task (M2.12)"
     )
 
@@ -62,7 +62,7 @@ def test_stage_1_split_into_lettered_subrows(skill_impl_text):
     assert "`Stage 1a - Discovery & Architecture Modeling`" in skill_impl_text
     assert "`Stage 1b - Trust Boundary Analysis`" in skill_impl_text
     assert "`Stage 1c - Control & Threat Analysis`" in skill_impl_text
-    assert "`Stage 1d - Abuse Case Verification`" in skill_impl_text
+    assert "`Stage 1d - Abuse case verification`" in skill_impl_text
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ def test_composition_documents_pre_generator_call(skill_impl_text):
 
 
 def test_composition_handoff_banner_documented(skill_impl_text):
-    assert "Stage 2 - Report Rendering starting" in skill_impl_text
+    assert "Stage 2 - Report rendering starting" in skill_impl_text
     assert "renderer budget" in skill_impl_text
 
 

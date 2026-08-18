@@ -2172,16 +2172,16 @@ def _stage1_runtime_for(cfg: dict[str, Any]) -> Path:
 
 
 STAGE1_TASK_ROWS_CONTEXT_V2 = (
-    "Stage 1a [1/3] - Recon scan",
+    "Stage 1a [1/3] - Repository recon",
     "Stage 1a [2/3] - Actor discovery",
     "Stage 1a [3/3] - Architecture modeling",
-    "Stage 1b [1/1] - Trust boundaries",
-    "Stage 1c [1/6] - Security controls",
+    "Stage 1b [1/1] - Trust boundary analysis",
+    "Stage 1c [1/6] - Control assessment",
     "Stage 1c [2/6] - STRIDE analysis",
-    "Stage 1c [3/6] - Threat merge",
+    "Stage 1c [3/6] - Threat consolidation",
     "Stage 1c [4/6] - Evidence verification",
-    "Stage 1c [5/6] - Triage",
-    "Stage 1c [6/6] - Root causes",
+    "Stage 1c [5/6] - Finding triage",
+    "Stage 1c [6/6] - Root cause synthesis",
 )
 
 STAGE1_TASK_ROWS_LEGACY = (
@@ -2217,12 +2217,12 @@ def _task_rows(cfg: dict[str, Any]) -> list[str]:
     rows = ["Preparing workspace"]
     rows.extend(_stage1_task_rows(cfg))
     if not cfg.get("skip_abuse_case_verification"):
-        rows.append("Stage 1d - Abuse Case Verification")
-    rows.append("Stage 2 - Report Rendering")
+        rows.append("Stage 1d - Abuse case verification")
+    rows.append("Stage 2 - Report rendering")
     if not cfg.get("skip_qa"):
-        rows.append("Stage 3 - QA Review")
+        rows.append("Stage 3 - QA review")
     if cfg.get("architect_review"):
-        rows.append("Stage 4 - Architect Review")
+        rows.append("Stage 4 - Architect review")
     rows.append("Final summary" if cfg.get("keep_runtime_files") else "Final summary + cleanup")
     return rows
 

@@ -5407,10 +5407,10 @@ class TestStage1TaskRows:
             controller.STAGE1_TASK_ROWS_CONTEXT_V2
         )
         assert [row for row in every if row.startswith(("Stage 1d", "Stage 2", "Stage 3", "Stage 4"))] == [
-            "Stage 1d - Abuse Case Verification",
-            "Stage 2 - Report Rendering",
-            "Stage 3 - QA Review",
-            "Stage 4 - Architect Review",
+            "Stage 1d - Abuse case verification",
+            "Stage 2 - Report rendering",
+            "Stage 3 - QA review",
+            "Stage 4 - Architect review",
         ]
 
         lean = controller._task_rows(
