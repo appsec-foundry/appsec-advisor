@@ -616,20 +616,27 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
 
 
 def _validated_wait_components(plan: dict[str, Any], component_ids: list[str]) -> list[str]:
-    if not component_ids or len(component_ids) > plan["concurrency"]:
+    """Reduce a caller's join list to the components it names.
+
+    The caller types this list from the action it just dispatched, so naming one
+    component twice, or in another order, repeats a claim rather than making a
+    new one. Both fold. What the claim must still cover exactly is the set of
+    components: a subset leaves a dispatched analyzer unjoined, and an extra ID
+    joins a wave that was never dispatched.
+    """
+    deduped = list(dict.fromkeys(component_ids))
+    if not deduped or len(deduped) > plan["concurrency"]:
         raise WavePlanError("wait component list must contain one bounded dispatch wave")
-    if len(set(component_ids)) != len(component_ids):
-        raise WavePlanError("wait component list contains duplicate IDs")
     known = set(plan["component_ids"])
-    unknown = sorted(set(component_ids) - known)
+    unknown = sorted(set(deduped) - known)
     if unknown:
         raise WavePlanError("wait component list contains unknown IDs: " + ", ".join(unknown))
-    matching_waves = [wave for wave in plan["waves"] if set(component_ids).issubset(set(wave["component_ids"]))]
+    matching_waves = [wave for wave in plan["waves"] if set(deduped).issubset(set(wave["component_ids"]))]
     if len(matching_waves) != 1:
         raise WavePlanError("wait component list must belong to exactly one persisted wave")
-    if component_ids != plan["active_claim"]["component_ids"]:
+    if set(deduped) != set(plan["active_claim"]["component_ids"]):
         raise WavePlanError("wait component list must exactly match the active dispatch claim")
-    return component_ids
+    return deduped
 
 
 def wait_status(

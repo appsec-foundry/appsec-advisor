@@ -515,6 +515,24 @@ def test_wait_rejects_an_undispatched_future_component(tmp_path: Path) -> None:
         waves.wait_status(plan, manifest, tmp_path, ["service-02"], now=100)
 
 
+def test_wait_folds_a_repeated_or_reordered_claim(tmp_path: Path) -> None:
+    """The join list is typed from the action that was just dispatched. Naming a
+    component twice, or in another order, repeats one claim; rejecting it ended
+    the run at the join with every analyzer still running.
+    """
+    manifest = _manifest(2)
+    plan = waves.build_plan(manifest, concurrency=2)
+    waves.claim(plan, manifest, tmp_path)
+
+    repeated = waves.wait_status(plan, manifest, tmp_path, ["service-01", "service-01", "service-02"], now=100)
+    reordered = waves.wait_status(plan, manifest, tmp_path, ["service-02", "service-01"], now=100)
+    exact = waves.wait_status(plan, manifest, tmp_path, ["service-01", "service-02"], now=100)
+
+    assert repeated["status"] == exact["status"]
+    assert reordered["status"] == exact["status"]
+    assert len(repeated["incomplete"]) == len(exact["incomplete"])
+
+
 def test_wait_rejects_a_subset_of_the_active_claim(tmp_path: Path) -> None:
     manifest = _manifest(2)
     plan = waves.build_plan(manifest, concurrency=2)
