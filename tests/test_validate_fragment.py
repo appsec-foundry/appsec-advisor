@@ -529,3 +529,126 @@ def test_main_gate_dispatch_emit_json(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert json.loads(out)["error"]
+
+
+# ---------------------------------------------------------------------------
+# pre-render-gate --write-repair-plan
+#
+# The gate itself predates these tests; what is new is that a failure becomes
+# directly actionable for appsec-fragment-fixer instead of only being reported.
+# ---------------------------------------------------------------------------
+
+_REQUIRED_MD = (
+    "system-overview.md",
+    "architecture-diagrams.md",
+    "attack-walkthroughs.md",
+    "assets.md",
+    "attack-surface.md",
+    "security-architecture.md",
+)
+
+
+def _ai_exposure(label: str) -> dict:
+    return {
+        "ai_risks": [
+            {
+                "name": "Prompt Injection",
+                "description": ("Untrusted retrieved content reaches the model instruction channel without separation."),
+                "findings": [{"ref": "T-019", "label": label}],
+            }
+        ]
+    }
+
+
+def _valid_verdict() -> dict:
+    return {
+        "severity": "red",
+        "opening": ("The service exposes every route without authentication, so any anonymous caller reaches all stored data."),
+        "bullets": [
+            {
+                "title": "Admin access without a password",
+                "body": "Any caller can claim the administrator identity and gain full privileged access.",
+                "refs": ["T-003"],
+            },
+            {
+                "title": "Stored data readable by anyone",
+                "body": "The database interface executes caller-supplied statements without any access check.",
+                "refs": ["T-012"],
+            },
+        ],
+        "closing": ("The service must not be deployed beyond a local development machine until authentication is in place."),
+    }
+
+
+def _complete_fragment_set(tmp_path: Path) -> Path:
+    """A fragment dir satisfying the unconditional required set. ms-verdict.json
+    must be schema-VALID here — these tests assert on the gate's verdict, not
+    merely on fragment presence."""
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    (frag / "ms-verdict.json").write_text(json.dumps(_valid_verdict()))
+    for name in _REQUIRED_MD:
+        (frag / name).write_text("# placeholder\n")
+    return frag
+
+
+def test_repair_plan_is_actionable_on_schema_violation(tmp_path: Path):
+    """An over-long label must produce a fixer-consumable plan naming the
+    offending fragment — the 2026-08-18 insecure-ai-app failure mode, where
+    compose rejected the fragment one dispatch after it was authored."""
+    frag = _complete_fragment_set(tmp_path)
+    too_long = "R" * 81  # schema caps findings[].label at 80
+    (frag / "ms-ai-exposure.json").write_text(json.dumps(_ai_exposure(too_long)))
+
+    result = _run(["pre-render-gate", str(tmp_path), "--write-repair-plan"])
+    assert result.returncode == 1
+
+    plan = json.loads((tmp_path / ".fragment-repair-plan.json").read_text())
+    assert plan["status"] == "fail"
+    assert plan["actionable"] is True
+    assert plan["action_count"] == 1
+    action = plan["actions"][0]
+    assert action["type"] == "fragment_schema_violation"
+    assert action["fragments_to_rewrite"] == [".fragments/ms-ai-exposure.json"]
+    assert action["severity"] == "blocking"
+    # The exact JSON path must survive into the plan so the fixer edits one field.
+    assert "findings/0/label" in action["raw_issue"]
+    assert "ai-exposure.schema.json" in action["remediation"]
+
+
+def test_repair_plan_not_actionable_when_only_required_fragments_missing(tmp_path: Path):
+    """Missing required fragments are owned by pregenerate_fragments.py — the
+    fixer must not hand-author them, so the plan stays non-actionable."""
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    # Schema-valid, so the ONLY defect is the absent markdown fragments.
+    (frag / "ms-verdict.json").write_text(json.dumps(_valid_verdict()))
+
+    result = _run(["pre-render-gate", str(tmp_path), "--write-repair-plan"])
+    assert result.returncode == 1
+
+    plan = json.loads((tmp_path / ".fragment-repair-plan.json").read_text())
+    assert plan["actionable"] is False
+    assert plan["status"] == "manual_review"
+    assert plan["actions"] == []
+    assert plan["manual_review_items"]
+
+
+def test_no_repair_plan_written_when_gate_passes(tmp_path: Path):
+    """A clean run must leave no stale plan behind for the next stage to read."""
+    frag = _complete_fragment_set(tmp_path)
+    (frag / "ms-ai-exposure.json").write_text(json.dumps(_ai_exposure("RAG document promoted to system channel")))
+
+    result = _run(["pre-render-gate", str(tmp_path), "--write-repair-plan"])
+    assert result.returncode == 0
+    assert not (tmp_path / ".fragment-repair-plan.json").exists()
+
+
+def test_repair_plan_only_written_when_flag_passed(tmp_path: Path):
+    """Default behaviour is unchanged — the plan is opt-in."""
+    frag = _complete_fragment_set(tmp_path)
+    (frag / "ms-ai-exposure.json").write_text(json.dumps(_ai_exposure("R" * 81)))
+
+    result = _run(["pre-render-gate", str(tmp_path)])
+    assert result.returncode == 1
+    assert not (tmp_path / ".fragment-repair-plan.json").exists()

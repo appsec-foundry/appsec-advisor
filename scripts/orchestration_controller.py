@@ -5637,6 +5637,19 @@ def _upgrade_bootstrap_yaml(output_dir: Path, cfg: dict[str, Any]) -> bool:
     return _is_bootstrap() is False
 
 
+def _fragment_repair_is_actionable(output_dir: Path) -> bool:
+    """True when the fragment gate left a plan a fragment-fixer can execute.
+
+    A plan with ``actionable: false`` carries only missing required fragments —
+    those belong to ``pregenerate_fragments.py``, not to an LLM repair pass.
+    """
+    try:
+        plan = json.loads((output_dir / ".fragment-repair-plan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(plan, dict) and bool(plan.get("actionable")) and bool(plan.get("actions"))
+
+
 def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     """Deterministically compose or refresh ``threat-model.md`` from fragments.
 
@@ -5736,6 +5749,18 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     if not _step("hydrate_mitigation_details.py", str(output_dir)):
         return False
     if not _step("validate_mitigation_quality.py", str(output_dir)):
+        return False
+    # Schema-gate the LLM-authored fragments BEFORE compose reads them. The
+    # legacy finalization path has run this as its substep 4b for a long time;
+    # the parallel Stage-2 path (secarch + ms specialists) never inherited it,
+    # so a schema-invalid fragment first surfaced as a RENDER_FAILED deep inside
+    # compose — one dispatch after the agent that could still have fixed it
+    # cheaply (insecure-ai-app 2026-08-18: an 82-char findings[].label against a
+    # maxLength of 80 cost a full renderer re-dispatch). Placing it here rather
+    # than in the skill text keeps it deterministic and unskippable, and costs
+    # no runtime prompt budget. `--write-repair-plan` leaves
+    # `.fragment-repair-plan.json` for appsec-fragment-fixer.
+    if not _step("validate_fragment.py", "pre-render-gate", str(output_dir), "--write-repair-plan"):
         return False
 
     # Mechanical structural fragments (idempotent backstop), then the strict
@@ -5997,6 +6022,16 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             step = str(blocked.get("step") or "") if isinstance(blocked, dict) else ""
             if step == "required-fragments":
                 receipt = f"Stage-2 render fragments incomplete; retry {retry_count}/2"
+            elif step == "validate_fragment.py" and _fragment_repair_is_actionable(output_dir):
+                # A schema violation in an authored fragment is a targeted edit,
+                # not a re-render: send the cheap fixer at the named fragment
+                # instead of paying for the full renderer again.
+                receipt = (
+                    "Stage-2 fragment schema gate failed; dispatch "
+                    "appsec-advisor:appsec-fragment-fixer with REPAIR_MODE=true and "
+                    "REPAIR_PLAN_PATH=.fragment-repair-plan.json, then re-run this transition; "
+                    f"retry {retry_count}/2 (see .compose-blocked.json)"
+                )
             elif step:
                 receipt = f"Stage-2 compose blocked at {step}; retry {retry_count}/2 (see .compose-blocked.json)"
             else:

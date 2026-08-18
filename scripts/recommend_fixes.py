@@ -85,6 +85,12 @@ def _recommend_max_turns_subagent(issue: dict, output_dir: Path) -> dict:
             "auto_applicable": False,
             "confidence": "low",
             "risk_level": "low",
+            # This recommender could not do its job because ITS OWN input was
+            # absent — not because the finding resists automation. That is a
+            # defect in the pipeline that produced the issue, so mark it and
+            # let the aggregator surface it instead of shipping a plausible-
+            # looking but useless recommendation.
+            "degraded": "missing_recommender_input",
             "summary": f"Sub-agent {src!r} hit MAX_TURNS but the agent file could not be located.",
             "rationale": "Could not read agents/<agent>.md to compute a bump.",
             "actions": [
@@ -536,6 +542,9 @@ def _recommend_default(issue: dict, output_dir: Path) -> dict:
         "auto_applicable": False,
         "confidence": "low",
         "risk_level": "low",
+        # An issue category the aggregator emits but no recommender covers is a
+        # coverage gap in this module, not a property of the scanned repository.
+        "degraded": "no_recommender_for_category",
         "summary": f"Unknown issue category {issue.get('category')!r} — manual review required.",
         "rationale": "No automated recommender for this category yet.",
         "actions": [

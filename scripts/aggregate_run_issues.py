@@ -1611,6 +1611,82 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     }
 
 
+_DEGRADED_REASONS = {
+    "missing_recommender_input": (
+        "a recommender could not read its own input (e.g. the agent name never "
+        "reached the issue record), so it fell back to a generic note"
+    ),
+    "no_recommender_for_category": (
+        "an issue category is emitted by the aggregator but no recommender covers it"
+    ),
+}
+
+
+def flag_degraded_recommendations(data: dict) -> dict:
+    """Surface recommenders that degraded for want of their OWN input.
+
+    A degraded recommendation is indistinguishable from a legitimate one in the
+    completion summary: both render as a low-confidence "manual review" line.
+    That is how a producer/consumer mismatch stays invisible across runs — the
+    self-diagnosis fails silently and reports the failure as a finding about the
+    scanned repository. Treat it as what it is: a defect in this pipeline.
+
+    Repository-independent by construction — it keys on the recommender's own
+    ``degraded`` marker, never on run content.
+    """
+    issues = data.get("issues") or []
+    degraded = [
+        (i, (i.get("fix_recommendation") or {}).get("degraded"))
+        for i in issues
+        if isinstance(i.get("fix_recommendation"), dict) and i["fix_recommendation"].get("degraded")
+    ]
+    if not degraded:
+        return data
+
+    reasons = sorted({reason for _i, reason in degraded})
+    affected = sorted({i.get("category", "?") for i, _r in degraded})
+    data["issues"] = issues + [
+        {
+            "category": "pipeline_self_diagnosis_degraded",
+            "severity": "warning",
+            "title": (
+                f"{len(degraded)} fix recommendation(s) degraded for lack of their own input "
+                f"— affected categories: {', '.join(affected)}"
+            ),
+            "evidence": {
+                "degraded_count": len(degraded),
+                "reasons": reasons,
+                "affected_categories": affected,
+                "degraded_issue_ids": [i.get("id") for i, _r in degraded],
+            },
+            "id": f"ISSUE-{len(issues) + 1:03d}",
+            "fix_recommendation": {
+                "category": "plugin_bug",
+                "auto_applicable": False,
+                "confidence": "high",
+                "risk_level": "low",
+                "summary": "A recommender lacked its own input — fix the producer, not the run.",
+                "rationale": " · ".join(_DEGRADED_REASONS.get(r, r) for r in reasons),
+                "actions": [
+                    {
+                        "type": "manual_review",
+                        "target": "scripts/recommend_fixes.py",
+                        "details": (
+                            "Trace each degraded recommendation to the field it needed and the "
+                            "component that should have populated it. This is a contract gap "
+                            "between an event producer and its consumer, independent of the "
+                            "repository under assessment."
+                        ),
+                    }
+                ],
+                "verification": [],
+            },
+        }
+    ]
+    data["summary"]["warnings"] = data["summary"].get("warnings", 0) + 1
+    return data
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="aggregate_run_issues.py", description=__doc__.splitlines()[0])
     p.add_argument("output_dir", type=Path)
@@ -1641,6 +1717,8 @@ def main(argv: list[str] | None = None) -> int:
             data = enrich_with_recommendations(data, args.output_dir)
         except (ImportError, AttributeError) as exc:
             print(f"warning: recommend_fixes not available — skipping enrichment ({exc})", file=sys.stderr)
+        else:
+            data = flag_degraded_recommendations(data)
 
     out_path = args.output_dir / ".run-issues.json"
     try:

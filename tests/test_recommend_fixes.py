@@ -283,3 +283,40 @@ def test_cli_success(run_plugin_script, tmp_path):
     out = json.loads((tmp_path / ".run-issues.json").read_text())
     assert "fix_recommendation" in out["issues"][0]
     assert out["summary"]["auto_applicable_fixes"] == 0
+
+
+# ---------------------------------------------------------------------------
+# `degraded` marker — consumed by the aggregator's self-diagnosis canary.
+# ---------------------------------------------------------------------------
+
+
+def test_max_turns_marks_itself_degraded_when_agent_unresolvable(tmp_path):
+    """When the agent name never reached the issue record, this recommender
+    cannot compute a maxTurns bump. It must SAY so structurally rather than
+    emit a plausible-looking manual-review note the summary cannot distinguish
+    from a real finding."""
+    issue = {"category": "max_turns_subagent", "evidence": {"source_agent": ""}}
+    rec = rf._recommend_max_turns_subagent(issue, tmp_path)
+    assert rec["degraded"] == "missing_recommender_input"
+    assert rec["auto_applicable"] is False
+
+
+def test_unknown_category_marks_itself_degraded(tmp_path):
+    """A category with no recommender is a coverage gap in this module."""
+    rec = rf._recommend_default({"category": "brand_new_category", "evidence": {}}, tmp_path)
+    assert rec["degraded"] == "no_recommender_for_category"
+
+
+def test_resolvable_agent_carries_no_degraded_marker(tmp_path):
+    """The marker must vanish once the producer populates the agent name —
+    otherwise the canary would fire forever after the underlying fix."""
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "appsec-threat-merger.md").write_text("---\nname: appsec-threat-merger\nmaxTurns: 12\n---\n")
+    issue = {"category": "max_turns_subagent", "evidence": {"source_agent": "threat-merger"}}
+    import unittest.mock as mock
+
+    with mock.patch.object(rf, "_read_agent_max_turns", lambda name: 12):
+        rec = rf._recommend_max_turns_subagent(issue, tmp_path)
+    assert "degraded" not in rec
+    assert rec["auto_applicable"] is True

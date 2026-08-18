@@ -287,6 +287,7 @@ def _fragment_type_for_file(path: Path) -> str | None:
 def run_pre_render_gate(
     output_dir: Path,
     emit_json: bool = False,
+    write_repair_plan: bool = False,
 ) -> int:
     """Validate fragment presence + schema under output_dir/.fragments/ before
     the renderer runs.  Writes a .pre-render-report.json summary to output_dir.
@@ -341,6 +342,8 @@ def run_pre_render_gate(
         )
         report["missing_required"] = list(required_fragments)
         _write_report(output_dir, report)
+        if write_repair_plan:
+            _write_repair_plan(output_dir, report)
         if emit_json:
             print(json.dumps(report, indent=2))
         else:
@@ -394,6 +397,9 @@ def run_pre_render_gate(
     passed = len(report["passed"])
     skipped = len(report["skipped"])
 
+    if write_repair_plan and (failed or missing):
+        _write_repair_plan(output_dir, report)
+
     if emit_json:
         print(json.dumps(report, indent=2))
     elif failed or missing:
@@ -431,6 +437,64 @@ def _write_report(output_dir: Path, report: dict) -> None:
         pass  # non-fatal — the gate result is printed to stderr regardless
 
 
+def _write_repair_plan(output_dir: Path, report: dict) -> None:
+    """Emit `.fragment-repair-plan.json` in the shape `appsec-fragment-fixer`
+    consumes, so a gate failure is directly actionable instead of merely
+    described.
+
+    Only `failed[]` — schema violations of LLM-authored JSON fragments —
+    becomes a repair action. A `missing_required` entry is deliberately NOT
+    handed to the fixer: that set is dominated by deterministic fragments
+    `pregenerate_fragments.py` owns, and letting an LLM hand-author them would
+    bypass their generator. That case emits an `actionable: false` plan, which
+    the fixer answers with `REPAIR_SKIPPED` and which leaves the decision to
+    the Stage-3 gates that already own the required-set check.
+    """
+    failed = report.get("failed") or []
+    missing = report.get("missing_required") or []
+    actions = [
+        {
+            "raw_issue": f"{entry['file']} ({entry['type']}): {entry['error']}",
+            "type": "fragment_schema_violation",
+            "section_id": "fragments",
+            "fragments_to_rewrite": [f".fragments/{entry['file']}"],
+            "remediation": (
+                f"Re-author `.fragments/{entry['file']}` so it validates against "
+                f"`schemas/fragments/{FRAGMENT_SCHEMAS[entry['type']]}`. The violation carries "
+                "its exact JSON path — correct that field only and preserve every other value. "
+                "The schema's own length and enum limits are authoritative over the prose "
+                "examples in the authoring contract."
+            ),
+            "severity": "blocking",
+        }
+        for entry in failed
+        if entry.get("type") in FRAGMENT_SCHEMAS
+    ]
+    plan: dict[str, Any] = {
+        "output_dir": str(output_dir),
+        "source": "validate_fragment.py pre-render-gate",
+        "status": "fail" if actions else "manual_review",
+        "actionable": bool(actions),
+        "issue_count": len(failed) + len(missing),
+        "action_count": len(actions),
+        "actions": actions,
+        "re_render_command": (
+            "python3 $CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py --output-dir $OUTPUT_DIR --strict"
+        ),
+    }
+    if not actions:
+        plan["manual_review_items"] = [{"issue": f"required fragment missing: {name}"} for name in missing]
+    try:
+        atomic_write_json(
+            output_dir / ".fragment-repair-plan.json",
+            plan,
+            indent=2,
+            sort_keys=False,
+        )
+    except OSError:
+        pass  # non-fatal — the gate exit code still blocks the caller
+
+
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
 
@@ -445,11 +509,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         gate_p.add_argument("output_dir", type=Path, help="Path to $OUTPUT_DIR (must contain .fragments/).")
         gate_p.add_argument("--json", action="store_true", help="Print structured JSON report to stdout.")
+        gate_p.add_argument(
+            "--write-repair-plan",
+            action="store_true",
+            help="On failure also write .fragment-repair-plan.json for appsec-fragment-fixer.",
+        )
         gargs = gate_p.parse_args(args[1:])
         if not gargs.output_dir.is_dir():
             print(f"error: output_dir not a directory: {gargs.output_dir}", file=sys.stderr)
             return 2
-        return run_pre_render_gate(gargs.output_dir, emit_json=gargs.json)
+        return run_pre_render_gate(
+            gargs.output_dir,
+            emit_json=gargs.json,
+            write_repair_plan=gargs.write_repair_plan,
+        )
 
     # Legacy positional mode — original single-fragment interface:
     #   validate_fragment.py <fragment_type> <path>

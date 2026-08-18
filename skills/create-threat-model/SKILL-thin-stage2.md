@@ -60,7 +60,7 @@ handoff.
    ```
 
    The controller composes from complete fragments when needed. If it returns
-   `stage=stage2`, run this compact Stage-2 procedure again; do not emit a
-   completion summary. If it returns Stage 3, Stage 4, or complete, continue
+   `stage=stage2`, obey a receipt naming a repair agent, else re-run this
+   procedure; never emit a completion summary. If it returns 3, 4, or complete, continue
    with the parent runtime's stage-local schedule. Never infer completion from
    Agent return prose or stale report-file presence.

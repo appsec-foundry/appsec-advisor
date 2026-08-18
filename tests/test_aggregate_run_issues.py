@@ -1242,3 +1242,85 @@ def test_append_reconciliation_warns_on_unrecovered(tmp_path):
     )
     last = log_path.read_text(encoding="utf-8").splitlines()[-1]
     assert "WARN" in last and "UNRECOVERED" in last
+
+
+# ---------------------------------------------------------------------------
+# Degraded-recommendation canary
+#
+# A recommender that could not read its OWN input renders in the completion
+# summary exactly like a legitimate low-confidence finding. That is how the
+# MAX_TURNS producer/consumer mismatch (agent name carried in the event detail,
+# read from the empty source column) stayed invisible across runs. The canary
+# keys on the recommender's structural `degraded` marker, never on run content,
+# so it generalises to any repository.
+# ---------------------------------------------------------------------------
+
+
+def _data_with(recommendation: dict | None, category: str = "max_turns_subagent") -> dict:
+    issue: dict = {"category": category, "severity": "error", "title": "t", "evidence": {}, "id": "ISSUE-001"}
+    if recommendation is not None:
+        issue["fix_recommendation"] = recommendation
+    return {"summary": {"errors": 1, "warnings": 0}, "issues": [issue]}
+
+
+def test_canary_fires_on_degraded_recommendation():
+    data = agg.flag_degraded_recommendations(
+        _data_with({"confidence": "low", "degraded": "missing_recommender_input"})
+    )
+    canaries = [i for i in data["issues"] if i["category"] == "pipeline_self_diagnosis_degraded"]
+    assert len(canaries) == 1
+    canary = canaries[0]
+    assert canary["severity"] == "warning"
+    assert canary["evidence"]["degraded_count"] == 1
+    assert canary["evidence"]["reasons"] == ["missing_recommender_input"]
+    assert canary["evidence"]["degraded_issue_ids"] == ["ISSUE-001"]
+    # It must point at the producing component, not at the scanned repository.
+    assert canary["fix_recommendation"]["actions"][0]["target"] == "scripts/recommend_fixes.py"
+    assert data["summary"]["warnings"] == 1
+
+
+def test_canary_silent_on_healthy_recommendation():
+    """A legitimately low-confidence recommendation is NOT a pipeline defect."""
+    data = agg.flag_degraded_recommendations(
+        _data_with({"confidence": "low", "summary": "Heuristic — may be a false positive."})
+    )
+    assert all(i["category"] != "pipeline_self_diagnosis_degraded" for i in data["issues"])
+    assert data["summary"]["warnings"] == 0
+
+
+def test_canary_silent_when_enrichment_absent():
+    """--no-recommend / a failed import must not synthesise a canary."""
+    data = agg.flag_degraded_recommendations(_data_with(None))
+    assert len(data["issues"]) == 1
+    assert data["summary"]["warnings"] == 0
+
+
+def test_canary_aggregates_multiple_reasons_once():
+    data = {
+        "summary": {"errors": 0, "warnings": 0},
+        "issues": [
+            {
+                "category": "max_turns_subagent",
+                "severity": "error",
+                "id": "ISSUE-001",
+                "evidence": {},
+                "fix_recommendation": {"degraded": "missing_recommender_input"},
+            },
+            {
+                "category": "novel_category",
+                "severity": "warning",
+                "id": "ISSUE-002",
+                "evidence": {},
+                "fix_recommendation": {"degraded": "no_recommender_for_category"},
+            },
+        ],
+    }
+    out = agg.flag_degraded_recommendations(data)
+    canaries = [i for i in out["issues"] if i["category"] == "pipeline_self_diagnosis_degraded"]
+    assert len(canaries) == 1, "one canary summarises the run, not one per degraded issue"
+    assert canaries[0]["evidence"]["degraded_count"] == 2
+    assert canaries[0]["evidence"]["reasons"] == [
+        "missing_recommender_input",
+        "no_recommender_for_category",
+    ]
+    assert sorted(canaries[0]["evidence"]["affected_categories"]) == ["max_turns_subagent", "novel_category"]
