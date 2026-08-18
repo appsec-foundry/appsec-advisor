@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- New context-v2 analysis runtime projects only the facts each component needs instead of a shared prompt context; full and rebuild scans use it by default, `APPSEC_CONTEXT_V2=0` keeps the legacy producer. On the reference OWASP Juice Shop at quick depth this reduced the API cost by 39.8 % ($25.02 → $15.06). See `docs/threat-modeler.md`.
+- New context-v2 analysis runtime projects only the facts each component needs instead of a shared prompt context; full and rebuild scans use it by default, `APPSEC_CONTEXT_V2=0` keeps the legacy producer. On the reference OWASP Juice Shop this reduced the API cost by 39.8 % at quick depth ($25.02 → $15.06) and by 26.8 % at thorough depth ($48.01 → $35.15). See `docs/threat-modeler.md`.
 - A new or rebuilt analysis now takes optional business context from pasted text or a URL, interactively, through `--context`, or not at all with `--skip-context`. See `docs/threat-modeler.md`.
 - A context-v2 scan now shows Stage 1 as one task per analysis step, each numbered within its stage and carrying a component counter while STRIDE runs, instead of a single task for its whole duration.
 - An organization profile can declare an `llm_policy` of permitted data classes and approval-required actions. See `docs/org-profiles.md`.

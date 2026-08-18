@@ -220,13 +220,13 @@ Thorough increases both component coverage and per-component analysis depth.
 
 ### Measured cost by depth
 
-The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session. Quick and standard used v0.5.2-dev; thorough used v0.5.1-dev. Results vary with repository, cache state, and model routing.
+The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session on v0.5.2-dev. Results vary with repository, cache state, and model routing.
 
 | Mode | Best fit | Review depth | Measured API cost and time |
 |---|---|---|---|
 | **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; no abuse-case validation or final model-based QA | $15.06 and 97 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick-v0.5.2.md)) |
 | **Standard** *(default)* | Normal security reviews | Full analysis, abuse-case validation, and QA | $25.39 and 124 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.2.md)) |
-| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $48.01 and about 138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.2.md)) |
+| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $35.15 and about 138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.2.md)) |
 
 The standard run included one STRIDE retry. Incremental scans commonly use 70–90% fewer tokens when a previous model is available. Cost follows the number and complexity of analyzed components more closely than raw repository size.
 
