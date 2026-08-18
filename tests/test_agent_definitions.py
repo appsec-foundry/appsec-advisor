@@ -329,23 +329,32 @@ class TestFragmentFixerFinalizationTail:
     """The fragment-fixer recomposes from fragments, which discards the
     autofix-exclusive §4/§5 GFM→HTML fixed-layout table conversion + path
     backticking. The canonical tail `compose --strict → apply_prose_fixes →
-    qa_checks autofix` MUST run after the recompose, with `autofix` LAST,
-    else repaired runs ship regressed §4/§5 tables. Recurring regression
-    class — see AGENTS.md "Critical ordering rule"."""
+    <autofix-bearing command>` MUST run after the recompose, with the autofix
+    LAST, else repaired runs ship regressed §4/§5 tables. Recurring regression
+    class — see AGENTS.md "Critical ordering rule".
+
+    `qa_checks.py gate` satisfies the autofix half: `cmd_gate` runs
+    `_run_autofix` and only then validates the resulting bytes. It is the
+    preferred form because it is also the command SKILL-impl.md decides on —
+    see tests/test_repair_self_verification.py for why the fixer must not
+    self-verify with anything narrower."""
 
     def test_fragment_fixer_reruns_autofix_after_prose_fixes(self):
         body = (AGENTS_DIR / "appsec-fragment-fixer.md").read_text(encoding="utf-8")
         prose_idx = body.find("apply_prose_fixes.py")
-        autofix_idx = body.find("qa_checks.py autofix")
+        # `gate` = `_run_autofix` + `cmd_repair_plan`; either form re-applies
+        # the autofix-exclusive passes. Quoting/line continuations vary.
+        autofix_match = re.search(r'qa_checks\.py"?\s*\\?\s*(?:autofix|gate)\b', body)
         compose_idx = body.find("compose_threat_model.py")
         assert prose_idx != -1, "fragment-fixer must re-run apply_prose_fixes after recompose"
-        assert autofix_idx != -1, (
-            "fragment-fixer must re-run `qa_checks.py autofix` after recompose — "
-            "it owns the §4/§5 GFM→HTML table conversion that compose drops"
+        assert autofix_match is not None, (
+            "fragment-fixer must re-run `qa_checks.py autofix` (or `gate`, which "
+            "subsumes it) after recompose — it owns the §4/§5 GFM→HTML table "
+            "conversion that compose drops"
         )
-        assert compose_idx < prose_idx < autofix_idx, (
+        assert compose_idx < prose_idx < autofix_match.start(), (
             "canonical order must be compose --strict → apply_prose_fixes → "
-            "qa_checks autofix (autofix is the LAST mutation)"
+            "qa_checks autofix/gate (the autofix is the LAST mutation)"
         )
 
     def test_no_unexpected_agents(self):

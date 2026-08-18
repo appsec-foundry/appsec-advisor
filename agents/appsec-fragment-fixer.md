@@ -47,23 +47,25 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
        --output-dir "$OUTPUT_DIR" --strict --skip-changelog-audit
    ```
    A non-zero exit is a repair failure — emit `RENDER_FAILED` and let the skill's loop count this iteration as unsuccessful.
-4. **Re-run the deterministic finalization tail** — a `--strict` recompose regenerates the Markdown from fragments and therefore discards **every** post-compose mutation the pre-agent gate applied. Re-apply the canonical tail in order (both idempotent):
+4. **Re-run the deterministic finalization tail, then verify with the gate that decides.** A `--strict` recompose regenerates the Markdown from fragments and therefore discards **every** post-compose mutation the pre-agent gate applied:
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py" "$OUTPUT_DIR/threat-model.md"
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" autofix "$OUTPUT_DIR/threat-model.md" "$REPO_ROOT"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" gate \
+       "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" "$REPO_ROOT"
    ```
-   `apply_prose_fixes.py` re-backticks bare code tokens; `qa_checks.py autofix` re-applies the links / anchors / MS-structure / cell-format passes **and the §4/§5 GFM→HTML fixed-layout table conversion + `A-NN`/`C-NN` nowrap** — these live ONLY in `autofix` and would otherwise ship as plain wide-column GFM tables. `autofix` MUST be the **last** mutation on `threat-model.md` (AGENTS.md → "Critical ordering rule"). Skipping it is the root cause of the repeated §4/§5 table + code-format regressions on repaired runs.
-5. Re-run the QA contract gate for observability:
-   ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" contract "$OUTPUT_DIR/threat-model.md"
-   ```
-   Exit 0 means the repair worked; 1 means the plan was insufficient (the skill's next iteration re-attempts or hard-fails at the cap).
-6. Only after the contract gate exits 0, regenerate the auxiliary changelog audit once:
+   `apply_prose_fixes.py` re-backticks bare code tokens. `qa_checks.py gate` then re-applies the links / anchors / MS-structure / cell-format passes **and the §4/§5 GFM→HTML fixed-layout table conversion + `A-NN`/`C-NN` nowrap** — these live ONLY in the autofix half and would otherwise ship as plain wide-column GFM tables — and validates the resulting bytes in the same process, so the mutation stays the **last** write to `threat-model.md` (AGENTS.md → "Critical ordering rule").
+
+   **Never substitute `qa_checks.py contract`.** It runs only `check_contract`; of the sixteen `BLOCKING_ACTION_TYPES` that can dispatch you, just `missing_section`, `missing_required_subsection` and `table_schema_drift` originate there — `auth_method_decomposition`, `control_subsection_coverage` and the rest are appended by checks `contract` does not run. Verified that way you report success both for the defect you were sent to fix and for any defect your own edit introduced, while the skill's gate still exits 1.
+5. Read the gate's exit code and act on it:
+   - `0` — converged. Continue at step 6.
+   - `1` — blocking defects remain, and the gate has just rewritten `$OUTPUT_DIR/.qa-repair-plan.json` with what is still open. Re-read that plan and repair again from step 2, **at most 3 internal attempts in total**. Renaming or moving a heading orphans the cross-references that name it — check `**Controls covered:**` and TOC links against every heading you touched. After the third attempt still at exit 1, emit `REPAIR_INCOMPLETE`, log the remaining issues, and stop.
+   - `3` (manual review) or `4` (cosmetic advisory) — not repairable by re-render. Emit `REPAIR_SKIPPED` and stop; do not spend an attempt on them.
+6. Only after the gate exits 0, regenerate the auxiliary changelog audit once:
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_changelog_audit.py" --output-dir "$OUTPUT_DIR"
    ```
    This keeps failed intermediate compose attempts from repeatedly parsing and writing the large audit export while preserving it for every repaired final report.
-7. Log a `STEP_END` / `AGENT_END` pair summarizing which fragment paths were rewritten and the final `qa_checks.py contract` exit code.
+7. Log a `STEP_END` / `AGENT_END` pair summarizing which fragment paths were rewritten, how many internal attempts step 5 consumed, and the final `qa_checks.py gate` exit code.
 
 ## Hard rule — the renderer is the only legal writer of the document
 
@@ -71,4 +73,4 @@ Do **not** write `threat-model.md` or `threat-model.yaml` directly. A `Write`/`E
 
 ## Return signal
 
-Exit after step 5. The skill inspects `.qa-status.json` (written by the next Stage 3 invocation) to decide whether another iteration is needed or whether the loop has converged.
+Exit after step 6. The skill inspects `.qa-status.json` (written by the next Stage 3 invocation) to decide whether another iteration is needed or whether the loop has converged — it re-runs the gate itself and never trusts your prose. Report the gate exit code you actually observed; a success claim that the skill's own gate contradicts is a defect in this agent, not a discrepancy for the skill to absorb.
