@@ -107,14 +107,35 @@ Pair every `⟶ Dispatching …` print with its `AGENT_INVOKE` log line (same Ba
 
 ## Startup logging (MUST be the VERY FIRST Bash command)
 
-Execute this IMMEDIATELY before any file reads, globs, or greps. Combine with `date +%s` to capture `START_EPOCH`:
+Execute this IMMEDIATELY before any file reads, globs, or greps.
+
+**Export `OUTPUT_DIR` as your very first Bash call**, substituting the literal
+path from your dispatch prompt:
 
 ```bash
+export OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
+```
+
+Then log, and combine with `date +%s` to capture `START_EPOCH`:
+
+```bash
+[ -n "${OUTPUT_DIR:-}" ] || { echo "OUTPUT_DIR unset — refusing to log" >&2; exit 2; }
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <AGENT>  AGENT_START   <AGENT> started (model: <MODEL>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 date +%s
 ```
 
-**Important:** `OUTPUT_DIR` is always injected into sub-agent prompts by the orchestrator — do NOT include variable-assignment preamble (`REPO_ROOT=...`, `OUTPUT_DIR=...`) or `mkdir -p` calls in this command. The orchestrator's `acquire_lock.py` already creates `$OUTPUT_DIR` and its standard subdirectories before any sub-agent is dispatched. Combining assignments or mkdir with the echo would produce a compound `&&` chain that Claude Code cannot match against any single `Bash(...)` allow-list entry and will prompt the user.
+**Important:** the orchestrator injects `OUTPUT_DIR` into your prompt as *text*,
+not as shell state. Each Bash call starts a fresh shell, so `$OUTPUT_DIR` is
+unset until you export it — an earlier version of this rule claimed otherwise
+and forbade the export, which made agents improvise `mkdir -p "$OUTPUT_DIR"` on
+an empty variable and append to `/.agent-run.log` at filesystem root (juice-shop
+2026-08-18). Usually this failed silently, because the `2>/dev/null` on the echo
+discarded the error and the agent's own log lines were simply lost.
+
+Never derive, guess, or default the path, and never `mkdir` it — `acquire_lock.py`
+already created `$OUTPUT_DIR` before any sub-agent is dispatched. If the variable
+is empty, **fail loudly** as the guard above does; a log line is never worth a
+write to an unknown location.
 
 Run the echo and `date +%s` as two separate Bash calls (or combine only those two with `&&`) — both are covered by `Bash(echo:*)` and `Bash(date:*)` respectively.
 

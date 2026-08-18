@@ -646,7 +646,12 @@ def _extract_budget_events(agent_log: list[tuple[int, str]]) -> list[dict]:
 
 
 def _extract_warnings(hook_log: list[tuple[int, str]]) -> list[dict]:
-    """BASH_WARN events from PostToolUse hook."""
+    """BASH_WARN events from PostToolUse hook.
+
+    ``BASH_NOTE`` is deliberately not collected: it marks a read-only probe
+    reporting a missing path — visible in the event log, but not an issue to
+    triage.
+    """
     issues: list[dict] = []
     for ln, raw in hook_log:
         ev = _parse_event_line(raw)
@@ -656,7 +661,7 @@ def _extract_warnings(hook_log: list[tuple[int, str]]) -> list[dict]:
             {
                 "category": "bash_warn",
                 "severity": "warning",
-                "title": f"Bash command emitted error/warn keyword: {_clip(ev['detail'], 80)}",
+                "title": f"Bash command emitted a diagnostic on its own channel: {_clip(ev['detail'], 80)}",
                 "evidence": {
                     "log_file": ".hook-events.log",
                     "log_line": ln,

@@ -22,6 +22,7 @@ from agent_logger import (  # noqa: E402
     _agent_model,
     _clip,
     _extract_param,
+    _is_async_launch,
     _mask_secrets,
     _mirror_phase_events_to_hook_log,
     _plain_log_text,
@@ -1920,3 +1921,86 @@ class TestAssessmentSummaryIdle:
         summary = self._summary_line(tmp_path)
         assert "idle≈" not in summary, summary
         assert "active≈" not in summary, summary
+
+
+class TestAsyncLaunchIsNotACompletion:
+    """Claude Code >=2.x answers a foreground Agent call with a launch
+    acknowledgement (`agentId`, `isAsync`, `outputFile`, `status`) carrying no
+    result body. Deciding the lifecycle branch on the input's
+    `run_in_background` flag therefore finished every call at dispatch: all six
+    STRIDE calls went SPAWN → RUNNING → DONE within one second while the agents
+    ran for minutes, which silently disabled every per-component progress write
+    and all `log_event.py` calls that resolve an authoritative running call.
+    """
+
+    def test_async_shaped_return_is_a_launch(self):
+        assert _is_async_launch({"agentId": "a1", "isAsync": True, "outputFile": "/t/a1.out", "status": "running"})
+
+    def test_launch_shape_without_the_flag_is_still_a_launch(self):
+        assert _is_async_launch({"agentId": "a1", "outputFile": "/t/a1.out", "status": "running"})
+
+    def test_a_real_completion_is_not_a_launch(self):
+        assert not _is_async_launch({"result": "done", "usage": {"output_tokens": 100}})
+
+    def test_a_launch_shape_carrying_a_body_is_a_completion(self):
+        assert not _is_async_launch({"agentId": "a1", "outputFile": "/t/x", "result": "done"})
+
+    def test_non_dict_is_never_a_launch(self):
+        assert not _is_async_launch("agent finished")
+        assert not _is_async_launch(None)
+
+
+class TestBashWarnUsesProvenanceNotKeywordSoup:
+    """A diagnostic belongs to the command only if the command emitted it.
+
+    The rule used to match keywords against `str(tool_response)` — both channels
+    plus the dict's own keys flattened into one blob — so any file whose body
+    mentioned an error flagged the command that merely printed it. On the
+    2026-08-18 juice-shop run 7 of 14 warnings were transported content, and the
+    noise hid four real defects.
+
+    Exit status is deliberately NOT the discriminator: the PostToolUse payload
+    carries none, and all 7 genuine defects on that run exited 0 anyway because
+    the callers used `|| true`, `2>&1 | tail`, and `$?` after a pipe.
+    """
+
+    def _run(self, tmp_path, command, stdout="", stderr=""):
+        event = make_post_tool_event("Bash", inp={"command": command}, resp={"stdout": stdout, "stderr": stderr})
+        return run_logger(event, tmp_path)[1]
+
+    def test_transported_keyword_deep_in_a_dump_is_not_a_warning(self, tmp_path):
+        dump = "line\n" * 25 + "  description: error: raised when the token expires\n" + "line\n" * 40
+        log = self._run(tmp_path, "sed -n 1,200p schemas/stride.schema.yaml", stdout=dump)
+        assert "BASH_WARN" not in log
+
+    def test_self_emitted_usage_on_stdout_warns_despite_exit_zero(self, tmp_path):
+        """The `2>&1 | tail; echo AUDIT_EXIT:$?` shape — a real argparse failure."""
+        out = "usage: render_changelog_audit.py [-h]\nrender_changelog_audit.py: error: unrecognized arguments: /p\nAUDIT_EXIT:0\n"
+        log = self._run(
+            tmp_path, 'python3 render_changelog_audit.py /p 2>&1 | tail -5; echo "AUDIT_EXIT:$?"', stdout=out
+        )
+        assert "BASH_WARN" in log
+
+    def test_hand_rolled_program_diagnostic_warns(self, tmp_path):
+        """`log_event.py: unknown kind 'agent_start'` carries no keyword at all."""
+        out = "/p/scripts/log_event.py: unknown kind 'agent_start' (expected one of ['info'])\n"
+        log = self._run(tmp_path, "python3 /p/scripts/log_event.py info agent_start x 2>&1", stdout=out)
+        assert "BASH_WARN" in log
+
+    def test_stderr_keyword_warns_at_any_position(self, tmp_path):
+        log = self._run(tmp_path, "python3 x.py", stdout="ok\n" * 200, stderr="Traceback (most recent call last):")
+        assert "BASH_WARN" in log
+
+    def test_readonly_probe_reporting_an_absent_path_is_demoted(self, tmp_path):
+        log = self._run(tmp_path, "ls a.json b.json", stdout="ls: cannot access 'b.json': No such file or directory\n")
+        assert "BASH_NOTE" in log
+        assert "BASH_WARN" not in log
+
+    def test_empty_output_dir_mkdir_still_warns(self, tmp_path):
+        """The genuine defect that started this: `mkdir -p ""` on an unset var."""
+        log = self._run(
+            tmp_path,
+            'set -e; mkdir -p "$OUTPUT_DIR"',
+            stdout="mkdir: cannot create directory '': No such file or directory\n",
+        )
+        assert "BASH_WARN" in log

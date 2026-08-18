@@ -428,3 +428,50 @@ def test_critical_marker_matches_its_published_schema(tmp_path: Path) -> None:
         (Path(__file__).parent.parent / "schemas" / "agent-call-budget-marker.schema.json").read_text(encoding="utf-8")
     )
     assert list(Draft202012Validator(schema).iter_errors(value)) == []
+
+
+class TestParallelForegroundWaveSurvives:
+    """A parallel wave holds N concurrent foreground calls.
+
+    Superseding every running foreground call in the session left exactly one
+    alive and marked the rest `superseded_without_return`, which then broke
+    every per-component lookup that requires its own call to be running.
+    """
+
+    @staticmethod
+    def _ident(cid, job, comp, attempt=1):
+        return {
+            "agent_call_id": cid,
+            "session_id": "S",
+            "agent": "stride",
+            "agent_type": "appsec-stride-analyzer-v2",
+            "background": False,
+            "action_id": "A1",
+            "job_id": job,
+            "component_id": comp,
+            "attempt": attempt,
+        }
+
+    def _states(self, d):
+        return {c["agent_call_id"]: c["state"] for c in lifecycle._read_state_unlocked(d)["calls"]}
+
+    def test_five_parallel_components_all_stay_running(self, tmp_path):
+        for i in range(5):
+            lifecycle.append_events(
+                tmp_path, lifecycle.register_call(tmp_path, self._ident(f"c{i}", f"job-{i}", f"comp-{i}"))
+            )
+        assert sorted(self._states(tmp_path).values()) == ["running"] * 5
+
+    def test_redispatch_of_the_same_job_still_supersedes(self, tmp_path):
+        for i in range(3):
+            lifecycle.append_events(
+                tmp_path, lifecycle.register_call(tmp_path, self._ident(f"c{i}", f"job-{i}", f"comp-{i}"))
+            )
+        lifecycle.append_events(
+            tmp_path,
+            lifecycle.register_call(tmp_path, self._ident("c0-retry", "job-0", "comp-0", attempt=2)),
+        )
+        states = self._states(tmp_path)
+        assert states["c0"] == "failed", "a genuine re-dispatch of the same job must supersede"
+        assert states["c1"] == "running", "a sibling job must not be collateral"
+        assert states["c2"] == "running"

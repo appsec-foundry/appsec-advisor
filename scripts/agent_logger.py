@@ -980,6 +980,35 @@ def _runtime_agent_id(value: object) -> str:
     return ""
 
 
+def _is_async_launch(value: object) -> bool:
+    """True when an Agent return only acknowledges a launch.
+
+    Claude Code >=2.x answers an Agent call with an async-shaped result
+    (``agentId``, ``isAsync``, ``outputFile``, ``status``) carrying no result
+    body, even when the call was dispatched with ``run_in_background: false``.
+    Deciding the lifecycle branch on the *input* flag therefore finishes every
+    call at dispatch: on the 2026-08-18 juice-shop run all six STRIDE calls went
+    SPAWN → RUNNING → DONE within the same second while the agents ran for
+    minutes. Every later per-component write — progress files and all
+    ``log_event.py`` calls that resolve an authoritative running call — then
+    fails, because no call is ever in ``running``.
+
+    ``telemetry_consistency`` already reasons about this shape; this is the same
+    knowledge, consumed where the lifecycle branch is chosen. Detection is
+    positive-only: an explicit ``isAsync`` truth, or a launch-shaped dict that
+    names an agent and an output file but returns no content.
+    """
+    if not isinstance(value, dict):
+        return False
+    for key in ("isAsync", "is_async"):
+        if value.get(key) is True:
+            return True
+    has_agent = bool(_runtime_agent_id(value))
+    has_output_file = any(k in value for k in ("outputFile", "output_file"))
+    has_body = any(k in value for k in ("result", "content", "output", "text", "usage"))
+    return has_agent and has_output_file and not has_body
+
+
 def _plain_log_text(value: object) -> str:
     """Normalize tool-protocol display text for one-line plaintext logs.
 
@@ -3050,7 +3079,9 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
                 agent_lifecycle.bind_runtime_agent_id(_output_dir(), call_id, runtime_agent_id)
             if is_err:
                 events = agent_lifecycle.fail_call(_output_dir(), call_id, "agent_tool_error")
-            elif bg:
+            elif bg or _is_async_launch(resp):
+                # A launch acknowledgement is not a completion — the call stays
+                # running and terminates on SubagentStop. See _is_async_launch.
                 events = agent_lifecycle.acknowledge_background_call(_output_dir(), call_id)
             else:
                 events = agent_lifecycle.finish_call(_output_dir(), call_id)
@@ -3145,7 +3176,6 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     # --- Bash tool — warn on errors + extract substep progress for verbose ---
     elif tool == "Bash":
         cmd_str = str(inp.get("command", ""))
-        resp_str = str(resp).lower()
         ERROR_KW = (
             "permission denied",
             "no such file or directory",
@@ -3164,12 +3194,66 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
             # Phase-10b regression burnt 5+ minutes this way).
             "usage:",
         )
+
+        # Provenance, not exit status. The PostToolUse payload carries no exit
+        # code (measured: 1255 Bash responses on the 2026-08-18 juice-shop run,
+        # none with such a field), and gating on one would help nothing anyway —
+        # all 7 genuine defects in that run exited 0 because the orchestrator's
+        # own idioms destroy the status (`|| true`, `2>&1 | tail`, `$?` after a
+        # pipe). What separates a real diagnostic from a transported one is
+        # WHERE the keyword appears:
+        #   * stderr is always the command's own voice  → scan in full;
+        #   * stdout is the command's voice only at its edges → scan the first
+        #     and last 3 lines. Measured, genuine hits land on stdout line 1-2;
+        #     false positives sat at lines 15-134 of `sed`/`grep`/`cat` dumps
+        #     that merely CONTAINED the word "error".
+        # Before this, `str(resp)` flattened both channels plus the dict keys
+        # into one blob, so any file whose body mentioned an error flagged the
+        # command that printed it: 7 of 14 warnings were transported content,
+        # and the noise hid four real defects.
+        def _channel(name: str) -> str:
+            return str(resp.get(name) or "") if isinstance(resp, dict) else ""
+
+        stderr_text = _channel("stderr")
+        stdout_text = _channel("stdout")
+        if not isinstance(resp, dict):
+            # Unknown shape — fall back to the whole blob rather than going blind.
+            stderr_text = str(resp)
+        stdout_lines = stdout_text.splitlines()
+        edge = "\n".join(stdout_lines[:3] + stdout_lines[-3:]).lower()
+        scanned = f"{stderr_text.lower()}\n{edge}"
+
+        # A tool speaking about itself writes at column 0: `usage:`,
+        # `prog: error: …`, or `prog.py: <diagnostic>` (the hand-rolled form —
+        # `log_event.py: unknown kind 'agent_start'`, which carries none of the
+        # keywords yet is a rejected call whose event was silently dropped).
+        # The same words mid-line are prose, so anchoring keeps every CLI
+        # failure while dropping YAML descriptions and doc dumps.
+        anchored = re.search(r"(?m)^\s*(usage:|\S*:\s*error:|\S+\.(?:py|sh):\s+\S)", scanned) is not None
+        unanchored = any(kw in scanned for kw in ERROR_KW if kw not in ("usage:", "error:"))
+
         # Exclude legitimate `--help` / `-h` discovery calls — they print
         # `usage:` to stdout but are not failures. Without this guard the
         # orchestrator's help-discovery noise (typically 10+ calls per run)
         # drowned out genuine errors in the log.
         is_help_call = "--help" in cmd_str or cmd_str.endswith(" -h") or " -h " in cmd_str
-        is_warn = any(kw in resp_str for kw in ERROR_KW) and not is_help_call
+
+        # A read-only probe reporting an absent path is a question answered, not
+        # a failure — demote it so it stays visible without competing with real
+        # defects for the completion summary's top-issue slot.
+        probe = re.sub(r"^\s*cd\s+\S+\s*&&\s*", "", cmd_str).strip()
+        leading = re.split(r"[\s|;]", probe, 1)[0].rsplit("/", 1)[-1]
+        is_probe = leading in {"cat", "sed", "head", "tail", "grep", "rg", "ls", "wc", "find"}
+
+        is_warn = (anchored or unanchored) and not is_help_call
+        if is_warn and is_probe and not stderr_text.strip():
+            _write(
+                "INFO ",
+                "BASH_NOTE",
+                f"cmd={_mask_secrets(_clip(cmd_str, 80))}  read-only probe reported a missing path{dur_tail}",
+                sid,
+            )
+            is_warn = False
         if is_warn:
             cmd = _mask_secrets(_clip(cmd_str, 80))
             _write("WARN ", "BASH_WARN", f"cmd={cmd}  resp={_mask_secrets(_clip(str(resp), 100))}{dur_tail}", sid)

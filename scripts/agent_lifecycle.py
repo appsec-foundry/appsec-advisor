@@ -258,11 +258,20 @@ def register_call(output_dir: str | Path, identity: dict[str, Any]) -> list[Life
                     return []
                 return [LifecycleEvent("AGENT_LIFECYCLE_REJECTED", existing, "duplicate_or_reordered_spawn")]
         if not new_call["background"]:
+            # Supersede only a re-dispatch of the SAME job, never every running
+            # foreground call in the session. A parallel wave (STRIDE, abuse
+            # cases, renderers) legitimately holds N concurrent foreground calls;
+            # session-wide superseding leaves exactly one alive and marks the
+            # rest `superseded_without_return`, which then breaks every
+            # per-component lookup that requires its call to be running.
             for existing in state["calls"]:
                 if (
                     existing.get("state") == "running"
                     and not existing.get("background")
                     and existing.get("session_id") == new_call["session_id"]
+                    and existing.get("action_id") == new_call.get("action_id")
+                    and existing.get("job_id") == new_call.get("job_id")
+                    and existing.get("component_id") == new_call.get("component_id")
                 ):
                     existing["state"] = "failed"
                     existing["finished_at"] = _now()
