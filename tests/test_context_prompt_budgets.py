@@ -298,6 +298,12 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     for derived in ("context-v2-post-recon", "context-v2-post-actors", "context-v2-post-architecture"):
         assert derived not in text, derived
 
+    # The boundary names are the runtime's own vocabulary. A run printed
+    # "calling context-v2-post-evidence" and labelled a dispatch
+    # "Evidence verifier - phase10a-evidence", so the ban has to name every
+    # surface the reader sees, not narration alone.
+    assert "a command, boundary, or id never reaches console text, an Agent description, or a task row" in flat
+
     # It must not carry the legacy generation's stage machinery.
     assert "SKILL-thin-stage1.md" in text  # names it only to forbid mixing
     assert "STAGE1_PHASE_LIMIT" not in text

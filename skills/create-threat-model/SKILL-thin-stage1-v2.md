@@ -1,8 +1,9 @@
 # Compact Thin Stage 1 — context-v2
 
-`prepare` selects this for context-v2; never mix `SKILL-thin-stage1.md`.
+`prepare` selects this runtime; never mix `SKILL-thin-stage1.md`.
 
-**No meta-narration.** Report outcomes; never name a command, boundary, or id.
+**No meta-narration.** Report outcomes; a command, boundary, or id never
+reaches console text, an Agent description, or a task row.
 
 ## Invariants
 
@@ -14,8 +15,7 @@
   Pass no `run_in_background`; the Agent schema rejects it.
 - Do not end your turn after dispatching; join STRIDE below and wait for foreground jobs.
 - Description: `STRIDE (<dispatch_jobs[].analysis_depth>): <dispatch_jobs[].component_id>`.
-- Returns carry status, paths, and blockers; filesystem is
-  authoritative.
+- Returns carry status and blockers; filesystem is authoritative.
 - Never re-dispatch an agent that already returned; controller classifies
   missing output.
 - On abort, quote its reason. Never recommend `--resume` or claim
@@ -70,7 +70,7 @@ depth — and never re-invoke a boundary whose dispatch already ran.
 Invoke Agent with `subagent_type=dispatch_jobs[].agent_type`,
 `model=dispatch_jobs[].model`, the dispatch mode above, and this common prefix.
 The job model is already the bare alias; a `dispatch_values` model
-(`stride_model`, …) is a full id, is rejected, and loses the dispatch.
+(`stride_model`, …) is a full id and loses the dispatch.
 
 ```text
 REPO_ROOT=<REPO_ROOT>
