@@ -347,8 +347,11 @@ error.
   bytes.
 - Receipt creation validates and hashes one exact byte snapshot. Immediately
   before Agent dispatch, the thin runtime calls `verify-receipts` once for the
-  complete action, STRIDE taxonomy slices, and the effective-plan receipt; a
-  missing validator, unreadable artifact, or byte change fails closed.
+  complete action and its STRIDE taxonomy slices; the effective-plan receipt is
+  one of the action's receipts, and naming it a second time with the same
+  fingerprint verifies it once rather than failing. A missing validator,
+  unreadable artifact, byte change, or one path carrying two fingerprints fails
+  closed.
 - Before returning a semantic dispatch, the controller removes prior bytes for
   every output not also used as an in-place repair input. Fresh context-v2 entry
   also removes optional evidence and synthesis outputs that may have no producer

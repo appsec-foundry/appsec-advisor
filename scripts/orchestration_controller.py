@@ -886,13 +886,18 @@ def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]
     """Re-hash one action's admitted inputs immediately before Agent dispatch."""
     if not receipt_pairs:
         raise ControllerError("receipt verification requires at least one artifact")
-    if len(receipt_pairs) > 64:
-        raise ControllerError("receipt verification exceeds the 64-artifact action cap")
-    seen: set[str] = set()
+    # A bound action names the effective context plan twice — once among its
+    # artifact receipts, once as its plan reference — so a caller that passes
+    # both is repeating one claim, not making a second one. Equal pairs fold
+    # into one verification; two fingerprints for one path stay a contradiction
+    # and abort, as does a byte change under either of them.
+    expected: dict[str, str] = {}
     for artifact_path, expected_sha256 in receipt_pairs:
-        if artifact_path in seen:
-            raise ControllerError(f"duplicate receipt verification path: {artifact_path}")
-        seen.add(artifact_path)
+        if expected.setdefault(artifact_path, expected_sha256) != expected_sha256:
+            raise ControllerError(f"conflicting receipt fingerprints for path: {artifact_path}")
+    if len(expected) > 64:
+        raise ControllerError("receipt verification exceeds the 64-artifact action cap")
+    for artifact_path, expected_sha256 in expected.items():
         if not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
             raise ControllerError(f"invalid receipt fingerprint for {artifact_path!r}")
         path = _resolve_artifact_path(output_root.resolve(), artifact_path)
@@ -907,7 +912,7 @@ def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]
             "schema_version": 1,
             "action": "run_gate",
             "dispatch_values": {"output_dir": str(output_root.resolve())},
-            "receipts": [f"Verified {len(receipt_pairs)} artifact receipt(s) immediately before dispatch"],
+            "receipts": [f"Verified {len(expected)} artifact receipt(s) immediately before dispatch"],
         }
     )
 

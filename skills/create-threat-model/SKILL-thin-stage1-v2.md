@@ -36,8 +36,8 @@ Call the boundary command:
    ```
 
 Send foreground `dispatch_jobs[]` together. Immediately before dispatch call
-`verify-receipts` with every artifact receipt, STRIDE
-`taxonomy_slice_path`/`taxonomy_slice_sha256`, and context-plan receipt pair.
+`verify-receipts` with every artifact receipt (context plan included) and
+STRIDE `taxonomy_slice_path`/`taxonomy_slice_sha256`.
 Omit empty calls. It is the last filesystem operation. `run_gate` completes;
 abort/non-zero is terminal.
 

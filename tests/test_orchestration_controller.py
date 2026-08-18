@@ -1656,6 +1656,53 @@ def test_verify_receipt_hashes_rejects_a_post_validation_change(tmp_path):
         controller.verify_receipt_hashes(tmp_path, [("result.json", expected)])
 
 
+def test_verify_receipt_hashes_folds_a_repeated_claim_and_rejects_a_conflicting_one(tmp_path):
+    artifact = tmp_path / "result.json"
+    artifact.write_text("original\n", encoding="utf-8")
+    expected = hashlib.sha256(artifact.read_bytes()).hexdigest()
+
+    gate = controller.verify_receipt_hashes(tmp_path, [("result.json", expected), ("result.json", expected)])
+    assert "Verified 1 artifact receipt(s)" in gate["receipts"][0]
+
+    other = hashlib.sha256(b"something else\n").hexdigest()
+    with pytest.raises(controller.ControllerError, match="conflicting receipt fingerprints"):
+        controller.verify_receipt_hashes(tmp_path, [("result.json", expected), ("result.json", other)])
+
+
+def test_the_verifier_accepts_what_a_bound_action_names(tmp_path):
+    """A bound action carries the effective context plan twice — among its
+    artifact receipts and as its plan reference — and the runtime passes both.
+    Rejecting that as a duplicate ended a run at the dispatch gate with Stage 1
+    complete (juice-shop 2026-08-18).
+    """
+    output = _write_context_v2_config(tmp_path)
+    cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+    action = controller._context_v2_dispatch(
+        output,
+        cfg,
+        role="context_resolver",
+        job_id="phase1-context",
+        next_boundary="context-v2-post-recon",
+        input_artifacts=[".skill-config.json"],
+        output_artifacts=[".threat-modeling-context.md"],
+        decision_keys=[],
+        receipts=[],
+    )
+    plan = controller.context_routing.resolve_action(
+        action,
+        output,
+        semantic_roles=controller.SEMANTIC_ROLE_REGISTRY,
+        model_keys=controller.SEMANTIC_ROLE_MODEL_KEYS,
+    )
+    bound = controller.context_routing.bind_action_to_plan(action, plan, output)
+
+    pairs = [(receipt["artifact_path"], receipt["sha256"]) for receipt in bound["artifact_receipts"]]
+    pairs.append((bound["context_plan"]["artifact_path"], bound["context_plan"]["sha256"]))
+    assert len({path for path, _ in pairs}) < len(pairs), "the plan is named twice, or this test proves nothing"
+
+    assert controller.verify_receipt_hashes(output, pairs)["action"] == "run_gate"
+
+
 def test_dispatch_values_supply_runtime_defaults(tmp_path):
     values = controller._dispatch_values(
         _cfg(tmp_path),
