@@ -2133,7 +2133,16 @@ def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | No
 
 
 def _context_v2_terminal_abort_reason() -> str | None:
-    """Reject tool use after a current-run context-v2 controller abort."""
+    """Reject a producer dispatch after a current-run context-v2 abort.
+
+    What must not happen after an authoritative abort is that the pipeline
+    continues, so this covers the one call that continues it: an Agent
+    dispatch. Boundary commands refuse on their own — every context-v2 command
+    re-reads the abort state before it does anything — which leaves reading,
+    diagnosing and the recovery skills, none of which advance the run. Denying
+    those too is what made the abort message's own advice, to start a fresh
+    rebuild, impossible to follow without deleting files by hand.
+    """
     output_dir = Path(_output_dir())
     config_path = output_dir / ".skill-config.json"
     if not config_path.is_file():
@@ -2240,10 +2249,11 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     event = _hook_event(data, "PreToolUse", sid)
     tool = event.tool_name
 
-    abort_reason = _context_v2_terminal_abort_reason()
-    if abort_reason is not None:
-        _emit_pretool_denial(abort_reason)
-        return
+    if event.is_agent_call:
+        abort_reason = _context_v2_terminal_abort_reason()
+        if abort_reason is not None:
+            _emit_pretool_denial(abort_reason)
+            return
 
     # A gate used to sit here demanding `run_in_background: true` on STRIDE and
     # abuse-verifier dispatches. Claude Code >=2.x dropped that parameter from

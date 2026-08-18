@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1654,6 +1655,32 @@ def test_verify_receipt_hashes_rejects_a_post_validation_change(tmp_path):
     artifact.write_text("changed\n", encoding="utf-8")
     with pytest.raises(controller.ControllerError, match="changed after validation"):
         controller.verify_receipt_hashes(tmp_path, [("result.json", expected)])
+
+
+def test_a_malformed_call_ends_the_call_and_a_bad_artifact_ends_the_run(tmp_path, monkeypatch):
+    """The two failures a boundary command can have are not the same failure.
+    Arguments it cannot read leave the run untouched, so the caller may correct
+    them and repeat; a byte change under a receipt is a statement about the run
+    and stays terminal. Treating both as terminal ended runs over a duplicated
+    argument (juice-shop 2026-08-18).
+    """
+    artifact = tmp_path / "result.json"
+    artifact.write_text("original\n", encoding="utf-8")
+    expected = hashlib.sha256(artifact.read_bytes()).hexdigest()
+
+    monkeypatch.setattr(sys, "argv", ["c", "verify-receipts", "--output-dir", str(tmp_path), "--receipt", "x", "nope"])
+    assert controller.main() == 3
+    assert not (tmp_path / ".agent-run.log").exists()
+    assert not (tmp_path / ".run-issues.json").exists()
+
+    artifact.write_text("changed\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["c", "verify-receipts", "--output-dir", str(tmp_path), "--receipt", "result.json", expected],
+    )
+    assert controller.main() == 2
+    assert "RUN_ABORTED" in (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
 
 
 def test_verify_receipt_hashes_folds_a_repeated_claim_and_rejects_a_conflicting_one(tmp_path):

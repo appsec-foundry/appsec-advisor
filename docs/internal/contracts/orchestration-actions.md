@@ -345,6 +345,11 @@ error.
   A structured receipt records the relative path, schema identity, SHA-256,
   record count, and successful validation status from the exact validated
   bytes.
+- A command that rejects its own arguments answers `reject` with exit code 3,
+  writes no `RUN_ABORTED`, and leaves the run untouched; the caller corrects the
+  call and repeats it. Everything a command learns from disk — a changed
+  artifact, an invalid contract, a stale receipt — answers `abort`, ends the
+  run, and is never repeated.
 - Receipt creation validates and hashes one exact byte snapshot. Immediately
   before Agent dispatch, the thin runtime calls `verify-receipts` once for the
   complete action and its STRIDE taxonomy slices; the effective-plan receipt is

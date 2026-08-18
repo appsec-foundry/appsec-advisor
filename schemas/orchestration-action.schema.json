@@ -16,6 +16,7 @@
         "dispatch_agent",
         "dispatch_parallel",
         "load_runtime",
+        "reject",
         "run_gate",
         "start_watchdog",
         "stop_watchdog"

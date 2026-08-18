@@ -39,7 +39,7 @@ Send foreground `dispatch_jobs[]` together. Immediately before dispatch call
 `verify-receipts` with every artifact receipt (context plan included) and
 STRIDE `taxonomy_slice_path`/`taxonomy_slice_sha256`.
 Omit empty calls. It is the last filesystem operation. `run_gate` completes;
-abort/non-zero is terminal.
+`reject` = fix the call, repeat; else terminal.
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
@@ -57,8 +57,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
 ```
 
 Exit `75`: repeat unchanged (deadline persists). `0`/`1`: call
-`context-v2-post-stride`. `2`: abort. It rejects seeds and future waves; never
-re-dispatch or end here.
+`context-v2-post-stride`. `2`: abort. Never re-dispatch or end here.
 
 `context-v2-begin` opens the chain. After that, once the dispatched jobs
 return, the next command is always the returned action's `next_boundary`,

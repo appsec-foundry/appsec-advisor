@@ -45,7 +45,7 @@ Removing an entry means listing it here in the same change.
 | ST-1 | Every artifact crossing a boundary carries a versioned receipt whose hash is verified before dispatch, in `verify_receipt_hashes` | `test_exact_byte_plan_receipt_detects_mutation` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, Contract A |
 | ST-2 | A stale receipt is refused, never repaired | `test_shadow_plan_rejects_stale_action_receipt` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, Contract A |
 | ST-3 | A run cannot continue across runtime generations; generation and artifact schema versions are persisted *(generation-scoped — WP7)* | `test_route_rejects_context_v2_generation_on_legacy_runtime`, `test_context_v2_action_refuses_a_run_without_a_persisted_generation` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, WP7 |
-| ST-4 | Resume is refused after an authoritative abort; a stale aborted state is not resumable | `test_resume_guard_refuses_stale_aborted` | `CHANGELOG.md` (context-v2) |
+| ST-4 | Resume is refused after an authoritative abort; a stale aborted state is not resumable. It is enforced where a run would continue — every boundary command, and the producer dispatch — not on every tool call | `test_resume_guard_refuses_stale_aborted`, `test_after_an_abort_only_a_producer_dispatch_is_denied` | `CHANGELOG.md` (context-v2) |
 
 ## Orchestration
 
@@ -64,6 +64,7 @@ Removing an entry means listing it here in the same change.
 | OR-11 | Every dispatching action names its successor boundary in `next_boundary`; the caller invokes that name and never derives the sequence, which branches by depth | `tests/test_orchestration_controller.py::TestContextV2NextBoundary` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-12 | A contract violation in LLM-written recon signals buys one redispatch carrying the validator errors; STRIDE keeps its separate persisted two-attempt component budget, and other producers follow their boundary contract | `tests/test_orchestration_controller.py::TestProducerContractRetry` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-13 | An artifact a boundary regenerates and then receipts keeps its timestamp while its remaining content is unchanged, so the boundary can repeat the dispatch it already issued | `tests/test_merge_threats.py::TestBoundaryRepeatability`, `test_builder_carries_generated_at_while_the_manifest_is_unchanged` | `scripts/_artifact_stamp.py` |
+| OR-14 | A command that rejects its own arguments ends the call and not the run — `reject`, exit code 3, no `RUN_ABORTED`, and the caller repeats it corrected; what a command learns from disk stays a terminal abort | `test_a_malformed_call_ends_the_call_and_a_bad_artifact_ends_the_run` | `docs/internal/contracts/orchestration-actions.md` |
 
 ## Repair
 

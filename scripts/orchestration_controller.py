@@ -460,6 +460,22 @@ class ControllerError(RuntimeError):
         self.exit_code = exit_code
 
 
+class CallError(ControllerError):
+    """The invocation itself is malformed; the run behind it is intact.
+
+    Raised only while reading a command's own arguments, before anything is
+    read from or written to the run. Nothing has happened that a corrected
+    second call would repeat, so this ends the call and not the run: the
+    controller answers `reject` with exit code 3 and writes no `RUN_ABORTED`.
+    Everything a command learns from disk — a changed artifact, an invalid
+    contract, a stale receipt — is a statement about the run and stays a
+    terminal abort.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, exit_code=3)
+
+
 class ProducerContractError(ControllerError):
     """An LLM-written artifact violates its contract.
 
@@ -885,7 +901,7 @@ def consume_artifact_receipt(output_root: Path, receipt: dict[str, Any]) -> byte
 def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]]) -> dict[str, Any]:
     """Re-hash one action's admitted inputs immediately before Agent dispatch."""
     if not receipt_pairs:
-        raise ControllerError("receipt verification requires at least one artifact")
+        raise CallError("receipt verification requires at least one artifact")
     # A bound action names the effective context plan twice — once among its
     # artifact receipts, once as its plan reference — so a caller that passes
     # both is repeating one claim, not making a second one. Equal pairs fold
@@ -894,12 +910,12 @@ def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]
     expected: dict[str, str] = {}
     for artifact_path, expected_sha256 in receipt_pairs:
         if expected.setdefault(artifact_path, expected_sha256) != expected_sha256:
-            raise ControllerError(f"conflicting receipt fingerprints for path: {artifact_path}")
+            raise CallError(f"conflicting receipt fingerprints for path: {artifact_path}")
     if len(expected) > 64:
-        raise ControllerError("receipt verification exceeds the 64-artifact action cap")
+        raise CallError("receipt verification exceeds the 64-artifact action cap")
     for artifact_path, expected_sha256 in expected.items():
         if not re.fullmatch(r"[a-f0-9]{64}", expected_sha256):
-            raise ControllerError(f"invalid receipt fingerprint for {artifact_path!r}")
+            raise CallError(f"invalid receipt fingerprint for {artifact_path!r}")
         path = _resolve_artifact_path(output_root.resolve(), artifact_path)
         try:
             payload = path.read_bytes()
@@ -955,14 +971,19 @@ def _emit(action: dict[str, Any]) -> int:
                 f"revision={plan['revision']} actions={len(plan['actions'])} deliveries={len(plan['deliveries'])}",
             )
     except ControllerError as exc:
-        action = {
-            "schema_version": 1,
-            "action": "abort",
-            "reason": str(exc),
-            "exit_code": exc.exit_code,
-        }
+        action = _failure_action(exc)
     print(json.dumps(action, indent=2, sort_keys=True))
-    return int(action.get("exit_code", 0)) if action["action"] == "abort" else 0
+    return int(action.get("exit_code", 0)) if action["action"] in {"abort", "reject"} else 0
+
+
+def _failure_action(exc: ControllerError) -> dict[str, Any]:
+    """Answer a malformed call with `reject`, everything else with `abort`."""
+    return {
+        "schema_version": 1,
+        "action": "reject" if isinstance(exc, CallError) else "abort",
+        "reason": str(exc),
+        "exit_code": exc.exit_code,
+    }
 
 
 def _resolve(argv: list[str]) -> dict[str, Any]:
@@ -6178,18 +6199,17 @@ def main(argv: list[str] | None = None) -> int:
         else:
             action = next_action(Path(args.output_dir))
     except (ControllerError, SystemExit, OSError) as exc:
-        code = exc.exit_code if isinstance(exc, ControllerError) else 2
-        action = {
-            "schema_version": 1,
-            "action": "abort",
-            "reason": str(exc),
-            "exit_code": code,
-        }
-        _aggregate_issues_on_abort(
-            getattr(args, "output_dir", None),
-            str(exc),
-            getattr(args, "repo_root", None),
-        )
+        if not isinstance(exc, ControllerError):
+            exc = ControllerError(str(exc))
+        action = _failure_action(exc)
+        # A rejected call left the run exactly as it found it, so it neither
+        # ends the run nor belongs in its issue report.
+        if action["action"] == "abort":
+            _aggregate_issues_on_abort(
+                getattr(args, "output_dir", None),
+                str(exc),
+                getattr(args, "repo_root", None),
+            )
     return _emit(action)
 
 

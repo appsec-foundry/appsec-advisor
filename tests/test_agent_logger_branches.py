@@ -439,6 +439,38 @@ class TestPreToolUseBranches:
         )
         assert al.os.environ.get("OUTPUT_DIR") == str(recovered)
 
+    def test_after_an_abort_only_a_producer_dispatch_is_denied(self, al, monkeypatch, tmp_path, capsys):
+        """What must not continue after an authoritative abort is the pipeline,
+        and only an Agent dispatch continues it — boundary commands refuse on
+        their own. Denying every call instead left the operator unable to
+        diagnose, or to follow the abort message's own advice.
+        """
+        (tmp_path / ".skill-config.json").write_text('{"runtime_generation": "context-v2"}', encoding="utf-8")
+        (tmp_path / ".scan-start-epoch").write_text("1", encoding="utf-8")
+        (tmp_path / ".agent-run.log").write_text(
+            "2026-08-18T10:00:00Z  [--------]  WARN   skill-controller    RUN_ABORTED         boundary gate\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+
+        al.handle_pre_tool_use(
+            {
+                "tool_use_id": "toolu_x",
+                "tool_name": "Agent",
+                "tool_input": {"subagent_type": "appsec-advisor:appsec-threat-analyst", "prompt": "JOB_ID=j"},
+            },
+            "sid",
+        )
+        assert "deny" in capsys.readouterr().out
+
+        for tool, tool_input in (
+            ("Read", {"file_path": str(tmp_path / ".run-issues.json")}),
+            ("Bash", {"command": "python3 scripts/appsec_status.py --live"}),
+            ("Skill", {"skill": "appsec-advisor:fix-run-issues"}),
+        ):
+            al.handle_pre_tool_use({"tool_name": tool, "tool_input": tool_input}, "sid")
+            assert "deny" not in capsys.readouterr().out, tool
+
     def test_direct_write_guard_denies_threat_model_md(self, al, capsys):
         al.handle_pre_tool_use(
             {"tool_name": "Write", "tool_input": {"file_path": "/out/threat-model.md"}},
