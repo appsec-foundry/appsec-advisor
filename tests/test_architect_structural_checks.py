@@ -1014,3 +1014,80 @@ class TestSec7QualityBar:
         _write_text(out_dir / "threat-model.md", "# Threat Model\n\n## 8. Threats\n\nrows\n")
         r = asc.check_sec7_quality_bar(out_dir / "threat-model.md")
         assert r["skipped"] is True
+
+
+class TestWalkthroughCoverageIsCapAware:
+    """§3 is capped and editorial; §8 is exhaustive.
+
+    Before this check the architect demanded a walkthrough for EVERY Critical
+    while `qa_checks.walkthrough_coverage` blocked on more than the cap. On a
+    model with more Criticals than the cap the two rules could not both hold, so
+    the Stage-4 repair loop could never converge: the fixer added the demanded
+    blocks, the QA gate blocked on the overflow, and the next deterministic
+    regeneration dropped them again (juice-shop 2026-08-18, 21 vs a cap of 8).
+    """
+
+    @staticmethod
+    def _model(n_crit: int) -> str:
+        rows = "\n".join(
+            f"- id: T-{i:03d}\n"
+            f"  title: Critical finding {i}\n"
+            f"  risk: Critical\n"
+            f"  effective_severity: Critical\n"
+            f"  component: api-backend\n"
+            f"  evidence:\n"
+            f"  - file: routes/r{i}.ts\n"
+            f"    line: {i}\n"
+            for i in range(1, n_crit + 1)
+        )
+        return "threats:\n" + (rows if rows else "[]\n")
+
+    def _render(self, out_dir, n_crit):
+        _write_yaml(out_dir / "threat-model.yaml", self._model(n_crit))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        import walkthrough_renderer
+
+        data = asc._load_yaml(out_dir / "threat-model.yaml") or {}
+        picks = walkthrough_renderer.select_walkthrough_picks(data)
+        frag = out_dir / ".fragments"
+        frag.mkdir(exist_ok=True)
+        body = "## 3. Attack Walkthroughs\n\n" + "\n".join(
+            f"### 3.{n} T{n}\n\n**Source:** [{walkthrough_renderer._to_fid(str(p.get('id')))}](#x)\n"
+            for n, p in enumerate(picks, 1)
+        )
+        (frag / "attack-walkthroughs.md").write_text(body, encoding="utf-8")
+        return picks
+
+    @pytest.mark.parametrize("n_crit", [1, 7, 8, 9, 21])
+    def test_freshly_rendered_fragment_has_no_repairable_finding(self, out_dir, n_crit):
+        """What the architect may demand ⊆ what the renderer emits."""
+        self._render(out_dir, n_crit)
+        r = asc.check_walkthrough_coverage(out_dir)
+        repairable = [f for f in r["findings"] if f["severity"] == "warning"]
+        assert repairable == [], f"n_crit={n_crit}: {[f['finding_id'] for f in repairable]}"
+        assert len(r["selected"]) <= r["cap"]
+
+    def test_overflow_criticals_are_advisory_only(self, out_dir):
+        """13 Criticals past the cap must never become a repair action."""
+        self._render(out_dir, 21)
+        r = asc.check_walkthrough_coverage(out_dir)
+        assert r["overflow_count"] == 21 - r["cap"]
+        kinds = {f["kind"]: f["severity"] for f in r["findings"]}
+        assert kinds == {"walkthrough_overflow_critical": "info"}
+
+    def test_a_selected_critical_without_a_block_still_flags(self, out_dir):
+        """The real defect class stays enforceable."""
+        picks = self._render(out_dir, 21)
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        import walkthrough_renderer
+
+        dropped = walkthrough_renderer._to_fid(str(picks[0].get("id")))
+        frag = out_dir / ".fragments" / "attack-walkthroughs.md"
+        frag.write_text(frag.read_text().replace(dropped, "F-999"), encoding="utf-8")
+        r = asc.check_walkthrough_coverage(out_dir)
+        repairable = [f for f in r["findings"] if f["severity"] == "warning"]
+        assert [f["finding_id"] for f in repairable] == [dropped]
+
+    def test_skips_when_no_threats(self, out_dir):
+        _write_yaml(out_dir / "threat-model.yaml", "threats: []")
+        assert asc.check_walkthrough_coverage(out_dir)["skipped"] is True

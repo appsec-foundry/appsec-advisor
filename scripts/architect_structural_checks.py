@@ -1010,6 +1010,97 @@ def check_config_iac(output_dir: Path) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Check 15b — §3 Walkthrough coverage (cap-aware; replays the renderer's pick)
+# ---------------------------------------------------------------------------
+
+
+def check_walkthrough_coverage(output_dir: Path) -> dict[str, Any]:
+    """Flag only a Critical the renderer actually *selected* for §3.
+
+    §3 is editorial and capped (``walkthrough_renderer.DEFAULT_MAX_WALKTHROUGHS``);
+    §8 is the exhaustive register. An architect rule of "one walkthrough per
+    Critical" is therefore unsatisfiable on any model with more Criticals than
+    the cap: demanding the extras trips the blocking ``walkthrough_coverage``
+    explosion guard in ``qa_checks.py``, and the next deterministic regeneration
+    drops them again — a repair loop that cannot converge (juice-shop
+    2026-08-18, 21 effective-Criticals against a cap of 8).
+
+    This check replays ``select_walkthrough_picks`` — the same function the
+    renderer and the QA gate use — so all three share one source of truth:
+
+    * a selected Critical with no ``### 3.x`` block → repairable warning,
+    * a Critical the cap left out → ``info``, never a repair action.
+    """
+    tm_yaml = _load_yaml(output_dir / "threat-model.yaml") or {}
+    threats = [t for t in (tm_yaml.get("threats") or []) if isinstance(t, dict)]
+    if not threats:
+        return {"check": "walkthrough-coverage", "skipped": True, "reason": "no threats", "findings": []}
+
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import walkthrough_renderer
+    except ImportError as exc:  # pragma: no cover - defensive
+        return {
+            "check": "walkthrough-coverage",
+            "skipped": True,
+            "reason": f"renderer unavailable: {exc}",
+            "findings": [],
+        }
+
+    cap = walkthrough_renderer.resolve_walkthrough_cap(tm_yaml, _load_json(output_dir / ".skill-config.json") or {})
+    picks = walkthrough_renderer.select_walkthrough_picks(tm_yaml, cap=cap)
+    picked_ids = [str(t.get("id") or "") for t in picks]
+
+    fragment = output_dir / ".fragments" / "attack-walkthroughs.md"
+    body = fragment.read_text(encoding="utf-8") if fragment.is_file() else ""
+
+    eligible = [t for t in threats if str(t.get("effective_severity") or t.get("risk") or "").lower() == "critical"]
+    overflow = [t for t in eligible if str(t.get("id") or "") not in set(picked_ids)]
+
+    findings: list[dict[str, Any]] = []
+    for tid in picked_ids:
+        # The fragment addresses the reader, so it carries the visible `F-NNN`
+        # id, not the merged-stage `T-NNN`. Resolve through the renderer's own
+        # mapping rather than re-deriving it — comparing raw `T-NNN` against the
+        # body flags every selected Critical on a perfectly good fragment.
+        fid = walkthrough_renderer._to_fid(tid)
+        if fid and fid not in body:
+            findings.append(
+                {
+                    "check": "walkthrough-coverage",
+                    "severity": "warning",
+                    "kind": "missing_walkthrough_for_selected_critical",
+                    "finding_id": fid,
+                    "message": f"{fid} was selected for §3 but has no walkthrough block. "
+                    f"Regenerate the fragment deterministically: pregenerate_fragments.py "
+                    f"--force --only attack-walkthroughs.md",
+                }
+            )
+    if overflow:
+        findings.append(
+            {
+                "check": "walkthrough-coverage",
+                "severity": "info",
+                "kind": "walkthrough_overflow_critical",
+                "overflow_count": len(overflow),
+                "message": f"{len(overflow)} Critical finding(s) beyond the §3 cap of {cap} are "
+                f"covered by their §8 register rows, not by a walkthrough. This is the "
+                f"intended editorial bound — not a defect, and not repairable.",
+            }
+        )
+
+    return {
+        "check": "walkthrough-coverage",
+        "skipped": False,
+        "cap": cap,
+        "eligible_critical": len(eligible),
+        "selected": picked_ids,
+        "overflow_count": len(overflow),
+        "findings": findings,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Check 15 — Actor Coverage (conditional counts; skip when no actor layer)
 # ---------------------------------------------------------------------------
 
@@ -1273,6 +1364,7 @@ def run_all(output_dir: Path) -> dict[str, Any]:
     g = check_config_iac(output_dir)
     h = check_actor_coverage(output_dir)
     i = check_sec7_quality_bar(tm_md)
+    j = check_walkthrough_coverage(output_dir)
 
     findings = (
         list(a["findings"])
@@ -1283,6 +1375,7 @@ def run_all(output_dir: Path) -> dict[str, Any]:
         + list(g["findings"])
         + list(h["findings"])
         + list(i["findings"])
+        + list(j["findings"])
     )
 
     return {
@@ -1296,6 +1389,7 @@ def run_all(output_dir: Path) -> dict[str, Any]:
         "config_iac": g,
         "actor_coverage": h,
         "sec7_quality_bar": i,
+        "walkthrough_coverage": j,
         "findings": findings,
         "findings_total": len(findings),
     }

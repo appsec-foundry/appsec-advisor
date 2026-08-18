@@ -16,6 +16,7 @@ Used by `appsec-architect-reviewer` after the 13 checks run. Classifies each war
 | Check 10 `coherence_D1_*` cap violation | no — content drift | — |
 | Check 11 `design decision uninvestigated` | no — narrative | — |
 | Check 12 `high_roi_mitigation_not_prioritized` | no — narrative | — |
-| §3 Attack Walkthroughs — missing `sequenceDiagram` for a Critical finding | yes | rewrite `.fragments/attack-walkthroughs.md` |
+| §3 Attack Walkthroughs — `walkthrough_coverage.missing_walkthrough_for_selected_critical` (id listed in `selected`) | yes | regenerate `.fragments/attack-walkthroughs.md` via `pregenerate_fragments.py --force` |
+| §3 Attack Walkthroughs — `walkthrough_coverage.walkthrough_overflow_critical` (Critical beyond the cap) | no — advisory; the cap is the intended editorial bound and §8 carries these findings | — |
 | §6 v2 Security Architecture — missing required H3, missing H4 control block, stale `7.3.N` auth-flow block, or missing `Security assessment` / `Relevant findings` labels | yes | rewrite `.fragments/security-architecture.md` |
 | Any `__mermaid__ syntax error` detected in the rendered MD | yes | rewrite the fragment that contains the broken diagram |

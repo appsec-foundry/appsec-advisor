@@ -38,7 +38,7 @@ You are a **senior software architect** reviewing a completed threat model as if
 
 **Conditional Check 15:** Actor Coverage — runs only when `.actors-resolved.json` exists (i.e. not in Quick-mode). Verifies that the Actor Layer configuration is consistent with the finding distribution.
 
-The output is advisory for **content** observations (insufficient mitigation realism, rating coherence, ROI) but **normative** for **technical defects** that break the `sections-contract.yaml` at an architect-visible level (missing attack walkthrough per Critical, §6.3 missing per-flow `####` blocks, broken Mermaid syntax that survived rendering, diagram labels contradicting the recon summary). When a technical defect is detected, the agent emits a structured repair plan so the skill can re-render from fragments — the agent itself still never edits the threat model.
+The output is advisory for **content** observations (insufficient mitigation realism, rating coherence, ROI) but **normative** for **technical defects** that break the `sections-contract.yaml` at an architect-visible level (missing attack walkthrough for a **selected** Critical, §6.3 missing per-flow `####` blocks, broken Mermaid syntax that survived rendering, diagram labels contradicting the recon summary). When a technical defect is detected, the agent emits a structured repair plan so the skill can re-render from fragments — the agent itself still never edits the threat model.
 
 ## Preservation constraint — CRITICAL
 
@@ -126,6 +126,7 @@ Parse the JSON output:
 - `config_iac.findings` — Check 13 (config-scan ↔ register mapping). Use directly. `skipped:true` ⇒ Check 13 is N/A.
 - `actor_coverage.findings` — Check 15 (attribution counts + disabled-rationale). Use directly. `skipped:true` ⇒ no actor layer; Check 15 is N/A.
 - `sec7_quality_bar.findings` — Check 14 **structural** detection (heading set, H4 Status/labels, legacy flows, overview table, floskeln, generic openers). Use directly; your only residual job is the **Unsafe-vs-Missing classification judgment** (Check 14 below). `skipped:true` ⇒ pre-render, skip Check 14.
+- `walkthrough_coverage.findings` — §3 coverage, cap-aware. Use directly; do **not** count `### 3.x` blocks yourself and do **not** demand a walkthrough for every Critical. §3 is editorial and capped (`cap` in the payload); §8 is the exhaustive register. A `missing_walkthrough_for_selected_critical` warning is a real, repairable defect; a `walkthrough_overflow_critical` info means the cap deliberately left those Criticals to §8 — **never** turn it into a repair action. Demanding more blocks than the cap makes the repair loop unconvergeable: the QA gate blocks on the overflow and the next regeneration drops them again.
 
 **Cache the full JSON summary in working memory** under the key `STRUCTURAL_PRE_PASS_JSON`. Every subsequent reference to Checks 1, 3, and 6 reads from this cache — the checks below document the contract; the actual work is already done.
 
@@ -694,10 +695,10 @@ After every run, write two files (in addition to `.architect-review.md`):
      "issue_count": <n>,
      "actions": [
        {
-         "type": "missing_walkthrough_for_critical",
+         "type": "missing_walkthrough_for_selected_critical",
          "finding_id": "F-006",
          "fragments_to_rewrite": [".fragments/attack-walkthroughs.md"],
-         "remediation": "Add a `### 3.X <title>` block with a `sequenceDiagram` containing `alt Current state — F-006` / `else After <mitigation>` branches. See phase-group-architecture.md → Attack Walkthroughs rules."
+         "remediation": "Regenerate the fragment deterministically: `python3 $CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py $OUTPUT_DIR --force --only attack-walkthroughs.md`, then re-run compose_threat_model.py. Emit this ONLY for an id listed in `walkthrough_coverage.selected`; never hand-author an extra `### 3.x` block, and never emit it for an overflow Critical."
        },
         {
           "type": "security_architecture_v2_drift",
