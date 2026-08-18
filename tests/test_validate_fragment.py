@@ -603,7 +603,7 @@ def test_repair_plan_is_actionable_on_schema_violation(tmp_path: Path):
     result = _run(["pre-render-gate", str(tmp_path), "--write-repair-plan"])
     assert result.returncode == 1
 
-    plan = json.loads((tmp_path / ".fragment-repair-plan.json").read_text())
+    plan = json.loads((tmp_path / ".pre-render-repair-plan.json").read_text())
     assert plan["status"] == "fail"
     assert plan["actionable"] is True
     assert plan["action_count"] == 1
@@ -627,7 +627,7 @@ def test_repair_plan_not_actionable_when_only_required_fragments_missing(tmp_pat
     result = _run(["pre-render-gate", str(tmp_path), "--write-repair-plan"])
     assert result.returncode == 1
 
-    plan = json.loads((tmp_path / ".fragment-repair-plan.json").read_text())
+    plan = json.loads((tmp_path / ".pre-render-repair-plan.json").read_text())
     assert plan["actionable"] is False
     assert plan["status"] == "manual_review"
     assert plan["actions"] == []
@@ -641,7 +641,7 @@ def test_no_repair_plan_written_when_gate_passes(tmp_path: Path):
 
     result = _run(["pre-render-gate", str(tmp_path), "--write-repair-plan"])
     assert result.returncode == 0
-    assert not (tmp_path / ".fragment-repair-plan.json").exists()
+    assert not (tmp_path / ".pre-render-repair-plan.json").exists()
 
 
 def test_repair_plan_only_written_when_flag_passed(tmp_path: Path):
@@ -651,4 +651,27 @@ def test_repair_plan_only_written_when_flag_passed(tmp_path: Path):
 
     result = _run(["pre-render-gate", str(tmp_path)])
     assert result.returncode == 1
-    assert not (tmp_path / ".fragment-repair-plan.json").exists()
+    assert not (tmp_path / ".pre-render-repair-plan.json").exists()
+
+
+def test_repair_plan_shares_composes_attempt_counter(tmp_path: Path):
+    """The gate and compose_threat_model.py write the SAME plan file, so the
+    three-attempt cap has to count both producers. A gate that reset the
+    counter would hand the repair agent an unbounded loop."""
+    frag = _complete_fragment_set(tmp_path)
+    (frag / "ms-ai-exposure.json").write_text(json.dumps(_ai_exposure("R" * 81)))
+    plan_path = tmp_path / ".pre-render-repair-plan.json"
+
+    # A prior compose failure already consumed two attempts.
+    plan_path.write_text(json.dumps({"status": "fail", "attempt": 2}))
+    _run(["pre-render-gate", str(tmp_path), "--write-repair-plan"])
+    plan = json.loads(plan_path.read_text())
+    assert plan["attempt"] == 3
+    assert plan["actionable"] is True
+
+    # The next failure exceeds the cap and must stop dispatching repairs.
+    _run(["pre-render-gate", str(tmp_path), "--write-repair-plan"])
+    plan = json.loads(plan_path.read_text())
+    assert plan["attempt"] == 4
+    assert plan["status"] == "exhausted"
+    assert plan["actionable"] is False

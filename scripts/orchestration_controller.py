@@ -5644,7 +5644,7 @@ def _fragment_repair_is_actionable(output_dir: Path) -> bool:
     those belong to ``pregenerate_fragments.py``, not to an LLM repair pass.
     """
     try:
-        plan = json.loads((output_dir / ".fragment-repair-plan.json").read_text(encoding="utf-8"))
+        plan = json.loads((output_dir / ".pre-render-repair-plan.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return isinstance(plan, dict) and bool(plan.get("actionable")) and bool(plan.get("actions"))
@@ -5759,7 +5759,7 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     # maxLength of 80 cost a full renderer re-dispatch). Placing it here rather
     # than in the skill text keeps it deterministic and unskippable, and costs
     # no runtime prompt budget. `--write-repair-plan` leaves
-    # `.fragment-repair-plan.json` for appsec-fragment-fixer.
+    # `.pre-render-repair-plan.json` for the repair agents.
     if not _step("validate_fragment.py", "pre-render-gate", str(output_dir), "--write-repair-plan"):
         return False
 
@@ -6029,7 +6029,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
                 receipt = (
                     "Stage-2 fragment schema gate failed; dispatch "
                     "appsec-advisor:appsec-fragment-fixer with REPAIR_MODE=true and "
-                    "REPAIR_PLAN_PATH=.fragment-repair-plan.json, then re-run this transition; "
+                    "REPAIR_PLAN_PATH=.pre-render-repair-plan.json, then re-run this transition; "
                     f"retry {retry_count}/2 (see .compose-blocked.json)"
                 )
             elif step:

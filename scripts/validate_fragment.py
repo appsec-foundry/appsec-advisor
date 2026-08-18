@@ -69,6 +69,10 @@ FRAGMENT_SCHEMAS: dict[str, str] = {
 # identify the type of each .json fragment found on disk).
 _STEM_TO_TYPE: dict[str, str] = {v.replace(".schema.json", ""): k for k, v in FRAGMENT_SCHEMAS.items()}
 
+# Shared with compose_threat_model._PRE_RENDER_REPAIR_MAX_ATTEMPTS: both write
+# `.pre-render-repair-plan.json`, so the cap has to mean the same thing in both.
+_PRE_RENDER_REPAIR_MAX_ATTEMPTS = 3
+
 # Canonical fragment filenames used by the renderer (from sections-contract.yaml
 # + phase-group-finalization.md). Keyed by fragment type for reverse lookup.
 # Substep-2 sidecars are intentionally NOT listed here — they are NOT render
@@ -438,13 +442,20 @@ def _write_report(output_dir: Path, report: dict) -> None:
 
 
 def _write_repair_plan(output_dir: Path, report: dict) -> None:
-    """Emit `.fragment-repair-plan.json` in the shape `appsec-fragment-fixer`
-    consumes, so a gate failure is directly actionable instead of merely
-    described.
+    """Emit the pre-render repair plan so a gate failure is directly actionable
+    instead of merely described.
+
+    Writes `.pre-render-repair-plan.json` — the artifact `compose_threat_model.py`
+    already emits for the same purpose one step later. Sharing the path rather
+    than adding a second name means every existing consumer applies unchanged:
+    the secarch/ms/threat renderers read it as their repair shortcut, compose
+    deletes it after a successful render, `runtime_cleanup.py` reaps it, and
+    `rebuild-wipe` clears it. It also shares compose's `attempt` counter, so the
+    three-attempt cap counts both producers instead of each resetting the other.
 
     Only `failed[]` — schema violations of LLM-authored JSON fragments —
     becomes a repair action. A `missing_required` entry is deliberately NOT
-    handed to the fixer: that set is dominated by deterministic fragments
+    handed to a repair agent: that set is dominated by deterministic fragments
     `pregenerate_fragments.py` owns, and letting an LLM hand-author them would
     bypass their generator. That case emits an `actionable: false` plan, which
     the fixer answers with `REPAIR_SKIPPED` and which leaves the decision to
@@ -452,6 +463,13 @@ def _write_repair_plan(output_dir: Path, report: dict) -> None:
     """
     failed = report.get("failed") or []
     missing = report.get("missing_required") or []
+    plan_path = output_dir / ".pre-render-repair-plan.json"
+    prior_attempts = 0
+    try:
+        prior_attempts = int(json.loads(plan_path.read_text(encoding="utf-8")).get("attempt", 0) or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        prior_attempts = 0
+    attempt = prior_attempts + 1
     actions = [
         {
             "raw_issue": f"{entry['file']} ({entry['type']}): {entry['error']}",
@@ -470,11 +488,19 @@ def _write_repair_plan(output_dir: Path, report: dict) -> None:
         for entry in failed
         if entry.get("type") in FRAGMENT_SCHEMAS
     ]
+    exhausted = attempt > _PRE_RENDER_REPAIR_MAX_ATTEMPTS
+    if exhausted:
+        status = "exhausted"
+    elif actions:
+        status = "fail"
+    else:
+        status = "manual_review"
     plan: dict[str, Any] = {
         "output_dir": str(output_dir),
         "source": "validate_fragment.py pre-render-gate",
-        "status": "fail" if actions else "manual_review",
-        "actionable": bool(actions),
+        "status": status,
+        "actionable": bool(actions) and not exhausted,
+        "attempt": attempt,
         "issue_count": len(failed) + len(missing),
         "action_count": len(actions),
         "actions": actions,
@@ -486,7 +512,7 @@ def _write_repair_plan(output_dir: Path, report: dict) -> None:
         plan["manual_review_items"] = [{"issue": f"required fragment missing: {name}"} for name in missing]
     try:
         atomic_write_json(
-            output_dir / ".fragment-repair-plan.json",
+            plan_path,
             plan,
             indent=2,
             sort_keys=False,
@@ -512,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
         gate_p.add_argument(
             "--write-repair-plan",
             action="store_true",
-            help="On failure also write .fragment-repair-plan.json for appsec-fragment-fixer.",
+            help="On failure also write .pre-render-repair-plan.json for the repair agents.",
         )
         gargs = gate_p.parse_args(args[1:])
         if not gargs.output_dir.is_dir():
