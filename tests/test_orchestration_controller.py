@@ -11,6 +11,7 @@ import build_abuse_case_contexts as abuse_contexts
 import build_architecture_analysis_context as architecture_context
 import build_post_stride_contexts as post_stride_contexts
 import build_stride_evidence_bundles as evidence_bundles
+import context_routing
 import orchestration_controller as controller
 import pytest
 
@@ -4592,15 +4593,69 @@ class TestContextV2PostRecon:
         monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
 
         # Invented evidence is a producer contract violation, so it buys one
-        # redispatch — but it is never admitted: the artifact is cleared, and a
-        # producer that repeats it ends the run.
+        # redispatch. The rejected bytes stay on disk for the in-place repair,
+        # and are never admitted: the gate re-reads them every time, so a
+        # producer that returns them unchanged ends the run.
         action = controller.context_v2_post_recon(output)
         assert action["dispatch_jobs"][0]["job_id"] == "phase2-recon:attempt-2"
-        assert not (output / ".recon-signals.json").exists()
+        assert (output / ".recon-signals.json").read_text(encoding="utf-8") == rejected
 
-        (output / ".recon-signals.json").write_text(rejected, encoding="utf-8")
         with pytest.raises(controller.ControllerError, match="missing or unsafe file"):
             controller.context_v2_post_recon(output)
+
+    def test_producer_retry_is_dispatchable_and_keeps_the_rejected_bytes(self, tmp_path, monkeypatch):
+        """A producer-contract retry has to survive context routing.
+
+        The receipts the first dispatch consumed do not carry over, so a
+        redispatch that declares an actively-enforced delivery without a
+        receipt of its own aborts before the producer ever runs — and the
+        rejected artifact is then already gone, leaving the next boundary on a
+        missing file rather than a repairable one.
+        """
+        output = self._prepare(tmp_path)
+        (output / ".recon-patterns.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "repo_root": str(tmp_path / "repo"),
+                    "categories": {"1": {"category": 1, "name": "Authentication", "findings": [], "count": 0}},
+                    "limits": {
+                        "max_findings_per_category": 12,
+                        "max_findings_total": 96,
+                        "minimum_per_nonempty_category": 3,
+                        "original_findings": 0,
+                        "retained_findings": 0,
+                        "omitted_findings": 0,
+                        "ordering_key": "severity,strength,category,file,line,subcategory,match",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        signals = _valid_recon_signals()
+        signals["signals"]["has_auth_surface"] = True
+        signals["signal_evidence"]["has_auth_surface"] = {
+            "status": "supporting",
+            "locations": [{"file": "invented/auth.ts", "line": 1}],
+        }
+        rejected = json.dumps(signals)
+        (output / ".recon-signals.json").write_text(rejected, encoding="utf-8")
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        action = controller.context_v2_post_recon(output)
+
+        job = action["dispatch_jobs"][0]
+        assert job["job_id"] == "phase2-recon:attempt-2"
+        assert ".recon-patterns.json" in job["input_artifacts"]
+        assert any(receipt["artifact_path"] == ".recon-patterns.json" for receipt in action["artifact_receipts"])
+        context_routing.resolve_action(
+            action,
+            output,
+            semantic_roles=controller.SEMANTIC_ROLE_REGISTRY,
+            model_keys=controller.SEMANTIC_ROLE_MODEL_KEYS,
+            plugin_root=controller.PLUGIN_ROOT,
+        )
+        assert (output / ".recon-signals.json").read_text(encoding="utf-8") == rejected
 
     def test_post_recon_rejects_invalid_architecture_projection(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)

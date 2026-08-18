@@ -722,7 +722,6 @@ Particular care required for §7.9 OAuth / OIDC and §7.10 SPA / BFF:
 - §7.10 is anti-pattern oriented. Use `RECON_PATTERNS_JSON.categories["10"]` as the baseline; a `spa-without-bff-candidate`, `spa-client-side-role-trust`, or `spa-withcredentials-token-mix` finding must be named explicitly with its `anti_pattern` value in the observations.
 - Cat 29 mobile findings are also anti-pattern oriented. Route them into existing sections, but do not lose the label: `Mobile WebView bridge`, `Mobile TLS trust disabled`, `Mobile token in app storage`, `Mobile cleartext network policy`, `Mobile IPC boundary exposed`, and `Mobile deep-link trust boundary` are architecture signals, not just implementation smells.
 - Immediately after writing `.recon-summary.md`, the **next tool call** must be `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_recon_summary.py" "$OUTPUT_DIR/.recon-summary.md" --repo-root "$REPO_ROOT" --normalize-key-files`. Do not write `.recon-signals.json` or print completion statistics before this exits 0. If it fails, correct the summary and run the same validator again. The normalizer may only delete unverifiable `Key files` entries and replace an empty list with `none detected`; it never creates a path or line claim. This check uses the same heading and repository-evidence contract as the controller's post-recon gate.
-- Immediately after writing `.recon-signals.json`, run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" recon_signals "$OUTPUT_DIR/.recon-signals.json" --repo-root "$REPO_ROOT"`. Do not print completion before it exits 0; correct the sidecar and repeat the command if it fails. This validates each evidence location against the current repository; do not replace a rejected location with a guessed path or line.
 - LEGACY top-level numbering ("## Section 1 — Technology Stack", "## Section 4 — Authentication and Authorization", "## Section 7 — Security Controls Assessment", "## Section 9 — Component List") is FORBIDDEN — the legacy schema collapsed §7.1-§7.32 into a single bullet block and lost the per-mechanism granularity that Phase 8 IAM coverage depends on. Always emit the template's structured §7.1-§7.32 headings as separate H3 blocks.
 
 ### Signals block — mandatory (Actor-Layer input)
@@ -794,12 +793,22 @@ When Cat 29 contains any `mobile-app-surface` finding, emit a deterministic comp
 
 **Granularity, not a hard cap.** There is **no fixed limit** on the number of hints — downstream STRIDE-component selection is criteria-derived (exposure / ci-cd / crown-jewel), so under-enumerating here silently drops attack surface. The guidance is about *granularity*: list **major deployable units** (a service, the frontend SPA, the data tier, the auth surface, the CI/CD pipeline, a distinct worker/queue), NOT every file or module. Split one service into sub-pieces **only** when they sit behind different trust boundaries. As a sanity check, ~10 units is the typical ceiling for a single repo — if you are about to emit **more than 10**, you are most likely over-decomposing: reconsider granularity first. If after that you still have >10 genuinely-distinct deployable units (a real microservice estate), emit them all **and** add this line to `.recon-summary.md`'s notes so the breadth is visible rather than silently truncated: `RECON_INVENTORY_LARGE: <n> deployable units (>10) — STRIDE merge/turn-budget may be stressed`.
 
+**VALIDATION — HARD GATE.** Immediately after writing `.recon-signals.json`, the
+**next tool call** must be
+`python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" recon_signals "$OUTPUT_DIR/.recon-signals.json" --repo-root "$REPO_ROOT"`.
+Do not print the completion banner before it exits 0. It re-checks every
+`signal_evidence` location against the current repository. When it rejects a
+location, delete that location — never replace it with a guessed path or line,
+and never adjust a path's spelling or capitalization to make it resolve. If
+that empties a signal's `locations`, set the signal's boolean `false` with
+status `none`. Then write the file again and run the same command again.
+
 
 ---
 
 ## Completion
 
-**Print:**
+**Print** — only after `validate_intermediate.py recon_signals` has exited 0:
 ```
 [recon-scanner] ✓ Scan complete — .recon-summary.md written (<n> lines)
   ↳ Manifests: <n> | Deployment: <n> | Config: <n>

@@ -173,6 +173,11 @@ contexts:
     category: prior_runs_and_identity
     description: Bounded prior finding and stable-identity records that apply to the current component.
     scope: one_component
+  - id: run.producer_repair_brief
+    name: Producer repair brief
+    category: target_and_run
+    description: Contract violations the controller recorded for a producer to fix in its next write.
+    scope: whole_run
   - id: discovery.recon_patterns
     name: Deterministic recon patterns
     category: repository_discovery
@@ -471,6 +476,22 @@ assignments:
     importance: supporting
     applies_to: whole_run
     reason: Deterministic patterns reduce broad discovery and retain the documented fallback.
+  - id: repair-brief-for-recon
+    context: run.producer_repair_brief
+    agents:
+      - recon_scanner
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: A redispatched producer must fix the recorded violations rather than rediscover them.
+  - id: prior-recon-summary-for-repair
+    context: discovery.recon_summary
+    agents:
+      - recon_scanner
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: An in-place repair keeps the producer's accepted summary so only the rejected artifact is rewritten.
   - id: repository-discovery
     context: discovery.repository_surface
     agents:

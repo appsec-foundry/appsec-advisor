@@ -3509,12 +3509,30 @@ def _recon_producer_retry(
         f"role=recon_scanner artifact={artifact} attempt={attempt} errors={len(exc.errors)} reason={exc}",
         level="WARN",
     )
-    # The summary already passed its own gate; naming it an input both keeps the
-    # producer's earlier observations available and protects it from the output
-    # clearing below. Only the rejected artifact is rewritten.
+    # The summary already passed its own gate; naming it an input keeps the
+    # producer's earlier observations available. Only the rejected artifact is
+    # rewritten.
     inputs = [".skill-config.json", ".recon-summary.md", brief]
+    structured: list[dict[str, Any]] = []
     if (output_dir / ".recon-patterns.json").is_file():
         inputs.append(".recon-patterns.json")
+        # This retry is a new action, so the receipts the first dispatch
+        # consumed do not carry over. Routing enforces this binding actively
+        # and rejects a declared delivery that arrives without a receipt of its
+        # own, which would strand every producer retry before it dispatches.
+        patterns = _validate_json_artifact(
+            output_dir / ".recon-patterns.json",
+            PLUGIN_ROOT / "schemas" / "recon-patterns.schema.json",
+            contract="recon-patterns-v1",
+        )
+        structured.append(
+            _validated_json_receipt(
+                output_dir,
+                ".recon-patterns.json",
+                schema_id="schemas/recon-patterns.schema.json#v1",
+                record_count=len(patterns["categories"]),
+            )
+        )
     jobs = [
         {
             "schema_version": 1,
@@ -3531,11 +3549,17 @@ def _recon_producer_retry(
         "action": "dispatch_parallel",
         "next_boundary": _checked_next_boundary("context-v2-post-recon"),
         "dispatch_jobs": jobs,
-        "artifact_receipts": [],
+        "artifact_receipts": structured,
         "receipts": [f"recon producer redispatched to repair {artifact} (attempt {attempt})"],
     }
-    if not context_routing.action_already_issued(action, output_dir):
-        _prepare_context_v2_dispatch_outputs(output_dir, jobs)
+    # Deliberately no dispatch-output clearing. The rejected artifact belongs to
+    # this run and this producer is redispatched to rewrite it in place, so the
+    # stale-bytes hazard that clearing guards against does not apply. Clearing
+    # it here — before routing has accepted the redispatch — would strand the
+    # next boundary on a missing file and turn a repairable rejection into a
+    # terminal one. A producer that returns without writing is still caught:
+    # the gate re-reads the same rejected bytes and fails with the semantic
+    # reason rather than a missing-file error.
     return _validate_action(action)
 
 
