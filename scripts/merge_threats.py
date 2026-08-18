@@ -2530,7 +2530,9 @@ def build_weakness_register(
         A producer can pass an explicit mechanism id. Practice-only rows fall
         back to the first guidance entry that deliberately claims their CWE;
         otherwise they retain a narrow CWE-scoped key instead of being merged
-        into every other member of the weakness class.
+        into every other member of the weakness class. Every returned id is a
+        hyphen slug, as `mechanism_id` requires in both schemas — weakness-class
+        ids are snake_case and must not reach the id unnormalised.
         """
         key = _normalise_mechanism_key(mechanism_id) if mechanism_id else ""
         if key and isinstance(mechanism_guidance.get(key), dict):
@@ -2539,7 +2541,7 @@ def build_weakness_register(
         for candidate, candidate_guidance in mechanism_guidance.items():
             if cwe_norm and cwe_norm in {str(v).upper() for v in (candidate_guidance.get("cwes") or [])}:
                 return str(candidate), candidate_guidance
-        return key or f"{wcid}-{cwe_norm.lower() or 'observed-practice'}", {}
+        return key or _normalise_mechanism_key(f"{wcid}-{cwe_norm or 'observed-practice'}"), {}
 
     def _title_and_guidance(
         mechanism_id: str | None,

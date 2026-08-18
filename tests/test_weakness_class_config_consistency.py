@@ -19,6 +19,7 @@ schema-enum entries.)
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -52,6 +53,31 @@ def _weakness_class_enums(schema: dict) -> list[list[str]]:
     return found
 
 
+def _mechanism_id_pattern(schema_name: str) -> str:
+    """The `mechanism_id` pattern a schema states."""
+    schema = yaml.safe_load((SCHEMAS / schema_name).read_text())
+
+    def walk(node: object) -> str | None:
+        if isinstance(node, dict):
+            prop = node.get("mechanism_id")
+            if isinstance(prop, dict) and prop.get("pattern"):
+                return str(prop["pattern"])
+            for v in node.values():
+                found = walk(v)
+                if found:
+                    return found
+        elif isinstance(node, list):
+            for v in node:
+                found = walk(v)
+                if found:
+                    return found
+        return None
+
+    pattern = walk(schema)
+    assert pattern, f"{schema_name}: no mechanism_id pattern found (walker broke?)"
+    return pattern
+
+
 def test_schema_enums_match_cluster_ids() -> None:
     clusters = _cluster_ids()
     for name in ("threats-merged.schema.yaml", "threat-model.output.schema.yaml"):
@@ -80,6 +106,28 @@ def test_security_library_domains_reference_known_classes() -> None:
     lib = yaml.safe_load((DATA / "security-libraries.yaml").read_text())
     keys = set(lib.get("domains", {}))
     assert keys <= clusters, f"security-libraries.yaml domains reference unknown weakness classes: {keys - clusters}"
+
+
+def test_curated_mechanism_ids_match_the_schema_pattern() -> None:
+    """`build_weakness_register` returns a curated mechanism key verbatim, so a
+    key that does not satisfy the schema's `mechanism_id` pattern would reach
+    the emitted register and hard-fail post-merge validation."""
+    pattern = re.compile(_mechanism_id_pattern("threats-merged.schema.yaml"))
+    keys = list(yaml.safe_load((DATA / "weakness-classes.yaml").read_text()).get("mechanism_guidance") or {})
+    assert keys, "weakness-classes.yaml carries no mechanism_guidance"
+    lib = yaml.safe_load((DATA / "security-libraries.yaml").read_text())
+    for domain in (lib.get("domains") or {}).values():
+        control = (domain or {}).get("central_control") or {}
+        if control.get("mechanism_id"):
+            keys.append(str(control["mechanism_id"]))
+    for key in keys:
+        assert pattern.match(str(key)), f"mechanism id {key!r} violates {pattern.pattern}"
+
+
+def test_both_schemas_state_the_same_mechanism_id_pattern() -> None:
+    assert _mechanism_id_pattern("threats-merged.schema.yaml") == _mechanism_id_pattern(
+        "threat-model.output.schema.yaml"
+    )
 
 
 def test_input_validation_mechanism_narrative_is_not_blacklist_asserting() -> None:

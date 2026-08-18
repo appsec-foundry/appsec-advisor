@@ -1614,6 +1614,14 @@ def main() -> None:
     else:
         for e in real_errors:
             print(f"INVALID: {e}")
+        if schema_type == "threats_merged":
+            # The merged register is deterministic Python output, not an agent
+            # artifact. Without this, a reader assumes the analysis agents wrote
+            # the offending value and edits the file — which re-runs identically.
+            print(
+                "PRODUCER: this artifact is written by scripts/merge_threats.py (finalize). "
+                "Fix the producer and start a new run; editing the artifact does not fix the defect."
+            )
         sys.exit(1)
 
 

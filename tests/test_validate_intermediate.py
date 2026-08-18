@@ -1457,6 +1457,26 @@ def test_main_inproc_invalid_stride_prints_errors(monkeypatch, tmp_path, capsys)
     assert "INVALID:" in capsys.readouterr().out
 
 
+def test_main_inproc_invalid_threats_merged_names_its_producer(monkeypatch, tmp_path, capsys):
+    """`.threats-merged.json` is deterministic Python output, so a rejected
+    artifact must point at `merge_threats.py`. Without it a reader blames the
+    analysis agents and hand-edits the file (juice-shop thorough abort)."""
+    p = tmp_path / ".threats-merged.json"
+    p.write_text(_json.dumps({"threats": [], "weaknesses": [{"id": "W-001", "mechanism_id": "bad_id"}]}))
+    assert _main_exit(monkeypatch, ["threats_merged", str(p)]) == 1
+    out = capsys.readouterr().out
+    assert "INVALID:" in out
+    assert "merge_threats.py" in out
+
+
+def test_main_inproc_stride_failure_does_not_claim_a_python_producer(monkeypatch, tmp_path, capsys):
+    """An agent-authored artifact must not be attributed to a script."""
+    p = tmp_path / ".stride-x.json"
+    p.write_text("{}")
+    assert _main_exit(monkeypatch, ["stride", str(p)]) == 1
+    assert "PRODUCER:" not in capsys.readouterr().out
+
+
 def test_main_inproc_triage_flags_summary(monkeypatch, tmp_path, capsys):
     p = tmp_path / ".triage-flags.json"
     # Build a minimally-valid triage flags doc; if schema fails it still

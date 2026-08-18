@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from jsonschema import Draft202012Validator
 
 SCRIPT_PATH = Path(__file__).parent.parent / "scripts" / "merge_threats.py"
@@ -2545,6 +2547,79 @@ class TestWeaknessRegister:
         assert weakness["weakness_class"] == "outdated_deps"
         assert weakness["title"] == "Vulnerability management does not prevent known-vulnerable dependencies"
         assert weakness["instances"][0]["id"] == "T-001"
+
+
+def _mechanism_id_pattern() -> re.Pattern[str]:
+    """The `mechanism_id` pattern as the merged-threats schema states it."""
+    schema = yaml.safe_load(
+        (Path(__file__).parent.parent / "schemas" / "threats-merged.schema.yaml").read_text(encoding="utf-8")
+    )
+
+    def walk(node: object) -> str | None:
+        if isinstance(node, dict):
+            prop = node.get("mechanism_id")
+            if isinstance(prop, dict) and prop.get("pattern"):
+                return str(prop["pattern"])
+            for value in node.values():
+                found = walk(value)
+                if found:
+                    return found
+        elif isinstance(node, list):
+            for value in node:
+                found = walk(value)
+                if found:
+                    return found
+        return None
+
+    pattern = walk(schema)
+    assert pattern, "threats-merged.schema.yaml no longer constrains mechanism_id"
+    return re.compile(pattern)
+
+
+def _weakness_vocabulary() -> dict:
+    return yaml.safe_load((Path(__file__).parent.parent / "data" / "weakness-classes.yaml").read_text(encoding="utf-8"))
+
+
+def _emitting_cluster_ids() -> list[str]:
+    # `_unmapped` is the CWE catch-all and never becomes a register row.
+    return [str(c["id"]) for c in (_weakness_vocabulary().get("clusters") or []) if c.get("id") != "_unmapped"]
+
+
+def _cwe_claimed_by_no_mechanism() -> str:
+    """A CWE no `mechanism_guidance` entry claims, so the register must fall
+    back to a class-derived mechanism id instead of a curated one."""
+    claimed = {
+        str(cwe).strip().upper()
+        for guidance in (_weakness_vocabulary().get("mechanism_guidance") or {}).values()
+        for cwe in (guidance.get("cwes") or [])
+    }
+    return next(f"CWE-{n}" for n in range(200, 1400) if f"CWE-{n}" not in claimed)
+
+
+@pytest.mark.parametrize("wcid", _emitting_cluster_ids())
+@pytest.mark.parametrize("cwe", [_cwe_claimed_by_no_mechanism(), ""])
+def test_fallback_mechanism_id_matches_the_schema_pattern(mt, wcid, cwe):
+    """Weakness-class ids are snake_case; `mechanism_id` is a hyphen slug. The
+    fallback id must be normalised, or the class name reaches the field verbatim
+    and post-merge schema validation hard-aborts the run (juice-shop thorough:
+    `sensitive_disclosure-cwe-209`)."""
+    signal = {
+        "weakness_class": wcid,
+        "cwe": cwe,
+        "title": "Control gap",
+        "statement": "A central control is not enforced.",
+        "severity": "Medium",
+        "component": "api",
+        "absent_control_signal": [{"pattern": "central-control", "hit_count": 0}],
+    }
+    weaknesses = mt.build_weakness_register([], [signal])
+    assert weaknesses, f"no register row emitted for {wcid}"
+    pattern = _mechanism_id_pattern()
+    for weakness in weaknesses:
+        mechanism_id = weakness.get("mechanism_id")
+        assert mechanism_id is None or pattern.match(mechanism_id), (
+            f"{wcid}/{cwe or '<no cwe>'} emitted mechanism_id {mechanism_id!r}, which violates {pattern.pattern}"
+        )
 
 
 def test_load_design_signals_fallback_generates_from_coverage(mt, tmp_path):
