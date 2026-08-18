@@ -9,10 +9,13 @@ rating completeness, CVSS scope, and the file-IO / flag-merge driver."""
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
+from jsonschema import Draft202012Validator
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
@@ -432,6 +435,33 @@ def test_main_merges_existing_flags_and_continues_ids(monkeypatch, tmp_path):
     assert out["ranking"] == {"computed_by": "x"}
 
 
+def test_main_replaces_its_own_flags_and_keeps_foreign_ones(monkeypatch, tmp_path):
+    """A boundary can be entered twice, and this writer merges into a file it
+    shares with the triage agent and the ranking step. Appending its own set a
+    second time doubled every pre-flight flag (juice-shop 2026-08-18: 35 → 69).
+    """
+    (tmp_path / ".threats-merged.json").write_text(
+        json.dumps({"threats": [_threat(cwe="CWE-89", risk="Critical"), _threat(t_id="T-002", risk="Low")]}),
+        encoding="utf-8",
+    )
+    assert _run_main(monkeypatch, tmp_path) == 0
+    first = json.loads((tmp_path / ".triage-flags.json").read_text())
+    document = dict(first)
+    document["flags"] = [
+        *first["flags"],
+        {"flag_id": "TF-900", "type": "consistency", "severity": "info", "threat_ids": ["T-001"], "source": "agent"},
+    ]
+    (tmp_path / ".triage-flags.json").write_text(json.dumps(document), encoding="utf-8")
+
+    assert _run_main(monkeypatch, tmp_path) == 0
+
+    second = json.loads((tmp_path / ".triage-flags.json").read_text())
+    own = [flag for flag in second["flags"] if flag["source"] == tvr._PRE_FLIGHT_SOURCE]
+    assert [flag["message"] for flag in own] == [flag["message"] for flag in first["flags"]]
+    assert [flag["flag_id"] for flag in second["flags"] if flag["source"] == "agent"] == ["TF-900"]
+    assert second["summary"]["total_flags"] == len(first["flags"]) + 1
+
+
 def test_main_corrupt_existing_flags_treated_empty(monkeypatch, tmp_path):
     (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": []}), encoding="utf-8")
     (tmp_path / ".triage-flags.json").write_text("garbage{", encoding="utf-8")
@@ -477,7 +507,7 @@ _DECLARED = {"comp-api": {"sensitive_assets": ["customer payment mandates", "ses
 def test_step5b_flags_low_impact_where_context_declares_assets():
     flags = tvr._step5b_business_impact_alignment([_threat(impact="Low")], _DECLARED, "standard")
     assert len(flags) == 1
-    assert flags[0]["type"] == "business-impact"
+    assert flags[0]["type"] == "business_impact"
     assert flags[0]["severity"] == "info"
     assert "customer payment mandates" in flags[0]["message"]
     assert "caps still bind" in flags[0]["suggested_action"].lower()
@@ -520,6 +550,56 @@ def test_declared_business_context_reads_analyst_artifact(tmp_path):
 
 def test_declared_business_context_missing_file_is_empty(tmp_path):
     assert tvr._declared_business_context(tmp_path) == {}
+
+
+# ---------------------------------------------------------------------------
+# The flag vocabulary and its contract
+#
+# `.triage-flags.json` is validated at the boundary that follows the producer,
+# so a flag type this file emits but `schemas/triage-flags.schema.yaml` does not
+# list aborts the run after Stage 1 has completed (juice-shop 2026-08-18,
+# `business-impact`). Asserting a type against the producer's own literal is
+# what let that ship, so both checks below compare it to the schema instead.
+# ---------------------------------------------------------------------------
+
+
+def _schema_flag_types() -> set[str]:
+    schema = yaml.safe_load((PLUGIN_ROOT / "schemas" / "triage-flags.schema.yaml").read_text(encoding="utf-8"))
+    return set(schema["properties"]["flags"]["items"]["properties"]["type"]["enum"])
+
+
+@pytest.mark.parametrize("producer", ["triage_validate_ratings.py", "triage_compute_ranking.py"])
+def test_every_emitted_flag_type_is_in_the_contract(producer):
+    source = (PLUGIN_ROOT / "scripts" / producer).read_text(encoding="utf-8")
+    emitted = set(re.findall(r'"type": "([a-z][a-z_-]*)"', source))
+    assert emitted, f"{producer} emits no flag type — the pattern above stopped matching"
+    assert emitted <= _schema_flag_types()
+
+
+def test_every_written_flag_validates_against_its_schema(monkeypatch, tmp_path):
+    """Every deterministic step at once, including the one that only fires when
+    the repository declares business context. Scope is the flag entries: this
+    writer owns those, while `triage_compute_ranking.py` completes the document
+    into the v2 shape the boundary validates.
+    """
+    threats = [
+        _threat(t_id="T-001", cwe="CWE-89", risk="Critical", component_id="comp-api"),
+        _threat(t_id="T-002", cwe="CWE-89", risk="Low", component_id="comp-db"),
+        _threat(t_id="T-003", impact="Low", component_id="comp-api"),
+    ]
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": threats}), encoding="utf-8")
+    (tmp_path / ".stride-analyst-context.json").write_text(
+        json.dumps({"comp-api": {"business_context": {"sensitive_assets": ["customer payment mandates"]}}}),
+        encoding="utf-8",
+    )
+
+    assert _run_main(monkeypatch, tmp_path, "--depth", "standard") == 0
+
+    document = json.loads((tmp_path / ".triage-flags.json").read_text())
+    assert "business_impact" in {flag["type"] for flag in document["flags"]}
+    schema = yaml.safe_load((PLUGIN_ROOT / "schemas" / "triage-flags.schema.yaml").read_text(encoding="utf-8"))
+    validator = Draft202012Validator(schema["properties"]["flags"]["items"])
+    assert [error.message for flag in document["flags"] for error in validator.iter_errors(flag)] == []
 
 
 if __name__ == "__main__":

@@ -47,6 +47,8 @@ from _shared_sources import (
 # ---------------------------------------------------------------------------
 
 _SEVERITY_RANK = {"Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+# Marks the flags this writer owns, so a repeated run can replace exactly those.
+_PRE_FLIGHT_SOURCE = "triage-pre-flight"
 _VALID_RISK = frozenset({"Critical", "High", "Medium", "Low"})
 _VALID_LIKELIHOOD = frozenset({"Critical", "High", "Medium", "Low"})
 _VALID_IMPACT = frozenset({"Critical", "High", "Medium", "Low"})
@@ -496,7 +498,7 @@ def _step5b_business_impact_alignment(threats: list[dict], business: dict[str, d
         stated = ", ".join(assets[:3]) if assets else harm.strip()[:160]
         flags.append(
             {
-                "type": "business-impact",
+                "type": "business_impact",
                 "severity": "info",
                 "threat_ids": [t.get("t_id", "?")],
                 "message": (
@@ -706,9 +708,17 @@ def main() -> int:
         except (json.JSONDecodeError, OSError):
             existing = {}
 
-    existing_flags: list[dict] = existing.get("flags") or []
+    # Every flag this writer produced carries its source, so a second
+    # invocation on the same output directory replaces that set rather than
+    # appending a duplicate of it. Flags from the triage agent and from the
+    # ranking step carry a different source and are kept untouched.
+    existing_flags: list[dict] = [
+        flag
+        for flag in (existing.get("flags") or [])
+        if not (isinstance(flag, dict) and flag.get("source") == _PRE_FLIGHT_SOURCE)
+    ]
 
-    # Assign sequential TF-NNN IDs starting after the last existing one
+    # Assign sequential TF-NNN IDs starting after the last retained one
     next_id = 1
     for ef in existing_flags:
         fid = ef.get("flag_id", "")
@@ -718,7 +728,7 @@ def main() -> int:
 
     for flag in all_flags:
         flag["flag_id"] = f"TF-{next_id:03d}"
-        flag.setdefault("source", "triage-pre-flight")
+        flag.setdefault("source", _PRE_FLIGHT_SOURCE)
         next_id += 1
 
     combined_flags = existing_flags + all_flags

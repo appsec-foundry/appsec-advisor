@@ -377,7 +377,7 @@ Write the flags file. The schema carries a `version` field; `v1` is the legacy f
   "flags": [
     {
       "flag_id": "TF-001",
-      "type": "consistency | plausibility | priority | completeness | cvss_missing | cvss_scope_violation | cvss_band_mismatch | business-impact",
+      "type": "consistency | plausibility | priority | completeness | cvss_missing | cvss_scope_violation | cvss_band_mismatch | business_impact",
       "severity": "warning | info",
       "threat_ids": ["F-003", "F-007"],
       "message": "Human-readable description of the flag",

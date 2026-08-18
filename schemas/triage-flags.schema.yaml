@@ -39,6 +39,7 @@ properties:
             - cvss_missing
             - cvss_scope_violation
             - cvss_band_mismatch
+            - business_impact
             - severity_reconciliation
         severity:
           type: string
