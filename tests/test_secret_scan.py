@@ -152,10 +152,46 @@ def test_prose_credential_keyword_not_flagged(secret_scan, raw):
 @pytest.mark.parametrize(
     "raw",
     [
+        # The 2026-08-18 juice-shop release-blocker: `token=` glued into
+        # `#access_token`, with the next English word of the sentence read as
+        # the assigned value.
+        "An attacker lures a victim to a URL carrying an attacker-supplied "
+        "#access_token= fragment; the router matcher activates OAuthComponent.",
+        "The handler sets the ?api_key= parameter in the query string before dispatch.",
+        "Here the token: attacker-controlled value is accepted without validation.",
+        "The endpoint reads password= directly from request.body and trusts it.",
+        "It forwards the bearer token= Authorization header to the upstream service.",
+    ],
+)
+def test_credential_parameter_name_in_prose_not_flagged(secret_scan, raw):
+    """A threat model describes credential handling for a living, so a keyword
+    glued into a larger token (``#access_token=``, ``?api_key=``) must not read
+    as an assignment just because an English word follows it.
+
+    ``mask_text`` is asserted alongside ``scan_text`` because the masker mirrors
+    the detector: before this guard it rewrote the sentence to
+    ``#access_token= **** (8 chars)``, silently corrupting prose.
+    """
+    hits = [h for h in secret_scan.scan_text(raw) if h.pattern == "generic_credential_assignment"]
+    assert hits == [], f"prose credential keyword should not flag: {raw!r}, got {hits}"
+    masked, _ = secret_scan.mask_text(raw)
+    assert masked == raw, f"masker must leave prose intact: {raw!r} -> {masked!r}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
         "  secret: changeme",  # YAML key (indent, not mid-sentence) → flags
         "const secret = mypassword",  # code assignment with `=` → flags
         "Rotate the secret: hunter2longer",  # prose but value has a digit → flags
         "the secret: 'existing'",  # quoted value → flags
+        # The same URL-fragment prose as above, but carrying a real token.
+        "An attacker replays #access_token=eyJhbGciOiJIUzI1NiJ9 captured from the log",
+        # Alphabetic, mid-sentence, sentence continues — but longer than any
+        # English word the guard admits (segment cap is 13 chars).
+        "the bearer=abcdefghijklmnop is hardcoded",
+        "the bearer=sunflowerpower is hardcoded",
+        "password= admin123456",  # digit-bearing value after `= ` → flags
     ],
 )
 def test_prose_guard_does_not_swallow_real_assignments(secret_scan, raw):

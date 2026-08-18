@@ -173,39 +173,86 @@ def _is_keyword_echo_value(value: str, keyword: str | None, quoted: bool) -> boo
     return norm(value) == norm(keyword)
 
 
-# A plain lowercase English word (no digits, no separators) — e.g. "existing",
-# "required", "rotated". On its own this is not enough to skip (a weak password
-# could be a lowercase word), so it is only honoured in prose context below.
-_PROSE_WORD_RE = re.compile(r"^[a-z]{4,}$")
+# A natural-language word: letters only, optionally hyphenated ("existing",
+# "Authorization", "attacker-controlled"). Every segment is capped at 13 chars
+# because that is the longest word a threat model plausibly writes after a
+# credential keyword; a longer alphabetic run is more likely a passphrase than
+# prose. On its own this is not enough to skip (a weak password could be a
+# lowercase word), so it is only honoured in prose context below.
+_PROSE_WORD_RE = re.compile(r"^[A-Za-z]{1,13}(?:-[A-Za-z]{1,13})*$")
+
+# At least one vowel — a letters-only run without any is far more likely to be
+# an encoded literal ("bcdfghjklmnp") than an English word.
+_PROSE_VOWEL_RE = re.compile(r"[aeiouyAEIOUY]")
+
+# The characters that can glue a credential keyword into a larger prose token:
+# `#access_token=`, `?api_key=`, `x-auth-token:`. The keyword match itself may
+# start mid-token, so sentence position must be measured from the token's left
+# edge, not from the keyword.
+_TOKEN_CHAR_RE = re.compile(r"[A-Za-z0-9_\-#?&/.]")
 
 
 def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool, text: str, start: int) -> bool:
     """A credential keyword appearing mid-sentence in prose is not an
-    assignment. Example false positive that blocked a release on the
-    2026-06-05 juice-shop run::
+    assignment. Two false positives that blocked a release::
 
         - 'Rotate the secret: existing SecurityAnswers rows are invalidated…'
+        - 'a URL carrying an attacker-supplied #access_token= fragment; the …'
 
-    Here ``secret: existing`` is an English sentence, not ``secret = <literal>``.
+    Here ``secret: existing`` and ``token= fragment`` are English sentences, not
+    ``secret = <literal>``. The second shape is structural for this document
+    class: a threat model describes credential handling for a living, so any
+    OAuth/JWT/API-key finding risks having the next English word of the sentence
+    read as the assigned value.
+
     The guard is deliberately narrow so a genuine literal can never slip
     through — ALL of the following must hold:
 
     * unquoted value (a quoted value stays flagged),
-    * the operator is ``:`` (prose uses a colon; ``=`` is assignment syntax),
-    * the value is a plain lowercase word (a real secret carries digits / mixed
-      case / token shape, which fails ``_PROSE_WORD_RE``),
-    * the keyword is preceded on the same line by a word + whitespace, i.e. it
-      sits inside a sentence rather than at a key / assignment position
-      (``  secret: x`` as a YAML key is preceded by indent only and stays
-      flagged).
+    * the value is a natural-language word: letters and inner hyphens only, each
+      segment ≤ 13 chars, containing a vowel (a real secret carries digits /
+      separators / token shape, which fails ``_PROSE_WORD_RE``),
+    * the keyword sits inside a sentence rather than at a key / assignment
+      position — measured from the left edge of the whole token, so that
+      ``#access_token`` counts as mid-sentence while a bare ``  secret: x``
+      YAML key, preceded by indent only, stays flagged,
+    * the sentence continues after the value (another word, or a clause-ending
+      ``.,;`` ). A config value is line-final or followed by a quote,
+    * the operator is ``:``, or ``=`` **with** whitespace before the value. No
+      URL, env file, or query string ever puts a space after ``=``, so this is
+      what separates ``token= fragment`` in prose from ``token=<literal>``.
     """
-    if quoted or op != ":":
+    if quoted:
         return False
-    if not _PROSE_WORD_RE.match(value):
+    if op not in (":", "="):
         return False
+    if not _PROSE_WORD_RE.match(value) or not _PROSE_VOWEL_RE.search(value):
+        return False
+
     line_start = text.rfind("\n", 0, start) + 1
-    before = text[line_start:start]
-    return bool(re.search(r"[A-Za-z]{2,}\s+$", before))
+    line_end = text.find("\n", start)
+    if line_end == -1:
+        line_end = len(text)
+    line = text[line_start:line_end]
+    offset = start - line_start
+
+    # `=` is assignment syntax unless a space separates it from the value.
+    if op == "=":
+        eq = line.find("=", offset)
+        if eq == -1 or not line[eq + 1 : eq + 2].isspace():
+            return False
+
+    # Expand left over token characters so a keyword glued into a larger token
+    # is judged by where that token sits, not where the keyword does.
+    token_start = offset
+    while token_start > 0 and _TOKEN_CHAR_RE.match(line[token_start - 1]):
+        token_start -= 1
+    if not re.search(r"[A-Za-z]{2,}\s+$", line[:token_start]):
+        return False
+
+    # The sentence has to keep going; a config value ends its line.
+    after = line[line.find(value, offset) + len(value) :]
+    return bool(re.match(r"(?:\s+[A-Za-z]|[.,;](?:\s|$))", after))
 
 
 # A JWT header segment that decodes to ``{"alg":"none"}``. An unsigned token
