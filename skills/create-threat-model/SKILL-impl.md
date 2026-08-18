@@ -1458,6 +1458,7 @@ case "$PRE_CHECK_DECISION:$DIRTY_SET_DECISION" in
       printf '\n  No source changes — reusing existing threat model; requested HTML is missing, generating it now.\n' >&2
       python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" \
         --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.html" \
+        --require-mermaid \
         2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2 || true
     fi
     if [ "${WRITE_THREATDRAGON:-false}" = "true" ] && [ ! -f "$OUTPUT_DIR/threat-model.threatdragon.json" ]; then
@@ -4718,13 +4719,16 @@ The exporter's own preflight handles missing dependencies with a clear message; 
 
 The HTML export runs **after** the PDF block, under the same rationale: `threat-model.md` is final, so the standalone `threat-model.html` can never go stale. The export script is the same one used by `/appsec-advisor:export-threat-model --formats html`. `--pdf` and `--html` are independent and may both be set in one run.
 
-**Non-fatal.** HTML export failures must not fail the assessment, identically to PDF. The threat model itself was already written; a conversion error or a missing optional `mmdc` (Mermaid pre-render) is a warning, not an error. Log and continue.
+**Run this step UNSANDBOXED**, for the same reason as the PDF block above: the Mermaid pre-render shells out to a headless Chrome whose `process_singleton` `socket()` syscall the Bash sandbox blocks. Under the sandbox `mmdc` is *present* (so preflight passes) but every diagram fails, which is why this call passes `--require-mermaid` — without it the script would write a diagram-less HTML and exit 0, shipping a document that looks complete but carries none of its 18+ diagrams (juice-shop 2026-08-18). If you see the "Refusing to ship a diagram-less HTML" abort, the cause is the sandbox — re-run the exact command unsandboxed. Do **not** "fix" it by dropping `--require-mermaid` or adding `--no-mermaid`; `--no-mermaid` is only for a deliberate, user-requested diagram-less export.
+
+**Non-fatal.** HTML export failures must not fail the assessment, identically to PDF. The threat model itself was already written; a conversion error is a warning, not an error. Log and continue.
 
 ```bash
 if [ "$WRITE_HTML" = "true" ]; then
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" \
         --input  "$OUTPUT_DIR/threat-model.md" \
         --output "$OUTPUT_DIR/threat-model.html" \
+        --require-mermaid \
         2>&1 | tee -a "$OUTPUT_DIR/.agent-run.log" >&2
     HTML_RC=${PIPESTATUS[0]}
     if [ "$HTML_RC" -eq 0 ]; then

@@ -850,9 +850,7 @@ def test_every_context_v2_role_can_be_dispatched(tmp_path):
             binding = binding_by_id[assignment["context"]]
             if binding["delivery"] != "declared" or binding["source"]["kind"] != "output_artifact":
                 continue
-            artifact = routing._render_artifact(
-                binding["source"]["artifact_pattern"], component_id, candidate_id
-            )
+            artifact = routing._render_artifact(binding["source"]["artifact_pattern"], component_id, candidate_id)
             contract_by_artifact[artifact] = binding["contract"]
         inputs = sorted(contract_by_artifact)
         output = tmp_path / f"out-{role}"

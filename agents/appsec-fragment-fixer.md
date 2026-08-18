@@ -59,7 +59,7 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
    Exit 0 means the repair worked; 1 means the plan was insufficient (the skill's next iteration re-attempts or hard-fails at the cap).
 6. Only after the contract gate exits 0, regenerate the auxiliary changelog audit once:
    ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_changelog_audit.py" "$OUTPUT_DIR"
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_changelog_audit.py" --output-dir "$OUTPUT_DIR"
    ```
    This keeps failed intermediate compose attempts from repeatedly parsing and writing the large audit export while preserving it for every repaired final report.
 7. Log a `STEP_END` / `AGENT_END` pair summarizing which fragment paths were rewritten and the final `qa_checks.py contract` exit code.

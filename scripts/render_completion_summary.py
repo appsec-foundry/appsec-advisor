@@ -1236,23 +1236,54 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
     return lines
 
 
+# Every optional deliverable a run can request: config flag → label → filename.
+# The Outputs block reports each REQUESTED entry, present or not. Reporting only
+# what happens to exist turns a missing deliverable into a silently shorter list
+# — which is how a `--pdf --html --pentest-tasks` run printed "Assessment
+# complete" while producing none of the three (juice-shop 2026-08-18).
+_REQUESTABLE_DELIVERABLES: tuple[tuple[str, str, str], ...] = (
+    ("write_sarif", "SARIF", "threat-model.sarif.json"),
+    ("write_threatdragon", "Threat Dragon", "threat-model.threatdragon.json"),
+    ("write_pentest_tasks", "Pentest tasks", "pentest-tasks.yaml"),
+    ("write_pdf", "PDF", "threat-model.pdf"),
+    ("write_html", "HTML", "threat-model.html"),
+)
+
+
+def missing_deliverables(output_dir: Path, cfg: dict) -> list[str]:
+    """Requested deliverables that are not on disk. Empty when the run is whole."""
+    return [
+        basename
+        for key, _label, basename in _REQUESTABLE_DELIVERABLES
+        if cfg.get(key) and not (output_dir / basename).is_file()
+    ]
+
+
 def render_files(output_dir: Path, cfg: dict) -> list[str]:
     lines = ["", "Outputs"]
     lines.append(f"  Report     : {output_dir}/threat-model.md")
     if cfg.get("write_yaml", True):
         lines.append(f"  YAML       : {output_dir}/threat-model.yaml")
-    sarif = output_dir / "threat-model.sarif.json"
-    if cfg.get("write_sarif") and sarif.is_file():
-        lines.append(f"  SARIF      : {sarif}")
-    td = output_dir / "threat-model.threatdragon.json"
-    if cfg.get("write_threatdragon") and td.is_file():
-        lines.append(f"  Threat Dragon: {td} (alpha)")
+    for key, label, basename in _REQUESTABLE_DELIVERABLES:
+        if not cfg.get(key):
+            continue
+        target = output_dir / basename
+        suffix = " (alpha)" if key == "write_threatdragon" else ""
+        if target.is_file():
+            lines.append(f"  {label:<11}: {target}{suffix}")
+        else:
+            lines.append(f"  {label:<11}: MISSING — requested but not produced ({basename})")
     arch_md = output_dir / ".architect-review.md"
     if cfg.get("architect_review") and arch_md.is_file():
         lines.append(f"  Architect  : {arch_md} (advisory)")
     analysis_md = output_dir / "analysis-model.md"
     if analysis_md.is_file():
         lines.append(f"  Analysis   : {analysis_md} (architecture snapshot)")
+    absent = missing_deliverables(output_dir, cfg)
+    if absent:
+        lines.append("")
+        lines.append(f"  ⚠ {len(absent)} requested deliverable(s) missing: {', '.join(absent)}")
+        lines.append("    The threat model itself is complete; re-run the export step for these.")
     return lines
 
 
@@ -1785,10 +1816,7 @@ def render_dry_run(output_dir: Path, repo_root: Path) -> str:
     lines.append("")
     lines.append(f"  -- Metrics {SECTION_RULE[:49]}")
     lines.append("")
-    _sev_bits = (
-        f"Critical: {s['Critical']}, High: {s['High']}, "
-        f"Medium: {s['Medium']}, Low: {s['Low']}"
-    )
+    _sev_bits = f"Critical: {s['Critical']}, High: {s['High']}, Medium: {s['Medium']}, Low: {s['Low']}"
     if metrics.get("threats_info"):
         _sev_bits += f", Informational: {metrics['threats_info']}"
     lines.append(f"  Threats         : {metrics['threats_total']} total ({_sev_bits})")

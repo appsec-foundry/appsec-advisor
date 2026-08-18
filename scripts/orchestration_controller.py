@@ -5784,14 +5784,21 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
 
 
 # Which deterministic yaml-derived exports a run can request, and the script
-# that produces each. Both take the same `--threat-model` / `--output` pair.
-# `pentest-tasks.yaml` is deliberately NOT here: it needs repo-root/format/
-# target arguments and a follow-up validate_intermediate pass, so it keeps the
-# analyst as its only producer until that flow gets the same treatment.
+# that produces each. These take the same `--threat-model` / `--output` pair.
 _YAML_DERIVED_EXPORTS: tuple[tuple[str, str, str], ...] = (
     ("write_sarif", "export_sarif.py", "threat-model.sarif.json"),
     ("write_threatdragon", "export_threat_dragon.py", "threat-model.threatdragon.json"),
 )
+
+# `pentest-tasks` needs its own argv shape (merged findings, dialect, target
+# URL), which is why it stayed analyst-owned long after SARIF and Threat Dragon
+# moved here. That left it unproducible on the thin runtime: Analyst-B is capped
+# at `STAGE1_PHASE_LIMIT=10b`, `SKILL-thin-stage2.md` mentions no export at all,
+# and `SKILL-full-runtime.md` binds WRITE_PENTEST_TASKS without ever consuming
+# it — so `--pentest-tasks` was promised in the pre-flight and silently produced
+# nothing (juice-shop 2026-08-18). The extra arguments were never the blocker:
+# every one of them already lives in the durable `.skill-config.json`.
+_PENTEST_TASKS_EXPORT = ("write_pentest_tasks", "render_pentest_tasks.py", "pentest-tasks.yaml")
 
 
 def _export_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
@@ -5839,6 +5846,47 @@ def _export_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
             continue
         if proc.returncode == 0 and target.is_file():
             _append_event(output_dir, "EXPORT_BACKSTOP", f"{script} wrote {basename} from threat-model.yaml")
+
+    _export_pentest_tasks_if_configured(output_dir, cfg)
+
+
+def _export_pentest_tasks_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
+    """Produce `pentest-tasks.yaml` when the run asked for it.
+
+    Separated from `_YAML_DERIVED_EXPORTS` only because its argv shape differs;
+    the ownership rule is identical — a requested deliverable must not depend on
+    an LLM remembering a trailing instruction. See `_PENTEST_TASKS_EXPORT`.
+    Idempotent and fail-safe, like its siblings.
+    """
+    key, script, basename = _PENTEST_TASKS_EXPORT
+    if not cfg.get(key):
+        return
+    target = output_dir / basename
+    if target.is_file():
+        return
+    merged = output_dir / ".threats-merged.json"
+    if not merged.is_file():
+        return
+    argv = [
+        sys.executable,
+        str(SCRIPT_DIR / script),
+        "--merged",
+        str(merged),
+        "--output",
+        str(target),
+        "--threat-model",
+        str(output_dir / "threat-model.yaml"),
+        "--dialect",
+        str(cfg.get("pentest_format") or "generic"),
+    ]
+    if cfg.get("pentest_target"):
+        argv += ["--target-url", str(cfg["pentest_target"])]
+    try:
+        proc = subprocess.run(argv, cwd=str(SCRIPT_DIR), capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return
+    if proc.returncode == 0 and target.is_file():
+        _append_event(output_dir, "EXPORT_BACKSTOP", f"{script} wrote {basename} from .threats-merged.json")
 
 
 def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:

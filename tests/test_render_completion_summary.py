@@ -161,18 +161,14 @@ class TestSeverityBasisMatchesTheReport:
                         {"risk": "High", "evidence_tier": "insecure-practice"},
                         {"risk": "High"},
                     ],
-                    "weaknesses": [
-                        {"kind": "implementation", "severity_basis": "confirmed", "severity": "High"}
-                    ],
+                    "weaknesses": [{"kind": "implementation", "severity_basis": "confirmed", "severity": "High"}],
                 },
                 id="folded-practice-sites",
             ),
             pytest.param(
                 {
                     "threats": [{"risk": "High"}],
-                    "weaknesses": [
-                        {"kind": "design", "severity_basis": "design-risk", "severity": "Critical"}
-                    ],
+                    "weaknesses": [{"kind": "design", "severity_basis": "design-risk", "severity": "Critical"}],
                 },
                 id="design-risk-weakness-has-no-threat-instance",
             ),
@@ -1890,3 +1886,66 @@ class TestExportDeliverablesBackstop:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         assert rcs._YAML_DERIVED_EXPORTS == module._YAML_DERIVED_EXPORTS
+
+
+class TestRequestedDeliverablesAreReported:
+    """A requested deliverable that was never produced must be visible.
+
+    `render_files` used to list an optional output only `and <path>.is_file()`,
+    so a missing one silently shortened the Outputs block: a
+    `--pdf --html --pentest-tasks` run printed "Assessment complete" and listed
+    none of the three, with nothing anywhere comparing the `write_*` flags
+    against the files on disk (juice-shop 2026-08-18).
+    """
+
+    ALL_REQUESTED = {
+        "write_sarif": True,
+        "write_threatdragon": True,
+        "write_pentest_tasks": True,
+        "write_pdf": True,
+        "write_html": True,
+    }
+
+    def test_missing_requested_deliverables_are_named(self, tmp_path):
+        mod = _load_module()
+        assert sorted(mod.missing_deliverables(tmp_path, self.ALL_REQUESTED)) == [
+            "pentest-tasks.yaml",
+            "threat-model.html",
+            "threat-model.pdf",
+            "threat-model.sarif.json",
+            "threat-model.threatdragon.json",
+        ]
+
+    def test_outputs_block_marks_them_missing(self, tmp_path):
+        mod = _load_module()
+        body = "\n".join(mod.render_files(tmp_path, self.ALL_REQUESTED))
+        assert body.count("MISSING — requested but not produced") == 5
+        assert "5 requested deliverable(s) missing" in body
+
+    def test_present_deliverable_is_listed_normally(self, tmp_path):
+        mod = _load_module()
+        (tmp_path / "threat-model.pdf").write_text("x", encoding="utf-8")
+        body = "\n".join(mod.render_files(tmp_path, {"write_pdf": True}))
+        assert "threat-model.pdf" in body
+        assert "MISSING" not in body
+        assert mod.missing_deliverables(tmp_path, {"write_pdf": True}) == []
+
+    def test_a_deliverable_that_was_not_requested_is_not_reported(self, tmp_path):
+        mod = _load_module()
+        body = "\n".join(mod.render_files(tmp_path, {"write_pdf": False}))
+        assert "PDF" not in body
+        assert mod.missing_deliverables(tmp_path, {"write_pdf": False}) == []
+
+    def test_every_requestable_flag_has_a_producer_in_the_controller(self):
+        """A future `--foo` flag cannot ship a deliverable with no producer."""
+        mod = _load_module()
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        import orchestration_controller as oc
+
+        produced = {k for k, _s, _b in oc._YAML_DERIVED_EXPORTS} | {oc._PENTEST_TASKS_EXPORT[0]}
+        # PDF/HTML need an unsandboxed shell, so they stay skill-owned by design.
+        skill_owned = {"write_pdf", "write_html"}
+        gated = {k for k, _label, _basename in mod._REQUESTABLE_DELIVERABLES}
+        assert gated - skill_owned == produced, (
+            "every gated deliverable needs a deterministic producer or an explicit exemption"
+        )

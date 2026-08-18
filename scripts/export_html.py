@@ -129,6 +129,7 @@ def export_html(
     *,
     use_mermaid: bool,
     css_path: Path,
+    require_mermaid: bool = False,
 ) -> int:
     md_text = input_md.read_text(encoding="utf-8")
     md_text = rewrite_vscode_links(md_text)
@@ -143,6 +144,23 @@ def export_html(
             # PNG for WeasyPrint's sake — this path opts into SVG explicitly.
             md_text, rendered, failed = render_mermaid_blocks(md_text, work, fmt="svg")
             sys.stderr.write(f"[export_html] mermaid: {rendered} rendered, {failed} failed\n")
+            # Preflight only proves mmdc is *present*; rendering can still die
+            # per-diagram (under a sandbox, Chrome's process_singleton socket()
+            # is blocked, so every block fails while `which mmdc` succeeds).
+            # Writing anyway ships a diagram-less document that looks complete —
+            # the 2026-08-18 juice-shop HTML carried 0/18 diagrams and exit 0.
+            # When the caller asked for diagrams, refuse instead.
+            if require_mermaid and failed and not rendered:
+                sys.stderr.write(
+                    "[export_html] Mermaid renderer cannot run (mmdc present but every diagram "
+                    "failed — under a sandbox Chrome's process_singleton socket() syscall is "
+                    "blocked).\n"
+                    "[export_html] Refusing to ship a diagram-less HTML. Do one of:\n"
+                    "[export_html]   - re-run the export with the sandbox disabled, or\n"
+                    "[export_html]   - pass --no-mermaid to deliberately export with diagrams "
+                    "kept as code blocks.\n"
+                )
+                return 1
 
         # Stage relative image assets (e.g. the hand-built figure1.svg) from the
         # document's own directory into the work dir, so pandoc — whose
@@ -247,6 +265,7 @@ def main(argv: list[str] | None = None) -> int:
             output_html=output_html,
             use_mermaid=not args.no_mermaid,
             css_path=css_path,
+            require_mermaid=args.require_mermaid,
         )
     except RuntimeError as exc:
         sys.stderr.write(f"[export_html] conversion failed: {exc}\n")
