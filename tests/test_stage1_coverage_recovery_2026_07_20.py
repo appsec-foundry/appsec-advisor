@@ -80,7 +80,7 @@ def test_harness_ceiling_exceeds_the_highest_derivable_budget() -> None:
     """
     import re
 
-    text = (REPO_ROOT / "agents" / "appsec-stride-analyzer.md").read_text(encoding="utf-8")
+    text = (REPO_ROOT / "agents" / "appsec-stride-analyzer-v2.md").read_text(encoding="utf-8")
     m = re.search(r"^maxTurns:\s*(\d+)", text, re.M)
     assert m, "maxTurns not found in analyzer frontmatter"
     ceiling = int(m.group(1))
@@ -171,6 +171,7 @@ def _blocked_run(tmp_path: Path) -> Path:
     )
     (out / ".recon-summary.md").write_text("# recon", encoding="utf-8")
     manifest = {
+        "context_version": 2,
         "generated_at": "2026-07-20T09:00:00Z",
         "components": [
             {"component_id": "ok-svc", "max_turns": 22, "index_paths": {}},
@@ -188,7 +189,7 @@ def _blocked_run(tmp_path: Path) -> Path:
     return out
 
 
-def test_post_stage1_names_blocked_coverage_not_missing_artifacts(tmp_path: Path) -> None:
+def test_post_stage1_names_blocked_coverage_not_missing_artifacts(tmp_path: Path, monkeypatch) -> None:
     """The orchestrator obeyed 'stop before Analyst-B'; say so.
 
     Before this fix post_stage1 checked the Analyst-B artifacts first and raised
@@ -199,8 +200,17 @@ def test_post_stage1_names_blocked_coverage_not_missing_artifacts(tmp_path: Path
     """
     out = _blocked_run(tmp_path)
 
+    monkeypatch.setattr(oc, "_load_context_v2_config", lambda _out: (out, {}))
+    real_run_script = oc._run_script
+
+    def run_script(name, args, **kwargs):
+        if name == "validate_dispatch_manifest.py":
+            return None
+        return real_run_script(name, args, **kwargs)
+
+    monkeypatch.setattr(oc, "_run_script", run_script)
     with pytest.raises(oc.ControllerError) as exc:
-        oc.post_stage1(out)
+        oc.context_v2_post_stride(out)
 
     message = str(exc.value)
     assert "did not produce required artifacts" not in message, (

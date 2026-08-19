@@ -31,4 +31,4 @@ The authoritative security-architecture authoring contract remains in the full-f
 1. If `.pre-render-repair-plan.json` lists at most three edits below 500 characters, make only those edits.
 2. Otherwise fill only narrative placeholders in `security-architecture.md`. Preserve every scaffolded heading, table, anchor, control name, and deterministic block. Do not add fragments or rewrite generator-owned structure.
 3. Ground every assertion in the supplied structured artifacts. Keep the prose specific, falsifiable, and concise.
-4. Do not compose the report or invoke any QA command. Return one short status sentence after the fragment is written.
+4. Do not compose the report or invoke any QA command. Follow `shared/completion-contract.md` and return one short status sentence after the fragment is written.

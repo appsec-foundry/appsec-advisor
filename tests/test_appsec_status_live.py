@@ -120,7 +120,8 @@ def test_cutoff_verdict_api_stall_surfaced(tmp_path, appsec_status):
     assert verdict["kind"] == "api_stall"
     lead = appsec_status._render_cutoff(verdict)
     assert "Last run incomplete" in lead
-    assert "--resume" in lead
+    assert "repeat the original --full/--rebuild invocation" in lead
+    assert "--resume" not in lead
 
 
 def test_cutoff_verdict_budget_default_when_render_ready(tmp_path, appsec_status):

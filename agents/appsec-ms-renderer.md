@@ -31,4 +31,4 @@ The authoritative Management Summary authoring contract remains in the full-frag
 1. If `.pre-render-repair-plan.json` lists at most three edits below 500 characters, make only those edits.
 2. Otherwise author only the fragments you own and only when their documented conditions apply. Never touch `security-architecture.md` or deterministic fragments.
 3. Run the Management Summary compactness gate required by the focused contract.
-4. Do not compose the report or invoke the general QA gate. Return one short status sentence after the owned fragments are written.
+4. Do not compose the report or invoke the general QA gate. Follow `shared/completion-contract.md` and return one short status sentence after the owned fragments are written.

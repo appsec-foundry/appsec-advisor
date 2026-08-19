@@ -215,7 +215,7 @@ class TestRecommender:
             "category": "max_turns_subagent",
             "severity": "error",
             "title": "MAX_TURNS",
-            "evidence": {"source_agent": "stride-analyzer"},
+            "evidence": {"source_agent": "stride-analyzer-v2"},
         }
         rec_dict = rec._recommend_max_turns_subagent(issue, Path("/tmp"))
         assert rec_dict["auto_applicable"] is True
@@ -277,7 +277,7 @@ class TestEnrichment:
                     "category": "max_turns_subagent",
                     "severity": "error",
                     "title": "MAX_TURNS",
-                    "evidence": {"source_agent": "stride-analyzer"},
+                    "evidence": {"source_agent": "stride-analyzer-v2"},
                 },
                 {
                     "id": "ISSUE-002",
@@ -305,7 +305,7 @@ class TestCli:
             output_dir,
             ".agent-run.log",
             [
-                "2026-04-26T10:00:00Z  [t1]  ERROR  stride-analyzer  MAX_TURNS  hit",
+                "2026-04-26T10:00:00Z  [t1]  ERROR  stride-analyzer-v2  MAX_TURNS  hit",
             ],
         )
         _write_log(output_dir, ".hook-events.log", [])

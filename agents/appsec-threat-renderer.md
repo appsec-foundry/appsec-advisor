@@ -676,5 +676,6 @@ is a false provenance claim.
 ## Completion
 
 Do not compose, mutate `threat-model.md`, run QA, write checkpoints, or create
-exports. Return only a short status summary naming authored fragments and any
-blocker. The controller validates the exact files and owns every later action.
+exports. Follow `shared/completion-contract.md` and return only a short status
+summary naming authored fragments and any blocker. The controller validates the
+exact files and owns every later action.

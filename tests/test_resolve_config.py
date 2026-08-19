@@ -2808,7 +2808,7 @@ class TestBusinessContext:
         with pytest.raises(SystemExit, match="contradict"):
             rc.resolve_business_context(self._ns("--context", "https://ctx.example.test/a.md", "--skip-context"), cfg)
 
-    def test_unusable_value_is_rejected(self, tmp_path):
+    def test_context_is_refused_when_the_producer_cannot_read_it(self, tmp_path):
         cfg = {"incremental": False, "repo_root": str(tmp_path), "output_dir": str(tmp_path)}
         with pytest.raises(SystemExit, match="neither an http"):
             rc.resolve_business_context(self._ns("--context", "ftp://host/ctx.md"), cfg)

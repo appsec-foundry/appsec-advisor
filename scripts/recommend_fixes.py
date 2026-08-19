@@ -75,7 +75,7 @@ def _recommend_max_turns_subagent(issue: dict, output_dir: Path) -> dict:
     """Sub-agent hit MAX_TURNS → bump its maxTurns by 50%."""
     src = (issue["evidence"].get("source_agent") or "").strip()
     # Map log "source" (short name) to canonical agent name. The logger
-    # writes the short name (e.g. "stride-analyzer") in the source field;
+    # writes the short name (e.g. "stride-analyzer-v2") in the source field;
     # the agent file is "appsec-stride-analyzer-v2.md".
     agent_name = src if src.startswith("appsec-") else f"appsec-{src}"
     current = _read_agent_max_turns(agent_name)
