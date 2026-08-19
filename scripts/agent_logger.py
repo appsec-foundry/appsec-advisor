@@ -15,8 +15,6 @@ Events logged:
   AGENT_DONE    — one foreground return or validated background join succeeded
   AGENT_FAILED  — one call failed, expired, was superseded, or was terminally cleaned
   AGENT_USAGE   — SubagentStop usage bound through agent_id to the Agent call
-  SCAN_START    — threat-analyst dispatched / scan beginning (PreToolUse, top-level only)
-  SCAN_COMPLETE — threat-analyst finished (PostToolUse, top-level only)
   CONTEXT_READY — context resolver wrote .threat-modeling-context.md (size)
   FILE_WRITE    — Write tool completed (path, size, duration)
   FILE_EDIT     — Edit tool completed (path, char delta, duration)
@@ -46,16 +44,12 @@ Agent lifecycle identity
   the host agent_id to that call for usage. Session IDs remain observational and
   never select lifecycle, usage, or budget ownership.
 
-Why both PreToolUse (AGENT_SPAWN / SCAN_START) and PostToolUse (SCAN_COMPLETE / AGENT_DONE)?
+Why both PreToolUse (AGENT_SPAWN) and PostToolUse (AGENT_DONE)?
   PostToolUse for the Agent tool only fires in the *outermost* Claude session —
   the one where the skill runs. Controller-dispatched semantic agents can share
   the parent transcript path, so lifecycle identity never comes from that path.
   PreToolUse fires in the session that is *about to call* the tool, which includes
   sub-agent sessions, giving full visibility at dispatch time.
-
-  SCAN_START is emitted at PreToolUse so it appears *before* the threat-analyst's
-  own SESSION_STOP in the chronological log. SCAN_COMPLETE replaces the old
-  PostToolUse SCAN_START which incorrectly appeared *after* SESSION_STOP.
 """
 
 import html
@@ -915,8 +909,6 @@ def _dur_suffix(started_at: int) -> str:
 # AGENT_INVOKE, BASH_WARN, CONTEXT_READY) stay behind the _VERBOSE gate.
 _HIGH_SIGNAL_EVENTS = frozenset(
     {
-        "SCAN_START",
-        "SCAN_COMPLETE",
         "TOOL_ERROR",
         "MAX_TURNS",
         "SESSION_STOP",
@@ -1225,9 +1217,9 @@ def _write_assessment_summary(sid: str) -> None:
     if not os.path.exists(log_file):
         return
 
-    # Reject ghost summaries from sessions that did not spawn the current
-    # assessment.  SCAN_START writes the owner SID; if a different (older)
-    # session reaches here first, its summary would aggregate stale data.
+    # Legacy runs persisted an owner SID beside their SCAN_START hook marker.
+    # Keep consuming it so existing audit logs remain readable; the compact
+    # runtime owns new-run isolation through .scan-start-epoch instead.
     owner_path = os.path.join(os.path.dirname(log_file), ".assessment-owner-sid")
     if os.path.exists(owner_path):
         try:
@@ -1264,28 +1256,44 @@ def _write_assessment_summary(sid: str) -> None:
         with open(log_file) as fh:
             all_lines = fh.readlines()
 
-        # Anchor the run boundary on the FIRST SCAN_START of the *current*
-        # session. The threat-analyst is dispatched once per stage (Stage 1
-        # plus a Stage-3 repair re-dispatch), so SCAN_START fires multiple
-        # times with the SAME session id within one logical run. The previous
-        # logic took the LAST SCAN_START, which truncated both the measured
-        # duration and the token rollup to only the final stage — the
-        # 2026-06-03 juice-shop run (true wall-clock ~60m) was reported as
-        # 9m 14s because its repair re-dispatch fired SCAN_START at +50m.
-        # Everything before the current session's first SCAN_START belongs to
-        # an earlier (different-session) run in the persistent log and stays
-        # excluded; we fall back to the last SCAN_START when no line carries
-        # this session id.
+        # Compact runs write .scan-start-epoch after preflight and before the
+        # first stage dispatch. Use that deterministic marker to exclude prior
+        # entries from the preserved hook log. For historical audit logs that
+        # predate the compact runtime, retain the first-SCAN_START boundary
+        # reader; this is input compatibility, not an executable legacy route.
         sid8 = (sid or "")[:8]
         scan_start_idx = 0
-        first_owned_idx = None
-        last_scan_idx = 0
-        for idx, line in enumerate(all_lines):
-            if "SCAN_START" in line:
-                last_scan_idx = idx
-                if first_owned_idx is None and sid8 and f"[{sid8}" in line:
-                    first_owned_idx = idx
-        scan_start_idx = first_owned_idx if first_owned_idx is not None else last_scan_idx
+        compact_start_epoch = 0
+        try:
+            compact_start_epoch = int((Path(_output_dir()) / ".scan-start-epoch").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            pass
+        if compact_start_epoch:
+            scan_start_idx = len(all_lines)
+            for idx, line in enumerate(all_lines):
+                ts_match = re.match(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)", line)
+                if not ts_match:
+                    continue
+                try:
+                    line_epoch = int(
+                        datetime.strptime(ts_match.group(1), "%Y-%m-%dT%H:%M:%SZ")
+                        .replace(tzinfo=timezone.utc)
+                        .timestamp()
+                    )
+                except ValueError:
+                    continue
+                if line_epoch >= compact_start_epoch:
+                    scan_start_idx = idx
+                    break
+        else:
+            first_owned_idx = None
+            last_scan_idx = 0
+            for idx, line in enumerate(all_lines):
+                if "SCAN_START" in line:
+                    last_scan_idx = idx
+                    if first_owned_idx is None and sid8 and f"[{sid8}" in line:
+                        first_owned_idx = idx
+            scan_start_idx = first_owned_idx if first_owned_idx is not None else last_scan_idx
 
         for line in all_lines[scan_start_idx:]:
             # Track timestamps for duration
@@ -2497,32 +2505,9 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # token/cost data to the correct agent in .agent-run.log.
     # Each hook invocation is a separate process, so we persist the
     # mapping in a lightweight file.
-    raw_name = subtype.split(":")[-1] if ":" in subtype else subtype
     short = _short_agent_name(subtype)
     if short and sid:
         _save_session_agent(sid[:8], short)
-
-    # SCAN_START fires at PreToolUse (dispatch time) so it precedes
-    # the threat-analyst's own SESSION_STOP in the log. Emitting it
-    # here (before the agent runs) fixes the ordering bug where
-    # SCAN_START was previously logged at PostToolUse (after completion).
-    if "threat-analyst" in raw_name:
-        repo = params.get("REPO_ROOT", "unknown")
-        _write("INFO ", "SCAN_START", f"repo={repo}  agent={subtype}  model={model}", sid)
-        # Reset the summary sentinel so this new assessment gets its own summary
-        sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
-        try:
-            os.remove(sentinel)
-        except FileNotFoundError:
-            pass
-        # Record which session owns this assessment so ghost summaries from
-        # lingering prior sessions are suppressed in _write_assessment_summary.
-        owner_path = os.path.join(os.path.dirname(_log_path()), ".assessment-owner-sid")
-        try:
-            with open(owner_path, "w") as fh:
-                fh.write(sid[:8] if sid else "unknown")
-        except Exception:
-            pass
 
 
 def _usage_from_transcript(transcript_path: str) -> dict:
@@ -3096,16 +3081,6 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
 
         if is_err:
             _write("ERROR", "TOOL_ERROR", f"tool={tool}  {_mask_secrets(_clip(resp))}{dur_tail}", sid)
-            return
-
-        # Emit a SCAN_COMPLETE line when the orchestrator agent finishes.
-        # (SCAN_START is now emitted at PreToolUse / dispatch time, so the
-        # chronological order in the log is correct: SCAN_START → SESSION_STOP
-        # → SCAN_COMPLETE. Previously both were emitted at PostToolUse which
-        # placed SCAN_START *after* SESSION_STOP.)
-        if "threat-analyst" in subtype:
-            repo = params.get("REPO_ROOT", "unknown")
-            _write("INFO ", "SCAN_COMPLETE", f"repo={repo}  agent={subtype}  model={model}", sid)
             return
 
         # A successful background Agent PostToolUse acknowledges launch only.

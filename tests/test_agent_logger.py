@@ -142,22 +142,6 @@ class TestAgentReturn:
         assert "AGENT_DONE" in line
         assert "background=false" in line
 
-    def test_threat_analyst_logs_scan_start(self, tmp_path):
-        """SCAN_START is emitted at PreToolUse for the orchestrator dispatch."""
-        event = make_pre_tool_event(
-            "Agent",
-            {
-                "subagent_type": "appsec-advisor:appsec-threat-analyst",
-                "description": "Threat Model Orchestrator",
-                "prompt": "REPO_ROOT=/tmp/repo",
-                "run_in_background": False,
-            },
-        )
-        rc, log = run_logger(event, tmp_path)
-        assert rc == 0
-        assert "SCAN_START" in log
-        assert "/tmp/repo" in log
-
     def test_component_id_extracted_from_prompt(self, tmp_path):
         event = make_post_tool_event(
             "Agent",
@@ -205,21 +189,22 @@ class TestAgentReturn:
         assert rc == 0
         assert "model=opus" in log
 
-    def test_scan_start_includes_model(self, tmp_path):
-        """SCAN_START must include model= for the orchestrator."""
-        event = make_pre_tool_event(
-            "Agent",
-            {
-                "subagent_type": "appsec-advisor:appsec-threat-analyst",
-                "description": "Threat Model Orchestrator",
-                "prompt": "REPO_ROOT=/tmp/repo",
-                "run_in_background": False,
-            },
-        )
-        rc, log = run_logger(event, tmp_path)
+    def test_removed_legacy_analyst_has_no_scan_lifecycle(self, tmp_path):
+        tool_input = {
+            "subagent_type": "appsec-advisor:appsec-threat-analyst",
+            "description": "removed legacy agent",
+            "prompt": "REPO_ROOT=/tmp/repo",
+            "run_in_background": False,
+        }
+        rc, log = run_logger(make_pre_tool_event("Agent", tool_input), tmp_path)
         assert rc == 0
-        assert "SCAN_START" in log
-        assert "model=sonnet" in log
+        assert "AGENT_SPAWN" in log
+        assert "SCAN_START" not in log
+
+        rc, log = run_logger(make_post_tool_event("Agent", tool_input), tmp_path)
+        assert rc == 0
+        assert "AGENT_DONE" in log
+        assert "SCAN_COMPLETE" not in log
 
 
 # ===========================================================================
@@ -1573,43 +1558,13 @@ class TestAssessmentSummary:
 # High-signal stderr mirror — fires WITHOUT --verbose
 # ===========================================================================
 # The old behaviour only mirrored to stderr when APPSEC_VERBOSE was set, which
-# meant a default-verbosity user saw no live scan-start / scan-complete /
-# session-stop / tool-error signal at all. These events are low-volume and
+# meant a default-verbosity user saw no live session-stop / tool-error signal
+# at all. These events are low-volume and
 # high-value, so they now mirror unconditionally. Higher-volume events
 # (FILE_WRITE, AGENT_INVOKE, BASH_WARN) stay behind the verbose gate.
 
 
 class TestHighSignalMirror:
-    def test_scan_start_mirrors_without_verbose(self, tmp_path):
-        event = make_pre_tool_event(
-            "Agent",
-            {
-                "subagent_type": "appsec-advisor:appsec-threat-analyst",
-                "description": "Threat Model Orchestrator",
-                "prompt": "REPO_ROOT=/tmp/repo",
-            },
-        )
-        rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=False)
-        assert rc == 0
-        # SCAN_START is emitted by the pre-tool handler when the dispatched
-        # agent is the threat-analyst orchestrator — must reach stderr.
-        assert "SCAN_START" in stderr, f"SCAN_START must mirror without verbose, got: {stderr!r}"
-
-    def test_scan_complete_mirrors_without_verbose(self, tmp_path):
-        # SCAN_COMPLETE is emitted by the PostToolUse handler on the outer
-        # session when the orchestrator Agent call returns.
-        event = make_post_tool_event(
-            "Agent",
-            {
-                "subagent_type": "appsec-advisor:appsec-threat-analyst",
-                "description": "Threat Model Orchestrator",
-                "prompt": "REPO_ROOT=/tmp/repo",
-            },
-        )
-        rc, log, stderr = run_logger_verbose(event, tmp_path, verbose=False)
-        assert rc == 0
-        assert "SCAN_COMPLETE" in stderr, f"SCAN_COMPLETE must mirror without verbose, got: {stderr!r}"
-
     def test_session_stop_mirrors_without_verbose(self, tmp_path):
         event = {
             "hook_event_name": "Stop",
@@ -1843,6 +1798,31 @@ class TestAssessmentSummaryDuration:
         # is still excluded by the SCAN_START boundary.
         assert "output=400" in tokens, tokens
         assert "9,999" not in tokens, tokens
+
+    def test_compact_runtime_epoch_excludes_prior_hook_events(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(PLUGIN_ROOT))
+        from agent_logger import _write_assessment_summary
+
+        lines = [
+            "2026-06-03T01:00:00Z  [aaaaaaaa]  INFO   SESSION_STOP        "
+            "stop_reason=unknown  in=9,999  out=9,999  cost=$9.0000",
+            "2026-06-03T04:00:00Z  [cb7b5188]  INFO   AGENT_SPAWN         "
+            "agent_type=appsec-advisor:appsec-recon-scanner  model=sonnet",
+            "2026-06-03T04:05:00Z  [cb7b5188]  INFO   SESSION_STOP        "
+            "stop_reason=end_turn  in=100  out=200  cost=$1.0000",
+        ]
+        (tmp_path / ".hook-events.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (tmp_path / ".scan-start-epoch").write_text("1780459200", encoding="utf-8")
+
+        _write_assessment_summary("cb7b5188")
+
+        text = (tmp_path / ".hook-events.log").read_text(encoding="utf-8")
+        tokens = next(line for line in text.splitlines() if "ASSESSMENT_TOKENS" in line)
+        assert "output=200" in tokens
+        assert "9,999" not in tokens
+        summary = next(line for line in text.splitlines() if "ASSESSMENT_SUMMARY" in line)
+        assert "duration=5m 00s" in summary
 
 
 class TestAssessmentSummaryIdle:

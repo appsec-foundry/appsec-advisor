@@ -73,7 +73,7 @@ class TestDeterministicFirstQa:
         text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md")
         assert "deterministic-pre-agent" in text
         assert "no Agent dispatch" in " ".join(text.split())
-        assert "qa_checks.py\" gate" in text
+        assert 'qa_checks.py" gate' in text
 
     def test_repair_loop_respects_deterministic_qa_gate(self):
         text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md")

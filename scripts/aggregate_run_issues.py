@@ -1616,9 +1616,7 @@ _DEGRADED_REASONS = {
         "a recommender could not read its own input (e.g. the agent name never "
         "reached the issue record), so it fell back to a generic note"
     ),
-    "no_recommender_for_category": (
-        "an issue category is emitted by the aggregator but no recommender covers it"
-    ),
+    "no_recommender_for_category": ("an issue category is emitted by the aggregator but no recommender covers it"),
 }
 
 

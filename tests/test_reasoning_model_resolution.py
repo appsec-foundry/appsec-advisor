@@ -18,7 +18,6 @@ without updating the others will surface here.
 from __future__ import annotations
 
 import importlib.util
-import re
 import sys
 from pathlib import Path
 
@@ -49,8 +48,7 @@ def _load_resolver():
 def skill_text() -> str:
     """Concatenated live routing, runtime, and help surfaces."""
     return "\n".join(
-        path.read_text()
-        for path in (SKILL_MD, SKILL_FULL_RUNTIME_MD, SKILL_RERENDER_RUNTIME_MD, HELP_TXT)
+        path.read_text() for path in (SKILL_MD, SKILL_FULL_RUNTIME_MD, SKILL_RERENDER_RUNTIME_MD, HELP_TXT)
     )
 
 

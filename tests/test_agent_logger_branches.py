@@ -359,24 +359,6 @@ class TestPostToolAgentBranches:
         assert "AGENT_DONE" in log
         assert "AGENT_INVOKE" not in log
 
-    def test_agent_scan_complete_for_analyst(self, al):
-        al.handle_post_tool_use(
-            {
-                "tool_use_id": "toolu_analyst",
-                "tool_name": "Agent",
-                "tool_input": {
-                    "subagent_type": "appsec-threat-analyst",
-                    "description": "scan",
-                    "prompt": "REPO_ROOT=/repo",
-                },
-                "tool_response": "",
-            },
-            "sid",
-        )
-        log = self._log(al)
-        assert "SCAN_COMPLETE" in log
-        assert "repo=/repo" in log
-
     def test_write_emits_context_ready(self, al):
         al.handle_post_tool_use(
             {
@@ -529,25 +511,6 @@ class TestPreToolUseBranches:
         al.handle_pre_tool_use(
             {"tool_name": "Read", "tool_input": {"file_path": "/repo/a.py"}}, "sidv1234"
         )  # exercises _emit_activity path; no assertion needed beyond no-raise
-
-    def test_threat_analyst_spawn_emits_scan_start(self, al, tmp_path):
-        al.handle_pre_tool_use(
-            {
-                "tool_use_id": "toolu_threat_analyst",
-                "tool_name": "Agent",
-                "tool_input": {
-                    "subagent_type": "appsec-threat-analyst",
-                    "description": "scan",
-                    "prompt": "REPO_ROOT=/repo",
-                },
-            },
-            "sidanalyst",
-        )
-        log = (tmp_path / ".hook-events.log").read_text()
-        assert "SCAN_START" in log
-        assert "AGENT_SPAWN" in log
-        # owner-sid recorded
-        assert (tmp_path / ".assessment-owner-sid").exists()
 
 
 # ---------------------------------------------------------------------------

@@ -428,6 +428,7 @@ class TestGeneratorsRich:
         md = pf.gen_security_architecture_v2(rich_yaml_data, "quick")
         assert isinstance(md, str) and md
 
+
 # ---------------------------------------------------------------------------
 # Targeted helper branch tests.
 # ---------------------------------------------------------------------------

@@ -226,9 +226,7 @@ def test_unsupported_modes_fail_before_output_mutation(monkeypatch, tmp_path, ar
     output = tmp_path / "not-created"
     monkeypatch.chdir(tmp_path)
 
-    code = controller.main(
-        ["route", "--", *arguments, "--repo", str(tmp_path), "--output", str(output)]
-    )
+    code = controller.main(["route", "--", *arguments, "--repo", str(tmp_path), "--output", str(output)])
 
     assert code == 2
     assert json.loads(capsys.readouterr().out)["action"] == "abort"
@@ -5056,6 +5054,7 @@ class TestStage1RuntimeSelection:
         monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         action = controller.context_v2_begin(output)
         assert action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
+
 
 class TestIacSurfaceDetection:
     def test_detects_a_top_level_marker(self, tmp_path):

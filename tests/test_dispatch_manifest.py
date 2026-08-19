@@ -858,9 +858,9 @@ def test_ms_renderer_includes_ms_ai_exposure_in_author_list():
 def test_renderer_delegates_every_export_to_the_controller_tail():
     """Stage 2 must not regain export ownership after the compact cutover."""
     renderer_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
-    completion_md = (
-        PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
-    ).read_text(encoding="utf-8")
+    completion_md = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md").read_text(
+        encoding="utf-8"
+    )
     controller = (PLUGIN_ROOT / "scripts" / "orchestration_controller.py").read_text(encoding="utf-8")
     assert "controller owns validation, composition" in renderer_md
     assert "Do not compose" in renderer_md

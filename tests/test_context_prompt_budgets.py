@@ -112,10 +112,7 @@ def test_thin_full_initial_context_is_bounded():
 
 def test_thin_full_without_abuse_verification_omits_stage1d_budget():
     surfaces = BUDGETS["surfaces"]
-    thin = sum(
-        _slice_bytes(surfaces[name])
-        for name in ("skill_router", "thin_full_runtime", "thin_stage1_v2_runtime")
-    )
+    thin = sum(_slice_bytes(surfaces[name]) for name in ("skill_router", "thin_full_runtime", "thin_stage1_v2_runtime"))
     assert thin <= BUDGETS["aggregate"]["thin_full_without_stage1d_max_bytes"]
 
 

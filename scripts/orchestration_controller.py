@@ -2192,6 +2192,7 @@ STAGE1_TASK_ROWS = (
     "Stage 1c [6/6] - Root cause synthesis",
 )
 
+
 def _task_rows(cfg: dict[str, Any]) -> list[str]:
     """Every task row the session creates, in creation order.
 
@@ -5805,6 +5806,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             pass
         except OSError:
             pass
+
     def _fresh_json(name: str, *, after: list[Path]) -> dict[str, Any] | None:
         path = output_dir / name
         try:

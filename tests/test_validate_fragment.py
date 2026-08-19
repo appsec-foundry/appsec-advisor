@@ -553,7 +553,9 @@ def _ai_exposure(label: str) -> dict:
         "ai_risks": [
             {
                 "name": "Prompt Injection",
-                "description": ("Untrusted retrieved content reaches the model instruction channel without separation."),
+                "description": (
+                    "Untrusted retrieved content reaches the model instruction channel without separation."
+                ),
                 "findings": [{"ref": "T-019", "label": label}],
             }
         ]
@@ -563,7 +565,9 @@ def _ai_exposure(label: str) -> dict:
 def _valid_verdict() -> dict:
     return {
         "severity": "red",
-        "opening": ("The service exposes every route without authentication, so any anonymous caller reaches all stored data."),
+        "opening": (
+            "The service exposes every route without authentication, so any anonymous caller reaches all stored data."
+        ),
         "bullets": [
             {
                 "title": "Admin access without a password",
@@ -576,7 +580,9 @@ def _valid_verdict() -> dict:
                 "refs": ["T-012"],
             },
         ],
-        "closing": ("The service must not be deployed beyond a local development machine until authentication is in place."),
+        "closing": (
+            "The service must not be deployed beyond a local development machine until authentication is in place."
+        ),
     }
 
 

@@ -2745,7 +2745,9 @@ class TestRuntimeGeneration:
 
     def test_read_only_resolution_does_not_create_output_directory(self, tmp_path):
         out_dir = tmp_path / "unstarted"
-        cfg = rc.resolve(["--full", "--repo", str(tmp_path), "--output", str(out_dir)], REPO_ROOT, create_output_dir=False)
+        cfg = rc.resolve(
+            ["--full", "--repo", str(tmp_path), "--output", str(out_dir)], REPO_ROOT, create_output_dir=False
+        )
 
         assert cfg["output_dir"] == str(out_dir)
         assert not out_dir.exists()

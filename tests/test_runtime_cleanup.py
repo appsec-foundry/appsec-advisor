@@ -187,9 +187,7 @@ def whitelist_text() -> str:
 
 @pytest.fixture(scope="module")
 def skill_text() -> str:
-    return "\n".join(
-        path.read_text() for path in (SKILL_MD, FULL_RUNTIME_MD, COMPLETION_RUNTIME_MD, HELP_MD)
-    )
+    return "\n".join(path.read_text() for path in (SKILL_MD, FULL_RUNTIME_MD, COMPLETION_RUNTIME_MD, HELP_MD))
 
 
 @pytest.fixture(scope="module")
@@ -206,9 +204,7 @@ class TestFinalizationWhitelist:
     @pytest.mark.parametrize("filename", sorted(EXPECTED_WHITELIST_FILES))
     def test_file_in_cleanup_table(self, whitelist_text, filename):
         """Every whitelisted file must appear in the cleanup contract."""
-        assert filename in whitelist_text, (
-            f"cleanup-whitelist.md is missing entry for {filename!r}."
-        )
+        assert filename in whitelist_text, f"cleanup-whitelist.md is missing entry for {filename!r}."
 
     @pytest.mark.parametrize("dirname", sorted(EXPECTED_WHITELIST_DIRS))
     def test_directory_in_cleanup_table(self, whitelist_text, dirname):

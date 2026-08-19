@@ -239,6 +239,7 @@ class TestMaxTurnsCeilings:
         mt = meta.get("maxTurns", 0)
         assert mt <= ceiling, f"{agent_name}: maxTurns {mt} exceeds ceiling {ceiling}"
 
+
 # ---------------------------------------------------------------------------
 # INTERNAL agent marker
 # ---------------------------------------------------------------------------
@@ -250,6 +251,7 @@ class TestInternalMarkers:
         path = AGENTS_DIR / f"{agent_name}.md"
         _, body = parse_frontmatter(path)
         assert "INTERNAL" in body, f"{agent_name}: body must contain 'INTERNAL' to prevent direct invocation"
+
 
 def test_internal_kernel_is_preloaded_only_by_focused_context_v2_roles():
     preloaded = set()

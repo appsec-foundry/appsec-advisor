@@ -175,9 +175,7 @@ def test_headless_parser_retains_no_yaml() -> None:
     assert "|--no-yaml|" in body
 
 
-def test_default_progress_monitor_is_reaped_after_claude_exit(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_default_progress_monitor_is_reaped_after_claude_exit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo = tmp_path / "repo"
     output = tmp_path / "out"
     repo.mkdir()

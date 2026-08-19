@@ -1264,9 +1264,7 @@ def _data_with(recommendation: dict | None, category: str = "max_turns_subagent"
 
 
 def test_canary_fires_on_degraded_recommendation():
-    data = agg.flag_degraded_recommendations(
-        _data_with({"confidence": "low", "degraded": "missing_recommender_input"})
-    )
+    data = agg.flag_degraded_recommendations(_data_with({"confidence": "low", "degraded": "missing_recommender_input"}))
     canaries = [i for i in data["issues"] if i["category"] == "pipeline_self_diagnosis_degraded"]
     assert len(canaries) == 1
     canary = canaries[0]
