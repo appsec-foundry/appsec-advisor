@@ -139,10 +139,12 @@ class TestSeverityBasisMatchesTheReport:
     """
 
     @staticmethod
-    def _model(threats, weaknesses=None):
+    def _model(threats, weaknesses=None, floor=None):
         doc = {"threats": threats}
         if weaknesses is not None:
             doc["weaknesses"] = weaknesses
+        if floor is not None:
+            doc["meta"] = {"register_severity_floor": floor}
         return doc
 
     @pytest.mark.parametrize(
@@ -211,7 +213,7 @@ class TestSeverityBasisMatchesTheReport:
         assert m["threats_by_sev"]["High"] == 1
         assert m["threats_total"] == 2
         rendered = "\n".join(rcs.render_metrics(m, {}))
-        assert "  Threats    : 2 total | 1 Critical | 1 High | 0 Medium | 0 Low" in rendered
+        assert "  Threats    : 2 total | 1 Critical | 1 High | 0 Medium | n/a Low" in rendered
 
     def test_design_risk_weakness_is_visible_in_the_headline(self):
         """It has no instance in threats[] and would otherwise be invisible
@@ -228,12 +230,24 @@ class TestSeverityBasisMatchesTheReport:
     def test_sub_counts_reconcile_with_the_total(self):
         """Informational is off the four-bucket display, so it is rendered
         when present — otherwise the line does not add up."""
-        model = self._model([{"risk": "informational"}, {"risk": "Medium"}])
+        model = self._model([{"risk": "informational"}, {"risk": "Medium"}], floor="low")
         m = rcs.extract_metrics(model, "")
 
         assert m["threats_total"] == 2
         rendered = "\n".join(rcs.render_metrics(m, {}))
         assert "2 total | 0 Critical | 0 High | 1 Medium | 0 Low | 1 Informational" in rendered
+
+    def test_low_reads_na_when_the_register_floor_excluded_it(self):
+        """`0 Low` would claim the analysis found none. Above a `low` floor no
+        Low finding could reach `threats[]`, so the cell is not a count."""
+        model = self._model([{"risk": "High"}], floor="medium")
+        rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics(model, ""), {}))
+        assert "n/a Low" in rendered
+
+    def test_low_reads_a_count_when_the_register_floor_kept_it(self):
+        model = self._model([{"risk": "High"}, {"risk": "Low"}], floor="low")
+        rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics(model, ""), {}))
+        assert "1 Low" in rendered
 
     def test_informational_stays_off_the_line_when_absent(self):
         model = self._model([{"risk": "High"}])

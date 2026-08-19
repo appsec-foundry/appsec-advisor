@@ -1036,6 +1036,18 @@ def test_risk_dist_re_parses_info_cell():
     assert m.group(6) == "15"  # Total
 
 
+def test_risk_dist_re_parses_na_low_cell():
+    """Above a `low` register floor the Low cell reads `n/a` — the line must
+    still parse, or the contract conditions run against silence."""
+    line = "**Risk Distribution:** Critical: 2 · High: 5 · Medium: 3 · Low: n/a · **Total: 10**"
+    m = qa.RISK_DIST_RE.search(line)
+    assert m is not None
+    assert m.group(4) == "n/a"
+    assert m.group(6) == "10"
+    assert qa._rd_count(m, 4) == 0
+    assert qa._rd_count(m, 1) == 2
+
+
 def test_risk_dist_re_no_match_on_empty():
     assert qa.RISK_DIST_RE.search("nothing here") is None
 

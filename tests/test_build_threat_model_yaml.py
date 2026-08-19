@@ -528,6 +528,13 @@ def test_build_meta_stride_cap_propagated_when_active():
     assert m["stride_per_category_cap"] == 2
 
 
+def test_build_meta_records_the_register_severity_floor():
+    """Reader-facing tallies need the floor to tell "no Low finding" apart from
+    "Low was never collected"; .skill-config.json does not survive cleanup."""
+    assert _meta()["register_severity_floor"] == "medium"
+    assert _meta(register_severity_floor="low")["register_severity_floor"] == "low"
+
+
 def _business_meta(tmp_path):
     repo = tmp_path / "repo"
     (repo / "docs").mkdir(parents=True, exist_ok=True)

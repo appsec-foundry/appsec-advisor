@@ -2712,11 +2712,18 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
         f"🔴 Critical: {counts['critical']}",
         f"🟠 High: {counts['high']}",
         f"🟡 Medium: {counts['medium']}",
-        f"🟢 Low: {counts['low']}",
+        f"🟢 Low: {_severity_rollup.low_cell(ctx.yaml_data, counts)}",
     ]
     if counts["info"] > 0:
         rd_parts.append(f"⚪ Info: {counts['info']}")
     risk_distribution = "**Risk distribution:** " + " · ".join(rd_parts) + f" · **Total: {total}**"
+    # Name the floor that made the Low cell `n/a`, so the reader knows the
+    # tiers are missing by configuration and which flag brings them back.
+    if _severity_rollup.low_suppressed(ctx.yaml_data):
+        risk_distribution += (
+            f"<br/>**Reporting threshold:** {_severity_rollup.register_floor(ctx.yaml_data)} — "
+            "Low and Informational excluded"
+        )
     if _breakdown is not None:
         _combined_assessment_count, confirmed, impl, design = _breakdown
         risk_distribution += (
@@ -16716,7 +16723,7 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         f"🔴 Critical: {counts['critical']}",
         f"🟠 High: {counts['high']}",
         f"🟡 Medium: {counts['medium']}",
-        f"🟢 Low: {counts['low']}",
+        f"🟢 Low: {_severity_rollup.low_cell(ctx.yaml_data, counts)}",
     ]
     if counts.get("info", 0) > 0:
         rd_parts.append(f"⚪ Info: {counts['info']}")

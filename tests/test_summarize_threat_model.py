@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import textwrap
@@ -142,6 +143,22 @@ def test_findings_are_cited_by_report_id(tmp_path):
     out = stm.render_text(summary, None, show_all=True)
     assert "F-001" in out
     assert "T-001" not in out
+
+
+def test_histogram_low_row_reads_na_under_the_default_register_floor(tmp_path):
+    """The floor kept Low out of `threats[]`, so a `0` row would claim a
+    measurement. The report's Risk-distribution line says `n/a`; so does this."""
+    import yaml
+
+    _write_model(tmp_path, SAMPLE)
+    data = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    data["meta"]["register_severity_floor"] = "medium"
+    out = stm.render_text(stm.build_summary(data, tmp_path), None, show_all=False)
+    assert re.search(r"^  Low\s+n/a\s*$", out, re.MULTILINE)
+
+    data["meta"]["register_severity_floor"] = "low"
+    out = stm.render_text(stm.build_summary(data, tmp_path), None, show_all=False)
+    assert re.search(r"^  Low\s+\d", out, re.MULTILINE)
 
 
 def test_worst_case_prefers_the_persisted_verdict(tmp_path):

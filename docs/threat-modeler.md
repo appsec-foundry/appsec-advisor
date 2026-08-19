@@ -237,7 +237,7 @@ The standard run included one STRIDE retry. Incremental scans commonly use 70–
 | `--cheap-stride` / `--no-cheap-stride` | Use or disable the light pass for proven-internal components. It is on by default for quick and standard and off for thorough. All six STRIDE categories still run. |
 | `--stride-cap N` | Limit non-Critical findings per STRIDE category and component. Off by default. |
 | `--evidence-verifier-cap N` | Limit non-Critical findings sent through evidence verification. Critical findings are always selected first. |
-| `--register-severity-floor LEVEL` | Set the lowest severity included in the report and exports. Default: `medium`. |
+| `--register-severity-floor LEVEL` | Set the lowest severity included in the report and exports. Default: `medium`, which reports the Low tally as `n/a` rather than `0`. |
 
 Authentication, frontend, LLM, internet-exposed, file-upload, real-time, data-store, and core-backend components keep full STRIDE depth. Components with unknown reachability also keep full depth.
 

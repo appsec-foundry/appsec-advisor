@@ -340,6 +340,22 @@ class TestMsVerdict:
         r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
         assert r["reported_counts"] == {"Critical": 14, "High": 54, "Medium": 26, "Low": 0}
 
+    def test_na_low_cell_parses_and_is_left_out_of_the_comparison(self, out_dir):
+        """Above a `low` register floor the Low cell reads `n/a`. It reports no
+        count, so there is nothing to mismatch — and the line must still parse."""
+        _write_text(
+            out_dir / "threat-model.md",
+            """
+            ## Management Summary
+            > **Verdict**: fine.
+            **Risk distribution:** 🔴 Critical: 1 · 🟠 High: 0 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total: 1**
+        """,
+        )
+        _write_json(out_dir / ".threats-merged.json", {"threats": [{"risk": "Critical"}, {"risk": "Low"}]})
+        r = asc.check_ms_verdict(out_dir / "threat-model.md", out_dir / ".threats-merged.json")
+        assert r["reported_counts"] == {"Critical": 1, "High": 0, "Medium": 0}
+        assert [f for f in r["findings"] if f["kind"] == "risk_distribution_mismatch"] == []
+
     def test_unparseable_distribution_reports_instead_of_skipping(self, out_dir):
         """A check that cannot run must say so — silence reads as 'passed'."""
         _write_text(

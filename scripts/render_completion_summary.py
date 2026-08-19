@@ -204,6 +204,9 @@ def extract_metrics(
     return {
         "threats_total": threats_total,
         "threats_by_sev": by_sev,
+        # The register severity floor kept Low out of `threats[]`, so the Low
+        # bucket is not a measurement — the console says `n/a`, like the report.
+        "low_suppressed": _severity_rollup.low_suppressed(yaml_data),
         "threats_info": threats_info,
         "n_components": n_components,
         "n_stride_components": n_stride_components,
@@ -947,10 +950,11 @@ def render_metrics(metrics: dict, cfg: dict) -> list[str]:
     lines = [""]
     lines.append("Results")
     s = metrics["threats_by_sev"]
+    _low = "n/a" if metrics.get("low_suppressed") else s["Low"]
     threat_line = (
         f"  Threats    : {metrics['threats_total']} total | "
         f"{s['Critical']} Critical | {s['High']} High | "
-        f"{s['Medium']} Medium | {s['Low']} Low"
+        f"{s['Medium']} Medium | {_low} Low"
     )
     if metrics.get("threats_info"):
         threat_line += f" | {metrics['threats_info']} Informational"
@@ -1816,7 +1820,8 @@ def render_dry_run(output_dir: Path, repo_root: Path) -> str:
     lines.append("")
     lines.append(f"  -- Metrics {SECTION_RULE[:49]}")
     lines.append("")
-    _sev_bits = f"Critical: {s['Critical']}, High: {s['High']}, Medium: {s['Medium']}, Low: {s['Low']}"
+    _low = "n/a" if metrics.get("low_suppressed") else s["Low"]
+    _sev_bits = f"Critical: {s['Critical']}, High: {s['High']}, Medium: {s['Medium']}, Low: {_low}"
     if metrics.get("threats_info"):
         _sev_bits += f", Informational: {metrics['threats_info']}"
     lines.append(f"  Threats         : {metrics['threats_total']} total ({_sev_bits})")

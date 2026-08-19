@@ -359,11 +359,14 @@ def test_risk_distribution_matches_threat_register_rows(tmp_path: Path) -> None:
     m = re.search(
         r"\*\*Risk Distribution:\*\*\s*[🔴🟠🟡🟢]?\s*Critical:\s*(\d+)\s*[·|]\s*"
         r"[🔴🟠🟡🟢]?\s*High:\s*(\d+)\s*[·|]\s*[🔴🟠🟡🟢]?\s*Medium:\s*(\d+)\s*[·|]\s*"
-        r"[🔴🟠🟡🟢]?\s*Low:\s*(\d+)",
+        # `n/a` when the register severity floor excluded Low — nothing could
+        # be counted there, so it contributes nothing to the total either.
+        r"[🔴🟠🟡🟢]?\s*Low:\s*(\d+|n/a)",
         rendered,
     )
     assert m, "Risk Distribution line not found"
-    c, h, med, low = (int(x) for x in m.groups())
+    c, h, med = (int(x) for x in m.groups()[:3])
+    low = int(m.group(4)) if m.group(4).isdigit() else 0
     # Count anchors for F-NNN / T-NNN inside §8.
     s8 = re.search(r"^## 8\. Findings Register", rendered, re.MULTILINE)
     # §8 is now bounded by §9 Abuse Cases (Mitigation Register shifted to §10).

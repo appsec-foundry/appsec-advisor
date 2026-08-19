@@ -200,3 +200,37 @@ def register_threats(yaml_data: dict) -> list[dict]:
     weak-password-hashing finding from "Top Critical").
     """
     return [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict) and not is_refuted(t)]
+
+
+# Rank of the register severity floor (`--register-severity-floor`, resolved
+# into `meta.register_severity_floor`). Above `low` the floor drops Low and
+# Informational findings from `threats[]` in
+# `build_threat_model_yaml.build_threats`, so every tally derived from it is
+# blind to those tiers.
+_FLOOR_RANK: dict[str, int] = {"informational": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def register_floor(yaml_data: dict) -> str:
+    """The severity floor ``threats[]`` was filtered at.
+
+    A model written before the floor was persisted falls back to ``medium``,
+    the resolver's default and the floor those runs used.
+    """
+    meta = yaml_data.get("meta") if isinstance(yaml_data, dict) else None
+    raw = str((meta or {}).get("register_severity_floor") or "medium").strip().lower()
+    return raw if raw in _FLOOR_RANK else "medium"
+
+
+def low_suppressed(yaml_data: dict) -> bool:
+    """True when the floor excludes Low, so no Low finding could reach the tally."""
+    return _FLOOR_RANK[register_floor(yaml_data)] > _FLOOR_RANK["low"]
+
+
+def low_cell(yaml_data: dict, counts: dict) -> str:
+    """The Low tally as a reader sees it.
+
+    ``0`` states that the analysis found no Low finding. Under a floor above
+    ``low`` nothing could have been counted there, so the cell reads ``n/a``:
+    not measured, not measured-as-zero.
+    """
+    return "n/a" if low_suppressed(yaml_data) else str(counts.get("low", 0))

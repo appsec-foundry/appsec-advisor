@@ -306,6 +306,10 @@ def build_summary(data: dict, output_dir: Path) -> dict:
             "controls": len(controls),
         },
         "severity_counts": counts,
+        # The register severity floor kept Low out of `threats[]`, so its
+        # bucket is not a measurement — the histogram says `n/a`, like the
+        # report's Risk-distribution line.
+        "low_suppressed": _severity_rollup.low_suppressed(data),
         "verdict": _verdict(data),
         "backlog": _backlog_by_priority(mitigations),
         "coverage": _coverage(threats),
@@ -525,9 +529,13 @@ def render_text(summary: dict, freshness: dict | None, show_all: bool) -> str:
         buf.append(f"Report     {summary['report']}")
         return "\n".join(buf) + "\n"
     peak = max(counts.values()) if counts else 0
+    low_suppressed = bool(summary.get("low_suppressed"))
     for sev in ("Critical", "High", "Medium", "Low", "Informational"):
         n = counts.get(sev, 0)
         if sev == "Informational" and n == 0:
+            continue
+        if sev == "Low" and low_suppressed:
+            buf.append(f"  {sev:<13} {'n/a':>3}")
             continue
         buf.append(f"  {sev:<13} {n:>3}   {_bar(n, peak)}")
     buf.append("")

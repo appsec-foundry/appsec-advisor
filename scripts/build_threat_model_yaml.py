@@ -892,6 +892,11 @@ def build_meta(
         # renderer omits the Run-Statistics row. meta has additionalProperties:true
         # so no schema bump is needed.
         "stride_per_category_cap": (skill_cfg.get("stride_profile") or {}).get("max_threats_per_category"),
+        # The floor `build_threats` filtered `threats[]` at. Reader-facing
+        # tallies need it to tell "no Low finding" apart from "Low was never
+        # collected"; without it in meta they would have to guess from
+        # .skill-config.json, which runtime cleanup removes.
+        "register_severity_floor": (skill_cfg.get("register_severity_floor") or "medium"),
         # Digest of the business context this model was rated against. The next
         # run compares it: an incremental scan re-rates only changed components,
         # so changed context is surfaced as a full-scan recommendation.

@@ -125,7 +125,9 @@ RISK_DIST_RE = re.compile(
     + r"Medium:\s*(\d+)"
     + _DELIM
     + _SEV_ICON
-    + r"Low:\s*(\d+)"
+    # `n/a` when the register severity floor excluded Low (the default
+    # `medium` does) — the cell is not a count, so it must not read as one.
+    + r"Low:\s*(\d+|n/a)"
     # Optional Info cell (only rendered when count > 0). Captured into
     # group(5); the rest of the parser must treat None as 0.
     + r"(?:"
@@ -137,6 +139,15 @@ RISK_DIST_RE = re.compile(
     + r"\**Total(?:\s+findings)?:\s*(\d+)\**"
 )
 CODE_FENCE_RE = re.compile(r"^```", re.MULTILINE)
+
+
+def _rd_count(rd: re.Match | None, group: int) -> int:
+    """A Risk-distribution cell as a number. `n/a` and a missing match are 0 —
+    the contract conditions ask "are there any", and there are none either way."""
+    if rd is None:
+        return 0
+    raw = rd.group(group)
+    return int(raw) if raw and raw.isdigit() else 0
 
 
 @dataclass
@@ -1403,7 +1414,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
     # Chain Overview was retired). Skipped when .skill-config.json sets
     # SKIP_ATTACK_WALKTHROUGHS=true — a skip-notice stub is intentional then.
     rd = RISK_DIST_RE.search(text)
-    critical_count = int(rd.group(1)) if rd else 0
+    critical_count = _rd_count(rd, 1)
     _skip_walkthroughs = False
     try:
         import json as _json_ck
@@ -1515,7 +1526,7 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
 
     # 1. Section order + presence.
     rd = RISK_DIST_RE.search(text)
-    critical_count = int(rd.group(1)) if rd else 0
+    critical_count = _rd_count(rd, 1)
 
     # Resolve the depth / skip flags the composer actually used so the
     # `condition` gates below evaluate against the SAME context. Without this
@@ -1538,9 +1549,9 @@ def check_contract(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -
 
     env = {
         "critical_count": critical_count,
-        "high_count": int(rd.group(2)) if rd else 0,
-        "medium_count": int(rd.group(3)) if rd else 0,
-        "low_count": int(rd.group(4)) if rd else 0,
+        "high_count": _rd_count(rd, 2),
+        "medium_count": _rd_count(rd, 3),
+        "low_count": _rd_count(rd, 4),
         "check_requirements": _flags["check_requirements"],
         "verbose_report": _flags["verbose_report"],
         "triage_has_warnings": False,

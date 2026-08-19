@@ -5075,6 +5075,45 @@ def _verdict_ctx_with_abuse(tmp_path: Path, bullets: list[dict], abuse_cases: li
     return ctx, env, section
 
 
+def test_verdict_low_cell_reads_na_and_names_the_threshold(tmp_path: Path) -> None:
+    """`Low: 0` claims the analysis found none. Under the default `medium`
+    floor no Low finding could reach the register, so the cell says `n/a` and
+    the line names the threshold that put it there."""
+    ctx, env, section = _verdict_ctx_with_abuse(
+        tmp_path,
+        bullets=[
+            {"title": "Full DB theft", "body": "Any internet user extracts the customer table.", "refs": ["F-001"]},
+            {"title": "Customer data reachable", "body": "Any logged-in user reads other records.", "refs": ["F-002"]},
+        ],
+        abuse_cases=None,
+    )
+    ctx.yaml_data = {"meta": {"register_severity_floor": "medium"}, "threats": [{"risk": "High"}]}
+    out = compose._render_verdict(ctx, env, section)
+    assert "🟢 Low: n/a" in out
+    # The dash is not pinned: `_normalize_emdashes` rewrites it in the final
+    # document, so this asserts the claim, not the glyph.
+    assert "**Reporting threshold:** medium" in out
+    assert "Low and Informational excluded" in out
+
+
+def test_verdict_low_cell_reads_a_count_when_the_floor_kept_it(tmp_path: Path) -> None:
+    ctx, env, section = _verdict_ctx_with_abuse(
+        tmp_path,
+        bullets=[
+            {"title": "Full DB theft", "body": "Any internet user extracts the customer table.", "refs": ["F-001"]},
+            {"title": "Customer data reachable", "body": "Any logged-in user reads other records.", "refs": ["F-002"]},
+        ],
+        abuse_cases=None,
+    )
+    ctx.yaml_data = {
+        "meta": {"register_severity_floor": "low"},
+        "threats": [{"risk": "High"}, {"risk": "Low"}],
+    }
+    out = compose._render_verdict(ctx, env, section)
+    assert "🟢 Low: 1" in out
+    assert "Reporting threshold" not in out
+
+
 def test_verdict_badges_bullet_anchoring_fully_viable_chain(tmp_path: Path) -> None:
     ctx, env, section = _verdict_ctx_with_abuse(
         tmp_path,

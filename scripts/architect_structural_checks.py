@@ -352,7 +352,9 @@ _RISK_DIST_RE = re.compile(
     r"Critical\s*[:\*]*\s*(?P<critical>\d+)[^A-Za-z0-9\n]*"
     r"High\s*[:\*]*\s*(?P<high>\d+)[^A-Za-z0-9\n]*"
     r"Medium\s*[:\*]*\s*(?P<medium>\d+)[^A-Za-z0-9\n]*"
-    r"Low\s*[:\*]*\s*(?P<low>\d+)",
+    # `n/a` when the register severity floor excluded Low. The cell is then
+    # not a count and is left out of the mismatch comparison below.
+    r"Low\s*[:\*]*\s*(?P<low>\d+|n/a)",
     re.IGNORECASE,
 )
 
@@ -385,12 +387,15 @@ def _parse_risk_distribution(tm_md: str) -> dict[str, int] | None:
     m = _RISK_DIST_RE.search(tm_md)
     if not m:
         return None
-    return {
+    reported = {
         "Critical": int(m.group("critical")),
         "High": int(m.group("high")),
         "Medium": int(m.group("medium")),
-        "Low": int(m.group("low")),
     }
+    low = m.group("low")
+    if low.isdigit():
+        reported["Low"] = int(low)
+    return reported
 
 
 def _count_threats_by_severity(threats: list[dict[str, Any]]) -> dict[str, int]:
@@ -505,7 +510,10 @@ def check_ms_verdict(
             }
         )
     else:
-        mismatches = {k: (reported[k], actual[k]) for k in actual if reported[k] != actual[k]}
+        # A cell the line does not report (Low under a floor above `low`) has
+        # nothing to compare against — its absence is the honest state, not a
+        # mismatch.
+        mismatches = {k: (reported[k], actual[k]) for k in actual if k in reported and reported[k] != actual[k]}
         if mismatches:
             findings.append(
                 {

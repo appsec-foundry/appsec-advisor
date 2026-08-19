@@ -202,3 +202,35 @@ def test_composer_delegates_to_this_module():
     )
     assert compose._risk_distribution_counts(data) == sr.risk_distribution_counts(data)
     assert compose._weakness_basis_breakdown(data) == sr.weakness_basis_breakdown(data)
+
+
+# ---------------------------------------------------------------------------
+# register floor / low cell
+# ---------------------------------------------------------------------------
+
+
+def test_register_floor_defaults_to_medium_when_meta_is_silent():
+    """A model written before the floor was persisted ran under the resolver's
+    default, so reading it as `medium` matches what actually happened."""
+    assert sr.register_floor({}) == "medium"
+    assert sr.register_floor({"meta": {}}) == "medium"
+    assert sr.register_floor({"meta": {"register_severity_floor": "bogus"}}) == "medium"
+
+
+def test_register_floor_reads_meta():
+    assert sr.register_floor({"meta": {"register_severity_floor": "LOW"}}) == "low"
+    assert sr.register_floor({"meta": {"register_severity_floor": "high"}}) == "high"
+
+
+def test_low_is_suppressed_above_a_low_floor():
+    assert sr.low_suppressed({"meta": {"register_severity_floor": "medium"}}) is True
+    assert sr.low_suppressed({"meta": {"register_severity_floor": "high"}}) is True
+    assert sr.low_suppressed({"meta": {"register_severity_floor": "low"}}) is False
+    assert sr.low_suppressed({"meta": {"register_severity_floor": "informational"}}) is False
+
+
+def test_low_cell_reports_na_only_when_nothing_could_be_counted():
+    counts = {"low": 0}
+    assert sr.low_cell({"meta": {"register_severity_floor": "medium"}}, counts) == "n/a"
+    assert sr.low_cell({"meta": {"register_severity_floor": "low"}}, counts) == "0"
+    assert sr.low_cell({"meta": {"register_severity_floor": "low"}}, {"low": 3}) == "3"

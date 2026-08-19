@@ -75,7 +75,7 @@ _Append-only history of assessment runs. Most recent first._
 
 🔴 **CRITICAL SECURITY POSTURE** - the fixture project has severe exploitable vulnerabilities across authentication, injection, and access control. The assessment identified **3 Critical** and **1 High** findings.
 
-**Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: 0 · **Total: 4**
+**Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total: 4**<br/>**Reporting threshold:** medium - Low and Informational excluded
 
 
 
@@ -677,7 +677,7 @@ Layered defense would improve most by fixing raw SQL construction, moving signin
 
 Findings are grouped by severity (Critical → High → Medium → Low); within a tier they are ordered by attack vektor (Repo-Read → Internet-Anon → Internet-User → Victim-Required). Each finding is a card with the same fixed fields, in order: **Severity · Component · Location** → **Issue** → **Root cause** → **Evidence** → **Fix** → **Classification** (with external CWE / OWASP links).
 
-**Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: 0 · **Total findings: 4**
+**Risk Distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total findings: 4**
 **STRIDE Coverage:** Spoofing: 1 · Tampering: 3 · Repudiation: 0 · Information Disclosure: 0 · Denial of Service: 0 · Elevation of Privilege: 0
 
 **Findings index:**<br/>🔴 [F-001](#f-001) — SQL injection in product search<br/>🔴 [F-002](#f-002) — SQL injection in login<br/>🔴 [F-003](#f-003) — Hardcoded RSA private key<br/>🟠 [F-010](#f-010) — Persistent XSS via bypassSecurityTrustHtml
