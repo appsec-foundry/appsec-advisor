@@ -521,10 +521,11 @@ the operator approves that change; until then the sentence that is written
 holds. The requirements governing a file are put in front of whoever edits it,
 at the moment of the edit.
 
-**Applies to:** `specs/requirements.md`, `scripts/check_specs.py`, `scripts/requirements_hook.py`
+**Applies to:** `specs/requirements.md`, `scripts/check_specs.py`, `scripts/spec_guard.py`,
+`scripts/requirements_hook.py`
 **Source:** `specs/README.md` → Who writes what, What is enforced
-**Guard:** `test_held_files_require_user_approval`, `test_governed_file_carries_its_requirements`,
-`test_project_settings_wire_every_write_surface_to_the_hook`
+**Guard:** `test_spec_guard_registration_and_decisions`, `test_held_files_require_user_approval`,
+`test_governed_file_carries_its_requirements`
 
 ### REQ-EVO-002 — New behavior works for any repository and declares what it touches
 

@@ -23,9 +23,9 @@ a test obligation, or a scope extension of your own.
 ## Who writes what
 
 You approve the requirement: the title and the sentence. Whoever writes the
-test fills in the guard. An agent cannot edit `requirements.md` silently;
-`scripts/requirements_hook.py` routes every recognized write attempt through a
-user permission prompt.
+test fills in the guard. An agent cannot edit anything under `specs/` silently;
+`scripts/spec_guard.py` routes identifiable writes through a user permission
+prompt.
 
 ## What belongs here, and what belongs in the decision register
 
@@ -83,10 +83,15 @@ to a file. Run it before changing that file.
 the decision register changed with no change directory under `changes/`. It
 belongs in CI, where the base ref is always resolvable.
 
-`scripts/requirements_hook.py` asks for user approval before an agent changes
-either held file through `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, or a shell
-command that names one of them and could write to it. The hook is wired in this
-checkout's `.claude/settings.json` and is not shipped with the plugin.
+`scripts/spec_guard.py` asks for user approval before an agent changes a file
+under `specs/` through `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, a
+recognizable Bash or PowerShell writer, or a recognizable mutating MCP tool.
+Malformed hook input fails closed. The hook is wired in this checkout's
+`.claude/settings.json` and is not shipped with the plugin.
+
+`scripts/requirements_hook.py` still surfaces the requirements that govern an
+edited implementation file and separately holds the decision register. It is
+also development-only.
 
 ## What is not enforced
 
