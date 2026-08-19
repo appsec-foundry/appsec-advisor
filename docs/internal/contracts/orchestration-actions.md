@@ -100,6 +100,11 @@ compact runtime acting on controller actions, and no agent recurses through
   freshness, abuse-case match/finalize, Stage-2 structural preparation,
   rerender artifact preconditions, fixed next-action classification, and
   compact dispatch values.
+- `prepare-stage2` returns an explicit renderer profile. Default Quick uses only
+  the Management Summary specialist, enriched architecture uses both
+  specialists, and the full renderer remains the bounded recovery profile.
+  Every profile converges on the same controller-owned fragment validation,
+  strict compose, prose-fix, and QA-autofix tail before Stage 3.
 - `SKILL-full-runtime.md`, `SKILL-thin-stage1-v2.md`,
   `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and
   `SKILL-rerender-runtime.md` own user-visible output, Task lifecycle, and

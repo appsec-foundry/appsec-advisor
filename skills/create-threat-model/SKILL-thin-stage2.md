@@ -1,8 +1,7 @@
 # Compact Thin Stage 2
 
-Do not read the Stage-2 body from `SKILL-impl.md`. The controller owns
-structural pre-generation and the mandatory filesystem-authoritative compose
-handoff.
+Do not read Stage 2 from `SKILL-impl.md`. The controller owns structural
+pregeneration and the filesystem-authoritative compose handoff.
 
 1. Run:
 
@@ -11,56 +10,46 @@ handoff.
      prepare-stage2 --output-dir "$OUTPUT_DIR"
    ```
 
-   Require `stage=stage2` and action `dispatch_agent` or `dispatch_parallel`.
-2. Mark `Stage 2 - Report rendering` in progress, capture `STAGE2_START_ISO`,
-   print this banner, and start the fixed heartbeat watchdog:
+   Require `stage=stage2`, `renderer_profile`, and a matching
+   `dispatch_agent` or `dispatch_parallel` action.
+2. Mark `Stage 2 - Report rendering` in progress, capture
+   `STAGE2_START_ISO`, print the fixed banner, and start the heartbeat:
 
    ```text
    ▶ Stage 2 - Report rendering starting  (expect ~<EST_STAGE2> min, model: <RENDERER_MODEL>, renderer budget)
-     ⟶ Authoring 2 LLM fragments + invoking compose_threat_model.py
-     ⟶ Structural fragments prepared from YAML before rendering
+     ⟶ Authoring required LLM fragments and invoking the deterministic compose tail
    ```
-3. Reduce `RENDERER_MODEL` to the bare Agent model alias and set it explicitly.
-   Every renderer prompt receives all non-null aliases from
-   `SKILL-full-runtime.md` and requests only concise final status, artifact
-   paths, and blockers. Renderer return prose must not reproduce fragment or
-   report bodies; the filesystem is the handoff.
+3. Reduce `RENDERER_MODEL` to a bare Agent model alias and set it explicitly.
+   Pass all non-null aliases from `SKILL-full-runtime.md`. Request only concise
+   status, artifact paths, and blockers; never reproduce report bodies.
 
-   - `dispatch_parallel`: issue both calls in one assistant message and wait for
-     both. Call `appsec-advisor:appsec-secarch-renderer` with description
-     `Render: §7 Security Architecture` and `RENDER_ROLE=secarch`; call
-     `appsec-advisor:appsec-ms-renderer` with description
-     `Render: Management Summary` and `RENDER_ROLE=ms`. Specialists author only
-     their owned fragments and never compose.
-   - `dispatch_agent`: call `appsec-advisor:appsec-threat-renderer` with
-     description `Threat Model Renderer (Stage 2)` and `RENDER_ROLE=full`.
+   - `ms-only`: call only `appsec-advisor:appsec-ms-renderer`, description
+     `Render: Management Summary`, with `RENDER_ROLE=ms`. This is default
+     Quick. The deterministic security-architecture scaffold remains on disk.
+   - `parallel`: issue both calls in one message and wait for both. Call
+     `appsec-advisor:appsec-secarch-renderer`, description
+     `Render: §7 Security Architecture`, with `RENDER_ROLE=secarch`; call
+     `appsec-advisor:appsec-ms-renderer`, description
+     `Render: Management Summary`, with `RENDER_ROLE=ms`.
+   - `full`: call `appsec-advisor:appsec-threat-renderer`, description
+     `Threat Model Renderer (Stage 2)`, with `RENDER_ROLE=full`.
 
-4. Send the final heartbeat, stop the watchdog, mark the Stage-2 task
-   completed, and record Stage-2 stats with `record_stage_stats.py`
-   (`output_dir` is positional). For parallel rendering, sum tokens and tool
-   uses but use the larger duration. `--subagent-type` takes **one
-   comma-separated value** — repeating the flag keeps only the last one and
-   silently under-counts the dispatch; it must be paired with `--since-iso`:
-
-   ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
-       --stage 2 --name "Report Rendering" \
-       --agent appsec-advisor:appsec-threat-renderer \
-       --model "$RENDERER_MODEL" \
-       --duration-ms <ms> --tool-uses <n> --tokens <n> \
-       ${STAGE2_START_ISO:+--subagent-type \
-         "appsec-advisor:appsec-secarch-renderer,appsec-advisor:appsec-ms-renderer" \
-         --since-iso "$STAGE2_START_ISO"} 2>/dev/null || true
-   ```
-5. Run the mandatory controller transition:
+   Specialists write only their owned fragments and never compose. The profile
+   never skips fragment validation, strict compose, prose fixes, QA autofix, or
+   the Stage-3 secret gate.
+4. Send the final heartbeat, stop the watchdog, mark Stage 2 completed, and run
+   `record_stage_stats.py` (`output_dir` is positional). Use the dispatched
+   agent as `--agent`. For parallel, sum tokens and tool uses, use the larger
+   duration, and pass one comma-separated `--subagent-type` value together with
+   `--since-iso`.
+5. Run:
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
      next --output-dir "$OUTPUT_DIR"
    ```
 
-   The controller composes from complete fragments when needed. If it returns
-   `stage=stage2`, obey a receipt naming a repair agent, else re-run this
-   procedure; never emit a completion summary. If it returns 3, 4, or complete, continue
-   with the parent runtime's stage-local schedule. Never infer completion from
-   Agent return prose or stale report-file presence.
+   The controller validates fragments and composes when ready. A Stage-2
+   response naming a repair agent must dispatch it; any other Stage-2 response
+   repeats this procedure. Continue only on Stage 3, Stage 4, or complete.
+   Never infer completion from Agent prose or report-file presence.

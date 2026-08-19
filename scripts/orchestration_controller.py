@@ -646,6 +646,14 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
         if not instruction.is_absolute() or instruction.resolve() not in _plugin_owned_instruction_paths():
             raise ControllerError("internal action instruction_file is not plugin-owned")
 
+    renderer_profile = action.get("renderer_profile")
+    if renderer_profile is not None:
+        if action.get("stage") != "stage2":
+            raise ControllerError("renderer_profile is valid only for Stage 2")
+        expected_action = "dispatch_parallel" if renderer_profile == "parallel" else "dispatch_agent"
+        if action.get("action") != expected_action:
+            raise ControllerError(f"renderer profile {renderer_profile!r} requires action {expected_action!r}")
+
     semantic_role = action.get("semantic_role")
     if semantic_role is not None and semantic_role not in SEMANTIC_ROLE_REGISTRY:
         raise ControllerError(f"unknown semantic role: {semantic_role!r}")
@@ -5284,10 +5292,11 @@ def prepare_stage2(output_dir: Path) -> dict[str, Any]:
             pass
 
     retry_pending = (output_dir / ".inline-shortcut-retry-count").is_file()
-    parallel = (
-        bool(cfg.get("enrich_arch_fragments")) and os.environ.get("APPSEC_PARALLEL_RENDER") != "0" and not retry_pending
-    )
-    action = "dispatch_parallel" if parallel else "dispatch_agent"
+    enrich_arch = bool(cfg.get("enrich_arch_fragments"))
+    quick_ms_only = str(cfg.get("assessment_depth") or "standard") == "quick" and not enrich_arch
+    parallel = enrich_arch and os.environ.get("APPSEC_PARALLEL_RENDER") != "0" and not retry_pending
+    renderer_profile = "ms-only" if quick_ms_only else ("parallel" if parallel else "full")
+    action = "dispatch_parallel" if renderer_profile == "parallel" else "dispatch_agent"
     if parallel:
         _best_effort_script(
             output_dir,
@@ -5301,16 +5310,17 @@ def prepare_stage2(output_dir: Path) -> dict[str, Any]:
             ],
             receipts,
         )
-    _append_event(output_dir, "STAGE2_READY", f"parallel={str(parallel).lower()}")
+    _append_event(output_dir, "STAGE2_READY", f"renderer_profile={renderer_profile}")
     return {
         "schema_version": 1,
         "action": action,
         "mode": cfg["mode"],
         "stage": "stage2",
+        "renderer_profile": renderer_profile,
         "instruction_file": str(THIN_STAGE2_RUNTIME),
         "config_path": str(config_path),
         "dispatch_values": _dispatch_values(cfg),
-        "receipts": [f"Stage-2 structural fragments prepared; parallel={str(parallel).lower()}", *receipts],
+        "receipts": [f"Stage-2 structural fragments prepared; renderer_profile={renderer_profile}", *receipts],
     }
 
 

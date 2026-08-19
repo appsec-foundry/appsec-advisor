@@ -193,8 +193,9 @@ def test_compact_stage_contracts_preserve_level0_dispatch_and_gates():
     assert "appsec-threat-renderer" in stage2
     assert "next --output-dir" in stage2
     assert "Never infer completion" in stage2
-    assert "must not reproduce fragment or" in stage2
-    assert "Authoring 2 LLM fragments" in stage2
+    assert "never reproduce report bodies" in stage2
+    assert "Stage-3 secret gate" in stage2
+    assert "Authoring required LLM fragments" in stage2
 
 
 def test_thin_rerender_runtime_starts_at_stage2():

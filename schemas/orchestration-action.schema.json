@@ -30,7 +30,7 @@
       "enum": ["stage1", "stage1a", "stage1b", "stage1c", "stage1d", "stage2", "stage3", "stage4", "complete"]
     },
     "runtime": {
-      "enum": ["thin-full", "thin-rerender", "legacy"]
+      "enum": ["thin-full", "thin-rerender"]
     },
     "instruction_file": {
       "type": "string",
@@ -192,6 +192,9 @@
         "maxLength": 500
       },
       "maxItems": 50
+    },
+    "renderer_profile": {
+      "enum": ["ms-only", "parallel", "full"]
     },
     "semantic_role": {
       "$ref": "#/$defs/semantic_role"

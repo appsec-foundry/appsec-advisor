@@ -1007,6 +1007,7 @@ def test_prepare_stage2_selects_compact_parallel_runtime(tmp_path, monkeypatch):
 
     action = controller.prepare_stage2(output)
     assert action["action"] == "dispatch_parallel"
+    assert action["renderer_profile"] == "parallel"
     assert action["instruction_file"] == str(controller.THIN_STAGE2_RUNTIME)
     controller._validate_action(action)
 
@@ -1023,8 +1024,54 @@ def test_prepare_stage2_retry_uses_single_renderer(tmp_path, monkeypatch):
 
     action = controller.prepare_stage2(output)
     assert action["action"] == "dispatch_agent"
+    assert action["renderer_profile"] == "full"
     assert action["instruction_file"] == str(controller.THIN_STAGE2_RUNTIME)
     controller._validate_action(action)
+
+
+def test_prepare_stage2_default_quick_uses_only_ms_renderer(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg.update(assessment_depth="quick", enrich_arch_fragments=False)
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+
+    action = controller.prepare_stage2(output)
+    assert action["action"] == "dispatch_agent"
+    assert action["renderer_profile"] == "ms-only"
+    assert "renderer_profile=ms-only" in action["receipts"][0]
+    controller._validate_action(action)
+
+
+def test_prepare_stage2_quick_retry_stays_ms_only(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg.update(assessment_depth="quick", enrich_arch_fragments=False)
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / ".inline-shortcut-retry-count").write_text("1\n", encoding="utf-8")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+
+    action = controller.prepare_stage2(output)
+    assert action["renderer_profile"] == "ms-only"
+    controller._validate_action(action)
+
+
+def test_renderer_profile_must_match_stage2_dispatch_shape(tmp_path):
+    action = {
+        "schema_version": 1,
+        "action": "dispatch_parallel",
+        "stage": "stage2",
+        "renderer_profile": "ms-only",
+    }
+    with pytest.raises(controller.ControllerError, match="requires action"):
+        controller._validate_action_semantics(action)
+
+
+def test_action_schema_has_no_legacy_runtime():
+    schema = json.loads(controller.ACTION_SCHEMA.read_text(encoding="utf-8"))
+    assert schema["properties"]["runtime"]["enum"] == ["thin-full", "thin-rerender"]
 
 
 def test_compose_if_ready_requires_llm_fragments(tmp_path):
@@ -1068,6 +1115,13 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     assert "emit_general_mitigation_titles.py" in rendered_scripts
     assert "hydrate_mitigation_details.py" in rendered_scripts
     assert "validate_mitigation_quality.py" in rendered_scripts
+    ordered_tail = [
+        next(i for i, item in enumerate(commands) if any("validate_fragment.py" in str(part) for part in item)),
+        next(i for i, item in enumerate(commands) if any("compose_threat_model.py" in str(part) for part in item)),
+        next(i for i, item in enumerate(commands) if any("apply_prose_fixes.py" in str(part) for part in item)),
+        next(i for i, item in enumerate(commands) if any("qa_checks.py" in str(part) for part in item)),
+    ]
+    assert ordered_tail == sorted(ordered_tail)
     checkpoint = (output / ".appsec-checkpoint").read_text(encoding="utf-8")
     assert "phase=11 status=completed" in checkpoint
 
