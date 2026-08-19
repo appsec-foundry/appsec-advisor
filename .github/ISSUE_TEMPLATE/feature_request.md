@@ -14,10 +14,10 @@ labels: enhancement
 
 **Which part of the plugin is affected?**
 
-- [ ] `appsec-threat-analyst` (orchestrator)
+- [ ] `create-threat-model` runtime/controller
 - [ ] `appsec-context-resolver` (sub-agent)
 - [ ] `appsec-dep-scanner` (sub-agent)
-- [ ] `appsec-stride-analyzer` (sub-agent)
+- [ ] `appsec-stride-analyzer-v2` (sub-agent)
 - [ ] `appsec-qa-reviewer` (sub-agent)
 - [ ] `create-threat-model` skill
 - [ ] `update-threat-model` skill

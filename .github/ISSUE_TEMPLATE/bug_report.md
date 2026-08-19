@@ -25,7 +25,7 @@ labels: bug
 
 **Which agent or skill was running?**
 
-<!-- e.g. appsec-threat-analyst, create-threat-model skill, appsec-qa-reviewer, etc. -->
+<!-- e.g. create-threat-model runtime, appsec-stride-analyzer-v2, appsec-qa-reviewer, etc. -->
 
 **Diagnostic bundle (recommended — anonymised)**
 
