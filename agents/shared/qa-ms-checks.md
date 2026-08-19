@@ -18,7 +18,7 @@ When `CHECK_REQUIREMENTS=true`, `### Requirements Compliance` sits between Mitig
 
 ## 3. Forbidden sub-sections (helper-enforced)
 
-`check_ms_structure` auto-rewrites or strips: `### Risk Distribution`, `### STRIDE Coverage`, `### ⚠ Worst Case Scenarios` (any variant — bullets migrate into the Verdict blockquote), `### Top Threats` / `### Top Critical Findings` / `### Critical Findings` (→ `### Top Findings`), `### Key Strengths` (→ `### Operational Strengths`), `### Follow-up Actions` (→ `### Mitigations`), `### Recommended Priority Actions` / `### Immediate Actions` (→ `### Mitigations`), `### Overall Security Rating` (the Verdict carries it). Legacy `## Critical Attack Chain` is renamed to `## Critical Attack Tree`.
+`check_ms_structure` auto-rewrites or strips: `### Risk Distribution`, `### STRIDE Coverage`, `### ⚠ Worst Case Scenarios` (any variant — bullets migrate into the Verdict blockquote), `### Top Threats` / `### Top Critical Findings` / `### Critical Findings` (→ `### Top Findings`), `### Key Strengths` (→ `### Operational Strengths`), `### Follow-up Actions` (→ `### Mitigations`), `### Recommended Priority Actions` / `### Immediate Actions` (→ `### Mitigations`), `### Overall Security Rating` (the Verdict carries it).
 
 ## 4. Worst Case Scenarios migration (semantic)
 
@@ -26,7 +26,7 @@ If a standalone `### ⚠ Worst Case Scenarios` heading still exists after the he
 - Extract bold scenario names + F-NNN/T-NNN references.
 - Convert to single-line bullets (`- **<Name>** — <sentence>. *([F-NNN](#f-NNN))*`) if needed.
 - Append to Verdict blockquote bullets; deduplicate by scenario name.
-- Drop any trailing "See [Critical Attack Chain]" / "See [Critical Attack Tree]" link.
+- Drop any trailing "See [Critical Attack Tree]" link.
 
 If a Markdown blockquote (`> `) wraps the Verdict bullets instead of the canonical HTML form, auto-convert to the HTML blockquote with the red style above.
 

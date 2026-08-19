@@ -1338,7 +1338,7 @@ class TestYamlMdConsistencyCheck:
         md, yml = self._write_pair(
             tmp_path,
             textwrap.dedent("""
-                ## Critical Attack Chain
+                ## Critical Attack Tree
                 | [F-001](#f-001) | Chain member |
                 ## Findings Register
                 | [F-001](#f-001) | full row |
@@ -4315,16 +4315,6 @@ def test_mermaid_owner_survives_composer_edge_label_quoting(tmp_path: Path):
     md.write_text(text, encoding="utf-8")
     raw = "mermaid block #1 (starts at line ~5): authoritative parse failed"
     assert qa._fragment_owning_mermaid_block(md, raw) == ".fragments/architecture-diagrams.md"
-
-
-def test_mermaid_owner_ignores_non_contract_scratch_fragments(tmp_path: Path):
-    """`_chain-skeleton.md` mirrors the walkthrough diagrams and would tie with
-    the real owner, pushing every sequence-diagram issue into the fallback."""
-    md = _mermaid_workspace(tmp_path)
-    seq = (tmp_path / ".fragments" / "attack-walkthroughs.md").read_text(encoding="utf-8")
-    (tmp_path / ".fragments" / "_chain-skeleton.md").write_text(seq, encoding="utf-8")
-    raw = "mermaid block #2 (starts at line ~11): authoritative parse failed"
-    assert qa._fragment_owning_mermaid_block(md, raw) == ".fragments/attack-walkthroughs.md"
 
 
 def test_mermaid_owner_returns_none_for_unresolvable_issue(tmp_path: Path):

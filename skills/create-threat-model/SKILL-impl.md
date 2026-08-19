@@ -3490,7 +3490,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
     --only system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md \
     || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
-    --only security-architecture.md,_chain-skeleton.md \
+    --only security-architecture.md \
     || true
 # ms-ai-exposure.json — deterministic "AI / LLM Exposure" MS callout, IDEMPOTENT
 # (no --force). The renderer authors this fragment only at its discretion, so it
@@ -3540,12 +3540,6 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_abuse_cases.py" \
     ${ORG_PROFILE_PATH:+--org-profile "$ORG_PROFILE_PATH"} \
     || true
 ```
-
-`_chain-skeleton.md` is kept for one release as a deprecated transitional
-artifact (the legacy renderer fallback path still reads it). It is no
-longer the source of truth for `attack-walkthroughs.md` — `walkthrough_renderer.py`
-is. Idempotent on purpose: when the agent has already filled it in, the
-scaffold is preserved.
 
 **Hard-gate enforcement (M2.10 — promoted from Bash to standalone script).**
 
@@ -3598,7 +3592,7 @@ GATE_EXIT=$?
        --only system-overview.md,architecture-diagrams.md,assets.md,attack-surface.md,out-of-scope.md,attack-walkthroughs.md \
        || true
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/pregenerate_fragments.py" "$OUTPUT_DIR" \
-       --only security-architecture.md,_chain-skeleton.md \
+       --only security-architecture.md \
        || true
    ```
 2. **Re-dispatch Stage 2** — fresh `appsec-threat-renderer` session with identical prompt + configuration to the original Stage 2 dispatch. The renderer is idempotent: it sees the partial fragment set on disk and authors only what is still missing.

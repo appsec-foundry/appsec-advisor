@@ -2172,35 +2172,6 @@ def test_evidence_snippet_summary_label_is_evidence_not_code(tmp_path: Path) -> 
         assert "<summary><i>Code · " not in section8
 
 
-# ---------------------------------------------------------------------------
-# Pregenerator skeleton — §3 + §3.1 intro paragraphs
-# ---------------------------------------------------------------------------
-
-
-def test_attack_walkthroughs_skeleton_has_no_chain_overview() -> None:
-    """The §3.1 Attack Chain Overview was retired — the cross-finding view is
-    the `## Critical Attack Tree`. `_chain-skeleton.md` is no longer consumed
-    by any agent, so the skeleton generator now mirrors the deterministic
-    per-Critical walkthrough generator: a §3 chapter intro plus `### 3.N`
-    walkthroughs, with NO `### 3.1 Attack Chain Overview` / `#### Chain N`
-    / `graph LR` kill-chain blocks."""
-    pregen_path = REPO_ROOT / "scripts" / "pregenerate_fragments.py"
-    pf = _load_module("pregenerate_fragments", pregen_path)
-    yaml_data = {
-        "threats": [
-            {"id": "T-001", "title": "SQL injection in login", "risk": "Critical"},
-            {"id": "T-002", "title": "Hardcoded admin password", "risk": "Critical"},
-        ]
-    }
-    md = pf.gen_attack_walkthroughs_skeleton(yaml_data)
-    assert "## 3. Attack Walkthroughs" in md
-    assert "### 3.1 Attack Chain Overview" not in md
-    assert "#### Chain " not in md
-    assert "graph LR" not in md
-    # Per-finding walkthroughs are present (the first owns §3.1's number now).
-    assert "### 3.1 " in md
-
-
 def test_mitigation_register_derived_from_yaml(tmp_path: Path) -> None:
     out = _prepare_output_dir(tmp_path)
     rendered, _ = compose.render(CONTRACT, out)

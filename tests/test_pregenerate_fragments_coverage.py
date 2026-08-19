@@ -428,11 +428,6 @@ class TestGeneratorsRich:
         md = pf.gen_security_architecture_v2(rich_yaml_data, "quick")
         assert isinstance(md, str) and md
 
-    def test_attack_walkthroughs_skeleton_rich(self, rich_yaml_data):
-        md = pf.gen_attack_walkthroughs_skeleton(rich_yaml_data)
-        assert isinstance(md, str) and md
-
-
 # ---------------------------------------------------------------------------
 # Targeted helper branch tests.
 # ---------------------------------------------------------------------------
@@ -510,11 +505,6 @@ class TestHelperBranches:
             {"control": "Password Authentication", "name": "auth", "implementation": "login"}
         )
         assert isinstance(out, str)
-
-    def test_chain_label_for_threat(self):
-        assert pf._chain_label_for_threat({"title": ""}) == "—"
-        out = pf._chain_label_for_threat({"title": "The SQL Injection in the search box — server.ts:42"})
-        assert isinstance(out, str) and out != "—"
 
     def test_render_threat_hypotheses_table(self, rich_yaml_data):
         lines = pf._render_threat_hypotheses_table(rich_yaml_data)

@@ -2413,7 +2413,7 @@ class TestCli:
             assert (frag_dir / name).is_file(), f"{name} not written"
 
     def test_idempotent_skips_existing(self, output_dir):
-        # First run writes all 7 (6 composer fragments + _chain-skeleton.md helper).
+        # First run writes all 7 composer fragments.
         _run_cli(str(output_dir))
         # Second non-force run skips every MECHANICAL fragment. The one
         # exception is the still-UNFILLED security-architecture.md scaffold,
