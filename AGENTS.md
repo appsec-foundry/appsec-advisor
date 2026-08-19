@@ -155,7 +155,7 @@ Two limits to know:
 
 - Keep Stage 1 analysis separate from Stage 2 rendering so the renderer receives a fresh budget. Thin Stage 1/1c/2 must use its compact runtimes, not verbose legacy bodies.
 - `SKILL-impl.md` is large and is read in bounded slices. Lazy-load phase groups and `skills/create-threat-model/modes/*.md` branches at their boundaries; do not inline them.
-- Full/rebuild and rerender use `scripts/orchestration_controller.py` by default. `APPSEC_THIN_ORCHESTRATOR=0` selects the legacy path.
+- Full/rebuild and rerender use `scripts/orchestration_controller.py`; unsupported modes fail before dispatch or run-state mutation.
 - The Stage-4 architect reviewer is read-only for `threat-model.md`, `threat-model.yaml`, and SARIF. It may emit a blocking repair plan; the separate repair loop then fixes fragments and recomposes the report.
 - Phase 2.5 conditionally scans config/IaC surfaces. Quick mode skips Phase 2.7 actor discovery.
 

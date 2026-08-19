@@ -73,7 +73,7 @@ flowchart LR
 
 ### Create or update the model
 
-Use `/appsec-advisor:create-threat-model` for the first assessment. After a code change, `/appsec-advisor:update-threat-model` checks the affected components again and keeps the existing finding IDs. If there is no earlier model, the update command stops and tells you to create one first.
+Use `/appsec-advisor:create-threat-model` for the first assessment. After a code change, `/appsec-advisor:create-threat-model --full` reassesses the repository while preserving report history. Incremental updates are not supported by the compact runtime.
 
 Incremental scans preserve T/F finding IDs. A shallower scan carries forward findings it could not reverify; an equal-or-deeper scan records non-reproduced findings as resolved. `--rebuild` deliberately clears the prior model and stable-ID cache, allowing IDs to be reassigned.
 
@@ -166,8 +166,8 @@ Run these commands in Claude Code:
 # Fresh scan that may reassign finding IDs
 /appsec-advisor:create-threat-model --full --rebuild
 
-# Preview without writing files
-/appsec-advisor:create-threat-model --dry-run
+# Reassess while preserving report history
+/appsec-advisor:create-threat-model --full
 ```
 
 ### Focused analysis
@@ -269,12 +269,11 @@ Headless runs default to 4.6 and accept `scripts/run-headless.sh --model <id>`. 
 
 | Interactive | Headless / CI | Effect |
 |---|---|---|
-| `--max-wall-time` | `--max-duration` | Maximum runtime. |
-| `--max-cost` | `--max-budget` | Maximum API spend. |
+| Unsupported | `--max-duration` | Maximum runtime enforced by the host wrapper. |
+| Unsupported | `--max-budget` | Maximum API spend enforced by the host wrapper. |
 
 ```text
-/appsec-advisor:create-threat-model --max-cost 5 --max-wall-time 30m
-./scripts/run-headless.sh --incremental --max-duration 1800 --max-budget 5
+./scripts/run-headless.sh --full --max-duration 1800 --max-budget 5
 ```
 
 Cost limits require an `ANTHROPIC_API_KEY`; time limits also work with Claude subscriptions.
@@ -398,7 +397,7 @@ Agents read the repository and make the security judgments. Python checks their 
 |---|---|
 | `/appsec-advisor:ask-threat-model <question>` | Answer from the structured model without rescanning or writing files. |
 | `/appsec-advisor:show-threat-model` | Show a fixed overview of freshness, findings, mitigations, and control posture. |
-| `/appsec-advisor:update-threat-model` | Re-analyze changed components in an existing model. |
+| `/appsec-advisor:create-threat-model --full` | Reassess the repository while preserving report history. |
 | `/appsec-advisor:review-threat-model` | Review findings, record decisions, implement selected fixes, or build a remediation plan. |
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable after publication checks. |
 | `/appsec-advisor:export-threat-model` | Export an existing model without another analysis. |

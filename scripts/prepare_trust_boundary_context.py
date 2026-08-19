@@ -2183,7 +2183,7 @@ def _ingress_is_evidenced(repo_root: Path, candidate: dict) -> bool:
     """Does the cited evidence actually show the inbound surface it claims?
 
     `confirmed` is what unlocks the entire external-ingress severity channel:
-    `appsec-stride-analyzer` may only emit a `boundary_refs[]` entry for a
+    `appsec-stride-analyzer-v2` may only emit a `boundary_refs[]` entry for a
     confirmed boundary, and `triage_compute_ranking` only elevates on
     `confirmed` + `from == "external"`. Leaving that judgement wholly to the
     analyst made the channel unreachable on juice-shop — it marked exactly one

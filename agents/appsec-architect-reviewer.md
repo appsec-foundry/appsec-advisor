@@ -512,7 +512,9 @@ For each entry in `.actors-resolved.json.inputs_questioned[]`:
 
 **Sub-Check 15.6 — Recon-derived TH-10 / BFF mandates honoured (2026-05):**
 
-The STRIDE-analyzer prompt (`appsec-stride-analyzer.md`, *Mandatory recon-derived findings* block) lists hard-required findings that MUST be emitted when specific phrases appear in `.recon-summary.md` Section 7.9 (OAuth/OIDC) or 7.10 (SPA/BFF). This sub-check verifies the bridge actually held:
+The STRIDE producer (`appsec-stride-analyzer-v2.md`) must carry admitted OAuth,
+OIDC, SPA, and BFF evidence into findings when the target proves a concrete
+mechanism. This sub-check verifies that bridge:
 
 For each component in `threat-model.yaml` `components[]`:
 

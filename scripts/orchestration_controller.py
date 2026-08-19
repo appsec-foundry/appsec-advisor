@@ -9,9 +9,6 @@ Commands:
 
     orchestration_controller.py route -- <create-threat-model arguments>
     orchestration_controller.py prepare [--force] -- <arguments>
-    orchestration_controller.py post-stage1a --output-dir <path>
-    orchestration_controller.py finalize-stage1b --output-dir <path>
-    orchestration_controller.py post-stage1c --output-dir <path>
     orchestration_controller.py prepare-abuse --output-dir <path>
     orchestration_controller.py finalize-abuse --output-dir <path>
     orchestration_controller.py prepare-stage2 --output-dir <path>
@@ -74,14 +71,11 @@ from event_log import format_line  # noqa: E402
 ACTION_SCHEMA = PLUGIN_ROOT / "schemas" / "orchestration-action.schema.json"
 THIN_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
 THIN_RERENDER_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
-THIN_STAGE1_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1.md"
 THIN_STAGE1_V2_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md"
-THIN_STAGE1B_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1b.md"
 THIN_STAGE1D_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1d.md"
 THIN_STAGE2_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage2.md"
 LEGACY_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 CONTEXT_V2_GENERATION = "context-v2"
-LEGACY_GENERATION = "legacy"
 
 MAX_ACTION_BYTES = 65_536
 MAX_STRIDE_ANALYST_CONTEXT_BYTES = 1_048_576
@@ -380,7 +374,6 @@ _DISPATCH_KEYS = (
     "requirements_url_override",
     "business_context_source",
     "skip_business_context",
-    "incremental",
     "reuse_recon_eligible",
     "run_id",
     "rebuild",
@@ -418,8 +411,6 @@ _DISPATCH_KEYS = (
     "verbose",
     "quiet",
     "tracing",
-    "pr_mode",
-    "base_ref",
     "slug",
     "total_stages",
     "plugin_version",
@@ -442,10 +433,7 @@ _DISPATCH_EXTRA_KEYS = (
     "estimate_stage4_min",
     "estimate_total_pretty",
     "invocation_args",
-    "live_phase",
     "org_profile_path",
-    "parallel_stride",
-    "parallel_stride_env",
     "plugin_root",
     "refresh_actor_discovery",
     "reuse_recon_eligible",
@@ -563,9 +551,7 @@ def _plugin_owned_instruction_paths() -> frozenset[Path]:
     paths = {
         THIN_RUNTIME,
         THIN_RERENDER_RUNTIME,
-        THIN_STAGE1_RUNTIME,
         THIN_STAGE1_V2_RUNTIME,
-        THIN_STAGE1B_RUNTIME,
         THIN_STAGE1D_RUNTIME,
         THIN_STAGE2_RUNTIME,
         LEGACY_RUNTIME,
@@ -988,37 +974,57 @@ def _failure_action(exc: ControllerError) -> dict[str, Any]:
 
 def _resolve(argv: list[str]) -> dict[str, Any]:
     filtered = [arg for arg in argv if arg != "--force"]
-    return resolve_config.resolve(filtered, PLUGIN_ROOT)
+    # Routing and admission must be read-only. Full/rebuild preparation creates
+    # the output directory only after `_runtime_for` accepts the invocation.
+    return resolve_config.resolve(filtered, PLUGIN_ROOT, create_output_dir=False)
+
+
+def _unsupported_runtime_reason(cfg: dict[str, Any]) -> str | None:
+    """Explain why the single compact runtime cannot execute this invocation."""
+    if cfg.get("dry_run"):
+        return "--dry-run is not implemented by the compact runtime"
+    if cfg.get("resume"):
+        return "--resume is not implemented by the compact runtime"
+    if cfg.get("mode") == "incremental" or cfg.get("incremental"):
+        return "incremental scans are not implemented by the compact runtime"
+    if cfg.get("max_wall_time_seconds"):
+        return "--max-wall-time is not implemented by the compact runtime"
+    if cfg.get("max_cost_usd"):
+        return "--max-cost is not implemented by the compact runtime"
+    if os.environ.get("APPSEC_LIVE_PHASE") == "1" or cfg.get("live_phase"):
+        return "APPSEC_LIVE_PHASE=1 is not implemented by the compact runtime"
+    if cfg.get("mode") not in {"full", "rebuild", "rerender"}:
+        return f"mode {cfg.get('mode')!r} is not implemented by the compact runtime"
+    return None
 
 
 def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
-    thin_eligible = resolve_config.compact_runtime_eligible(cfg)
-    if cfg.get("runtime_generation") == CONTEXT_V2_GENERATION and not thin_eligible:
-        raise ControllerError("incompatible runtime selection: context-v2 requires the compact top-level runtime")
-    if thin_eligible and cfg.get("mode") in {"full", "rebuild"} and not cfg.get("rerender"):
+    if cfg.get("runtime_generation") != CONTEXT_V2_GENERATION:
+        raise ControllerError(
+            "unsupported pre-cutover runtime generation; the legacy producer has been removed. "
+            "Start a new full, rebuild, or rerender invocation."
+        )
+    unsupported = _unsupported_runtime_reason(cfg)
+    if unsupported:
+        raise ControllerError(
+            f"unsupported invocation: {unsupported}; no run state was changed and no agent was dispatched. "
+            "Use --full or --rebuild for a new analysis, or --rerender for existing Stage-1 artifacts. "
+            "The legacy runtime has been removed."
+        )
+    if cfg.get("mode") in {"full", "rebuild"} and not cfg.get("rerender"):
         return "thin-full", THIN_RUNTIME
-    if thin_eligible and cfg.get("mode") == "rerender":
+    if cfg.get("mode") == "rerender":
         return "thin-rerender", THIN_RERENDER_RUNTIME
-    return "legacy", LEGACY_RUNTIME
+    raise ControllerError("unsupported invocation: no compact runtime owns this mode")
 
 
 def route(argv: list[str]) -> dict[str, Any]:
     cfg = _resolve(argv)
     runtime, instruction = _runtime_for(cfg)
     if runtime == "thin-full":
-        reason = "default full/rebuild compact runtime selected (opt out with APPSEC_THIN_ORCHESTRATOR=0)"
-    elif runtime == "thin-rerender":
-        reason = "compact rerender runtime selected (opt out with APPSEC_THIN_ORCHESTRATOR=0)"
-    elif (
-        cfg.get("mode") in {"full", "rebuild"}
-        and not cfg.get("dry_run")
-        and not cfg.get("resume")
-        and not cfg.get("rerender")
-        and os.environ.get("APPSEC_THIN_ORCHESTRATOR") == "0"
-    ):
-        reason = "compact runtime opted out via APPSEC_THIN_ORCHESTRATOR=0; using legacy parity runtime"
+        reason = "single compact full/rebuild runtime selected"
     else:
-        reason = "special mode retains the parity runtime"
+        reason = "single compact rerender runtime selected"
     return {
         "schema_version": 1,
         "action": "load_runtime",
@@ -1255,33 +1261,19 @@ def _checkpoint_needs_render(output_dir: Path) -> bool:
 
 
 def _need_render_recovery_reason(output_dir: Path) -> str:
-    """Describe the supported recovery without crossing runtime generations."""
-    try:
-        persisted = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        persisted = {}
-    if persisted.get("runtime_generation") == CONTEXT_V2_GENERATION:
-        return (
-            "Stage 1 is complete (phase=10b need_render=true), but context-v2 "
-            "does not support --resume. Repeat --rebuild --force to start a "
-            "fresh run and discard the incomplete assessment."
-        )
+    """Describe the supported single-runtime recovery."""
     return (
-        "Stage 1 is complete (phase=10b need_render=true). Use --resume to "
-        "render it, or repeat --rebuild --force to discard the completed analysis."
+        "Stage 1 is complete (phase=10b need_render=true), but --resume is not supported. "
+        "Use --rerender to render the validated Stage-1 artifacts, or repeat "
+        "--rebuild --force to discard them and start again."
     )
 
 
 def _boundary_budget_abort_reason(cfg: dict[str, Any]) -> str:
-    if cfg.get("runtime_generation") == CONTEXT_V2_GENERATION:
-        return (
-            "Stage 1b was not dispatched because the Stage-1a turn budget was "
-            "exhausted. Context-v2 retained the assessment input for diagnostics "
-            "but cannot resume it; start a fresh full or rebuild run."
-        )
     return (
-        "Stage 1b was not dispatched because the Stage-1a turn budget was exhausted; "
-        "the immutable assessment input was preserved for --resume"
+        "Stage 1b was not dispatched because the Stage-1a turn budget was exhausted. "
+        "The assessment input was retained for diagnostics, but this run cannot resume; "
+        "start a fresh full or rebuild run."
     )
 
 
@@ -1438,7 +1430,7 @@ def _session_context_advisory(output_dir: Path) -> str:
 
 
 def _validator_advisory() -> str:
-    """Mirror the legacy optional Mermaid-validator dependency probe."""
+    """Return the optional Mermaid-validator dependency advisory."""
     if os.environ.get("APPSEC_SKIP_VALIDATOR_CHECK") == "1":
         return ""
     scripts = SCRIPT_DIR
@@ -1543,13 +1535,6 @@ def _dispatch_values(
     values.update(
         {
             "plugin_root": str(PLUGIN_ROOT),
-            "parallel_stride": (
-                cfg.get("mode") in {"full", "rebuild"} and os.environ.get("APPSEC_PARALLEL_STRIDE", "1") != "0"
-            ),
-            "parallel_stride_env": os.environ.get("APPSEC_PARALLEL_STRIDE", "unset"),
-            "live_phase": (
-                os.environ.get("APPSEC_LIVE_PHASE") == "1" and os.environ.get("APPSEC_PARALLEL_STRIDE", "1") == "0"
-            ),
             "invocation_args": cfg.get("invocation_args", ""),
             "compat_label": "equal",
         }
@@ -1622,7 +1607,7 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
             "reason": (
                 "--rerender needs an existing assessment to re-render. Missing under "
                 f"{output_dir}: {', '.join(missing)}. Run a full assessment first; "
-                "for source-code changes use --incremental or --full."
+                "for source-code changes use --full or --rebuild."
             ),
             "exit_code": 2,
         }
@@ -1683,9 +1668,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     if runtime == "thin-rerender":
         return _prepare_rerender(cfg)
     if runtime != "thin-full":
-        raise ControllerError(
-            "compact prepare supports only non-dry full/rebuild runs; route this invocation through the legacy runtime"
-        )
+        raise ControllerError("compact prepare supports only full, rebuild, and rerender invocations")
 
     output_dir = Path(cfg["output_dir"]).resolve()
     repo_root = Path(cfg["repo_root"]).resolve()
@@ -1700,8 +1683,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
 
     # Stable per-run token so a Stage-1 agent's own lock acquisition can
     # re-acquire this controller-held lock re-entrantly instead of
-    # false-blocking on it (mirrors the legacy-runtime fix in SKILL-impl.md
-    # "Skill-layer lock acquisition" — the 2026-07-02 costly re-dispatch).
+    # false-blocking on it.
     cfg["run_id"] = (
         os.environ.get("CLAUDE_CODE_SESSION_ID")
         or os.environ.get("CLAUDE_SESSION_ID")
@@ -1884,7 +1866,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "action": "dispatch_agent",
         "mode": cfg["mode"],
         "stage": "stage1",
-        "instruction_file": str(_stage1_runtime_for(cfg)),
+        "instruction_file": str(THIN_STAGE1_V2_RUNTIME),
         "task_rows": _task_rows(cfg),
         "preflight_status": str(cfg.get("preflight_status") or ""),
         "run_plan": run_plan,
@@ -2152,21 +2134,13 @@ def _validate_context_v2_analyst_context(
 
 
 def _load_context_v2_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
-    """Load durable run state and refuse to continue under another generation.
-
-    The generation is read from the run's persisted config, never from the
-    current environment: the producer that already wrote artifacts into this
-    output directory is the only one allowed to continue writing them. An
-    operator who changes APPSEC_CONTEXT_V2 mid-run gets an explicit
-    incompatible-state abort instead of a second producer for one artifact.
-    """
+    """Load durable single-runtime state and reject pre-cutover runs."""
     output_dir, cfg = _load_run_config(output_dir)
-    generation = cfg.get("runtime_generation") or LEGACY_GENERATION
+    generation = cfg.get("runtime_generation")
     if generation != CONTEXT_V2_GENERATION:
         raise ControllerError(
-            f"incompatible runtime generation: this run was prepared as {generation!r} and a "
-            "context-v2 action cannot continue it. Select the prior runtime for this "
-            "invocation, or start a new eligible full/rebuild run."
+            f"incompatible pre-cutover run generation {generation!r}; the legacy producer is no longer available. "
+            "Start a new --full or --rebuild run with the current compact runtime."
         )
     versions = cfg.get("runtime_artifact_schema_versions")
     expected_versions = resolve_config.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS
@@ -2179,25 +2153,10 @@ def _load_context_v2_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
             "this context-v2 invocation already reached an authoritative RUN_ABORTED state; "
             "no later boundary or semantic producer may continue it"
         )
-    env_override = os.environ.get("APPSEC_CONTEXT_V2", "").strip()
-    if env_override not in ("", "1"):
-        _append_event(
-            output_dir,
-            "RUNTIME_GENERATION_ENV_IGNORED",
-            "continuing persisted runtime_generation=context-v2; the current APPSEC_CONTEXT_V2 override selects legacy",
-            level="WARN",
-        )
     return output_dir, cfg
 
 
-def _stage1_runtime_for(cfg: dict[str, Any]) -> Path:
-    """The Stage-1 runtime for this run's persisted producer generation."""
-    if (cfg.get("runtime_generation") or LEGACY_GENERATION) == CONTEXT_V2_GENERATION:
-        return THIN_STAGE1_V2_RUNTIME
-    return THIN_STAGE1_RUNTIME
-
-
-STAGE1_TASK_ROWS_CONTEXT_V2 = (
+STAGE1_TASK_ROWS = (
     "Stage 1a [1/3] - Repository recon",
     "Stage 1a [2/3] - Actor discovery",
     "Stage 1a [3/3] - Architecture modeling",
@@ -2210,27 +2169,6 @@ STAGE1_TASK_ROWS_CONTEXT_V2 = (
     "Stage 1c [6/6] - Root cause synthesis",
 )
 
-STAGE1_TASK_ROWS_LEGACY = (
-    "Stage 1a - Discovery & Architecture Modeling",
-    "Stage 1b - Trust Boundary Analysis",
-    "Stage 1c - Control & Threat Analysis",
-)
-
-
-def _stage1_task_rows(cfg: dict[str, Any]) -> list[str]:
-    """The Stage-1 task rows the session creates before it dispatches.
-
-    Context-v2 returns control to the session at every job, so Stage 1 can show
-    which part of it is running instead of one row for its whole duration. Each
-    row names its stage and its position within that stage's substages, so the
-    reader can tell how far the running stage has left to go. The legacy runtime
-    has no comparable seam and keeps its undivided stage rows.
-    """
-    if _stage1_runtime_for(cfg) == THIN_STAGE1_V2_RUNTIME:
-        return list(STAGE1_TASK_ROWS_CONTEXT_V2)
-    return list(STAGE1_TASK_ROWS_LEGACY)
-
-
 def _task_rows(cfg: dict[str, Any]) -> list[str]:
     """Every task row the session creates, in creation order.
 
@@ -2241,7 +2179,7 @@ def _task_rows(cfg: dict[str, Any]) -> list[str]:
     no longer matches.
     """
     rows = ["Preparing workspace"]
-    rows.extend(_stage1_task_rows(cfg))
+    rows.extend(STAGE1_TASK_ROWS)
     if not cfg.get("skip_abuse_case_verification"):
         rows.append("Stage 1d - Abuse case verification")
     rows.append("Stage 2 - Report rendering")
@@ -2251,19 +2189,6 @@ def _task_rows(cfg: dict[str, Any]) -> list[str]:
         rows.append("Stage 4 - Architect review")
     rows.append("Final summary" if cfg.get("keep_runtime_files") else "Final summary + cleanup")
     return rows
-
-
-def _reject_context_v2(cfg: dict[str, Any], stage: str) -> None:
-    """Keep a legacy Stage-1 gate off a context-v2 run.
-
-    Context-v2 has its own terminal Stage-1 gate. Letting a legacy gate also
-    run would put two producers on the same artifacts inside one invocation.
-    """
-    if (cfg.get("runtime_generation") or LEGACY_GENERATION) == CONTEXT_V2_GENERATION:
-        raise ControllerError(
-            f"incompatible runtime generation: {stage} is a legacy-producer gate and this run was "
-            "prepared as 'context-v2'. Use the context-v2 actions for this run."
-        )
 
 
 def _context_v2_common(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -3308,35 +3233,6 @@ def _has_iac_surface(repo_root: Path) -> bool:
     return False
 
 
-def _context_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
-    """Reuse a prior context file only on an incremental run newer than HEAD.
-
-    A full or rebuild run always re-resolves context: an existing
-    `.threat-modeling-context.md` survives full cleanup, so treating mere
-    presence as a cache hit would silently reuse stale policy and prior-finding
-    data on every rerun.
-    """
-    if not cfg.get("incremental"):
-        return False
-    context_file = output_dir / ".threat-modeling-context.md"
-    try:
-        context_epoch = context_file.stat().st_mtime
-        _validate_threat_modeling_context(context_file)
-    except (OSError, ControllerError):
-        return False
-    head = subprocess.run(
-        ["git", "-C", str(cfg.get("repo_root") or output_dir), "log", "-1", "--format=%ct"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    try:
-        head_epoch = float(head.stdout.strip())
-    except ValueError:
-        return False
-    return context_epoch > head_epoch > 0
-
-
 def _recon_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
     """Reuse a prior recon summary only when the fingerprint contract allows it."""
     if not (output_dir / ".recon-summary.md").is_file() or not (output_dir / ".recon-signals.json").is_file():
@@ -3349,8 +3245,7 @@ def _recon_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
         )
     except ControllerError:
         return False
-    incremental = bool(cfg.get("incremental"))
-    if not incremental and not cfg.get("recon_reuse_eligible"):
+    if not cfg.get("recon_reuse_eligible"):
         return False
     args = [
         "check-fingerprint",
@@ -3359,10 +3254,9 @@ def _recon_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
         "--repo-root",
         str(cfg.get("repo_root") or output_dir),
     ]
-    if not incremental:
-        # An auto-upgraded full run has no incremental git-diff back-stop, so
-        # the tree must be git-provably unchanged before recon may be reused.
-        args.append("--require-clean-tree")
+    # Full/rebuild has no incremental git-diff back-stop, so the tree must be
+    # git-provably unchanged before recon may be reused.
+    args.append("--require-clean-tree")
     try:
         _run_script("baseline_state.py", args)
     except ControllerError:
@@ -3400,7 +3294,7 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
     )
 
     recon_skip = _recon_skip(output_dir, cfg)
-    context_skip = _context_skip(output_dir, cfg)
+    context_skip = False
     has_iac = _has_iac_surface(repo_root)
     if not has_iac:
         from _atomic_io import atomic_write_text
@@ -4786,7 +4680,7 @@ def _context_v2_finalize(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any
         ["threat_model_output", str(output_dir / "threat-model.yaml")],
     )
     # Context-v2 builds canonical YAML directly instead of passing through the
-    # legacy post_stage1 gate. It still needs the same deterministic enrichment
+    # former post-Stage-1 gate. It still needs the same deterministic enrichment
     # before the P1/P2 actionability gate: scanner remediation backfill and
     # mitigation-detail hydration copy concrete steps and verification from
     # finding producers onto mitigation cards.
@@ -4943,123 +4837,6 @@ def context_v2_finalize(output_dir: Path) -> dict[str, Any]:
     return _context_v2_finalize(output_dir, cfg)
 
 
-def _selected_coverage_errors(output_dir: Path) -> list[dict[str, str]]:
-    """Blocked bounded-wave components, or [] when the gate does not apply.
-
-    Delegates to check_stride_dispatch.selected_coverage_errors so the early
-    diagnosis in post_stage1 and the hard gate below it can never disagree.
-    Import failures are non-fatal: the hard gate still runs as a subprocess.
-    """
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import check_stride_dispatch  # noqa: PLC0415
-
-        return check_stride_dispatch.selected_coverage_errors(output_dir)
-    except Exception:
-        return []
-
-
-def post_stage1(output_dir: Path) -> dict[str, Any]:
-    """Run the deterministic thin-path gates after the Stage-1 agents return."""
-    output_dir, cfg = _load_run_config(output_dir)
-    _reject_context_v2(cfg, "post-stage1")
-    config_path = output_dir / ".skill-config.json"
-
-    # Bounded-wave coverage is checked FIRST, before the artifact precondition.
-    #
-    # SKILL-thin-stage1.md tells the orchestrator to stop before Analyst-B when
-    # the wave plan reports `blocked`. Analyst-B is what produces
-    # .threats-merged.json / .triage-flags.json / threat-model.yaml, so an
-    # orchestrator that obeys that instruction used to land on the artifact
-    # precondition below and be told "Stage 1 did not produce required
-    # artifacts" -- which reads as its own failure and pushes it into the
-    # cut-off recovery path. Running that recovery produces the artifacts, and
-    # then check_stride_dispatch.py (further down) hard-fails with exit 4
-    # anyway. Both branches aborted, and the second one only after paying for a
-    # full merge+triage pass (2026-07-20 juice-shop: ~20 min / $5.75 spent
-    # after the run was already doomed).
-    #
-    # Reporting the real cause here keeps the two gates consistent: an
-    # orchestrator that correctly stopped gets the correct diagnosis instead of
-    # being blamed for the artifacts it was forbidden to create.
-    coverage_errors = _selected_coverage_errors(output_dir)
-    if coverage_errors:
-        detail = "; ".join(f"{e['component_id']}: {e['reason']}" for e in coverage_errors)
-        raise ControllerError(
-            "Selected STRIDE coverage is incomplete after the bounded retry budget "
-            f"({detail}). Merge and triage were correctly skipped -- the report must "
-            "not claim coverage for these components. Attempt counts persist across "
-            "resume, so a plain --resume hits the same block. Recover by fixing what "
-            "made the component fail (a turn budget too small for its file footprint "
-            "is the common cause) and then granting one more attempt with "
-            "APPSEC_STRIDE_MAX_ATTEMPTS=3; a fresh --full run also resets the counts "
-            "but discards the merge and triage already produced."
-        )
-
-    required = (".recon-summary.md", ".threats-merged.json", ".triage-flags.json", "threat-model.yaml")
-    missing = [name for name in required if not (output_dir / name).is_file()]
-    if missing:
-        raise ControllerError(f"Stage 1 did not produce required artifacts: {', '.join(missing)}")
-    if not _checkpoint_needs_render(output_dir):
-        raise ControllerError(
-            "Stage 1 completion checkpoint is missing or invalid; expected phase=10b status=completed need_render=true"
-        )
-
-    _run_script("check_stride_dispatch.py", [str(output_dir)])
-    if not _upgrade_bootstrap_yaml(output_dir, cfg):
-        raise ControllerError("Stage 1 left a bootstrap threat-model.yaml that could not be upgraded")
-    receipts: list[str] = []
-    # Normalize cross-artifact invariants before the hard schema/cross-field
-    # gate. In particular, invalid CVSS scope must be repaired before
-    # validate_intermediate evaluates the eligibility rule; the reverse order
-    # would block Stage 2 before the deterministic enforcer could run.
-    _best_effort_script(output_dir, "enforce_yaml_invariants.py", [str(output_dir)], receipts)
-    _run_script(
-        "validate_intermediate.py",
-        ["threat_model_output", str(output_dir / "threat-model.yaml")],
-    )
-    _best_effort_script(
-        output_dir,
-        "triage_compute_ranking.py",
-        [str(output_dir), "--force"],
-        receipts,
-    )
-    _run_auto_emitter_pass(output_dir, cfg, receipts)
-
-    _run_script("validate_mitigation_quality.py", [str(output_dir)])
-    _run_script(
-        "assert_completeness.py",
-        [str(output_dir), "--phase", "build", "--plugin-root", str(PLUGIN_ROOT)],
-    )
-    _append_event(output_dir, "POST_STAGE1_GATES_PASSED", "thin deterministic Stage-1 gates passed")
-    return {
-        "schema_version": 1,
-        "action": "run_gate",
-        "mode": cfg["mode"],
-        "stage": "stage1",
-        "config_path": str(config_path),
-        "receipts": ["Stage-1 artifacts and gates verified", *receipts],
-    }
-
-
-def post_stage1a(output_dir: Path) -> dict[str, Any]:
-    """Finalize architecture artifacts and open the Stage-1b dispatch gate."""
-    output_dir, cfg = _load_run_config(output_dir)
-    _reject_context_v2(cfg, "post-stage1a")
-    config_path = output_dir / ".skill-config.json"
-    _gate_architecture_stage(output_dir, cfg)
-    return {
-        "schema_version": 1,
-        "action": "dispatch_agent",
-        "mode": cfg["mode"],
-        "stage": "stage1b",
-        "instruction_file": str(THIN_STAGE1B_RUNTIME),
-        "config_path": str(config_path),
-        "dispatch_values": _dispatch_values(cfg),
-        "receipts": ["Stage-1a component, topology, and assessment-input gates passed"],
-    }
-
-
 def _bind_finalized_component_fingerprint(output_dir: Path) -> None:
     """Bind derived data-flow metadata to the finalized component inventory."""
     try:
@@ -5084,11 +4861,7 @@ def _gate_architecture_stage(
     *,
     controller_owned_handoff: bool = False,
 ) -> None:
-    """Validate the Phase 3-6 artifacts and build the boundary assessment input.
-
-    Shared by the legacy Stage-1a gate and the context-v2 architecture
-    boundary so both generations enforce one architecture contract.
-    """
+    """Validate the Phase 3-6 artifacts and build the boundary assessment input."""
     required = [
         ".recon-summary.md",
         ".components.json",
@@ -5168,26 +4941,8 @@ def _gate_architecture_stage(
     _append_event(output_dir, "POST_STAGE1A_GATES_PASSED", "architecture handoff and boundary input verified")
 
 
-def finalize_stage1b(output_dir: Path) -> dict[str, Any]:
-    """Promote candidate output and require complete deterministic coverage."""
-    output_dir, cfg = _load_run_config(output_dir)
-    config_path = output_dir / ".skill-config.json"
-    _gate_trust_boundary_promotion(output_dir, cfg)
-    return {
-        "schema_version": 1,
-        "action": "run_gate",
-        "mode": cfg["mode"],
-        "stage": "stage1b",
-        "config_path": str(config_path),
-        "receipts": ["Stage-1b candidates promoted; mandatory signal coverage passed"],
-    }
-
-
 def _gate_trust_boundary_promotion(output_dir: Path, cfg: dict[str, Any]) -> None:
-    """Promote Phase-7 candidates and require complete deterministic coverage.
-
-    Shared by the legacy Stage-1b gate and the context-v2 boundary transition.
-    """
+    """Promote Phase-7 candidates and require complete deterministic coverage."""
     from _atomic_io import atomic_write_text
 
     candidates = output_dir / ".trust-boundary-candidates.json"
@@ -5217,13 +4972,6 @@ def _gate_trust_boundary_promotion(output_dir: Path, cfg: dict[str, Any]) -> Non
         "phase=7 status=completed need_threat_analysis=true\n",
     )
     _append_event(output_dir, "POST_STAGE1B_GATES_PASSED", "candidate promotion and signal coverage verified")
-
-
-def post_stage1c(output_dir: Path) -> dict[str, Any]:
-    """Compatibility wrapper for the renamed threat-analysis/triage stage."""
-    action = post_stage1(output_dir)
-    action["stage"] = "stage1c"
-    return action
 
 
 _ABUSE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
@@ -5345,49 +5093,40 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
         candidates = [item for item in candidates if item not in already]
     if not candidates or budget_watchdog.has_active_critical_claim(output_dir):
         return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
-    if (cfg.get("runtime_generation") or LEGACY_GENERATION) == CONTEXT_V2_GENERATION:
-        projection_args = ["--output-dir", str(output_dir), "--repo-root", repo_root]
-        for candidate in candidates:
-            projection_args.extend(["--candidate", candidate])
-        _run_script("build_abuse_case_contexts.py", projection_args)
-        artifact_receipts = [
-            _context_v2_abuse_candidate_receipt(output_dir, candidate, Path(repo_root)) for candidate in candidates
-        ]
-        jobs = [
-            {
-                "schema_version": 1,
-                "job_id": f"phase10c-abuse-{candidate}",
-                "semantic_role": "abuse_case_verifier",
-                "candidate_id": candidate,
-                **_context_v2_job_metadata(cfg, "abuse_case_verifier"),
-                "input_artifacts": [f".dispatch-context/abuse-cases/{candidate}.json"],
-                "output_artifacts": [f".abuse-case-verdict-{candidate}.json"],
-                "unresolved_decision_keys": [candidate],
-            }
-            for candidate in candidates
-        ]
-        action = {
-            **common,
-            "action": "dispatch_parallel",
-            "instruction_file": str(THIN_STAGE1D_RUNTIME),
+    projection_args = ["--output-dir", str(output_dir), "--repo-root", repo_root]
+    for candidate in candidates:
+        projection_args.extend(["--candidate", candidate])
+    _run_script("build_abuse_case_contexts.py", projection_args)
+    artifact_receipts = [
+        _context_v2_abuse_candidate_receipt(output_dir, candidate, Path(repo_root)) for candidate in candidates
+    ]
+    jobs = [
+        {
+            "schema_version": 1,
+            "job_id": f"phase10c-abuse-{candidate}",
             "semantic_role": "abuse_case_verifier",
-            "dispatch_jobs": jobs,
-            "artifact_receipts": artifact_receipts,
-            "unresolved_decision_keys": candidates,
-            "candidates": candidates,
-            "candidate_titles": _abuse_candidate_titles(output_dir, candidates),
-            "receipts": receipts,
+            "candidate_id": candidate,
+            **_context_v2_job_metadata(cfg, "abuse_case_verifier"),
+            "input_artifacts": [f".dispatch-context/abuse-cases/{candidate}.json"],
+            "output_artifacts": [f".abuse-case-verdict-{candidate}.json"],
+            "unresolved_decision_keys": [candidate],
         }
-        _prepare_context_v2_dispatch_outputs(output_dir, jobs)
-        return _validate_action(action)
-    return {
+        for candidate in candidates
+    ]
+    action = {
         **common,
         "action": "dispatch_parallel",
         "instruction_file": str(THIN_STAGE1D_RUNTIME),
+        "semantic_role": "abuse_case_verifier",
+        "dispatch_jobs": jobs,
+        "artifact_receipts": artifact_receipts,
+        "unresolved_decision_keys": candidates,
         "candidates": candidates,
         "candidate_titles": _abuse_candidate_titles(output_dir, candidates),
         "receipts": receipts,
     }
+    _prepare_context_v2_dispatch_outputs(output_dir, jobs)
+    return _validate_action(action)
 
 
 _ABUSE_TITLE_MAX = 60
@@ -5978,7 +5717,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             **common,
             "action": "dispatch_agent",
             "stage": "stage1",
-            "instruction_file": str(THIN_STAGE1_RUNTIME),
+            "instruction_file": str(THIN_STAGE1_V2_RUNTIME),
         }
     # A bootstrap stub IS a file but is not a model — upgrade it deterministically
     # before anything downstream treats it as canonical. Unrecoverable ⇒ Stage 1.
@@ -5987,7 +5726,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             **common,
             "action": "dispatch_agent",
             "stage": "stage1",
-            "instruction_file": str(THIN_STAGE1_RUNTIME),
+            "instruction_file": str(THIN_STAGE1_V2_RUNTIME),
         }
     if not (output_dir / "threat-model.md").is_file() or _checkpoint_needs_render(output_dir):
         # Deterministic compose backstop: when the render fragments are already
@@ -6186,14 +5925,6 @@ def main(argv: list[str] | None = None) -> int:
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--force", action="store_true")
     prepare_parser.add_argument("arguments", nargs=argparse.REMAINDER)
-    post_stage1_parser = sub.add_parser("post-stage1")
-    post_stage1_parser.add_argument("--output-dir", required=True)
-    post_stage1a_parser = sub.add_parser("post-stage1a")
-    post_stage1a_parser.add_argument("--output-dir", required=True)
-    finalize_stage1b_parser = sub.add_parser("finalize-stage1b")
-    finalize_stage1b_parser.add_argument("--output-dir", required=True)
-    post_stage1c_parser = sub.add_parser("post-stage1c")
-    post_stage1c_parser.add_argument("--output-dir", required=True)
     prepare_abuse_parser = sub.add_parser("prepare-abuse")
     prepare_abuse_parser.add_argument("--output-dir", required=True)
     finalize_abuse_parser = sub.add_parser("finalize-abuse")
@@ -6241,14 +5972,6 @@ def main(argv: list[str] | None = None) -> int:
                 _split_remainder(args.arguments),
                 force=args.force,
             )
-        elif args.command == "post-stage1":
-            action = post_stage1(Path(args.output_dir))
-        elif args.command == "post-stage1a":
-            action = post_stage1a(Path(args.output_dir))
-        elif args.command == "finalize-stage1b":
-            action = finalize_stage1b(Path(args.output_dir))
-        elif args.command == "post-stage1c":
-            action = post_stage1c(Path(args.output_dir))
         elif args.command == "prepare-abuse":
             action = prepare_abuse(Path(args.output_dir))
         elif args.command == "finalize-abuse":

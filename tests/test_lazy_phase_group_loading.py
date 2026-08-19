@@ -266,63 +266,14 @@ def test_business_context_reaches_the_default_full_runtime():
     )
 
 
-def test_skill_impl_stage2_tail_lazy_loaded():
-    """Context-budget fix (2026-06-23): the orchestrator must read SKILL-impl.md only
-    through the LAZY-LOAD BOUNDARY during initial load (Stage 1 core), deferring the
-    Stage 2/3/4/Completion tail until its individual stage boundaries. This keeps the
-    pre-flight resident context below the auto-compaction threshold that otherwise fires
-    just before STRIDE dispatch. Content stays in SKILL-impl.md (no test churn) — only the
-    *read schedule* changes."""
-    skill = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md").read_text(encoding="utf-8")
-    impl = SKILL_IMPL_MD.read_text(encoding="utf-8")
-
-    # SKILL.md no longer reads the whole file upfront; it stops at the boundary.
-    assert "read `<base-dir>/SKILL-impl.md` in full" not in skill, (
-        "SKILL.md must NOT instruct reading SKILL-impl.md in full (defeats the lazy tail)"
-    )
-    assert "LAZY-LOAD BOUNDARY" in skill, "SKILL.md must point the initial read at the LAZY-LOAD BOUNDARY"
-
-    # Exactly one boundary marker, and it defers Stage 1d plus later stages.
-    assert impl.count("<!-- LAZY-LOAD BOUNDARY") == 1, (
-        "SKILL-impl.md must contain exactly one LAZY-LOAD BOUNDARY marker"
-    )
-    boundary_pos = impl.find("<!-- LAZY-LOAD BOUNDARY")
-    stage1d_pos = impl.find("## Stage 1d — Abuse Case Verification")
-    stage2_pos = impl.find("## Stage 2 - Report Rendering")
-    assert 0 < boundary_pos < stage1d_pos < stage2_pos, (
-        "the LAZY-LOAD BOUNDARY marker must defer Stage 1d and every later stage"
-    )
-
-    # The bounded resume instruction must sit above the marker, and neither the
-    # router nor the prefix may tell legacy mode to ingest the complete tail.
-    resume_pos = impl.find("Follow the bounded schedule")
-    assert 0 < resume_pos < boundary_pos
-    bounded_instruction = " ".join(impl[resume_pos:boundary_pos].split())
-    assert "Do not read from this marker to EOF" in bounded_instruction
-    assert "do not read the whole tail" in skill
-    for heading in (
-        "## Stage 2 - Report Rendering",
-        "## Stage 3 - QA Review",
-        "## Stage 4 - Architect Review",
-        "## Completion Summary",
-        "## Error Handling",
-    ):
-        assert heading in skill
-    assert "skip it for rerender and Stage-2-only recovery paths" in skill
-    prefix = impl[:boundary_pos]
-    assert "rerender and Stage-2-only recovery go directly to\nStage 2" in prefix
-
-
 def test_thin_runtime_loads_stage1d_only_when_enabled():
     runtime = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
     flat = " ".join(runtime.split())
     # The parent follows the controller-returned Stage-1 runtime and may not
-    # pick one itself; both generations' files are named as the only permitted
-    # values so a substitution is visibly out of contract.
+    # pick one itself.
     assert "Read `ACTION.instruction_file` in full and follow it" in flat
-    assert "SKILL-thin-stage1.md" in flat
     assert "SKILL-thin-stage1-v2.md" in flat
-    assert "Do not substitute either" in flat
+    assert "Do not substitute another file" in flat
     assert "Only when `SKIP_ABUSE_CASE_VERIFICATION=false`" in flat
     assert "read `SKILL-thin-stage1d.md` in full" in flat
     assert "Otherwise do not load any Stage-1d instructions" in flat
@@ -339,7 +290,8 @@ def test_non_dry_stage3_safety_slice_cannot_be_bypassed_by_controller_action():
         encoding="utf-8"
     )
 
-    for text in (router, full, rerender):
+    assert "SKILL-impl.md" not in router
+    for text in (full, rerender):
         normalized = " ".join(text.split())
         assert "Stage-3 safety slice" in normalized
         assert "secret-leak gate" in normalized

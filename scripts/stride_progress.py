@@ -3,7 +3,7 @@
 Print a one-line progress summary for STRIDE analyzers running in the background.
 
 Reads `$OUTPUT_DIR/.progress/<component-id>.json` files written by each
-`appsec-stride-analyzer` sub-agent and collapses them into a single line
+`appsec-stride-analyzer-v2` sub-agent and collapses them into a single line
 showing current step/label per component plus an overall "K/N ready" counter.
 
 Exits 0 when all `EXPECTED` `.stride-<component-id>.json` output files are

@@ -210,7 +210,7 @@ _MODEL_FAMILY_RE = re.compile(r"(opus|sonnet|haiku)", re.IGNORECASE)
 # context-v2 dispatches through the hook and emits AGENT_SPAWN; AGENT_INVOKE
 # appears on the legacy path only. Keying on AGENT_INVOKE alone left this
 # advisory silent on every context-v2 run — the runs it exists to check.
-_STRIDE_INVOKE_MODEL_RE = re.compile(r"AGENT_(?:INVOKE|SPAWN).*appsec-stride-analyzer.*\bmodel=(\S+)")
+_STRIDE_INVOKE_MODEL_RE = re.compile(r"AGENT_(?:INVOKE|SPAWN).*appsec-stride-analyzer-v2.*\bmodel=(\S+)")
 
 
 def _model_family(value: str) -> str:

@@ -1,8 +1,7 @@
 # Orchestration Action Contract
 
 `scripts/orchestration_controller.py` is the deterministic control plane for
-the thin full/rebuild and rerender runtimes (the defaults; opt out with
-`APPSEC_THIN_ORCHESTRATOR=0`). Its stdout is validated against
+the single full/rebuild and rerender runtimes. Its stdout is validated against
 `schemas/orchestration-action.schema.json` before the skill consumes it.
 
 ## Control-plane invariants
@@ -87,13 +86,9 @@ The standing contract surfaces are:
 - context catalog and effective-plan policy in
   `docs/internal/contracts/context-routing.md`.
 
-During producer-generation coexistence, dispatch and mutation ownership is
-generation-scoped. Legacy Agent recursion belongs only to
-`appsec-threat-analyst`; context-v2 Level-0 dispatch belongs to the compact
-runtime acting on controller actions. No context-v2 action may enter a legacy
-gate, and no legacy action may enter a context-v2 gate. When WP7 removes the
-legacy generation, its removal must deliberately replace these coexistence
-rules with the resulting global ownership invariant.
+Dispatch and mutation ownership is global: Level-0 dispatch belongs to the
+compact runtime acting on controller actions, and no agent recurses through
+`Agent`. One controller boundary owns each state mutation and producer output.
 
 ## Ownership
 
@@ -105,8 +100,8 @@ rules with the resulting global ownership invariant.
   freshness, abuse-case match/finalize, Stage-2 structural preparation,
   rerender artifact preconditions, fixed next-action classification, and
   compact dispatch values.
-- `SKILL-full-runtime.md`, `SKILL-thin-stage1.md`,
-  `SKILL-thin-stage1b.md`, `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and
+- `SKILL-full-runtime.md`, `SKILL-thin-stage1-v2.md`,
+  `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and
   `SKILL-rerender-runtime.md` own user-visible output, Task lifecycle, and
   Level-0 Agent calls for their modes.
 - `stride_dispatch_waves.py` owns deterministic bounded-wave scheduling,
@@ -153,7 +148,8 @@ audit artifact and never enters an Agent input or prompt.
 
 Both plan files are local audit artifacts. Successful runtime cleanup preserves
 them, while the next full or rebuild preflight removes them before a fresh plan
-is created. Context-v2 still has no incremental or resume path; stale catalog,
+is created. Incremental and resume invocations are refused before dispatch or
+run-state mutation; stale catalog,
 binding, run, plan, or receipt bytes block rather than being carried forward.
 Diagnostic bundles include only their filename, byte count, and hash through
 the existing metadata inventory and never copy their contents.
@@ -365,7 +361,7 @@ error.
   to undispatched members of a future wave. A waiter slice returns `75` before
   the host's Bash ceiling and is repeated without resetting the persisted wave
   deadline; `0` and deadline exit `1` return ownership to the controller.
-- Full/rebuild cleanup matches the exact filename globs in the legacy runtime;
+- Full/rebuild cleanup matches the controller-owned exact filename globs;
   prefix lookalikes and symlink targets must not be deleted.
 - A context-v2 terminal abort has no continuation action. A later `--full`
   starts Stage 1 again; retained runtime artifacts are diagnostic evidence, not
@@ -381,46 +377,17 @@ error.
 
 ## Runtime generation
 
-A run is prepared as exactly one producer generation, `legacy` or `context-v2`,
-and `resolve_config.py` persists it as `runtime_generation` in
-`.skill-config.json` together with the artifact schema versions a context-v2
-successor action is reconstructed from. Context-v2 is selected by default only
-for full and rebuild invocations eligible for the compact top-level runtime;
-`APPSEC_CONTEXT_V2=0` selects the legacy producer for a new invocation.
-Deadline, cost-limited, live-phase, dry-run, resume, and explicit compact-runtime
-opt-out paths persist `legacy`; repository content never reaches the decision.
-The runtime router rejects any state that combines `context-v2` with an
-ineligible top-level runtime.
+Every new run is prepared as `context-v2`, and `resolve_config.py` persists that
+generation in `.skill-config.json` together with the artifact schema versions
+used to reconstruct successor actions. Environment variables cannot select a
+different generation. A boundary refuses a missing, pre-cutover, or
+schema-incompatible generation and requires a new full or rebuild run.
 
-The controller reads the generation from that persisted state, never from the
-current environment. A context-v2 action refuses a run prepared as legacy, and a
-legacy Stage-1 gate refuses a run prepared as context-v2, so one invocation
-never gets two producers for the same artifact. Changing `APPSEC_CONTEXT_V2`
-mid-run does not switch producers: the run continues on its persisted generation
-and records `RUNTIME_GENERATION_ENV_IGNORED` for a conflicting explicit
-override. A context-v2 successor also
-requires the persisted artifact-version map to match the current producer
-generation; a mismatch requires a new run. Rollback selects the prior runtime
-for a new invocation.
+## Supported modes
 
-## Rollout
-
-The thin path is the default for full/rebuild and rerender;
-`APPSEC_THIN_ORCHESTRATOR=0` is the permanent escape hatch back to
-`SKILL-impl.md`. Incremental, resume, dry-run, deadline/cost, and live-phase
-paths remain on `SKILL-impl.md` regardless. The full/rebuild thin path became
-the default after the juice-shop standard
-parity A/B held (2026-07-04): Critical severity identical at base (11=11) and
-effective (21=21), remaining deltas attributable to STRIDE-analyzer run
-variance rather than the orchestrator runtime.
-
-The context-v2 role registry, structured dispatch jobs, and artifact receipts
-select the focused-agent runtime for new eligible full/rebuild invocations.
-This branch default is an R10 testing convenience, not evidence that the parity,
-incremental/resume, or release-rollout gates have passed.
-
-Legacy mode also uses bounded post-Stage-1 reads: normal Stage 2, conditional
-recovery, Stage 3, optional Stage 4, completion, and error handling are loaded
-at their own boundaries rather than as one tail. The normal thin path instead
-uses compact dedicated Stage-1a/1b/1c/1d/2 runtimes and never reads those legacy
-bodies. Both runtimes omit Stage 1d when abuse-case verification is disabled.
+Full and rebuild use `SKILL-full-runtime.md`; rerender uses
+`SKILL-rerender-runtime.md`. Incremental, resume, dry-run, `--max-wall-time`,
+`--max-cost`, and `APPSEC_LIVE_PHASE=1` are unsupported until they have bounded
+controller implementations. The router resolves these invocations without
+creating their output directory, then aborts before dispatch or run-state
+mutation with the supported alternatives.

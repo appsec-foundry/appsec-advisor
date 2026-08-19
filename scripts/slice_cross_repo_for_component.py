@@ -99,7 +99,7 @@ def slice_for_component(
     """Return the cross-repo deps that apply to a single STRIDE component.
 
     The output mirrors the documented ``CROSS_REPO_CONTEXT`` shape consumed
-    by ``appsec-stride-analyzer``. Findings are included only for declared
+    by ``appsec-stride-analyzer-v2``. Findings are included only for declared
     entries (siblings/submodules/recon are metadata-only).
     """
     corpus = _component_text_corpus(

@@ -5,7 +5,7 @@ in `.qa-repair-plan.json` (the contract-violation plan emitted by
 `qa_checks.py build_repair_plan`).
 
 Background. Before this script existed, every non-empty `.qa-repair-plan.json`
-caused the skill's Re-Render Loop to dispatch the heavy `appsec-threat-analyst`
+caused the old Re-Render Loop to dispatch a full analysis producer
 agent (sonnet, ~125 KB system prompt, ~16 min per iteration). For mechanical
 defects like `toc_nested_link` — where the composer emits
 `[Walkthrough [§3.9](#39-f-008-xss)](#39-f-008-xss)` (outer and inner link

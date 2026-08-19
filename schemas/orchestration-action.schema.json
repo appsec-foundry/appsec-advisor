@@ -23,7 +23,7 @@
       ]
     },
     "mode": {
-      "enum": ["full", "rebuild", "incremental", "rerender"]
+      "enum": ["full", "rebuild", "rerender"]
     },
     "stage": {
       "type": "string",
@@ -94,7 +94,6 @@
           "architect_model",
           "architect_review",
           "assessment_depth",
-          "base_ref",
           "business_context_source",
           "check_requirements",
           "compat_label",
@@ -110,10 +109,8 @@
           "estimate_stage3_min",
           "estimate_stage4_min",
           "estimate_total_pretty",
-          "incremental",
           "invocation_args",
           "keep_runtime_files",
-          "live_phase",
           "max_cost_usd",
           "max_repair_iterations",
           "max_stride_components",
@@ -122,13 +119,10 @@
           "orchestrator_model",
           "org_profile_path",
           "output_dir",
-          "parallel_stride",
-          "parallel_stride_env",
           "pentest_format",
           "pentest_target",
           "plugin_root",
           "plugin_version",
-          "pr_mode",
           "qa_content_model",
           "qa_depth",
           "qa_routine_model",

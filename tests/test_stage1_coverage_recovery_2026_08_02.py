@@ -114,7 +114,7 @@ def test_harness_ceiling_covers_cap_and_retry_escalation() -> None:
     """A soft target above the frontmatter ceiling is unreachable by construction."""
     import re
 
-    text = (REPO_ROOT / "agents" / "appsec-stride-analyzer.md").read_text(encoding="utf-8")
+    text = (REPO_ROOT / "agents" / "appsec-stride-analyzer-v2.md").read_text(encoding="utf-8")
     m = re.search(r"^maxTurns:\s*(\d+)", text, re.M)
     assert m, "maxTurns not found in analyzer frontmatter"
     ceiling = int(m.group(1))
@@ -219,23 +219,3 @@ def test_budget_scope_disables_multi_agent_shared_counter(tmp_path, monkeypatch)
 
     scope = agent_logger._budget_scope_agent("abcd1234")
     assert scope is None
-
-
-def test_tally_uses_budget_agent_when_supplied(tmp_path, monkeypatch) -> None:
-    """The legacy adapter preserves its explicit maxTurns override."""
-    import budget_watchdog
-
-    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(REPO_ROOT))
-    monkeypatch.setattr(budget_watchdog, "_MAX_TURNS_CACHE", {})
-
-    out = str(tmp_path)
-    narrow = budget_watchdog.get_max_turns("appsec-stride-analyzer")
-    wide = budget_watchdog.get_max_turns("appsec-threat-analyst")
-    assert wide > narrow, "fixture assumption: orchestrator budget is the wider one"
-
-    budget_watchdog.tally_and_check("sid00001", "stride-analyzer", out, budget_agent="threat-analyst")
-    state = budget_watchdog._read_state(out)
-
-    entry = state["calls"]["legacy:sid00001:stride-analyzer"]
-    assert entry["max_turns"] == wide
-    assert entry["agent"] == "stride-analyzer", "reporting name stays the caller"

@@ -8,7 +8,7 @@ merges the small set of CONTEXTUAL fields that only the analyst can supply
 (interfaces, controls, known_*) from an optional analyst-context JSON. The
 result, ``$OUTPUT_DIR/.stride-dispatch-manifest.json``, is validated by
 ``validate_dispatch_manifest.py`` and consumed by the skill's parallel
-``appsec-stride-analyzer`` fan-out (Full-M1).
+``appsec-stride-analyzer-v2`` fan-out.
 
 This minimises the LLM-authored surface to the contextual fields only — the
 load-bearing identity/budget/path fields are deterministic and testable.
@@ -726,7 +726,7 @@ def _etc_label(count: object) -> str:
     """Band an ``estimated_threat_count`` integer into the analyzer's pacing label.
 
     The manifest schema stores the count as an integer, but the analyzer's turn
-    budget self-regulation branches on the LABEL (`appsec-stride-analyzer.md` —
+    budget self-regulation branches on the LABEL (`appsec-stride-analyzer-v2.md` —
     ``low`` ≤3 / ``moderate`` 4–7 / ``high`` ≥8) and silently falls back to
     ``moderate`` for anything it does not recognise. Emitting the label next to
     the count is what makes the count actually reach the pacing rules; without it

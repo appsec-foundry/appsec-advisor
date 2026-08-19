@@ -412,7 +412,7 @@ def test_calm_current_model_offers_no_threat_model_command(tmp_path):
     assert "/appsec-advisor:" not in line
 
 
-def test_stale_model_offers_update_not_review(tmp_path):
+def test_stale_model_offers_full_refresh_not_review(tmp_path):
     init_repo(tmp_path)
     write_severities(tmp_path, "effective_severity", ["Critical"])
     # Overwrite generated to an old stamp so commits count as drift.
@@ -422,7 +422,7 @@ def test_stale_model_offers_update_not_review(tmp_path):
     for i in range(session_banner.STALE_COMMITS):
         commit(tmp_path, f"file{i}.txt", "2026-02-01T12:00:00+00:00")
     line = tm_line(session_banner.build_banner(str(tmp_path)))
-    assert "/appsec-advisor:update-threat-model" in line
+    assert line.endswith("/appsec-advisor:create-threat-model --full")
     assert "review-threat-model" not in line
 
 
@@ -724,7 +724,7 @@ def test_dropped_skills_leave_no_dangling_commands(tmp_path, monkeypatch):
     assert tm_line("\n".join(lines)).startswith("threat model")
 
 
-def test_dropped_update_skill_falls_back_to_incremental_mode(tmp_path, monkeypatch):
+def test_packaged_build_uses_full_refresh_for_stale_model(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     init_repo(repo)
@@ -734,7 +734,7 @@ def test_dropped_update_skill_falls_back_to_incremental_mode(tmp_path, monkeypat
     packaged_root(tmp_path, ["create-threat-model"], monkeypatch)
     line = tm_line(session_banner.build_banner(str(repo)))
     assert "update-threat-model" not in line
-    assert line.endswith("/appsec-advisor:create-threat-model --incremental")
+    assert line.endswith("/appsec-advisor:create-threat-model --full")
 
 
 def test_create_threat_model_is_always_available(tmp_path, monkeypatch):
@@ -746,7 +746,7 @@ def test_create_threat_model_is_always_available(tmp_path, monkeypatch):
 def test_namespace_literals_are_rewritable_by_packaging(tmp_path):
     """Packaging rewrites `appsec-advisor:` in .py files; the constants must match."""
     source = SCRIPT.read_text(encoding="utf-8")
-    for constant in ("REVIEW", "UPDATE", "CREATE", "STATUS", "HELP", "INSTALL_BASELINE"):
+    for constant in ("REVIEW", "CREATE", "STATUS", "HELP", "INSTALL_BASELINE"):
         assert f'{constant} = "/appsec-advisor:' in source
 
 
@@ -810,14 +810,14 @@ def test_missing_analysis_version_is_treated_as_compatible(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_stale_model_recommends_update(tmp_path):
+def test_stale_model_recommends_full_refresh(tmp_path):
     init_repo(tmp_path)
     write_model(tmp_path, generated="2026-01-01T00:00:00Z")
     for i in range(session_banner.STALE_COMMITS):
         commit(tmp_path, f"file{i}.txt", "2026-02-01T12:00:00+00:00")
     message = session_banner.build_banner(str(tmp_path))
     assert f"+{session_banner.STALE_COMMITS} commits" in message
-    assert "/appsec-advisor:update-threat-model" in tm_line(message)
+    assert tm_line(message).endswith("/appsec-advisor:create-threat-model --full")
 
 
 def test_fresh_model_below_threshold_is_not_stale(tmp_path):

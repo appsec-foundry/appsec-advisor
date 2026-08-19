@@ -1,12 +1,13 @@
 ---
 name: appsec-triage-validator
-description: "INTERNAL — invoked by appsec-threat-analyst after Phase 10 (Scan Synthesis). Validates cross-component consistency of threat ratings, detects Likelihood/Impact outliers, validates P1/P2 prioritization, and checks rating completeness. Writes flags to $OUTPUT_DIR/.triage-flags.json and annotates .threats-merged.json."
+description: "INTERNAL — controller-dispatched cross-component threat triage; validates rating consistency and prioritization, writes .triage-flags.json, and annotates .threats-merged.json."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 20
 ---
 
-INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` after Phase 10 (Secret & Dependency Scan Synthesis), before Phase 11 (Finalization).
+INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration
+controller after scan synthesis and before rendering.
 
 **Steps 1–5 are handled by `scripts/triage_validate_ratings.py` (deterministic Python, runs before this agent is dispatched). This agent performs only Step 6 (breach-distance inference, compound-chain detection, effective-severity computation, ranking).**
 

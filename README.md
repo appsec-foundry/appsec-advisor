@@ -83,8 +83,8 @@ The assessment writes `threat-model.md` and `threat-model.yaml` to `docs/securit
 ### 3. Work with the model
 
 ```text
-# Reassess components affected by code changes
-/appsec-advisor:update-threat-model
+# Reassess after code changes while preserving history
+/appsec-advisor:create-threat-model --full
 
 # Record fix, accept-risk, or defer decisions
 /appsec-advisor:review-threat-model

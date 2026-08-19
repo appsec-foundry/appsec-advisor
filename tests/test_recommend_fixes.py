@@ -72,13 +72,12 @@ def test_max_turns_subagent_already_prefixed(tmp_path, monkeypatch):
     assert "10 → 15" in rec["summary"]
 
 
-def test_max_turns_orchestrator_delegates(tmp_path, monkeypatch):
-    (tmp_path / "appsec-threat-analyst.md").write_text("maxTurns: 75\n")
-    monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
+def test_max_turns_orchestrator_requires_investigation(tmp_path):
     issue = {"evidence": {"source_agent": "threat-analyst"}}
     rec = rf._recommend_max_turns_orchestrator(issue, tmp_path)
-    assert rec["category"] == "agent_def"
-    assert "75 → 112" in rec["summary"]
+    assert rec["category"] == "investigate"
+    assert rec["auto_applicable"] is False
+    assert "compact orchestration" in rec["summary"]
 
 
 # ---------------------------------------------------------------------------

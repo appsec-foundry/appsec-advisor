@@ -6,7 +6,6 @@ SKILL-impl.md (Phase-10b precondition gate) and is expected to:
   * exit 0 when STRIDE was dispatched (every real .stride-<id>.json has a
     matching .progress/<id>.json)
   * exit 0 when every .stride-<id>.json is a trivial-skip stub or empty
-  * exit 0 when --incremental is passed (carry-forward — gate N/A)
   * exit 2 when a real .stride-<id>.json has no .progress/<id>.json
     (orchestrator inlined the analysis instead of dispatching)
   * exit 3 on tool error (bad path)
@@ -95,7 +94,7 @@ def _write_spawns(output_dir: Path, count: int, *, day: str = "2026-06-05") -> N
     """
     lines = "".join(
         f"{day}T10:00:0{i}Z  [sess]  INFO  AGENT_SPAWN  "
-        f"appsec-advisor:appsec-stride-analyzer  model=sonnet  STRIDE: c{i}\n"
+        f"appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  STRIDE: c{i}\n"
         for i in range(count)
     )
     with (output_dir / ".hook-events.log").open("a", encoding="utf-8") as fh:
@@ -204,15 +203,14 @@ def test_fresh_spawns_after_manifest_pass_with_time_bound(tmp_path):
     assert _run(tmp_path) == 0
 
 
-def test_agent_spawn_hook_evidence_suppresses_false_positive(tmp_path):
-    """Real stride files, no .progress, but the hook log shows a dispatched
-    appsec-stride-analyzer → NOT inlined."""
+def test_hook_evidence_without_manifest_does_not_suppress(tmp_path):
+    """A missing manifest cannot admit an otherwise unbound hook event."""
     _write_stride(tmp_path, "backend-api", _real_stride())
     (tmp_path / ".hook-events.log").write_text(
-        "2026-06-04T10:00:00Z  [sess]  INFO  AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer  model=sonnet\n",
+        "2026-06-04T10:00:00Z  [sess]  INFO  AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n",
         encoding="utf-8",
     )
-    assert _run(tmp_path) == 0
+    assert _run(tmp_path) == 2
 
 
 def test_agent_invoke_evidence_suppresses_false_positive(tmp_path):
@@ -230,7 +228,7 @@ def test_agent_invoke_evidence_suppresses_false_positive(tmp_path):
     _write_manifest(tmp_path, *cids, generated_at="2026-06-12T14:43:00Z")
     log = (
         "2026-06-12T14:46:41Z  [sess]  INFO  AGENT_SPAWN   "
-        "appsec-advisor:appsec-stride-analyzer  model=sonnet  STRIDE: backend-api  "
+        "appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  STRIDE: backend-api  "
         "[REPO_ROOT=/r  COMPONENT_ID=backend-api]\n"
     )
     for ts, cid in (
@@ -241,22 +239,20 @@ def test_agent_invoke_evidence_suppresses_false_positive(tmp_path):
     ):
         log += (
             f"2026-06-12T{ts}Z  [sess]  INFO  AGENT_INVOKE  "
-            f"appsec-advisor:appsec-stride-analyzer  model=sonnet  STRIDE: {cid}  "
+            f"appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  STRIDE: {cid}  "
             f"[REPO_ROOT=/r  COMPONENT_ID={cid}]\n"
         )
     (tmp_path / ".hook-events.log").write_text(log, encoding="utf-8")
     assert _run(tmp_path) == 0
 
 
-def test_invoke_only_evidence_without_component_id_uses_max(tmp_path):
-    """No manifest, real stride file, no .progress, but an AGENT_INVOKE line
-    (no COMPONENT_ID) → max(spawn,invoke) fallback still proves a dispatch."""
+def test_invoke_only_evidence_without_manifest_does_not_suppress(tmp_path):
     _write_stride(tmp_path, "backend-api", _real_stride())
     (tmp_path / ".hook-events.log").write_text(
-        "2026-06-04T10:00:00Z  [sess]  INFO  AGENT_INVOKE  appsec-advisor:appsec-stride-analyzer  model=sonnet\n",
+        "2026-06-04T10:00:00Z  [sess]  INFO  AGENT_INVOKE  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n",
         encoding="utf-8",
     )
-    assert _run(tmp_path) == 0
+    assert _run(tmp_path) == 2
 
 
 def test_partial_inline_trips(tmp_path):
@@ -327,10 +323,14 @@ def test_no_stride_files_pass(tmp_path):
     assert _run(tmp_path) == 0
 
 
-def test_incremental_skips_gate(tmp_path):
-    """Carry-forward makes progress-file absence ambiguous → gate N/A."""
-    _write_stride(tmp_path, "backend-api", _real_stride())  # no progress
-    assert _run(tmp_path, "--incremental") == 0
+def test_removed_incremental_gate_bypass_is_rejected(tmp_path):
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_path), "--incremental"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "unrecognized arguments" in result.stderr
 
 
 def test_bad_path_errors(tmp_path):

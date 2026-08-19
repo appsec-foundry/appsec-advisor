@@ -1,6 +1,6 @@
 # CVSS v4.0 scoring (evidence-gated)
 
-Applied by `appsec-stride-analyzer` and any sub-agent emitting threat findings. Populate `cvss_v4` **only** when **both** conditions hold:
+Applied by `appsec-stride-analyzer-v2` and any sub-agent emitting threat findings. Populate `cvss_v4` **only** when **both** conditions hold:
 
 1. The threat's `cwe` appears in `data/cvss-eligible-cwes.yaml` (injection, XSS, SSRF, path traversal, deserialization, auth-bypass, hardcoded credentials, crypto misuse, similar concrete-sink weaknesses). Read this file once at the start of threat enumeration from `$CLAUDE_PLUGIN_ROOT/data/cvss-eligible-cwes.yaml` (not sliced — always read from the data dir). Keep the CWE set in working memory.
 2. `evidence.file` **and** `evidence.line` both point at the exploitable code location — not an inferred or absent line.

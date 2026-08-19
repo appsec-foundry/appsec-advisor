@@ -43,10 +43,6 @@ expensive to discover later.
 | Member | Depth | Producer | What it is for |
 |---|---|---|---|
 | `r10` | quick | context-v2 | The single rebuild checkpoint for the full lifecycle, concurrency, claim, post-STRIDE, rendering, and cleanup path |
-| `ab-baseline-1..3` | thorough | legacy | Baseline arm of the fixed A/B cohort |
-| `ab-context-v2-1..3` | thorough | context-v2 | Context-v2 arm; the 700-turn and 20% cost gates are read from cohort medians, never from one run |
-
-The two A/B arms differ only in producer generation; a test pins that.
 
 ## Prove the host integration first
 

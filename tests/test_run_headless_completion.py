@@ -84,40 +84,38 @@ def test_every_non_clean_exit_class_reaches_the_terminator() -> None:
 
 
 def test_failure_branch_prints_full_recovery_command() -> None:
-    """The failure hint must print a paste-ready re-run command, and choose
-    --resume vs --rebuild from what the resume-guard actually allows — never a
-    bare 'run with --resume' that the guard would then refuse."""
+    """The failure hint must print a paste-ready fresh-run command."""
     body = _body()
     # Raw invocation is preserved before the parser consumes it.
     assert 'ORIG_ARGS=""' in body, "must capture the original invocation for the hint"
     # The re-run command is reconstructed (mode flags stripped, one appended).
     assert "_rerun_cmd" in body
-    # The resume/rebuild choice is delegated to the resume-guard, not guessed.
-    assert "--resume-guard" in body, "hint must consult the resume-guard before suggesting --resume"
-    assert "_rerun_cmd --resume" in body and "_rerun_cmd --rebuild" in body
+    assert "_rerun_cmd --resume" not in body
+    assert "_rerun_cmd --rebuild" in body
 
 
-def test_context_v2_resume_fails_before_dispatch() -> None:
-    """WP7 has not implemented context-v2 resume, so the wrapper must not
-    silently route a resume request through the legacy full runtime."""
+def test_unsupported_modes_fail_before_output_path_mutation() -> None:
     body = _body()
-    guard = 'die "Context-v2 does not support --resume yet (WP7).'
+    guard = '[ "$RESUME_REQUESTED" = "1" ] && die "--resume is not supported by the compact runtime.'
     assert guard in body
-    assert body.index(guard) < body.index("# ── Trust mode: preflight + strict defaults")
-    assert 'get("runtime_generation", "")' in body
-    assert "refusing to fall back to the legacy full runtime" in body
-    hint = 'warn "Context-v2 resume is not available yet (WP7) — start fresh:"'
-    assert hint in body
-    assert body.index(hint) < body.index('warn "Resume from the last checkpoint:"')
+    assert body.index(guard) < body.index("# ── Resolve paths")
+    for state in ("INCREMENTAL_REQUESTED", "DRY_RUN_REQUESTED", "UNSUPPORTED_RUNTIME_OPTION"):
+        assert state in body
 
 
-def test_context_v2_is_the_headless_default_with_a_legacy_escape_hatch() -> None:
+def test_effective_mode_is_admitted_before_output_creation_and_dispatch() -> None:
     body = _body()
-    assert "APPSEC_CONTEXT_V2=0        Use the legacy producer" in body
-    assert "CONTEXT_V2_RESUME_TARGET=0" in body
-    assert '[ "$PERSISTED_RUNTIME_GENERATION" = "legacy" ]' in body
-    assert "context-v2) CONTEXT_V2_SELECTED=1" in body
-    assert "legacy) CONTEXT_V2_SELECTED=0" in body
+    admission = 'ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py"'
+    assert admission in body
+    assert body.index(admission) < body.index('mkdir -p "$OUTPUT_PATH"')
+    assert body.index(admission) < body.index('eval "$CLAUDE_CMD"')
+
+
+def test_headless_has_no_generation_escape_hatch() -> None:
+    body = _body()
+    assert "APPSEC_CONTEXT_V2" not in body
+    assert "CONTEXT_V2_SELECTED" not in body
+    assert "PERSISTED_RUNTIME_GENERATION" not in body
 
 
 def test_headless_scans_default_to_untrusted_mode() -> None:

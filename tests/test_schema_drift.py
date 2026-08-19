@@ -3,9 +3,8 @@ Drift guard: the `threat-model.yaml` schema v1 lives in ONE place —
 `schemas/threat-model.output.schema.yaml`. Agent prompts and phase-group
 files must reference the schema file, not re-inline it.
 
-Sprint 1 Item C extracted ~160 lines of duplicated schema definition from
-`appsec-threat-analyst.md` and `phase-group-finalization.md`. This test
-prevents regression.
+Sprint 1 Item C extracted duplicated schema definitions from report-producing
+prompts. This test prevents regression.
 """
 
 import re
@@ -23,7 +22,6 @@ ALLOWED_SCHEMA_AUTHORITIES = {
 
 # Files that are SCANNED for drift (must NOT re-inline schema structure)
 SCANNED_FILES = [
-    PLUGIN_ROOT / "agents" / "appsec-threat-analyst.md",
     PLUGIN_ROOT / "agents" / "phases" / "phase-group-finalization.md",
 ]
 
@@ -100,9 +98,8 @@ def test_schema_file_exists_and_nonempty():
 
 def test_diagram_prose_distinguishes_zones_from_boundary_crossings():
     scanned = [
-        PLUGIN_ROOT / "agents" / "appsec-threat-analyst.md",
-        PLUGIN_ROOT / "agents" / "phases" / "phase-group-architecture.md",
+        PLUGIN_ROOT / "agents" / "appsec-architecture-analyst.md",
     ]
     text = "\n".join(path.read_text(encoding="utf-8") for path in scanned)
     assert "Trust boundaries are subgraphs" not in text
-    assert "trust-boundary objects are crossings" in text or "trust-boundary objects are crossings" in text.lower()
+    assert "Do not invent a crossing or endpoint" in text

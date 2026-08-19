@@ -1,6 +1,8 @@
 # Shared Logging Standard
 
-All agents (orchestrator + sub-agents) MUST follow this logging standard. Replace `<AGENT>` with the agent's short name (e.g. `threat-analyst`, `stride-analyzer`, `recon-scanner`, `context-resolver`, `triage-validator`, `qa-reviewer`) and `<MODEL>` with the model identifier.
+All agents and the controller-owned runtime MUST follow this logging standard.
+Replace `<AGENT>` with the semantic role's short name and `<MODEL>` with the
+model identifier.
 
 ## Structured log format
 
@@ -21,7 +23,7 @@ All agents (orchestrator + sub-agents) MUST follow this logging standard. Replac
 
 | Scope | Events |
 |-------|--------|
-| Controller / skill / legacy orchestrator only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT`, `TELEMETRY_MISMATCH` |
+| Controller / skill only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT`, `TELEMETRY_MISMATCH` |
 | Hook lifecycle | `AGENT_SPAWN`, `AGENT_RUNNING`, `AGENT_USAGE`, `AGENT_DONE`, `AGENT_FAILED`, `AGENT_LIFECYCLE_REJECTED`, `HOOK_PAYLOAD_UNEXPECTED` |
 | Semantic agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `WRAP_UP_TRIGGERED` |
 | Watchdog-emitted | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog counts only a concrete running `agent_call_id`. SubagentStop reconciles the distinct tool-use count, terminalizes the call, and retires its budget; a later PostToolUse is idempotent. Parent tools and shared sessions never select a budget owner. |
@@ -77,13 +79,15 @@ ID must not create `.assessment-summary-emitted` or report the run complete.
 
 ## Agent purpose reference (user-visible dispatch echos)
 
-Single source of truth for the one-line **purpose** the orchestrator prints immediately before each sub-agent dispatch (the `⟶ Dispatching …` line). Keep these short — they appear on the console and tell the user *what the agent will do* and *which artifact it produces*. Update this table whenever an agent's responsibility changes; the dispatch echos in `appsec-threat-analyst.md` and the phase-group files read from here.
+Single source of truth for the one-line **purpose** printed immediately before
+each sub-agent dispatch. Keep these short; they tell the user what the agent
+will do and which artifact it produces.
 
 | Agent | One-line purpose (use verbatim in `⟶ Dispatching` echo) |
 |-------|---------------------------------------------------------|
 | `context-resolver` | extracts team, asset tier, compliance scope, prior findings, known threats, requirements → `.threat-modeling-context.md` |
 | `recon-scanner` | enumerates 26 security categories (routes, dependencies, secrets, auth, crypto, logging, IaC, …) → `.recon-summary.md` |
-| `stride-analyzer` | per component: enumerates Spoofing / Tampering / Repudiation / Information-Disclosure / DoS / EoP threats with CWE + evidence → `.stride-<id>.json` |
+| `stride-analyzer-v2` | per component: enumerates all six STRIDE categories with CWE + evidence → `.stride-<id>.json` |
 | `architecture-analyst` | projects validated recon and topology into Phase-3–6 architecture sidecars |
 | `control-analyst` | rates evidenced controls and writes bounded per-component STRIDE semantic context |
 | `post-stride-synthesizer` | writes only requested qualitative mitigation overrides and tier root causes |

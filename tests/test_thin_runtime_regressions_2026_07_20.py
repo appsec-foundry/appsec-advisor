@@ -19,7 +19,7 @@ SKILL_DIR = REPO_ROOT / "skills" / "create-threat-model"
 SCRIPTS = REPO_ROOT / "scripts"
 
 THIN_RUNTIMES = [
-    SKILL_DIR / "SKILL-thin-stage1.md",
+    SKILL_DIR / "SKILL-thin-stage1-v2.md",
     SKILL_DIR / "SKILL-thin-stage1d.md",
     SKILL_DIR / "SKILL-thin-stage2.md",
 ]
@@ -179,7 +179,7 @@ def test_log_event_invocation_is_reproducible_from_instructions() -> None:
     requires <output_dir> info <event-name> <detail>. The compacted instruction
     named only the event, costing three failed invocations on 2026-07-20.
     """
-    text = (SKILL_DIR / "SKILL-thin-stage1.md").read_text(encoding="utf-8")
+    text = (SKILL_DIR / "SKILL-thin-stage1-v2.md").read_text(encoding="utf-8")
     if "log_event.py" not in text:
         return
 
@@ -188,7 +188,7 @@ def test_log_event_invocation_is_reproducible_from_instructions() -> None:
     assert kinds, "log_event kinds not discoverable"
 
     assert any(k in text for k in kinds), (
-        "SKILL-thin-stage1.md tells the orchestrator to call log_event.py but never "
+        "SKILL-thin-stage1-v2.md tells the orchestrator to call log_event.py but never "
         f"states a valid kind (one of {sorted(kinds)}); the event name alone is "
         "rejected by the CLI"
     )

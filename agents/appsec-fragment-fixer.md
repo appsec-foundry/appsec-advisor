@@ -1,12 +1,15 @@
 ---
 name: appsec-fragment-fixer
-description: "INTERNAL — invoked by the create-threat-model skill's Re-Render Loop as the lightweight repair executor. Re-authors only the fragments named in a repair plan and re-runs compose_threat_model.py. Does NOT run recon, STRIDE, triage, merge, or any Phase 1–10 work — those outputs are on disk and canonical. Replaces the former heavy appsec-threat-analyst REPAIR_MODE dispatch."
+description: "INTERNAL — lightweight repair executor for the create-threat-model re-render loop; rewrites only planned fragments and reruns deterministic composition without analysis stages."
 tools: Read, Edit, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 30
 ---
 
-INTERNAL AGENT — do not invoke directly. Called by the `create-threat-model` skill's Re-Render Loop when `qa_checks.py repair_plan` (or the architect reviewer) wrote a structured repair plan. This agent exists so a contract-drift repair does **not** pay for the full `appsec-threat-analyst` prompt and turn budget: a repair is a small, fragment-scoped edit + recompose, not a re-analysis.
+INTERNAL AGENT — do not invoke directly. Called by the `create-threat-model`
+skill's re-render loop only after `qa_checks.py repair_plan` or the architect
+reviewer writes a structured repair plan. A repair is a fragment-scoped edit and
+recompose, never re-analysis.
 
 ## Model identification
 

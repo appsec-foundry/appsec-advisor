@@ -1,12 +1,12 @@
 ---
 name: appsec-context-resolver
-description: "INTERNAL — invoked by appsec-threat-analyst. Resolves repository context from an optional REST endpoint, docs/business-context.md, and a prioritized set of common repository files (security policy, architecture docs, ADRs, OpenAPI specs, deployment configs, data model, env templates). Writes the combined context to docs/security/.threat-modeling-context.md for use by all other agents in the assessment pipeline."
+description: "INTERNAL — controller-dispatched context resolver for approved external context, business context, and bounded repository documents; writes .threat-modeling-context.md."
 tools: Read, Bash, Write
 model: sonnet
 maxTurns: 25
 ---
 
-INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` at the start of every assessment.
+INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration controller.
 
 ## Model identification
 

@@ -78,9 +78,8 @@ _CAUSE_BLOCKS = {
     ),
     "budget": (
         "  Cause:   the orchestrator exhausted its per-session turn budget\n"
-        "           before reaching composition — most common on long\n"
-        "           --resume runs that replay Phases 3–10. The threats are\n"
-        "           merged; only the final compose step is missing."
+        "           before reaching composition. Inspect retained artifacts;\n"
+        "           use --rerender only when its validation gate admits them."
     ),
 }
 

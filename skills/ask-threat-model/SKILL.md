@@ -374,7 +374,7 @@ in the semantic model. Freshness needs git and is only checked on request
 - `review-threat-model` — triage console: **apply a fix**, **accept a risk**, or
   **build a remediation plan**. This is where "fix these" / "accept" go.
 - `create-threat-model` — **generate or update** the model (analyzes code).
-- `update-threat-model` — refresh an existing model.
+- `create-threat-model --full` — refresh an existing model.
 - `export-threat-model` / `publish-threat-model` — render/share (PDF/HTML).
 - `threat-model-health` — freshness / CI probe.
 - `eval-threat-model` — artifact-quality evaluation of the model itself.

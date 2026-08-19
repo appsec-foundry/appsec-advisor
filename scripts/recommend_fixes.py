@@ -26,7 +26,7 @@ appending one entry to ``RECOMMENDERS``.
 Auto-applicable categories (in scope for the fix-run-issues skill):
 
   * ``max_turns_subagent``        bump <agent>.md maxTurns by 50%
-  * ``max_turns_orchestrator``    bump appsec-threat-analyst maxTurns
+  * ``max_turns_orchestrator``    require a bounded-runtime investigation
   * (more added as patterns prove safe through repeated production runs)
 
 All other categories return ``auto_applicable: False`` with a manual
@@ -76,7 +76,7 @@ def _recommend_max_turns_subagent(issue: dict, output_dir: Path) -> dict:
     src = (issue["evidence"].get("source_agent") or "").strip()
     # Map log "source" (short name) to canonical agent name. The logger
     # writes the short name (e.g. "stride-analyzer") in the source field;
-    # the agent file is "appsec-stride-analyzer.md".
+    # the agent file is "appsec-stride-analyzer-v2.md".
     agent_name = src if src.startswith("appsec-") else f"appsec-{src}"
     current = _read_agent_max_turns(agent_name)
     if current is None:
@@ -139,8 +139,23 @@ def _recommend_max_turns_subagent(issue: dict, output_dir: Path) -> dict:
 
 
 def _recommend_max_turns_orchestrator(issue: dict, output_dir: Path) -> dict:
-    """Specialized recommender for the orchestrator (different file naming)."""
-    return _recommend_max_turns_subagent(issue, output_dir)
+    """The controller has no prompt-local turn ceiling to auto-edit."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": "The compact orchestration session exhausted its host turn budget.",
+        "rationale": "The deterministic controller owns orchestration; no legacy analyst prompt remains to tune.",
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".agent-run.log",
+                "details": "Identify the bounded semantic job that failed to return before starting a fresh full run.",
+            }
+        ],
+        "verification": [],
+    }
 
 
 def _recommend_perf_anomaly_phase(issue: dict, output_dir: Path) -> dict:

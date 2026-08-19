@@ -1,9 +1,8 @@
-"""Unit tests for scripts/check_state.py — new hung/aborted states + resume-guard."""
+"""Hung-lock and aborted-checkpoint tests for scripts/check_state.py."""
 
 from __future__ import annotations
 
 import importlib.util
-import json
 import os
 import sys
 import time
@@ -25,341 +24,52 @@ def _load():
 check_state = _load()
 
 
-# ---------------------------------------------------------------------------
-# v2 lock parsing
-# ---------------------------------------------------------------------------
-
-
 def test_reads_v2_lock_with_heartbeat(tmp_path: Path):
-    lp = tmp_path / ".appsec-lock"
-    ts = int(time.time())
-    lp.write_text(f"{os.getpid()}\n{ts}\n")
+    lock = tmp_path / ".appsec-lock"
+    timestamp = int(time.time())
+    lock.write_text(f"{os.getpid()}\n{timestamp}\n")
     info = check_state._read_lock(tmp_path)
     assert info is not None
     assert info["pid"] == os.getpid()
-    assert info["heartbeat"] == ts
+    assert info["heartbeat"] == timestamp
     assert info["heartbeat_age"] is not None
 
 
 def test_reads_v1_lock_with_none_heartbeat(tmp_path: Path):
-    lp = tmp_path / ".appsec-lock"
-    lp.write_text(f"{os.getpid()}\n")
+    (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n")
     info = check_state._read_lock(tmp_path)
     assert info is not None
     assert info["heartbeat"] is None
     assert info["heartbeat_age"] is None
 
 
-# ---------------------------------------------------------------------------
-# Hung lock detection
-# ---------------------------------------------------------------------------
-
-
 def test_live_pid_fresh_heartbeat_is_active(tmp_path: Path):
-    lp = tmp_path / ".appsec-lock"
-    lp.write_text(f"{os.getpid()}\n{int(time.time())}\n")
-    rep = check_state.classify(tmp_path)
-    assert rep["state"] == "active"
+    (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n{int(time.time())}\n")
+    assert check_state.classify(tmp_path)["state"] == "active"
 
 
 def test_live_pid_stale_heartbeat_is_stale_with_hung_reason(tmp_path: Path):
-    lp = tmp_path / ".appsec-lock"
-    lp.write_text(f"{os.getpid()}\n{int(time.time()) - 600}\n")
-    rep = check_state.classify(tmp_path)
-    assert rep["state"] == "stale"
-    assert any("hung" in r.lower() for r in rep["reasons"])
+    (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n{int(time.time()) - 600}\n")
+    report = check_state.classify(tmp_path)
+    assert report["state"] == "stale"
+    assert any("hung" in reason.lower() for reason in report["reasons"])
 
 
 def test_hung_lock_is_cleaned(tmp_path: Path):
-    lp = tmp_path / ".appsec-lock"
-    lp.write_text(f"{os.getpid()}\n{int(time.time()) - 600}\n")
+    lock = tmp_path / ".appsec-lock"
+    lock.write_text(f"{os.getpid()}\n{int(time.time()) - 600}\n")
     result = check_state.clean(tmp_path)
     assert not result["skipped"]
     assert ".appsec-lock" in result["removed"]
-    assert not lp.exists()
+    assert not lock.exists()
 
 
-# ---------------------------------------------------------------------------
-# Aborted checkpoint
-# ---------------------------------------------------------------------------
-
-
-def test_aborted_checkpoint_is_orphaned(tmp_path: Path):
-    (tmp_path / ".appsec-checkpoint").write_text(
-        "phase=7 status=aborted reason=max_turns aborted_at=2026-04-24T12:00:00Z\n"
-    )
-    rep = check_state.classify(tmp_path)
-    assert rep["state"] == "orphaned"
-    assert any("aborted" in r for r in rep["reasons"])
-
-
-def test_aborted_checkpoint_is_cleaned(tmp_path: Path):
-    cp = tmp_path / ".appsec-checkpoint"
-    cp.write_text("phase=3 status=aborted reason=unknown\n")
-    result = check_state.clean(tmp_path)
+def test_aborted_checkpoint_is_orphaned_and_cleaned(tmp_path: Path):
+    checkpoint = tmp_path / ".appsec-checkpoint"
+    checkpoint.write_text("phase=7 status=aborted reason=max_turns\n")
+    report = check_state.classify(tmp_path)
+    assert report["state"] == "orphaned"
+    assert any("aborted" in reason for reason in report["reasons"])
+    result = check_state.clean(tmp_path, report)
     assert ".appsec-checkpoint" in result["removed"]
-    assert not cp.exists()
-
-
-# ---------------------------------------------------------------------------
-# Resume guard
-# ---------------------------------------------------------------------------
-
-
-def _seed_resumable(tmp_path: Path, checkpoint_line: str) -> None:
-    """Seed a *valid* resumable state: checkpoint + the Phase-1 context file
-    its phases would have produced. Guards against the artifact-existence gate
-    firing in tests that mean to exercise a different dimension."""
-    (tmp_path / ".appsec-checkpoint").write_text(checkpoint_line)
-    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
-
-
-def test_resume_guard_allows_fresh_checkpoint(tmp_path: Path):
-    _seed_resumable(tmp_path, "phase=5 status=started\n")
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 0
-
-
-def test_resume_guard_allows_completed_checkpoint(tmp_path: Path):
-    _seed_resumable(tmp_path, "phase=11 status=completed\n")
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 0
-
-
-def test_resume_guard_refuses_completed_checkpoint_missing_context(tmp_path: Path):
-    # The juice-shop 2026-07-14 loop: checkpoint says done, but the Phase-1
-    # context file is gone → resume would re-run early phases and stall.
-    (tmp_path / ".appsec-checkpoint").write_text("phase=2 status=completed\n")
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 3
-    assert "threat-modeling-context.md is missing" in msg
-    assert "WITHOUT --resume" in msg
-
-
-def test_resume_guard_allows_stage1_complete_missing_context(tmp_path: Path):
-    # Stage 1 fully finished (threat-model.yaml on disk) but runtime_cleanup
-    # reaped the context cache. Resume re-enters at Phase-11 compose/render only,
-    # which never reads the cache — the artifact gate must NOT fire, or it would
-    # discard the paid-for STRIDE + merge + triage work.
-    (tmp_path / ".appsec-checkpoint").write_text("phase=10b status=completed need_render=true\n")
-    (tmp_path / "threat-model.yaml").write_text("meta: {}\n")
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 0
-
-
-def test_resume_guard_refuses_late_phase_missing_context_before_yaml(tmp_path: Path):
-    # Killed after merge but before triage produced threat-model.yaml, with the
-    # context cache already reaped. Even at a late checkpoint phase a resume
-    # would re-enter the cache-reading phases, so the refusal must still hold.
-    (tmp_path / ".appsec-checkpoint").write_text("phase=10 status=completed\n")
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 3
-    assert "threat-modeling-context.md is missing" in msg
-
-
-def test_resume_guard_missing_context_started_also_refused(tmp_path: Path):
-    (tmp_path / ".appsec-checkpoint").write_text("phase=9 status=started\n")
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 3
-    assert "threat-modeling-context.md is missing" in msg
-
-
-def test_resume_guard_phase_zero_missing_context_not_refused(tmp_path: Path):
-    # Phase 0 (nothing completed) has no early artifact to promise — the
-    # artifact gate must not fire; the normal status path decides.
-    (tmp_path / ".appsec-checkpoint").write_text("phase=0 status=started\n")
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 0
-
-
-def test_resume_guard_allows_missing_checkpoint(tmp_path: Path):
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 0
-
-
-def test_resume_guard_refuses_active_lock_without_checkpoint(tmp_path: Path):
-    lock = tmp_path / ".appsec-lock"
-    lock.write_text(f"{os.getpid()}\n{int(time.time())}\n")
-
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-
-    assert code == 3
-    assert "active run lock" in msg
-
-
-def test_resume_guard_refuses_stale_started(tmp_path: Path):
-    cp = tmp_path / ".appsec-checkpoint"
-    cp.write_text("phase=5 status=started\n")
-    old = time.time() - 1200  # > 15 min
-    os.utime(cp, (old, old))
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 3
-    assert "Refusing" in msg
-
-
-def test_resume_guard_refuses_stale_aborted(tmp_path: Path):
-    cp = tmp_path / ".appsec-checkpoint"
-    cp.write_text("phase=7 status=aborted reason=unknown\n")
-    old = time.time() - 1200
-    os.utime(cp, (old, old))
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 3
-
-
-def test_resume_guard_refuses_current_controller_abort_with_partial_yaml(tmp_path: Path):
-    now = int(time.time())
-    (tmp_path / ".scan-start-epoch").write_text(f"{now - 10}\n")
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
-    (tmp_path / ".agent-run.log").write_text(
-        f"{timestamp}  [--------]  WARN   skill-controller    RUN_ABORTED         output schema validation failed\n"
-    )
-    (tmp_path / ".appsec-checkpoint").write_text("phase=7 status=completed\n")
-    (tmp_path / "threat-model.yaml").write_text("meta: {mode: rebuild}\n")
-
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-
-    assert code == 3
-    assert "RUN_ABORTED" in msg
-
-
-def test_resume_guard_ignores_controller_abort_from_prior_run(tmp_path: Path):
-    now = int(time.time())
-    (tmp_path / ".scan-start-epoch").write_text(f"{now}\n")
-    prior = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - 60))
-    (tmp_path / ".agent-run.log").write_text(
-        f"{prior}  [--------]  WARN   skill-controller    RUN_ABORTED         prior run failed\n"
-    )
-    (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
-    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
-
-    code, _ = check_state._resume_guard_result(tmp_path, 900)
-
-    assert code == 0
-
-
-def test_resume_guard_cli_writes_json(tmp_path: Path, capsys):
-    cp = tmp_path / ".appsec-checkpoint"
-    cp.write_text("phase=5 status=started\n")
-    old = time.time() - 1200
-    os.utime(cp, (old, old))
-    code = check_state.main([str(tmp_path), "--resume-guard", "--json"])
-    captured = capsys.readouterr()
-    payload = json.loads(captured.out)
-    assert payload["allow"] is False
-    assert payload["exit_code"] == 3
-    assert code == 3
-
-
-def test_resume_guard_cli_exit_0_when_allowed(tmp_path: Path, capsys):
-    (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
-    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
-    code = check_state.main([str(tmp_path), "--resume-guard"])
-    assert code == 0
-
-
-def test_resume_guard_configurable_max_age(tmp_path: Path):
-    cp = tmp_path / ".appsec-checkpoint"
-    cp.write_text("phase=3 status=started\n")
-    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
-    old = time.time() - 300  # 5 min
-    os.utime(cp, (old, old))
-    # With default 900 s window → allowed
-    code, _ = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 0
-    # With tight 120 s window → refused
-    code, _ = check_state._resume_guard_result(tmp_path, 120)
-    assert code == 3
-
-
-# ---------------------------------------------------------------------------
-# Resume guard — dead-PID override
-#
-# The 15-min checkpoint-age threshold guards against racing with a possibly-
-# still-running orchestrator. When the lock proves the prior process is dead
-# (PID gone AND heartbeat stale), the race is impossible and resume becomes
-# safe regardless of checkpoint age.
-# ---------------------------------------------------------------------------
-
-
-def _pick_dead_pid() -> int:
-    """Return a PID that is reliably not alive on this system."""
-    candidate = 999999
-    for _ in range(20):
-        try:
-            os.kill(candidate, 0)
-        except ProcessLookupError:
-            return candidate
-        except PermissionError:
-            pass
-        candidate += 1
-    raise RuntimeError("could not find a dead PID for the test")
-
-
-def test_resume_guard_refuses_fresh_heartbeat_even_when_lock_pid_is_dead(tmp_path: Path):
-    """Fresh heartbeat still means "do not start another resume".
-
-    This covers headless retries that accidentally refreshed a stale lock:
-    the PID can be gone, but a fresh heartbeat must produce a clear refusal
-    instead of dispatching a second idle-looking run.
-    """
-    dead_pid = _pick_dead_pid()
-    lock = tmp_path / ".appsec-lock"
-    lock.write_text(f"{dead_pid}\n{int(time.time())}\n")
-
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-
-    assert code == 3
-    assert "fresh heartbeat" in msg
-
-
-def test_resume_guard_allows_stale_checkpoint_when_lock_proves_dead(tmp_path: Path):
-    """Stale checkpoint + dead PID + stale heartbeat → resume allowed."""
-    cp = tmp_path / ".appsec-checkpoint"
-    cp.write_text("phase=3 status=started\n")
-    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
-    old_cp = time.time() - 7200  # 2 h — well past 15 min
-    os.utime(cp, (old_cp, old_cp))
-
-    dead_pid = _pick_dead_pid()
-    lock = tmp_path / ".appsec-lock"
-    lock.write_text(f"{dead_pid}\n{int(time.time()) - 3600}\n")  # heartbeat 1 h old
-
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 0
-    assert "dead" in msg.lower()
-
-
-def test_resume_guard_still_refuses_stale_checkpoint_when_lock_pid_alive(tmp_path: Path):
-    """Stale checkpoint + alive PID → keep refusing (race still possible)."""
-    cp = tmp_path / ".appsec-checkpoint"
-    cp.write_text("phase=3 status=started\n")
-    old_cp = time.time() - 7200
-    os.utime(cp, (old_cp, old_cp))
-
-    # Use our own PID — guaranteed alive — with a stale heartbeat. Together
-    # with the stale checkpoint this is the "hung but technically still running"
-    # case where we must not auto-allow resume.
-    lock = tmp_path / ".appsec-lock"
-    lock.write_text(f"{os.getpid()}\n{int(time.time()) - 3600}\n")
-
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 3
-    assert "Refusing" in msg
-
-
-def test_resume_guard_dead_pid_v1_lock_without_heartbeat(tmp_path: Path):
-    """Legacy v1 lock (PID-only, no heartbeat) + dead PID + stale checkpoint
-    → resume allowed (heartbeat absence is not a blocker when PID is dead)."""
-    cp = tmp_path / ".appsec-checkpoint"
-    cp.write_text("phase=5 status=started\n")
-    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
-    old_cp = time.time() - 7200
-    os.utime(cp, (old_cp, old_cp))
-
-    dead_pid = _pick_dead_pid()
-    lock = tmp_path / ".appsec-lock"
-    lock.write_text(f"{dead_pid}\n")  # v1: PID only, no heartbeat line
-
-    code, msg = check_state._resume_guard_result(tmp_path, 900)
-    assert code == 0
-    assert "dead" in msg.lower()
+    assert not checkpoint.exists()

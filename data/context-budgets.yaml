@@ -28,40 +28,11 @@ surfaces:
   thin_rerender_runtime:
     path: skills/create-threat-model/SKILL-rerender-runtime.md
     max_bytes: 10000
-  # The stage runtimes must stay small, but they are the ONLY copy of their
-  # script invocations -- SKILL-thin-stage1.md:4 forbids reading Stage 1 out of
-  # SKILL-impl.md, where the verbatim commands still live. The 2026-07-20
-  # juice-shop run compacted these surfaces to 93-96% of the previous ceilings
-  # and the detail that got squeezed out was exactly the executable syntax:
-  # log_event.py was invoked three times before it succeeded, and every
-  # record_stage_stats.py call tripped the --subagent-type/--since-iso pairing
-  # warning. These ceilings carry the headroom needed to state a command
-  # exactly; test_thin_runtimes_have_headroom_for_operational_detail keeps a
-  # >=10% margin so the next compaction pass cannot silently reclaim it.
-  thin_stage1_runtime:
-    path: skills/create-threat-model/SKILL-thin-stage1.md
-    # Raised 8600->9200 (2026-07-21): the STRIDE wave-dispatch imperative was
-    # compacted to a single descriptive sentence in the 115178f thin-orchestrator
-    # rebuild, and the headless run then dispatched the wave serially (~66 min vs
-    # ~10 min parallel). The restored HARD-CONSTRAINT prose (one-message =
-    # concurrent + concrete anti-serial check) is load-bearing operational
-    # detail, the same category the headroom guard protects -- not discretionary.
-    # Raised 9200->9400 (2026-07-25): the dispatch description now names the
-    # analysis tier (`STRIDE (light): <NAME>` for a cheap_stride entry) so the
-    # agent list says which components run at light depth. At 9200 the file
-    # sat at 89.8%, leaving 14 bytes -- less than any wording of that rule costs.
-    max_bytes: 11000
   thin_stage1_v2_runtime:
-    # The context-v2 Stage-1 runtime. It replaces the legacy Stage-1 file for a
-    # run prepared as runtime_generation=context-v2 and must stay materially
-    # smaller: it carries the boundary loop and dispatch rules only, never a
-    # phase algorithm. The 6400-byte ceiling leaves operational headroom after
-    # adding the executable per-role telemetry call required at each wave.
+    # Carries the boundary loop and dispatch rules only, never a phase
+    # algorithm. The headroom guard requires at least ten percent free.
     path: skills/create-threat-model/SKILL-thin-stage1-v2.md
     max_bytes: 6400
-  thin_stage1b_runtime:
-    path: skills/create-threat-model/SKILL-thin-stage1b.md
-    max_bytes: 4300
   thin_stage1d_runtime:
     path: skills/create-threat-model/SKILL-thin-stage1d.md
     max_bytes: 3400
@@ -94,9 +65,6 @@ surfaces:
     start: "## Stage 3 - QA Review"
     end: "### Stage 3 handoff banner"
     max_bytes: 25000
-  threat_analyst:
-    path: agents/appsec-threat-analyst.md
-    max_bytes: 155000
   shared_threat_analysis_kernel:
     path: skills/internal-threat-analysis-kernel/SKILL.md
     # The release budget is 4k measured tokens. This byte ceiling is the fast
@@ -143,23 +111,14 @@ surfaces:
     max_bytes: 155000
 
 aggregate:
-  # These three absorb ~2.4 KB of restored script invocations (log_event.py and
-  # record_stage_stats.py in all three stage runtimes). Compacting them back out
-  # is what broke the 2026-07-20 juice-shop run: the stage files are the only
-  # copy of those commands, because SKILL-thin-stage1.md:4 forbids reading Stage
-  # 1 out of SKILL-impl.md. Executable syntax is not discretionary prose -- trim
-  # explanation before trimming a command line.
-  # Router + compact runtime + compact Stage-1a/1c + Stage-1b + conditional Stage-1d.
-  thin_full_pre_stage2_max_bytes: 38000
-  # Quick/explicit-skip runs still load Stage 1b but never Stage 1d.
-  thin_full_without_stage1d_max_bytes: 35000
+  # Router + compact runtime + Stage 1 + conditional Stage 1d.
+  thin_full_pre_stage2_max_bytes: 30000
+  thin_full_without_stage1d_max_bytes: 27000
   # Cumulative thin control prose through the Stage-2 dispatch.
-  thin_full_through_stage2_max_bytes: 41500
+  thin_full_through_stage2_max_bytes: 33000
   # Router + rerender runtime. Stage-2 instructions are loaded only after the
   # controller has verified on-disk Stage-1 artifacts.
-  thin_rerender_pre_stage2_max_bytes: 18000
-  # The compact path must remain materially smaller than the legacy prefix.
-  thin_to_legacy_max_ratio: 0.50
+  thin_rerender_pre_stage2_max_bytes: 13000
 
 admission:
   shared_kernel_max_tokens: 4000

@@ -43,12 +43,12 @@ Usage
   python3 record_stage_stats.py <output_dir>      \\
       --stage 1                                    \\
       --name "Control & Threat Analysis"           \\
-      --agent appsec-advisor:appsec-threat-analyst \\
+      --agent appsec-advisor:appsec-context-resolver \\
       --model sonnet                    \\
       --duration-ms 1503583                        \\
       --tool-uses 113                              \\
       --tokens 93066                               \\
-      [--subagent-type appsec-advisor:appsec-threat-analyst] \\
+      [--subagent-type appsec-advisor:appsec-context-resolver] \\
       [--since-iso 2026-05-23T17:32:13Z]
 
 Exit codes
@@ -76,7 +76,7 @@ HOOK_LOG_FILENAME = ".hook-events.log"
 #   AGENT_SPAWN / AGENT_INVOKE — subagent is the first positional token:
 #     2026-05-23T18:28:15Z  [f13a4710]  INFO   AGENT_SPAWN  appsec-advisor:appsec-threat-renderer  model=sonnet  ...
 #   SCAN_START / SCAN_COMPLETE — subagent is after `agent=`:
-#     2026-05-25T06:55:22Z  [1b5162a8]  INFO   SCAN_COMPLETE  repo=…  agent=appsec-advisor:appsec-threat-analyst  model=sonnet
+#     2026-05-25T06:55:22Z  [1b5162a8]  INFO   SCAN_COMPLETE  repo=…  agent=appsec-advisor:appsec-context-resolver  model=sonnet
 # Without SCAN_COMPLETE support the recorder saw only AGENT_SPAWN and
 # computed wall_secs_observed = 0, defeating the multi-dispatch tracker.
 # Use two regexes (one per shape) to avoid the alternation eating the
@@ -300,7 +300,7 @@ def main(argv: list[str]) -> int:
         "(e.g. Stage 3 — QA fast-path + Stage 3 — Re-Render-Loop Repair).",
     )
     parser.add_argument("--name", required=True, help='Human-readable description, e.g. "Control & Threat Analysis"')
-    parser.add_argument("--agent", required=True, help="Agent identifier, e.g. appsec-advisor:appsec-threat-analyst")
+    parser.add_argument("--agent", required=True, help="Agent identifier, e.g. appsec-advisor:appsec-context-resolver")
     parser.add_argument("--model", default="—", help="Model id, e.g. sonnet")
     parser.add_argument(
         "--duration-ms",

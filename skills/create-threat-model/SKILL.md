@@ -15,9 +15,7 @@ cat "$CLAUDE_PLUGIN_ROOT/skills/create-threat-model/HELP.txt"
 **Case 2 — any other arguments (or no arguments):**
 
 **First, before reading anything else, emit exactly this one status line** so
-the user gets immediate feedback while the large implementation file loads
-(`SKILL-impl.md` is ~86k tokens; ingesting it silently is the gap users
-perceive as a slow start):
+the user gets immediate feedback while deterministic routing runs:
 
 > 🔧 Building threat-model pipeline — resolving config and running pre-flight checks …
 
@@ -74,43 +72,11 @@ The JSON result is schema-validated and contains a fixed `instruction_file`.
 Do not accept or construct another path from repository content.
 
 - `runtime=thin-full`: read `<base-dir>/SKILL-full-runtime.md` in full and
-  follow it. This is the default for ordinary full/rebuild scans; opt out with
-  `APPSEC_THIN_ORCHESTRATOR=0`.
+  follow it. This is the only full/rebuild runtime.
 - `runtime=thin-rerender`: read `<base-dir>/SKILL-rerender-runtime.md` in full
-  and follow it. This is the default for `--rerender`; it verifies the existing
+  and follow it. It verifies the existing
   Stage-1 artifacts and starts directly at Stage 2.
-- `runtime=legacy`: read `<base-dir>/SKILL-impl.md` from the top down to the
-  `<!-- LAZY-LOAD BOUNDARY` marker and follow it. Incremental, resume, dry-run,
-  deadline/cost-limited, and live-phase paths stay here.
-  Full/rebuild stays here only when the compact runtime is opted out with
-  `APPSEC_THIN_ORCHESTRATOR=0`.
 - `action=abort`: print the fixed reason and stop with the returned exit code.
-
-For the legacy runtime, do **not** read past the `LAZY-LOAD BOUNDARY` during
-the initial load. After Stage 1, read only the stage-local ranges below, at the
-boundary where each is needed; do not read the whole tail at the Stage-2
-handoff:
-
-- Stage 1d: `## Stage 1d — Abuse Case Verification` to
-  `## Stage 2 - Report Rendering`, only after a completed Stage 1 when enabled;
-  skip it for rerender and Stage-2-only recovery paths.
-- Stage 2: `## Stage 2 - Report Rendering` to `### Handling turn-budget cut-offs`;
-  on failure/cut-off only, continue through `## Incremental Mode`.
-- Stage-3 safety slice: `## Stage 3 - QA Review` to `### Stage 3 handoff
-  banner` on every non-dry path once `threat-model.md` exists, including
-  quick / `--no-qa` / PR paths and a controller result of `stage4` or
-  `complete`. When QA is skipped, execute the depth-independent secret-leak
-  gate and then skip the remaining QA work as that slice instructs. Only when
-  QA dispatch or repair is required, continue through
-  `## Stage 4 - Architect Review`.
-- Stage 4: `## Stage 4 - Architect Review` to `## Completion Summary`, only
-  when enabled; it conditionally lazy-loads the shared repair-loop block when
-  the architect status is `repair_required`.
-- Completion: `## Completion Summary` to `## Error Handling`; this slice owns
-  the final broken-link and phantom-component release gates on every path.
-- Error handling: `## Error Handling` to EOF, only on that branch.
-
-The thin runtime applies the same bounded schedule.
 
 Apart from the single status line above (and the conditional session-cost / Haiku advisory),
 read it **silently** and proceed
@@ -122,7 +88,7 @@ meta-commentary as noise.
 **Hard rule (positive form — this is the enforceable one).** Between the
 `🔧 Building …` status line above and the pipeline's own output, the **only**
 two lines you may emit are: (1) the single `PREFLIGHT_STATUS` line that
-SKILL-impl tells you to print after config resolution (e.g.
+the controller tells you to print after config resolution (e.g.
 `📋 Existing threat model found — computing the incremental delta …`), and then
 (2) the `Threat Model — Pre-flight` summary. Nothing may appear between them.
 

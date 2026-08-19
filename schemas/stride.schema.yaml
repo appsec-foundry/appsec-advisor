@@ -2,9 +2,9 @@ $schema: https://json-schema.org/draft/2020-12/schema
 $id: https://appsec-advisor/schemas/stride.schema.yaml
 title: Per-component STRIDE analysis result
 description: |
-  Output written by `appsec-stride-analyzer` to
+  Output written by `appsec-stride-analyzer-v2` to
   `$OUTPUT_DIR/.stride-<component-id>.json`. One file per analyzed
-  component. Phase 9 of the orchestrator merges all stride files into
+  component. The controller merges all STRIDE files into
   `.threats-merged.json` after assigning global T-NNN IDs.
 
 type: object
@@ -89,7 +89,7 @@ $defs:
       component_id:   { type: string, minLength: 1 }
       component_name: { type: string, minLength: 1 }
       analyzed_at:    { type: string }
-      # Write-first stub bookkeeping (appsec-stride-analyzer.md "Write-first
+      # Write-first stub bookkeeping (appsec-stride-analyzer-v2.md "Write-first
       # guarantee"): present while a component is mid-enumeration, cleared on
       # the final write. Declared so the early stub validates and a future
       # additionalProperties:false tightening will not silently break it.
@@ -111,7 +111,7 @@ $defs:
 
       resolved_prior_findings:
         # Incremental re-scan only. Prior findings this re-scan affirmatively
-        # confirmed FIXED (disposition #2 in appsec-stride-analyzer.md
+        # confirmed FIXED (disposition #2 in appsec-stride-analyzer-v2.md
         # "prior-finding disposition"). The deterministic reconciler in
         # build_threat_model_yaml.py uses this to mark them resolved instead
         # of carrying them forward. Advisory: when omitted, the reconciler
@@ -261,7 +261,7 @@ $defs:
               # analyzer sets `verified-prior` when it re-read the cited
               # evidence file for a prior-finding-derived threat (per the
               # mandatory verification target rule in
-              # appsec-stride-analyzer.md). Fresh threats start as
+              # appsec-stride-analyzer-v2.md). Fresh threats start as
               # `unchecked`; the appsec-evidence-verifier sub-agent
               # (Phase 10b pre-step) updates them to `verified`,
               # `refuted`, or `ambiguous` after re-reading the cited

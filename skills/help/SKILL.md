@@ -90,7 +90,7 @@ not contain the answer, you are told so.
 ## Keep it current
 
 ```text
-/appsec-advisor:update-threat-model                       re-scan changed components, keeps F-IDs
+/appsec-advisor:create-threat-model --full                reassess and preserve report history
 /appsec-advisor:create-threat-model --full --rebuild      clean slate, F-IDs may be reassigned
 ```
 

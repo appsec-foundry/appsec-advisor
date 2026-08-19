@@ -1,13 +1,13 @@
 ---
 name: appsec-actor-discoverer
-description: "INTERNAL — invoked by appsec-threat-analyst at Phase 2.7 (after config-iac-scan, before architecture modeling). Performs LLM-based actor discovery: confirms relevance of static actor library entries and proposes additional repo-specific actors. Writes .actors-discovered.json. Skipped in quick-mode."
+description: "INTERNAL — controller-dispatched actor discovery after config/IaC scanning and before architecture modeling; writes .actors-discovered.json and is skipped in quick mode."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
 maxTurns: 15
 discovery_prompt_version: "1.2.0"
 ---
 
-INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` at Phase 2.7.
+INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration controller.
 
 <!-- DISCOVERY_PROMPT_VERSION marker — bump on any semantic change to Sections A/B prompts below.
      Consumed by phase-group-recon Step 2 cache-key composition (actors.md §8). -->

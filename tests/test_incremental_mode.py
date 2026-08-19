@@ -32,7 +32,6 @@ ROOT = Path(__file__).parent.parent
 PLUGIN = ROOT
 SKILL_MD = PLUGIN / "skills" / "create-threat-model" / "SKILL.md"
 SKILL_IMPL_MD = PLUGIN / "skills" / "create-threat-model" / "SKILL-impl.md"
-ANALYST_MD = PLUGIN / "agents" / "appsec-threat-analyst.md"
 RECON_MD = PLUGIN / "agents" / "phases" / "phase-group-recon.md"
 THREATS_MD = PLUGIN / "agents" / "phases" / "phase-group-threats.md"
 FINAL_MD = PLUGIN / "agents" / "phases" / "phase-group-finalization.md"
@@ -141,23 +140,6 @@ _FLAG_MATRIX_INVARIANTS = [
         False,
     ),
     ("skill-auto-incremental-default-with-hint", SKILL_MD, None, ["--reasoning-model"], None, True),
-    ("analyst-no-longer-declares-always-full", ANALYST_MD, None, None, ["always runs a full assessment"], False),
-    (
-        "analyst-has-hard-abort-safety-net",
-        ANALYST_MD,
-        None,
-        ["hard abort on missing baseline"],
-        ["falling back to full assessment"],
-        True,
-    ),
-    (
-        "analyst-does-not-receive-dry-run",
-        ANALYST_MD,
-        ["orchestrator does not receive or check", "does not receive or check `dry_run`"],
-        None,
-        None,
-        True,
-    ),
 ]
 
 
@@ -299,15 +281,6 @@ _MODE_AWARE_CLEANUP_INVARIANTS = [
         True,
         None,
     ),
-    (
-        "analyst-preserves-carry-forward-files-in-incremental",
-        ANALYST_MD,
-        None,
-        ['if [ "$INCREMENTAL" != "true" ]; then', "carry-forward source"],
-        None,
-        True,
-        None,
-    ),
 ]
 
 
@@ -357,11 +330,6 @@ class TestYamlAlwaysOn:
         "only if WRITE_YAML=true",
     ]
 
-    def test_analyst_has_no_yaml_gates(self):
-        txt = _read(ANALYST_MD)
-        for phrase in self.GATE_PHRASES:
-            assert phrase not in txt, f"appsec-threat-analyst.md still has gate phrase: {phrase!r}"
-
     def test_finalization_has_no_yaml_gates(self):
         txt = _read(FINAL_MD)
         for phrase in self.GATE_PHRASES:
@@ -373,56 +341,6 @@ class TestYamlAlwaysOn:
         # pattern from the completion summary is gone
         assert "If `WRITE_YAML=true` and `$OUTPUT_DIR/threat-model.yaml` exists" not in txt
 
-    # ----- Bug 3: yaml schema v1 in the agent -----
-
-    V1_SCHEMA_FIELDS = [
-        "schema_version: 1",
-        "commit_sha:",
-        "baseline_ref:",
-        "components:",
-        "changelog:",
-        "threat_ids:",
-        "paths:",
-    ]
-
-    def test_analyst_yaml_schema_is_v1(self):
-        """The schema block in appsec-threat-analyst.md must be v1 — not the
-        old schema. All five new fields must be present in the schema example."""
-        txt = _read(ANALYST_MD)
-        # Find the schema example block
-        start = txt.find("### `threat-model.yaml` schema")
-        assert start != -1, "Schema section not found"
-        # Take the next ~150 lines after the header
-        schema_block = txt[start : start + 6000]
-        for field in self.V1_SCHEMA_FIELDS:
-            assert field in schema_block, f"yaml schema v1 in appsec-threat-analyst.md missing field: {field!r}"
-
-    def test_analyst_schema_is_marked_mandatory(self):
-        """The schema must explicitly say that the new incremental fields
-        are mandatory, not optional — otherwise Claude will 'helpfully' omit
-        them."""
-        txt = _read(ANALYST_MD)
-        assert "mandatory" in txt.lower() and "meta.git.commit_sha" in txt, (
-            "Agent must state that meta.git.commit_sha is mandatory"
-        )
-
-    # ----- Bug 1b: CURRENT_SHA captured on every run -----
-
-    def test_analyst_captures_current_sha_in_pre_phase(self):
-        """Pre-phase step must capture CURRENT_SHA regardless of mode, so that
-        a full run also populates meta.git.commit_sha."""
-        txt = _read(ANALYST_MD)
-        # Anchor on the actual checklist header (not the Dry-Run section that
-        # also contains the phrase "Pre-Phase checklist" in passing).
-        start = txt.find("**Pre-Phase checklist — run in this exact order")
-        assert start != -1, "Real Pre-Phase checklist header not found"
-        pre_phase = txt[start : start + 6000]
-        assert "CURRENT_SHA" in pre_phase, "Pre-phase checklist must capture CURRENT_SHA on every run"
-        assert 'git -C "$REPO_ROOT" rev-parse HEAD' in pre_phase, (
-            "Pre-phase checklist must run git rev-parse HEAD explicitly"
-        )
-
-
 class TestRunHeadlessScript:
     def test_run_headless_parses_no_yaml(self):
         txt = (ROOT / "scripts" / "run-headless.sh").read_text()
@@ -430,11 +348,7 @@ class TestRunHeadlessScript:
         # And it must appear in the flag parsing case statement
         assert "|--no-yaml|" in txt
 
-    def test_run_headless_preserves_check_changes_exit_for_changed_repo(self, tmp_path, monkeypatch):
-        """The headless fast-path must not normalize ``check-changes`` exit 1
-        to exit 0. A security-relevant delta should fall through to Claude
-        instead of fast-aborting as a false no-op.
-        """
+    def test_run_headless_rejects_incremental_before_claude(self, tmp_path, monkeypatch):
         repo = tmp_path / "repo"
         repo.mkdir()
         _init_git_repo(repo)
@@ -501,8 +415,9 @@ class TestRunHeadlessScript:
             text=True,
             timeout=15,
         )
-        assert result.returncode == 42, result.stdout + result.stderr
-        assert "CLAUDE_STUB_INVOKED" in result.stdout
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "--incremental is not supported by the compact runtime" in result.stderr
+        assert "CLAUDE_STUB_INVOKED" not in result.stdout
 
     def test_run_headless_reaps_default_progress_monitor(self, tmp_path, monkeypatch):
         """The default live monitor must not leave ``tail -F`` holding the
@@ -562,7 +477,7 @@ class TestRunHeadlessScript:
         assert tail_started.exists(), "default progress monitor never started"
         assert tail_stopped.read_text() == "stopped"
 
-    def test_run_headless_resume_refuses_active_lock_before_claude(self, tmp_path, monkeypatch):
+    def test_run_headless_rejects_resume_before_lock_handling_or_claude(self, tmp_path, monkeypatch):
         repo = tmp_path / "repo"
         outdir = tmp_path / "out"
         repo.mkdir()
@@ -590,12 +505,12 @@ class TestRunHeadlessScript:
             text=True,
         )
 
-        assert result.returncode == 3, result.stdout + result.stderr
-        assert "Refusing to resume: active run lock" in result.stdout
-        assert "--resume refused before starting Claude Code" in result.stderr
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "--resume is not supported by the compact runtime" in result.stderr
         assert "CLAUDE_STUB_INVOKED" not in result.stdout
+        assert (outdir / ".appsec-lock").exists()
 
-    def test_run_headless_full_resume_conflict_before_claude(self, tmp_path, monkeypatch):
+    def test_run_headless_rejects_resume_even_when_full_is_also_present(self, tmp_path, monkeypatch):
         repo = tmp_path / "repo"
         outdir = tmp_path / "out"
         repo.mkdir()
@@ -623,7 +538,7 @@ class TestRunHeadlessScript:
         )
 
         assert result.returncode == 1, result.stdout + result.stderr
-        assert "--full and --resume cannot be used together" in result.stderr
+        assert "--resume is not supported by the compact runtime" in result.stderr
         assert "CLAUDE_STUB_INVOKED" not in result.stdout
 
     def test_fast_path_exit_capture_is_not_or_true_wrapped(self):
@@ -650,16 +565,6 @@ class TestRunHeadlessScript:
         assert block.find('if [ "$LOCK_EXIT" != "0" ]; then') < block.find(
             "--heartbeat --phase=skill --step=stage1-dispatch"
         )
-
-
-class TestIncrementalDirtySetFiltering:
-    def test_agent_prompts_filter_raw_git_diff_before_dirty_mapping(self):
-        analyst = _read(ANALYST_MD)
-        threats = _read(THREATS_MD)
-        for text in (analyst, threats):
-            assert "RAW_CHANGED_FILES" in text
-            assert "filter-diff-paths" in text
-            assert "Do not use `RAW_CHANGED_FILES`" in text or ("RAW_CHANGED_FILES` only for" in text)
 
 
 # ---------------------------------------------------------------------------
@@ -1102,97 +1007,6 @@ class TestArchitectureAssessmentThemeDiagrams:
         # Authentication mandatory at standard+, forbidden themes checked
         assert "mandatory" in theme_check.lower()
         assert "forbidden" in theme_check.lower()
-
-
-_ORCH_FALLBACK_INVARIANTS = [
-    # case_id, file, any_of, all_of, none_of, case_insensitive, section_anchor
-    (
-        "downgrades-on-missing-commit-sha",
-        ANALYST_MD,
-        None,
-        ["Downgrading to full scan", "Existing changelog[] history will be preserved"],
-        None,
-        False,
-        None,
-    ),
-    (
-        "handles-force-push-baseline-detects-missing-commit",
-        ANALYST_MD,
-        ["git cat-file -e", "no longer exists in the git history"],
-        None,
-        None,
-        False,
-        None,
-    ),
-    (
-        "handles-force-push-baseline-mentions-force-push",
-        ANALYST_MD,
-        ["force-push", "history rewrite"],
-        None,
-        None,
-        True,
-        None,
-    ),
-    # Fallback block scoped via section_anchor — stays out of exit 2 path
-    (
-        "fallback-sets-incremental-false-no-exit-2",
-        ANALYST_MD,
-        None,
-        ["INCREMENTAL=false"],
-        ["  exit 2"],
-        False,
-        "Graceful fallback",
-    ),
-    (
-        "downgrade-is-not-an-error-callout",
-        ANALYST_MD,
-        ["not a failure", "not print this as an error"],
-        ["one-time transition"],
-        None,
-        True,
-        None,
-    ),
-]
-
-
-class TestOrchestratorGracefulFallback:
-    """The orchestrator's safety-net downgrade. Even if the skill layer is
-    bypassed (direct agent test invocation) or the yaml got corrupted, the
-    orchestrator must downgrade to full instead of aborting hard."""
-
-    _params, _ids = _run_doc_table(_ORCH_FALLBACK_INVARIANTS)
-
-    @pytest.mark.parametrize(
-        "file_path,any_of,all_of,none_of,case_insensitive,section_anchor",
-        _params,
-        ids=_ids,
-    )
-    def test_doc_invariant(self, file_path, any_of, all_of, none_of, case_insensitive, section_anchor):
-        _assert_doc_invariant(file_path, any_of, all_of, none_of, case_insensitive, section_anchor)
-
-
-# ---------------------------------------------------------------------------
-# M2 — git-sha baseline resolution
-# ---------------------------------------------------------------------------
-
-
-class TestGitShaBaseline:
-    def test_analyst_uses_yaml_commit_sha_not_head_tilde(self):
-        txt = _read(ANALYST_MD)
-        # The old HEAD~1..HEAD pattern as the only source is gone
-        assert '"$BASELINE_SHA"..HEAD' in txt
-        assert "APPSEC_BASELINE_REF" in txt, "CI override env var must be documented"
-        assert "meta.git.commit_sha" in txt
-
-    def test_analyst_downgrades_instead_of_aborting_on_missing_sha(self):
-        """M2-revision: the old hard abort on missing commit_sha was wrong for
-        legacy users. It is now replaced by a graceful downgrade to full scan.
-        This is verified in depth in TestOrchestratorGracefulFallback; here
-        we just assert the obsolete abort message is gone."""
-        txt = _read(ANALYST_MD)
-        assert "no baseline commit sha available" not in txt, (
-            "Old hard-abort message must be gone — replaced by graceful downgrade"
-        )
 
 
 # ---------------------------------------------------------------------------

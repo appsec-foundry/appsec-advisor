@@ -696,7 +696,7 @@ properties:
           # if they were actions, so the list never read as a followable attack
           # (2026-07-19 user report).
           #
-          # Author contract (see agents/appsec-stride-analyzer.md):
+          # Author contract (see agents/appsec-stride-analyzer-v2.md):
           #   1. The ATTACKER is the subject of every step — never the code.
           #   2. Each step is an action the attacker performs, not a state,
           #      precondition, rationale, or limitation.

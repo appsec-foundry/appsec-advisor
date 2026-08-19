@@ -69,7 +69,7 @@ def test_simple_pair_yields_one_duration():
 def _stride_invoke(model: str) -> str:
     return (
         "2026-06-22T08:20:00Z  [d95edeed]  INFO   AGENT_INVOKE        "
-        f"appsec-advisor:appsec-stride-analyzer        model={model}  "
+        f"appsec-advisor:appsec-stride-analyzer-v2     model={model}  "
         "STRIDE: Express Backend  [COMPONENT_ID=express-backend]"
     )
 

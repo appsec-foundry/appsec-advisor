@@ -11,7 +11,7 @@
 #   - one breach_distance value maps to multiple vektors (see mapping below)
 #
 # Consumers:
-#   - appsec-threat-analyst (emits Vektor cells)
+#   - deterministic report pipeline (emits Vektor cells)
 #   - appsec-architect-reviewer (Check 8 Attack Path — uses vektor as entry label)
 #   - threat-model.md Appendix "Vektor Taxonomy" (renders one section per entry)
 

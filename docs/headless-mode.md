@@ -1,810 +1,201 @@
 # Non-interactive Mode
 
-Use `scripts/run-headless.sh` to run assessments from a shell, CI job, or scheduled task. The wrapper handles authentication, cost and duration limits, and exit codes.
+Use `scripts/run-headless.sh` to run a full threat-model assessment from a
+shell, CI job, or scheduled task. The wrapper owns authentication, host-level
+cost and duration limits, trust preflight, terminal cleanup, and exit codes.
 
-The same command works for local repositories, AppSec-managed scans, and CI pipelines.
+## Supported assessment modes
 
-## Contents
+The headless wrapper uses the compact controller runtime only.
 
-- [Choose a workflow](#decision-matrix)
-- [Minimal CI example](#minimal-example)
-- [Prerequisites](#prerequisites)
-- [Running from an installed plugin](#installed-plugin)
-- [Part A — Non-interactive local & ops runs](#part-a)
-  - [A1. Scan your own repository](#a1-scan-your-own-repository)
-  - [A2. AppSec team scans an external repository](#a2-appsec-team-scans-an-external-repository)
-  - [A3. Cost-limited / time-capped assessments](#a3-cost-limited--time-capped-assessments)
-  - [A4. Requirements compliance check (standalone)](#a4-requirements-compliance-check-standalone)
-  - [A5. Thorough assessment](#a5-full-featured-assessment)
-- [Part B — CI/CD pipelines](#part-b)
-  - [B1. Cadence — when to run in CI](#b1-cadence)
-  - [B2. Cost & duration planning](#b2-cost--duration-planning)
-  - [B3. GitHub Actions](#b3-github-actions)
-  - [B4. GitLab CI](#b4-gitlab-ci)
-  - [B5. Jenkins](#b5-jenkins)
-  - [B6. Pull-request gating (`--pr-mode --fail-on`)](#b6-pr-gating)
-  - [B7. CI cache: `--restore-from` for incremental runs](#b7-ci-cache)
-- [Authentication in non-interactive mode](#authentication)
-- [Security and permissions](#security-and-permissions)
-- [Exit codes and CI semantics](#exit-codes)
-- [Output files](#output-files)
-- [Flag reference](#flag-reference)
-- [Diagnosing a run](#diagnosing-a-run)
-- [Troubleshooting](#troubleshooting)
-- [Deprecated flags](#deprecated-flags)
+| Mode | Command | Behavior |
+|---|---|---|
+| Full | `run-headless.sh` or `--full` | Reassesses the repository and preserves report history. |
+| Rebuild | `--rebuild` | Clears the prior model and cache before a fresh assessment; IDs may change. |
+| Rerender | `--rerender` | Rebuilds the report from validated Stage-1 artifacts without analyzing source again. |
 
-<a id="decision-matrix"></a>
+Incremental, resume, assessment dry-run, PR mode, baseline restore,
+`--max-wall-time`, `--max-cost`, and `APPSEC_LIVE_PHASE=1` are unsupported.
+They fail before output creation, run-state mutation, or model dispatch. Use
+`--full` after source changes, `--rebuild` for a clean restart, and `--rerender`
+only when the existing Stage-1 artifacts remain authoritative.
 
-## Choose a workflow
-
-Each row links to the section covering that scenario.
-
-| Goal | Section |
-|---|---|
-| Scan the repository you are developing | [A1](#a1-scan-your-own-repository) |
-| Scan another team's repository without writing to it | [A2](#a2-appsec-team-scans-an-external-repository) |
-| Set cost and runtime limits | [A3](#a3-cost-limited--time-capped-assessments) |
-| Run a requirements audit | [A4](#a4-requirements-compliance-check-standalone) |
-| Run a thorough assessment | [A5](#a5-full-featured-assessment) |
-| Add a scheduled CI scan | [B3](#b3-github-actions), [B4](#b4-gitlab-ci), or [B5](#b5-jenkins) |
-| Gate a pull request on new findings | [B6](#b6-pr-gating) |
-
-<a id="minimal-example"></a>
-
-## Minimal CI example
-
-This example runs an incremental assessment with cost and duration limits and writes SARIF:
-
-```bash
-./scripts/run-headless.sh \
-  --incremental \
-  --max-duration 1800 \
-  --max-budget 5 \
-  --sarif
-```
-
-- `--incremental` analyzes components affected by recent changes.
-- `--max-duration 1800` stops after 30 minutes.
-- `--max-budget 5` stops when estimated API cost reaches $5.
-- `--sarif` writes `threat-model.sarif.json`.
+`--dry-run` remains available with `--clean-cache` and `--clean-all`; that is a
+deterministic cleanup preview rather than an assessment mode.
 
 ## Prerequisites
 
-1. **Claude Code CLI** installed and on your `PATH` ([installation guide](https://claude.ai/download)).
-2. **Authentication** — one of:
-   - **API key** (per-token billing): `export ANTHROPIC_API_KEY="sk-ant-..."` — recommended for CI. Use `--max-budget` to cap spend.
-   - **Subscription** (Claude Pro / Team / Enterprise): run `claude auth login` first. Works locally; **does not work in a non-TTY CI runner** — see [Authentication in non-interactive mode](#authentication).
-3. The plugin repository cloned locally (or installed into `~/.claude/plugins/`).
+1. Install the Claude Code CLI and place `claude` on `PATH`.
+2. Authenticate with an API key or a stored Claude subscription login.
+3. Clone or install the plugin.
 
-The script auto-detects billing mode from `ANTHROPIC_API_KEY`. When API billing is active without `--max-budget`, a warning is printed.
-
-<a id="installed-plugin"></a>
-
-## Running from an installed plugin
-
-`run-headless.sh` ships inside the plugin, so it runs the same whether you call it from a repository clone or from a plugin installed through a marketplace. Installed plugins live under `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`; invoke the wrapper by its full path:
+With API billing, supply the key through the environment and keep it in the CI
+secret store. The wrapper never needs the key as a command-line argument.
 
 ```bash
-# Locate the installed wrapper, then run it like any other assessment
-RH="$(find ~/.claude/plugins/cache -path '*appsec-advisor*/scripts/run-headless.sh' | head -1)"
-"$RH" --repo /path/to/repo
+export ANTHROPIC_API_KEY="<from-secret-store>"
+./scripts/run-headless.sh --repo /path/to/repository --full
 ```
 
-The script locates its own plugin directory and loads the plugin for the run — no extra setup is needed. There is no `make` shortcut in an installed plugin; always call the script by path. (`CLAUDE_PLUGIN_DIR=<install-path>` pins it explicitly if `find` is ambiguous.)
+An installed wrapper can be invoked from its plugin directory. Set
+`CLAUDE_PLUGIN_DIR` when several installed copies exist and the desired one is
+otherwise ambiguous.
 
-**Repackaged under a different name.** If your organization repackages the plugin under its own name (see [internal packaging](internal-plugin-packaging.md)), the same command applies — the built wrapper already targets your package's command namespace, so no flags change. After a build, a quick `grep create-threat-model <build>/scripts/run-headless.sh` confirms it points at `/<your-name>:create-threat-model`.
+## Common workflows
 
-<a id="part-a"></a>
-
-## Part A — Non-interactive local & ops runs
-
-These examples run from a developer or AppSec shell.
-
-<a id="a1-scan-your-own-repository"></a>
-
-### A1. Scan your own repository
-
-Developer workflow: run the full assessment from your repo root. Output lands in `docs/security/` by default:
+Scan the current repository and write to `docs/security/`:
 
 ```bash
-# Full threat model of the current repo
-cd /path/to/my-project
-/path/to/appsec-advisor/scripts/run-headless.sh
-
-# Add a SARIF export for downstream tooling (YAML is emitted by default)
-/path/to/appsec-advisor/scripts/run-headless.sh --sarif
-
-# Dry-run first to preview scope and estimated complexity
-/path/to/appsec-advisor/scripts/run-headless.sh --dry-run
-
-# Analyze only affected components after code changes
-/path/to/appsec-advisor/scripts/run-headless.sh --incremental
+/path/to/appsec-advisor/scripts/run-headless.sh --full
 ```
 
-Result: `docs/security/threat-model.md` (+ `.yaml`, `.sarif.json` when requested). YAML is always emitted unless `--no-yaml` is passed, because subsequent incremental runs need it as baseline.
-
-<a id="a2-appsec-team-scans-an-external-repository"></a>
-
-### A2. AppSec team scans an external repository
-
-Analyze another repository and write the results to a separate AppSec directory:
+Scan another team's repository without writing report artifacts into it:
 
 ```bash
-# Output in the team's own docs/security/
-./scripts/run-headless.sh --repo /repos/team-frontend
-
-# Output written to a central AppSec directory (target repo stays untouched)
-./scripts/run-headless.sh \
-  --repo /repos/team-frontend \
-  --output /appsec-reports/team-frontend
-
-# Dated output directory for audit trail
-./scripts/run-headless.sh \
-  --repo /repos/team-api \
-  --output /appsec-reports/team-api/2026-04-08 \
-  --sarif
-
-# Incremental review after the team pushed changes
 ./scripts/run-headless.sh \
   --repo /repos/team-api \
   --output /appsec-reports/team-api \
-  --incremental
+  --full --sarif
+```
 
-# Preview scope before committing budget
+Start clean when prior state is not reusable:
+
+```bash
 ./scripts/run-headless.sh \
   --repo /repos/team-api \
   --output /appsec-reports/team-api \
-  --dry-run
+  --rebuild
 ```
 
-When `--output` points outside the target repository, the assessment does not write to that repository.
-
-<a id="a3-cost-limited--time-capped-assessments"></a>
-
-### A3. Cost-limited / time-capped assessments
-
-`--max-budget` limits API spend; `--max-duration` limits wall-clock time. A stopped run can be continued with `--resume`.
+Rerender after a report template, renderer, or QA contract change:
 
 ```bash
-# Preview scope before committing to a full run
-./scripts/run-headless.sh --repo /repos/large-monorepo --dry-run
-
-# Lower analyzer concurrency on a constrained runner; coverage is unchanged
-APPSEC_STRIDE_CONCURRENCY=4 \
-  ./scripts/run-headless.sh --repo /repos/large-monorepo --full
-
-# Cap API spend at $3
-./scripts/run-headless.sh --repo /repos/small-service --max-budget 3
-
-# Cap at $8 with full exports + requirements
-./scripts/run-headless.sh \
-  --repo /repos/large-monorepo \
-  --sarif --requirements \
-  --max-budget 8
-
-# Combined cap: 10 USD or 40 min, whichever hits first
 ./scripts/run-headless.sh \
   --repo /repos/team-api \
   --output /appsec-reports/team-api \
-  --sarif --requirements \
-  --max-budget 10 \
-  --max-duration 2400
+  --rerender
 ```
 
-When either limit is reached, the run writes a checkpoint:
+Rerender is not a source-code rescan. It fails closed if its required
+structured Stage-1 artifacts are missing or invalid.
 
-```bash
-# Budget ran out mid-run — resume from the last checkpoint
-./scripts/run-headless.sh \
-  --repo /repos/large-monorepo \
-  --max-budget 5 \
-  --resume
-```
+## Cost and duration limits
 
-<a id="a4-requirements-compliance-check-standalone"></a>
-
-### A4. Requirements compliance check (standalone)
-
-Run the `audit-security-requirements` skill to verify security requirements against a codebase — without running a full STRIDE analysis:
-
-```bash
-# All requirements
-./scripts/run-headless.sh --audit-requirements
-
-# Filter to a single category
-./scripts/run-headless.sh --audit-requirements --category SEC-AUTH
-
-# Save the report (Markdown + PDF + JSON)
-./scripts/run-headless.sh --audit-requirements --save-report
-
-# External repo
-./scripts/run-headless.sh --audit-requirements --repo /repos/team-frontend --save-report
-
-# Combined: threat model with requirements AND a standalone requirements report
-./scripts/run-headless.sh --repo /repos/team-api --requirements --sarif
-./scripts/run-headless.sh --audit-requirements --repo /repos/team-api --save-report
-```
-
-The command prints each open requirement with evidence and remediation. `--save-report` also writes Markdown, PDF, and JSON reports under `docs/security/`.
-
-<a id="a5-full-featured-assessment"></a>
-
-### A5. Thorough assessment
-
-This example uses thorough depth, Opus reasoning, a custom requirements catalog, and verbose progress:
+Headless limits are enforced outside the model runtime:
 
 ```bash
 ./scripts/run-headless.sh \
-  --repo /repos/team-payment-api \
-  --output /appsec-reports/team-payment-api/2026-04-09 \
-  --assessment-depth thorough \
-  --reasoning-model opus \
-  --sarif \
-  --requirements https://security.example.com/appsec-requirements.yaml \
-  --max-budget 15 \
-  --verbose
+  --repo /repos/team-api \
+  --full \
+  --max-duration 3600 \
+  --max-budget 10
 ```
 
-Thorough and Opus runs cost more than the default. See [cost and duration planning](#b2-cost--duration-planning) and use `--dry-run` before setting the budget for a new repository.
+`--max-duration` uses the host `timeout` command. `--max-budget` applies to API
+billing. An interrupted or capped assessment is not resumable; start a new
+`--full` or `--rebuild` run. Completed component artifacts may remain for
+diagnosis, but they are never silently admitted as a legacy continuation.
 
-Verbose mode streams progress and cost data from `$OUTPUT_DIR/.agent-run.log` and `$OUTPUT_DIR/.hook-events.log`.
+## Scheduled CI example
 
-<a id="part-b"></a>
-
-## Part B — CI/CD pipelines
-
-Everything in Part B assumes non-TTY execution with an `ANTHROPIC_API_KEY` secret. For interactive / local runs, use Part A.
-
-<a id="b1-cadence"></a>
-
-### B1. Cadence — when to run in CI
-
-Full assessments are too slow and expensive for every push. Use narrow incremental checks on pull requests and schedule full scans separately.
-
-| Trigger | Recommendation | Typical mode |
-|---|---|---|
-| Every push on main branch | Not recommended | — |
-| Every pull request | Only with `--pr-mode --incremental --fail-on high` (narrow delta) | PR delta |
-| PR labeled `security-review` | Recommended — manual trigger with full scan | `--full` |
-| Nightly / weekly schedule | Recommended — rolling full scan | `--full --sarif` |
-| Release pipeline | Recommended — blocking on Critical | `--full --fail-on critical` |
-| `workflow_dispatch` (manual) | Recommended — when reviewer requests | any mode |
-
-An incremental run with no relevant changes is inexpensive, but it only establishes that the change introduced no new findings. Keep a periodic full scan.
-
-<a id="b2-cost--duration-planning"></a>
-
-### B2. Cost & duration planning
-
-Clean runs against OWASP Juice Shop measured on 2026-06-23 cost about USD 18 for quick, USD 31 for standard, and USD 50 for thorough. Wall-clock time was 43, 88, and 94 minutes respectively. Repository size, stack, model choice, pricing, and cache state can change those figures substantially.
-
-In the same standard benchmark, full Opus reasoning cost $40.78 compared with $30.01 for `sonnet-economy`. Incremental scans commonly reduce token use by 70–90% when a valid baseline exists.
-
-Use `--dry-run` for a new repository and set `--max-budget` and `--max-duration` on every CI job. The [Threat Modeler cost section](threat-modeler.md#assessment-depth--cost-control) contains the full comparison and model overrides.
-
-#### What the run actually spent
-
-Every run ends with a per-model token and cost breakdown:
-
-```
-  Token usage & cost — Claude Code accounting, same source as /cost
-    model                input  output  cache read  cache write   cost
-    claude-sonnet-4-6   12,043  38,221   1,204,880      420,113  $3.10
-    claude-haiku-4-5       812   2,004      44,120       12,000  $0.31
-    ───────────────────────────────────────────────────────────────────
-    total               12,855  40,225   1,249,000      432,113  $3.41
-```
-
-These figures come from the result object that `claude -p` emits when it finishes: Claude Code's own accounting, the same numbers the interactive `/cost` command reports, and the only readout that includes sub-agent spend. No local pricing table is involved. On a subscription the amount is the API-equivalent list price, not what you are billed.
-
-The result object only exists when the process exits on its own. A `--max-duration` timeout, a `SIGKILL`, or Ctrl-C truncates it, and the wrapper then falls back to the `.hook-events.log` figure and labels it `ESTIMATE`. That fallback covers the host session only, so it is a lower bound — sub-agent spend, which dominates a threat-model run, is missing from it.
-
-<a id="b3-github-actions"></a>
-
-### B3. GitHub Actions
+Run full assessments on a schedule or by explicit manual trigger. Pull-request
+delta mode is not supported.
 
 ```yaml
-# .github/workflows/threat-model.yml
-name: Threat Model Assessment
+name: Threat model
 on:
   schedule:
-    - cron: '0 2 * * 1'       # Weekly Monday 02:00 UTC
-  workflow_dispatch:          # Manual trigger for ad-hoc reviews
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
 
 jobs:
   threat-model:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      security-events: write  # needed for SARIF upload
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0       # incremental/baseline needs history
-
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
-
-      - name: Clone AppSec Plugin
-        run: git clone https://github.com/your-org/appsec-advisor.git /tmp/appsec-advisor
-
-      # Restore prior run artifacts so incremental has a baseline
-      - name: Restore baseline
-        uses: actions/cache@v4
-        with:
-          path: docs/security
-          key: threat-model-${{ github.ref_name }}
-          restore-keys: threat-model-
-
-      - name: Run Threat Model
+          fetch-depth: 0
+      - name: Run full assessment
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          /tmp/appsec-advisor/scripts/run-headless.sh \
-            --incremental \
-            --sarif \
-            --max-duration 2400 \
-            --max-budget 5
-
-      - name: Upload SARIF to Code Scanning
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: docs/security/threat-model.sarif.json
-
-      - name: Upload threat model as artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: threat-model
-          path: docs/security/threat-model.*
+          /path/to/appsec-advisor/scripts/run-headless.sh \
+            --repo "$GITHUB_WORKSPACE" \
+            --output "$GITHUB_WORKSPACE/docs/security" \
+            --full --sarif --max-duration 7200 --max-budget 25
 ```
 
-For a **requirements-only** job (faster, cheaper), swap the main step for:
+Do not execute repository-owned hooks from an untrusted checkout. The default
+`--trust-mode untrusted` preflight rejects repository-resident Claude hooks and
+out-of-repository symlinks, enables strict URL handling, and redacts paths in
+runtime logs. Use `--trust-mode trusted` only for a repository and Claude
+configuration you control.
 
-```yaml
-      - name: Check Requirements
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          /tmp/appsec-advisor/scripts/run-headless.sh \
-            --audit-requirements \
-            --save-report \
-            --max-budget 3
-```
+## Requirements audit
 
-<a id="b4-gitlab-ci"></a>
-
-### B4. GitLab CI
-
-```yaml
-# .gitlab-ci.yml (excerpt)
-threat-model:
-  image: node:20
-  stage: security
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'       # manual trigger
-  variables:
-    GIT_DEPTH: 0
-  cache:
-    key: "threat-model-$CI_COMMIT_REF_SLUG"
-    paths:
-      - docs/security/
-  before_script:
-    - npm install -g @anthropic-ai/claude-code
-    - git clone https://gitlab.example.com/appsec/appsec-advisor.git /tmp/appsec-advisor
-  script:
-    - /tmp/appsec-advisor/scripts/run-headless.sh
-        --incremental
-        --sarif
-        --max-duration 2400
-        --max-budget 5
-  artifacts:
-    when: always
-    paths:
-      - docs/security/threat-model.md
-      - docs/security/threat-model.yaml
-      - docs/security/threat-model.sarif.json
-    reports:
-      sast: docs/security/threat-model.sarif.json   # surfaced in MR security tab
-```
-
-<a id="b5-jenkins"></a>
-
-### B5. Jenkins
-
-```groovy
-pipeline {
-  agent { label 'linux' }
-  triggers { cron('H 2 * * 1') }              // weekly Monday ~02:00
-  environment {
-    ANTHROPIC_API_KEY = credentials('anthropic-api-key')
-  }
-  stages {
-    stage('Install') {
-      steps {
-        sh 'npm install -g @anthropic-ai/claude-code'
-        sh 'git clone https://github.com/your-org/appsec-advisor.git /tmp/appsec-advisor'
-      }
-    }
-    stage('Threat Model') {
-      steps {
-        sh '''
-          /tmp/appsec-advisor/scripts/run-headless.sh \
-            --incremental --sarif \
-            --max-duration 2400 --max-budget 5
-        '''
-      }
-    }
-  }
-  post {
-    always {
-      archiveArtifacts artifacts: 'docs/security/threat-model.*', allowEmptyArchive: true
-      recordIssues(tools: [sarif(pattern: 'docs/security/threat-model.sarif.json')])
-    }
-  }
-}
-```
-
-<a id="b6-pr-gating"></a>
-
-### B6. Pull-request gating (`--pr-mode --fail-on`)
-
-`--pr-mode` produces a focused *delta* report for a merge request: implies `--incremental`, uses `--base <ref>` (set it to the PR's target branch, e.g. `origin/main`) to compute the diff, and emits only threats introduced in the PR.
-
-`--fail-on <level>` turns the result into a build gate — the script exits non-zero when the delta contains at least one threat at or above `<level>` (`critical` | `high` | `medium`).
+The standalone requirements audit remains independent of threat-model runtime
+modes:
 
 ```bash
-./scripts/run-headless.sh \
-  --pr-mode \
-  --base origin/main \
-  --fail-on high \
-  --max-duration 600 \
-  --max-budget 2 \
-  --sarif
+./scripts/run-headless.sh --audit-requirements
+./scripts/run-headless.sh --audit-requirements --category SEC-AUTH --save-report
+./scripts/run-headless.sh --audit-requirements --repo /repos/team-api
 ```
 
-Typical PR pipeline usage:
+## Output
 
-```yaml
-# GitHub Actions — PR-triggered gate
-on:
-  pull_request:
-    branches: [main]
+A successful threat-model run writes `threat-model.md` and, unless disabled,
+`threat-model.yaml`. Optional flags add SARIF, Threat Dragon, HTML, PDF, or
+pentest task exports. The Markdown report is the review surface and YAML is the
+structured source for deterministic exports.
 
-jobs:
-  threat-gate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - run: npm install -g @anthropic-ai/claude-code
-      - run: git clone https://github.com/your-org/appsec-advisor.git /tmp/appsec-advisor
-      - env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          /tmp/appsec-advisor/scripts/run-headless.sh \
-            --pr-mode --base origin/${{ github.base_ref }} \
-            --fail-on high --max-duration 600 --max-budget 2 \
-            --sarif
-```
-
-Choose the threshold based on your review policy and observed false-positive rate.
-
-<a id="b7-ci-cache"></a>
-
-### B7. CI cache: `--restore-from` for incremental runs
-
-Incremental runs need a prior `threat-model.yaml` as baseline. In CI the workspace is clean on every run, so pull the baseline from CI cache or from a previous pipeline's artifacts:
-
-```bash
-# Pull a prior artifact into the expected location before running
-./scripts/run-headless.sh \
-  --restore-from ./prior-run/docs/security/ \
-  --incremental \
-  --sarif \
-  --max-budget 3
-```
-
-You can also restore `docs/security/` with the CI provider's cache, as shown in the GitHub and GitLab examples.
-
-<a id="authentication"></a>
-
-## Authentication in non-interactive mode
-
-Headless runs support API-key and subscription authentication:
-
-| Mode | How to activate | Works in TTY terminal | Works in CI runner (non-TTY) |
-|---|---|---|---|
-| API key (per-token) | `export ANTHROPIC_API_KEY=sk-ant-...` | Yes | **Yes** — per-token billing; use `--max-budget` to cap spend |
-| Subscription — interactive login | `claude auth login` — stores refresh token in `~/.claude/` | Yes | **No** — `auth login` needs a browser |
-| Subscription — OAuth token | `claude setup-token` (once, in a browser) → `export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...` | Yes | **Yes** — non-interactive subscription billing for CI |
-
-Two ways to run unattended:
-
-- **API key** — inject `ANTHROPIC_API_KEY` as a CI secret. Per-token billing, decoupled from any personal quota, rotatable, and `--max-budget` applies.
-- **Subscription OAuth token** — generate once with `claude setup-token` and store the `sk-ant-oat01-…` value as a CI secret exposed as `CLAUDE_CODE_OAUTH_TOKEN`. The run bills against your subscription. Do **not** also set `ANTHROPIC_API_KEY` — it takes precedence and switches billing to per-token.
-
-Interactive `claude auth login` stores a browser-obtained refresh token in `~/.claude/` and is for local/TTY use only.
-
-<a id="security-and-permissions"></a>
-
-## Security and permissions
-
-The headless script bypasses interactive permission prompts and uses a fixed tool allow-list. Only run it against repositories you trust or inside an isolated environment.
-
-**Data sent to the API.** Files read during analysis are sent to the Anthropic API. Review [SECURITY.md](../SECURITY.md#data-sent-to-anthropic-api) before scanning repositories with sensitive content.
-
-**Write scope.** Writes are limited to `$OUTPUT_DIR` (default `<repo>/docs/security/`). Set `--output` to a separate directory to keep the target repository unchanged.
-
-**Credentials.** `ANTHROPIC_API_KEY` is read from the environment and forwarded to the Claude Code CLI; it never lands in any log or output file. No other authentication material is expected.
-
-**Logging.** `.agent-run.log` and `.hook-events.log` include paths, token counts, and cost estimates, but not prompt or response bodies. Restrict access to `$OUTPUT_DIR` if repository paths are sensitive.
-
-**Concurrency.** `.appsec-lock` prevents overlapping runs against the same output directory.
-
-**Claude Code permissions.** Headless runs require the tool allow-list to be written into the target repository before the first run. Use `make setup-target REPO=<path>` (or `/appsec-advisor:check-permissions` inside a CC session) to write `.claude/settings.local.json` into the target repo (pass `SCOPE=project` to write `.claude/settings.json` instead).
-
-<a id="exit-codes"></a>
-
-## Exit codes and CI semantics
-
-The script propagates the `claude` CLI exit code, plus `--fail-on` overlay:
-
-| Code | Meaning | What a CI should do |
-|---|---|---|
-| 0 | Assessment completed; no gate-violating findings | Upload SARIF + artifacts; continue pipeline |
-| 1 | Assessment failed (agent error, lock conflict, missing prerequisites) | Fail build; surface `.agent-run.log` as artifact |
-| 2 | Budget or duration cap reached before completion | Warn; schedule a `--resume` job |
-| 20 | `--fail-on <level>` matched — delta contains findings at or above threshold | Fail build; require manual security review |
-
-In most pipelines, map exit code `1` to pipeline failure and `2` to warning-with-resume; `20` is the expected signal for a working PR gate.
-
-<a id="output-files"></a>
-
-## Output files
-
-All files are written to `$OUTPUT_DIR` (default: `<repo>/docs/security/`):
-
-| File | When created | Purpose |
-|---|---|---|
-| `threat-model.md` | Always | Human-readable threat model report |
-| `threat-model.yaml` | Always (unless `--no-yaml`) | Machine-readable export; baseline for incremental runs |
-| `threat-model.sarif.json` | `--sarif` | SARIF v2.1.0 for code scanning upload |
-| `threat-model.threatdragon.json` | `--threatdragon` | **Alpha.** OWASP Threat Dragon v2 JSON — see [Threat Dragon export](threat-dragon-export.md) |
-| `appsec-requirements-report.md` / `.pdf` / `.json` | `--audit-requirements --save-report` | Requirements compliance report |
-| `.agent-run.log` | Always | Progress and errors |
-| `.hook-events.log` | Always | Token and cost events |
-| `.run-issues.json` | After a run (or regenerated on the failure path) | Structured aggregate of the run's execution issues — see [Diagnosing a run](#diagnosing-a-run) |
-| `.appsec-cache/baseline.json` | Always | Baseline for incremental assessments |
-
-Other dotfiles in the output directory are intermediate run data. Do not publish or edit them.
-
-<a id="flag-reference"></a>
+The wrapper applies the same post-run secret checks, composition backstop,
+cleanup, and fail-closed report gate in every supported assessment mode.
 
 ## Flag reference
 
-This table lists the flags `run-headless.sh` accepts.
-
-### Scope & targeting
-
-| Flag | Purpose |
+| Flag | Meaning |
 |---|---|
-| `--repo <path>` | Repository to analyze (default: current working directory) |
-| `--output <path>` | Output directory (default: `<repo>/docs/security`) |
-| `--incremental` | Analyze only components affected by recent changes and carry forward prior findings |
-| `--full` | Force full scan even when prior output exists |
-| `--base <ref>` | Git ref to diff `HEAD` against (default: commit SHA recorded in prior `threat-model.yaml`) |
-| `--pr-mode` | Focused delta report for MR/PR (implies `--incremental`) |
-| `--dry-run` | Preview scope without running the full pipeline |
-| `--resume` | Continue from last checkpoint |
-| `--restore-from <path>` | Restore `$OUTPUT_DIR` from a prior run before starting |
-| `--context <url\|path>` | Business context for this run: an http(s) URL or a file path, never written to the repository. Applies to a new or rebuilt analysis; refused on a run that cannot read it |
+| `--repo <path>` | Repository to analyze; defaults to the current directory. |
+| `--output <path>` | Output directory; defaults to `<repo>/docs/security`. |
+| `--full` | Force a full assessment and preserve report history. |
+| `--rebuild` | Clear prior model state and start fresh. |
+| `--rerender` | Render validated existing Stage-1 artifacts. |
+| `--assessment-depth quick\|standard\|thorough` | Select analysis depth. |
+| `--reasoning-model <tier>` | Select the centrally routed reasoning tier. |
+| `--sarif` | Write SARIF in addition to Markdown and YAML. |
+| `--threatdragon` | Write the alpha Threat Dragon export. |
+| `--requirements [source]` | Include the requirements catalog. |
+| `--context <source>` | Supply business context as untrusted data for this run. |
+| `--max-duration <seconds>` | Stop the wrapper after the host deadline. |
+| `--max-budget <usd>` | Stop when the API billing budget is reached. |
+| `--trust-mode trusted\|untrusted` | Select repository trust preflight; default is untrusted. |
+| `--clean-cache` | Delete transient cache state and exit. |
+| `--clean-all` | Delete the selected output directory contents after confirmation and exit. |
+| `--dry-run` with cleanup | Preview deterministic cleanup without writing. |
+| `--verbose` | Stream detailed runtime events. |
+| `--quiet` | Suppress live progress. |
 
-### Output formats
+The wrapper accepts removed mode flags only to reject them with a stable,
+actionable error. There is no environment-variable opt-out that restores the
+old producer or orchestration path.
 
-| Flag | Purpose |
-|---|---|
-| `--yaml` | (no-op — YAML is written by default) |
-| `--no-yaml` | Suppress `threat-model.yaml` — **breaks incremental mode** |
-| `--sarif` | Also write `threat-model.sarif.json` (SARIF v2.1.0) |
-| `--threatdragon` | Also write `threat-model.threatdragon.json` (OWASP Threat Dragon v2 — **alpha**, opt-in only) |
-| `--json` | Echo the raw `claude -p` result object on stdout (useful for piping into CI steps). The token and cost breakdown is printed either way — see [B2](#b2-cost--duration-planning) |
-| `--verbose` | Stream real-time hook event log on stderr |
+## Exit behavior and diagnosis
 
-### Analysis scope
+An exit code of `0` means the requested supported operation completed and the
+required report artifact exists. Invalid configuration, unsupported modes,
+missing rerender inputs, trust-preflight findings, validation failures, secret
+gate failures, and incomplete reports exit non-zero.
 
-| Flag | Purpose |
-|---|---|
-| `--assessment-depth quick\|standard\|thorough` | Control coverage, analysis depth, runtime, and cost; see [Threat Modeler](threat-modeler.md#assessment-depth--cost-control) |
-| `--evidence-verifier-cap <N>` | Verify at most `N` non-Critical findings in Phase 10a; Critical findings do not count toward the cap and are selected first. Defaults: 20 quick, 30 standard, 100 thorough. |
-| `--cheap-stride` | Force light-depth STRIDE (flat 8-turn pass, all six categories kept) for the internal tail at any depth; auth, frontend, LLM, internet-exposed, file-upload, realtime, data-store and core-backend (API/gateway) components keep full depth, and so does anything whose reachability is unknown (ci-cd excepted). Auth and the core API are never screened. Screened components are marked as such in the report; a run that screened nothing logs `CHEAP_STRIDE_INERT`. Default: on at quick/standard, off at thorough. |
-| `--no-cheap-stride` | Full STRIDE depth on every selected component, including the provably-internal tail and ci-cd. Use to override the quick/standard default. |
-| `--register-severity-floor critical\|high\|medium\|low\|informational` | Keep only findings at or above this effective severity in the canonical report and its SARIF/pentest-task exports; default `medium` excludes Low and Informational findings |
-| `--requirements [<url>]` | Enable the requirements compliance check during the assessment |
-| `--no-requirements` | Skip requirements even when enabled in config |
-
-### Models
-
-| Flag | Purpose |
-|---|---|
-| `--model <model>` | Session model. **Defaults to `claude-sonnet-4-6` (economy)** — the main cost lever. Override per run with an explicit model id. |
-| `--reasoning-model <tier>` | Reasoning tier for STRIDE/triage/merger: `opus`, `opus-cheap`, `sonnet`, `sonnet-economy` |
-
-The economy default keeps headless runs at roughly half the cost. To raise quality for specific stages, use `--triage-model claude-sonnet-5` or the `APPSEC_RENDERER_MODEL` / `APPSEC_ABUSE_VERIFIER_MODEL` env vars — see *Session Model* in `docs/threat-modeler.md`.
-
-### Gates & caps
-
-| Flag | Purpose |
-|---|---|
-| `--max-duration <sec>` | Abort the run if it exceeds the given wall-clock duration |
-| `--max-budget <usd>` | Stop when estimated cost exceeds this amount |
-| `--fail-on critical\|high\|medium` | Exit code 20 when delta contains threats at or above `<level>` |
-| `--no-qa` | Skip model-based QA; structural validation still runs |
-
-### Housekeeping
-
-| Flag | Purpose |
-|---|---|
-| `--clean-cache` | Delete cache & transient files in `$OUTPUT_DIR`; keeps the threat model. Exits without running. |
-| `--clean-all` | Delete everything in `$OUTPUT_DIR` (interactive confirm unless `--force` / `CI=true`). Exits without running. |
-| `--force` | Skip the interactive confirmation for `--clean-all` |
-
-### Skill selection
-
-| Flag | Purpose |
-|---|---|
-| `--audit-requirements` | Run `audit-security-requirements` instead of the threat model |
-| `--check-requirements` | Deprecated alias for `--audit-requirements` (see [Deprecated flags](#deprecated-flags)) |
-| `--category <filter>` | Category filter for requirements check (e.g. `SEC-AUTH`) |
-| `--save-report` | Save requirements report (Markdown + PDF + JSON) |
-
-<a id="diagnosing-a-run"></a>
-
-## Diagnosing a run
-
-When a run aborts, stalls, or produces a report that looks wrong, this is how
-to find out what happened.
-
-### Run it so you can see the errors
+Use these deterministic status tools against the selected output directory:
 
 ```bash
-make analyze REPO=/path/to/repo
+python3 scripts/appsec_status.py --live --repo /path/to/repository
+python3 scripts/check_state.py /path/to/output
+python3 scripts/render_completion_summary.py \
+  --issues-only --output-dir /path/to/output --repo-root /path/to/repository
 ```
 
-This runs the assessment with live progress and keeps a copy of the output in a
-log file, so you can see errors as they happen and read back over them later.
-Add `BG=1` to run it in the background and keep working in the same shell.
-
-`make analyze` is a shortcut available from a repository checkout. From an
-installed plugin there is no `make`; run the script directly with `--verbose`
-instead — see [Running from an installed plugin](#installed-plugin).
-
-### Let Claude monitor the run for you
-
-A run takes over an hour, so you usually want to start it in the background and
-have Claude Code watch it while you work on something else. Step by step:
-
-1. **Ask Claude to start and monitor it.** Name the repo so it knows which log
-   to read:
-
-   > Analyze /path/to/repo in the background and monitor the run. Tell
-   > me on a phase change, an error, if it stalls, or when it finishes — then
-   > with the Run Issues summary and where the report is.
-
-2. **Claude starts the run** with `make analyze REPO=/path/to/repo BG=1`
-   and begins watching the log. You do not pass `BG=1` or a `tail` command
-   yourself — Claude handles it.
-
-3. **Keep working.** Claude stays quiet and checks the log in the background.
-
-4. **You hear back when it matters** — on each phase change, on an error or a
-   budget/time limit, if the run stalls, and when it finishes, with the Run
-   Issues summary and the path to the report.
-
-If you want progress updates while you are away from the keyboard, add "wake
-yourself up to check even if I go quiet" — otherwise the checks happen the next
-time you message Claude.
-
-### Where to look
-
-Two log files are always written to `$OUTPUT_DIR`, even on failure:
-
-- **`.agent-run.log`** — progress and errors, one phase at a time. This is the
-  first place to check: it shows where the run got to and where it stopped.
-- **`.hook-events.log`** — token and cost events. Check this when a run stops
-  on the budget or time cap (exit code 2) to see what used up the budget.
-
-### The Run Issues summary
-
-Every run collects its execution problems — dropped components, failed gates,
-budget or time limits — into `$OUTPUT_DIR/.run-issues.json`. A normal run prints
-these as a **Run Issues** summary at the end of the report.
-
-If the run is cut short and never reaches that final step, the summary would
-normally be lost. To prevent that, `run-headless.sh` rebuilds it from the logs
-and prints it anyway whenever the run exits with an error. So you get the same
-summary either way.
-
-### Rebuild the summary yourself
-
-For an earlier run, or to see the more detailed developer view:
-
-```bash
-python3 scripts/aggregate_run_issues.py "$OUTPUT_DIR" --depth standard
-python3 scripts/render_completion_summary.py --issues-only \
-  --output-dir "$OUTPUT_DIR" --repo-root /path/to/repo
-```
-
-Add `--plugin-dev` (or set `APPSEC_PLUGIN_DEV=1`) for the fuller breakdown. Use
-the same `--depth` the run used, so the checks match what that run was expected
-to produce.
-
-Those issues are symptoms. The `appsec-run-diagnostician` agent reads them
-against the plugin's own code and separates real plugin defects — each with a
-`file:line` root cause — from environment and expected conditions. It is
-read-only and writes `$OUTPUT_DIR/.run-bugs.json`.
-
-**A headless run never dispatches it.** As a sub-agent it would add its
-wall-clock and tokens to the run's own duration and cost, and headless is where
-those figures are measured. The run instead keeps `.run-issues.json` on disk;
-diagnose it afterwards with `/appsec-advisor:diagnose-run` in an interactive
-session, which asks nothing and reports the same block. An interactive run
-offers the same step after its completion summary.
-
-To re-render the block from an already-diagnosed run:
-
-```bash
-python3 scripts/render_run_diagnosis.py --output-dir "$OUTPUT_DIR"
-```
-
-### Fixing what it found
-
-The `fix-run-issues` skill applies the safe fixes for the recorded issues and
-tells you which ones need manual work. Use it instead of editing the output
-files by hand — see [never hand-edit final reports](../AGENTS.md).
-
-<a id="troubleshooting"></a>
-
-## Troubleshooting
-
-**"No credentials found" / `claude auth login` prompt in CI.**
-The pipeline is trying to use subscription auth with no credentials on the runner. Either set `ANTHROPIC_API_KEY` (per-token billing) or `CLAUDE_CODE_OAUTH_TOKEN` (subscription billing, from `claude setup-token`) as a CI secret and pass it through as env (e.g. `env: CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}` in GitHub Actions). See [Authentication in non-interactive mode](#authentication).
-
-**Incremental scan keeps doing a full scan.**
-Incremental needs `threat-model.yaml` from a prior run as baseline. In CI, the workspace is clean every run — restore the prior `docs/security/` via CI cache or `--restore-from`. See [B7](#b7-ci-cache). Also check that you are not passing `--no-yaml` earlier in the pipeline — that breaks the baseline.
-
-**`.appsec-lock` exists and blocks the run.**
-A previous run is still active, or it crashed and left the lock behind. First check you are using the same `--output` as the interrupted run — `--repo /path/to/repo` defaults to `/path/to/repo/docs/security`, which is not the same as `--output /path/to/repo`. If no run is active, clean the state with `python3 scripts/check_state.py "$OUTPUT_DIR" --clean`.
-
-**Script exits with code 2 "budget exhausted" in the middle of a run.**
-This is expected when the cap is reached. Re-run with `--resume` on the same `$OUTPUT_DIR`, or raise `--max-budget`.
-
-**GitHub Actions: SARIF upload silently skipped.**
-The job needs `permissions: security-events: write` and the workflow needs `contents: read` or `write`. Without those, the upload step is a no-op.
-
-**Relative `--output` path resolves to the plugin directory, not the repo.**
-Pass absolute paths for `--output` when working from a different directory, or run from the repo root. The wrapper resolves relative paths against the current working directory at invocation time, not against `--repo`.
-
-**Run starts, but no progress for >5 minutes.**
-Enable `--verbose` to tail `.agent-run.log` on stderr. The recon scan is typically the longest silent phase on large repos. If it is stuck >10 min, abort with Ctrl-C and rerun with `--dry-run` to check the recon scope.
-
-**"timeout: command not found" warning when `--max-duration` is set.**
-The wrapper uses GNU `timeout` for `--max-duration`. On Alpine, install it with `apk add coreutils` or omit the duration limit.
-
-**PR gate fires on threats that already existed in main.**
-Use `--pr-mode` instead of plain `--incremental`; `--pr-mode` scopes the delta against `--base` and filters out pre-existing findings.
-
-<a id="deprecated-flags"></a>
-
-## Deprecated flags
-
-Still accepted for backward compatibility; will print a deprecation warning:
-
-| Deprecated | Use instead |
-|---|---|
-| `--check-requirements` | `--audit-requirements` |
-| `--with-requirements` | `--requirements` |
-| `--ignore-requirements` | `--no-requirements` |
-| `--requirements-url <url>` | `--requirements <url>` |
+After an interrupted run, inspect the reported issue and start a new `--full`
+or `--rebuild` assessment. Do not copy checkpoint files into a new run or set a
+compatibility environment variable; neither is an admitted runtime path.

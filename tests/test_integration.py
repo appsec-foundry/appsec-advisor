@@ -192,14 +192,6 @@ class TestPhaseGroups:
         content = (PHASES_DIR / filename).read_text()
         assert len(content) > 100, f"Phase group file {filename} appears too short"
 
-    def test_orchestrator_references_phase_files(self):
-        """The orchestrator must reference phase-group files."""
-        orchestrator = AGENTS_DIR / "appsec-threat-analyst.md"
-        content = orchestrator.read_text()
-        for filename in EXPECTED_PHASE_FILES:
-            assert filename in content, f"Orchestrator does not reference {filename}"
-
-
 # ---------------------------------------------------------------------------
 # Skill definitions reference valid agents
 # ---------------------------------------------------------------------------
@@ -212,7 +204,7 @@ class TestPhaseGroups:
 # `phrases` list can hold multiple required substrings.
 _CREATE_THREAT_MODEL_INVARIANTS = [
     # (test-id,              phrases that must all be present,            case-insensitive?)
-    ("references-orchestrator", ["appsec-threat-analyst"], False),
+    ("references-controller", ["orchestration_controller.py"], False),
     ("references-qa-reviewer", ["appsec-qa-reviewer"], False),
     ("supports-dry-run", ["--dry-run", "DRY_RUN"], False),
     ("supports-resume", ["--resume", "checkpoint"], True),

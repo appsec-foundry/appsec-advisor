@@ -1043,7 +1043,7 @@ def render(output_dir: Path, sidecar_path: Path, plan_path: Path) -> Path:
 # generated threat-model.yaml — it writes the create-threat-model *input* channel
 # (docs/known-threats.yaml). A `status: accepted` entry there is re-read on every
 # scan: the STRIDE analyzer skips it (not re-raised) and the orchestrator surfaces
-# it in meta.accepted_risks[] (verified in appsec-stride-analyzer.md / build_*).
+# it in meta.accepted_risks[] (verified in appsec-stride-analyzer-v2.md / build_*).
 # ---------------------------------------------------------------------------
 
 

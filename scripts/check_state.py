@@ -21,7 +21,7 @@ A Claude Code session that crashes mid-assessment leaves:
 The Claude Code UI and ``/appsec-advisor:status`` read these files and, when
 they are present, report the skill as "scanning / in progress". Without
 automatic recovery the user sees a perpetual "scanning" indicator and
-every subsequent ``--incremental`` run bails out on ``LOCK_BLOCKED`` for up
+every subsequent assessment bails out on ``LOCK_BLOCKED`` for up
 to an hour (the ``acquire_lock.py`` stale-mtime window).
 
 This script closes the gap by:
@@ -71,7 +71,7 @@ Exit codes
   0 — clean OR active OR (stale/orphaned AND --clean succeeded)
   1 — stale OR orphaned (report only; no --clean)
   2 — --clean requested but skipped because state is active
-  3 — resume guard refused / usage error / unreadable output dir
+  3 — usage error / unreadable output dir
 """
 
 from __future__ import annotations
@@ -89,7 +89,6 @@ from pathlib import Path
 # without a checkpoint on disk.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from cutoff_cause import detect_abort  # noqa: E402
 
 try:
     import phase_budgets  # type: ignore  # noqa: E402
@@ -116,7 +115,7 @@ _CLEANUP_TARGETS: tuple[str, ...] = (
     CHECKPOINT_FILE,
     PHASE_EPOCH,
     SESSION_MAP,
-    # Stage-1 resume bookkeeping (turn-budget cutoff counter).
+    # Obsolete Stage-1 retry bookkeeping is safe to reap as transient state.
     ".stage1-resume-count",
     # Pre-render gate output. Run 2 (2026-04-25) left these behind when
     # Phase 11 died mid-repair-cycle; without cleanup the next run reads
@@ -257,20 +256,6 @@ def _file_mtime_age(output_dir: Path, name: str) -> float | None:
         return time.time() - p.stat().st_mtime
     except (OSError, FileNotFoundError):
         return None
-
-
-def _checkpoint_has_pending_analysis(checkpoint: dict | None) -> bool:
-    """Return whether a completed checkpoint is an analysis handoff.
-
-    Phase completion is not run completion. These markers intentionally stop
-    between bounded agents and are consumed by the legacy resume runtime.
-    """
-    if not checkpoint or checkpoint.get("status") != "completed":
-        return False
-    phase = checkpoint.get("phase")
-    return (phase == "6" and checkpoint.get("need_boundary_assessment") == "true") or (
-        phase == "7" and checkpoint.get("need_threat_analysis") == "true"
-    )
 
 
 def _resolve_threshold(output_dir: Path, checkpoint: dict | None) -> int:
@@ -479,17 +464,9 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
     Always leaves ``threat-model.*``, ``.appsec-cache/``, ``.fragments/``,
     ``.agent-run.log`` and ``.hook-events.log`` untouched.
 
-    Continuation carve-outs: completed phase 6/7 analysis handoffs and the
-    ``needs_stage2`` state are not crash residue. When Stage 1 finished but
-    Stage 2 never ran (``.appsec-checkpoint`` = ``phase=10b status=completed
-    need_render=true`` and ``threat-model.md`` absent), the checkpoint is the
-    ``need_render`` recovery signal ``--resume`` reads to dispatch Stage 2
-    only. Removing it here would silently destroy recoverable Phase-1–10b work
-    and force a full re-run. We preserve ``.appsec-checkpoint`` while still
-    reaping the stale lock and other residue. ``clean-run-state --force`` still
-    wipes it via its own direct ``rm`` — the state machine is the guarantor of
-    correctness, the skill layer owns the escape hatch (see clean-run-state
-    SKILL.md).
+    Structured Stage-1 artifacts are not cleanup targets and can still support
+    a validated rerender. Checkpoints are transient orchestration state and are
+    removed with other stale state; no compact runtime resumes them.
     """
     report = report if report is not None else classify(output_dir)
     if report["state"] == "active":
@@ -501,16 +478,9 @@ def clean(output_dir: Path, report: dict | None = None) -> dict:
             "state": report["state"],
         }
 
-    preserve_checkpoint = report.get("needs_stage2") or _checkpoint_has_pending_analysis(report.get("checkpoint"))
-    preserve: set[str] = {CHECKPOINT_FILE} if preserve_checkpoint else set()
-
     removed: list[str] = []
     preserved: list[str] = []
     for name in _CLEANUP_TARGETS:
-        if name in preserve:
-            if (output_dir / name).exists():
-                preserved.append(name)
-            continue
         target = output_dir / name
         if target.exists():
             try:
@@ -569,12 +539,13 @@ def _render_text(report: dict, clean_result: dict | None) -> str:
     elif is_residue_branch:
         sub = " — leftover from prior run"
     lines.append(f"{emoji} Assessment state: {state}{sub}")
-    # G-1: surface needs_stage2 prominently so operators don't --rebuild by mistake.
+    # Surface a completed Stage-1 handoff so operators can choose rerender
+    # instead of discarding it with rebuild.
     if report.get("needs_stage2"):
         lines.append("")
         lines.append("⚠ Stage 1 is complete (phase=10b need_render=true) but threat-model.md is missing.")
         lines.append("  Stage 2 (composition) was never dispatched — Phase 1–10b work is still on disk.")
-        lines.append("  → Run  /appsec-advisor:create-threat-model --resume  to dispatch Stage 2 only.")
+        lines.append("  → Run  /appsec-advisor:create-threat-model --rerender to validate and render it.")
         lines.append("  → Running --rebuild will discard all Phase 1–10b results. Use --rebuild --force to confirm.")
     for r in report["reasons"]:
         lines.append(f"    • {r}")
@@ -590,8 +561,6 @@ def _render_text(report: dict, clean_result: dict | None) -> str:
         else:
             lines.append("")
             lines.append("✓ Nothing to clean.")
-        if clean_result.get("preserved"):
-            lines.append(f"✓ Preserved {', '.join(clean_result['preserved'])} for --resume (Stage-1 work recoverable).")
     return "\n".join(lines) + "\n"
 
 
@@ -629,254 +598,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit machine-readable JSON on stdout.",
     )
-    p.add_argument(
-        "--resume-guard",
-        action="store_true",
-        help="Refuse-to-proceed gate for --resume: exits 3 with a "
-        "user-facing error when the checkpoint is stale "
-        "(status in {started, aborted} and older than "
-        "--max-age-seconds).",
-    )
-    p.add_argument(
-        "--max-age-seconds",
-        type=int,
-        default=900,
-        help="Max checkpoint age (seconds) tolerated by --resume-guard "
-        "before the run is classified as stale. Default: 900 (15 min).",
-    )
     return p
-
-
-def _phase_ordinal(phase: object) -> float | None:
-    """Leading numeric of a checkpoint phase label (``2.5``→2.5, ``10b``→10.0).
-
-    Returns None when there is no leading number (e.g. ``?``). Used by the
-    resume guard to decide whether early-phase artifacts should exist yet.
-    """
-    if phase is None:
-        return None
-    num = ""
-    for ch in str(phase).strip():
-        if ch.isdigit() or (ch == "." and "." not in num):
-            num += ch
-        else:
-            break
-    try:
-        return float(num) if num else None
-    except ValueError:
-        return None
-
-
-def _resume_guard_result(output_dir: Path, max_age: int) -> tuple[int, str]:
-    """Classify whether a --resume request should be allowed.
-
-    Returns (exit_code, message). Exit codes:
-      0 — safe to resume (checkpoint absent, or status=completed, or fresh,
-          or lock proves the orchestrator is dead).
-      3 — refuse to resume (active lock, or stale checkpoint and lock cannot
-          prove death).
-    """
-    checkpoint = _read_checkpoint(output_dir)
-    lock = _read_lock(output_dir)
-    if lock is not None:
-        hb_age = lock.get("heartbeat_age")
-        has_hb = hb_age is not None
-        threshold = _resolve_threshold(output_dir, checkpoint)
-        hb_fresh = has_hb and hb_age <= threshold
-        legacy_live = not has_hb and lock.get("alive") is True
-        if hb_fresh or legacy_live:
-            if hb_fresh:
-                signal = f"fresh heartbeat age={int(hb_age or 0)}s threshold={threshold}s"
-            else:
-                signal = f"live PID {lock.get('pid')} (legacy PID-only lock)"
-            return (
-                3,
-                (
-                    f"Refusing to resume: active run lock in {output_dir} "
-                    f"({signal}). Wait for the prior run to finish, use the "
-                    "same --output as the interrupted run, or clean stale state "
-                    "only after verifying no assessment is running."
-                ),
-            )
-
-    # A controller RUN_ABORTED event is an authoritative terminal verdict for
-    # the current run.  A partially written output such as threat-model.yaml
-    # must not turn that verdict into a resumable Stage-2 handoff merely because
-    # the file exists.  detect_abort bounds the event to .scan-start-epoch, so
-    # an older run's append-only log entry cannot block a later run.
-    if detect_abort(output_dir):
-        return (
-            3,
-            "Refusing to resume: the controller stopped at an authoritative "
-            "validation gate (RUN_ABORTED). Start a fresh run after fixing the "
-            "reported cause.",
-        )
-
-    checkpoint_path = output_dir / CHECKPOINT_FILE
-    if not checkpoint_path.is_file():
-        return (
-            0,
-            f"no checkpoint in {output_dir} — nothing to resume; starting "
-            "fresh. If the interrupted run used a different --output, re-run "
-            "--resume with that same path.",
-        )
-    try:
-        age = time.time() - checkpoint_path.stat().st_mtime
-    except OSError:
-        age = float("inf")
-    cp = checkpoint or {}
-    status = cp.get("status", "")
-    phase = cp.get("phase", "?")
-    # Artifact-existence gate (2026-07-14): a checkpoint can outlive the
-    # intermediate files its phases produced — removed by cleanup, or written
-    # to a different OUTPUT_DIR. Resuming then silently re-runs the early phases
-    # and rebuilds the full analyst context on every attempt. The juice-shop
-    # 2026-07-14 loop showed this: checkpoint said phase=2 completed but
-    # .threat-modeling-context.md was gone, so each --resume re-invoked the
-    # context-resolver and stalled, cache_read ballooning 4.5M→9.8M tokens.
-    # When the checkpoint claims Phase 1+ is done but its Phase-1 context file
-    # is missing, resume offers nothing safe — force an honest fresh run.
-    context_md = output_dir / ".threat-modeling-context.md"
-    phase_ord = _phase_ordinal(phase)
-    if str(phase) in {"6", "7"}:
-        stage1a_required = (
-            ".components.json",
-            ".component-inventory-finalization.json",
-            ".data-flows.json",
-            ".trust-boundary-assessment-input.json",
-        )
-        missing_stage1a = [name for name in stage1a_required if not (output_dir / name).is_file()]
-        if missing_stage1a:
-            return (
-                3,
-                "Refusing to resume the trust-boundary handoff: checkpoint "
-                f"phase={phase} but Stage-1a artifacts are missing: {', '.join(missing_stage1a)}.",
-            )
-    if str(phase) == "7" and status == "completed":
-        stage1b_required = (
-            ".trust-boundary-candidates.json",
-            ".trust-boundaries.json",
-            ".trust-boundary-diagnostics.json",
-            ".trust-boundary-coverage.json",
-        )
-        missing_stage1b = [name for name in stage1b_required if not (output_dir / name).is_file()]
-        if missing_stage1b:
-            return (
-                3,
-                "Refusing to skip Stage 1b: phase=7 is completed but required "
-                f"artifacts are missing: {', '.join(missing_stage1b)}.",
-            )
-        try:
-            assessment = json.loads((output_dir / ".trust-boundary-assessment-input.json").read_text(encoding="utf-8"))
-            candidates = json.loads((output_dir / ".trust-boundary-candidates.json").read_text(encoding="utf-8"))
-            coverage = json.loads((output_dir / ".trust-boundary-coverage.json").read_text(encoding="utf-8"))
-            fingerprint_fields = ("component_inventory_fingerprint", "assessment_input_fingerprint")
-            if any(
-                candidates.get(field) != assessment.get(field) or coverage.get(field) != assessment.get(field)
-                for field in fingerprint_fields
-            ):
-                raise ValueError("fingerprint mismatch")
-            if coverage.get("status") != "pass":
-                raise ValueError("coverage status is not pass")
-        except (OSError, json.JSONDecodeError, ValueError) as exc:
-            return (
-                3,
-                f"Refusing to skip Stage 1b: candidate/coverage artifacts are stale or malformed ({exc}).",
-            )
-    # The analyst context cache is read only by the Stage-1 phases (context
-    # resolver, actor discovery, STRIDE analysers + merger). Once Stage 1 is
-    # fully finished — threat-model.yaml on disk — a resume re-enters at
-    # Phase-11 compose/render only (SKILL-impl.md "need_render" state), and none
-    # of the remaining consumers read the cache: appsec-triage-validator.md
-    # explicitly refuses it, and the secarch/ms renderers + compose never
-    # reference it. Requiring the cache there needlessly discards the paid-for
-    # STRIDE + merge + triage work. Before Stage 1 is complete a resume would
-    # re-enter the cache-reading early phases, so the refusal still holds.
-    stage1_complete = (output_dir / "threat-model.yaml").is_file()
-    if phase_ord is not None and phase_ord >= 1 and not context_md.is_file() and not stage1_complete:
-        return (
-            3,
-            (
-                f"Refusing to resume: checkpoint says phase={phase} but "
-                f"{context_md.name} is missing and Stage 1 never produced "
-                "threat-model.yaml — resume cannot skip the early phases and "
-                "would re-run them from scratch (rebuilding the full analyst "
-                "context each attempt). Re-run WITHOUT --resume (auto-cleans "
-                "the stale checkpoint) or use --rebuild for a clean fresh run."
-            ),
-        )
-    if status == "completed" and _checkpoint_has_pending_analysis(cp):
-        return (0, f"checkpoint phase={phase} has pending analysis — safe to resume")
-    if status == "completed":
-        return (0, "checkpoint status=completed — prior run finalized cleanly")
-    if status in ("started", "aborted") and age > max_age:
-        # Dead-PID override: the max-age threshold exists to avoid racing with
-        # a possibly-still-running orchestrator. When the lock proves the prior
-        # process is dead (PID gone AND heartbeat stale, or dead PID on a v1
-        # lock without heartbeat), there is no race left — resume is safe.
-        lock = _read_lock(output_dir)
-        if lock is not None and lock.get("alive") is False:
-            hb_age = lock.get("heartbeat_age")
-            # Phase-aware threshold (M3.6): a Phase-3 dead-lock with a 90 s
-            # stale heartbeat is unambiguously safe to reap; a Phase-10b
-            # dead-lock waits the full triage budget before flipping. Falls
-            # back to the legacy 300 s when phase / depth are missing.
-            hb_stale = hb_age is None or hb_age > _resolve_threshold(output_dir, cp)
-            if hb_stale:
-                return (
-                    0,
-                    (
-                        f"checkpoint phase={phase} status={status} is "
-                        f"{int(age)}s old, but lock PID {lock.get('pid')} "
-                        f"is dead and heartbeat is stale — safe to resume"
-                    ),
-                )
-        return (
-            3,
-            (
-                f"Refusing to resume: checkpoint phase={phase} status={status} "
-                f"is {int(age)}s old (> {max_age}s threshold). The prior run "
-                "likely hung or crashed. Run `/appsec-advisor:clean-run-state` "
-                "and retry with --full or --rebuild."
-            ),
-        )
-    return (0, f"checkpoint phase={phase} status={status} (age {int(age)}s) — OK to resume")
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     out = Path(args.output_dir)
-
-    # --resume-guard is an independent sub-mode: evaluate and return without
-    # touching state. Never mutates files.
-    if args.resume_guard:
-        if not out.is_dir():
-            if args.json:
-                print(json.dumps({"allow": True, "reason": "output dir missing"}))
-            else:
-                print("✓ No prior run state — --resume is allowed.")
-            return 0
-        code, msg = _resume_guard_result(out, args.max_age_seconds)
-        if args.json:
-            print(
-                json.dumps(
-                    {
-                        "allow": code == 0,
-                        "reason": msg,
-                        "exit_code": code,
-                    }
-                )
-            )
-        else:
-            # A code-0 "no checkpoint" result is not a success — the user asked
-            # to resume and there was nothing to resume from. Flag it (⚠) rather
-            # than printing a reassuring green ✓ next to "starting fresh".
-            if code == 0 and msg.startswith("no checkpoint"):
-                marker = "⚠"
-            else:
-                marker = "✓" if code == 0 else "✗"
-            print(f"{marker} {msg}")
-        return code
 
     if not out.is_dir():
         # Missing output dir is effectively "clean" — nothing to report.

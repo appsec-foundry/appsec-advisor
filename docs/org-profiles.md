@@ -108,7 +108,7 @@ Precedence (highest wins):
 3. APPSEC_ADVISOR_ORG_PROFILE / APPSEC_ADVISOR_PRESET / APPSEC_ADVISOR_NO_ORG_PROFILE
 4. --org-profile / --preset / --no-org-profile
 5. values from the selected preset
-6. direct CLI flags (--sarif, --no-requirements, --max-cost, …)
+6. supported direct CLI flags (`--sarif`, `--no-requirements`, …)
 ```
 
 Profile and preset selection happen before preset values are applied. Direct command-line flags always win.

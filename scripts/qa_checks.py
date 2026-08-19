@@ -9900,7 +9900,7 @@ _MD_THREAT_ROW_RE = re.compile(
     # A threat-register ID cell can appear in two canonical forms:
     #   1. `| [F-NNN]` or `| [T-NNN]`  — markdown-link form (older)
     #   2. `| <a id="f-001"></a>F-001` — anchor-tag form (current; see
-    #      appsec-threat-analyst.md "Section 8 layout — ID cell" and
+    #      the report section contract's "Section 8 layout — ID cell" and
     #      phase-group-threats.md). The 2026-04-25 juice-shop Run 4 surfaced
     #      a drift where this regex only matched form 1, so md_threat_count
     #      came out as 0 while yaml had 33 threats — QA flagged it as a

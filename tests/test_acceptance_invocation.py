@@ -28,9 +28,7 @@ def _manifest() -> dict:
 
 def test_the_shipped_manifest_loads_and_defines_the_planned_cohort() -> None:
     members = _manifest()["members"]
-    assert "r10" in members
-    assert sum(name.startswith("ab-baseline-") for name in members) == 3
-    assert sum(name.startswith("ab-context-v2-") for name in members) == 3
+    assert set(members) == {"r10"}
 
 
 def test_r10_pins_the_four_settings_earlier_runs_lost() -> None:
@@ -43,24 +41,6 @@ def test_r10_pins_the_four_settings_earlier_runs_lost() -> None:
     assert line.startswith("scripts/run-headless.sh --repo /repo --output /out/r10")
     assert member["expect"]["skip_abuse_case_verification"] is False
     assert member["expect"]["runtime_generation"] == "context-v2"
-
-
-def test_the_two_ab_arms_differ_only_in_producer_generation() -> None:
-    manifest = _manifest()
-    baseline = cohort.member_of(manifest, "ab-baseline-1")
-    context_v2 = cohort.member_of(manifest, "ab-context-v2-1")
-    assert baseline["flags"] == context_v2["flags"]
-    assert baseline["env"] == {"APPSEC_CONTEXT_V2": "0"}
-    assert context_v2["env"] == {}
-    differing = {key for key in baseline["expect"] if baseline["expect"][key] != context_v2["expect"].get(key)}
-    assert differing == {"runtime_generation"}
-
-
-def test_the_baseline_invocation_carries_its_generation_override() -> None:
-    member = cohort.member_of(_manifest(), "ab-baseline-3")
-    line = cohort.invocation(member, "ab-baseline-3", Path("/repo"), Path("/out"))
-    assert line.startswith("APPSEC_CONTEXT_V2=0 scripts/run-headless.sh")
-    assert "--assessment-depth thorough" in line
 
 
 def test_the_manifest_names_no_machine_specific_path() -> None:

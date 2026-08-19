@@ -48,9 +48,8 @@ Agent lifecycle identity
 
 Why both PreToolUse (AGENT_SPAWN / SCAN_START) and PostToolUse (SCAN_COMPLETE / AGENT_DONE)?
   PostToolUse for the Agent tool only fires in the *outermost* Claude session —
-  the one where the skill runs. Sub-agents spawned from within appsec-threat-analyst
-  (context-resolver, recon-scanner, dep-scanner, stride-analyzer) are invisible to
-  PostToolUse because that hook does not propagate through nested agent sessions.
+  the one where the skill runs. Controller-dispatched semantic agents can share
+  the parent transcript path, so lifecycle identity never comes from that path.
   PreToolUse fires in the session that is *about to call* the tool, which includes
   sub-agent sessions, giving full visibility at dispatch time.
 
@@ -514,11 +513,10 @@ def _write_agent_run(level: str, agent: str, event: str, detail: str) -> None:
 
 # Map subagent_type identifiers to short agent names for .agent-run.log
 _AGENT_SHORT_NAMES = {
-    "appsec-threat-analyst": "threat-analyst",
     "appsec-context-resolver": "context-resolver",
     "appsec-recon-scanner": "recon-scanner",
     "appsec-dep-scanner": "dep-scanner",
-    "appsec-stride-analyzer": "stride-analyzer",
+    "appsec-stride-analyzer-v2": "stride-analyzer-v2",
     "appsec-qa-reviewer": "qa-reviewer",
 }
 
@@ -1327,7 +1325,7 @@ def _write_assessment_summary(sid: str) -> None:
 
             # Collect agent → model from AGENT_SPAWN
             # AGENT_SPAWN lines look like:
-            #   AGENT_SPAWN  appsec-advisor:appsec-threat-analyst  model=sonnet  ...
+            #   AGENT_SPAWN  appsec-advisor:appsec-recon-scanner  model=sonnet  ...
             # The old regex r"(appsec-[\w-]+)" matched the registry prefix
             # `appsec-advisor` instead of the actual agent name after the colon,
             # which caused ASSESSMENT_MODELS to collapse every agent into a

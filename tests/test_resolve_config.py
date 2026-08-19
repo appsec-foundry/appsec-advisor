@@ -1924,30 +1924,13 @@ class TestSummaryActiveOptions:
         assert "abuse-case" not in rows.get("Extras", "")
         assert "abuse-case" not in rows.get("Skips", "")
 
-    def test_parallel_stride_default_on_for_full(self, monkeypatch):
-        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
-        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
+    def test_compact_runtime_uses_bounded_stride_for_full(self):
         rows = dict(rc._summary_active_options(_base_cfg(mode="full", stride_concurrency=5)))
         assert "up to 5 concurrent" in rows["STRIDE disp"]
 
-    def test_parallel_stride_optout(self, monkeypatch):
-        monkeypatch.setenv("APPSEC_PARALLEL_STRIDE", "0")
-        monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(mode="full")))
-        assert "serial inline" in rows["STRIDE disp"]
-
-    def test_live_phase_active(self, monkeypatch):
-        monkeypatch.setenv("APPSEC_PARALLEL_STRIDE", "0")
-        monkeypatch.setenv("APPSEC_LIVE_PHASE", "1")
-        rows = dict(rc._summary_active_options(_base_cfg(mode="incremental")))
-        assert "Live phase" in rows
-        assert "background dispatch" in rows["Live phase"]
-
-    def test_live_phase_inactive_under_parallel(self, monkeypatch):
-        monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
-        monkeypatch.setenv("APPSEC_LIVE_PHASE", "1")
-        rows = dict(rc._summary_active_options(_base_cfg(mode="full")))
-        assert "PARALLEL_STRIDE wins" in rows["Live phase"]
+    def test_parallel_stride_environment_switch_is_absent(self):
+        source = Path(rc.__file__).read_text(encoding="utf-8")
+        assert "APPSEC_PARALLEL_STRIDE" not in source
 
     def test_limits_wall_time_hours_and_cost(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
@@ -2718,72 +2701,23 @@ class TestRunPlanCLI:
 
 
 class TestRuntimeGeneration:
-    def test_run_plan_exposes_legacy_runtime_before_dispatch(self):
-        cfg = _base_cfg(runtime_generation="legacy", runtime_generation_label="legacy (default)")
-        out = rc.render_run_plan(cfg, None, None, "equal")
-        assert "Runtime   : legacy (default)" in out
-
     def test_configuration_summary_exposes_context_v2_runtime(self):
         cfg = _base_cfg(
             runtime_generation="context-v2",
-            runtime_generation_label="context-v2 (default)",
+            runtime_generation_label="context-v2 (single runtime)",
         )
         out = rc.render_configuration_summary(cfg)
-        assert "context-v2 (default)" in out
+        assert "context-v2 (single runtime)" in out
 
-    """context-v2 is the eligible default, mode-restricted, and never repo-selected."""
-
-    @pytest.mark.parametrize("mode", ["full", "rebuild"])
-    def test_default_is_context_v2_for_full_and_rebuild(self, monkeypatch, mode):
-        monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
-        resolved = rc.resolve_runtime_generation(mode)
+    def test_runtime_generation_has_no_legacy_selection(self):
+        resolved = rc.resolve_runtime_generation()
         assert resolved["runtime_generation"] == "context-v2"
-        assert resolved["runtime_generation_label"] == "context-v2 (default)"
+        assert resolved["runtime_generation_label"] == "context-v2 (single runtime)"
         assert resolved["runtime_artifact_schema_versions"] == rc.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS
-
-    @pytest.mark.parametrize("mode", ["full", "rebuild"])
-    def test_env_opt_in_selects_context_v2_for_full_and_rebuild(self, monkeypatch, mode):
-        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
-        resolved = rc.resolve_runtime_generation(mode)
-        assert resolved["runtime_generation"] == "context-v2"
-        assert resolved["runtime_artifact_schema_versions"] == rc.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS
-        assert "APPSEC_CONTEXT_V2=1" in resolved["runtime_generation_label"]
-
-    @pytest.mark.parametrize("mode", ["incremental", "rerender"])
-    def test_unsupported_modes_stay_legacy_despite_opt_in(self, monkeypatch, mode):
-        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
-        resolved = rc.resolve_runtime_generation(mode)
-        assert resolved["runtime_generation"] == "legacy"
-        assert mode in resolved["runtime_generation_label"]
-
-    @pytest.mark.parametrize("mode", ["incremental", "rerender"])
-    def test_unsupported_modes_stay_legacy_by_default(self, monkeypatch, mode):
-        monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
-        resolved = rc.resolve_runtime_generation(mode)
-        assert resolved["runtime_generation"] == "legacy"
-        assert mode in resolved["runtime_generation_label"]
-
-    @pytest.mark.parametrize("value", ["0", "true", "yes", " 1 x"])
-    def test_non_opt_in_override_selects_legacy(self, monkeypatch, value):
-        monkeypatch.setenv("APPSEC_CONTEXT_V2", value)
-        assert rc.resolve_runtime_generation("full")["runtime_generation"] == "legacy"
-
-    def test_zero_override_is_labeled_as_legacy_selection(self, monkeypatch):
-        monkeypatch.setenv("APPSEC_CONTEXT_V2", "0")
-        resolved = rc.resolve_runtime_generation("full")
-        assert resolved["runtime_generation_label"] == "legacy (APPSEC_CONTEXT_V2=0)"
-
-    def test_ineligible_compact_runtime_keeps_legacy_generation(self, monkeypatch):
-        monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
-        resolved = rc.resolve_runtime_generation("full", compact_eligible=False)
-        assert resolved["runtime_generation"] == "legacy"
-        assert resolved["runtime_artifact_schema_versions"] == {}
-        assert "requires the compact runtime" in resolved["runtime_generation_label"]
 
     @pytest.mark.parametrize("flag,value", [("--max-wall-time", "30m"), ("--max-cost", "5")])
-    def test_deadline_guardrail_cannot_persist_context_v2_on_legacy_runtime(self, tmp_path, monkeypatch, flag, value):
+    def test_special_mode_configuration_cannot_select_legacy(self, tmp_path, monkeypatch, flag, value):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         result = subprocess.run(
@@ -2802,12 +2736,18 @@ class TestRuntimeGeneration:
         )
         assert result.returncode == 0
         cfg = json.loads((out_dir / ".skill-config.json").read_text(encoding="utf-8"))
-        assert cfg["runtime_generation"] == "legacy"
-        assert cfg["runtime_artifact_schema_versions"] == {}
+        assert cfg["runtime_generation"] == "context-v2"
+        assert cfg["runtime_artifact_schema_versions"] == rc.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS
+
+    def test_read_only_resolution_does_not_create_output_directory(self, tmp_path):
+        out_dir = tmp_path / "unstarted"
+        cfg = rc.resolve(["--full", "--repo", str(tmp_path), "--output", str(out_dir)], REPO_ROOT, create_output_dir=False)
+
+        assert cfg["output_dir"] == str(out_dir)
+        assert not out_dir.exists()
 
     def test_generation_is_persisted_to_skill_config(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
         out_dir = tmp_path / "out"
         out_dir.mkdir()
         result = subprocess.run(
@@ -2943,10 +2883,7 @@ class TestBusinessContext:
 
         assert note and "changed" in note
 
-    def test_context_is_refused_when_the_producer_cannot_read_it(self, tmp_path):
-        """Only context-v2 reads the supplied document. On every other producer
-        the run-only file is written and never read, so the scan would silently
-        ignore the context the user passed."""
+    def test_context_configuration_never_selects_another_producer(self, tmp_path):
         source = tmp_path / "context.md"
         source.write_text("Checkout handles card data.\n", encoding="utf-8")
         out = tmp_path / "out"
@@ -2954,17 +2891,10 @@ class TestBusinessContext:
         (out / "threat-model.yaml").write_text("meta:\n  assessment_depth: standard\n", encoding="utf-8")
         base = ["--repo", str(tmp_path), "--output", str(out), "--context", str(source)]
 
-        with pytest.raises(SystemExit, match="no effect on this run"):
-            rc.resolve([*base, "--incremental"], REPO_ROOT)
+        cfg = rc.resolve([*base, "--incremental"], REPO_ROOT)
 
-    def test_context_is_refused_when_the_compact_runtime_is_opted_out(self, tmp_path, monkeypatch):
-        source = tmp_path / "context.md"
-        source.write_text("Checkout handles card data.\n", encoding="utf-8")
-        monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "0")
-        base = ["--repo", str(tmp_path), "--output", str(tmp_path / "out"), "--context", str(source)]
-
-        with pytest.raises(SystemExit, match="no effect on this run"):
-            rc.resolve(base, REPO_ROOT)
+        assert cfg["runtime_generation"] == "context-v2"
+        assert cfg["business_context_source"] == str(source.resolve())
 
     def test_context_survives_a_full_run(self, tmp_path):
         source = tmp_path / "context.md"

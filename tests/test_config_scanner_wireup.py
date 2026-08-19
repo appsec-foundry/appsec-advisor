@@ -176,9 +176,9 @@ class TestSpecIntegration:
         assert "$CONFIG_SCANNER_MODEL" in text, "Phase 2.5 dispatch must thread $CONFIG_SCANNER_MODEL"
         assert ".config-scan-findings.json" in text, "Phase 2.5 must reference the output filename"
 
-    def test_threat_analyst_references_phase_2_5(self):
-        text = (ROOT / "agents" / "appsec-threat-analyst.md").read_text()
-        assert "Phase 2.5" in text, "appsec-threat-analyst.md must reference Phase 2.5 in its process flow"
+    def test_controller_routes_the_config_scanner(self):
+        text = (ROOT / "scripts" / "orchestration_controller.py").read_text()
+        assert '"agent": "appsec-config-scanner"' in text
 
     def test_agents_md_lists_phase_2_5(self):
         text = (ROOT / "AGENTS.md").read_text()

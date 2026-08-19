@@ -215,7 +215,7 @@ QUICK_STRIDE_PROFILE = {
     #     per STRIDE category per component.
     #     CRITICAL-SAFE: the analyzer never
     #     drops a Critical to honour this cap
-    #     — see appsec-stride-analyzer.md
+    #     — see appsec-stride-analyzer-v2.md
     #     Quick-mode table exception.)
     "skip_code_examples": False,  # C (R9 — was True; flipped 2026-05.
     #     User feedback: mitigations without
@@ -494,50 +494,17 @@ CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS = {
 }
 
 
-def compact_runtime_eligible(cfg: dict) -> bool:
-    """Return whether this invocation can use the compact top-level runtime."""
-    return (
-        os.environ.get("APPSEC_THIN_ORCHESTRATOR") != "0"
-        and not cfg.get("dry_run")
-        and not cfg.get("resume")
-        and not cfg.get("max_wall_time_seconds")
-        and not cfg.get("max_cost_usd")
-        and os.environ.get("APPSEC_LIVE_PHASE") != "1"
-    )
+def resolve_runtime_generation() -> dict:
+    """Return the sole producer generation for every new invocation.
 
-
-def resolve_runtime_generation(mode: str, *, compact_eligible: bool = True) -> dict:
-    """Select the producer generation for a NEW invocation.
-
-    Context-v2 is the default for compact full and rebuild runs. The operator
-    may select the legacy producer with ``APPSEC_CONTEXT_V2=0``; repository
-    content never reaches this decision. Special paths that retain the legacy
-    top-level runtime must also persist the legacy producer generation.
+    Runtime support is decided by the controller before it mutates run state.
+    Persisting one generation even for a rejected configuration makes it
+    impossible for an environment override or a special mode to revive the
+    removed producer.
     """
-    override = os.environ.get("APPSEC_CONTEXT_V2", "").strip()
-    if override not in ("", "1"):
-        return {
-            "runtime_generation": "legacy",
-            "runtime_generation_label": f"legacy (APPSEC_CONTEXT_V2={override or '0'})",
-            "runtime_artifact_schema_versions": {},
-        }
-    if mode not in ("full", "rebuild"):
-        return {
-            "runtime_generation": "legacy",
-            "runtime_generation_label": f"legacy (context-v2 not supported for {mode})",
-            "runtime_artifact_schema_versions": {},
-        }
-    if not compact_eligible:
-        return {
-            "runtime_generation": "legacy",
-            "runtime_generation_label": "legacy (context-v2 requires the compact runtime)",
-            "runtime_artifact_schema_versions": {},
-        }
     return {
         "runtime_generation": "context-v2",
-        "runtime_generation_label": (
-            "context-v2 (APPSEC_CONTEXT_V2=1)" if override == "1" else "context-v2 (default)"
-        ),
+        "runtime_generation_label": "context-v2 (single runtime)",
         "runtime_artifact_schema_versions": dict(CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS),
     }
 
@@ -1049,7 +1016,7 @@ def resolve_stride_profile(reasoning_mode: str, depth: str, stride_cap: int | No
     component. The default (None) preserves the documented "standard =
     full STRIDE, reduction opt-in only" invariant. CRITICAL-SAFE: the
     analyzer never drops a Critical to honour the cap (see
-    ``agents/appsec-stride-analyzer.md`` cap table). The cap is key-gated
+    ``agents/appsec-stride-analyzer-v2.md`` cap table). The cap is key-gated
     in the analyzer — it activates whenever ``max_threats_per_category``
     is present in the profile, independent of the label.
     """
@@ -1173,7 +1140,7 @@ def resolve_architect_review(ns: argparse.Namespace, depth: str, dry_run: bool) 
     return {"architect_review": True, "architect_model": model, "architect_label": label}
 
 
-def resolve_paths(ns: argparse.Namespace, dry_run: bool) -> dict:
+def resolve_paths(ns: argparse.Namespace, dry_run: bool, *, create_output_dir: bool = True) -> dict:
     """Resolve REPO_ROOT (via git rev-parse) and OUTPUT_DIR.
 
     In dry-run mode, OUTPUT_DIR is forced to a temp directory regardless
@@ -1206,16 +1173,21 @@ def resolve_paths(ns: argparse.Namespace, dry_run: bool) -> dict:
         except (OSError, subprocess.SubprocessError):
             repo_root = repo_in
 
-    if dry_run:
+    if dry_run and create_output_dir:
         import tempfile
 
         output_dir = Path(tempfile.mkdtemp(prefix="appsec-dry-run-"))
+    elif dry_run:
+        import tempfile
+
+        output_dir = Path(tempfile.gettempdir()) / "appsec-dry-run-unstarted"
     elif ns.output:
         output_dir = Path(ns.output).resolve()
     else:
         output_dir = repo_root / "docs" / "security"
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if create_output_dir:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     output_outside_repo = not _is_within(output_dir, repo_root)
 
@@ -2052,7 +2024,7 @@ def build_parser() -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-def resolve(argv: list[str], plugin_root: Path) -> dict:
+def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = True) -> dict:
     parser = build_parser()
     ns = parser.parse_args(argv)
 
@@ -2179,7 +2151,7 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     else:
         cfg["skip_attack_walkthroughs_label"] = "authored (LLM)"
     cfg.update(resolve_abuse_case_verification(ns, depth_info["assessment_depth"]))
-    cfg.update(resolve_paths(ns, ns.dry_run))
+    cfg.update(resolve_paths(ns, ns.dry_run, create_output_dir=create_output_dir))
     # Paths are consumed as data by resolve_abuse_cases.py, which constrains
     # them to REPO_ROOT before reading. Never interpolate these values in Bash.
     cfg["abuse_case_files"] = list(ns.abuse_case_file or [])
@@ -2230,24 +2202,9 @@ def resolve(argv: list[str], plugin_root: Path) -> dict:
     # explicitly toggled by the user.
     cfg.update(_apply_org_profile(ns, cfg, plugin_root))
 
-    # Select the producer only after CLI and organization guardrails have
-    # resolved. Context-v2 executes inside the compact top-level runtime; a
-    # deadline, cost cap, live-phase run, or explicit compact-runtime opt-out
-    # retains both the legacy runtime and the legacy producer generation.
-    cfg.update(resolve_runtime_generation(cfg["mode"], compact_eligible=compact_runtime_eligible(cfg)))
-
-    # Only the context-v2 producer reads a supplied document: it is the one
-    # that builds the context artifact from `.business-context-input.md`. On
-    # every other producer the file is written and never read, so refuse the
-    # combination instead of running a scan the context never reaches.
-    if cfg.get("business_context_source") and cfg["runtime_generation"] != "context-v2":
-        raise SystemExit(
-            "Error: --context has no effect on this run.\n"
-            f"  This run resolved to {cfg['runtime_generation_label']}, and only the\n"
-            "  context-v2 producer reads the supplied document.\n"
-            "  Run --full --context <url|path> to apply it, or write the context to\n"
-            "  docs/business-context.md, which every producer reads."
-        )
+    # There is one producer generation. The controller separately rejects
+    # modes for which that runtime has no safe compact implementation.
+    cfg.update(resolve_runtime_generation())
 
     # Opus ceiling — MUST be the last model step. Sourced from (CLI --no-opus)
     # OR (env APPSEC_DISABLE_OPUS) OR (org-profile policy.disable_opus, merged
@@ -3368,8 +3325,7 @@ def _format_runtime_generation(cfg: dict) -> str:
     label = cfg.get("runtime_generation_label")
     if isinstance(label, str) and label.strip():
         return label.strip()
-    generation = cfg.get("runtime_generation") or "legacy"
-    return "context-v2" if generation == "context-v2" else "legacy (default)"
+    return str(cfg.get("runtime_generation") or "context-v2")
 
 
 def _format_target_scope(cfg: dict) -> str:
@@ -3530,46 +3486,16 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
     if not sp_label.startswith("full"):
         rows.append(("STRIDE", sp_label))
 
-    # Full-M1 parallel-STRIDE opt-in surfacing. Mirror the exact skill-Bash
-    # resolution (SKILL-impl.md "Configuration Resolution"): env-gated, only
-    # honoured for from-scratch runs (full/rebuild). Surface the requested-but-
-    # inactive case too, so a user who set the env var on an incremental run
-    # sees why no per-component fan-out happened.
-    # Parallel STRIDE is DEFAULT-ON for full/rebuild; opt-OUT via
-    # APPSEC_PARALLEL_STRIDE=0 (mirror the skill resolution at SKILL-impl.md
-    # "Configuration Resolution"). Incremental/rerender never parallelise.
-    _ps_optout = os.environ.get("APPSEC_PARALLEL_STRIDE") == "0"
-    parallel_active = cfg.get("mode") in ("full", "rebuild") and not _ps_optout
+    # The compact full runtime always uses controller-owned bounded waves.
+    # Unsupported modes are rejected by the controller before this plan is
+    # actionable, so no compatibility opt-out or serial producer path exists.
     if cfg.get("mode") in ("full", "rebuild"):
-        if parallel_active:
-            rows.append(
-                (
-                    "STRIDE disp",
-                    f"bounded waves (up to {cfg.get('stride_concurrency', STRIDE_DISPATCH_CONCURRENCY)} concurrent; Level-0)",
-                )
+        rows.append(
+            (
+                "STRIDE disp",
+                f"bounded waves (up to {cfg.get('stride_concurrency', STRIDE_DISPATCH_CONCURRENCY)} concurrent; Level-0)",
             )
-        else:
-            rows.append(
-                (
-                    "STRIDE disp",
-                    "serial inline (disabled via APPSEC_PARALLEL_STRIDE=0)",
-                )
-            )
-
-    # Live-phase console surfacing (opt-in, experimental). Mirror the skill-Bash
-    # resolution: honoured only when PARALLEL_STRIDE is NOT active (that path has
-    # its own per-component rows). Surface the inactive case so a user who set the
-    # env var alongside parallel-stride sees why no background dispatch happened.
-    if os.environ.get("APPSEC_LIVE_PHASE") == "1":
-        if not parallel_active:
-            rows.append(("Live phase", "on (background dispatch + console phase)"))
-        else:
-            rows.append(
-                (
-                    "Live phase",
-                    "requested — inactive (PARALLEL_STRIDE wins)",
-                )
-            )
+        )
 
     # M11/M9 — wall-time + cost deadline display (existing behaviour).
     deadline_parts = []

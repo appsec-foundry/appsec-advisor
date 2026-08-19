@@ -62,6 +62,9 @@ Do not read an unselected lens. If its CWE is absent, read the plugin-owned full
 Use `REPO_ROOT` for `primary`. Resolve related slices only through
 `REPOSITORY_REGISTRY_PATH`; its IDs must match the bundle. Missing, extra,
 stale, or invalid data blocks. Never read `.stride-repository-registry.json`.
+Related context cannot prove a finding or justify CVSS. A cross-repository
+mismatch requires a target-side probe; emit only when target source or the probe
+proves the vulnerable mechanism.
 Batch by root, path, and range; read each `path_routing.focus_paths` slice once.
 Omitted focus paths authorize no read.
 
@@ -205,12 +208,8 @@ unscored.
 
 ## Final output
 
-Overwrite the seed with the version-1 `schemas/stride.schema.yaml` shape. The
-top-level object contains component identity, `started_at`, `analyzed_at`,
-`partial`, `seed_only:false`, `skipped_categories`, applied compliance scope,
-resolved priors, bounded discovery escapes, and `threats`.
-
-Each threat uses these exact fields:
+Overwrite the seed with the version-1 `schemas/stride.schema.yaml` shape and
+these exact threat fields:
 
 ```json
 {

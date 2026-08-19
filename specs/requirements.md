@@ -26,7 +26,7 @@ services, unauthenticated internal paths, and design weaknesses with no
 vulnerable line to point at. It sits next to code scanners rather than replacing
 them, and the report is review input, never a release verdict.
 
-**Applies to:** `agents/appsec-stride-analyzer.md`, `docs/threat-modeler.md`
+**Applies to:** `agents/appsec-stride-analyzer-v2.md`, `docs/threat-modeler.md`
 **Source:** `README.md` → Why this isn't a SAST tool, Threat Modeler
 **Guard:** — (no guard written)
 
@@ -124,7 +124,7 @@ which the report carries as requiring validation and never scores; only target
 evidence turns it into a finding. A walkthrough, solution guide, or bundled
 vulnerability write-up never seeds a finding.
 
-**Applies to:** `scripts/merge_threats.py`, `agents/appsec-stride-analyzer.md`,
+**Applies to:** `scripts/merge_threats.py`, `agents/appsec-stride-analyzer-v2.md`,
 `schemas/related-repos.schema.yaml`, `scripts/slice_cross_repo_for_component.py`
 **Source:** `AGENTS.md`, decision `FE-4`
 **Guard:** `test_cross_repo_mismatch_requires_target_evidence`
@@ -167,7 +167,7 @@ assigned contracted artifacts.
 
 **Applies to:** `scripts/orchestration_controller.py`, `agents/**`
 **Source:** `README.md` → Project structure, principle `P-2`, decisions `OR-1`, `OR-2`
-**Guard:** `test_generation_coexistence_pins_recursive_and_edit_tool_owners`
+**Guard:** `test_single_runtime_forbids_recursive_agents_and_pins_edit_owners`
 
 ### REQ-ROL-002 — What can be derived is not written by a model
 

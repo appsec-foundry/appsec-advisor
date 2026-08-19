@@ -9,8 +9,7 @@ model parameters. Touching any of:
 
     * scripts/resolve_config.py                  (source of truth)
     * skills/create-threat-model/SKILL.md        (must mention the flag + delegate)
-    * agents/appsec-threat-analyst.md            (must accept the three vars)
-    * agents/phases/phase-group-threats.md       (must thread the vars to dispatches)
+    * scripts/orchestration_controller.py        (must own role routing)
     * AGENTS.md                                  (must describe flag + opus-cheap)
 
 without updating the others will surface here.
@@ -27,11 +26,12 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 SKILL_MD = ROOT / "skills" / "create-threat-model" / "SKILL.md"
-SKILL_IMPL_MD = ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
+SKILL_FULL_RUNTIME_MD = ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
+SKILL_RERENDER_RUNTIME_MD = ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
+HELP_TXT = ROOT / "skills" / "create-threat-model" / "HELP.txt"
 AGENTS_MD = ROOT / "AGENTS.md"
-THREAT_ANALYST_MD = ROOT / "agents" / "appsec-threat-analyst.md"
-PHASE_GROUP_THREATS_MD = ROOT / "agents" / "phases" / "phase-group-threats.md"
 RESOLVE_CONFIG_PY = ROOT / "scripts" / "resolve_config.py"
+CONTROLLER_PY = ROOT / "scripts" / "orchestration_controller.py"
 
 
 def _load_resolver():
@@ -47,11 +47,11 @@ def _load_resolver():
 
 @pytest.fixture(scope="module")
 def skill_text() -> str:
-    """Concatenated text of SKILL.md (router stub) + SKILL-impl.md
-    (authoritative implementation). The skill's actual flag handling,
-    env-var extraction, and orchestrator handoff live in SKILL-impl.md
-    since the M2.x split — SKILL.md is a thin Case 1/Case 2 router."""
-    return SKILL_MD.read_text() + "\n" + SKILL_IMPL_MD.read_text()
+    """Concatenated live routing, runtime, and help surfaces."""
+    return "\n".join(
+        path.read_text()
+        for path in (SKILL_MD, SKILL_FULL_RUNTIME_MD, SKILL_RERENDER_RUNTIME_MD, HELP_TXT)
+    )
 
 
 @pytest.fixture(scope="module")
@@ -69,10 +69,8 @@ class TestFlagDocumented:
     def test_flag_appears_in_skill_md(self, skill_text):
         assert "--reasoning-model" in skill_text, "SKILL.md / SKILL-impl.md must document --reasoning-model"
 
-    def test_skill_delegates_to_resolve_config(self, skill_text):
-        assert "resolve_config.py" in skill_text, (
-            "SKILL must delegate flag resolution to resolve_config.py (check SKILL-impl.md for the actual delegation)"
-        )
+    def test_controller_delegates_to_resolve_config(self):
+        assert "import resolve_config" in CONTROLLER_PY.read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -299,48 +297,28 @@ class TestPerStageModelFlags:
 
 class TestOrchestratorHandoff:
     def test_skill_passes_all_three_vars_to_orchestrator(self, skill_text):
-        """The Stage 1 invocation must pass all three model variables to the
-        orchestrator so it can thread them through Agent dispatches.
-        The handoff lives in SKILL-impl.md (M2.x split) — the fixture
-        concatenates both router + impl, so this test catches the var in
-        either file."""
+        """The live runtime must bind all three centrally resolved model values."""
         for var in ("STRIDE_MODEL", "TRIAGE_MODEL", "MERGER_MODEL"):
             assert var in skill_text, f"SKILL Stage 1 handoff must pass {var} to the orchestrator"
 
-    def test_orchestrator_accepts_all_three_vars(self):
-        text = THREAT_ANALYST_MD.read_text()
-        for var in ("STRIDE_MODEL", "TRIAGE_MODEL", "MERGER_MODEL"):
-            assert var in text, f"appsec-threat-analyst.md must reference {var} as an input variable"
+    def test_controller_accepts_all_three_config_keys(self):
+        text = CONTROLLER_PY.read_text()
+        for key in ("stride_model", "triage_model", "merger_model"):
+            assert f'"{key}"' in text
 
 
 class TestDispatchThreading:
     def test_stride_dispatch_uses_stride_model(self):
-        text = PHASE_GROUP_THREATS_MD.read_text()
-        assert "$STRIDE_MODEL" in text, (
-            "phase-group-threats.md STRIDE dispatch must pass $STRIDE_MODEL as Agent model parameter"
-        )
+        text = CONTROLLER_PY.read_text()
+        assert '"stride_analyzer": "stride_model"' in text
 
     def test_triage_dispatch_uses_triage_model(self):
-        text = PHASE_GROUP_THREATS_MD.read_text()
-        m = re.search(
-            r"subagent_type:\s*\"appsec-advisor:appsec-triage-validator\".*?(?=\n###|\n##)",
-            text,
-            re.DOTALL,
-        )
-        assert m, "Triage-validator dispatch block not found"
-        assert "$TRIAGE_MODEL" in m.group(0) or "TRIAGE_MODEL" in m.group(0), (
-            "Triage-validator dispatch must pass $TRIAGE_MODEL"
-        )
+        text = CONTROLLER_PY.read_text()
+        assert '"triage_validator": "triage_model"' in text
 
     def test_merger_dispatch_uses_merger_model(self):
-        text = PHASE_GROUP_THREATS_MD.read_text()
-        m = re.search(
-            r"subagent_type:\s*\"appsec-advisor:appsec-threat-merger\".*?(?=\n###|\n##)",
-            text,
-            re.DOTALL,
-        )
-        assert m, "Threat-merger dispatch block not found"
-        assert "$MERGER_MODEL" in m.group(0), "Threat-merger dispatch must pass $MERGER_MODEL"
+        text = CONTROLLER_PY.read_text()
+        assert '"threat_merger": "merger_model"' in text
 
 
 class TestAgentsMdDocumentsFlag:

@@ -1,8 +1,7 @@
 # Compact Rerender Runtime
 
-Only for a non-dry `--rerender` invocation without resume, deadline/cost
-watchdogs, or `APPSEC_LIVE_PHASE=1`. It replaces the legacy preflight and
-Stage-1 prefix with a deterministic artifact check and starts at Stage 2.
+Only for `--rerender`. It verifies the existing Stage-1 artifacts and starts at
+Stage 2; incompatible options are rejected before run-state mutation.
 
 ## 1. Prepare
 
@@ -72,7 +71,6 @@ QA_DEPTH = qa_depth
 VERBOSE_REPORT = verbose
 QUIET = quiet
 TRACING = tracing
-PR_MODE = pr_mode
 SLUG = slug
 TOTAL_STAGES = total_stages
 PLUGIN_VERSION = plugin_version
@@ -86,7 +84,6 @@ INVOCATION_ARGS = invocation_args
 DRY_RUN = false
 RERENDER = true
 RESUME = false
-INCREMENTAL = false
 REBUILD = false
 MODE = rerender
 ```
@@ -115,9 +112,8 @@ Emit this handoff banner:
 ▶ Stage 2/<TOTAL_STAGES> — Report Rendering starting
 ```
 
-Read `SKILL-impl.md` only from `## Stage 2 - Report Rendering` through
-`### Handling turn-budget cut-offs`, then follow the Stage-2 instructions. Do
-not read the legacy preflight, rerender mode file, or Stages 1a–1d.
+Read `SKILL-thin-stage2.md` in full and follow it. Do not load any Stage-1
+runtime.
 
 After the renderer returns, and again before the completion summary, run:
 

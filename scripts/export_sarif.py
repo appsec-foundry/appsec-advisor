@@ -4,9 +4,9 @@ export_sarif.py — generate `threat-model.sarif.json` (SARIF v2.1.0)
 deterministically from a `threat-model.yaml` export.
 
 Replaces the previous LLM-authored SARIF write in
-`agents/appsec-threat-analyst.md`. The yaml is the single source of truth;
+`schemas/threat-model.output.schema.yaml`. The yaml is the single source of truth;
 the SARIF shape and CVSS / mitigation / location handling rules are pinned
-in `agents/appsec-threat-analyst.md:524-608` and reproduced verbatim here.
+in the output schema and reproduced verbatim here.
 
 CLI:
 

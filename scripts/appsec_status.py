@@ -397,27 +397,15 @@ def _cutoff_verdict(output_dir: Path, *, live_snapshot: dict | None = None) -> d
         )
         default = "budget" if render_ready else "interrupted"
         kind, block = cutoff_cause.cause_for(output_dir, default)
-        generation = None
-        try:
-            generation = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8")).get(
-                "runtime_generation"
-            )
-        except (OSError, ValueError):
-            pass
-        return {"kind": kind, "block": block, "runtime_generation": generation}
+        return {"kind": kind, "block": block}
     except Exception:
         return None
 
 
 def _render_cutoff(verdict: dict) -> str:
-    """One-line lead + the single-sourced Cause block + the resume hint."""
+    """One-line lead, the cause block, and the compact-runtime restart hint."""
     lead = _CUTOFF_ONELINE.get(verdict["kind"], "run ended without producing a threat model.")
-    if verdict.get("runtime_generation") == "context-v2":
-        recovery = (
-            "  → Restart: start a fresh context-v2 session and repeat the original --full/--rebuild invocation.\n"
-        )
-    else:
-        recovery = "  → Resume:  /appsec-advisor:create-threat-model --resume\n"
+    recovery = "  → Restart: repeat the original --full/--rebuild invocation in a fresh session.\n"
     return (
         f"⚠ Last run incomplete — no threat-model.md was produced.\n  Cause: {lead}\n{recovery}\n{verdict['block']}\n"
     )

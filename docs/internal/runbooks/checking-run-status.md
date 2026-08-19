@@ -41,7 +41,7 @@ Read it like this:
 When the previous run ended **without** producing `threat-model.md` and no scan
 is currently live, the snapshot leads with a **last-run verdict** — the same
 `cutoff_cause.py` classification the in-run cut-off banners use (`api_stall` vs
-`session_death` vs `budget`), plus the `--resume` recovery hint. This is the
+`session_death` vs `budget`), plus the fresh-run recovery hint. This is the
 robust surface for the plugin-fault-vs-API question: the in-run banner only
 prints while the orchestrator turn survives, but this verdict renders in the
 next live status turn regardless. It is suppressed while a scan is genuinely

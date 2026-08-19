@@ -1,12 +1,13 @@
 ---
 name: appsec-threat-merger
-description: "INTERNAL — invoked by appsec-threat-analyst after Phase 9 STRIDE fan-in. Reviews candidate groups of potentially-duplicate or systemic threats produced by merge_threats.py and emits merge/keep/consolidate decisions. Does NOT perform STRIDE analysis itself."
+description: "INTERNAL — controller-dispatched STRIDE fan-in reviewer for bounded merge candidates; emits merge, keep, or consolidate decisions without performing STRIDE analysis."
 tools: Read, Bash, Write
 model: sonnet
 maxTurns: 12
 ---
 
-INTERNAL AGENT — do not invoke directly. Called by `appsec-threat-analyst` in Phase 9 only when `merge_threats.py collect` produced at least one candidate group.
+INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration
+controller only when `merge_threats.py collect` produced candidate groups.
 
 ## Model identification
 

@@ -44,14 +44,14 @@ Removing an entry means listing it here in the same change.
 |---|---|---|---|
 | ST-1 | Every artifact crossing a boundary carries a versioned receipt whose hash is verified before dispatch, in `verify_receipt_hashes` | `test_exact_byte_plan_receipt_detects_mutation` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, Contract A |
 | ST-2 | A stale receipt is refused, never repaired | `test_shadow_plan_rejects_stale_action_receipt` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, Contract A |
-| ST-3 | A run cannot continue across runtime generations; generation and artifact schema versions are persisted *(generation-scoped — WP7)* | `test_route_rejects_context_v2_generation_on_legacy_runtime`, `test_context_v2_action_refuses_a_run_without_a_persisted_generation` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, WP7 |
-| ST-4 | Resume is refused after an authoritative abort; a stale aborted state is not resumable. It is enforced where a run would continue — every boundary command, and the producer dispatch — not on every tool call | `test_resume_guard_refuses_stale_aborted`, `test_after_an_abort_only_a_producer_dispatch_is_denied` | `CHANGELOG.md` (context-v2) |
+| ST-3 | Every new run uses the context-v2 artifact generation; a missing or pre-cutover generation is refused rather than migrated or resumed | `test_runtime_generation_has_no_legacy_selection`, `test_context_v2_action_refuses_a_run_without_a_persisted_generation` | `docs/internal/analysis/analysis-repository-legacy-and-pipeline-ballast-2026-08-19.md` |
+| ST-4 | An authoritative abort blocks further producer dispatch for that run; recovery starts a fresh full or rebuild invocation | `test_after_an_abort_only_a_producer_dispatch_is_denied` | `CHANGELOG.md` (context-v2) |
 
 ## Orchestration
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| OR-1 | Level-0 dispatch belongs to the deterministic controller; only the legacy orchestrator recurses through `Agent` *(generation-scoped — WP7)*, pinned by `AGENT_TOOL_OWNERS` | `tests/test_agent_definitions.py` | comment at the constant |
+| OR-1 | Level-0 dispatch belongs to the deterministic controller acting through compact runtimes; no agent may recurse through `Agent`, pinned by `AGENT_TOOL_OWNERS` | `tests/test_agent_definitions.py` | `docs/internal/analysis/analysis-repository-legacy-and-pipeline-ballast-2026-08-19.md` |
 | OR-2 | `Edit` stays limited to the two repair roles, pinned by `EDIT_TOOL_OWNERS` | `tests/test_agent_definitions.py` | comment at the constant |
 | OR-3 | A stage refuses to proceed on a missing required upstream artifact; optional enrichment degrades only where its contract names the fail-open behavior | `test_post_stage1_fails_closed_on_missing_artifact` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-4 | Rebuild archives before it clears, and fails closed if archiving fails | `test_rebuild_mode_archive_is_fail_closed` | `docs/internal/contracts/audit-artifacts.md` |
@@ -98,8 +98,8 @@ Removing an entry means listing it here in the same change.
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
 | DP-1 | A depth increase forces a full scan; the prior shallower model is not extended in place | `test_depth_increase_quick_to_standard_forces_full`, `test_depth_increase_standard_to_thorough_forces_full` | `scripts/resolve_config.py` |
-| DP-2 | A shallower re-scan stays incremental and must not silently drop what a deeper run found | `test_shallower_depth_stays_incremental` | `evidence_check: carried-unverified-shallower-depth`; see `docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md` |
-| DP-3 | An explicit `--incremental` is honoured even against a depth increase — a deliberate, documented bypass | `test_explicit_incremental_honored_despite_depth_increase` | `scripts/resolve_config.py` |
+| DP-2 | The resolver may classify a shallower rescan as incremental, but the compact runtime rejects it before dispatch or mutation | `test_shallower_depth_stays_incremental`, `test_unsupported_modes_fail_before_output_mutation` | Authorized single-runtime compatibility migration; use `--full` |
+| DP-3 | An explicit `--incremental` is parsed only to produce a fail-closed rejection; it cannot bypass the compact runtime | `test_unsupported_modes_fail_before_output_mutation` | Authorized single-runtime compatibility migration |
 | DP-4 | A depth increase makes recon reuse eligible only when the tree is git-provably clean | `test_depth_increase_sets_reuse_recon_eligible` | `phase-group-recon.md` → Incremental fingerprint skip |
 
 ## Model routing

@@ -1,6 +1,8 @@
 # Client-side / SPA threat lens
 
-Applied by `appsec-stride-analyzer` when `COMPONENT_ID` is `frontend`, `spa`, `web-app`, `client`, or when `COMPONENT_DESCRIPTION` indicates a browser-based application. In addition to standard STRIDE, systematically check these client-side vectors. Same quality bar as standard STRIDE threats.
+Applied by `appsec-stride-analyzer-v2` when the admitted component plan selects
+the `spa` lens. In addition to standard STRIDE, systematically check these
+client-side vectors with the same evidence bar.
 
 | Threat vector | What to check | STRIDE category |
 |--------------|--------------|-----------------|

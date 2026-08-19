@@ -3,7 +3,7 @@
 
 `schemas/stride.schema.yaml` owns exactly one artifact shape:
 `$OUTPUT_DIR/.stride-<component-id>.json`, one file per analyzed component,
-written by `appsec-stride-analyzer` during the Phase-9 fan-out.
+written by `appsec-stride-analyzer-v2` during the component fan-out.
 
 Four *other* artifacts squat the same `.stride-` prefix in the same
 directory, all written BEFORE the fan-out and none of them a STRIDE result:

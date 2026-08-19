@@ -1,6 +1,8 @@
 # Supply chain threat patterns
 
-Applied by `appsec-stride-analyzer` when `SUPPLY_CHAIN_FINDINGS != none` (i.e. on the `ci-cd-pipeline` component, or — when Cat 28 findings exist — also on the synthetic `developer-workstation` component). The **untrusted-external-contribution** pattern (last row) additionally fires whenever the recon `7.27a` block reports a public (or unknown-visibility) repo — it is visibility-driven and does **not** require any CI/CD workflow file to exist.
+Applied by `appsec-stride-analyzer-v2` when the admitted component plan selects
+the `supply-chain` lens. The **untrusted-external-contribution** pattern remains
+visibility-driven and does not require a CI/CD workflow file to exist.
 
 Generate Tampering **and** Elevation-of-Privilege threats for each verified finding. EoP applies specifically to Cat 27 patterns (`pull_request_target`, missing/broad `permissions:`, self-hosted runners, untrusted external contribution) and Cat 28 patterns (wildcard assistant permissions, committed hooks, bundled agents with shell tools, MCP remote servers, prompt-injection payloads in instruction files).
 

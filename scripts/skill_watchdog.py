@@ -767,9 +767,8 @@ def watch(
         # Phase 11 Substep 2 is, by spec (phase-group-finalization.md:264),
         # a single Bash call to `build_threat_model_yaml.py` expected to
         # complete in under 5 seconds. The 2026-05-25 juice-shop run hung
-        # for 1 h 39 min in Substep 2 because the LLM followed an
-        # obsolete pre-cutover instruction in appsec-threat-analyst.md
-        # (pre-validate intermediates, clip titles, then call Write) — the
+        # for 1 h 39 min in Substep 2 after pre-validating intermediates and
+        # clipping titles instead of invoking the deterministic builder. The
         # entire stall was idle (no non-watchdog log events for 1h 38m 58s).
         #
         # Detection: once a Substep-2 STEP_START line appears in
@@ -806,12 +805,10 @@ def watch(
                                 "`build_threat_model_yaml.py` "
                                 "(phase-group-finalization.md:264). If the agent is "
                                 "pre-inspecting `.stride-*.json` / `.threats-merged.json` "
-                                "or clipping titles, that is a spec violation introduced "
-                                "by stale pre-cutover prose in appsec-threat-analyst.md. "
-                                "Either: (a) abort and re-run with `--resume` so a "
-                                "fresh Stage-1 session picks up the corrected spec, or "
-                                "(b) inspect `.agent-run.log` to see what Bash the "
-                                "agent issued last and steer it to call the builder directly."
+                                "or clipping titles, that is a pipeline defect. Abort and "
+                                "use `--rerender` when validated Stage-1 artifacts exist, "
+                                "or start a fresh full/rebuild run after inspecting "
+                                "`.agent-run.log` for the last completed boundary."
                             ),
                         )
                         substep2_idle_fired = True

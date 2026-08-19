@@ -39,13 +39,11 @@ REQUIRED_MODEL = "sonnet"
 #     skipped its required Markdown validator after writing an incomplete
 #     heading sequence.
 EXPECTED_MAX_TURNS = {
-    "appsec-threat-analyst": 300,
     "appsec-architecture-analyst": 60,
     "appsec-control-analyst": 40,
     "appsec-post-stride-synthesizer": 20,
     "appsec-context-resolver": 25,
     "appsec-recon-scanner": 36,
-    "appsec-stride-analyzer": 96,  # 2026-08-02: covers the file-footprint turn floor (cap 80 + 16 wrap-up buffer); was 56 (cap 48 + 8), which killed a 47-file component on both attempts
     "appsec-stride-analyzer-v2": 96,
     "appsec-triage-validator": 20,
     "appsec-threat-merger": 12,
@@ -73,7 +71,6 @@ INTERNAL_AGENTS = {
     "appsec-post-stride-synthesizer",
     "appsec-context-resolver",
     "appsec-recon-scanner",
-    "appsec-stride-analyzer",
     "appsec-stride-analyzer-v2",
     "appsec-triage-validator",
     "appsec-threat-merger",
@@ -91,14 +88,9 @@ INTERNAL_AGENTS = {
     "appsec-run-diagnostician",  # dispatched by the orchestrator at completion, never by the user
 }
 
-# The orchestrator is the only user-facing agent
-ORCHESTRATOR = "appsec-threat-analyst"
-
-# Coexistence topology while both producer generations are shipped. The legacy
-# orchestrator alone may recurse through Agent; deterministic context-v2 owns
-# Level-0 dispatch. Edit remains limited to the two repair roles. WP7 must
-# change this guard explicitly when the legacy generation is removed.
-AGENT_TOOL_OWNERS = {"appsec-threat-analyst"}
+# The deterministic controller owns all Level-0 dispatch. No pipeline agent may
+# recursively dispatch another agent.
+AGENT_TOOL_OWNERS = set()
 EDIT_TOOL_OWNERS = {"appsec-fragment-fixer", "appsec-qa-reviewer"}
 
 KERNEL_PRELOAD_ROLES = {
@@ -143,7 +135,7 @@ def _frontmatter_tools(path: Path) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_generation_coexistence_pins_recursive_and_edit_tool_owners():
+def test_single_runtime_forbids_recursive_agents_and_pins_edit_owners():
     agent_owners = {path.stem for path in agent_files() if "Agent" in _frontmatter_tools(path)}
     edit_owners = {path.stem for path in agent_files() if "Edit" in _frontmatter_tools(path)}
 
@@ -161,12 +153,12 @@ def test_pipeline_agent_frontmatter_never_admits_mcp_tools():
 
 
 def test_cross_repo_mismatch_requires_target_evidence():
-    text = (AGENTS_DIR / "appsec-stride-analyzer.md").read_text(encoding="utf-8")
-    cross_repo_line = next(line for line in text.splitlines() if line.startswith("- `CROSS_REPO_CONTEXT_PATH`"))
-    assert "requires a target-side probe" in cross_repo_line
-    assert "emit a threat only when this repository's source" in cross_repo_line
-    assert "cannot justify CVSS by itself" in cross_repo_line
-    assert "emit a HIGH-likelihood threat" not in cross_repo_line
+    text = (AGENTS_DIR / "appsec-stride-analyzer-v2.md").read_text(encoding="utf-8")
+    flat = " ".join(text.split())
+    assert "requires a target-side probe" in flat
+    assert "emit only when target source or the probe proves" in flat
+    assert "Related context cannot prove a finding or justify CVSS" in flat
+    assert "emit a HIGH-likelihood threat" not in flat
 
 
 def test_actor_discovery_prompt_keeps_actor_identity_boundary():
@@ -247,31 +239,6 @@ class TestMaxTurnsCeilings:
         mt = meta.get("maxTurns", 0)
         assert mt <= ceiling, f"{agent_name}: maxTurns {mt} exceeds ceiling {ceiling}"
 
-    def test_orchestrator_has_highest_turns(self):
-        """The orchestrator must have the highest maxTurns of all sub-agents.
-
-        The QA reviewer is excluded because it runs at SKILL level (Stage 3),
-        not as a sub-agent of the orchestrator — it has its own independent
-        turn budget invoked by the skill after the orchestrator finishes.
-        """
-        skill_level_agents = {
-            "appsec-qa-reviewer",
-            "appsec-architect-reviewer",
-            "appsec-threat-renderer",
-            "appsec-fragment-fixer",
-        }
-        all_turns = {}
-        for f in agent_files():
-            meta, _ = parse_frontmatter(f)
-            all_turns[f.stem] = meta.get("maxTurns", 0)
-        orchestrator_turns = all_turns.get(ORCHESTRATOR, 0)
-        for name, turns in all_turns.items():
-            if name != ORCHESTRATOR and name not in skill_level_agents:
-                assert orchestrator_turns >= turns, (
-                    f"Orchestrator ({orchestrator_turns}) has fewer turns than {name} ({turns})"
-                )
-
-
 # ---------------------------------------------------------------------------
 # INTERNAL agent marker
 # ---------------------------------------------------------------------------
@@ -283,15 +250,6 @@ class TestInternalMarkers:
         path = AGENTS_DIR / f"{agent_name}.md"
         _, body = parse_frontmatter(path)
         assert "INTERNAL" in body, f"{agent_name}: body must contain 'INTERNAL' to prevent direct invocation"
-
-    def test_orchestrator_is_not_marked_internal(self):
-        path = AGENTS_DIR / f"{ORCHESTRATOR}.md"
-        _, body = parse_frontmatter(path)
-        # The orchestrator body should NOT start with "INTERNAL AGENT"
-        assert not body.strip().startswith("INTERNAL AGENT"), (
-            f"{ORCHESTRATOR} must not be marked as INTERNAL — it is user-facing"
-        )
-
 
 def test_internal_kernel_is_preloaded_only_by_focused_context_v2_roles():
     preloaded = set()
@@ -397,8 +355,7 @@ class TestModelIdConsistency:
 
 # Agents that reference the context file (all except context-resolver which writes it)
 _CONTEXT_FILE_AGENTS = {
-    "appsec-threat-analyst",
-    "appsec-stride-analyzer",
+    "appsec-stride-analyzer-v2",
     "appsec-context-resolver",
 }
 
@@ -430,12 +387,6 @@ class TestBodyContentConsistency:
         _, body = parse_frontmatter(agent_file)
         assert ".agent-run.log" in body, f"{agent_file.name}: must reference '.agent-run.log' for structured logging"
 
-    def test_orchestrator_references_model_id_string(self):
-        """The orchestrator must contain the literal model ID string 'claude-sonnet-4-6'."""
-        path = AGENTS_DIR / f"{ORCHESTRATOR}.md"
-        _, body = parse_frontmatter(path)
-        assert "claude-sonnet-4-6" in body, f"{ORCHESTRATOR}: must contain 'claude-sonnet-4-6' as MODEL_ID value"
-
     def test_step_logging_guidance_forbids_inline_format_line(self):
         """Regression guard (2026-06-20 Sonnet run): step/check logging must route
         through log_event.py, and the shared standard must explicitly forbid calling
@@ -449,10 +400,8 @@ class TestBodyContentConsistency:
         assert "format_line" in shared and "python3 -c" in shared, (
             "logging-standard.md must explicitly forbid calling format_line via python3 -c"
         )
-        _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer.md")
-        assert "log_event.py" in stride and "format_line" in stride, (
-            "stride-analyzer must carry the local log_event.py mandate + format_line prohibition"
-        )
+        _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer-v2.md")
+        assert "log_event.py" in stride
 
     def test_context_v2_logging_ownership_is_explicit(self):
         shared = (AGENTS_DIR / "shared" / "logging-standard.md").read_text(encoding="utf-8")
@@ -619,8 +568,8 @@ class TestBodyContentConsistency:
         OUTPUT_DIR as their first Bash call, so agent_progress.sh (which exits 0
         silently when $OUTPUT_DIR is unset) no-opped. The agent doc must mandate
         the export as the literal first command."""
-        _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer.md")
-        assert "export OUTPUT_DIR=" in stride, (
+        _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer-v2.md")
+        assert 'export OUTPUT_DIR="' in stride, (
             "stride-analyzer must mandate `export OUTPUT_DIR=` as its first Bash call "
             "so agent_progress.sh / log_event.py see the path (RC-3)"
         )
@@ -654,8 +603,8 @@ class TestBodyContentConsistency:
         assert "`COMPONENT_CONTEXT_PLAN_SHA256`" in thin_runtime
         assert "`THREAT_TAXONOMY_SHA256`" in thin_runtime
         flat_runtime = " ".join(thin_runtime.split())
-        assert "Never recommend `--resume`" in flat_runtime
-        assert "a later `--full` restarts Stage 1" in flat_runtime
+        assert "Never recommend resume" in flat_runtime
+        assert "a later fresh full run restarts Stage 1" in flat_runtime
 
         architecture = (AGENTS_DIR / "appsec-architecture-analyst.md").read_text(encoding="utf-8")
         assert "AI/LLM surface separate only when it is a distinct deployable" in architecture
@@ -755,7 +704,6 @@ INLINE_LOG_TEMPLATE_BUDGET = {
     # context-specific phase-logging call sites. Templates themselves now
     # delegate to shared/logging-standard.md; budget covers the contextual
     # call sites.
-    "agents/appsec-threat-analyst.md": 8,
     # Renderer owns a minimal Phase-11 start/end pair so Stage 2 telemetry is
     # present without loading the full finalization prompt just for logging.
     "agents/appsec-threat-renderer.md": 2,
@@ -764,7 +712,6 @@ INLINE_LOG_TEMPLATE_BUDGET = {
 # Everything else: zero inline templates. Use shared/logging-standard.md.
 AGENT_FILES_WITH_ZERO_BUDGET = [
     AGENTS_DIR / "appsec-qa-reviewer.md",
-    AGENTS_DIR / "appsec-stride-analyzer.md",
     AGENTS_DIR / "appsec-stride-analyzer-v2.md",
     AGENTS_DIR / "appsec-context-resolver.md",
     AGENTS_DIR / "appsec-recon-scanner.md",
@@ -829,7 +776,6 @@ _LEGACY_HARDCODED_GLOB_FRAGMENT = (
 
 AGENT_FILES_USING_EXCLUDE_GLOB = [
     AGENTS_DIR / "appsec-recon-scanner.md",
-    AGENTS_DIR / "appsec-stride-analyzer.md",
     AGENTS_DIR / "appsec-stride-analyzer-v2.md",
 ]
 
@@ -888,7 +834,6 @@ AGENT_FILES_AUTHORING_PROSE = [
     AGENTS_DIR / "appsec-threat-renderer.md",
     AGENTS_DIR / "appsec-secarch-renderer.md",
     AGENTS_DIR / "appsec-ms-renderer.md",
-    AGENTS_DIR / "appsec-stride-analyzer.md",
     AGENTS_DIR / "appsec-stride-analyzer-v2.md",
     AGENTS_DIR / "phases" / "phase-group-finalization.md",
     AGENTS_DIR / "shared" / "ms-template.md",
@@ -975,13 +920,11 @@ REPO_READING_AGENTS = [
     "appsec-config-scanner",
     "appsec-evidence-verifier",
     "appsec-abuse-case-verifier",
-    "appsec-stride-analyzer",
     "appsec-stride-analyzer-v2",
     "appsec-threat-renderer",
     "appsec-secarch-renderer",
     "appsec-ms-renderer",
     "appsec-context-resolver",
-    "appsec-threat-analyst",
     "appsec-eval-judge",
 ]
 
@@ -999,7 +942,7 @@ class TestUntrustedContentGuard:
         assert re.search(r"untrusted|not instructions|never as instructions", text, re.I), (
             f"{agent_name}.md reads untrusted target-repo content but has no "
             f"untrusted-content guard. Add the boundary block (see "
-            f"appsec-recon-scanner.md or appsec-threat-analyst.md). PI-1/PI-2."
+            f"appsec-recon-scanner.md or appsec-stride-analyzer-v2.md). PI-1/PI-2."
         )
 
 
@@ -1023,9 +966,9 @@ def test_stride_template_never_offers_null_for_a_string_only_field():
     if "null" in file_type:
         pytest.skip("evidence.file now accepts null — the template may offer it again")
 
-    text = (AGENTS_DIR / "appsec-stride-analyzer.md").read_text(encoding="utf-8")
+    text = (AGENTS_DIR / "appsec-stride-analyzer-v2.md").read_text(encoding="utf-8")
     line = next((ln for ln in text.splitlines() if '"file":' in ln and "REPO_ROOT" in ln), None)
-    assert line is not None, "evidence.file template line not found in appsec-stride-analyzer.md"
+    assert line is not None, "evidence.file template line not found in appsec-stride-analyzer-v2.md"
     assert "or null" not in line, (
         "the evidence.file template offers `null`, which stride.schema.yaml rejects "
         '(type: string). Say `never null` and point the author at `"evidence": null` '

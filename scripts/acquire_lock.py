@@ -2,7 +2,7 @@
 """
 acquire_lock.py — assessment concurrency lock helper.
 
-Replaces the compound Bash lock script in appsec-threat-analyst.md so the
+Replaces the former prompt-owned compound Bash lock script so the
 operation runs under a single `python3:*` permission entry instead of
 requiring compound-command approval from Claude Code.
 

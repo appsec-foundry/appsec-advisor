@@ -10,7 +10,7 @@
 #   --repo <path>           Repository to analyze (default: current directory)
 #   --output <path>         Output directory (default: <repo>/docs/security)
 #   --yaml                  (no-op) yaml is always written by default
-#   --no-yaml               Suppress threat-model.yaml (BREAKS incremental mode!)
+#   --no-yaml               Suppress threat-model.yaml
 #   --sarif                 Also write threat-model.sarif.json (SARIF v2.1.0)
 #   --threatdragon          Also write threat-model.threatdragon.json (ALPHA)
 #   --requirements [<src>]   Enable requirements check (optionally from an
@@ -18,15 +18,13 @@
 #   --no-requirements        Skip requirements even when enabled in config
 #   --context <src>          Business context for this run: an http(s):// URL or
 #                            a file path (optional; used for this run only)
-#   --dry-run               Preview scope without running the full pipeline
-#   --incremental           Force delta analysis based on git diff
+#   --dry-run               Unsupported for assessments; exits before dispatch
+#   --incremental           Unsupported; use a fresh full or rebuild run
 #   --full                  Force full scan even when prior output exists
-#   --resume                Continue from last checkpoint
-#   --base <ref>            Git ref to diff HEAD against for incremental / PR mode
-#                           (default: commit_sha recorded in prior threat-model.yaml)
-#   --pr-mode               Produce a focused delta report for a MR/PR; implies
-#                           --incremental and uses --base <ref> (target branch)
-#   --fail-on <level>       Exit non-zero when delta contains threats at or above
+#   --resume                Unsupported; use rerender or rebuild
+#   --base <ref>            Unsupported because incremental mode is unavailable
+#   --pr-mode               Unsupported because incremental mode is unavailable
+#   --fail-on <level>       Exit non-zero when new threats are at or above
 #                           <level> (critical, high, medium); PR-gate friendly
 #   --no-qa                 Skip the Stage-3 QA reviewer (faster CI runs)
 #   --trust-mode <mode>     untrusted (default) | trusted — untrusted runs
@@ -36,8 +34,7 @@
 #                           and aborts the pipeline on preflight findings
 #   --strict-urls           Require APPSEC_URL_ALLOWLIST for all remote fetches
 #                           (implied by --trust-mode untrusted)
-#   --restore-from <path>   Hydrate $OUTPUT_DIR from a prior-run artifact before
-#                           running (CI cache restore)
+#   --restore-from <path>   Unsupported because incremental mode is unavailable
 #   --max-duration <sec>    Abort the run if it exceeds <sec> seconds
 #   --max-budget <usd>      Stop when estimated cost exceeds this amount
 #   --clean-cache           Delete cache & transient files (keeps the model); exits
@@ -62,7 +59,6 @@
 # Environment:
 #   ANTHROPIC_API_KEY       Anthropic API key (optional — uses subscription if unset)
 #   CLAUDE_PLUGIN_DIR       Override plugin directory (default: auto-detected)
-#   APPSEC_CONTEXT_V2=0     Use the legacy producer for a new full/rebuild run
 # ──────────────────────────────────────────────────────────────────────
 set -eu
 
@@ -89,9 +85,7 @@ Options:
   --repo <path>              Repository to analyze (default: current directory)
   --output <path>            Output directory (default: <repo>/docs/security)
   --yaml                     (no-op) yaml is always written by default
-  --no-yaml                  Suppress threat-model.yaml output — WARNING: breaks
-                             incremental mode on future runs against this output
-                             directory (yaml is the canonical baseline)
+  --no-yaml                  Suppress threat-model.yaml output
   --sarif                    Also write threat-model.sarif.json (SARIF v2.1.0)
   --threatdragon             Also write threat-model.threatdragon.json
                              (OWASP Threat Dragon v2 — ALPHA, opt-in only)
@@ -101,18 +95,18 @@ Options:
   --context <src>            Business context for this run: an http(s):// URL or
                              a file path. Optional; applies to this run only —
                              persist it by committing docs/business-context.md
-  --dry-run                  Preview scope without running the full pipeline
-  --incremental              Force delta analysis based on git diff
+  --dry-run                  Unsupported by the compact runtime; exits before dispatch
+  --incremental              Unsupported by the compact runtime; exits before dispatch
   --full                     Force full scan even when prior output exists
   --rerender                 Re-render Stage 2 + re-run Stage 3 QA from the
                              EXISTING Stage-1 fragments (no Stage 1, no no-op).
                              For fragment/renderer/QA changes; not for code changes.
-  --resume                   Continue from last checkpoint
-  --base <ref>               Git ref to diff HEAD against (default: baseline commit)
-  --pr-mode                  MR/PR delta report — implies --incremental
-  --fail-on <level>          Non-zero exit on delta threats >= critical|high|medium
+  --resume                   Unsupported; use --rerender or a fresh --rebuild
+  --base <ref>               Reserved for incremental mode, which is unsupported
+  --pr-mode                  Unsupported because incremental mode is unavailable
+  --fail-on <level>          Non-zero exit on new threats >= critical|high|medium
   --no-qa                    Skip Stage-3 QA reviewer (faster CI runs)
-  --restore-from <path>      Hydrate \$OUTPUT_DIR from a prior artifact
+  --restore-from <path>      Unsupported because incremental mode is unavailable
   --max-duration <seconds>   Abort the run if it exceeds the given duration
   --max-budget <usd>         Stop when estimated cost exceeds this amount
   --clean-cache              Delete cache & transient files in \$OUTPUT_DIR; keeps
@@ -145,7 +139,6 @@ Skill selection:
 Environment:
   ANTHROPIC_API_KEY          Anthropic API key (optional — uses subscription auth if unset)
   CLAUDE_PLUGIN_DIR          Override plugin directory (default: auto-detected)
-  APPSEC_CONTEXT_V2=0        Use the legacy producer for a new full/rebuild run
   CI=true                    Enables CI mode (skips stale-lock wait, bumps caches,
                              adjusts defaults for non-interactive runners)
 HELP
@@ -205,8 +198,6 @@ SKILL="create-threat-model"
 CATEGORY_FILTER=""
 SAVE_REPORT=""
 ASSESSMENT_DEPTH=""
-BASE_REF=""
-PR_MODE=0
 FAIL_ON=""
 NO_QA=0
 RESTORE_FROM=""
@@ -214,14 +205,15 @@ MAX_DURATION=""
 INCREMENTAL_REQUESTED=0
 CLEAN_MODE=""
 CLEAN_FORCE=0
-CLEAN_DRY_RUN=0
 # Target repositories are untrusted by default. Opting into trusted mode is an
 # explicit acknowledgement that repository-resident agent configuration may
 # execute before this plugin establishes its own instruction boundary.
 TRUST_MODE="untrusted"
 STRICT_URLS=0
 RESUME_REQUESTED=0
-FULL_REQUESTED=0
+DRY_RUN_REQUESTED=0
+UNSUPPORTED_RUNTIME_OPTION=""
+RUNTIME_MODE_ARGS=""
 
 # Preserve the raw invocation before the parser consumes it, so the failure
 # path can reconstruct a re-run command (see the recovery hint below). POSIX sh
@@ -259,9 +251,21 @@ while [ $# -gt 0 ]; do
             RESUME_REQUESTED=1
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --full)
-            FULL_REQUESTED=1
+            RUNTIME_MODE_ARGS="$RUNTIME_MODE_ARGS --full"
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
-        --yaml|--no-yaml|--sarif|--threatdragon|--no-requirements|--dry-run|--rerender|--enrich-arch|--no-enrich-arch)
+        --dry-run)
+            DRY_RUN_REQUESTED=1
+            SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
+        --max-wall-time|--max-cost)
+            UNSUPPORTED_RUNTIME_OPTION="$1"
+            SKILL_FLAGS="$SKILL_FLAGS $1 ${2:-}"; shift 2 ;;
+        --rerender)
+            RUNTIME_MODE_ARGS="$RUNTIME_MODE_ARGS --rerender"
+            SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
+        --rebuild)
+            RUNTIME_MODE_ARGS="$RUNTIME_MODE_ARGS --rebuild"
+            SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
+        --yaml|--no-yaml|--sarif|--threatdragon|--no-requirements|--enrich-arch|--no-enrich-arch)
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --keep-runtime-files)
             # Preserve all transient runtime artifacts. runtime_cleanup.py reads
@@ -277,11 +281,9 @@ while [ $# -gt 0 ]; do
             INCREMENTAL_REQUESTED=1
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --base)
-            BASE_REF="$2"; shift 2 ;;
+            UNSUPPORTED_RUNTIME_OPTION="--base"; shift 2 ;;
         --pr-mode)
-            PR_MODE=1
-            INCREMENTAL_REQUESTED=1
-            SKILL_FLAGS="$SKILL_FLAGS --incremental"
+            UNSUPPORTED_RUNTIME_OPTION="--pr-mode"
             shift ;;
         --fail-on)
             case "$2" in
@@ -300,7 +302,9 @@ while [ $# -gt 0 ]; do
         --strict-urls)
             STRICT_URLS=1; shift ;;
         --restore-from)
-            RESTORE_FROM="$2"; shift 2 ;;
+            RESTORE_FROM="$2"
+            UNSUPPORTED_RUNTIME_OPTION="--restore-from"
+            shift 2 ;;
         --max-duration)
             MAX_DURATION="$2"; shift 2 ;;
         --clean-cache)
@@ -376,6 +380,24 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# The single runtime has no safe compact implementation for these modes. Stop
+# before resolving or creating the output directory, trust preflight, or model
+# dispatch. Host-level --max-duration/--max-budget remain independent guards.
+if [ "$SKILL" = "create-threat-model" ]; then
+    [ "$RESUME_REQUESTED" = "1" ] && die "--resume is not supported by the compact runtime. Use --rerender for validated Stage-1 artifacts or --rebuild to start again."
+    [ "$INCREMENTAL_REQUESTED" = "1" ] && die "--incremental is not supported by the compact runtime. Use --full or --rebuild."
+    if [ "$DRY_RUN_REQUESTED" = "1" ] && [ -z "$CLEAN_MODE" ]; then
+        die "--dry-run is not supported by the compact runtime. No scan was started."
+    fi
+    case "$UNSUPPORTED_RUNTIME_OPTION" in
+        --max-wall-time|--max-cost)
+            die "$UNSUPPORTED_RUNTIME_OPTION is not supported by the compact runtime. Use a host-level limit instead." ;;
+        ?*)
+            die "$UNSUPPORTED_RUNTIME_OPTION is not supported by the compact runtime. Use --full, --rebuild, or --rerender." ;;
+    esac
+    [ "${APPSEC_LIVE_PHASE:-}" = "1" ] && die "APPSEC_LIVE_PHASE=1 is not supported by the compact runtime."
+fi
+
 # ── Pre-flight auth check ────────────────────────────────────────────
 if [ "$BILLING_MODE" = "subscription" ]; then
     if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
@@ -429,42 +451,36 @@ else
 fi
 
 if [ -n "$OUTPUT_PATH" ]; then
-    mkdir -p "$OUTPUT_PATH" 2>/dev/null || die "Cannot create output directory: $OUTPUT_PATH"
-    OUTPUT_PATH="$(cd "$OUTPUT_PATH" && pwd)"
+    case "$OUTPUT_PATH" in
+        /*) : ;;
+        *) OUTPUT_PATH="$(pwd)/$OUTPUT_PATH" ;;
+    esac
 else
     OUTPUT_PATH="$REPO_PATH/docs/security"
 fi
 
-# Context-v2 is the default for a new eligible full/rebuild run. Resume remains
-# a WP7 capability and is not implemented yet. Letting a context-v2 resume
-# request fall through to the legacy skill runtime silently restarts a
-# full assessment while reusing context-v2 artifacts, which wastes tokens and
-# produces a mixed output directory. Fail before trust preflight or dispatch.
-CONTEXT_V2_SELECTED=0
-PERSISTED_RUNTIME_GENERATION=""
-if [ -f "$OUTPUT_PATH/.skill-config.json" ]; then
-    PERSISTED_RUNTIME_GENERATION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("runtime_generation", ""))' \
-        "$OUTPUT_PATH/.skill-config.json" 2>/dev/null || true)
+# Resolve the effective mode with the same read-only owner used by the skill.
+# This catches automatic incremental selection from an existing baseline before
+# the headless Claude process is started and before this wrapper creates output.
+if [ "$SKILL" = "create-threat-model" ] && [ -z "$CLEAN_MODE" ]; then
+    set +e
+    if [ -n "$RUNTIME_MODE_ARGS" ]; then
+        ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
+            route -- $RUNTIME_MODE_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
+    else
+        ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
+            route -- --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
+    fi
+    ADMISSION_EXIT=$?
+    set -e
+    if [ "$ADMISSION_EXIT" -ne 0 ]; then
+        printf '%s\n' "$ADMISSION_RESULT" >&2
+        exit "$ADMISSION_EXIT"
+    fi
 fi
-if [ "${APPSEC_CONTEXT_V2:-}" = "1" ]; then
-    CONTEXT_V2_SELECTED=1
-elif [ -n "${APPSEC_CONTEXT_V2:-}" ]; then
-    CONTEXT_V2_SELECTED=0
-elif [ "$PERSISTED_RUNTIME_GENERATION" = "legacy" ]; then
-    CONTEXT_V2_SELECTED=0
-else
-    CONTEXT_V2_SELECTED=1
-fi
-CONTEXT_V2_RESUME_TARGET=0
-if [ "${APPSEC_CONTEXT_V2:-}" = "1" ] \
-   || [ "$PERSISTED_RUNTIME_GENERATION" = "context-v2" ]; then
-    CONTEXT_V2_RESUME_TARGET=1
-fi
-if [ "$SKILL" = "create-threat-model" ] \
-   && [ "$RESUME_REQUESTED" = "1" ] \
-   && [ "$CONTEXT_V2_RESUME_TARGET" = "1" ]; then
-    die "Context-v2 does not support --resume yet (WP7). Start a fresh context-v2 run with --rebuild and a clean output directory; refusing to fall back to the legacy full runtime."
-fi
+
+mkdir -p "$OUTPUT_PATH" 2>/dev/null || die "Cannot create output directory: $OUTPUT_PATH"
+OUTPUT_PATH="$(cd "$OUTPUT_PATH" && pwd)"
 
 # ── Trust mode: preflight + strict defaults ─────────────────────────
 # --trust-mode untrusted forces every defence we have today: reject
@@ -511,14 +527,9 @@ fi
 # Executes before anything else. When triggered, we delegate to the Python
 # helper (which owns the file classification) and exit — no Claude dispatch.
 if [ -n "$CLEAN_MODE" ]; then
-    # Detect --dry-run in SKILL_FLAGS so it applies to the clean operation
-    # instead of the (not-happening) assessment.
-    if echo "$SKILL_FLAGS" | grep -q -- '--dry-run'; then
-        CLEAN_DRY_RUN=1
-    fi
     CLEAN_ARGS="clean --output-dir $OUTPUT_PATH --mode $CLEAN_MODE"
     [ "$CLEAN_FORCE" = "1" ] && CLEAN_ARGS="$CLEAN_ARGS --force"
-    [ "$CLEAN_DRY_RUN" = "1" ] && CLEAN_ARGS="$CLEAN_ARGS --dry-run"
+    [ "$DRY_RUN_REQUESTED" = "1" ] && CLEAN_ARGS="$CLEAN_ARGS --dry-run"
     # CI auto-force: in CI the TTY-confirmation is never reachable, so
     # --clean-all would otherwise abort with exit 1.
     if [ "$CI_MODE" = "1" ] && [ "$CLEAN_MODE" = "all" ]; then
@@ -550,75 +561,6 @@ if [ -n "$RESTORE_FROM" ]; then
     ok "Restored $(ls -1 "$OUTPUT_PATH" 2>/dev/null | wc -l) files into $OUTPUT_PATH"
 fi
 
-if [ "$SKILL" = "create-threat-model" ] \
-   && [ "$RESUME_REQUESTED" = "1" ] \
-   && [ "$FULL_REQUESTED" = "1" ]; then
-    die "--full and --resume cannot be used together. Use --resume to continue a checkpoint, or --full to start a complete assessment."
-fi
-
-# ── Resume preflight ────────────────────────────────────────────────
-# In headless mode a blocked resume otherwise looks like an idle `claude -p`
-# session: no new agent log lines are emitted until the skill starts. Refuse
-# before dispatch when the selected output directory has an active or stale
-# unsafe checkpoint state, and print the exact directory being inspected so
-# `--repo` / `--output` mismatches are visible.
-if [ "$SKILL" = "create-threat-model" ] && [ "$RESUME_REQUESTED" = "1" ]; then
-    set +e
-    python3 "$PLUGIN_DIR/scripts/check_state.py" \
-        "$OUTPUT_PATH" --resume-guard --max-age-seconds 900
-    RESUME_GUARD_EXIT=$?
-    set -e
-    if [ "$RESUME_GUARD_EXIT" = "3" ]; then
-        err "--resume refused before starting Claude Code (output: $OUTPUT_PATH)"
-        warn "Use the same --output as the interrupted run. If no assessment is running, inspect or clean with: python3 $PLUGIN_DIR/scripts/check_state.py $OUTPUT_PATH --clean"
-        exit 3
-    fi
-fi
-
-# ── Fast-Path Preflight ─────────────────────────────────────────────
-# When an incremental run is requested and a baseline exists, check whether
-# anything actually changed BEFORE dispatching Claude. If the repo is
-# unchanged and the plugin hasn't drifted, we can skip the entire run in
-# a fraction of a second — the killer optimisation for CI.
-FAST_PATH_TAKEN=0
-if [ "$INCREMENTAL_REQUESTED" = "1" ] || [ "$PR_MODE" = "1" ]; then
-    if [ -f "$OUTPUT_PATH/threat-model.yaml" ]; then
-        CHECK_ARGS="check-changes --output-dir $OUTPUT_PATH --repo-root $REPO_PATH"
-        if [ -n "$BASE_REF" ]; then
-            CHECK_ARGS="$CHECK_ARGS --base-ref $BASE_REF"
-        fi
-        set +e
-        FAST_PATH_OUTPUT="$(python3 "$PLUGIN_DIR/scripts/baseline_state.py" $CHECK_ARGS 2>/dev/null)"
-        FAST_PATH_EXIT=$?
-        set -e
-        case "$FAST_PATH_EXIT" in
-            0)
-                ok "No changes since last scan — threat model is up to date."
-                if [ "$CI_MODE" = "1" ]; then
-                    echo "$FAST_PATH_OUTPUT"
-                fi
-                FAST_PATH_TAKEN=1
-                exit 0
-                ;;
-            10)
-                warn "Source unchanged, but plugin version drifted since the last run."
-                echo "$FAST_PATH_OUTPUT" | grep -i 'message' || true
-                warn "Consider running with --full to pick up new capabilities."
-                if [ "$CI_MODE" = "1" ]; then
-                    # In CI, honour the signal and still fast-abort — the CI can
-                    # schedule a full run separately (e.g. weekly).
-                    ok "Fast-abort (CI mode): use a scheduled --full job to refresh."
-                    FAST_PATH_TAKEN=1
-                    exit 0
-                fi
-                ;;
-            *)
-                # status=changed or error — fall through to the normal run
-                ;;
-        esac
-    fi
-fi
-
 # ── Build the skill command ─────────────────────────────────────────
 if [ "$SKILL" = "create-threat-model" ]; then
     PROMPT="/appsec-advisor:create-threat-model"
@@ -627,10 +569,6 @@ if [ "$SKILL" = "create-threat-model" ]; then
     [ -n "$REPO_PATH" ]   && PROMPT="$PROMPT --repo $REPO_PATH"
     [ -n "$OUTPUT_PATH" ] && PROMPT="$PROMPT --output $OUTPUT_PATH"
 
-    # Forward base-ref / pr-mode / no-qa so the skill can propagate them
-    # via env-vars to the orchestrator.
-    [ -n "$BASE_REF" ]   && PROMPT="$PROMPT --base $BASE_REF"
-    [ "$PR_MODE" = "1" ] && PROMPT="$PROMPT --pr-mode"
     [ "$NO_QA" = "1" ]   && PROMPT="$PROMPT --no-qa"
 
     # Append remaining flags
@@ -684,24 +622,14 @@ fi
 # (session-model) recommendation — interactive prompt".
 export APPSEC_HEADLESS=1
 # Background-task wait ceiling: Claude Code's `-p` mode waits a default 600s for
-# backgrounded tasks and then HARD-KILLS the process. Stage 1 (Analyst-A, phases
-# 1-8) routinely runs longer than that, so the orchestrator's turn ends while
-# Analyst-A is still backgrounded and the run dies mid-phase with no
-# threat-model.yaml — which also means the compose backstop below (gated on that
-# yaml) cannot salvage it. Observed as a nondeterministic ~13m failure: fixture
-# runs 29696937786 (fail, 775s) and 29697943011 (pass, 46m39s) share commit
-# 9d9c44e, fixture and depth. 0 = wait indefinitely; the bound is the outer
+# backgrounded tasks and then hard-kills the process. Controller-owned semantic
+# jobs may exceed that ceiling. 0 waits indefinitely; the bound is the outer
 # `timeout ${MAX_DURATION}s` wrapper above, so headless callers that care about
 # a wall-clock cap must pass --max-duration (CI always does).
 export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
 [ "$NO_QA" = "1" ]         && export APPSEC_SKIP_QA=1
-[ "$PR_MODE" = "1" ]       && export APPSEC_PR_MODE=1
-[ -n "$BASE_REF" ]         && export APPSEC_BASE_REF="$BASE_REF"
 [ "$CI_MODE" = "1" ]       && export APPSEC_CI_MODE=1
 [ -n "$FAIL_ON" ]          && export APPSEC_FAIL_ON="$FAIL_ON"
-# Full-M1 opt-in: forward the parallel-STRIDE switch into the headless skill env
-# (inherited from the caller's environment) so the skill's Bash tool sees it.
-[ "${APPSEC_PARALLEL_STRIDE:-0}" = "1" ] && export APPSEC_PARALLEL_STRIDE=1
 
 # ── Print summary ───────────────────────────────────────────────────
 echo ""
@@ -1003,31 +931,8 @@ print_recovery_hint() {
         done
         printf '%s %s\n' "$_cmd" "$1"
     }
-    # The resolver may have selected legacy for an unsupported mode or
-    # context-v2 for a fresh default run after this wrapper's preflight. Its
-    # persisted generation is authoritative for the recovery advice.
-    if [ -f "$_rh_dir/.skill-config.json" ]; then
-        _rh_generation=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("runtime_generation", ""))' \
-            "$_rh_dir/.skill-config.json" 2>/dev/null || true)
-        case "$_rh_generation" in
-            context-v2) CONTEXT_V2_SELECTED=1 ;;
-            legacy) CONTEXT_V2_SELECTED=0 ;;
-        esac
-    fi
-    if [ "$CONTEXT_V2_SELECTED" = "1" ]; then
-        warn "Context-v2 resume is not available yet (WP7) — start fresh:"
-        printf '    %s\n' "$(_rerun_cmd --rebuild)"
-        return
-    fi
-    if [ -f "$_rh_dir/.appsec-checkpoint" ] \
-       && python3 "$PLUGIN_DIR/scripts/check_state.py" "$_rh_dir" \
-            --resume-guard --max-age-seconds 900 >/dev/null 2>&1; then
-        warn "Resume from the last checkpoint:"
-        printf '    %s\n' "$(_rerun_cmd --resume)"
-    else
-        warn "This run cannot be resumed cleanly — start fresh:"
-        printf '    %s\n' "$(_rerun_cmd --rebuild)"
-    fi
+    warn "This runtime does not resume incomplete analysis — start fresh:"
+    printf '    %s\n' "$(_rerun_cmd --rebuild)"
 }
 
 # Every mode, including --quiet, owns an EXIT backstop. Signal handlers may
@@ -1132,7 +1037,6 @@ fi
 # and is a no-op when threat-model.md already exists. Runs regardless of
 # EXIT_CODE so a killed-but-complete run is still salvaged.
 if [ "$SKILL" = "create-threat-model" ] \
-   && ! printf '%s' "$SKILL_FLAGS" | grep -q -- '--dry-run' \
    && [ -s "$RESULT_DIR/threat-model.yaml" ] \
    && [ ! -s "$RESULT_DIR/threat-model.md" ]; then
     info "threat-model.md missing but yaml present — running deterministic compose backstop"
@@ -1141,7 +1045,7 @@ if [ "$SKILL" = "create-threat-model" ] \
     [ -s "$RESULT_DIR/threat-model.md" ] && ok "compose backstop produced threat-model.md"
 fi
 
-# Artifact gate (fail-closed): a non-dry create-threat-model run MUST leave a
+# Artifact gate (fail-closed): a create-threat-model run MUST leave a
 # composed threat-model.md. `claude -p` can exit 0 after a *graceful* stop that
 # produced no report (a broken-Bash environment aborts every script, so the
 # agent diagnoses and stops cleanly), and a bg-ceiling process-kill can leave
@@ -1150,9 +1054,7 @@ fi
 # closed when threat-model.md is still absent — a run must never report success
 # with no deliverable report. Checking md alone (not md-OR-yaml) closes the old
 # fail-open path where yaml-without-md was reported as "completed successfully".
-# (--dry-run previews scope without writing a report, so it is exempt.)
-if [ "$SKILL" = "create-threat-model" ] \
-   && ! printf '%s' "$SKILL_FLAGS" | grep -q -- '--dry-run'; then
+if [ "$SKILL" = "create-threat-model" ]; then
     if [ ! -s "$RESULT_DIR/threat-model.md" ]; then
         err "No threat-model.md in $RESULT_DIR — treating as failure (fail-closed)."
         [ "$EXIT_CODE" -eq 0 ] && EXIT_CODE=1
@@ -1245,12 +1147,8 @@ else
             $PLUGIN_DEV_FLAG 2>/dev/null || true
     fi
 
-    # Recovery hint — print a full, paste-ready re-run command. Reconstruct it
-    # from the original invocation (dropping the wrapper-only mode flags it must
-    # not carry) and pick --resume vs --rebuild from what the resume-guard
-    # actually allows, so we never point the user at a resume that will be
-    # refused (the missing-context / incomplete-Stage-1 case) or hide a resume
-    # that would work.
+    # Recovery hint — print a full, paste-ready fresh-run command without an
+    # unsupported mode flag.
     print_recovery_hint
 fi
 

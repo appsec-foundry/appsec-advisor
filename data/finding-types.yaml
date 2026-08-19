@@ -4,7 +4,7 @@
 # broad OWASP/STRIDE category (TH-NN) and the concrete finding instance (F-NNN).
 #
 # Used by:
-#   - appsec-stride-analyzer: assigns finding_type when emitting a finding
+#   - appsec-stride-analyzer-v2: assigns finding_type when emitting a finding
 #   - appsec-triage-validator Step 6: falls back to CWE-based auto-assignment
 #   - phase-group-threats.md "Top Findings" table: renders the Type column
 #   - phase-group-finalization.md §8.B: optionally groups findings by type

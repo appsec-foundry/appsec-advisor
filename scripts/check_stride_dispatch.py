@@ -4,19 +4,19 @@
 Exit codes
 ----------
 0   No bypass detected. STRIDE was dispatched to sub-agents (or every
-    component is a trivial stub / carry-forward). Skill may proceed. A
+    component is a trivial stub). Skill may proceed. A
     serially-dispatched wave also exits 0 but prints a DEGRADED warning:
     the analysis is correct, only its wall-clock is pathological.
 2   Inline-shortcut detected — the orchestrator authored one or more
     real ``.stride-<id>.json`` files itself instead of dispatching the
-    ``appsec-stride-analyzer`` sub-agents the design mandates.
+    ``appsec-stride-analyzer-v2`` sub-agents the design mandates.
 3   Tool error (bad path).
 4   Selected-component coverage is incomplete after the bounded retry budget.
 
 Why this script exists
 ----------------------
 ``agents/phases/phase-group-threats.md`` instructs the orchestrator to
-dispatch one parallel ``appsec-stride-analyzer`` background sub-agent per
+dispatch one parallel ``appsec-stride-analyzer-v2`` background sub-agent per
 component (``run_in_background: true``). Each dispatched analyzer writes a
 per-component progress file ``$OUTPUT_DIR/.progress/<component-id>.json``
 via ``agent_progress.sh`` at the start of every substep.
@@ -44,9 +44,9 @@ produced without dispatching the analyzer — the only writer of progress
 files.
 
 Positive dispatch evidence that suppresses the signal is **count-based**:
-at least as many dispatched ``appsec-stride-analyzer`` analyzers in
+at least as many dispatched ``appsec-stride-analyzer-v2`` analyzers in
 ``.hook-events.log`` as the ``.stride-dispatch-manifest.json`` planned
-components (or, with no manifest, any dispatch). A dispatch is proven by
+components. A dispatch is proven by
 EITHER an ``AGENT_SPAWN`` OR an ``AGENT_INVOKE`` line — both are emitted per
 analyzer, and the harness occasionally logs only one of the pair, so counting
 both (deduped by ``COMPONENT_ID``) avoids the false-trip seen on 2026-06-12
@@ -146,7 +146,7 @@ def _stride_has_real_threats(stride_path: Path) -> bool:
 
 
 def _stride_dispatch_evidence_count(output_dir: Path, since: str | None = None) -> int:
-    """How many distinct ``appsec-stride-analyzer`` dispatches the hook log proves.
+    """How many distinct ``appsec-stride-analyzer-v2`` dispatches the hook log proves.
 
     Each dispatched analyzer emits BOTH an ``AGENT_SPAWN`` (PreToolUse) and an
     ``AGENT_INVOKE`` (PostToolUse) line to ``.hook-events.log``
@@ -162,7 +162,7 @@ def _stride_dispatch_evidence_count(output_dir: Path, since: str | None = None) 
     union. To avoid double-counting the SPAWN+INVOKE pair of the same dispatch it
     dedupes by ``COMPONENT_ID`` when the lines carry it (the parallel fan-out
     always passes ``COMPONENT_ID=<id>``); when no component id is parseable
-    (serial / legacy lines) it falls back to ``max(spawn_lines, invoke_lines)``,
+    it falls back to ``max(spawn_lines, invoke_lines)``,
     which is the true dispatch count without double-counting the pair.
 
     ``.hook-events.log`` is **append-only across runs**, so a prior run's
@@ -170,7 +170,7 @@ def _stride_dispatch_evidence_count(output_dir: Path, since: str | None = None) 
     step 3b immediately *before* this run's fan-out) bounds the count to the
     current run: every legitimate dispatch line carries a leading timestamp
     ``>= since``. ISO-8601 Zulu is fixed-width, so lexicographic compare ==
-    chronological. Without ``since`` (no manifest) all matching lines count.
+    chronological.
     """
     try:
         text = (output_dir / ".hook-events.log").read_text(encoding="utf-8")
@@ -180,7 +180,7 @@ def _stride_dispatch_evidence_count(output_dir: Path, since: str | None = None) 
     spawn_lines = 0
     invoke_lines = 0
     for line in text.splitlines():
-        if "appsec-stride-analyzer" not in line:
+        if "appsec-stride-analyzer-v2" not in line:
             continue
         is_spawn = "AGENT_SPAWN" in line
         is_invoke = "AGENT_INVOKE" in line
@@ -200,10 +200,6 @@ def _stride_dispatch_evidence_count(output_dir: Path, since: str | None = None) 
     if component_ids:
         return len(component_ids)
     return max(spawn_lines, invoke_lines)
-
-
-# Back-compat alias — older callers / tests referenced the spawn-only name.
-_stride_analyzer_spawn_count = _stride_dispatch_evidence_count
 
 
 def _read_manifest(output_dir: Path) -> dict:
@@ -228,18 +224,15 @@ def _stride_was_dispatched(output_dir: Path) -> bool:
     path.
 
     Real proof is the ``AGENT_SPAWN`` evidence: at least as many dispatched
-    ``appsec-stride-analyzer`` calls as the manifest planned (``>=`` because a
-    re-dispatch on failure only adds spawns). When the manifest is absent
-    (serial / live / opt-out path) any spawn is still a positive signal.
+    ``appsec-stride-analyzer-v2`` calls as the manifest planned (``>=`` because
+    a re-dispatch on failure only adds spawns). A missing manifest supplies no
+    global suppression evidence.
 
     When there is NOT enough spawn evidence this returns ``False`` and the caller
     does NOT globally trust it — it falls through to the per-component
-    ``.progress`` check, which is the per-component safety net that BOTH the
-    dispatched analyzer and the sanctioned serial-inline analyst write (see
-    ``appsec-threat-analyst.md`` §"Reality check" + ``phase-group-threats.md``).
-    So a genuinely-parallel run whose hooks happened not to log still passes on
-    its ``.progress/`` files; only a real inline-collapse (no spawns AND no
-    ``.progress/``) trips.
+    ``.progress`` check, which is the per-component safety net written by the
+    dispatched analyzer. A genuinely parallel run whose hooks were dropped
+    still passes on its progress files; an inline collapse does not.
     """
     manifest = _read_manifest(output_dir)
     comps = manifest.get("components")
@@ -249,7 +242,7 @@ def _stride_was_dispatched(output_dir: Path) -> bool:
         # the fan-out reads the manifest, so every real spawn is at-or-after it.
         since = manifest.get("generated_at")
         return _stride_dispatch_evidence_count(output_dir, since=since) >= expected
-    return _stride_dispatch_evidence_count(output_dir) > 0
+    return False
 
 
 def detect_inlined_components(output_dir: Path) -> list[str]:
@@ -259,7 +252,7 @@ def detect_inlined_components(output_dir: Path) -> list[str]:
     but no ``.progress/<id>.json`` exists. Empty list = clean.
 
     Globally suppressed only when there is *count-based* dispatch evidence
-    (``_stride_was_dispatched`` — enough dispatched ``appsec-stride-analyzer``
+    (``_stride_was_dispatched`` — enough dispatched ``appsec-stride-analyzer-v2``
     spawns to cover the manifest). A manifest WITHOUT matching spawns is NOT
     suppression evidence: it is written before the fan-out and survives an
     inline-collapse, so it falls through to the per-component ``.progress``
@@ -417,7 +410,7 @@ def _dispatch_intervals(output_dir: Path, since: str | None = None) -> dict[str,
 def detect_serial_dispatch(output_dir: Path) -> list[str]:
     """Component ids, in dispatch order, when a wave ran strictly serially.
 
-    The skill (``SKILL-thin-stage1.md``) tells the orchestrator to issue a
+    The skill (``SKILL-thin-stage1-v2.md``) tells the orchestrator to issue a
     wave's Agent calls together in ONE assistant message, which runs the
     analyzers concurrently. Nothing mechanical enforced that: an orchestrator
     that emits one Agent call per assistant message produces the identical
@@ -511,7 +504,7 @@ def _print_banner(inlined: list[str], output_dir: Path) -> None:
     print(bar, file=sys.stderr)
     print("", file=sys.stderr)
     print("  Phase 9 produced real .stride-<id>.json files without", file=sys.stderr)
-    print("  dispatching the appsec-stride-analyzer sub-agents. The", file=sys.stderr)
+    print("  dispatching the appsec-stride-analyzer-v2 sub-agents. The", file=sys.stderr)
     print("  following components were analyzed INLINE (no .progress/", file=sys.stderr)
     print("  file — the only writer of which is a dispatched analyzer):", file=sys.stderr)
     print("", file=sys.stderr)
@@ -525,12 +518,10 @@ def _print_banner(inlined: list[str], output_dir: Path) -> None:
     print("  API request stall into a phase-wide freeze (the per-component", file=sys.stderr)
     print("  watchdog is blind because no .progress/ files exist).", file=sys.stderr)
     print("", file=sys.stderr)
-    print("  Fix: re-run the assessment. The orchestrator MUST issue one", file=sys.stderr)
-    print("  Agent tool call per component — see the dispatch rule for the", file=sys.stderr)
-    print("  active path (SKILL-thin-stage1.md, or phase-group-threats.md", file=sys.stderr)
-    print("  → 'STRIDE dispatch is mandatory' on the analyst path). If", file=sys.stderr)
-    print("  this reproduces, the Phase-9 dispatch rule needs enforcing", file=sys.stderr)
-    print("  harder in the orchestrator prompt.", file=sys.stderr)
+    print("  Fix: re-run the assessment. The controller action MUST issue", file=sys.stderr)
+    print("  one Agent tool call per component — see the dispatch rule in", file=sys.stderr)
+    print("  SKILL-thin-stage1-v2.md. If this reproduces, inspect the", file=sys.stderr)
+    print("  controller action and dispatch receipt before retrying.", file=sys.stderr)
     print(bar, file=sys.stderr)
     print("", file=sys.stderr)
 
@@ -545,22 +536,12 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Assessment output directory (typically <repo>/docs/security).",
     )
-    parser.add_argument(
-        "--incremental",
-        action="store_true",
-        help="Skip the gate (exit 0). In incremental mode a carry-forward "
-        ".stride-<id>.json legitimately has no fresh .progress/ file, so "
-        "progress-file absence is not a reliable inline signal.",
-    )
     args = parser.parse_args(argv)
 
     output_dir: Path = args.output_dir
     if not output_dir.is_dir():
         print(f"Error: output directory does not exist: {output_dir}", file=sys.stderr)
         return 3
-
-    if args.incremental:
-        return 0  # carry-forward makes the signal ambiguous — not applicable.
 
     coverage_errors = selected_coverage_errors(output_dir)
     if coverage_errors:

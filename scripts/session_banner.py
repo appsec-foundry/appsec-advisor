@@ -79,17 +79,12 @@ GIT_TIMEOUT_SECONDS = 3
 # check_namespace_leaks fails the build if one is missed. Keep the literals
 # whole — a namespace assembled at runtime would slip past both.
 REVIEW = "/appsec-advisor:review-threat-model"
-UPDATE = "/appsec-advisor:update-threat-model"
 CREATE = "/appsec-advisor:create-threat-model"
 STATUS = "/appsec-advisor:status"
 HELP = "/appsec-advisor:help"
 INSTALL_BASELINE = "/appsec-advisor:install-baseline"
 REBUILD = f"{CREATE} --full --rebuild"
-
-# Packaged builds may drop skills; only create-threat-model is guaranteed.
-# ``update-threat-model`` is an alias for the incremental mode, so it has a
-# fallback — the others are simply left out when absent.
-INCREMENTAL = f"{CREATE} --incremental"
+REFRESH = f"{CREATE} --full"
 
 # Fixed domain label. The baseline line is headed by the ``baseline`` block's
 # own ``name`` instead, so an organization's baseline appears under its name;
@@ -421,7 +416,7 @@ def _baseline_line(repo: Path | None) -> str:
 def _threat_model_command(*, stale: bool, pressure: bool) -> str:
     """One primary command for the threat-model line, or empty when calm."""
     if stale:
-        return _skill_command(UPDATE, INCREMENTAL)
+        return _skill_command(REFRESH)
     if pressure:
         return _skill_command(REVIEW)
     return ""

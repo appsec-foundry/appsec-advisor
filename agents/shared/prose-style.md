@@ -353,7 +353,7 @@ The pluralize helper in `scripts/compose_threat_model.py:pluralize()` exists for
 
 Loaded explicitly by:
 
-- `agents/appsec-stride-analyzer.md` — before authoring `scenario`,
+- `agents/appsec-stride-analyzer-v2.md` — before authoring `scenario`,
   `mitigation_title`, `remediation.steps`, `controls_in_place`.
 - `agents/phases/phase-group-finalization.md` — before authoring
   `ms-verdict.json` and `ms-architecture-assessment.json`, and before

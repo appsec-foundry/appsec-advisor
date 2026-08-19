@@ -41,11 +41,66 @@ def _cfg(tmp_path: Path, mode: str = "full") -> dict:
         "invocation_args": f"--{mode}",
         "reasoning_model": "sonnet-economy",
         "total_stages": 3,
+        "runtime_generation": "context-v2",
+        "runtime_artifact_schema_versions": dict(controller.resolve_config.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS),
     }
 
 
 def _completed(stdout: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(["test"], 0, stdout=stdout, stderr="")
+
+
+def _abuse_match(candidate_id: str, title: str | None = None) -> dict:
+    title = title or f"Candidate {candidate_id}"
+    return {
+        "abuse_case_id": candidate_id,
+        "title": title,
+        "source": "mandatory",
+        "structural_verdict": "candidate",
+        "reason": None,
+        "matched_finding_ids": ["T-001"],
+        "step_matches": [
+            {
+                "step": 1,
+                "label": "Reach sink",
+                "required": True,
+                "grants": "sink access",
+                "requires": None,
+                "matched": True,
+                "matched_finding_id": "T-001",
+                "evidence": None,
+                "match_basis": "finding",
+                "controls_found": [],
+            }
+        ],
+        "case": {
+            "id": candidate_id,
+            "title": title,
+            "source": "mandatory",
+            "attacker": {"actor_id": "anonymous", "initial_access": "unauthenticated"},
+            "goal": "Reach the selected sink.",
+            "chain": [
+                {
+                    "step": 1,
+                    "label": "Reach sink",
+                    "grants": "sink access",
+                    "required": True,
+                    "probe": {"sink_patterns": ["sink"]},
+                }
+            ],
+        },
+    }
+
+
+def _write_abuse_matches(output: Path, candidates: list[str], titles: dict[str, str] | None = None) -> None:
+    title_map = titles or {}
+    payload = {"schema_version": 1, "matches": [_abuse_match(item, title_map.get(item)) for item in candidates]}
+    (output / ".abuse-case-matches.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_abuse_projections(output: Path, candidates: list[str]) -> None:
+    for candidate in candidates:
+        abuse_contexts.write_candidate(output, candidate)
 
 
 @pytest.fixture(autouse=True)
@@ -54,21 +109,15 @@ def _grant_required_permissions(monkeypatch):
     monkeypatch.setattr(controller.check_permissions, "diff_required", lambda required, granted: [])
 
 
-def test_route_defaults_to_thin_for_full_or_rebuild(monkeypatch, tmp_path):
-    # Default (no env): full/rebuild route to the compact runtime; incremental
-    # keeps the legacy runtime.
-    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
+def test_route_uses_the_single_runtime_for_full_or_rebuild(monkeypatch, tmp_path):
     monkeypatch.setattr(controller, "_resolve", lambda argv: _cfg(tmp_path, argv[0]))
     full = controller.route(["full"])
     rebuild = controller.route(["rebuild"])
-    incremental = controller.route(["incremental"])
     assert full["runtime"] == "thin-full"
     assert rebuild["runtime"] == "thin-full"
-    assert incremental["runtime"] == "legacy"
 
 
 def test_route_defaults_to_compact_rerender(monkeypatch, tmp_path):
-    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
     cfg = _cfg(tmp_path, "rerender")
     cfg["rerender"] = True
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
@@ -78,20 +127,20 @@ def test_route_defaults_to_compact_rerender(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("key", ["dry_run", "resume"])
-def test_route_keeps_special_paths_on_legacy(monkeypatch, tmp_path, key):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+def test_route_rejects_unsupported_special_paths(monkeypatch, tmp_path, key):
     cfg = _cfg(tmp_path)
     cfg[key] = True
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    assert controller.route([])["runtime"] == "legacy"
+    with pytest.raises(controller.ControllerError, match="unsupported invocation"):
+        controller.route([])
 
 
-def test_rerender_with_deadline_keeps_legacy_runtime(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+def test_rerender_with_deadline_is_rejected(monkeypatch, tmp_path):
     cfg = _cfg(tmp_path, "rerender")
     cfg.update({"rerender": True, "max_cost_usd": 1})
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    assert controller.route([])["runtime"] == "legacy"
+    with pytest.raises(controller.ControllerError, match="--max-cost"):
+        controller.route([])
 
 
 def test_compact_rerender_prepare_verifies_artifacts_and_dispatches_stage2(monkeypatch, tmp_path):
@@ -130,31 +179,53 @@ def test_compact_rerender_prepare_fails_before_lock_when_artifacts_are_missing(m
 
 
 @pytest.mark.parametrize("key", ["max_wall_time_seconds", "max_cost_usd"])
-def test_route_keeps_deadline_paths_on_legacy(monkeypatch, tmp_path, key):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+def test_route_rejects_deadline_paths(monkeypatch, tmp_path, key):
     cfg = _cfg(tmp_path)
     cfg[key] = 60
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    assert controller.route([])["runtime"] == "legacy"
-
-
-def test_route_rejects_context_v2_generation_on_legacy_runtime(monkeypatch, tmp_path):
-    cfg = _cfg(tmp_path)
-    cfg.update({"runtime_generation": "context-v2", "max_wall_time_seconds": 1800})
-    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    with pytest.raises(controller.ControllerError, match="context-v2 requires the compact"):
+    with pytest.raises(controller.ControllerError, match="unsupported invocation"):
         controller.route([])
 
 
-def test_route_keeps_live_phase_on_legacy(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+def test_route_rejects_pre_cutover_generation(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg["runtime_generation"] = "legacy"
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    with pytest.raises(controller.ControllerError, match="pre-cutover"):
+        controller.route([])
+
+
+def test_route_rejects_live_phase(monkeypatch, tmp_path):
     monkeypatch.setenv("APPSEC_LIVE_PHASE", "1")
     monkeypatch.setattr(controller, "_resolve", lambda argv: _cfg(tmp_path))
-    assert controller.route([])["runtime"] == "legacy"
+    with pytest.raises(controller.ControllerError, match="APPSEC_LIVE_PHASE"):
+        controller.route([])
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--incremental"],
+        ["--resume"],
+        ["--dry-run"],
+        ["--full", "--max-wall-time", "30m"],
+        ["--full", "--max-cost", "5"],
+    ],
+)
+def test_unsupported_modes_fail_before_output_mutation(monkeypatch, tmp_path, arguments, capsys):
+    output = tmp_path / "not-created"
+    monkeypatch.chdir(tmp_path)
+
+    code = controller.main(
+        ["route", "--", *arguments, "--repo", str(tmp_path), "--output", str(output)]
+    )
+
+    assert code == 2
+    assert json.loads(capsys.readouterr().out)["action"] == "abort"
+    assert not output.exists()
 
 
 def test_full_prepare_wipes_only_intermediates(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path)
     output = Path(cfg["output_dir"])
     repo = Path(cfg["repo_root"])
@@ -201,11 +272,7 @@ def test_full_prepare_wipes_only_intermediates(monkeypatch, tmp_path):
     assert controller._validate_action(action) == action
     assert action["action"] == "dispatch_agent"
     assert action["stage"] == "stage1"
-    stage1 = (
-        list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
-        if action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
-        else list(controller.STAGE1_TASK_ROWS_LEGACY)
-    )
+    stage1 = list(controller.STAGE1_TASK_ROWS)
     assert action["task_rows"][1 : 1 + len(stage1)] == stage1
     assert "Workspace\n  Cleanup  :" in action["run_plan"]
     assert "prior deliverables and baseline preserved" in action["run_plan"]
@@ -221,7 +288,6 @@ def test_prepare_passes_detected_session_model_to_box(monkeypatch, tmp_path):
     # Thin-path fix: the controller must detect the host session model and pass
     # it to render_run_plan so the Pre-flight box can fold in the cost advisory.
     # (The rendered content itself is unit-tested in test_resolve_config.py.)
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path)
     Path(cfg["output_dir"]).mkdir(parents=True)
     Path(cfg["repo_root"]).mkdir(exist_ok=True)
@@ -242,7 +308,6 @@ def test_prepare_passes_detected_session_model_to_box(monkeypatch, tmp_path):
 
 
 def test_prepare_passes_empty_when_session_undetected(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path)
     Path(cfg["output_dir"]).mkdir(parents=True)
     Path(cfg["repo_root"]).mkdir(exist_ok=True)
@@ -267,26 +332,7 @@ def test_prepare_passes_empty_when_session_undetected(monkeypatch, tmp_path):
     assert captured["session_model"] == ""
 
 
-def test_rebuild_need_render_aborts_before_wipe(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
-    cfg = _cfg(tmp_path, "rebuild")
-    output = Path(cfg["output_dir"])
-    output.mkdir(parents=True)
-    (output / ".appsec-checkpoint").write_text(
-        "phase=10b status=completed need_render=true\n",
-        encoding="utf-8",
-    )
-    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
-    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    action = controller.prepare(["--rebuild"])
-    assert action["action"] == "abort"
-    assert action["exit_code"] == 0
-    assert "Use --resume" in action["reason"]
-    assert (output / "threat-model.yaml").exists()
-
-
-def test_rebuild_need_render_does_not_recommend_resume_for_context_v2(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
+def test_rebuild_need_render_recommends_supported_recovery_before_wipe(monkeypatch, tmp_path):
     cfg = _cfg(tmp_path, "rebuild")
     output = Path(cfg["output_dir"])
     output.mkdir(parents=True)
@@ -304,12 +350,13 @@ def test_rebuild_need_render_does_not_recommend_resume_for_context_v2(monkeypatc
     action = controller.prepare(["--rebuild"])
 
     assert action["action"] == "abort"
-    assert "does not support --resume" in action["reason"]
+    assert "--resume is not supported" in action["reason"]
+    assert "--rerender" in action["reason"]
     assert "--rebuild --force" in action["reason"]
+    assert (output / "threat-model.yaml").exists()
 
 
 def test_rebuild_cleanup_preserves_audit_logs(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path, "rebuild")
     output = Path(cfg["output_dir"])
     repo = Path(cfg["repo_root"])
@@ -563,7 +610,6 @@ def test_lock_failure_happens_before_intermediate_cleanup(monkeypatch, tmp_path)
     output = Path(cfg["output_dir"])
     output.mkdir(parents=True)
     (output / ".stride-api.json").write_text("active run", encoding="utf-8")
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
 
     def fail_lock(name, args, **kwargs):
@@ -585,7 +631,7 @@ def test_next_action_rehydrates_from_filesystem(tmp_path):
 
     stage1 = controller.next_action(output)
     assert stage1["stage"] == "stage1"
-    assert stage1["instruction_file"] == str(controller.THIN_STAGE1_RUNTIME)
+    assert stage1["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
     (output / "threat-model.yaml").write_text("meta: {}\n")
     stage2 = controller.next_action(output)
     assert stage2["stage"] == "stage2"
@@ -598,216 +644,6 @@ def test_next_action_rehydrates_from_filesystem(tmp_path):
     (output / ".appsec-checkpoint").write_text("phase=11 status=writing_output\n")
     assert controller.next_action(output)["action"] == "complete"
     assert not (output / ".appsec-checkpoint").exists()
-
-
-def test_post_stage1_runs_compact_deterministic_gate_sequence(tmp_path, monkeypatch):
-    output = tmp_path / "out"
-    output.mkdir()
-    cfg = _cfg(tmp_path)
-    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
-    for name in (".recon-summary.md", ".threats-merged.json", ".triage-flags.json", "threat-model.yaml"):
-        (output / name).write_text("{}", encoding="utf-8")
-    (output / ".appsec-checkpoint").write_text(
-        "phase=10b status=completed need_render=true\n",
-        encoding="utf-8",
-    )
-
-    scripts = []
-    external = []
-
-    def fake_script(name, args, **kwargs):
-        scripts.append(name)
-        return _completed()
-
-    monkeypatch.setattr(controller, "_run_script", fake_script)
-    monkeypatch.setattr(controller, "_run_external", lambda command, **kwargs: external.append(command) or _completed())
-    monkeypatch.setattr(controller, "_upgrade_bootstrap_yaml", lambda output_dir, config: True)
-
-    action = controller.post_stage1(output)
-    assert action["action"] == "run_gate"
-    assert action["stage"] == "stage1"
-    assert scripts == [
-        "check_stride_dispatch.py",
-        "enforce_yaml_invariants.py",
-        "validate_intermediate.py",
-        "triage_compute_ranking.py",
-        "validate_mitigation_quality.py",
-        "assert_completeness.py",
-    ]
-    assert external and external[0][0] == "bash"
-    assert external[0][1].endswith("auto_emitter_pass.sh")
-
-
-def test_post_stage1_fails_closed_on_missing_artifact(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
-    with pytest.raises(controller.ControllerError, match="required artifacts"):
-        controller.post_stage1(output)
-
-
-def test_post_stage1_rejects_stale_yaml_without_completion_checkpoint(tmp_path):
-    output = tmp_path / "out"
-    output.mkdir()
-    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
-    for name in (".recon-summary.md", ".threats-merged.json", ".triage-flags.json", "threat-model.yaml"):
-        (output / name).write_text("{}", encoding="utf-8")
-
-    with pytest.raises(controller.ControllerError, match="completion checkpoint"):
-        controller.post_stage1(output)
-
-
-def test_stage1a_to_stage1b_controller_handoff_and_promotion(tmp_path):
-    repo = tmp_path / "repo"
-    output = tmp_path / "out"
-    repo.mkdir()
-    (repo / "src").mkdir()
-    (repo / "src" / "api.py").write_text("value = 1\n", encoding="utf-8")
-    output.mkdir()
-    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
-    (output / ".recon-summary.md").write_text("# Recon\n", encoding="utf-8")
-    (output / ".components.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "components": [
-                    {
-                        "id": "api",
-                        "name": "API",
-                        "description": "Internet-facing API",
-                        "paths": ["src/**"],
-                        "tier": "application",
-                        "deployment_zones": ["internet"],
-                        "handles_sensitive_data": True,
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    controller._run_script(
-        "finalize_component_inventory.py",
-        ["--repo-root", str(repo), "--output-dir", str(output)],
-    )
-    receipt_path = output / ".component-inventory-finalization.json"
-    receipt_before = receipt_path.read_bytes()
-    receipt = json.loads(receipt_before)
-    (output / ".data-flows.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "component_inventory_fingerprint": receipt["component_inventory_fingerprint"],
-                "data_flows": [
-                    {
-                        "id": "df-001",
-                        "from": "external",
-                        "to": "api",
-                        "label": "HTTPS ingress",
-                        "protocol": "HTTPS",
-                        "data_classification": "Confidential",
-                        "direction": "request-response",
-                        "evidence": [],
-                        "provenance": "architecture",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    (output / ".assets.json").write_text(json.dumps({"schema_version": 1, "assets": []}), encoding="utf-8")
-    (output / ".attack-surface-overrides.json").write_text(
-        json.dumps({"schema_version": 1, "curations": {}, "additions": []}),
-        encoding="utf-8",
-    )
-    (output / ".appsec-checkpoint").write_text(
-        "phase=6 status=completed need_boundary_assessment=true\n",
-        encoding="utf-8",
-    )
-
-    stage1a = controller.post_stage1a(output)
-    assert stage1a["action"] == "dispatch_agent"
-    assert stage1a["stage"] == "stage1b"
-    assert stage1a["instruction_file"] == str(controller.THIN_STAGE1B_RUNTIME)
-    assert receipt_path.read_bytes() == receipt_before
-
-    assessment = json.loads((output / ".trust-boundary-assessment-input.json").read_text(encoding="utf-8"))
-    signal_id = assessment["signals"][0]["id"]
-    (output / ".trust-boundary-candidates.json").write_text(
-        json.dumps(
-            {
-                "schema_version": 1,
-                "component_inventory_fingerprint": assessment["component_inventory_fingerprint"],
-                "assessment_input_fingerprint": assessment["assessment_input_fingerprint"],
-                "candidates": [
-                    {
-                        "candidate_key": "candidate-api-ingress",
-                        "name": "Internet to API",
-                        "from": "external",
-                        "to": "api",
-                        "kind": "network",
-                        "assumption": "The API authenticates and authorizes protected operations.",
-                        "evidence": [],
-                        "confidence": "inferred",
-                        "covered_signal_ids": [signal_id],
-                        "covered_flow_ids": ["df-001"],
-                    }
-                ],
-                "dispositions": [
-                    {
-                        "signal_id": signal_id,
-                        "disposition": "boundary",
-                        "candidate_keys": ["candidate-api-ingress"],
-                        "rationale": "An external client crosses into the API enforcement domain.",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    stage1b = controller.finalize_stage1b(output)
-    assert stage1b["action"] == "run_gate"
-    assert stage1b["stage"] == "stage1b"
-    assert (output / ".appsec-checkpoint").read_text(encoding="utf-8") == (
-        "phase=7 status=completed need_threat_analysis=true\n"
-    )
-    coverage = json.loads((output / ".trust-boundary-coverage.json").read_text(encoding="utf-8"))
-    assert coverage["status"] == "pass"
-    assert coverage["signals"][0]["boundary_ids"] == ["tb-1"]
-
-
-def test_stage1a_active_budget_exhaustion_preserves_input_and_blocks_stage1b(tmp_path, monkeypatch):
-    output = tmp_path / "out"
-    output.mkdir()
-    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
-    for name in (
-        ".recon-summary.md",
-        ".components.json",
-        ".component-inventory-finalization.json",
-        ".data-flows.json",
-        ".assets.json",
-        ".attack-surface-overrides.json",
-    ):
-        (output / name).write_text("{}", encoding="utf-8")
-    (output / ".appsec-checkpoint").write_text(
-        "phase=6 status=completed need_boundary_assessment=true\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(controller.budget_watchdog, "has_active_critical_claim", lambda _output: True)
-
-    def fake_script(name, args, **kwargs):
-        if name == "build_trust_boundary_assessment_input.py":
-            (output / ".trust-boundary-assessment-input.json").write_text("{}", encoding="utf-8")
-        return _completed()
-
-    monkeypatch.setattr(controller, "_run_script", fake_script)
-    with pytest.raises(controller.ControllerError, match="preserved for --resume"):
-        controller.post_stage1a(output)
-
-    assert (output / ".trust-boundary-assessment-input.json").is_file()
-    assert (output / ".appsec-checkpoint").read_text(encoding="utf-8") == (
-        "phase=7 status=aborted reason=budget-critical-before-boundary\n"
-    )
 
 
 def test_context_v2_budget_abort_does_not_recommend_resume():
@@ -823,10 +659,14 @@ def test_prepare_abuse_returns_bounded_parallel_action(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     cfg["skip_abuse_case_verification"] = False
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    candidates = ["AC-T-001", "AC-T-002"]
+    _write_abuse_matches(output, candidates)
 
     def fake_script(name, args, **kwargs):
         if "list-candidates" in args:
             return _completed("AC-T-001\nAC-T-002\ninvalid/id\n")
+        if name == "build_abuse_case_contexts.py":
+            _write_abuse_projections(output, candidates)
         return _completed()
 
     monkeypatch.setattr(controller, "_run_script", fake_script)
@@ -921,22 +761,22 @@ def test_prepare_abuse_carries_candidate_titles_for_dispatch_labels(tmp_path, mo
     cfg["skip_abuse_case_verification"] = False
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
     long_title = "Account takeover through " + "chained password reset " * 4
-    (output / ".abuse-case-matches.json").write_text(
-        json.dumps(
-            {
-                "matches": [
-                    {"abuse_case_id": "AC-T-001", "title": "Stored XSS to admin session theft"},
-                    {"abuse_case_id": "AC-T-002", "title": long_title},
-                    {"abuse_case_id": "AC-T-003", "title": "not a candidate"},
-                ]
-            }
-        ),
-        encoding="utf-8",
+    candidates = ["AC-T-001", "AC-T-002"]
+    _write_abuse_matches(
+        output,
+        candidates + ["AC-T-003"],
+        {
+            "AC-T-001": "Stored XSS to admin session theft",
+            "AC-T-002": long_title,
+            "AC-T-003": "not a candidate",
+        },
     )
 
     def fake_script(name, args, **kwargs):
         if "list-candidates" in args:
             return _completed("AC-T-001\nAC-T-002\n")
+        if name == "build_abuse_case_contexts.py":
+            _write_abuse_projections(output, candidates)
         return _completed()
 
     monkeypatch.setattr(controller, "_run_script", fake_script)
@@ -948,19 +788,24 @@ def test_prepare_abuse_carries_candidate_titles_for_dispatch_labels(tmp_path, mo
     controller._validate_action(action)
 
 
-def test_prepare_abuse_titles_absent_without_matcher_sidecar(tmp_path, monkeypatch):
+def test_prepare_abuse_uses_the_receipted_match_title(tmp_path, monkeypatch):
     output = tmp_path / "out"
     output.mkdir()
     cfg = _cfg(tmp_path)
     cfg["skip_abuse_case_verification"] = False
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    _write_abuse_matches(output, ["AC-T-001"])
 
     def fake_script(name, args, **kwargs):
-        return _completed("AC-T-001\n" if "list-candidates" in args else "")
+        if "list-candidates" in args:
+            return _completed("AC-T-001\n")
+        if name == "build_abuse_case_contexts.py":
+            _write_abuse_projections(output, ["AC-T-001"])
+        return _completed()
 
     monkeypatch.setattr(controller, "_run_script", fake_script)
     action = controller.prepare_abuse(output)
-    assert action["candidate_titles"] == {}
+    assert action["candidate_titles"] == {"AC-T-001": "Candidate AC-T-001"}
     controller._validate_action(action)
 
 
@@ -1003,9 +848,14 @@ def test_prepare_abuse_never_redispatches_a_finalized_verdict(tmp_path, monkeypa
     output = _abuse_output(tmp_path)
     _verdict(output, "AC-T-001", [{"step": 1, "verdict": "confirmed", "reason": "sink reachable"}])
     _verdict(output, "AC-T-002", [{"step": 1, "verdict": "inconclusive"}])
+    _write_abuse_matches(output, ["AC-T-001", "AC-T-002"])
 
     def fake_script(name, args, **kwargs):
-        return _completed("AC-T-001\nAC-T-002\n" if "list-candidates" in args else "")
+        if "list-candidates" in args:
+            return _completed("AC-T-001\nAC-T-002\n")
+        if name == "build_abuse_case_contexts.py":
+            _write_abuse_projections(output, ["AC-T-002"])
+        return _completed()
 
     monkeypatch.setattr(controller, "_run_script", fake_script)
     action = controller.prepare_abuse(output)
@@ -1039,9 +889,14 @@ def test_prepare_abuse_still_dispatches_a_partially_finalized_verdict(tmp_path, 
             {"step": 2, "verdict": "inconclusive", "evidence": {"excerpt": ""}},
         ],
     )
+    _write_abuse_matches(output, ["AC-T-001"])
 
     def fake_script(name, args, **kwargs):
-        return _completed("AC-T-001\n" if "list-candidates" in args else "")
+        if "list-candidates" in args:
+            return _completed("AC-T-001\n")
+        if name == "build_abuse_case_contexts.py":
+            _write_abuse_projections(output, ["AC-T-001"])
+        return _completed()
 
     monkeypatch.setattr(controller, "_run_script", fake_script)
     action = controller.prepare_abuse(output)
@@ -1369,7 +1224,7 @@ def test_action_schema_rejects_unknown_dispatch_value():
                 "action": "dispatch_agent",
                 "mode": "full",
                 "stage": "stage1",
-                "instruction_file": str(controller.LEGACY_RUNTIME),
+                "instruction_file": str(controller.THIN_STAGE1_V2_RUNTIME),
                 "config_path": "/tmp/.skill-config.json",
                 "dispatch_values": {"shell_command": "rm -rf /"},
             }
@@ -1389,7 +1244,7 @@ def _semantic_action(tmp_path: Path, jobs: list[dict]) -> dict:
         "action": "dispatch_parallel",
         "mode": "full",
         "stage": "stage1",
-        "instruction_file": str(controller.THIN_STAGE1_RUNTIME),
+        "instruction_file": str(controller.THIN_STAGE1_V2_RUNTIME),
         "config_path": str(tmp_path / ".skill-config.json"),
         "dispatch_values": {"output_dir": str(tmp_path)},
         "dispatch_jobs": jobs,
@@ -1949,8 +1804,8 @@ def test_context_v2_begin_clears_optional_outputs_with_no_current_producer(tmp_p
     for path in optional:
         path.write_text("stale", encoding="utf-8")
     monkeypatch.setattr(controller, "_recon_skip", lambda *_args: True)
-    monkeypatch.setattr(controller, "_context_skip", lambda *_args: True)
     monkeypatch.setattr(controller, "_has_iac_surface", lambda *_args: False)
+    monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
     monkeypatch.setattr(controller, "_context_v2_after_recon", lambda *_args: {"action": "run_gate"})
 
     assert controller.context_v2_begin(output) == {"action": "run_gate"}
@@ -2151,12 +2006,11 @@ CONTEXT_V2_ENTRYPOINTS = (
 
 
 @pytest.mark.parametrize("entrypoint", CONTEXT_V2_ENTRYPOINTS)
-def test_context_v2_action_refuses_a_legacy_run(tmp_path, monkeypatch, entrypoint):
+def test_context_v2_action_refuses_a_pre_cutover_run(tmp_path, monkeypatch, entrypoint):
     output = _write_context_v2_config(tmp_path, runtime_generation="legacy")
-    monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
     with pytest.raises(controller.ControllerError) as excinfo:
         getattr(controller, entrypoint)(output)
-    assert "incompatible runtime generation" in str(excinfo.value)
+    assert "pre-cutover run generation" in str(excinfo.value)
 
 
 @pytest.mark.parametrize("entrypoint", CONTEXT_V2_ENTRYPOINTS)
@@ -2166,10 +2020,9 @@ def test_context_v2_action_refuses_a_run_without_a_persisted_generation(tmp_path
     cfg = _cfg(tmp_path)
     cfg.pop("runtime_generation", None)
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
-    monkeypatch.setenv("APPSEC_CONTEXT_V2", "1")
     with pytest.raises(controller.ControllerError) as excinfo:
         getattr(controller, entrypoint)(output)
-    assert "incompatible runtime generation" in str(excinfo.value)
+    assert "pre-cutover run generation" in str(excinfo.value)
 
 
 def test_context_v2_action_refuses_stale_persisted_schema_versions(tmp_path):
@@ -2181,51 +2034,6 @@ def test_context_v2_action_refuses_stale_persisted_schema_versions(tmp_path):
 
     with pytest.raises(controller.ControllerError, match="artifact schema versions"):
         controller.context_v2_begin(output)
-
-
-def test_context_v2_default_continues_without_an_environment_warning(tmp_path, monkeypatch):
-    output = _write_context_v2_config(tmp_path)
-    _write_minimal_context_v2_manifest(output)
-    monkeypatch.delenv("APPSEC_CONTEXT_V2", raising=False)
-
-    def fake_script(name, args, **kwargs):
-        if name == "stride_dispatch_waves.py" and args[0] == "claim":
-            return _completed(json.dumps({"status": "complete"}))
-        if name == "merge_threats.py" and args[0] == "collect":
-            (output / ".merge-candidates.json").write_text(json.dumps(_merge_candidates()), encoding="utf-8")
-        return _completed()
-
-    monkeypatch.setattr(controller, "_run_script", fake_script)
-    monkeypatch.setattr(controller, "_context_v2_after_merge", lambda *_a, **_k: {"action": "run_gate"})
-    assert controller.context_v2_post_stride(output)["action"] == "run_gate"
-    log_path = output / ".agent-run.log"
-    assert not log_path.exists() or "RUNTIME_GENERATION_ENV_IGNORED" not in log_path.read_text(encoding="utf-8")
-
-
-def test_context_v2_continues_persisted_generation_despite_legacy_override(tmp_path, monkeypatch):
-    output = _write_context_v2_config(tmp_path)
-    _write_minimal_context_v2_manifest(output)
-    monkeypatch.setenv("APPSEC_CONTEXT_V2", "0")
-
-    def fake_script(name, args, **kwargs):
-        if name == "stride_dispatch_waves.py" and args[0] == "claim":
-            return _completed(json.dumps({"status": "complete"}))
-        if name == "merge_threats.py" and args[0] == "collect":
-            (output / ".merge-candidates.json").write_text(json.dumps(_merge_candidates()), encoding="utf-8")
-        return _completed()
-
-    monkeypatch.setattr(controller, "_run_script", fake_script)
-    monkeypatch.setattr(controller, "_context_v2_after_merge", lambda *_a, **_k: {"action": "run_gate"})
-    assert controller.context_v2_post_stride(output)["action"] == "run_gate"
-    assert "RUNTIME_GENERATION_ENV_IGNORED" in (output / ".agent-run.log").read_text(encoding="utf-8")
-
-
-@pytest.mark.parametrize("entrypoint", ("post_stage1", "post_stage1a"))
-def test_legacy_stage1_gate_refuses_a_context_v2_run(tmp_path, entrypoint):
-    output = _write_context_v2_config(tmp_path)
-    with pytest.raises(controller.ControllerError) as excinfo:
-        getattr(controller, entrypoint)(output)
-    assert "incompatible runtime generation" in str(excinfo.value)
 
 
 def test_context_v2_post_stride_dispatches_merger_only_for_ambiguous_groups(tmp_path, monkeypatch):
@@ -3737,15 +3545,10 @@ def test_duration_estimate_forwards_resolved_profile(monkeypatch, tmp_path):
     assert captured[captured.index("--max-stride-components") + 1] == "7"
 
 
-def test_thin_runtime_is_default_with_opt_out(monkeypatch, tmp_path):
-    # Post-parity flip: the compact runtime is the default for full/rebuild;
-    # APPSEC_THIN_ORCHESTRATOR=0 is the explicit opt-out back to legacy.
-    cfg = _cfg(tmp_path)
-    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    monkeypatch.delenv("APPSEC_THIN_ORCHESTRATOR", raising=False)
-    assert controller.route([])["runtime"] == "thin-full"
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "0")
-    assert controller.route([])["runtime"] == "legacy"
+def test_runtime_environment_opt_outs_are_absent():
+    source = Path(controller.__file__).read_text(encoding="utf-8")
+    assert "APPSEC_THIN_ORCHESTRATOR" not in source
+    assert "APPSEC_CONTEXT_V2" not in source
 
 
 def test_agents_routes_to_orchestration_action_contract():
@@ -3799,7 +3602,6 @@ def test_emit_rewrites_invalid_action_to_abort(capsys):
 
 
 def test_main_route_end_to_end(monkeypatch, tmp_path, capsys):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     monkeypatch.setattr(controller, "_resolve", lambda argv: _cfg(tmp_path))
     code = controller.main(["route", "--", "--full"])
     payload = json.loads(capsys.readouterr().out)
@@ -3848,7 +3650,6 @@ def test_main_prepare_forwards_force_flag(monkeypatch, capsys):
 
 
 def test_post_lock_controller_error_releases_lock(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path)
     output = Path(cfg["output_dir"])
     repo = Path(cfg["repo_root"])
@@ -3871,7 +3672,6 @@ def test_post_lock_controller_error_releases_lock(monkeypatch, tmp_path):
 
 
 def test_post_lock_oserror_is_wrapped_and_releases_lock(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path)
     output = Path(cfg["output_dir"])
     repo = Path(cfg["repo_root"])
@@ -4057,7 +3857,6 @@ def test_checkpoint_needs_render_handles_empty_checkpoint(tmp_path):
 
 
 def test_rebuild_clean_slate_note(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path, "rebuild")
     output = Path(cfg["output_dir"])
     repo = Path(cfg["repo_root"])
@@ -4084,7 +3883,6 @@ def test_next_action_aborts_on_unreadable_config(tmp_path):
 
 
 def test_prepare_surfaces_validator_and_session_advisories(monkeypatch, tmp_path):
-    monkeypatch.setenv("APPSEC_THIN_ORCHESTRATOR", "1")
     cfg = _cfg(tmp_path)
     output = Path(cfg["output_dir"])
     repo = Path(cfg["repo_root"])
@@ -4112,7 +3910,7 @@ def test_prepare_surfaces_validator_and_session_advisories(monkeypatch, tmp_path
 def test_resolve_strips_force_before_config(monkeypatch):
     seen: dict[str, list[str]] = {}
 
-    def fake_resolve(argv, root):
+    def fake_resolve(argv, root, **kwargs):
         seen["argv"] = argv
         return {"mode": "full"}
 
@@ -4418,28 +4216,8 @@ class TestContextV2ReconWave:
         assert "context_resolver" not in roles
         assert (output / ".threat-modeling-context.md").read_text(encoding="utf-8") != "stale\n"
 
-    def test_incremental_reuses_context_newer_than_head(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, incremental=True)
-        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
-        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
-        monkeypatch.setattr(controller.subprocess, "run", lambda *a, **k: _completed("1\n"))
-        action = controller.context_v2_begin(output)
-        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
-        assert "context_resolver" not in roles
-
-    def test_incremental_re_resolves_context_older_than_head(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, incremental=True)
-        (output / ".threat-modeling-context.md").write_text("stale\n", encoding="utf-8")
-        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
-        future = str(int(Path(output / ".threat-modeling-context.md").stat().st_mtime) + 10_000)
-        monkeypatch.setattr(controller.subprocess, "run", lambda *a, **k: _completed(future + "\n"))
-        action = controller.context_v2_begin(output)
-        roles = [job["semantic_role"] for job in action["dispatch_jobs"]]
-        assert "context_resolver" not in roles
-        assert (output / ".threat-modeling-context.md").read_text(encoding="utf-8") != "stale\n"
-
     def test_begin_reuses_recon_when_the_fingerprint_is_unchanged(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, incremental=True)
+        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
         (tmp_path / "repo" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
@@ -4454,7 +4232,7 @@ class TestContextV2ReconWave:
         assert "recon_scanner" not in roles
 
     def test_begin_does_not_reuse_legacy_free_form_recon_evidence(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, incremental=True)
+        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         legacy = _valid_recon_signals()
         legacy["schema_version"] = 1
@@ -4468,7 +4246,7 @@ class TestContextV2ReconWave:
         assert "recon_scanner" in roles
 
     def test_begin_runs_recon_when_the_fingerprint_check_fails(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, incremental=True)
+        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
         (output / ".recon-summary.md").write_text("prior\n", encoding="utf-8")
 
         def fake_script(name, args, **kwargs):
@@ -4484,7 +4262,7 @@ class TestContextV2ReconWave:
         assert "recon_scanner" in roles
 
     def test_begin_continues_deterministically_when_the_wave_is_empty(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, incremental=True)
+        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
         (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
@@ -4943,7 +4721,7 @@ class TestContextV2ArchitectureAndBoundary:
         with pytest.raises(controller.ControllerError):
             controller.consume_artifact_receipt(output, receipt)
 
-    def test_post_architecture_propagates_a_failed_gate(self, tmp_path, monkeypatch):
+    def test_post_stage1_fails_closed_on_missing_artifact(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)
 
         def fail(*_a, **_k):
@@ -5132,22 +4910,20 @@ class TestContextV2ArchitectureAndBoundary:
             "context_v2_post_boundary",
         ],
     )
-    def test_pre_stride_actions_refuse_a_legacy_run(self, tmp_path, entrypoint):
+    def test_pre_stride_actions_refuse_a_pre_cutover_run(self, tmp_path, entrypoint):
         output = _context_v2_run(tmp_path, runtime_generation="legacy")
-        with pytest.raises(controller.ControllerError, match="incompatible runtime generation"):
+        with pytest.raises(controller.ControllerError, match="pre-cutover"):
             getattr(controller, entrypoint)(output)
 
 
 class TestStage1RuntimeSelection:
-    """prepare() hands the skill the runtime that matches the run's generation."""
+    """prepare() hands the skill the sole Stage-1 runtime."""
 
-    def test_the_two_stage1_runtimes_are_distinct_files(self):
-        assert controller.THIN_STAGE1_RUNTIME.name == "SKILL-thin-stage1.md"
+    def test_the_stage1_runtime_is_the_context_v2_file(self):
         assert controller.THIN_STAGE1_V2_RUNTIME.name == "SKILL-thin-stage1-v2.md"
 
-    def test_both_stage1_runtimes_are_plugin_owned(self):
+    def test_the_stage1_runtime_is_plugin_owned(self):
         owned = controller._plugin_owned_instruction_paths()
-        assert controller.THIN_STAGE1_RUNTIME.resolve() in owned
         assert controller.THIN_STAGE1_V2_RUNTIME.resolve() in owned
 
     def test_context_v2_actions_name_the_v2_runtime(self, tmp_path, monkeypatch):
@@ -5155,21 +4931,6 @@ class TestStage1RuntimeSelection:
         monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
         action = controller.context_v2_begin(output)
         assert action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
-
-    @pytest.mark.parametrize(
-        ("generation", "expected"),
-        [("legacy", "SKILL-thin-stage1.md"), ("context-v2", "SKILL-thin-stage1-v2.md")],
-    )
-    def test_stage1_runtime_follows_the_persisted_generation(self, tmp_path, generation, expected):
-        cfg = _cfg(tmp_path)
-        cfg["runtime_generation"] = generation
-        assert controller._stage1_runtime_for(cfg).name == expected
-
-    def test_a_run_without_a_generation_falls_back_to_legacy(self, tmp_path):
-        cfg = _cfg(tmp_path)
-        cfg.pop("runtime_generation", None)
-        assert controller._stage1_runtime_for(cfg) is controller.THIN_STAGE1_RUNTIME
-
 
 class TestIacSurfaceDetection:
     def test_detects_a_top_level_marker(self, tmp_path):
@@ -5470,29 +5231,18 @@ class TestStage1TaskRows:
     SKILL = ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
     STAGE1_V2 = ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md"
 
-    def test_context_v2_gets_one_row_per_job(self):
-        rows = controller._stage1_task_rows({"runtime_generation": "context-v2", "mode": "full"})
-
-        assert rows == list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
-        assert len(rows) > len(controller.STAGE1_TASK_ROWS_LEGACY)
-
-    def test_legacy_keeps_its_stage_rows(self):
-        rows = controller._stage1_task_rows({"runtime_generation": "legacy", "mode": "full"})
-
-        assert rows == list(controller.STAGE1_TASK_ROWS_LEGACY)
-
-    def test_an_unset_generation_is_legacy(self):
-        assert controller._stage1_task_rows({"mode": "full"}) == list(controller.STAGE1_TASK_ROWS_LEGACY)
+    def test_stage1_gets_one_row_per_job(self):
+        assert len(controller.STAGE1_TASK_ROWS) == 10
 
     def test_every_row_is_ascii(self):
         # The TUI mis-measures a multi-byte dash on a partial redraw and bleeds
         # adjacent labels together, which is why the stage subjects use
         # hyphen-minus. A row that rewrites often is the wrong place to retest it.
-        for row in controller.STAGE1_TASK_ROWS_CONTEXT_V2 + controller.STAGE1_TASK_ROWS_LEGACY:
+        for row in controller.STAGE1_TASK_ROWS:
             assert row.isascii(), row
 
     def test_rows_are_unique_because_a_task_update_matches_by_subject(self):
-        rows = list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
+        rows = list(controller.STAGE1_TASK_ROWS)
         assert len(set(rows)) == len(rows)
 
     def test_the_schema_admits_the_longest_row(self):
@@ -5517,7 +5267,7 @@ class TestStage1TaskRows:
         # The reader has to see how much of the running stage is left, so a
         # substage row names its own place in that stage, not in the run.
         positions: dict[str, list[tuple[int, int]]] = {}
-        for row in controller.STAGE1_TASK_ROWS_CONTEXT_V2:
+        for row in controller.STAGE1_TASK_ROWS:
             match = re.fullmatch(r"(Stage 1[a-d]) \[(\d+)/(\d+)\] - .+", row)
             assert match is not None, row
             positions.setdefault(match.group(1), []).append((int(match.group(2)), int(match.group(3))))
@@ -5532,9 +5282,7 @@ class TestStage1TaskRows:
 
         assert every[0] == "Preparing workspace"
         assert every[-1] == "Final summary + cleanup"
-        assert every[1 : 1 + len(controller.STAGE1_TASK_ROWS_CONTEXT_V2)] == list(
-            controller.STAGE1_TASK_ROWS_CONTEXT_V2
-        )
+        assert every[1 : 1 + len(controller.STAGE1_TASK_ROWS)] == list(controller.STAGE1_TASK_ROWS)
         assert [row for row in every if row.startswith(("Stage 1d", "Stage 2", "Stage 3", "Stage 4"))] == [
             "Stage 1d - Abuse case verification",
             "Stage 2 - Report rendering",
@@ -5559,9 +5307,9 @@ class TestStage1TaskRows:
         # A TaskUpdate that no longer matches its subject silently no-ops and
         # hangs the row it was meant to close.
         every = set(controller._task_rows({"mode": "full", "architect_review": True}))
-        every |= set(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
+        every |= set(controller.STAGE1_TASK_ROWS)
 
-        for name in ("SKILL-impl.md", "SKILL-thin-stage2.md", "SKILL-rerender-runtime.md"):
+        for name in ("SKILL-thin-stage1-v2.md", "SKILL-thin-stage2.md", "SKILL-rerender-runtime.md"):
             text = (ROOT / "skills" / "create-threat-model" / name).read_text(encoding="utf-8")
             for raw in re.findall(r"`(Stage [1-4][a-d]? - [^`]+)`", text):
                 subject = " ".join(raw.replace("\n>", " ").split())
@@ -5586,4 +5334,4 @@ class TestStage1TaskRows:
 
         assert controller._validate_action(action) == action
         assert action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
-        assert action["task_rows"][1:11] == list(controller.STAGE1_TASK_ROWS_CONTEXT_V2)
+        assert action["task_rows"][1:11] == list(controller.STAGE1_TASK_ROWS)

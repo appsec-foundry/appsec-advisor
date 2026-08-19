@@ -343,7 +343,7 @@ def renumber_trust_boundaries(doc: dict) -> tuple[dict, dict[str, str]]:
 # produced the baseline, its `.stride-<id>.json` is overwritten and prior
 # threats the shallow scan did not re-emit would silently vanish. This
 # deterministic reconciler is the authoritative safety net (the analyzer-side
-# carry rule in appsec-stride-analyzer.md is advisory): it re-injects such prior
+# carry rule in appsec-stride-analyzer-v2.md is advisory): it re-injects such prior
 # threats — unless the analyzer affirmatively confirmed a fix — and records
 # honest changelog buckets. See
 # docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md.
@@ -853,7 +853,7 @@ def build_meta(
         # assessment (``full``) or a delta assessment (``incremental``).
         "mode": _output_mode(skill_cfg),
         "model": skill_cfg.get("stride_model", "sonnet"),
-        "analyst": f"appsec-threat-analyst ({skill_cfg.get('stride_model', 'sonnet')})",
+        "analyst": f"context-v2 pipeline ({skill_cfg.get('stride_model', 'sonnet')})",
         "plugin_version": plugin_ver,
         "analysis_version": analysis_ver,
         "assessment_depth": skill_cfg.get("assessment_depth", "standard"),

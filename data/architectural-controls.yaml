@@ -1,6 +1,6 @@
 # architectural-controls.yaml — canonical control vocabulary for AppSec reports
 #
-# Used by: appsec-stride-analyzer (match detected controls to canonical names),
+# Used by: appsec-stride-analyzer-v2 (match detected controls to canonical names),
 # appsec-threat-merger (dedup identically-named controls across components),
 # phase-group-threats.md / phase-group-finalization.md (render Operational
 # Strengths + Section 6 with consistent terminology).

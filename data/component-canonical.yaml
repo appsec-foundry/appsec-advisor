@@ -2,9 +2,8 @@
 #
 # Problem this solves: across 8 historical Juice-Shop runs, the orchestrator
 # produced 22 unique component IDs for the SAME codebase (rest-api,
-# express-api, express-rest-api, express-backend, ...). Under --incremental,
-# component-matching is by ID. Each rename = silent T-ID drift, every
-# threat re-classified as "new", changelog history broken.
+# express-api, express-rest-api, express-backend, ...). Stable component IDs
+# preserve report identity and prevent threats from being reclassified as new.
 #
 # Solution: Phase 3 normalizes the orchestrator-generated component name
 # to a canonical ID via this mapping.

@@ -206,20 +206,19 @@ def test_classify_needs_stage2_false_when_md_present(tmp_path: Path):
     assert rep["needs_stage2"] is False
 
 
-def test_clean_preserves_needs_stage2_checkpoint(tmp_path: Path):
-    """The --resume pre-flight auto-clean must NOT wipe the need_render recovery
-    signal: it reaps the stale lock but keeps .appsec-checkpoint so --resume can
-    still dispatch Stage 2 only (regression — the checkpoint was being deleted)."""
+def test_clean_reaps_checkpoint_but_keeps_rerender_artifacts(tmp_path: Path):
     cp = tmp_path / ".appsec-checkpoint"
     cp.write_text("phase=10b status=completed need_render=true timestamp=x\n")
+    merged = tmp_path / ".threats-merged.json"
+    merged.write_text("{}\n")
     lock = tmp_path / ".appsec-lock"
     lock.write_text(f"{_dead_pid()}\n1000000000\n")  # dead PID + ancient heartbeat
     result = cs.clean(tmp_path)
     assert result["skipped"] is False
-    assert ".appsec-lock" in result["removed"]  # stale lock reaped
-    assert ".appsec-checkpoint" not in result["removed"]  # recovery signal kept
-    assert ".appsec-checkpoint" in result["preserved"]
-    assert cp.exists()  # survives on disk
+    assert ".appsec-lock" in result["removed"]
+    assert ".appsec-checkpoint" in result["removed"]
+    assert not cp.exists()
+    assert merged.exists()
     assert not lock.exists()
 
 
@@ -230,15 +229,14 @@ def test_clean_preserves_needs_stage2_checkpoint(tmp_path: Path):
         "phase=7 status=completed need_threat_analysis=true\n",
     ],
 )
-def test_clean_preserves_completed_analysis_handoff(tmp_path: Path, checkpoint: str):
+def test_clean_reaps_obsolete_completed_handoff_checkpoint(tmp_path: Path, checkpoint: str):
     cp = tmp_path / ".appsec-checkpoint"
     cp.write_text(checkpoint)
 
     result = cs.clean(tmp_path)
 
-    assert ".appsec-checkpoint" in result["preserved"]
-    assert ".appsec-checkpoint" not in result["removed"]
-    assert cp.read_text() == checkpoint
+    assert ".appsec-checkpoint" in result["removed"]
+    assert not cp.exists()
 
 
 def test_clean_wipes_completed_checkpoint_when_not_needs_stage2(tmp_path: Path):
@@ -304,7 +302,7 @@ def test_render_text_needs_stage2_banner(tmp_path: Path):
     }
     out = cs._render_text(report, None)
     assert "Stage 1 is complete" in out
-    assert "--resume" in out
+    assert "--rerender" in out
 
 
 def test_render_text_clean_skipped(tmp_path: Path):
@@ -353,7 +351,7 @@ def test_clean_tolerates_unlink_oserror(tmp_path: Path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# CLI: missing dir, json needs_stage2, resume-guard missing dir
+# CLI: missing dir and JSON needs_stage2
 # ---------------------------------------------------------------------------
 
 
@@ -368,37 +366,6 @@ def test_main_missing_output_dir_json(tmp_path: Path, capsys):
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["report"]["state"] == "clean"
-
-
-def test_main_resume_guard_missing_dir_text(tmp_path: Path, capsys):
-    code = cs.main([str(tmp_path / "nope"), "--resume-guard"])
-    assert code == 0
-    assert "allowed" in capsys.readouterr().out
-
-
-def test_main_resume_guard_missing_dir_json(tmp_path: Path, capsys):
-    code = cs.main([str(tmp_path / "nope"), "--resume-guard", "--json"])
-    assert code == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["allow"] is True
-
-
-def test_main_resume_guard_allowed_json(tmp_path: Path, capsys):
-    (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
-    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
-    code = cs.main([str(tmp_path), "--resume-guard", "--json"])
-    assert code == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["allow"] is True
-    assert payload["exit_code"] == 0
-
-
-def test_main_resume_guard_text_marker(tmp_path: Path, capsys):
-    (tmp_path / ".appsec-checkpoint").write_text("phase=11 status=completed\n")
-    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
-    code = cs.main([str(tmp_path), "--resume-guard"])
-    assert code == 0
-    assert "✓" in capsys.readouterr().out  # check mark
 
 
 def test_main_clean_json_includes_needs_stage2(tmp_path: Path, capsys):
@@ -419,42 +386,3 @@ def test_main_orphaned_text_render(tmp_path: Path, capsys):
 def test_main_auto_clean_returns_0_on_clean(tmp_path: Path, capsys):
     code = cs.main([str(tmp_path), "--auto-clean"])
     assert code == 0
-
-
-# ---------------------------------------------------------------------------
-# _resume_guard_result — checkpoint stat OSError
-# ---------------------------------------------------------------------------
-
-
-def test_resume_guard_checkpoint_stat_oserror(tmp_path: Path, monkeypatch):
-    cp = tmp_path / ".appsec-checkpoint"
-    cp.write_text("phase=5 status=started\n")
-    # Present so the artifact-existence gate passes and the age/mtime path
-    # (which this test targets) is reached; boom only counts checkpoint stats.
-    (tmp_path / ".threat-modeling-context.md").write_text("context\n")
-    orig_stat = Path.stat
-    state = {"n": 0}
-
-    def boom(self, *a, **k):
-        # Let the existence/is_file probes (stat #1, #2) succeed; fail the
-        # mtime stat (#3) so age becomes inf -> refuse.
-        if self.name == ".appsec-checkpoint":
-            state["n"] += 1
-            if state["n"] >= 3:
-                raise OSError("nope")
-        return orig_stat(self, *a, **k)
-
-    monkeypatch.setattr(Path, "stat", boom)
-    # age becomes float('inf') (stat failed) -> the refuse branch formats
-    # int(age), which currently raises OverflowError on infinity. Pin that
-    # current behaviour (do NOT fix the producer here).
-    with pytest.raises(OverflowError):
-        cs._resume_guard_result(tmp_path, 900)
-
-
-def test_resume_guard_legacy_live_pid_refuses(tmp_path: Path):
-    # v1 lock (no heartbeat) with our own live PID -> active -> refuse
-    (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n")
-    code, msg = cs._resume_guard_result(tmp_path, 900)
-    assert code == 3
-    assert "live PID" in msg

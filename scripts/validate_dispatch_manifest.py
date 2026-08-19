@@ -3,7 +3,7 @@
 
 Analyst-A writes ``$OUTPUT_DIR/.stride-dispatch-manifest.json`` at the Phase-8/9
 boundary; the skill validates it with this script BEFORE fanning out the
-parallel ``appsec-stride-analyzer`` dispatches. A malformed or incomplete
+parallel ``appsec-stride-analyzer-v2`` dispatches. A malformed or incomplete
 manifest would make the skill dispatch analyzers with missing parameters, so
 this gate must pass before any dispatch.
 

@@ -16,9 +16,7 @@ SURFACE_MAX_BYTES_RATCHET = {
     "skill_router": 8500,
     "thin_full_runtime": 13250,
     "thin_rerender_runtime": 10000,
-    "thin_stage1_runtime": 11000,
     "thin_stage1_v2_runtime": 6400,
-    "thin_stage1b_runtime": 4300,
     "thin_stage1d_runtime": 3400,
     "thin_stage2_runtime": 3600,
     "legacy_initial_slice": 230000,
@@ -26,7 +24,6 @@ SURFACE_MAX_BYTES_RATCHET = {
     "full_stage1d_slice": 15000,
     "stage2_runtime_dispatch_slice": 20000,
     "stage3_runtime_gate_slice": 25000,
-    "threat_analyst": 155000,
     "shared_threat_analysis_kernel": 16000,
     "architecture_analyst_role": 12000,
     "control_analyst_role": 12000,
@@ -50,7 +47,6 @@ def test_context_budget_contract_shape():
     for name, spec in BUDGETS["surfaces"].items():
         assert (ROOT / spec["path"]).is_file(), name
         assert isinstance(spec["max_bytes"], int) and spec["max_bytes"] > 0
-    assert 0 < BUDGETS["aggregate"]["thin_to_legacy_max_ratio"] < 1
     admission = BUDGETS["admission"]
     assert admission == {
         "shared_kernel_max_tokens": 4000,
@@ -105,29 +101,26 @@ def test_shared_kernel_stays_within_token_admission_budget():
     assert BUDGETS["admission"]["enforce_startup_totals"] is False
 
 
-def test_thin_full_initial_context_is_materially_smaller_than_legacy():
+def test_thin_full_initial_context_is_bounded():
     surfaces = BUDGETS["surfaces"]
     thin = sum(
         _slice_bytes(surfaces[name])
         for name in (
             "skill_router",
             "thin_full_runtime",
-            "thin_stage1_runtime",
-            "thin_stage1b_runtime",
+            "thin_stage1_v2_runtime",
             "thin_stage1d_runtime",
         )
     )
-    legacy = _slice_bytes(surfaces["legacy_initial_slice"])
     aggregate = BUDGETS["aggregate"]
     assert thin <= aggregate["thin_full_pre_stage2_max_bytes"]
-    assert thin / legacy <= aggregate["thin_to_legacy_max_ratio"]
 
 
 def test_thin_full_without_abuse_verification_omits_stage1d_budget():
     surfaces = BUDGETS["surfaces"]
     thin = sum(
         _slice_bytes(surfaces[name])
-        for name in ("skill_router", "thin_full_runtime", "thin_stage1_runtime", "thin_stage1b_runtime")
+        for name in ("skill_router", "thin_full_runtime", "thin_stage1_v2_runtime")
     )
     assert thin <= BUDGETS["aggregate"]["thin_full_without_stage1d_max_bytes"]
 
@@ -140,16 +133,12 @@ def test_thin_rerender_initial_context_is_bounded():
 
 def test_thin_runtime_uses_bounded_stage_reads():
     text = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
-    assert "SKILL-thin-stage1.md" in text
+    assert "SKILL-thin-stage1-v2.md" in text
     assert "SKILL-thin-stage1d.md" in text
     assert "SKILL-thin-stage2.md" in text
     assert "SKIP_ABUSE_CASE_VERIFICATION=false" in text
     assert "do not load any Stage-1d instructions" in text
     assert "Do not load the Stage-2 slice" in text
-    assert "### Stage-1 dispatch contract" in text
-    assert "APPSEC_TRIAGE_DETERMINISTIC=1" in text
-    assert "STAGE1_PHASE_LIMIT=8" in text
-    assert "RESUME_FROM_PHASE=9-merge" in text
     assert "ORG_PROFILE_PATH = org_profile_path" in text
     assert "▶ Stage 1a/<TOTAL_STAGES>" in text
     assert "## Stage 3 - QA Review` to `### Stage 3 handoff banner" in text
@@ -165,8 +154,7 @@ def test_thin_full_cumulative_stage2_context_is_bounded():
         for name in (
             "skill_router",
             "thin_full_runtime",
-            "thin_stage1_runtime",
-            "thin_stage1b_runtime",
+            "thin_stage1_v2_runtime",
             "thin_stage1d_runtime",
             "thin_stage2_runtime",
         )
@@ -176,27 +164,15 @@ def test_thin_full_cumulative_stage2_context_is_bounded():
 
 def test_compact_stage_contracts_preserve_level0_dispatch_and_gates():
     base = ROOT / "skills" / "create-threat-model"
-    stage1 = (base / "SKILL-thin-stage1.md").read_text(encoding="utf-8")
-    stage1b = (base / "SKILL-thin-stage1b.md").read_text(encoding="utf-8")
+    stage1 = (base / "SKILL-thin-stage1-v2.md").read_text(encoding="utf-8")
     stage1d = (base / "SKILL-thin-stage1d.md").read_text(encoding="utf-8")
     stage2 = (base / "SKILL-thin-stage2.md").read_text(encoding="utf-8")
 
-    assert "SKILL-impl.md" in stage1 and "do not read" in stage1.lower()
-    assert "STAGE1_PHASE_LIMIT=8" in stage1
-    assert "RESUME_FROM_PHASE=9-merge" in stage1
-    assert "one assistant message" in stage1
-    assert "post-stage1a --output-dir" in stage1
-    assert "post-stage1c --output-dir" in stage1
+    assert "in ONE assistant message" in stage1
+    assert "context-v2-begin" in stage1
+    assert "context-v2-finalize" in stage1
     assert "filesystem is authoritative" in stage1
-    assert "must not reproduce artifact bodies" in stage1
-    assert "MD_PRE_STAGE1" in stage1
-    assert ".stage1-resume-count" in stage1
-    assert "completion checkpoint" in stage1
-    assert "stall result does not override a successful post-gate" in stage1
-
-    assert "appsec-trust-boundary-analyst" in stage1b
-    assert "finalize-stage1b --output-dir" in stage1b
-    assert "Retry once" in stage1b
+    assert "verify-receipts" in stage1
 
     assert "prepare-abuse --output-dir" in stage1d
     assert "finalize-abuse --output-dir" in stage1d
@@ -224,21 +200,16 @@ def test_compact_stage_contracts_preserve_level0_dispatch_and_gates():
 def test_thin_rerender_runtime_starts_at_stage2():
     text = (ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md").read_text(encoding="utf-8")
     assert "ACTION.mode=rerender" in text
-    assert "Stage-1 prefix" in text
-    assert "## Stage 2 - Report Rendering" in text
-    assert "rerender mode file, or Stages 1a–1d" in text
+    assert "SKILL-thin-stage2.md" in text
     assert "RENDERER_MODEL = renderer_model" in text
     assert "always run the non-dry Stage-3 safety" in text
     assert "including its final release gates" in text
 
 
-def test_context_v2_stage1_runtime_is_bounded_and_smaller_than_legacy():
+def test_context_v2_stage1_runtime_is_bounded():
     base = ROOT / "skills" / "create-threat-model"
     v2 = (base / "SKILL-thin-stage1-v2.md").read_bytes()
-    legacy = (base / "SKILL-thin-stage1.md").read_bytes()
     assert len(v2) <= BUDGETS["surfaces"]["thin_stage1_v2_runtime"]["max_bytes"]
-    # The point of the split is a thinner Stage-1 prompt, not a second copy.
-    assert len(v2) < len(legacy)
 
 
 def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
@@ -304,8 +275,8 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     # surface the reader sees, not narration alone.
     assert "a command, boundary, or id never reaches console text, an Agent description, or a task row" in flat
 
-    # It must not carry the legacy generation's stage machinery.
-    assert "SKILL-thin-stage1.md" in text  # names it only to forbid mixing
+    # It must not carry the removed generation's stage machinery.
+    assert "SKILL-thin-stage1.md" not in text
     assert "STAGE1_PHASE_LIMIT" not in text
     assert "RESUME_FROM_PHASE" not in text
 
