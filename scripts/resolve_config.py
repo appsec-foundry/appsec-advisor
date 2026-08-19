@@ -1904,11 +1904,10 @@ def build_parser() -> argparse.ArgumentParser:
         "(Low/Informational excluded — they are noise in a "
         "threat model). Pass 'low' to keep Low findings.",
     )
-    # PR / base / no-qa / qa-scan-repo
+    # PR / base / no-qa
     p.add_argument("--base", default=None)
     p.add_argument("--pr-mode", action="store_true")
     p.add_argument("--no-qa", action="store_true")
-    p.add_argument("--qa-scan-repo", action="store_true")
     # Scan manifest — log all scanned files to OUTPUT_DIR/.scan-manifest.txt
     p.add_argument("--scan-manifest", action="store_true")
     # Optional model slug — when set, the run additionally emits a
@@ -2077,7 +2076,6 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
         "resume": ns.resume,
         "pr_mode": ns.pr_mode,
         "base_ref": ns.base,
-        "qa_scan_repo": ns.qa_scan_repo,
         "scan_manifest": ns.scan_manifest,
         "no_confirm": ns.no_confirm,
         # Persisted to .skill-config.json so compose_threat_model.py honours it
@@ -3661,8 +3659,6 @@ def _format_run_flags(cfg: dict) -> str:
         flags.append("keep-runtime-files")
     if cfg.get("pr_mode"):
         flags.append("pr-mode")
-    if cfg.get("qa_scan_repo"):
-        flags.append("qa-scan-repo")
     return ", ".join(flags)
 
 

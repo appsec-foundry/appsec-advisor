@@ -1,11 +1,10 @@
 """
-Tests for Sprint 1 Item E.2 + E.3:
+Tests for deterministic QA dispatch policy:
 
 - E.2: QA Check 11 depth matrix — core skips entirely; full runs 11a+11d only;
   extended runs the full 11a/b/c/d set. Prevents regression to the prior
   "always run 11a" wasteful baseline.
-- E.3: QA Check 2 Pass 2c must be opt-in via --qa-scan-repo / QA_SCAN_REPO=true.
-  The old 5-ref threshold auto-trigger is gone.
+- QA Check 2 Pass 2c remains retired.
 """
 
 import re
@@ -45,21 +44,15 @@ class TestDeterministicQaOwnership:
 
 
 # ---------------------------------------------------------------------------
-# E.3 — Pass 2c opt-in via --qa-scan-repo
+# Retired Pass 2c
 # ---------------------------------------------------------------------------
 
 
-class TestPass2cOptIn:
-    def test_skill_documents_qa_scan_repo_flag(self):
-        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
-        assert "--qa-scan-repo" in text, "SKILL.md must document the --qa-scan-repo flag in the Argument Parsing table"
-        assert "QA_SCAN_REPO=true" in text, "SKILL.md must bind --qa-scan-repo to QA_SCAN_REPO=true"
-
+class TestPass2cRetired:
     def test_qa_reviewer_pass_2c_section_removed(self):
         """As of 2026-04 the Pass 2c proactive repo-scan was removed
-        entirely — the `QA_SCAN_REPO` env var was never set in
-        production and the `find`-traversal cost was disproportionate
-        to the marginal coverage it added.
+        entirely because the traversal cost was disproportionate to the
+        marginal coverage it added.
 
         This test guards against accidental reintroduction: neither the
         section heading nor the gating env var should reappear in the
@@ -70,7 +63,6 @@ class TestPass2cOptIn:
         assert "### Pass 2c — Proactive repo scan" not in text, (
             "qa-reviewer.md should not reintroduce Pass 2c — see the 2026-04 removal note inline in the agent file."
         )
-        assert "QA_SCAN_REPO=true" not in text, "qa-reviewer.md must not reference QA_SCAN_REPO — Pass 2c was retired."
         assert not re.search(r"combined total from Passes 2a and 2b is fewer than 5", text), (
             "qa-reviewer.md must not reintroduce the old 'fewer than 5' auto-trigger for Pass 2c."
         )

@@ -60,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Threat modeling now uses the compact runtime exclusively and rejects incremental, resume, assessment dry-run, runtime deadline, and live-phase modes before dispatch.
+- The retired `--qa-scan-repo` compatibility option is no longer accepted.
 - Business context now breaks technically equal finding and mitigation ranking ties without changing severity or mitigation priority.
 - The risk distribution now reports Low as `n/a` and names the reporting threshold when the register severity floor excluded it, instead of showing `0`.
 - Attack walkthroughs now balance chain relevance with threat-category diversity across the findings the register shows as Critical, reserving coverage for Critical Access Control and LLM Abuse findings when present.

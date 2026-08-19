@@ -636,9 +636,3 @@ opt_in:
       - "*.mock.ts"
       - "*.mock.jsx"
       - "*.mock.tsx"
-
-  # New (Sprint 1 Item E.3) — QA reviewer Check 2 Pass 2c.
-  # Not a scan directory override; documented here so the flag surface is
-  # discoverable from one file.
-  QA_SCAN_REPO:
-    description: "Enable QA Check 2 Pass 2c proactive repo basename scan"

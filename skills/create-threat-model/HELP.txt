@@ -234,8 +234,6 @@ ADVANCED
                                when reached (e.g. 3600, 60m, 1h; default: none)
   --max-cost <USD>             Hard cost cap in USD; watchdog aborts when
                                cumulative cost exceeds this (e.g. 15.0; default: none)
-  --qa-scan-repo               Deep-scan repo for unlinked file references in QA
-
 PIPELINE
   Stage 1   Analysis
               Phase 1    Recon scan (+ .recon-signals.json for Actor Layer)

@@ -1121,6 +1121,13 @@ class TestCLI:
         assert r.returncode != 0, "--with-sca must be rejected by argparse"
         assert "unrecognized arguments" in r.stderr or "error" in r.stderr.lower()
 
+    def test_qa_scan_repo_flag_is_rejected(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--validate-only", "--qa-scan-repo")
+        assert r.returncode == 2
+        assert "unrecognized arguments: --qa-scan-repo" in r.stderr
+        assert r.stdout == ""
+
     def test_summary_shows_architect_when_thorough(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--assessment-depth", "thorough")
@@ -2041,7 +2048,6 @@ class TestFormatRunFlags:
                 scan_manifest=True,
                 keep_runtime_files=True,
                 pr_mode=True,
-                qa_scan_repo=True,
             )
         )
         for token in (
@@ -2051,7 +2057,6 @@ class TestFormatRunFlags:
             "scan-manifest",
             "keep-runtime-files",
             "pr-mode",
-            "qa-scan-repo",
         ):
             assert token in s
 
@@ -2064,7 +2069,6 @@ class TestFormatRunFlags:
                 scan_manifest=False,
                 keep_runtime_files=False,
                 pr_mode=False,
-                qa_scan_repo=False,
             )
         )
         assert s == ""
