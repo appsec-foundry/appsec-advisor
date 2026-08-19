@@ -25,7 +25,7 @@ Pipeline:
    collapse into ONE card addressing both threat IDs — matching the
    build_mitigations "one M-ID, many threat_ids" model.
 3. Resolve rollout priority from severity + effort using the P1–P4 algorithm
-   in `phase-group-threats.md` (Critical + tractable effort → P1; high-effort
+   in `data/mitigation-priority-rules.yaml` (Critical + tractable effort → P1; high-effort
    Critical slips to P2; High → P2/P3; Medium → P3; Low → P4).
 4. Allocate the next free `M-NNN`, append a card with `kind: fix`,
    `auto_emitted: true`, `auto_source: "finding-fix"`, and link it back via
@@ -69,7 +69,7 @@ _UNAUTH_VEKTORS = {"internet-anon", "internet-user", "repo-read"}
 
 
 def _resolve_priority(severity: str, effort: str, vektor: str) -> str:
-    """P1–P4 per phase-group-threats.md, severity + effort + reachability.
+    """P1–P4 from severity, effort, and reachability.
 
     Severity says *how bad*, priority says *how soon*. A Critical with a
     tractable (Low/Medium) fix, or one reachable without auth, is P1; a

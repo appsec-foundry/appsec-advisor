@@ -4,8 +4,8 @@ Since M3.2 the actual resolver lives in ``scripts/resolve_config.py`` and is
 covered in depth by ``tests/test_resolve_config.py``. The tests here guard
 against drift between the resolver (Python) and the downstream consumers
 that still reference the resolved env-vars by name — i.e. the agent
-definitions and phase-group markdown that dispatch sub-agents with these
-model parameters. Touching any of:
+definitions and compact runtimes that dispatch sub-agents with these model
+parameters. Touching any of:
 
     * scripts/resolve_config.py                  (source of truth)
     * skills/create-threat-model/SKILL.md        (must mention the flag + delegate)
@@ -67,7 +67,7 @@ def skill_router_text() -> str:
 
 class TestFlagDocumented:
     def test_flag_appears_in_skill_md(self, skill_text):
-        assert "--reasoning-model" in skill_text, "SKILL.md / SKILL-impl.md must document --reasoning-model"
+        assert "--reasoning-model" in skill_text, "SKILL.md must document --reasoning-model"
 
     def test_controller_delegates_to_resolve_config(self):
         assert "import resolve_config" in CONTROLLER_PY.read_text()

@@ -21,8 +21,8 @@ Two properties are pinned here, both repository-independent:
 
 1. `contract` is not a proxy for the gate — it cannot observe a defect the gate
    blocks on. This is a property of the scripts and holds for any document.
-2. The agent contract therefore names `gate`, the same command
-   `SKILL-impl.md` uses to decide whether the repair loop has converged.
+2. The agent contract therefore names `gate`, the same command the compact
+   Stage-3 runtime uses to decide whether the repair loop has converged.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import qa_checks as qa  # noqa: E402
 
 FIXER_AGENT = REPO_ROOT / "agents" / "appsec-fragment-fixer.md"
-STAGE3_SKILL = REPO_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
+STAGE3_SKILL = REPO_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md"
 
 # §6 stub in the shape `check_control_subsection_coverage` parses. The two
 # variants differ ONLY in the anchor the `**Controls covered:**` line names —
@@ -125,7 +125,7 @@ def test_fixer_self_verifies_with_the_deciding_gate():
     text = _normalize(FIXER_AGENT.read_text(encoding="utf-8"))
     assert re.search(r'qa_checks\.py"? gate ', text), (
         "appsec-fragment-fixer must verify its own repair with `qa_checks.py gate` — "
-        "the command SKILL-impl.md uses to decide whether the repair converged"
+        "the command Stage 3 uses to decide whether the repair converged"
     )
     assert not re.search(r'qa_checks\.py"? contract ', text), (
         "`qa_checks.py contract` is a strict subset of the gate and reports success "
@@ -145,9 +145,9 @@ def test_skill_repair_block_prescribes_the_gate_not_the_contract_check():
     """The skill's Re-Render-Loop block mirrors the agent contract; both must
     prescribe the same self-check or the fix is only half applied."""
     text = STAGE3_SKILL.read_text(encoding="utf-8")
-    start = text.index("**Repair-mode invocation.**")
-    block = _normalize(text[start : text.index("\n**Record the repair-mode dispatch", start)])
-    assert re.search(r'qa_checks\.py"? gate ', block), (
+    start = text.index("## 3. Bounded repair")
+    block = _normalize(text[start:])
+    assert "`qa_checks.py gate`" in block, (
         "the Re-Render-Loop repair block must prescribe `qa_checks.py gate` as the "
         "fixer's self-check — the command the loop itself decides on"
     )

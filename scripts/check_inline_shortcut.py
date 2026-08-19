@@ -10,16 +10,14 @@ Exit codes
 
 Why this script exists
 ----------------------
-The detection logic previously lived as a Bash snippet inside
-``skills/create-threat-model/SKILL-impl.md``. Because the skill body is
-interpreted by an LLM, that "soft" interpretation occasionally let
+The detection logic previously lived as an LLM-interpreted Bash snippet.
+That soft interpretation occasionally let
 broken runs slip through (the 2026-04-25 juice-shop Run 4 was the
 canonical case). Promoting the logic to a stand-alone Python script
 with a hard exit code makes the gate mechanical: ``|| exit $?`` cannot
 be talked around.
 
-Indicators (any one of which trips the gate, matching SKILL-impl.md
-"Post-Stage-1 fragment precondition" section)
+Indicators (any one of which trips the compact Stage-3 gate)
 ---------------------------------------------------------------------
 A1  ``$OUTPUT_DIR/.fragments/`` directory missing entirely.
 A2  ``.fragments/`` exists but contains < ``MIN_FRAGMENTS`` files.
@@ -152,7 +150,7 @@ def _run_qa_fragments_check(output_dir: Path) -> int:
 
 
 def _print_banner(reasons: list[str], qa_exit: int, output_dir: Path) -> None:
-    """Print the inline-shortcut banner mirroring SKILL-impl.md L1140-1158."""
+    """Print the canonical inline-shortcut failure banner."""
     bar = "═" * 62
     print("", file=sys.stderr)
     print(bar, file=sys.stderr)
@@ -193,7 +191,7 @@ def _print_banner(reasons: list[str], qa_exit: int, output_dir: Path) -> None:
         print("  Fix: re-run with --rebuild or --resume to redo Phase 11.", file=sys.stderr)
     print("", file=sys.stderr)
     print("  Fix: re-run the skill. If this reproduces, file a plugin bug —", file=sys.stderr)
-    print("  the Phase 11 substep templates in phase-group-finalization.md", file=sys.stderr)
+    print("  the Stage-2 fragment contracts in data/sections-contract.yaml", file=sys.stderr)
     print("  must be enforced harder (every Write tool call should be", file=sys.stderr)
     print("  preceded by a Bash heartbeat + checkpoint update).", file=sys.stderr)
     print(bar, file=sys.stderr)

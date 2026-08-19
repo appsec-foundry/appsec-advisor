@@ -1,18 +1,4 @@
-"""Doc-drift + integration tests for the M2.13 auto-retry loop.
-
-The retry loop itself runs inside the skill body (Bash + Agent calls),
-which we cannot exercise from pure pytest. These tests instead verify:
-
-  * SKILL-impl.md documents the contract (max retries, recovery sequence,
-    exhausted-retries banner, exit codes)
-  * The recovery-sequence scripts referenced exist and are runnable
-  * runtime_cleanup.py knows about the new bookkeeping files
-  * check_inline_shortcut.py --write-repair-plan keeps producing the
-    schema the skill consumes
-
-Behavioural execution is covered by the end-to-end run against juice-shop
-(out of pytest scope).
-"""
+"""Integration tests for bounded Stage-2 retry artifacts and cleanup."""
 
 from __future__ import annotations
 
@@ -25,94 +11,7 @@ from pathlib import Path
 import pytest
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-SKILL_IMPL = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
 SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
-
-
-@pytest.fixture(scope="module")
-def skill_impl_text() -> str:
-    return SKILL_IMPL.read_text(encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# SKILL-impl.md — auto-retry contract
-# ---------------------------------------------------------------------------
-
-
-def test_skill_documents_max_inline_retries(skill_impl_text):
-    assert "MAX_INLINE_RETRIES" in skill_impl_text
-    # The default of 2 must be in the spec
-    assert "MAX_INLINE_RETRIES=2" in skill_impl_text
-
-
-def test_skill_documents_retry_counter_file(skill_impl_text):
-    assert ".inline-shortcut-retry-count" in skill_impl_text
-
-
-def test_skill_documents_repair_plan_consumption(skill_impl_text):
-    # The skill instructs check_inline_shortcut.py --write-repair-plan
-    assert "--write-repair-plan" in skill_impl_text
-    # And the resulting plan path is the one the user should inspect
-    assert ".inline-shortcut-repair-plan.json" in skill_impl_text
-
-
-def test_skill_documents_recovery_sequence_scripts(skill_impl_text):
-    """All three recovery scripts must be referenced and ordered correctly
-    inside the auto-retry recovery sequence."""
-    assert "merge_threats.py" in skill_impl_text
-    assert "triage_validate_ratings.py" in skill_impl_text
-    assert "pregenerate_fragments.py" in skill_impl_text
-    # The recovery sequence is the bash block immediately following
-    # "**Recovery sequence**" — anchored on that prose marker so the
-    # ASCII pipeline diagram (which mentions all three scripts in a
-    # different order for visual readability) does not get matched.
-    block_start = skill_impl_text.find("**Recovery sequence**")
-    assert block_start != -1, "Recovery sequence prose marker missing"
-    # The recovery bash block is bounded by the next numbered list item
-    # (`2. **Re-dispatch Stage 2**`) which marks the end of step 1.
-    block_end = skill_impl_text.find("2. **Re-dispatch", block_start)
-    assert block_end != -1, "Re-dispatch step 2 marker missing after recovery block"
-    block = skill_impl_text[block_start:block_end]
-    idx_merge = block.find("merge_threats.py")
-    idx_triage = block.find("triage_validate_ratings.py")
-    idx_pregen = block.find("pregenerate_fragments.py")
-    assert idx_merge != -1, "merge_threats.py missing from recovery block"
-    assert idx_triage != -1, "triage_validate_ratings.py missing from recovery block"
-    assert idx_pregen != -1, "pregenerate_fragments.py missing from recovery block"
-    assert idx_merge < idx_triage < idx_pregen, (
-        f"Recovery sequence order wrong: merge={idx_merge}, triage={idx_triage}, pregen={idx_pregen}"
-    )
-
-
-def test_skill_documents_exhausted_retries_banner(skill_impl_text):
-    assert "auto-retry exhausted" in skill_impl_text
-    # Banner must instruct the user where to look
-    assert "Inspect the final repair plan" in skill_impl_text
-    assert "/appsec-advisor:create-threat-model --rebuild" in skill_impl_text
-
-
-def test_skill_documents_exit_code_2_on_exhaustion(skill_impl_text):
-    # The exit must be deterministic — exit 2 (same as gate trip)
-    assert "exit 2" in skill_impl_text
-
-
-def test_skill_documents_marker_cleanup_on_failure(skill_impl_text):
-    """Even on auto-retry exhaustion, verbose/tracing markers must be cleaned."""
-    # The exhausted-retries branch runs the same rm -f as other exit paths
-    assert ".appsec-verbose-$(id -u)" in skill_impl_text
-    assert ".appsec-tracing-$(id -u)" in skill_impl_text
-
-
-def test_skill_documents_counter_cleanup_on_success(skill_impl_text):
-    """Successful retry → counter file is unlinked."""
-    # The cleanup line targets both the counter and the repair plan
-    assert 'rm -f "$OUTPUT_DIR/.inline-shortcut-retry-count"' in skill_impl_text
-
-
-def test_skill_uses_idempotent_recovery(skill_impl_text):
-    """Recovery sequence must be safe to re-run — explicitly documented."""
-    # All three recovery scripts must be guarded so they never touch good state
-    assert "idempotent" in skill_impl_text.lower()
 
 
 # ---------------------------------------------------------------------------

@@ -843,39 +843,30 @@ def test_builder_supplements_sparse_llm_patterns_from_cat13(tmp_path):
 AGENTS_DIR = PLUGIN_ROOT / "agents"
 
 
-def test_renderer_ms_role_includes_ms_ai_exposure_in_author_list():
-    """RENDER_ROLE=ms row in appsec-threat-renderer.md must include ms-ai-exposure.json.
+def test_ms_renderer_includes_ms_ai_exposure_in_author_list():
+    """The dedicated Management Summary renderer must own ms-ai-exposure.json.
 
     Guard against future edits that re-strip it from the allowlist — this was the
     root cause of the AI/LLM Exposure section missing from the Management Summary
     on the 2026-06-24 juice-shop standard run.
     """
+    renderer_md = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
+    assert "ms-ai-exposure.json" in renderer_md
+    assert "You may write only" in renderer_md
+
+
+def test_renderer_delegates_every_export_to_the_controller_tail():
+    """Stage 2 must not regain export ownership after the compact cutover."""
     renderer_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
-    # The ms row must mention both the fragment name and the condition
-    assert "ms-ai-exposure.json" in renderer_md, "ms-ai-exposure.json must appear in appsec-threat-renderer.md"
-    # The fragment contract list must also include it (not just the table row)
-    fragment_contract_idx = renderer_md.index("## Fragment Contract")
-    fragment_contract_section = renderer_md[fragment_contract_idx : fragment_contract_idx + 2000]
-    assert "ms-ai-exposure.json" in fragment_contract_section, (
-        "ms-ai-exposure.json must be listed in the Fragment Contract section"
-    )
-
-
-def test_renderer_export_instruction_covers_every_bound_write_flag():
-    """Every WRITE_* export flag the renderer receives must have a matching
-    export instruction, otherwise the flag is bound and silently ignored.
-
-    Regression guard: WRITE_THREATDRAGON was threaded to the renderer (and to
-    the --rerender path, which runs Stage 2 only) but the export paragraph named
-    only WRITE_SARIF and WRITE_PENTEST_TASKS, so `--rerender --threatdragon`
-    produced no file.
-    """
-    renderer_md = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
-    for flag in ("WRITE_SARIF", "WRITE_PENTEST_TASKS", "WRITE_THREATDRAGON"):
-        assert f"If `{flag}=true`" in renderer_md, (
-            f"{flag} is listed as a renderer input but has no export instruction — "
-            f"the flag would be silently ignored on the Stage-2-only (--rerender) path."
-        )
+    completion_md = (
+        PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
+    ).read_text(encoding="utf-8")
+    controller = (PLUGIN_ROOT / "scripts" / "orchestration_controller.py").read_text(encoding="utf-8")
+    assert "controller owns validation, composition" in renderer_md
+    assert "Do not compose" in renderer_md
+    assert "## 2. Exports and summary" in completion_md
+    for flag in ("write_sarif", "write_pentest_tasks", "write_threatdragon"):
+        assert flag in controller
 
 
 def test_owasp_llm07_grep_covers_cookie_tool_call_leakage():
@@ -1721,14 +1712,6 @@ def test_print_selection_reads_persisted_json(tmp_path, capsys):
 
 def test_print_selection_missing_json_returns_1(tmp_path):
     assert bm.main([str(tmp_path), "--print-selection"]) == 1
-
-
-def test_skill_surfaces_component_selection_to_console():
-    """The skill must surface the analyzed/skipped selection (with reasons) to the
-    user console at the manifest-build seam, mirroring report §1 + §11."""
-    impl = (PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md").read_text(encoding="utf-8")
-    assert "Surface the component selection to the user" in impl
-    assert "--print-selection" in impl
 
 
 def test_main_writes_manifest_and_prints_selection(tmp_path, capsys):

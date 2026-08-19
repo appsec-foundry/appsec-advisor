@@ -7,7 +7,7 @@ domain by evaluating the 9 rule-based sub-controls directly from recon artifacts
 Saves ~4 orchestrator turns per run (the LLM no longer needs to read recon sections
 7.14–7.17, 7.26–7.28, reason through 9 sub-controls, and write the assessment prose).
 
-Sub-controls evaluated (per phase-group-architecture.md §"Operations, Runtime and Supply
+Sub-controls evaluated (per data/architectural-controls.yaml §"Operations, Runtime and Supply
 Chain — sub-controls"):
   1. CVE scanning
   2. Lockfile pinning

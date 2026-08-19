@@ -152,7 +152,7 @@ The orchestrator's Phase 9 STRIDE merge step reads `.config-scan-findings.json` 
 
 ## Breach-vector mapping
 
-The `breach_vector` field on each finding uses the nuanced vocabulary (see `phase-group-threats.md` → "Top Findings Vektor column semantics"):
+The `breach_vector` field on each finding uses the vocabulary in `data/breach-vector-taxonomy.yaml`:
 
 | Value | When used |
 |---|---|

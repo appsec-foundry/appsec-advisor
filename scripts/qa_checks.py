@@ -1111,7 +1111,7 @@ def check_invariants(md_path: Path) -> Report:
     # They are pinned by a compose unit test instead. Only the PHASE_BURST log
     # diagnostic below remains live.
 
-    # F4 — PHASE_BURST detection (moved here from phase-group-architecture.md
+    # F4 — PHASE_BURST detection (centralized here from the retired phase prompt
     # auto-repair block, which is skipped on inline-shortcut runs). Inspects
     # .agent-run.log for PHASE_START lines that share the same timestamp.
     # Legal inline batch: phases {4,5,6,7} (Attack Walkthroughs, Asset
@@ -9894,7 +9894,7 @@ _MD_THREAT_ROW_RE = re.compile(
     #   1. `| [F-NNN]` or `| [T-NNN]`  — markdown-link form (older)
     #   2. `| <a id="f-001"></a>F-001` — anchor-tag form (current; see
     #      the report section contract's "Section 8 layout — ID cell" and
-    #      phase-group-threats.md). The 2026-04-25 juice-shop Run 4 surfaced
+    #      STRIDE authoring prompt). The 2026-04-25 juice-shop Run 4 surfaced
     #      a drift where this regex only matched form 1, so md_threat_count
     #      came out as 0 while yaml had 33 threats — QA flagged it as a
     #      false-positive count mismatch even though the actual id sets

@@ -1,7 +1,7 @@
 """Unit tests for scripts/check_stride_dispatch.py.
 
 The hard gate is invoked as a subprocess from skills/create-threat-model/
-SKILL-impl.md (Phase-10b precondition gate) and is expected to:
+The compact Stage-1 runtime's precondition gate is expected to:
 
   * exit 0 when STRIDE was dispatched (every real .stride-<id>.json has a
     matching .progress/<id>.json)

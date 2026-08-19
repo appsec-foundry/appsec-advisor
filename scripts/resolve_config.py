@@ -274,7 +274,7 @@ BOUNDARY_CANDIDATE_LIMITS = {"quick": 2, "standard": 4, "thorough": 6}
 # Re-Render Loop. At quick/standard the loop is a SINGLE quick-fix pass (one
 # repair attempt, then fail-closed `exit 2` if the contract still does not hold —
 # never ship an invalid report). thorough keeps the historical budget of 3.
-# Consumed by skills/create-threat-model/SKILL-impl.md (the loop reads
+# Consumed by skills/create-threat-model/SKILL-thin-stage3.md (the loop reads
 # $MAX_REPAIR_ITERATIONS). NOTE: this key is intentionally NOT mirrored into
 # build_stride_dispatch_manifest._FALLBACK_DEPTH_PARAMS — that fallback only
 # tracks the per-complexity STRIDE turn budgets (simple/moderate/complex).
@@ -611,7 +611,7 @@ LARGE_REPO_SOURCE_FILE_THRESHOLD = 400
 # large-window Sonnet 5 as the SESSION model (higher cost, for more compaction
 # headroom); below it we recommend Sonnet 4.6 (much cheaper, only very limited
 # orchestrator benefit). Advisory only — the user always chooses (see the
-# interactive prompt in SKILL-impl.md).
+# interactive prompt in the compact full runtime).
 # CALIBRATION CAVEAT: this is a coarse heuristic, not a measured compaction point.
 # We have one calibration repo (Juice-Shop, ~650 source files by the count below);
 # 2500 is simply a margin well above it so a normal app recommends 4.6. Source-file
@@ -1700,7 +1700,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo", default=None)
     p.add_argument("--output", default=None)
     # Business context for this run: an http(s) URL or a path to a Markdown /
-    # plain-text file. Interactive runs ask instead (SKILL-impl.md); a value
+    # plain-text file. Interactive runs ask instead (compact full runtime); a value
     # given here is used for this run only and is not persisted to the
     # repository — that write belongs to a human, not to a pipeline.
     p.add_argument("--context", default=None)
@@ -2162,7 +2162,7 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
 
     # Orchestrator (session-model) recommendation — advisory, runs at ALL depths.
     # Surfaced in the pre-flight box and, interactively, an optional prompt
-    # (SKILL-impl.md). The user always makes the final choice; a divergent choice
+    # (compact full runtime). The user always makes the final choice; a divergent choice
     # requires a session restart (a running loop cannot switch its own model).
     cfg.update(recommend_orchestrator_model(_count_source_files(Path(cfg["repo_root"]))))
 
@@ -2217,7 +2217,7 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
     cfg.update(apply_opus_ban(cfg, disable_opus))
 
     # RC.A — emit `total_stages` deterministically so the skill banner does
-    # not have to compute it from prose in SKILL-impl.md. Formula:
+    # not have to compute it from runtime prose. Formula:
     #   2 (Stage 1 + Stage 2)
     #   + 1 when QA runs (not SKIP_QA and not DRY_RUN)
     #   + 1 when Architect Review runs (architect_review and not DRY_RUN)
@@ -2264,7 +2264,7 @@ def _preflight_status_line(cfg: dict) -> str:
 def _compute_total_stages(cfg: dict) -> int:
     """RC.A — programmatic total_stages for the Stage handoff banner.
 
-    Stays in lock-step with SKILL-impl.md §Stage 1 Handoff Banner:
+    Stays in lock-step with the compact runtime's Stage-1 handoff banner:
     'start with 2 for Stage 1 (orchestrator) + Stage 2 (composition),
     add 1 when SKIP_QA=false and DRY_RUN=false, and add 1 when
     ARCHITECT_REVIEW=true and DRY_RUN=false'.

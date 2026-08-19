@@ -16,7 +16,7 @@ Referenced by `appsec-qa-reviewer` Check 7b. The deterministic helpers `check_co
 8. `#### 2.4.8 Defense-in-Depth`
 9. `#### 2.4.9 Overall Architecture Security Rating`
 
-Legacy renames (apply when the contract gate has not already auto-fixed): `#### Trust Model Evaluation` → delete (merged into 2.4.4). `#### Authentication and Authorization Architecture` → delete (merged into 2.4.4 / 2.4.5). `#### Cross-Cutting Architecture Findings` → delete heading but keep body. `##### 1. Secret Management` through `##### 6. Defense-in-Depth` (H5 numbered themes) → rewrite to the H4 numbered form `#### 2.4.3` through `#### 2.4.8`. `**Secret Management**` bold-paragraph variant → same rewrite. Missing themes → append `<!-- QA: Section 2.4 is missing sub-section "2.4.<n> <title>" — add the micro-template body. See phase-group-architecture.md → "The six architecture themes" -->`.
+Legacy renames (apply when the contract gate has not already auto-fixed): `#### Trust Model Evaluation` → delete (merged into 2.4.4). `#### Authentication and Authorization Architecture` → delete (merged into 2.4.4 / 2.4.5). `#### Cross-Cutting Architecture Findings` → delete heading but keep body. `##### 1. Secret Management` through `##### 6. Defense-in-Depth` (H5 numbered themes) → rewrite to the H4 numbered form `#### 2.4.3` through `#### 2.4.8`. `**Secret Management**` bold-paragraph variant → same rewrite. Missing themes → append `<!-- QA: Section 2.4 is missing sub-section "2.4.<n> <title>" — add the micro-template body from data/sections-contract.yaml. -->`.
 
 ## Theme body micro-template (2.4.3 to 2.4.8)
 

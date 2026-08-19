@@ -371,7 +371,7 @@ def _normalize_fp_title(title: str) -> str:
 
 def _threat_fingerprint(t: dict) -> tuple:
     """Stable cross-run identity: component + cwe + normalized title.
-    Mirrors the re-dispatch fingerprint contract in phase-group-threats.md:50."""
+    Mirrors the controller's re-dispatch fingerprint contract."""
     comp = (t.get("component") or t.get("component_id") or "").strip().lower()
     cwe = (t.get("cwe") or "").strip().upper()
     title = _normalize_fp_title(t.get("title") or "")

@@ -11,7 +11,7 @@ Reader-facing references normally render as `[ID](#anchor) — <short-title>`. T
 Three things must stay aligned for the invariant to hold:
 
 1. **Schema source of truth.** `schemas/threat-model.output.schema.yaml`
-   declares `title` as **required** on `threats[]` (`minLength: 10`, `maxLength: 60`) and on `mitigations[]`. Do NOT make it optional or raise the 60-char ceiling; longer titles wrap in tables. Phase 11 (`agents/phases/phase-group-finalization.md` substep 2) MUST copy `.threats-merged.json[].title` verbatim or the report degrades into `(untitled)` cross-references.
+   declares `title` as **required** on `threats[]` (`minLength: 10`, `maxLength: 60`) and on `mitigations[]`. Do NOT make it optional or raise the 60-char ceiling; longer titles wrap in tables. `scripts/build_threat_model_yaml.py` MUST copy `.threats-merged.json[].title` verbatim or the report degrades into `(untitled)` cross-references.
 
 2. **Deterministic link owners.** `scripts/qa_checks.py:linkify_anchors` is the
    only legal normalizer for T/F/M/TH/C cross-references. It runs from `qa_checks.py all` and is idempotent. `scripts/compose_threat_model.py` owns the context-specific full, compact, and inline forms and emits titled W-NNN references directly from `weaknesses[]`; QA does not infer W-NNN labels. Their invariants:
@@ -32,7 +32,7 @@ Failure modes to watch for in PR review:
 
 ## §4b. Mitigation synthesis invariant
 
-When P1/P2/P3 threats exist in `threat-model.yaml`, `mitigations[]` MUST be non-empty. An empty register means Phase 11 skipped mandatory synthesis (`agents/phases/phase-group-finalization.md` → "Mitigation synthesis (mandatory before YAML write)"). `scripts/validate_intermediate.py:validate_threat_model_output` enforces this; a non-zero post-write self-check MUST block Stage 2.
+When P1/P2/P3 threats exist in `threat-model.yaml`, `mitigations[]` MUST be non-empty. An empty register means the model builder skipped mandatory synthesis. `scripts/validate_intermediate.py:validate_threat_model_output` enforces this; a non-zero post-write self-check MUST block Stage 2.
 
 **Canonical field names** — deviating causes silent data loss:
 

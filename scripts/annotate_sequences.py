@@ -5,7 +5,7 @@ annotate_sequences.py — post-Phase-9 Mermaid sequence-diagram annotator.
 Reads a Markdown file and a .threats-merged.json file, then injects a
 ``Note over`` line into the attack branch of every ``sequenceDiagram``
 that carries the three metadata comments described in
-``phase-group-architecture.md`` → "Sequence diagram annotation contract":
+the deterministic sequence-diagram annotation contract:
 
     %% components: <id>, <id>, …
     %% stride: <letters>

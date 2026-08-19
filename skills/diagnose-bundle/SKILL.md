@@ -1,6 +1,6 @@
 ---
 name: diagnose-bundle
-description: Maintainer/dev skill that triages an anonymised diagnostic bundle (appsec-diag-*.tgz, produced by scripts/diagnostic_bundle.py) a user sent after a pipeline failure. Runs the deterministic inspect, then cross-references the plugin source (scripts/, agents/phases/, AGENTS.md) and known-bug history to produce a grounded root-cause hypothesis. Does NOT re-run the pipeline and never needs the user's repo.
+description: Maintainer/dev skill that triages an anonymised diagnostic bundle (appsec-diag-*.tgz, produced by scripts/diagnostic_bundle.py) a user sent after a pipeline failure. Runs the deterministic inspect, then cross-references the plugin source (scripts/, compact runtimes, agents/, AGENTS.md) and known-bug history to produce a grounded root-cause hypothesis. Does NOT re-run the pipeline and never needs the user's repo.
 ---
 
 # diagnose-bundle
@@ -64,11 +64,11 @@ Bind the symptom to the mechanism. From the inspect output, take the
 `last error`, the stopping `phase`/`component`, and any **anomalous inventory
 entry** (a finding sidecar that is `0 B`, missing, or implausibly large), then:
 
-1. **Phase/component → producer.** Map the phase to its phase-group file under
-   `agents/phases/` and the script that runs there (e.g. Phase 9/merge →
-   `scripts/build_threat_model_yaml.py`; compose → `compose_threat_model.py`).
-   Use `AGENTS.md` → "Phase and stage map", the phase-group headings, and
-   each agent's frontmatter for its role and turn budget.
+1. **Phase/component → producer.** Map the phase to the controller boundary and
+   its registered producer (e.g. merge → `scripts/build_threat_model_yaml.py`;
+   compose → `compose_threat_model.py`). Use
+   `docs/internal/contracts/orchestration-actions.md`, the compact runtime
+   instruction file, and each agent's frontmatter for its role and turn budget.
 2. **Error signature → code.** `Grep` the repo for the distinctive tokens of the
    scrubbed `last error` (schema enum names, function names, event names) across
    `scripts/`, `schemas/`, `agents/`. The `<str>`/`<path>` placeholders are

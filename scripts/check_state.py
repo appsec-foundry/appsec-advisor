@@ -591,7 +591,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--auto-clean",
         action="store_true",
         help="Like --clean but exits 0 even when no cleanup was needed. "
-        "Intended for SKILL-impl preflight — never fails loud.",
+        "Intended for controller preflight — never fails loud.",
     )
     p.add_argument(
         "--json",

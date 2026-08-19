@@ -450,7 +450,7 @@ Complements §6.1 (which is biased toward user-facing web auth) by enumerating a
 
 If no mechanisms are detected, write a single line: `No service-to-service or cloud-IAM authentication detected — application uses user-facing authentication only (see §6.2 and §6.3).`
 
-**Why this matters:** Phase 8's `security_controls[]` schema uses a `kind: mechanism` discriminator (see `phase-group-architecture.md` → "Phase 8 output schema") so v2 §6 can distinguish end-to-end identity mechanisms from primitives. For non-web architectures (serverless, mesh services, batch workers, webhook receivers), this recon evidence drives the relevant H4 subcontrols under §6.2 Identity and Authentication Controls and §6.3 Session and Token Controls.
+**Why this matters:** the `security_controls[]` schema uses a `kind: mechanism` discriminator so v2 §6 can distinguish end-to-end identity mechanisms from primitives. For non-web architectures (serverless, mesh services, batch workers, webhook receivers), this recon evidence drives the relevant H4 subcontrols under §6.2 Identity and Authentication Controls and §6.3 Session and Token Controls.
 
 ### 7.32 AI Coding Assistant & IDE Agent Configurations
 

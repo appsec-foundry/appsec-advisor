@@ -333,7 +333,7 @@
         }
       },
       "then": {
-        "required": ["mode", "stage", "config_path", "dispatch_values"],
+        "required": ["mode", "stage", "instruction_file", "config_path", "dispatch_values"],
         "properties": {
           "stage": {
             "const": "complete"

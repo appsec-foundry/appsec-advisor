@@ -58,7 +58,7 @@ _Append-only history of assessment runs. Most recent first._
 {%- set dels          = changed_lines.deletions -%}
 {%- set note          = (entry.note or '') | trim -%}
 {#- Defensive truncation: the orchestrator is instructed to emit short factual
-    notes only (≤12 words, see phase-group-finalization.md §"note guidance").
+    notes only (≤12 words; longer run detail belongs in structured delta fields).
     Long prose is truncated here so a single run cannot clutter the section. -#}
 {%- if (note | length) > 100 -%}{%- set note = note[:98] ~ '…' -%}{%- endif -%}
 {%- if has_baseline %}

@@ -100,7 +100,7 @@ Removing an entry means listing it here in the same change.
 | DP-1 | A depth increase forces a full scan; the prior shallower model is not extended in place | `test_depth_increase_quick_to_standard_forces_full`, `test_depth_increase_standard_to_thorough_forces_full` | `scripts/resolve_config.py` |
 | DP-2 | The resolver may classify a shallower rescan as incremental, but the compact runtime rejects it before dispatch or mutation | `test_shallower_depth_stays_incremental`, `test_unsupported_modes_fail_before_output_mutation` | Authorized single-runtime compatibility migration; use `--full` |
 | DP-3 | An explicit `--incremental` is parsed only to produce a fail-closed rejection; it cannot bypass the compact runtime | `test_unsupported_modes_fail_before_output_mutation` | Authorized single-runtime compatibility migration |
-| DP-4 | A depth increase makes recon reuse eligible only when the tree is git-provably clean | `test_depth_increase_sets_reuse_recon_eligible` | `phase-group-recon.md` → Incremental fingerprint skip |
+| DP-4 | A depth increase makes recon reuse eligible only when the tree is git-provably clean | `test_depth_increase_sets_reuse_recon_eligible` | `scripts/resolve_config.py` |
 
 ## Model routing
 
@@ -204,7 +204,7 @@ Removing an entry means listing it here in the same change.
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| IN-1 | Reuse is authorised by a fingerprint match on an unchanged tree; a cache is validated, never assumed fresh | `test_check_fingerprint_matches_unchanged_repo`, `test_validate_accepts_fresh_cache` | `phase-group-recon.md` → Incremental fingerprint skip |
+| IN-1 | Reuse is authorised by a fingerprint match on an unchanged tree; a cache is validated, never assumed fresh | `test_check_fingerprint_match`, `test_cmd_validate_valid` | `scripts/baseline_state.py` |
 | IN-2 | A shallower rescan carries an unverified prior finding; an equal-or-deeper rescan records a non-reproduced finding as resolved with its prior identity and reason instead of dropping its history | `test_reconcile_carries_dropped_prior_threat_at_shallower_depth`, `test_reconcile_no_carry_at_equal_depth` | `scripts/build_threat_model_yaml.py`; see `docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md` |
 | IN-3 | Changed business context recommends a full run, it never forces one — unlike a requirements toggle, because re-rating every finding on every context edit costs more than the drift | `test_changed_context_is_flagged_on_an_incremental_run`, `test_unchanged_context_is_not_flagged` | `scripts/resolve_config.py::resolve_business_context`; `meta.business_context_sha256` |
 

@@ -27,20 +27,6 @@ TOLERANCE = 0.20
 # `low` flags suspicious shrinkage (someone deleted a section); `high` flags
 # bloat. Both bounds include the TOLERANCE buffer documented above.
 _BOUNDS: dict[str, tuple[int, int]] = {
-    "agents/phases/phase-group-finalization.md": (32_000, 60_000),
-    # Raised 2026-07-24: mirrored the canonical-zone hard constraint from
-    # appsec-recon-scanner.md into the actual .components.json writer — the
-    # analyst was free-texting off-vocab `*-zone` labels (application-zone/…)
-    # that silently disable the STRIDE exposure/ci-cd selector (real
-    # mis-classification bugfix). Raised 2026-07-27 for the finalized component
-    # inventory, persisted data-flow, and Stage-1b handoff contracts. Measured
-    # 46_143; high = ~2% buffer.
-    "agents/phases/phase-group-architecture.md": (25_000, 47_000),
-    "agents/phases/phase-group-threats.md": (24_000, 45_000),
-    # Raised 2026-06-26: commit 77721d7 added the ⛔ "never re-dispatch
-    # context-resolver/recon-scanner after a stall" rule (real token-waste
-    # bugfix, pinned by a drift guard). Measured 7_613; high = ~20% buffer.
-    "agents/phases/phase-group-recon.md": (3_000, 9_100),
     # Lowered 2026-07-20: the canonical post-autofix gate now owns all
     # mechanical checks. The exceptional reviewer consumes only a compact
     # repair plan or an explicitly forced semantic sample.

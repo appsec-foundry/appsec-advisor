@@ -1,74 +1,57 @@
-"""
-Drift guard: every flag parsed by the skill's Argument Parsing table must also
-appear in HELP.txt (modulo explicitly-exempt flags). Prevents the help text
-from drifting out of sync with the actual flag surface — a pre-existing drift
-problem that triggered the extraction of HELP.txt from SKILL.md.
-"""
+"""Drift guards between the active resolver parser and ``HELP.txt``."""
 
 import re
+import sys
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 SKILL_DIR = PLUGIN_ROOT / "skills" / "create-threat-model"
 SKILL_MD = SKILL_DIR / "SKILL.md"
-SKILL_IMPL = SKILL_DIR / "SKILL-impl.md"
 HELP_TXT = SKILL_DIR / "HELP.txt"
+sys.path.insert(0, str(PLUGIN_ROOT / "scripts"))
 
-# Flags that intentionally never appear in HELP.txt (power-user / undocumented).
-# Keep this list short and justified.
+import resolve_config  # noqa: E402
+
+
+# Internal/migration controls and symmetric negative forms are intentionally
+# absent from the concise user help. Keep every exception explicit so a newly
+# parsed public flag cannot disappear silently.
 HELP_EXEMPT_FLAGS = {
-    "--tracing",  # power-user diagnostic; enabled via env or marker file
+    "--emit-file",
+    "--no-org-profile",
+    "--no-pdf",
+    "--no-pentest-tasks",
+    "--no-sarif",
+    "--org-profile",
+    "--preset",
+    "--schema-v1",
+    "--schema-v2",
+    "--tracing",
 }
 
-# Pre-existing drift: flags that appear in HELP.txt + scripts/run-headless.sh
-# but have never been added to SKILL.md's Argument Parsing table. When someone
-# finally documents them, remove from this set.
-KNOWN_UNDOCUMENTED_FLAGS = {
-    "--clean-cache",
-    "--clean-all",
+# Headless-wrapper flags and cross-command examples legitimately appear in
+# HELP.txt without belonging to resolve_config's skill parser.
+HELP_ONLY_FLAGS = {
     "--force",
-    # Real flags parsed by scripts/run-headless.sh (trust/url safety) and
-    # documented in HELP.txt, but not surfaced in SKILL.md's Argument Parsing
-    # table (the skill defers to run-headless.sh for them).
-    "--trust-mode",
-    "--strict-urls",
-    # Session (main-loop) model — a Claude Code / run-headless.sh setting, not a
-    # skill flag (a running loop cannot switch its own model). HELP.txt references
-    # it as guidance ("set via /model or, headless, run-headless.sh --model");
-    # run-headless.sh defaults it to claude-sonnet-4-6 (economy).
-    "--model",
-    # Real flag wired via REFRESH_ACTOR_DISCOVERY (SKILL-impl.md) and described
-    # in HELP.txt, but driven through an env var rather than the parse table.
-    "--refresh-discovery",
-}
-
-# Flags that belong to a DIFFERENT skill/command and appear in HELP.txt only as
-# a cross-reference (e.g. the standalone export-threat-model command).
-CROSS_COMMAND_FLAGS = {
     "--formats",
+    "--model",
+    "--refresh-discovery",
+    "--strict-urls",
+    "--trust-mode",
 }
-
-# Match flags inside the Argument Parsing table's backtick-quoted flag cell.
-# Some rows document aliases such as ``--tracing`` / ``--no-tracing`` in the
-# same cell, so collect every backtick-started flag, stopping at whitespace.
-FLAG_ROW_RE = re.compile(r"`(--[a-z][a-z0-9-]*)")
 
 
 def parsed_flags() -> set[str]:
-    """Extract every --flag from the 'Argument Parsing' markdown table."""
-    text = SKILL_IMPL.read_text(encoding="utf-8")
-    # Isolate the Argument Parsing table — bounded by its heading and the
-    # first blank line after 'Deprecated aliases:'
-    start = text.index("## Argument Parsing")
-    end = text.index("**Deprecated aliases:**", start)
-    table = text[start:end]
-    return set(FLAG_ROW_RE.findall(table))
+    return {
+        option
+        for action in resolve_config.build_parser()._actions
+        for option in action.option_strings
+        if option.startswith("--")
+    }
 
 
 def help_flags() -> set[str]:
-    """Extract every --flag mentioned in HELP.txt."""
-    text = HELP_TXT.read_text(encoding="utf-8")
-    return set(re.findall(r"(--[a-z][a-z0-9-]*)", text))
+    return set(re.findall(r"(--[a-z][a-z0-9-]*)", HELP_TXT.read_text(encoding="utf-8")))
 
 
 def test_help_file_exists():
@@ -103,32 +86,11 @@ def test_skill_md_has_no_inline_help_block():
     )
 
 
-def test_all_parsed_flags_documented_in_help():
-    """Every flag in the Argument Parsing table must appear in HELP.txt,
-    except the explicitly exempt ones."""
-    parsed = parsed_flags()
-    assert parsed, "no flags parsed from SKILL.md Argument Parsing table"
-    helped = help_flags()
-    missing = (parsed - helped) - HELP_EXEMPT_FLAGS
-    assert not missing, (
-        f"flags in Argument Parsing table but not in HELP.txt: {sorted(missing)}. "
-        f"Either document them in HELP.txt or add to HELP_EXEMPT_FLAGS with justification."
-    )
+def test_all_public_parser_flags_are_documented_in_help():
+    missing = parsed_flags() - help_flags() - HELP_EXEMPT_FLAGS
+    assert not missing, f"resolver flags missing from HELP.txt: {sorted(missing)}"
 
 
-def test_no_phantom_flags_in_help():
-    """Flags in HELP.txt that are not in the Argument Parsing table are
-    likely typos or removed features — fail fast (except for the known
-    pre-existing drift in KNOWN_UNDOCUMENTED_FLAGS)."""
-    parsed = parsed_flags()
-    helped = help_flags()
-    # Deprecated aliases appear in both per-flag deprecation notices in
-    # SKILL.md; they may or may not appear in HELP.txt — allow either.
-    known_aliases = {"--with-requirements", "--ignore-requirements", "--requirements-url"}
-    # Common non-flag tokens that happen to start with --
-    false_positives = {"--"}
-    phantom = helped - parsed - known_aliases - false_positives - KNOWN_UNDOCUMENTED_FLAGS - CROSS_COMMAND_FLAGS
-    assert not phantom, (
-        f"HELP.txt mentions flags that no longer exist in the Argument Parsing "
-        f"table: {sorted(phantom)}. Either add them to the table or remove from HELP.txt."
-    )
+def test_help_contains_no_retired_or_phantom_skill_flags():
+    phantom = help_flags() - parsed_flags() - HELP_ONLY_FLAGS
+    assert not phantom, f"HELP.txt contains unknown flags: {sorted(phantom)}"

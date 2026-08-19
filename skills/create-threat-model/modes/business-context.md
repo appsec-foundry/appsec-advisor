@@ -2,10 +2,10 @@
 
 > **Lazy-loaded mode file.** Read at the "Business context" anchor of the runtime in
 > use — `SKILL-full-runtime.md` §2b, before the run plan, on the default full/rebuild
-> path; `SKILL-impl.md` on the legacy path, after the pre-flight wipes. The run plan
+> path, after the controller pre-flight wipes. The run plan
 > is computed before the answer and does not change with it; the answer feeds the
 > analysis.
-> `SKILL-impl.md` reads it only for the question (`BUSINESS_CONTEXT_SOURCE` empty,
+> The compact full runtime reads it only for the question (`BUSINESS_CONTEXT_SOURCE` empty,
 > `APPSEC_HEADLESS` not `1`, `DRY_RUN=false`, `MODE` `full` or `rebuild`) because it
 > captures a supplied source itself; the compact runtime reads it for both.
 
@@ -65,7 +65,7 @@ cannot restore those. Options, recommended first:
 - `Replace — fetch from URL`
 
 On `Continue without` or `Keep stored context`: print one line saying which applies and
-return to `SKILL-impl.md`. Do not ask again.
+return to the compact full runtime. Do not ask again.
 
 ## Step 3 — Collect the value
 
@@ -108,4 +108,4 @@ optional input, not a gate. Two cases are worth a retry rather than a shrug:
 - A credential was found: nothing was written. Report the reported line and continue;
   the user can capture a cleaned version on the next run.
 
-Then return to `SKILL-impl.md`.
+Then return to the compact full runtime.

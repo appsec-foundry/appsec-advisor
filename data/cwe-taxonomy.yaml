@@ -1,7 +1,7 @@
 # cwe-taxonomy.yaml — curated CWE taxonomy for AppSec reports
 #
 # Used by: appsec-stride-analyzer-v2, appsec-threat-merger, appsec-qa-reviewer,
-# phase-group-threats.md (rendering rule for classification tags).
+# agents/appsec-threat-renderer.md (authoring rule for classification tags).
 #
 # For each CWE we record:
 #   title              — human-readable short title

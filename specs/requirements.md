@@ -197,7 +197,7 @@ else is fixed at the producer. A repair may not weaken the gate it had to pass.
 Components are analyzed side by side. A run that dispatches them one after
 another is a defect, not a slower variant, and is reported as one.
 
-**Applies to:** `scripts/check_stride_dispatch.py`, `agents/phases/phase-group-threats.md`
+**Applies to:** `scripts/check_stride_dispatch.py`, `scripts/orchestration_controller.py`, `skills/create-threat-model/SKILL-thin-stage1-v2.md`
 **Source:** `AGENTS.md` → Orchestration, decision `OR-5`
 **Guard:** `test_real_serial_wave_is_detected`, `test_real_parallel_wave_is_not_flagged`
 
@@ -254,7 +254,7 @@ shallower model, and a shallower rescan may not drop what the deeper run found.
 
 **Applies to:** `scripts/check_state.py`, `scripts/resolve_config.py`
 **Source:** decisions `IN-1`, `DP-1`, `DP-2`
-**Guard:** `test_check_fingerprint_matches_unchanged_repo`,
+**Guard:** `test_check_fingerprint_match`,
 `test_depth_increase_quick_to_standard_forces_full`, `test_shallower_depth_stays_incremental`
 
 ### REQ-INC-002 — A finding lifecycle is never silently discarded
@@ -294,14 +294,15 @@ prompt, never by raising the budget.
 
 ### REQ-CTX-003 — Prompts are built so the stable part can be cached
 
-Phase groups are loaded when they are reached, never inlined ahead of time.
-Dispatch prompts run from stable to component-specific to volatile, so the
-provider can cache the part that does not change.
+Compact runtime instruction files are loaded only when their controller action
+is reached, never inlined ahead of time. Dispatch prompts run from stable to
+component-specific to volatile, so the provider can cache the part that does
+not change.
 
-**Applies to:** `agents/phases/phase-group-threats.md`, `skills/create-threat-model/SKILL-impl.md`
+**Applies to:** `scripts/orchestration_controller.py`, `skills/create-threat-model/SKILL-thin-stage1-v2.md`
 **Source:** `AGENTS.md` → Prompt caching contract, decisions `CE-4`, `CE-5`
-**Guard:** `test_groups_are_in_order_a_b_c`, `test_group_c_uses_paths_not_inline_json_contract`,
-`test_phase_boundary_has_lazy_load_instruction`
+**Guard:** `test_groups_are_in_order_a_b_c`, `test_group_c_uses_paths_and_hashes_not_inline_json`,
+`test_full_runtime_loads_only_controller_returned_stage_surfaces`
 
 ## Requirements-based analysis
 

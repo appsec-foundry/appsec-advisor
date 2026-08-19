@@ -2,7 +2,7 @@
 #
 # Used by: appsec-stride-analyzer-v2 (assign threat_category_id per finding),
 # appsec-threat-merger (dedup findings under same category),
-# phase-group-threats.md (Section 8 rendering as TH blocks with finding tables),
+# templates/fragments/threat-register.md.j2 (TH blocks with finding tables),
 # scripts/migrate_v3_to_v4.py (map legacy flat threats to categories).
 #
 # Each entry:

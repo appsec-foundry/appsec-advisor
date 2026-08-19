@@ -39,32 +39,15 @@ surfaces:
   thin_stage2_runtime:
     path: skills/create-threat-model/SKILL-thin-stage2.md
     max_bytes: 3600
-  legacy_initial_slice:
-    path: skills/create-threat-model/SKILL-impl.md
-    start: BOF
-    end: "<!-- LAZY-LOAD BOUNDARY"
-    max_bytes: 230000
-  full_stage1_slice:
-    path: skills/create-threat-model/SKILL-impl.md
-    start: "## Stages 1a–1c — Analysis Pipeline"
-    end: "<!-- LAZY-LOAD BOUNDARY"
-    # Measured 56,358 bytes after moving Stage 1d behind the lazy boundary.
-    max_bytes: 57500
-  full_stage1d_slice:
-    path: skills/create-threat-model/SKILL-impl.md
-    start: "## Stage 1d — Abuse Case Verification"
-    end: "## Stage 2 - Report Rendering"
-    max_bytes: 15000
-  stage2_runtime_dispatch_slice:
-    path: skills/create-threat-model/SKILL-impl.md
-    start: "## Stage 2 - Report Rendering"
-    end: "### Handling turn-budget cut-offs"
-    max_bytes: 20000
-  stage3_runtime_gate_slice:
-    path: skills/create-threat-model/SKILL-impl.md
-    start: "## Stage 3 - QA Review"
-    end: "### Stage 3 handoff banner"
-    max_bytes: 25000
+  thin_stage3_runtime:
+    path: skills/create-threat-model/SKILL-thin-stage3.md
+    max_bytes: 8000
+  thin_stage4_runtime:
+    path: skills/create-threat-model/SKILL-thin-stage4.md
+    max_bytes: 3600
+  thin_completion_runtime:
+    path: skills/create-threat-model/SKILL-thin-completion.md
+    max_bytes: 6000
   shared_threat_analysis_kernel:
     path: skills/internal-threat-analysis-kernel/SKILL.md
     # The release budget is 4k measured tokens. This byte ceiling is the fast
@@ -97,19 +80,6 @@ surfaces:
   stride_lens_supply_chain:
     path: agents/shared/supply-chain-patterns.md
     max_bytes: 14000
-  phase_group_recon:
-    path: agents/phases/phase-group-recon.md
-    max_bytes: 40000
-  phase_group_architecture:
-    path: agents/phases/phase-group-architecture.md
-    max_bytes: 190000
-  phase_group_threats:
-    path: agents/phases/phase-group-threats.md
-    max_bytes: 160000
-  phase_group_finalization:
-    path: agents/phases/phase-group-finalization.md
-    max_bytes: 155000
-
 aggregate:
   # Router + compact runtime + Stage 1 + conditional Stage 1d.
   thin_full_pre_stage2_max_bytes: 30000

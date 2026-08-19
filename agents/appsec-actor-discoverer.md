@@ -10,7 +10,7 @@ discovery_prompt_version: "1.2.0"
 INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration controller.
 
 <!-- DISCOVERY_PROMPT_VERSION marker — bump on any semantic change to Sections A/B prompts below.
-     Consumed by phase-group-recon Step 2 cache-key composition (actors.md §8). -->
+     Consumed by the controller's actor-discovery cache key (actors.md §8). -->
 <!-- DISCOVERY_PROMPT_VERSION: 1.2.0 -->
 
 ## Model identification

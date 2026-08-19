@@ -2,7 +2,7 @@
 #
 # Used by: appsec-stride-analyzer-v2 (match detected controls to canonical names),
 # appsec-threat-merger (dedup identically-named controls across components),
-# phase-group-threats.md / phase-group-finalization.md (render Operational
+# scripts/pregenerate_fragments.py / agents/appsec-threat-renderer.md (render Operational
 # Strengths + Section 6 with consistent terminology).
 #
 # Each entry:

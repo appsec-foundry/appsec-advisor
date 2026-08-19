@@ -439,8 +439,8 @@ class TestSkillApplicability:
         assert "standalone_audit.enabled" in content
 
     def test_create_skill_supports_both_flags(self):
-        """Verify create-threat-model implementation defines --requirements and --no-requirements."""
-        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL-impl.md"
+        """Verify create-threat-model help defines --requirements and --no-requirements."""
+        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "HELP.txt"
         content = skill_md.read_text()
         assert "--requirements" in content
         assert "--no-requirements" in content
@@ -480,13 +480,13 @@ class TestContextResolverContract:
         assert 'source:` is not `"disabled"`, `"skipped"`, or `"unavailable"`' in content
 
     def test_orchestrator_passes_url_override(self):
-        agent_md = PLUGIN_DIR / "agents" / "appsec-threat-analyst.md"
-        content = agent_md.read_text()
+        runtime_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
+        content = runtime_md.read_text()
         assert "REQUIREMENTS_URL_OVERRIDE" in content
 
     def test_phase8b_uses_canonical_requirements_fragment_name(self):
-        phase_md = PLUGIN_DIR / "agents" / "phases" / "phase-group-architecture.md"
-        content = phase_md.read_text()
+        renderer_md = PLUGIN_DIR / "agents" / "appsec-threat-renderer.md"
+        content = renderer_md.read_text()
         assert ".fragments/requirements-compliance.md" in content
         assert ".fragments/requirements_compliance.md" not in content
 
@@ -497,10 +497,10 @@ class TestContextResolverContract:
 
 
 class TestDeprecatedAliases:
-    """The old flags should be documented as deprecated in the skill implementation."""
+    """The old flags should be documented as deprecated in user help."""
 
     def test_deprecated_aliases_documented(self):
-        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "SKILL-impl.md"
+        skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "HELP.txt"
         content = skill_md.read_text()
         assert "Deprecated" in content or "deprecated" in content
         assert "--with-requirements" in content

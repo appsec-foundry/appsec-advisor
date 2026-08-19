@@ -1,7 +1,7 @@
 """
 Drift guard: the `threat-model.yaml` schema v1 lives in ONE place —
-`schemas/threat-model.output.schema.yaml`. Agent prompts and phase-group
-files must reference the schema file, not re-inline it.
+`schemas/threat-model.output.schema.yaml`. Agent prompts must reference the
+schema file, not re-inline it.
 
 Sprint 1 Item C extracted duplicated schema definitions from report-producing
 prompts. This test prevents regression.
@@ -22,7 +22,7 @@ ALLOWED_SCHEMA_AUTHORITIES = {
 
 # Files that are SCANNED for drift (must NOT re-inline schema structure)
 SCANNED_FILES = [
-    PLUGIN_ROOT / "agents" / "phases" / "phase-group-finalization.md",
+    PLUGIN_ROOT / "agents" / "appsec-threat-renderer.md",
 ]
 
 # Signals that indicate the schema has been re-inlined as a YAML example.

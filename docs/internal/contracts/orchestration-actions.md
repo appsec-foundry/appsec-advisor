@@ -108,12 +108,15 @@ compact runtime acting on controller actions, and no agent recurses through
 - `SKILL-full-runtime.md`, `SKILL-thin-stage1-v2.md`,
   `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and
   `SKILL-rerender-runtime.md` own user-visible output, Task lifecycle, and
-  Level-0 Agent calls for their modes.
+  Level-0 producer calls for their modes. `SKILL-thin-stage3.md`,
+  `SKILL-thin-stage4.md`, and `SKILL-thin-completion.md` own the bounded review,
+  repair, release-gate, export, and cleanup calls selected by the controller.
 - `stride_dispatch_waves.py` owns deterministic bounded-wave scheduling,
   persisted two-attempt counters, resume selection, and the selected-component
   completion gate. It never changes component selection or analyzer prompts.
-- Existing agents, phase groups, deterministic gates, renderer, QA, and
-  cleanup remain authoritative for analysis and report quality.
+- Registered agents own semantic analysis and prose. The controller and its
+  deterministic validators, renderer, QA gates, and cleanup own every state
+  transition and release decision.
 
 The action itself is not a persisted runtime sidecar. Rehydration reads
 existing `.skill-config.json`, checkpoints, validated phase artifacts, and

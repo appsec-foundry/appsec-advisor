@@ -5,7 +5,7 @@ These tests validate the structural integrity of the plugin as a whole:
 - All components referenced in plugin.json exist
 - Hook scripts are executable and handle edge cases
 - Config files pass schema validation
-- Phase-group reference files exist and are reachable
+- Compact runtime and agent definitions are reachable
 - Skill definitions reference valid agents
 - The .gitignore-template covers all intermediate files mentioned in agents
 - Steering keywords config is consistent with the steering script defaults
@@ -23,7 +23,6 @@ AGENTS_DIR = PLUGIN_DIR / "agents"
 SKILLS_DIR = PLUGIN_DIR / "skills"
 SCRIPTS_DIR = PLUGIN_DIR / "scripts"
 HOOKS_DIR = PLUGIN_DIR / "hooks"
-PHASES_DIR = AGENTS_DIR / "phases"
 
 
 # ---------------------------------------------------------------------------
@@ -168,31 +167,6 @@ class TestConfigValidation:
 
 
 # ---------------------------------------------------------------------------
-# Phase-group reference files
-# ---------------------------------------------------------------------------
-
-EXPECTED_PHASE_FILES = [
-    "phase-group-recon.md",
-    "phase-group-architecture.md",
-    "phase-group-threats.md",
-    "phase-group-finalization.md",
-]
-
-
-class TestPhaseGroups:
-    def test_phases_directory_exists(self):
-        assert PHASES_DIR.exists(), "phases/ directory not found under agents/"
-
-    @pytest.mark.parametrize("filename", EXPECTED_PHASE_FILES)
-    def test_phase_file_exists(self, filename):
-        assert (PHASES_DIR / filename).exists(), f"Phase group file missing: {filename}"
-
-    @pytest.mark.parametrize("filename", EXPECTED_PHASE_FILES)
-    def test_phase_file_not_empty(self, filename):
-        content = (PHASES_DIR / filename).read_text()
-        assert len(content) > 100, f"Phase group file {filename} appears too short"
-
-# ---------------------------------------------------------------------------
 # Skill definitions reference valid agents
 # ---------------------------------------------------------------------------
 
@@ -206,9 +180,6 @@ _CREATE_THREAT_MODEL_INVARIANTS = [
     # (test-id,              phrases that must all be present,            case-insensitive?)
     ("references-controller", ["orchestration_controller.py"], False),
     ("references-qa-reviewer", ["appsec-qa-reviewer"], False),
-    ("supports-dry-run", ["--dry-run", "DRY_RUN"], False),
-    ("supports-resume", ["--resume", "checkpoint"], True),
-    ("supports-incremental", ["--incremental", "INCREMENTAL"], False),
 ]
 
 
@@ -227,9 +198,8 @@ class TestSkillAgentReferences:
         """
         skill_dir = SKILLS_DIR / "create-threat-model"
         content = (skill_dir / "SKILL.md").read_text()
-        impl = skill_dir / "SKILL-impl.md"
-        if impl.exists():
-            content += "\n" + impl.read_text()
+        for runtime in skill_dir.glob("SKILL-*.md"):
+            content += "\n" + runtime.read_text()
         haystack = content.lower() if case_insensitive else content
         missing = [p for p in phrases if (p.lower() if case_insensitive else p) not in haystack]
         assert not missing, f"SKILL.md is missing required phrase(s): {missing!r}"

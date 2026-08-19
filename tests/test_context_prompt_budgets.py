@@ -19,11 +19,9 @@ SURFACE_MAX_BYTES_RATCHET = {
     "thin_stage1_v2_runtime": 6400,
     "thin_stage1d_runtime": 3400,
     "thin_stage2_runtime": 3600,
-    "legacy_initial_slice": 230000,
-    "full_stage1_slice": 57500,
-    "full_stage1d_slice": 15000,
-    "stage2_runtime_dispatch_slice": 20000,
-    "stage3_runtime_gate_slice": 25000,
+    "thin_stage3_runtime": 8000,
+    "thin_stage4_runtime": 3600,
+    "thin_completion_runtime": 6000,
     "shared_threat_analysis_kernel": 16000,
     "architecture_analyst_role": 12000,
     "control_analyst_role": 12000,
@@ -34,10 +32,6 @@ SURFACE_MAX_BYTES_RATCHET = {
     "stride_lens_spa": 3500,
     "stride_lens_mobile": 2500,
     "stride_lens_supply_chain": 14000,
-    "phase_group_recon": 40000,
-    "phase_group_architecture": 190000,
-    "phase_group_threats": 160000,
-    "phase_group_finalization": 155000,
 }
 
 
@@ -138,13 +132,13 @@ def test_thin_runtime_uses_bounded_stage_reads():
     assert "SKILL-thin-stage2.md" in text
     assert "SKIP_ABUSE_CASE_VERIFICATION=false" in text
     assert "do not load any Stage-1d instructions" in text
-    assert "Do not load the Stage-2 slice" in text
+    assert "SKILL-thin-stage3.md" in text
+    assert "SKILL-thin-stage4.md" in text
+    assert "SKILL-thin-completion.md" in text
     assert "ORG_PROFILE_PATH = org_profile_path" in text
     assert "▶ Stage 1a/<TOTAL_STAGES>" in text
-    assert "## Stage 3 - QA Review` to `### Stage 3 handoff banner" in text
-    assert "Load this safety slice on every non-dry path" in text
-    assert "run the Stage-3 safety slice first" in text
-    assert "marker to EOF" not in text
+    assert "secret gate is never optional" in text
+    assert "There is no legacy range or fallback" in text
 
 
 def test_thin_full_cumulative_stage2_context_is_bounded():
@@ -203,8 +197,10 @@ def test_thin_rerender_runtime_starts_at_stage2():
     assert "ACTION.mode=rerender" in text
     assert "SKILL-thin-stage2.md" in text
     assert "RENDERER_MODEL = renderer_model" in text
-    assert "always run the non-dry Stage-3 safety" in text
-    assert "including its final release gates" in text
+    assert "SKILL-thin-stage3.md" in text
+    assert "SKILL-thin-stage4.md" in text
+    assert "SKILL-thin-completion.md" in text
+    assert "There is no legacy slice" in text
 
 
 def test_context_v2_stage1_runtime_is_bounded():
@@ -249,10 +245,10 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     assert "model=dispatch_jobs[].model" in text
     assert "untrusted data" in text
     assert "Resolve every output-relative input and output path under absolute `OUTPUT_DIR`" in flat
-    assert "paths resolved under absolute `OUTPUT_DIR`" in flat
+    assert "Resolve every path under absolute `OUTPUT_DIR`" in flat
     assert "resolve any output artifact against `REPO_ROOT`" in flat
     assert "taxonomy_slice_path`/`taxonomy_slice_sha256" in text
-    assert "The component plan is authoritative for analysis depth" in flat
+    assert "The component plan owns depth" in flat
     assert "Never pass the shared effective plan" in flat
     assert "`COMPONENT_CONTEXT_PLAN_PATH`" in text
     assert "`COMPONENT_CONTEXT_PLAN_SHA256`" in text

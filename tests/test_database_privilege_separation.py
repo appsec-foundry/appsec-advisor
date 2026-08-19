@@ -9,8 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "database_privilege_separation.py"
-SKILL_IMPL = REPO_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
-PHASE_RECON = REPO_ROOT / "agents" / "phases" / "phase-group-recon.md"
+CONTROLLER = REPO_ROOT / "scripts" / "orchestration_controller.py"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import database_privilege_separation as dbsep  # noqa: E402
@@ -129,8 +128,9 @@ def test_non_thorough_depth_is_a_no_scan_sidecar(tmp_path: Path, monkeypatch) ->
 
 
 def test_runtime_wiring_keeps_database_separation_thorough_only() -> None:
-    for path in (SKILL_IMPL, PHASE_RECON):
-        text = path.read_text(encoding="utf-8")
-        assert "database_privilege_separation.py" in text
-        assert '[ "$ASSESSMENT_DEPTH" = "thorough" ]' in text
-    assert '--assessment-depth "$ASSESSMENT_DEPTH"' in SKILL_IMPL.read_text(encoding="utf-8")
+    text = CONTROLLER.read_text(encoding="utf-8")
+    start = text.index("def _prepasses(")
+    block = text[start : text.index("\ndef ", start + 1)]
+    assert 'if depth == "thorough"' in block
+    assert "database_privilege_separation.py" in block
+    assert '"--assessment-depth",\n                    "thorough"' in block

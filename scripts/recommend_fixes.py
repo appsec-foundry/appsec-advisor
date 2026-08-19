@@ -426,7 +426,7 @@ def _recommend_compose_retries_section(issue: dict, output_dir: Path) -> dict:
         "actions": [
             {
                 "type": "manual_review",
-                "target": "agents/phases/phase-group-finalization.md",
+                "target": "agents/appsec-threat-renderer.md",
                 "details": f"Look for the §{sec} authoring guidance — tighten the schema explanation.",
             },
         ],

@@ -1533,7 +1533,7 @@ def _render_walkthrough_block(
     steps = render_attack_steps(threat, template)
     diagram = render_sequence_diagram(threat, template, primary_mit_id, primary_mit_title)
 
-    # Heading HARD RULE (per agents/phases/phase-group-finalization.md §3
+    # Heading HARD RULE (per the Section-3 fragment contract
     # heading-format contract): NO T-NNN prefix, ≤80 chars (check_heading_hygiene
     # warns >80, errors >100). The T-NNN appears once in the **Source:** line
     # below — wrapping it into the heading inflates the line and trips the gate.

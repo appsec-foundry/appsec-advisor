@@ -236,19 +236,17 @@ Do not repeat what §1 lists as already done by the controller.
 
 ## 6. Stage 2 onward
 
-Read only:
+Load each returned plugin-owned instruction file in full:
 
-- 2: `SKILL-thin-stage2.md` in full. Do not load the Stage-2 slice from
-  `SKILL-impl.md`. Failure/cut-off only: load the legacy range from
-  `### Handling turn-budget cut-offs` through `## Incremental Mode`.
-- 3: `## Stage 3 - QA Review` to `### Stage 3 handoff banner`.
-  Load this safety slice on every non-dry path once the report exists, even
-  when quick / `--no-qa` / PR mode makes `next` return `stage4` or `complete`;
-  those paths run the hard secret-leak gate and skip the remaining QA work.
-  QA/repair only: continue through `## Stage 4 - Architect Review`.
-- 4: `## Stage 4 - Architect Review` to `## Completion Summary`.
-- Done: `## Completion Summary` to `## Error Handling`.
-- Error: `## Error Handling` to EOF on that branch.
+- Stage 2: `SKILL-thin-stage2.md`.
+- Stage 3: `SKILL-thin-stage3.md`; run it once for every report, including
+  Quick and `SKIP_QA=true`, because the secret gate is never optional.
+- Stage 4: `SKILL-thin-stage4.md` only when the controller returns Stage 4.
+- Complete: `SKILL-thin-completion.md` only when the controller returns
+  `action=complete`.
+
+There is no legacy range or fallback. A cut-off re-enters through
+`orchestration_controller.py next`, which returns the bounded stage runtime.
 
 **Mandatory finalize gate (deterministic — do NOT skip).** After the Stage-2
 renderer agent(s) return, and again before you emit any completion summary, you
@@ -265,11 +263,10 @@ Honor the returned `action`/`stage`:
 
 - `stage=stage2` → the report still does not exist **and** the render fragments
   are missing; (re-)dispatch Stage 2.
-- `stage=stage3` → run the Stage-3 safety slice and any enabled QA work.
-- `stage=stage4` → run the Stage-3 safety slice first if it has not run for
-  this report, then proceed with Stage 4.
-- `action=complete` → the report exists; run the Stage-3 safety slice first
-  if it has not run for this report, then proceed to the completion summary.
+- `stage=stage3` → load the returned thin Stage-3 runtime.
+- `stage=stage4` → load the returned thin Stage-4 runtime only after Stage 3.
+- `action=complete` → load the returned thin completion runtime only after
+  Stage 3 has run for the current report.
 
 **Hard invariant:** never emit an "Assessment complete" summary while
 `$OUTPUT_DIR/threat-model.md` is absent. After each major agent return the

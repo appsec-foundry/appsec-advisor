@@ -1141,7 +1141,7 @@ def _normalize_fragment_component_refs(ctx: RenderContext, filename: str, list_k
 
     Shared engine for ms-anti-patterns.json (``anti_patterns[]``) and
     ms-ai-exposure.json (``ai_risks[]``). Both fragment schemas require the
-    canonical ``^C-\\d{2,}$`` form, but the threat-renderer (RENDER_ROLE=ms)
+    canonical ``^C-\\d{2,}$`` form, but the Management Summary renderer
     sometimes writes the raw component slug it reads from ``threat-model.yaml``
     (e.g. ``ai-chatbot-service``) instead — a HARD ``--strict`` compose abort
     (observed: anti-patterns 2026-06-12, ai-exposure 2026-06-21 juice-shop).
@@ -3276,7 +3276,7 @@ def _reconcile_attack_path_membership(data: dict, taxonomy: dict, threats: list[
     """M-11: Ensure every taxonomy cluster that has ≥1 matching finding in
     ``yaml.threats`` appears in ``attack_paths[]``. The LLM frequently omits
     low-severity classes (e.g. CSRF with a single Medium finding), even
-    though `agents/phases/phase-group-finalization.md:544` mandates "≥ 1
+    though the fragment contract mandates "≥ 1
     matching finding ⇒ one entry".
 
     Algorithm:
@@ -12645,7 +12645,7 @@ _QUICK_MODE_NOTICE_STANDARD = (
     "step did not author them. Common causes: turn budget exhausted before "
     "§7 fill, or scaffold-fill instructions not loaded by the renderer agent. "
     "Check `.agent-run.log` for `BUDGET_CRITICAL` / `WRAP_UP_TRIGGERED` "
-    "around the §7 substep, and `agents/phases/phase-group-finalization.md` "
+    "around the §7 substep, and `data/sections-contract.yaml` "
     "→ scaffold-fill protocol."
 )
 
@@ -13489,7 +13489,7 @@ def _render_composition_notes(ctx: RenderContext, env: jinja2.Environment, secti
         lines.append(
             f"- Inline-shortcut hard gate triggered **{auto_retries}× recovery cycle"
             f"{'s' if auto_retries != 1 else ''}** "
-            f"(see SKILL-impl.md M2.13). Final outcome: success."
+            f"(bounded Stage-2 recovery). Final outcome: success."
         )
         lines.append("")
         lines.append(

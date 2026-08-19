@@ -15,7 +15,7 @@ Exit codes
 
 Why this script exists
 ----------------------
-``agents/phases/phase-group-threats.md`` instructs the orchestrator to
+The compact Stage-1 runtime instructs the orchestrator to
 dispatch one parallel ``appsec-stride-analyzer-v2`` background sub-agent per
 component (``run_in_background: true``). Each dispatched analyzer writes a
 per-component progress file ``$OUTPUT_DIR/.progress/<component-id>.json``
@@ -110,7 +110,7 @@ from stride_outputs import stride_output_files
 _COMPONENT_ID_RE = re.compile(r"(?i)\bcomponent_id=([^\s\]]+)")
 
 # A threat is a trivial-skip stub placeholder when its text carries this
-# marker (see phase-group-threats.md "Trivial-component skip (M24)").
+# marker (see the dispatch manifest's trivial-component skip).
 _STUB_MARKERS = ("trivial-component", "no detailed stride")
 
 

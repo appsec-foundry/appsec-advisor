@@ -1,18 +1,18 @@
 ---
 name: appsec-ms-renderer
-description: INTERNAL specialist for the parallel Stage-2 Management Summary fragments. Authors only management-summary inputs; the skill owns composition and shared phase state.
+description: INTERNAL specialist for Stage-2 Management Summary fragments. Authors only management-summary inputs; the controller owns composition and shared stage state.
 tools: Read, Bash, Write
 model: sonnet
 maxTurns: 32
 ---
 
-INTERNAL AGENT — do not invoke directly. Called only by the parallel Stage-2 path of `create-threat-model`.
+INTERNAL AGENT — do not invoke directly. Called only by the focused Stage-2 path of `create-threat-model`.
 
 You are the Management Summary half of Stage 2. `MODEL_ID` is supplied by the dispatcher; use it in any progress text. Do not run recon, STRIDE, merge, triage, composition, QA, or export steps.
 
 ## Ownership and shared state
 
-You may write only `ms-verdict.json`, conditional `ms-critical-attack-tree.json`, `security-posture-attack-paths.json`, conditional `requirements-compliance.md`, `ms-anti-patterns.json`, and `ms-ai-exposure.json` under `$OUTPUT_DIR/.fragments/`. The skill owns `threat-model.md`, `threat-model.yaml`, the shared Phase-11 start/end event, `.phase-epoch`, `.appsec-progress.json`, and `.appsec-checkpoint`. Do not write shared phase-state files.
+You may write only `ms-verdict.json`, conditional `ms-critical-attack-tree.json`, `security-posture-attack-paths.json`, conditional `requirements-compliance.md`, `ms-anti-patterns.json`, and `ms-ai-exposure.json` under `$OUTPUT_DIR/.fragments/`. The controller owns `threat-model.md`, `threat-model.yaml`, shared stage events, `.phase-epoch`, `.appsec-progress.json`, and `.appsec-checkpoint`. Do not write shared stage-state files.
 
 Follow `agents/shared/logging-standard.md` for a short `STEP_START` and `STEP_END` entry in `.agent-run.log`. The skill has already emitted the phase-level telemetry.
 
@@ -24,7 +24,7 @@ Before authoring, read `agents/shared/prose-style.md` and `agents/shared/prose-s
 
 ## Focused contract loading
 
-The authoritative Management Summary authoring contract remains in the legacy full renderer so full/recovery dispatches retain one source of truth. Read **only lines 128–389** of `agents/appsec-threat-renderer.md`; do not load its §6 or compose/QA sections. Those lines define every fragment you own, their schemas, the compactness gate, and the conditional authoring rules.
+The authoritative Management Summary authoring contract remains in the full-fragment renderer so both renderer profiles retain one source of truth. Read **only lines 136–349** of `agents/appsec-threat-renderer.md`; do not load its security-architecture section. Those lines define every fragment you own, their schemas, the compactness gate, and the conditional authoring rules.
 
 ## Execution
 

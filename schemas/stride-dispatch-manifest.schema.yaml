@@ -6,7 +6,7 @@ description: |
   to bounded parallel `appsec-stride-analyzer-v2` jobs.
 
   The per-component fields mirror the dispatch parameters documented in
-  `agents/phases/phase-group-threats.md` ("For each component, use Agent tool")
+  `skills/create-threat-model/SKILL-thin-stage1-v2.md` (STRIDE dispatch contract)
   and the Inputs section of `agents/appsec-stride-analyzer-v2.md`. Scalar context
   fields (interfaces, controls, known_*) are authored by the
   analyst from its Phase 6-8 analysis (they are NOT all reconstructable from the

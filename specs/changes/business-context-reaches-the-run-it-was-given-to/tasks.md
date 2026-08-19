@@ -9,7 +9,7 @@
       `appsec-context-resolver` template).
 - [x] Derive the report's context sources from that field instead of naming
       `docs/business-context.md` unconditionally
-      (`agents/appsec-threat-analyst.md`).
+      (`scripts/orchestration_controller.py`).
 - [x] Record `meta.business_context_source` beside the digest
       (`scripts/build_threat_model_yaml.py`).
 - [x] Tell a cleaned-up run-only source apart from an edited context in the

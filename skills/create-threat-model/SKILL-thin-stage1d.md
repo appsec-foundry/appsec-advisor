@@ -1,6 +1,6 @@
 # Compact Thin Stage 1d
 
-Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; do not read Stage 1d from `SKILL-impl.md`.
+Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instructions.
 
 1. Mark Stage 1d in progress, capture `STAGE_ABUSE_START_ISO`, print the banner,
    and start the heartbeat:

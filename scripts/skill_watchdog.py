@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """skill_watchdog.py — long-running watchdog spawned by the create-threat-model skill.
 
-Replaces the ~60-line ``HEARTBEAT_LOOP_CMD`` Bash blob in ``SKILL-impl.md``
-with a single Python process the skill spawns via the ``Bash`` tool with
+Runs the heartbeat and liveness loop as a single Python process that the
+compact runtime spawns via the ``Bash`` tool with
 ``run_in_background: true``. The Python rewrite is unit-testable, has no
 shell-quoting hell, and gives us a clean place to add per-component
 timeout escalation (M3.6 #7) and task-id-driven selective kills (M3.6 #8)
@@ -764,7 +764,7 @@ def watch(
 
         # 7b — Substep 2 idle detection (review-recommendations §4 Fix 3).
         #
-        # Phase 11 Substep 2 is, by spec (phase-group-finalization.md:264),
+        # The controller's Stage-1 finalizer is required to write
         # a single Bash call to `build_threat_model_yaml.py` expected to
         # complete in under 5 seconds. The 2026-05-25 juice-shop run hung
         # for 1 h 39 min in Substep 2 after pre-validating intermediates and
@@ -803,7 +803,7 @@ def watch(
                             (
                                 "Substep 2 must be a SINGLE Bash call to "
                                 "`build_threat_model_yaml.py` "
-                                "(phase-group-finalization.md:264). If the agent is "
+                                "(controller Stage-1 finalization contract). If the agent is "
                                 "pre-inspecting `.stride-*.json` / `.threats-merged.json` "
                                 "or clipping titles, that is a pipeline defect. Abort and "
                                 "use `--rerender` when validated Stage-1 artifacts exist, "

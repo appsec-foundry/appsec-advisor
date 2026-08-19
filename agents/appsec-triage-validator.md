@@ -81,7 +81,7 @@ Step 6 is **mandatory when `analysis_version ≥ 2`** and skipped silently for l
 
 When the environment variable `APPSEC_TRIAGE_DETERMINISTIC=1` is set, Step 6 is fully delegated to `scripts/triage_compute_ranking.py`. The script implements 6a–6g identically to the spec below — same data files, same scoring formula, same multi-view ranking — but in Python so the wall time drops from ~6 min (LLM) to <2 s (deterministic).
 
-**The deterministic ranking is now guaranteed independent of this flag.** The skill runs `triage_compute_ranking.py --force` directly at skill level after Stage 1 (SKILL-impl.md → "Deterministic Phase-10b ranking (skill-level)"), because env vars do not reach skill/agent Bash — so this in-agent flag never reliably flips and the LLM fallback below was firing on every default run. Inside this agent, run the deterministic invocation only if the flag happens to be set in your environment; otherwise the LLM Step 6 path below runs and is **harmlessly overwritten** by the skill-level `--force` pass after Stage 1 returns.
+**The deterministic ranking is guaranteed independent of this flag.** The controller runs `triage_compute_ranking.py --force` after this producer returns. Inside this agent, run the deterministic invocation only if the flag happens to be set in your environment; otherwise the LLM Step 6 path below is overwritten by the controller-owned `--force` pass.
 
 **Mandatory invocation when the flag is set:**
 

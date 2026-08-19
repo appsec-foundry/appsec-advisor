@@ -34,7 +34,7 @@ a. **Bare-ID → link.** In eligible prose, tables, and lists, wrap bare `T-NNN`
 
 b. **Ordinary link without a title → titled link.** In a table or list that requires labels, rewrite `[X-NNN](#x-nnn)` to `[X-NNN](#x-nnn) — <title>` using the lookup from step 1. Normalize legacy bare-space and colon forms to the same em-dash form. Do not expand compact or inline forms owned by the composer.
 
-c. **Comma-list outside tables → bullet list.** In the Mitigation Register `## 9.` body only: any `**Addresses:** …, …` line carrying ≥2 references is converted to a bullet list (see template in `phase-group-threats.md`).
+c. **Comma-list outside tables → bullet list.** In the Mitigation Register `## 9.` body only: any `**Addresses:** …, …` line carrying ≥2 references is converted to a bullet list (see `templates/fragments/mitigation-register.md.j2`).
 
 d. **Comma-list inside tables → `<br/>`-separated.** Any table cell matching `\| [^|]*[T|M]-\d{3}[^|]*, [^|]*[T|M]-\d{3}[^|]*\|` is rewritten to `<br/>`-separated form, each entry `[X-NNN](#x-nnn) — <title>`.
 

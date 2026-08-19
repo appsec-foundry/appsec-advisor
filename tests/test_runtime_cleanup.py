@@ -1,9 +1,8 @@
-"""Pin the Phase 11 runtime-cleanup whitelist.
+"""Pin the compact completion runtime-cleanup whitelist.
 
-The plugin's Phase 11 finalization removes a small set of transient files
-after a successful run. The whitelist is documented in
-`agents/phases/phase-group-finalization.md` and additionally summarized
-in `AGENTS.md`. This test pins both copies of the list and the safety
+The plugin's completion runtime removes a small set of transient files after a
+successful run. The whitelist is documented in the cleanup contract and
+additionally summarized in `AGENTS.md`. This test pins the list and the safety
 gates so that:
 
   * adding a new transient artifact (e.g. a future `.merger.stderr`) forces
@@ -29,16 +28,17 @@ import pytest
 import runtime_cleanup as rc
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-FINALIZATION_MD = PLUGIN_ROOT / "agents" / "phases" / "phase-group-finalization.md"
 AGENTS_MD = PLUGIN_ROOT / "AGENTS.md"
 CLEANUP_WHITELIST_MD = PLUGIN_ROOT / "docs" / "internal" / "contracts" / "cleanup-whitelist.md"
 SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
-SKILL_IMPL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
+FULL_RUNTIME_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
+COMPLETION_RUNTIME_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
+HELP_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "HELP.txt"
 RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime_cleanup.py"
 
 # ---------------------------------------------------------------------------
 # Whitelist — pinned. To add a new transient artifact:
-#   1) add it to the cleanup Bash block in phase-group-finalization.md
+#   1) add it to the cleanup contract and runtime_cleanup.py
 #   2) add it to AGENTS.md "Runtime artifact cleanup" section
 #   3) add it here
 # All three live-fire failures (cleanup, doc, doc) become test failures
@@ -46,7 +46,7 @@ RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime_cleanup.py"
 # ---------------------------------------------------------------------------
 # "Always" wave — removed regardless of QA / architect stage. These map 1:1
 # to ``runtime_cleanup.ALWAYS_FILES`` / ``ALWAYS_DIRS`` and are also listed in
-# the Phase-11 doc table.
+# the cleanup contract.
 EXPECTED_WHITELIST_FILES = {
     ".merge-candidates.json",
     ".merge-decisions.json",
@@ -176,11 +176,6 @@ NEVER_CLEANUP = {
 
 
 @pytest.fixture(scope="module")
-def finalization_text() -> str:
-    return FINALIZATION_MD.read_text()
-
-
-@pytest.fixture(scope="module")
 def agents_text() -> str:
     return AGENTS_MD.read_text()
 
@@ -192,7 +187,9 @@ def whitelist_text() -> str:
 
 @pytest.fixture(scope="module")
 def skill_text() -> str:
-    return SKILL_MD.read_text() + "\n" + SKILL_IMPL_MD.read_text()
+    return "\n".join(
+        path.read_text() for path in (SKILL_MD, FULL_RUNTIME_MD, COMPLETION_RUNTIME_MD, HELP_MD)
+    )
 
 
 @pytest.fixture(scope="module")
@@ -207,21 +204,15 @@ def cleanup_py_text() -> str:
 
 class TestFinalizationWhitelist:
     @pytest.mark.parametrize("filename", sorted(EXPECTED_WHITELIST_FILES))
-    def test_file_in_cleanup_table(self, finalization_text, filename):
-        """Every whitelisted file must appear in the Phase-11 doc table so
-        readers of the architecture doc see the same list the script uses."""
-        token = f"`$OUTPUT_DIR/{filename}`"
-        assert token in finalization_text, (
-            f"phase-group-finalization.md cleanup table is missing entry for {filename!r}. "
-            f"Add the path to the Runtime Cleanup section's table."
+    def test_file_in_cleanup_table(self, whitelist_text, filename):
+        """Every whitelisted file must appear in the cleanup contract."""
+        assert filename in whitelist_text, (
+            f"cleanup-whitelist.md is missing entry for {filename!r}."
         )
 
     @pytest.mark.parametrize("dirname", sorted(EXPECTED_WHITELIST_DIRS))
-    def test_directory_in_cleanup_table(self, finalization_text, dirname):
-        token = f"`$OUTPUT_DIR/{dirname}/`"
-        assert token in finalization_text, (
-            f"phase-group-finalization.md cleanup table is missing directory entry for {dirname!r}."
-        )
+    def test_directory_in_cleanup_table(self, whitelist_text, dirname):
+        assert dirname in whitelist_text, f"cleanup-whitelist.md is missing directory entry for {dirname!r}."
 
     @pytest.mark.parametrize("never", sorted(NEVER_CLEANUP))
     def test_audit_artifact_not_in_script_whitelist(self, cleanup_py_text, never):

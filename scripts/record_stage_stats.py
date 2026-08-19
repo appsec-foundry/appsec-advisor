@@ -2,7 +2,7 @@
 """
 record_stage_stats.py — append one Stage's stats to ``$OUTPUT_DIR/.stage-stats.jsonl``.
 
-Called by the skill (SKILL-impl.md) after each Stage Agent dispatch returns.
+Called by a compact stage runtime after each Stage Agent dispatch returns.
 The Agent tool's return notification carries a ``<usage>`` block with the
 total tokens, tool-use count, and duration in milliseconds — the LLM driving
 the skill extracts those values and passes them in via this helper. The
@@ -20,7 +20,7 @@ Dispatch wall-time derivation
 -----------------------------
 ``duration_ms`` (from the Agent tool's ``<usage>`` block) is the API-billed
 time for the **single** dispatch that returned successfully. When the skill
-re-dispatches an agent — via the auto-retry loop in ``SKILL-impl.md`` after
+re-dispatches an agent — via the bounded compact-runtime retry after
 ``check_inline_shortcut.py`` trips, or via the ``STAGE11_CUTOFF`` recovery
 path — earlier failed/aborted spawns are NOT reflected in ``duration_ms``.
 This under-reports actual wall time by ~50% in observed multi-dispatch runs
@@ -342,7 +342,7 @@ def main(argv: list[str]) -> int:
         help="Sprint 3C (M3.5): truncate the stats file on the FIRST stage of "
         "a rebuild run before appending. The skill passes this flag for "
         "Stage 1 in `--rebuild` mode so the second --rebuild in a row "
-        "starts with a clean stats slate (the wipe in SKILL-impl handles "
+        "starts with a clean stats slate (the controller wipe handles "
         "the rest, but this is a safety net for environments where the "
         "wipe was skipped or partial).",
     )

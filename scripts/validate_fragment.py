@@ -5,7 +5,7 @@ Fragments are the ONLY way the orchestrator can influence the rendered
 Markdown — the renderer then consumes the validated data. This script is
 the hard gate that prevents malformed fragments from reaching the renderer.
 
-Typical use (from phase-group-threats.md / phase-group-finalization.md):
+Typical use (from the controller and compact stage runtimes):
 
     python3 validate_fragment.py verdict "$OUTPUT_DIR/.fragments/ms-verdict.json"
 
@@ -74,7 +74,7 @@ _STEM_TO_TYPE: dict[str, str] = {v.replace(".schema.json", ""): k for k, v in FR
 _PRE_RENDER_REPAIR_MAX_ATTEMPTS = 3
 
 # Canonical fragment filenames used by the renderer (from sections-contract.yaml
-# + phase-group-finalization.md). Keyed by fragment type for reverse lookup.
+# + data/sections-contract.yaml). Keyed by fragment type for reverse lookup.
 # Substep-2 sidecars are intentionally NOT listed here — they are NOT render
 # fragments, they are aggregator inputs (live at OUTPUT_DIR/.X.json).
 _FRAGMENT_FILENAMES: dict[str, str] = {

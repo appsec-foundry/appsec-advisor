@@ -18,8 +18,8 @@ very different root causes that the historic banners conflated into a single
 
 This helper reads ``.agent-run.log``, decides which case the current run is in
 (a ``STALL_RECOVERY`` within the run window ⇒ ``api_stall``), and prints the
-matching indented ``Cause:`` block on stdout so the cut-off banners in
-``SKILL-impl.md`` surface the real reason instead of hard-coding a crash.
+matching indented ``Cause:`` block on stdout so compact-runtime cut-off banners
+surface the real reason instead of hard-coding a crash.
 
 Usage
 -----

@@ -24,8 +24,8 @@ intermediate retains the audit verdict.
 
 Verdicts are persisted back into `.threats-merged.json` as well as
 `threat-model.yaml`. This is load-bearing, not bookkeeping: Stage 1d
-regenerates `threat-model.yaml` from the merged intermediate
-(`SKILL-impl.md`, abuse-case branch), so a floor that wrote only to the YAML
+regenerates `threat-model.yaml` from the merged intermediate during abuse-case
+finalization, so a floor that wrote only to the YAML
 was silently discarded on every standard/thorough run — the depth tiers where
 abuse-case verification is enabled. Writing both keeps the floor idempotent
 under rebuild and lets `build_threat_model_yaml.build_threats` apply its own

@@ -37,6 +37,11 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
 
 1. Read `$REPAIR_PLAN_PATH` once. Abort (exit 2) when the file is missing, unreadable, or `status != "fail"`. When `status == "manual_review"` or `actionable == false`, emit `REPAIR_SKIPPED` and exit 0 — the skill handles that banner.
 2. For each `action` in the plan, re-author **only** the listed `fragments_to_rewrite`:
+   - The list is a binding whitelist, not advice. Refuse any target outside
+     `$OUTPUT_DIR/.fragments/`, and never edit deterministic fragments
+     `system-overview.md`, `architecture-diagrams.md`, `assets.md`,
+     `attack-surface.md`, or `out-of-scope.md`; an invalid target aborts the
+     repair instead of widening scope.
    - The authoritative guides are `schemas/fragments/` (for `data`/JSON fragments) and the subsection rules in `data/sections-contract.yaml` (for `markdown` fragments). Read the relevant rule block once when the action concerns it.
    - **§6.2 Identity and Authentication Controls** (`security-architecture.md`): H4 headings name canonical auth **mechanisms** (Password-Based Authentication, OAuth/OIDC, SAML/SSO, TOTP/2FA/MFA, Passkey/WebAuthn, Magic Link, mTLS, Webhook HMAC, API Key, Bearer Token, Cloud IAM, Anonymous Access) — never primitives (`Password Hashing`, `Login Rate Limiting`, `Credential Storage`), token formats (`JWT-RS256`), library names, or exploit/attack-flow names. **JWT issuance/verification/signing belongs in §6.3, not §6.2.** Each flow-method H4 carries its own positive-flow `sequenceDiagram`. This mirrors the `auth_method_decomposition` contract rule (`enforcement: error`).
    - When re-authoring a narrative/prose fragment, load `agents/shared/prose-style.md` once so the regenerated prose matches the house style the QA reviewer enforces.

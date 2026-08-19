@@ -10,7 +10,12 @@ reported ``✓ completed successfully`` (exit 0).
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "run-headless.sh"
@@ -116,6 +121,106 @@ def test_headless_has_no_generation_escape_hatch() -> None:
     assert "APPSEC_CONTEXT_V2" not in body
     assert "CONTEXT_V2_SELECTED" not in body
     assert "PERSISTED_RUNTIME_GENERATION" not in body
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "live_phase", "error_text"),
+    [
+        (["--incremental"], False, "--incremental is not supported"),
+        (["--resume"], False, "--resume is not supported"),
+        (["--full", "--resume"], False, "--resume is not supported"),
+        (["--dry-run"], False, "--dry-run is not supported"),
+        (["--max-wall-time", "1"], False, "--max-wall-time is not supported"),
+        (["--max-cost", "1"], False, "--max-cost is not supported"),
+        ([], True, "APPSEC_LIVE_PHASE=1 is not supported"),
+    ],
+)
+def test_unsupported_mode_exits_before_output_creation_or_claude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    extra_args: list[str],
+    live_phase: bool,
+    error_text: str,
+) -> None:
+    repo = tmp_path / "repo"
+    output = tmp_path / "not-created"
+    repo.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "claude-invoked"
+    claude = bin_dir / "claude"
+    claude.write_text('#!/bin/sh\nprintf invoked > "$CLAUDE_MARKER"\nexit 42\n', encoding="utf-8")
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_MARKER", str(marker))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    if live_phase:
+        monkeypatch.setenv("APPSEC_LIVE_PHASE", "1")
+
+    result = subprocess.run(
+        [str(SCRIPT), "--repo", str(repo), "--output", str(output), *extra_args],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert error_text in result.stderr
+    assert not output.exists(), "unsupported mode mutated the requested output path"
+    assert not marker.exists(), "unsupported mode reached Claude dispatch"
+
+
+def test_headless_parser_retains_no_yaml() -> None:
+    body = _body()
+    assert "|--no-yaml|" in body
+
+
+def test_default_progress_monitor_is_reaped_after_claude_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    claude = bin_dir / "claude"
+    claude.write_text("#!/bin/sh\nsleep 1\nprintf 'CLAUDE_STUB_INVOKED\\n'\nexit 42\n", encoding="utf-8")
+    claude.chmod(0o755)
+
+    tail_started = tmp_path / "tail-started"
+    tail_stopped = tmp_path / "tail-stopped"
+    fake_tail = bin_dir / "tail"
+    fake_tail.write_text(
+        "#!/bin/sh\n"
+        'for arg in "$@"; do\n'
+        '  if [ "$arg" = "-F" ]; then\n'
+        '    printf "%s\\n" "$$" > "$TAIL_STARTED"\n'
+        "    trap 'printf stopped > \"$TAIL_STOPPED\"; exit 0' TERM INT HUP\n"
+        "    while :; do sleep 1; done\n"
+        "  fi\n"
+        "done\n"
+        'exec "$REAL_TAIL" "$@"\n',
+        encoding="utf-8",
+    )
+    fake_tail.chmod(0o755)
+    real_tail = shutil.which("tail")
+    assert real_tail is not None
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("REAL_TAIL", real_tail)
+    monkeypatch.setenv("TAIL_STARTED", str(tail_started))
+    monkeypatch.setenv("TAIL_STOPPED", str(tail_stopped))
+
+    result = subprocess.run(
+        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--no-qa"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 42, result.stdout + result.stderr
+    assert tail_started.exists(), "default progress monitor never started"
+    assert tail_stopped.read_text(encoding="utf-8") == "stopped"
 
 
 def test_headless_scans_default_to_untrusted_mode() -> None:

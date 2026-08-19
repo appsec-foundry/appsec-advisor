@@ -123,15 +123,9 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
 ```
 
 Honor the returned action exactly: `stage=stage2` means dispatch Stage 2 again.
-Once the deterministic report exists, always run the non-dry Stage-3 safety
-slice below once, even when quick / `--no-qa` / PR mode makes `next` return
-`stage4` or `complete`; only after that may those actions continue. Never emit
-a completion summary while `$OUTPUT_DIR/threat-model.md` is absent.
-
-For Stage 3, read only `## Stage 3 - QA Review` through `### Stage 3 handoff
-banner`. On a QA-skip path, run the depth-independent secret-leak gate and skip
-the remaining QA work as that slice instructs. For QA dispatch or repair,
-extend the read through `## Stage 4 - Architect Review`. For Stage 4, read
-through `## Completion Summary`; then read the Completion Summary section,
-including its final release gates, through `## Error Handling`. Read the Error
-Handling section to EOF only on that branch.
+Once the deterministic report exists, load `SKILL-thin-stage3.md` in full once,
+including for Quick and `SKIP_QA=true`; its secret gate is never optional.
+Then honor only controller-returned plugin files: `SKILL-thin-stage4.md` for
+Stage 4 and `SKILL-thin-completion.md` for completion. Never emit a completion
+summary while `$OUTPUT_DIR/threat-model.md` is absent. There is no legacy slice
+or fallback.

@@ -1,7 +1,7 @@
 """M8 + M18 — Deterministic component complexity + MAX_TURNS classifier.
 
 Replaces the LLM-discretionary "thin-component cap" / "moderate / complex"
-heuristics in `phase-group-threats.md:185-198`. The orchestrator runs this
+heuristics used by `build_stride_dispatch_manifest.py`. The controller runs this
 script per component AFTER recon-summary is in working memory, BEFORE Phase
 9 dispatch — and uses the returned (complexity, max_turns, estimated_threat_count)
 triple to populate the STRIDE-analyzer prompt parameters.
@@ -30,7 +30,7 @@ Decision tree:
   2. **Trivial-skip eligible** (per M24 conditions) → complexity=trivial,
      max_turns=0 (caller writes stub stride file and skips dispatch).
 
-  3. **Thin** (per phase-group-threats.md:185 thin-cap conditions) →
+  3. **Thin** (per the manifest builder's thin-cap conditions) →
      complexity=simple, max_turns=8, estimated_threat_count=low.
 
   4. **Moderate** (3-6 interfaces AND ≤2 dangerous-sink matches in recon

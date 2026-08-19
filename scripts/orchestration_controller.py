@@ -74,7 +74,9 @@ THIN_RERENDER_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-
 THIN_STAGE1_V2_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1-v2.md"
 THIN_STAGE1D_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage1d.md"
 THIN_STAGE2_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage2.md"
-LEGACY_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
+THIN_STAGE3_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md"
+THIN_STAGE4_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage4.md"
+THIN_COMPLETION_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
 CONTEXT_V2_GENERATION = "context-v2"
 
 MAX_ACTION_BYTES = 65_536
@@ -554,7 +556,9 @@ def _plugin_owned_instruction_paths() -> frozenset[Path]:
         THIN_STAGE1_V2_RUNTIME,
         THIN_STAGE1D_RUNTIME,
         THIN_STAGE2_RUNTIME,
-        LEGACY_RUNTIME,
+        THIN_STAGE3_RUNTIME,
+        THIN_STAGE4_RUNTIME,
+        THIN_COMPLETION_RUNTIME,
     }
     paths.update(record["instruction"] for record in SEMANTIC_ROLE_REGISTRY.values())
     return frozenset(path.resolve() for path in paths)
@@ -645,6 +649,17 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
         instruction = Path(instruction_file)
         if not instruction.is_absolute() or instruction.resolve() not in _plugin_owned_instruction_paths():
             raise ControllerError("internal action instruction_file is not plugin-owned")
+        expected_stage_instruction = {
+            "stage2": THIN_STAGE2_RUNTIME,
+            "stage3": THIN_STAGE3_RUNTIME,
+            "stage4": THIN_STAGE4_RUNTIME,
+            "complete": THIN_COMPLETION_RUNTIME,
+        }.get(action.get("stage"))
+        if expected_stage_instruction is not None and instruction.resolve() != expected_stage_instruction.resolve():
+            raise ControllerError(
+                f"internal action stage {action.get('stage')!r} requires "
+                f"instruction_file {str(expected_stage_instruction)!r}"
+            )
 
     renderer_profile = action.get("renderer_profile")
     if renderer_profile is not None:
@@ -4550,9 +4565,8 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
         )
     # Deterministic source scanners use provisional component ids because the
     # merge stage does not own the run's component registry. Resolve those ids
-    # before ranking or synthesis consumes the canonical merged register. The
-    # legacy path gets the same repair later from auto_emitter_pass.sh, but
-    # context-v2 has no YAML artifact at this boundary.
+    # before ranking or synthesis consumes the canonical merged register and
+    # before the context-v2 pipeline builds the YAML artifact.
     _run_script(
         "reclassify_components.py",
         ["--merged-only", "--strict", str(output_dir)],
@@ -5499,15 +5513,12 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
         return False
     if not _step("validate_mitigation_quality.py", str(output_dir)):
         return False
-    # Schema-gate the LLM-authored fragments BEFORE compose reads them. The
-    # legacy finalization path has run this as its substep 4b for a long time;
-    # the parallel Stage-2 path (secarch + ms specialists) never inherited it,
-    # so a schema-invalid fragment first surfaced as a RENDER_FAILED deep inside
-    # compose — one dispatch after the agent that could still have fixed it
-    # cheaply (insecure-ai-app 2026-08-18: an 82-char findings[].label against a
-    # maxLength of 80 cost a full renderer re-dispatch). Placing it here rather
-    # than in the skill text keeps it deterministic and unskippable, and costs
-    # no runtime prompt budget. `--write-repair-plan` leaves
+    # Schema-gate the LLM-authored fragments BEFORE compose reads them. This
+    # controller-owned step applies identically to focused and full-fragment
+    # profiles, so a schema-invalid fragment does not first surface as a
+    # RENDER_FAILED deep inside compose. Placing it here rather than in an
+    # instruction file keeps it deterministic and unskippable, and costs no
+    # runtime prompt budget. `--write-repair-plan` leaves
     # `.pre-render-repair-plan.json` for the repair agents.
     if not _step("validate_fragment.py", "pre-render-gate", str(output_dir), "--write-repair-plan"):
         return False
@@ -5579,13 +5590,8 @@ def _export_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
     """Produce the deterministic yaml-derived exports the run asked for.
 
     ``--sarif`` and ``--threatdragon`` are pure functions of
-    ``threat-model.yaml``, but their only trigger was Phase-11 substeps 7-9 of
-    the threat-analyst (``agents/phases/phase-group-finalization.md``). The thin
-    runtime caps Analyst-B at ``STAGE1_PHASE_LIMIT=10b`` and hands substeps 4+
-    to Stage 2, where nothing owns them — so a ``--threatdragon`` run promised
-    the artefact in its pre-flight, produced nothing, and the completion summary
-    dropped the line without a warning (juice-shop 2026-08-02). ``run-headless.sh``
-    already carried exactly this backstop, but only for the headless path.
+    ``threat-model.yaml``. The controller owns their trigger so a compact run
+    cannot promise an artifact and then omit it after a model cut-off.
 
     Anchoring it here, in the mandatory re-entrant ``next`` gate that reads the
     durable on-disk config, makes the artefact independent of whether an LLM
@@ -5799,19 +5805,49 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             pass
         except OSError:
             pass
-    if not cfg.get("skip_qa") and not (output_dir / ".qa-status.json").is_file():
+    def _fresh_json(name: str, *, after: list[Path]) -> dict[str, Any] | None:
+        path = output_dir / name
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            artifact_mtime = path.stat().st_mtime_ns
+            newest_input = max(item.stat().st_mtime_ns for item in after if item.is_file())
+        except (OSError, ValueError):
+            return None
+        if not isinstance(payload, dict) or artifact_mtime < newest_input:
+            return None
+        return payload
+
+    report_inputs = [
+        output_dir / "threat-model.md",
+        output_dir / "threat-model.yaml",
+        *(item for item in (output_dir / ".fragments").glob("*") if item.is_file()),
+    ]
+
+    def _status_passes(name: str) -> bool:
+        payload = _fresh_json(name, after=report_inputs)
+        return payload is not None and payload.get("status") == "pass"
+
+    secret_scan = _fresh_json(".qa-secret-scan.json", after=report_inputs)
+    secret_gate_passes = (
+        secret_scan is not None
+        and secret_scan.get("check") == "unmasked_secrets"
+        and secret_scan.get("ok") == 1
+        and secret_scan.get("issues") == []
+    )
+
+    if not secret_gate_passes or (not cfg.get("skip_qa") and not _status_passes(".qa-status.json")):
         return {
             **common,
             "action": "dispatch_agent",
             "stage": "stage3",
-            "instruction_file": str(LEGACY_RUNTIME),
+            "instruction_file": str(THIN_STAGE3_RUNTIME),
         }
-    if cfg.get("architect_review") and not (output_dir / ".architect-status.json").is_file():
+    if cfg.get("architect_review") and not _status_passes(".architect-status.json"):
         return {
             **common,
             "action": "dispatch_agent",
             "stage": "stage4",
-            "instruction_file": str(LEGACY_RUNTIME),
+            "instruction_file": str(THIN_STAGE4_RUNTIME),
         }
     # Deterministic export backstop: the requested yaml-derived artefacts must
     # not depend on whether the LLM finalization ran its substep. Before the
@@ -5830,6 +5866,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
         **common,
         "action": "complete",
         "stage": "complete",
+        "instruction_file": str(THIN_COMPLETION_RUNTIME),
     }
 
 
@@ -5840,8 +5877,8 @@ def _split_remainder(values: list[str]) -> list[str]:
 def _aggregate_issues_on_abort(output_dir: Any, reason: str, repo_root: Any = None) -> None:
     """Populate .run-issues.json when the controller aborts the run.
 
-    aggregate_run_issues.py has exactly one call site: the Completion step in
-    SKILL-impl.md. An aborted run never reaches it, so the very runs that most
+    aggregate_run_issues.py has exactly one normal call site: the compact
+    Completion runtime. An aborted run never reaches it, so the very runs that most
     need a diagnostic bundle are the ones that produce none -- `report-error`
     and `diagnose-bundle` then read a stale file from a previous run, or none at
     all. The 2026-07-20 juice-shop abort left `.run-issues.json` reporting a

@@ -4,7 +4,7 @@ Referenced by `appsec-qa-reviewer` Check 7b. The deterministic helper `qa_checks
 
 ## 1. Presence (critical defect)
 
-If `## Management Summary` is **entirely missing**, `check_ms_structure` will surface it as an issue. The QA reviewer must **generate** a complete MS from §8 Threat Register and §9 Mitigation Register following the template in `phase-group-threats.md` → "Build Management Summary". Use F-NNN IDs in Top Findings. Include all five sub-sections with the templates below.
+If `## Management Summary` is **entirely missing**, `check_ms_structure` will surface it as an issue. The QA reviewer must **generate** a complete MS from §8 Threat Register and §9 Mitigation Register following `agents/shared/ms-template.md`. Use F-NNN IDs in Top Findings. Include all five sub-sections with the templates below.
 
 ## 2. Five required sub-sections (helper-enforced)
 

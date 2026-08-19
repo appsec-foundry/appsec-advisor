@@ -1289,7 +1289,7 @@ def _system_context_mermaid(yaml_data: dict, system_name: str) -> list[str]:
         out.append(f"    {sys_id} -->|{edge_label}| {eid}")
 
     # Class definitions + assignments. Audit palette (post-2026-05) — see
-    # phase-group-finalization.md → "Architecture Diagrams (§2)" for the
+    # the architecture-diagram fragment contract for the
     # color contract. The earlier C4-ish palette (`#dbeafe`, `#fecaca`,
     # `#dcfce7`, etc.) clashed visually with the heatmap and printed
     # poorly in B/W audit packs.
@@ -1846,7 +1846,7 @@ def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
             # produced a triple-hyphen slug (`241-layer-1---client`) that
             # did NOT match the single-hyphen slug emitted by the linker
             # (`241-layer-1-client`), breaking 4 of every 4 §2.4.x links.
-            # See SKILL-impl.md → "§2.4 layer references" repair history.
+            # Preserve the canonical §2.4 layer-reference anchor normalization.
             sanitized_title = title.replace(" & ", " ").replace("&", "")
             out.append(f"#### 2.4.{n} Layer {n} {sanitized_title}")
             out.append("")
@@ -2955,7 +2955,7 @@ def _attack_surface_notes(entry: dict) -> str:
     # head line above already cites it; a plain-text parenthetical produces
     # duplicate refs (`[F-013](#f-013) — Title<br/>Raw SQL … (T-013)`). The
     # author-prompt guidance forbids ID tokens in `notes` (see
-    # phase-group-architecture.md §"Phase 6 yaml schema") but legacy yamls and
+    # the canonical architecture artifact schema) but legacy yamls and
     # LLM drift still leak them through. This is the deterministic rendering
     # safeguard.
     if notes and threats:
@@ -5307,7 +5307,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
             for c, name in zip(section_controls[:8], control_names[:8]):
                 # R9 — subcontrols[] expansion. When the security_controls[]
                 # row carries subcontrols[] (Stage 1 populates these for
-                # flow-like mechanisms — see phase-group-architecture.md
+                # flow-like mechanisms — see data/sections-contract.yaml
                 # → "Subcontrols — required for flow-like mechanisms"),
                 # emit one #### block per subcontrol with the canonical
                 # reference-style depth:

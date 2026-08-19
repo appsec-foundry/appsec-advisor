@@ -1451,7 +1451,7 @@ def _write_assessment_summary(sid: str) -> None:
     # --- Smear batched phase timestamps (F3 fix, 2026-04-25) ---
     #
     # When the orchestrator batches multiple PHASE_START/PHASE_END entries onto
-    # the same second (legal for Phases 5+6+7 per phase-group-architecture.md
+    # the same second (legal for adjacent compact architecture steps
     # design, but also seen as a regression for Phases 3-8 in Run 4), every
     # batched phase ends up with `secs=0` because start_ts == end_ts at
     # second resolution. The Run Statistics appendix then shows misleading
@@ -2258,7 +2258,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # fallback in headless/CI — the very mode the count gate was meant to harden)
     # and zeroed `record_stage_stats` / `verify_run_costs`, which read
     # `$OUTPUT_DIR/.hook-events.log`. Every skill dispatch prompt carries
-    # `OUTPUT_DIR=<abs>` (SKILL-impl §3c hard-requirement), so recover it into the
+    # `OUTPUT_DIR=<abs>` (compact-runtime hard requirement), so recover it into the
     # env THIS process reads. Each hook call is a fresh process, so the mutation
     # cannot leak across runs; only set when unset; non-Agent tools have no
     # `prompt` field, so `_extract_param` returns '' and this is a no-op.
@@ -2356,7 +2356,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     #
     # The skill dispatches scripts/skill_watchdog.py (and, when a wall-time /
     # cost deadline is set, scripts/budget_watchdog.py) via the Bash tool with
-    # run_in_background=true (see SKILL-impl "Skill-layer heartbeat watchdog").
+    # run_in_background=true (see the compact runtime's heartbeat watchdog).
     # Claude Code shows an interactive "& background operator" safety
     # confirmation for every backgrounded Bash call, which forces the user to
     # answer a Yes/No prompt one or more times per run. These commands are

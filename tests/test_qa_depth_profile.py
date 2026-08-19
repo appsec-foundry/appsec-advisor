@@ -31,11 +31,11 @@ class TestDeterministicQaOwnership:
         assert "Do not run `qa_checks.py all`" in text
 
     def test_extended_depth_does_not_dispatch_clean_agent(self):
-        skill = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
+        skill = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md")
         reviewer = _read(QA_REVIEWER)
         assert "regardless of assessment depth" in reviewer
-        assert "Extended depth adds deterministic coverage" in skill
-        assert "- `QA_DEPTH=extended`" not in skill
+        assert "`0`: select a pass receipt" in skill
+        assert "no Agent dispatch" in " ".join(skill.split())
 
     def test_forced_review_bypasses_clean_fast_exit(self):
         text = _read(QA_REVIEWER)
@@ -70,26 +70,22 @@ class TestPass2cRetired:
 
 class TestDeterministicFirstQa:
     def test_skill_documents_clean_fast_path_skip(self):
-        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
+        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md")
         assert "deterministic-pre-agent" in text
-        assert "skip the QA agent" in text
-        assert "qa_checks.py all" in text
-        assert "QA_AGENT_DISPATCHED=false" in text
-        assert "do **not** execute any later instruction that invokes `appsec-qa-reviewer`" in text
+        assert "no Agent dispatch" in " ".join(text.split())
+        assert "qa_checks.py\" gate" in text
 
     def test_repair_loop_respects_deterministic_qa_gate(self):
-        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
-        assert "run Stage 3 QA gate" in text
-        assert "The Stage 3 gate may be deterministic-only" in text
-        assert "Do not dispatch\n  # qa-reviewer unless QA_AGENT_DISPATCHED=true" in text
+        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage3.md")
+        assert "Canonical QA gate" in text
+        assert "apply_repair_plan.py" in text
+        assert "rerun the canonical qa gate without dispatch" in " ".join(text.lower().split())
 
     def test_total_stage_count_includes_stage_1_and_2(self):
-        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md")
-        assert "start with `2` for Stage 1 (orchestrator) + Stage 2 (composition)" in text
-        assert "normal quick runs without architect review show `2`" in text
-        assert "standard runs with QA and no architect review show `3`" in text
-        assert "▶ Stage 4/<total_stages> — Architect Review starting" in text
-        assert "▶ Stage 4/4 — Architect Review starting" not in text
+        text = _read(PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md")
+        assert "TOTAL_STAGES = total_stages" in text
+        assert "Stage 1a/<TOTAL_STAGES>" in text
+        assert "Stage 4 -> Running architect review" in " ".join(text.split())
 
     def test_qa_reviewer_reads_prepass_before_markdown(self):
         text = _read(QA_REVIEWER)

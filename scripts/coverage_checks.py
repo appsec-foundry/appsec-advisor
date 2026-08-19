@@ -393,7 +393,7 @@ def check_cross_repo(
             covered.append(dep)
         else:
             # PII/auth interfaces → Medium; otherwise Low per the
-            # Phase 9 D spec in phase-group-threats.md.
+            # STRIDE coverage contract.
             iface = dep["interface"] or ""
             sensitive = any(
                 kw in iface.lower()

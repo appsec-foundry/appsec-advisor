@@ -148,10 +148,10 @@ REQUIRED_FRAGMENTS = [
     # NOT unconditional (removed 2026-06-05):
     #   - ms-critical-attack-tree.json     → only authored when >=2 Critical
     #     findings (composer gate `has_multi_critical`; see appsec-threat-
-    #     renderer.md:124, phase-group-finalization.md:444). Covered by the
+    #     renderer.md). Covered by the
     #     conditional test below.
-    #   - operational-strengths-overrides.json → explicitly OPTIONAL
-    #     (phase-group-finalization.md:443) — absent when no controls qualify.
+    #   - operational-strengths-overrides.json → explicitly OPTIONAL and
+    #     absent when no controls qualify.
 ]
 
 
@@ -171,8 +171,8 @@ def test_required_fragment_exists(out_dir: Path, name: str) -> None:
 
 def test_critical_attack_tree_fragment_is_conditional(out_dir: Path, threat_model_yaml: dict) -> None:
     """`ms-critical-attack-tree.json` is authored IFF >=2 Critical findings
-    exist — the composer's `has_multi_critical` gate (appsec-threat-renderer.md
-    :124, phase-group-finalization.md:444). Assert that conditional contract,
+    exist — the composer's `has_multi_critical` gate documented by the active
+    renderer. Assert that conditional contract,
     not unconditional presence: a single-Critical run correctly omits it."""
     critical = sum(1 for t in threat_model_yaml.get("threats", []) if str(t.get("risk", "")).lower() == "critical")
     frag = out_dir / ".fragments" / "ms-critical-attack-tree.json"
@@ -440,7 +440,7 @@ def test_hook_log_non_empty(out_dir: Path) -> None:
 
 def test_hook_log_records_phase_progression(out_dir: Path) -> None:
     """At minimum the recon + threats phases must show up. We don't pin the
-    exact set because phase-group changes are a normal refactor target."""
+    exact set because stage-boundary changes are a normal refactor target."""
     text = (out_dir / ".hook-events.log").read_text()
     assert "PHASE_START" in text, "no PHASE_START events in hook log"
     assert "PHASE_END" in text, "no PHASE_END events in hook log"

@@ -18,7 +18,7 @@ distinct per ``arch.md`` §"Threat-Hypothesis-Regeln":
 
   * ``architectural-anti-pattern`` / ``coverage-gap``
     Requirements/blueprint anti-patterns and recon coverage gaps,
-    produced by ``phase-group-architecture.md`` (LLM path) and
+    produced by the architecture analyst and
     ``coverage_checks.py``.
 
   * ``architecture-coverage`` / ``threat-hypothesis``

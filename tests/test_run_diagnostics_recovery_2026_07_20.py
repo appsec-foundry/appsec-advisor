@@ -150,7 +150,7 @@ def test_controller_abort_populates_run_issues(tmp_path: Path) -> None:
         [
             sys.executable,
             str(REPO_ROOT / "scripts" / "orchestration_controller.py"),
-            "post-stage1",
+            "next",
             "--output-dir",
             str(out),
         ],
@@ -221,11 +221,7 @@ def test_stage1_gates_evidence_content_not_just_existence() -> None:
     The pre-seed is schema-clean with every count at zero, so an existence check
     passes while triage silently loses the entire refutation signal.
     """
-    text = (AGENTS / "phases" / "phase-group-threats.md").read_text(encoding="utf-8")
-    assert "all sampled findings unchecked" in text, (
-        "Phase 10a still gates only on file existence; a zeroed pre-seed passes "
-        "and Phase 10b rates every finding with no refutation signal"
-    )
+    text = (REPO_ROOT / "scripts" / "orchestration_controller.py").read_text(encoding="utf-8")
     assert "guard_evidence_verification.py" in text, (
         "the content detector exists but is not invoked where its consumer runs"
     )

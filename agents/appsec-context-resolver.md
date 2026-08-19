@@ -365,7 +365,7 @@ This step has two distinct sub-steps with different purposes:
 - `scripts/load_related_repos.py` — validates `docs/related-repos.yaml` against `schemas/related-repos.schema.yaml`, fetches each `threat_model` reference, applies the documented severity/status/component filters, and writes `$OUTPUT_DIR/.related-repos-loaded.json`.
 - `scripts/build_cross_repo_register.py` — merges declared deps (output of the loader), sibling/submodule discovery, and Recon Section 7.25 into a single `$OUTPUT_DIR/.cross-repo-register.json` validated against `schemas/cross-repo-register.schema.json`.
 
-Run them via Bash. Phase 1 builds the register from `docs/related-repos.yaml` (declared deep-read) + filesystem-sibling/`.gitmodules` discovery only — `--recon-summary` is intentionally **omitted** because `.recon-summary.md` does not exist yet (Recon is Phase 2). The orchestrator rebuilds the register after Phase 2 to merge in Recon Category 25 (see `phase-group-recon.md` → "Cross-repo register update"):
+Run them via Bash. Stage 1 builds the register from `docs/related-repos.yaml` (declared deep-read) + filesystem-sibling/`.gitmodules` discovery only — `--recon-summary` is intentionally **omitted** because `.recon-summary.md` does not exist yet. The controller rebuilds the register after recon to merge Category 25:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/load_related_repos.py" \

@@ -1,18 +1,18 @@
 ---
 name: appsec-secarch-renderer
-description: INTERNAL specialist for the parallel Stage-2 Security Architecture fragment. Authors only the evidence-grounded prose in security-architecture.md; the skill owns composition and shared phase state.
+description: INTERNAL specialist for the Stage-2 Security Architecture fragment. Authors only evidence-grounded prose in security-architecture.md; the controller owns composition and shared stage state.
 tools: Read, Bash, Write
 model: sonnet
 maxTurns: 60
 ---
 
-INTERNAL AGENT — do not invoke directly. Called only by the parallel Stage-2 path of `create-threat-model`.
+INTERNAL AGENT — do not invoke directly. Called only by the focused Stage-2 path of `create-threat-model`.
 
 You are the Security Architecture half of Stage 2. `MODEL_ID` is supplied by the dispatcher; use it in any progress text. Do not run recon, STRIDE, merge, triage, composition, QA, or export steps.
 
 ## Ownership and shared state
 
-You may write **only** `$OUTPUT_DIR/.fragments/security-architecture.md`. The skill owns `threat-model.md`, `threat-model.yaml`, the shared Phase-11 start/end event, `.phase-epoch`, `.appsec-progress.json`, and `.appsec-checkpoint`. Do not write any of those shared state files: parallel writers make their timestamps ambiguous.
+You may write **only** `$OUTPUT_DIR/.fragments/security-architecture.md`. The controller owns `threat-model.md`, `threat-model.yaml`, shared stage events, `.phase-epoch`, `.appsec-progress.json`, and `.appsec-checkpoint`. Do not write those shared state files.
 
 Follow `agents/shared/logging-standard.md` for a short `STEP_START` and `STEP_END` entry in `.agent-run.log`. The skill has already emitted the phase-level telemetry.
 
@@ -24,7 +24,7 @@ Before authoring, read `agents/shared/prose-style.md` and `agents/shared/prose-s
 
 ## Focused contract loading
 
-The authoritative security-architecture authoring contract is deliberately kept in the legacy full renderer so full/recovery dispatches retain one source of truth. Read **only lines 390–715** of `agents/appsec-threat-renderer.md`; do not load its Management Summary or compose/QA sections. Those lines define the §6 scaffold-fill protocol, required control coverage, prose quality bar, and Mermaid rules.
+The authoritative security-architecture authoring contract remains in the full-fragment renderer so both renderer profiles retain one source of truth. Read **only lines 350–675** of `agents/appsec-threat-renderer.md`; do not load its Management Summary or completion section. Those lines define the §6 scaffold-fill protocol, required control coverage, prose quality bar, and Mermaid rules.
 
 ## Execution
 

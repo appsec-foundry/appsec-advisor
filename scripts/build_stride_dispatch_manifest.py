@@ -717,7 +717,7 @@ def _evidence_complexity_floor(paths: list, auth_files: list[str], claimed: str)
 # Flat screening budget for --cheap-stride components. Deliberately bypasses the
 # footprint floor: the analyzer runs the ESTIMATED_THREAT_COUNT=low pacing (all
 # six STRIDE letters, skip verification greps, no file re-reads) within it — the
-# documented thin-component path (phase-group-threats.md: "MAX_TURNS=8 +
+# documented thin-component path (compact Stage-1 runtime: bounded turns +
 # ESTIMATED_THREAT_COUNT=low"). 8, not 6, to keep the ≥2-turn write reserve.
 CHEAP_STRIDE_TURNS = 8
 
@@ -1557,7 +1557,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
             # Drive the analyzer's thin-component pace (all six STRIDE letters in
             # ≤6 turns, skip verification greps, no re-reads). estimated_threat_count
             # is advisory pacing only — the analyzer may still record more when
-            # evidence warrants (phase-group-threats.md) — so setting it here is
+            # evidence warrants — so setting it here is
             # its intended use, not a truth-claim. Override any analyst value.
             comp["estimated_threat_count"] = 3  # "low" (matches _etc_map["low"])
             comp["cheap_stride"] = True  # manifest audit marker

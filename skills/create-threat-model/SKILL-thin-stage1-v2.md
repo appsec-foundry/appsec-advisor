@@ -88,16 +88,19 @@ Aliases: context `CHECK_REQUIREMENTS`, `REQUIREMENTS_URL_OVERRIDE`; recon `SCOPE
 `SCAN_MANIFEST`, `ASSESSMENT_DEPTH`; config gets `ASSESSMENT_DEPTH`; triage too;
 evidence `EVIDENCE_VERIFIER_MAX_FINDINGS`. Omit nulls.
 
-For STRIDE pass `COMPONENT_ID` plus plan, bundle, taxonomy, and optional
-repository-projection paths resolved under absolute `OUTPUT_DIR` as
-`COMPONENT_CONTEXT_PLAN_PATH`, `EVIDENCE_BUNDLE_PATH`,
-`THREAT_TAXONOMY_PATH`, `REPOSITORY_REGISTRY_PATH`, and `STRIDE_OUTPUT_PATH`.
-`STRIDE_OUTPUT_PATH` is the sole attempt-qualified write path. Pass job hashes as
-`COMPONENT_CONTEXT_PLAN_SHA256`, `EVIDENCE_BUNDLE_SHA256`, and
-`THREAT_TAXONOMY_SHA256`. The component plan is authoritative for analysis
-depth, turn/sampling policy, estimates, profile, lenses, and hashes; do not
-repeat them. Preserve Group A → B → C order from
-`phase-group-threats.md`. Read focus/exclude routing only from the receipted
+Build each STRIDE analyzer prompt in this order:
+
+1. **Group A — stable:** `REPO_ROOT`, `OUTPUT_DIR`, model and run policy.
+2. **Group B — component:** `COMPONENT_ID` and short job scalars.
+3. **Group C — volatile paths:** `COMPONENT_CONTEXT_PLAN_PATH`,
+   `EVIDENCE_BUNDLE_PATH`, `THREAT_TAXONOMY_PATH`, optional
+   `REPOSITORY_REGISTRY_PATH`, sole attempt-qualified `STRIDE_OUTPUT_PATH`, and
+   the `COMPONENT_CONTEXT_PLAN_SHA256`, `EVIDENCE_BUNDLE_SHA256`, and
+   `THREAT_TAXONOMY_SHA256` job hashes.
+
+Resolve every path under absolute `OUTPUT_DIR`. The component plan owns depth,
+turn/sampling policy, estimates, profile, lenses, and hashes; do not repeat
+them. Never inline Group-C JSON. Read focus/exclude routing only from the receipted
 bundle. Resolve `REPOSITORY_REGISTRY_PATH` only from
 `dispatch_jobs[].repository_projection_path`; omit it when absent. Never pass
 the shared effective plan or registry, or inline untrusted artifacts.

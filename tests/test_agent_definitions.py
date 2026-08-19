@@ -293,7 +293,7 @@ class TestFragmentFixerFinalizationTail:
 
     `qa_checks.py gate` satisfies the autofix half: `cmd_gate` runs
     `_run_autofix` and only then validates the resulting bytes. It is the
-    preferred form because it is also the command SKILL-impl.md decides on —
+    preferred form because it is also the command the thin Stage-3 runtime uses —
     see tests/test_repair_self_verification.py for why the fixer must not
     self-verify with anything narrower."""
 
@@ -323,6 +323,23 @@ class TestFragmentFixerFinalizationTail:
         assert not extra, (
             f"Unexpected agent files found: {extra}\nAdd them to EXPECTED_MAX_TURNS in test_agent_definitions.py"
         )
+
+
+def test_focused_renderer_line_slices_match_their_owned_contracts():
+    """The focused agents use bounded line reads from the full producer."""
+    renderer_lines = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8").splitlines()
+    ms = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
+    secarch = (AGENTS_DIR / "appsec-secarch-renderer.md").read_text(encoding="utf-8")
+
+    assert "lines 136–349" in ms
+    assert renderer_lines[135].startswith("### MS prose")
+    assert renderer_lines[347].startswith("Map findings to requirements")
+    assert renderer_lines[348] == ""
+    assert "lines 350–675" in secarch
+    assert renderer_lines[349].startswith("### `security-architecture.md` authoring")
+    assert renderer_lines[673] == "```"
+    assert renderer_lines[674] == ""
+    assert renderer_lines[675].startswith("## Completion")
 
 
 # ---------------------------------------------------------------------------
@@ -670,11 +687,11 @@ class TestGitignoreTemplate:
 # Logging template centralization (Sprint 1 Item D)
 #
 # The shared/logging-standard.md file is the single source of truth for the
-# echo-template format. Agent prompts and phase-group files must reference it
+# echo-template format. Agent prompts and compact runtimes must reference it
 # rather than re-inlining full templates. The check below counts fully-formed
 # `.agent-run.log` echo templates per file and flags any file that exceeds a
-# drift ceiling. Files with genuinely phase-specific wrappers (the Phase 11
-# start block; the Phase 5-8 auto-repair loop) are exempted with a budget.
+# drift ceiling. Files with genuinely stage-specific wrappers are exempted with
+# a budget.
 # ---------------------------------------------------------------------------
 
 # Matches a full logging echo template: must have the structured format prefix
@@ -690,16 +707,6 @@ _LOG_TEMPLATE_RE = re.compile(
 INLINE_LOG_TEMPLATE_BUDGET = {
     # Authoritative source — templates live here.
     "agents/shared/logging-standard.md": 20,
-    # Phase 11 has a unique 3-call-batch (phase-epoch + checkpoint + PHASE_START)
-    # that is not expressible through the standard templates alone. The
-    # log-completeness auto-repair loop also emits synthetic PHASE_START/END
-    # entries. Keep finalization and architecture phase-groups close to the
-    # standard but allow these justified cases.
-    "agents/phases/phase-group-finalization.md": 10,
-    "agents/phases/phase-group-architecture.md": 5,
-    # Phase 9 STRIDE dispatch loop emits AGENT_INVOKE / AGENT_DONE per-component
-    # plus BASH_WARN entries that legitimately inline format strings.
-    "agents/phases/phase-group-threats.md": 12,
     # Orchestrator owns ASSESSMENT_START/END, CACHE_HIT, and a handful of
     # context-specific phase-logging call sites. Templates themselves now
     # delegate to shared/logging-standard.md; budget covers the contextual
@@ -720,7 +727,6 @@ AGENT_FILES_WITH_ZERO_BUDGET = [
     AGENTS_DIR / "appsec-architect-reviewer.md",
     AGENTS_DIR / "appsec-config-scanner.md",
     AGENTS_DIR / "appsec-eval-judge.md",
-    AGENTS_DIR / "phases" / "phase-group-recon.md",
 ]
 
 
@@ -819,7 +825,7 @@ class TestScanExcludesCentralization:
 # ---------------------------------------------------------------------------
 # Prose-style anchor centralization (AGENTS.md Rule 10)
 #
-# Every agent or phase-group file that authors prose for the rendered report
+# Every agent or shared template that authors prose for the rendered report
 # (verdict, STRIDE scenarios, security-architecture
 # domain text, MS template) must reference `agents/shared/prose-style.md` as
 # the runtime style anchor. This is the drift guard for the casework — if a
@@ -835,7 +841,6 @@ AGENT_FILES_AUTHORING_PROSE = [
     AGENTS_DIR / "appsec-secarch-renderer.md",
     AGENTS_DIR / "appsec-ms-renderer.md",
     AGENTS_DIR / "appsec-stride-analyzer-v2.md",
-    AGENTS_DIR / "phases" / "phase-group-finalization.md",
     AGENTS_DIR / "shared" / "ms-template.md",
 ]
 
@@ -847,7 +852,6 @@ AGENT_FILES_AUTHORING_PROSE = [
 AGENT_FILES_AUTHORING_MS_PROSE = [
     AGENTS_DIR / "appsec-threat-renderer.md",
     AGENTS_DIR / "appsec-ms-renderer.md",
-    AGENTS_DIR / "phases" / "phase-group-finalization.md",
 ]
 
 
@@ -873,7 +877,7 @@ class TestProseStyleAnchor:
         assert PROSE_SAMPLES_FILE.is_file(), (
             f"missing prose-samples companion file: {PROSE_SAMPLES_FILE.relative_to(AGENTS_DIR.parent)}. "
             f"It carries the worked Before/After pairs that the MS-prose authoring "
-            f"agents (renderer, phase-group-finalization) embed alongside prose-style.md. "
+            f"agents embed alongside prose-style.md. "
             f"See prose-style.md → 'Companion file' for the rationale."
         )
 

@@ -71,7 +71,7 @@ Code and schemas define behavior. Contract documents explain it. Tests guard aga
 | Adding or changing a section | schema contract and `docs/internal/runbooks/adding-a-section.md` | compose and QA tests |
 | Runtime routing, depth, and flags | `scripts/resolve_config.py`, `docs/model-selection.md`, `docs/threat-modeler.md` | `tests/test_resolve_config.py`, reasoning-model tests |
 | Orchestration and prompt budgets | `scripts/orchestration_controller.py`, `docs/internal/contracts/orchestration-actions.md`, `data/context-budgets.yaml` | orchestration and context-budget tests |
-| Phase behavior and cache layout | `agents/phases/`; Dispatch in `agents/phases/phase-group-threats.md` | phase tests, `tests/test_dispatch_prompt_cache_order.py` |
+| Stage behavior and cache layout | compact stage runtimes and `scripts/orchestration_controller.py` | controller tests, `tests/test_dispatch_prompt_cache_order.py` |
 | Severity and CVSS | `data/cvss-eligible-cwes.yaml`, `data/severity-caps.yaml`, `data/critical-criteria.yaml` | triage and validation tests |
 | Report prose and presentation | `agents/shared/prose-style.md`, `agents/shared/prose-samples.md`, composer/QA/prose-fix emitters | `tests/test_agent_definitions.py`, compose and QA tests |
 | Cleanup and preserved state | `scripts/runtime_cleanup.py`, `docs/internal/contracts/cleanup-whitelist.md`, `docs/internal/contracts/audit-artifacts.md` | `tests/test_runtime_cleanup.py` |
@@ -96,7 +96,7 @@ Phase-9 dispatch keeps this order:
 2. Group B: component-specific values.
 3. Group C: volatile `.dispatch-context/` paths; do not inline those files.
 
-The canonical layout is in `agents/phases/phase-group-threats.md` → Dispatch. `tests/test_dispatch_prompt_cache_order.py` guards it.
+The canonical layout is in `skills/create-threat-model/SKILL-thin-stage1-v2.md`. `tests/test_dispatch_prompt_cache_order.py` guards it.
 
 ### Threat Dragon export (alpha)
 
@@ -154,7 +154,7 @@ Two limits to know:
 ### Orchestration and context
 
 - Keep Stage 1 analysis separate from Stage 2 rendering so the renderer receives a fresh budget. Thin Stage 1/1c/2 must use its compact runtimes, not verbose legacy bodies.
-- `SKILL-impl.md` is large and is read in bounded slices. Lazy-load phase groups and `skills/create-threat-model/modes/*.md` branches at their boundaries; do not inline them.
+- Load only the compact stage runtime returned by `scripts/orchestration_controller.py`; do not inline another stage or invent a fallback.
 - Full/rebuild and rerender use `scripts/orchestration_controller.py`; unsupported modes fail before dispatch or run-state mutation.
 - The Stage-4 architect reviewer is read-only for `threat-model.md`, `threat-model.yaml`, and SARIF. It may emit a blocking repair plan; the separate repair loop then fixes fragments and recomposes the report.
 - Phase 2.5 conditionally scans config/IaC surfaces. Quick mode skips Phase 2.7 actor discovery.

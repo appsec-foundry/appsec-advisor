@@ -1,7 +1,7 @@
 """Unit tests for scripts/check_inline_shortcut.py.
 
 The hard gate is invoked as a subprocess from skills/create-threat-model/
-SKILL-impl.md and is expected to:
+The compact Stage-3 runtime uses this gate and expects it to:
 
   * exit 0 when the fragment pipeline ran cleanly
   * exit 2 when any inline-shortcut indicator trips

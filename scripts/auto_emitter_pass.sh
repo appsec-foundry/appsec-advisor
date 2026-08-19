@@ -1,20 +1,18 @@
 #!/usr/bin/env bash
-# auto_emitter_pass.sh — extracted VERBATIM from SKILL-impl.md (P3, 2026-06-20).
+# auto_emitter_pass.sh — controller-owned deterministic enrichment tail.
 #
-# The Auto-emitter pass was a 139-line inline Bash block in the skill body. It is
-# pure orchestration (a fixed sequence of deterministic python emitters, each
-# best-effort `|| true`), so it lifts 1:1 into a script with no behaviour change —
-# removing the most error-prone class of inline shell from the resident skill body.
+# This is pure orchestration: a fixed sequence of deterministic Python emitters,
+# each best-effort so an enrichment failure preserves the validated input model.
 #
-# Usage (called from SKILL-impl.md, AFTER the YAML integrity gate, AFTER the
-# Stage-2 no-op gate, BEFORE the Stage-2 fragment pre-generator):
+# Usage (called from orchestration_controller.py after the YAML integrity gate
+# and before Stage-2 fragment pregeneration):
 #
 #   bash "$CLAUDE_PLUGIN_ROOT/scripts/auto_emitter_pass.sh" \
 #       "$OUTPUT_DIR" "$REPO_ROOT" "$CLAUDE_PLUGIN_ROOT" "$DRY_RUN"
 #
 # Args:  $1 OUTPUT_DIR  $2 REPO_ROOT  $3 CLAUDE_PLUGIN_ROOT  $4 DRY_RUN(true|false)
 #
-# Contract preserved from the inline version: idempotent + best-effort — any
+# Contract: idempotent + best-effort — any
 # emitter failure falls back to the pre-script YAML rather than aborting the run
 # after 25+ minutes of Stage 1. NOT re-run inside the Re-Render Loop.
 set -u

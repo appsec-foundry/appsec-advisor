@@ -7,8 +7,8 @@ source (`source=last_run_cache` instead of `source=parametric`).
 
 WHY THIS IS A SCRIPT AND NOT A SKILL-LEVEL BASH BLOCK
 -----------------------------------------------------
-It used to be ~40 lines of inline bash in `SKILL-impl.md` that the orchestrator
-had to reproduce verbatim, including four exact JSON key names. That is a
+It replaces inline Bash that the orchestrator previously had to reproduce
+verbatim, including four exact JSON key names. That is a
 contract carried in prose, and it broke twice:
 
   * 2026-06 — a later baseline write wiped the fields (fixed defensively in

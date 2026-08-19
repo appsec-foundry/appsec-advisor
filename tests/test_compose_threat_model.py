@@ -2914,7 +2914,7 @@ def test_changelog_architecture_bullet_lists_components_and_entry_points(tmp_pat
 def test_changelog_truncates_overly_long_note_prose(tmp_path: Path) -> None:
     """Guards against AI-generated run summaries leaking into the changelog.
     The template hard-truncates any `note` > 100 chars to 98 chars + `…`.
-    Upstream guidance in phase-group-finalization.md forbids such prose in
+    The active renderer guidance forbids such prose in
     the first place — this is the defensive backstop."""
     out = _prepare_output_dir(tmp_path)
     prose = (

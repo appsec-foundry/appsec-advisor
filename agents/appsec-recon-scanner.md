@@ -163,7 +163,7 @@ Run these in parallel where possible:
 
 **Before any LLM-driven Grep, run the Python helper for Categories 11, 13, 14, 15, 17, 18, 21, 22, 23, 24, 27, and 28.** These categories are pure pattern extraction with no judgement — the helper walks the repo once, applies the canonical regexes, and emits structured findings as JSON. Skip the LLM grep loop for these categories entirely; consume the JSON instead and reserve judgement for impact summarisation.
 
-**M3.1 enforcement:** the orchestrator runs this pre-pass for you in `phase-group-recon.md → Step 0` so `.recon-patterns.json` should already exist when the recon-scanner agent starts. If it does, **skip the Bash call below and read the file directly**. Only invoke the script when the file is missing (orchestrator skipped it, or this agent was invoked standalone).
+**M3.1 enforcement:** the controller runs this pre-pass, so `.recon-patterns.json` should already exist when the recon-scanner agent starts. If it does, **skip the Bash call below and read the file directly**. Only invoke the script when the file is missing (controller pre-pass failed, or this agent was invoked standalone).
 
 > **Findings are capped per category** (40 examples each) to keep this file's Read from bloating your context — a recon pre-pass is a *signal*, not an exhaustive list. Each category's `count` is the **true** total and a `findings_truncated` field records how many were dropped; treat the listed findings as representative and re-grep on demand if you need more from a high-`count` category.
 

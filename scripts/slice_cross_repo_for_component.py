@@ -4,7 +4,7 @@ slice_cross_repo_for_component.py — deterministic per-component slice of the
 cross-repo register for STRIDE dispatch.
 
 Replaces the LLM-driven "match via interfaces/trust boundaries" step in
-``agents/phases/phase-group-threats.md``. The orchestrator runs this
+the compact STRIDE dispatch contract. The controller runs this
 script per component before dispatching the STRIDE analyzer; the output
 goes to ``$OUTPUT_DIR/.dispatch-context/<COMPONENT_ID>/cross-repo.json``.
 

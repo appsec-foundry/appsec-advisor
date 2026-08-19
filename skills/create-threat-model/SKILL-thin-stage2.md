@@ -1,6 +1,6 @@
 # Compact Thin Stage 2
 
-Do not read Stage 2 from `SKILL-impl.md`. The controller owns structural
+Use only this Stage-2 runtime. The controller owns structural
 pregeneration and the filesystem-authoritative compose handoff.
 
 1. Run:
@@ -24,15 +24,15 @@ pregeneration and the filesystem-authoritative compose handoff.
    status, artifact paths, and blockers; never reproduce report bodies.
 
    - `ms-only`: call only `appsec-advisor:appsec-ms-renderer`, description
-     `Render: Management Summary`, with `RENDER_ROLE=ms`. This is default
+     `Render: Management Summary`. This is default
      Quick. The deterministic security-architecture scaffold remains on disk.
    - `parallel`: issue both calls in one message and wait for both. Call
      `appsec-advisor:appsec-secarch-renderer`, description
-     `Render: §7 Security Architecture`, with `RENDER_ROLE=secarch`; call
+     `Render: §7 Security Architecture`; call
      `appsec-advisor:appsec-ms-renderer`, description
-     `Render: Management Summary`, with `RENDER_ROLE=ms`.
+     `Render: Management Summary`.
    - `full`: call `appsec-advisor:appsec-threat-renderer`, description
-     `Threat Model Renderer (Stage 2)`, with `RENDER_ROLE=full`.
+     `Threat Model Renderer (Stage 2)`.
 
    Specialists write only their owned fragments and never compose. The profile
    never skips fragment validation, strict compose, prose fixes, QA autofix, or

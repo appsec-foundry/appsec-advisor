@@ -15,7 +15,7 @@ a defect" copy lives, so every stall — Stage 1 recon, the STRIDE fan-out,
 Stage 2 render, Stage 3 QA, Stage 4 architect, or a recon sub-agent — surfaces
 the same calm message. The orchestrator calls it from its own Bash at the
 post-dispatch error seam; a hook could detect the stall but hook stderr is not
-surfaced in the interactive TUI (see SKILL-impl.md §"MAX_TURNS surfacing"), so
+surfaced in the interactive TUI, so
 the banner MUST come from the orchestrator's own stderr.
 
 Usage

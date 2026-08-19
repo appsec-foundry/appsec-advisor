@@ -354,7 +354,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     # and the per-component STRIDE durations — exactly the gap that left
     # `last_run_seconds=None` in the 2026-06 juice-shop anchor caches while
     # `component_durations`/`last_run_at` survived. These are pure carry-
-    # through (the run-end finalization in SKILL-impl.md owns the writes);
+    # through (the compact completion runtime owns the writes);
     # we only refuse to destroy them. id_counters is already preserved above.
     for _carry in (
         "last_run_seconds",
@@ -554,7 +554,7 @@ def cmd_check_fingerprint(args: argparse.Namespace) -> int:
     """Exit 0 if the recon fingerprint matches the current repo state; exit 1
     if it differs (caller should re-run Phase 2 recon); exit 2 on error.
 
-    Used by phase-group-recon.md to decide whether Phase 2 can be skipped.
+    Used by the resolver to decide whether recon reuse is eligible.
     """
     output_dir = Path(args.output_dir).resolve()
     repo_root = Path(args.repo_root).resolve()

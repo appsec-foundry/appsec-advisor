@@ -355,10 +355,9 @@ Loaded explicitly by:
 
 - `agents/appsec-stride-analyzer-v2.md` — before authoring `scenario`,
   `mitigation_title`, `remediation.steps`, `controls_in_place`.
-- `agents/phases/phase-group-finalization.md` — before authoring
+- Management Summary and Security Architecture renderers — before authoring
   `ms-verdict.json` and `ms-architecture-assessment.json`, and before
   filling the §6 narrative placeholders.
-- `agents/appsec-threat-renderer.md` — same set of fragments at Stage 2.
 - `agents/shared/ms-template.md` — referenced as the authority for prose
   rules cited from the Management Summary template.
 

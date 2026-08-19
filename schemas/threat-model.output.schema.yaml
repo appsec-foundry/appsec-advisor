@@ -133,7 +133,7 @@ properties:
 
   changelog:
     # Append-only history of assessment runs, newest first.
-    # Shape is pinned by agents/phases/phase-group-finalization.md
+    # Shape is pinned by this schema and validated at the Stage-1 boundary.
     # §"Changelog Entry Composition" and consumed by:
     #   * templates/fragments/changelog.md.j2 (markdown rendering)
     #   * scripts/render_completion_summary.py (console Change Summary)
@@ -966,7 +966,7 @@ properties:
     # `remediation` block — that is intermediate-only. When the
     # orchestrator consolidates per-threat remediations into the final
     # `mitigations[]` register, it MUST rename the field to `title`.
-    # See agents/phases/phase-group-threats.md → "Build Mitigation
+    # See data/sections-contract.yaml → mitigation register
     # Register" → "Canonical yaml shape" for the worked example.
     type: array
     items:

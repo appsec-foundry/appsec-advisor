@@ -148,7 +148,6 @@ python3 scripts/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz      
 | `.claude-plugin/plugin.json` | Claude Code plugin manifest |
 | `.claude/settings.json` | Contributor permission settings; `data/required-permissions.yaml` remains authoritative |
 | `agents/` | Agent definitions (Markdown with YAML frontmatter) |
-| `agents/phases/` | Phase-group reference files (authoritative phase instructions) |
 | `agents/shared/` | Shared standards (logging format, validation routines) |
 | `skills/` | User-invocable skills, one directory per skill (e.g. `create-threat-model`, `audit-security-requirements`, `status`, `publish-threat-model`, `export-threat-model`) |
 | `hooks/` | Hook definitions + configurable steering keywords |

@@ -1,6 +1,6 @@
 ---
 # Management Summary Template
-# Shared reference — loaded on-demand by phase-group-threats.md before composing the MS draft.
+# Shared reference — loaded on demand by Management Summary renderers.
 # Do NOT load this file at Phase 9 STRIDE dispatch time — it costs ~4k tokens.
 # Load it just before writing .management-summary-draft.md (end of Phase 9).
 ---

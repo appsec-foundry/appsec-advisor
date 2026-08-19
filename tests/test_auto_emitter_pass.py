@@ -1,13 +1,12 @@
 """
 Characterization tests for scripts/auto_emitter_pass.sh (P3, 2026-06-20).
 
-The Auto-emitter pass was a 139-line inline Bash block in SKILL-impl.md. P3
-extracts it verbatim into a script. These tests pin the extraction so it stays a
-1:1 behaviour-preserving move:
+The auto-emitter pass is the controller-owned deterministic enrichment tail.
+These tests pin its ordering and invocation contract:
 
   * the script runs the SAME fixed sequence of deterministic emitters, in order;
   * it honours the DRY_RUN=false guard and the tee-to-.agent-run.log contract;
-  * SKILL-impl.md now calls the script instead of inlining the block.
+  * the compact controller calls the script instead of inlining the block.
 
 The emitters themselves are unit-tested elsewhere; here we only verify the
 orchestration wrapper (sequence, guard, logging, exit code) is intact.
@@ -22,7 +21,7 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).parent.parent
 SCRIPT = PLUGIN_ROOT / "scripts" / "auto_emitter_pass.sh"
-SKILL_IMPL = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
+CONTROLLER = PLUGIN_ROOT / "scripts" / "orchestration_controller.py"
 
 # The exact emitter sequence lifted from the inline block — order is contractual
 # (comments in the script explain each "runs AFTER/BEFORE" dependency).
@@ -74,15 +73,12 @@ def test_dry_run_guard_and_tee_contract_present():
     assert "AUTO_EMITTER_START" in body and "AUTO_EMITTER_END" in body
 
 
-def test_skill_impl_calls_script_not_inline():
-    """Drift guard: SKILL-impl.md must call the script and no longer inline the
-    emitter sequence in its resident body."""
-    impl = SKILL_IMPL.read_text(encoding="utf-8")
-    assert "scripts/auto_emitter_pass.sh" in impl, "SKILL-impl.md must call auto_emitter_pass.sh"
-    # The first emitter no longer appears as an inline python3 call in the skill body.
-    assert 'emit_meta_findings.py" "$OUTPUT_DIR"' not in impl, (
-        "the emitter sequence must live in the script, not inline in SKILL-impl.md"
-    )
+def test_controller_calls_script_not_inline():
+    """The active context-v2 finalizer must retain the deterministic pass."""
+    controller = CONTROLLER.read_text(encoding="utf-8")
+    assert 'str(SCRIPT_DIR / "auto_emitter_pass.sh")' in controller
+    assert "_run_auto_emitter_pass(output_dir, cfg, receipts)" in controller
+    assert '"emit_meta_findings.py"' not in controller
 
 
 def test_smoke_run_logs_markers_and_preserves_yaml(tmp_path):

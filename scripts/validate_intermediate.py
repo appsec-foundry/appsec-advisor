@@ -1112,7 +1112,7 @@ def _check_mitigations_nonempty(data: dict) -> list[str]:
     by the deterministic backfill that always runs before compose.
 
     An empty register is the dominant symptom of Phase 11 failing to execute
-    the mandatory mitigation synthesis step (phase-group-finalization.md §356).
+    the mandatory mitigation synthesis step in `build_threat_model_yaml.py`.
     The compose renderer renders all four priority buckets as
     `_No P-N mitigations._` which makes the §9 section useless.
 
@@ -1152,7 +1152,7 @@ def _check_mitigations_nonempty(data: dict) -> list[str]:
         "mitigations[] is empty but P1/P2/P3-ranked threats exist and none "
         "carry remediation content the backfill can use. Phase 11 must "
         "synthesize at least one M-NNN entry per CWE cluster (see "
-        "phase-group-finalization.md §356 — Mitigation synthesis). "
+        "build_threat_model_yaml.py mitigation synthesis). "
         "Fix: re-run Stage 2 or manually populate mitigations[] before compose."
     )
     return errors

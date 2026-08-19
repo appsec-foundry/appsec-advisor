@@ -4,7 +4,7 @@ and its wiring.
 
 The scanner produces `.source-auth-findings.json`, ingested by
 `merge_threats.py:_load_source_auth_findings`. The producer is run by the
-skill-level pre-pass in SKILL-impl.md; before 2026-06 it was authored,
+controller pre-pass; before 2026-06 it was authored,
 schema-validated, and ingested end-to-end but never actually invoked, so the
 eight high-precision authz checks were dead. The wiring-guard test below exists
 to stop that regression recurring.
@@ -21,7 +21,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "source_auth_scanner.py"
 CHECKS = REPO_ROOT / "data" / "source-auth-checks.yaml"
-SKILL_IMPL = REPO_ROOT / "skills" / "create-threat-model" / "SKILL-impl.md"
+CONTROLLER = REPO_ROOT / "scripts" / "orchestration_controller.py"
 SCHEMA = REPO_ROOT / "schemas" / "source-auth-findings.schema.yaml"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -396,15 +396,16 @@ def test_no_sidecar_is_non_fatal(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_skill_impl_invokes_scanner_in_prepass() -> None:
-    text = SKILL_IMPL.read_text(encoding="utf-8")
-    assert "scripts/source_auth_scanner.py" in text, (
-        "SKILL-impl.md must invoke source_auth_scanner.py in the deterministic "
+def test_controller_invokes_scanner_in_prepass() -> None:
+    text = CONTROLLER.read_text(encoding="utf-8")
+    start = text.index("def _prepasses(")
+    block = text[start : text.index("\ndef ", start + 1)]
+    assert "source_auth_scanner.py" in block, (
+        "the controller must invoke source_auth_scanner.py in the deterministic "
         "pre-pass — otherwise .source-auth-findings.json is never produced and "
         "the AUTHZ-001..008 checks are dead (merge_threats only reads the file)."
     )
-    # Must sit under the same DRY_RUN/RERENDER guard as the route-inventory pre-pass.
-    assert "SOURCE_AUTH_PREPASS" in text
+    assert "route_inventory.py" in block
 
 
 def test_all_eight_checks_load() -> None:

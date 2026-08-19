@@ -618,8 +618,8 @@ fi
 # Export env-vars the skill/orchestrator can pick up
 # Headless marker: this run has no interactive user, so the skill must SKIP the
 # interactive orchestrator-model prompt (AskUserQuestion would block/error) and
-# proceed on the current session model. See SKILL-impl.md "Orchestrator
-# (session-model) recommendation — interactive prompt".
+# proceed on the current session model. The compact full runtime owns the
+# corresponding interactive model recommendation.
 export APPSEC_HEADLESS=1
 # Background-task wait ceiling: Claude Code's `-p` mode waits a default 600s for
 # backgrounded tasks and then hard-kills the process. Controller-owned semantic

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -48,6 +49,15 @@ def _cfg(tmp_path: Path, mode: str = "full") -> dict:
 
 def _completed(stdout: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(["test"], 0, stdout=stdout, stderr="")
+
+
+def _write_release_gates(output: Path, *, qa: bool = True) -> None:
+    if qa:
+        (output / ".qa-status.json").write_text('{"status":"pass"}', encoding="utf-8")
+    (output / ".qa-secret-scan.json").write_text(
+        '{"check":"unmasked_secrets","ok":1,"issues":[]}',
+        encoding="utf-8",
+    )
 
 
 def _abuse_match(candidate_id: str, title: str | None = None) -> dict:
@@ -477,38 +487,6 @@ def test_rebuild_archive_failure_aborts_before_deletion(monkeypatch, tmp_path):
     assert (output / "threat-model-changelog.md").is_file()
 
 
-def _name_patterns(path: Path, start: str, end: str) -> set[str]:
-    text = path.read_text(encoding="utf-8")
-    block = text[text.index(start) : text.index(end, text.index(start))]
-    return set(re.findall(r'-name "([^"]+)"', block))
-
-
-def test_full_cleanup_contract_matches_legacy_skill():
-    patterns = _name_patterns(
-        ROOT / "skills" / "create-threat-model" / "SKILL-impl.md",
-        "### Full-run Pre-flight Intermediate Wipe",
-        "### Skill-layer lock acquisition",
-    )
-    assert patterns == (controller._FULL_INTERMEDIATE_NAMES | set(controller._FULL_INTERMEDIATE_GLOBS))
-
-
-def test_rebuild_cleanup_contract_matches_legacy_mode_file():
-    patterns = _name_patterns(
-        ROOT / "skills" / "create-threat-model" / "modes" / "rebuild-wipe.md",
-        "# Rebuild Pre-flight Wipe",
-        "The single-call form",
-    )
-    assert patterns == controller._REBUILD_NAMES | set(controller._REBUILD_GLOBS)
-    assert ".skill-config.json" not in patterns
-
-
-def test_rebuild_mode_archive_is_fail_closed():
-    text = (ROOT / "skills" / "create-threat-model" / "modes" / "rebuild-wipe.md").read_text(encoding="utf-8")
-    assert "if ! python3" in text
-    assert "rebuild aborted before deletion" in text
-    assert "render_changelog_audit.py" in text
-
-
 def test_prepasses_restore_canonical_audit_events(monkeypatch, tmp_path):
     output = tmp_path / "out"
     output.mkdir()
@@ -638,12 +616,87 @@ def test_next_action_rehydrates_from_filesystem(tmp_path):
     assert stage2["instruction_file"] == str(controller.THIN_STAGE2_RUNTIME)
     (output / "threat-model.md").write_text("# report\n")
     (output / ".compose-blocked.json").write_text('{"step":"compose"}')
-    assert controller.next_action(output)["stage"] == "stage3"
+    stage3 = controller.next_action(output)
+    assert stage3["stage"] == "stage3"
+    assert stage3["instruction_file"] == str(controller.THIN_STAGE3_RUNTIME)
     assert not (output / ".compose-blocked.json").exists()
-    (output / ".qa-status.json").write_text("{}")
+    _write_release_gates(output)
     (output / ".appsec-checkpoint").write_text("phase=11 status=writing_output\n")
-    assert controller.next_action(output)["action"] == "complete"
+    complete = controller.next_action(output)
+    assert complete["action"] == "complete"
+    assert complete["instruction_file"] == str(controller.THIN_COMPLETION_RUNTIME)
     assert not (output / ".appsec-checkpoint").exists()
+
+
+def test_next_action_requires_a_passing_secret_gate_even_when_qa_is_skipped(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["skip_qa"] = True
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+
+    stage3 = controller.next_action(output)
+    assert stage3["stage"] == "stage3"
+    assert stage3["instruction_file"] == str(controller.THIN_STAGE3_RUNTIME)
+    (output / ".qa-secret-scan.json").write_text(
+        '{"check":"unmasked_secrets","ok":0,"issues":["raw token"]}',
+        encoding="utf-8",
+    )
+    assert controller.next_action(output)["stage"] == "stage3"
+
+    _write_release_gates(output, qa=False)
+    assert controller.next_action(output)["action"] == "complete"
+
+
+def test_next_action_requires_a_fresh_architect_pass_and_thin_stage4_runtime(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["architect_review"] = True
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    _write_release_gates(output)
+
+    stage4 = controller.next_action(output)
+    assert stage4["stage"] == "stage4"
+    assert stage4["instruction_file"] == str(controller.THIN_STAGE4_RUNTIME)
+
+    (output / ".architect-status.json").write_text('{"status":"unknown"}', encoding="utf-8")
+    assert controller.next_action(output)["stage"] == "stage4"
+
+    (output / ".architect-status.json").write_text('{"status":"pass"}', encoding="utf-8")
+    assert controller.next_action(output)["action"] == "complete"
+
+
+def test_next_action_rejects_stale_qa_and_secret_receipts(tmp_path):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    _write_release_gates(output)
+
+    (output / "threat-model.md").write_text("# changed after QA\n", encoding="utf-8")
+    report_mtime = (output / "threat-model.md").stat().st_mtime_ns
+    for receipt in (output / ".qa-status.json", output / ".qa-secret-scan.json"):
+        os.utime(receipt, ns=(report_mtime - 1, report_mtime - 1))
+
+    assert controller.next_action(output)["stage"] == "stage3"
+
+    _write_release_gates(output)
+    fragments = output / ".fragments"
+    fragments.mkdir()
+    fragment = fragments / "ms-verdict.json"
+    fragment.write_text('{"severity":"red"}', encoding="utf-8")
+    fragment_mtime = fragment.stat().st_mtime_ns
+    for receipt in (output / ".qa-status.json", output / ".qa-secret-scan.json"):
+        os.utime(receipt, ns=(fragment_mtime - 1, fragment_mtime - 1))
+
+    assert controller.next_action(output)["stage"] == "stage3"
 
 
 def test_context_v2_budget_abort_does_not_recommend_resume():
@@ -1074,6 +1127,23 @@ def test_action_schema_has_no_legacy_runtime():
     assert schema["properties"]["runtime"]["enum"] == ["thin-full", "thin-rerender"]
 
 
+def test_complete_action_requires_the_completion_runtime():
+    action = {
+        "schema_version": 1,
+        "action": "complete",
+        "mode": "full",
+        "stage": "complete",
+        "config_path": "/tmp/config.json",
+        "dispatch_values": {},
+    }
+    with pytest.raises(controller.ControllerError, match="instruction_file"):
+        controller._validate_action(action)
+
+    action["instruction_file"] = str(controller.THIN_STAGE3_RUNTIME)
+    with pytest.raises(controller.ControllerError, match="stage 'complete' requires"):
+        controller._validate_action(action)
+
+
 def test_compose_if_ready_requires_llm_fragments(tmp_path):
     """No render fragments on disk → cannot compose, caller must dispatch Stage 2."""
     output = tmp_path / "out"
@@ -1200,7 +1270,7 @@ def test_next_action_stamps_slug_deliverables_on_complete(tmp_path):
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
     (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
     (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
-    (output / ".qa-status.json").write_text("{}", encoding="utf-8")
+    _write_release_gates(output)
 
     action = controller.next_action(output)
 
@@ -1217,7 +1287,7 @@ def test_next_action_no_stamp_without_slug(tmp_path):
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
     (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
     (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
-    (output / ".qa-status.json").write_text("{}", encoding="utf-8")
+    _write_release_gates(output)
 
     action = controller.next_action(output)
 
@@ -3620,6 +3690,7 @@ def test_emit_returns_zero_for_non_abort_action(capsys):
             "action": "complete",
             "mode": "full",
             "stage": "complete",
+            "instruction_file": str(controller.THIN_COMPLETION_RUNTIME),
             "config_path": "/tmp/.skill-config.json",
             "dispatch_values": {},
         }
@@ -4124,7 +4195,7 @@ def _export_run_dir(tmp_path: Path, **cfg_overrides) -> tuple[Path, dict]:
     output.mkdir()
     (output / "threat-model.yaml").write_text(_DRAGON_SOURCE.read_text(encoding="utf-8"), encoding="utf-8")
     (output / "threat-model.md").write_text("# report\n", encoding="utf-8")
-    (output / ".qa-status.json").write_text("{}", encoding="utf-8")
+    _write_release_gates(output)
     cfg = _cfg(tmp_path)
     cfg.update(cfg_overrides)
     return output, cfg

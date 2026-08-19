@@ -3,8 +3,7 @@
 Verifies:
   - Schema is registered in validate_intermediate.py
   - Schema accepts well-formed examples and rejects malformed ones
-  - phase-group-recon.md contains the dispatch block
-  - appsec-threat-analyst.md references Phase 2.5 in its process flow
+  - orchestration_controller.py owns the dispatch block
   - AGENTS.md lists Phase 2.5
 """
 
@@ -169,13 +168,6 @@ class TestSpecIntegration:
         assert "only `scripts/config_iac_scanner.py` may emit this artifact" in text
         assert "derive `checks_run` and `violations` from those exact final bytes" in text
 
-    def test_phase_group_recon_has_phase_2_5_block(self):
-        text = (ROOT / "agents" / "phases" / "phase-group-recon.md").read_text()
-        assert "Phase 2.5" in text, "phase-group-recon.md must define Phase 2.5"
-        assert "appsec-config-scanner" in text, "phase-group-recon.md Phase 2.5 must reference the config-scanner agent"
-        assert "$CONFIG_SCANNER_MODEL" in text, "Phase 2.5 dispatch must thread $CONFIG_SCANNER_MODEL"
-        assert ".config-scan-findings.json" in text, "Phase 2.5 must reference the output filename"
-
     def test_controller_routes_the_config_scanner(self):
         text = (ROOT / "scripts" / "orchestration_controller.py").read_text()
         assert '"agent": "appsec-config-scanner"' in text
@@ -202,7 +194,7 @@ class TestSpecIntegration:
 
 
 class TestPreCheck:
-    def test_phase_recon_documents_skip_condition(self):
-        text = (ROOT / "agents" / "phases" / "phase-group-recon.md").read_text()
-        assert "HAS_IAC_SURFACE" in text, "phase-group-recon.md must define the IaC pre-check"
-        assert "no IaC surface" in text or "skipped" in text.lower(), "Pre-check must document skip behaviour"
+    def test_controller_owns_the_iac_surface_precheck(self):
+        text = (ROOT / "scripts" / "orchestration_controller.py").read_text()
+        assert "_has_iac_surface" in text
+        assert "config scan skipped: no IaC surface" in text

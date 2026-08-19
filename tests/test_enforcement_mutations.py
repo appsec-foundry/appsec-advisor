@@ -186,7 +186,7 @@ MUTATIONS = [
     # NB: ms-critical-attack-tree fragment is currently dormant — the
     # `## Critical Attack Tree` block (post-2026-05 hybrid migration) is
     # LLM-authored as prose inside attack-walkthroughs.md per the layout
-    # rules in agents/phases/phase-group-threats.md. The schema +
+    # rules in the active STRIDE producer contract. The schema +
     # mutation fn exist for forward-compatibility when the renderer is
     # activated. §3.1 Attack Chain Overview chain content is also
     # authored in the prose fragment, not from a JSON data fragment.

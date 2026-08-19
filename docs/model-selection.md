@@ -3,7 +3,7 @@
 This is the single authoritative reference for **which model runs where** in the
 create-threat-model pipeline, **what you (as plugin author or user) can control**,
 and the **cost / context-window trade-offs**. It consolidates what was previously
-scattered across `HELP.txt`, `SKILL.md`, `SKILL-impl.md`, and the internal
+scattered across `HELP.txt`, `SKILL.md`, compact stage runtimes, and the internal
 `docs/analysis/*model-placement*` / `*orchestrator-context*` notes.
 
 ## The two halves of a run
