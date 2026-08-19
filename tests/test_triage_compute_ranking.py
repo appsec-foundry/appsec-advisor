@@ -1080,6 +1080,164 @@ def test_rank_mitigations_non_list_addressed_coerced():
     assert ranked[0]["addresses_findings"] == []  # non-list coerced to empty
 
 
+def test_business_context_breaks_only_equal_finding_and_mitigation_scores(tmp_path: Path):
+    """Mapped business facts win exact technical ties without changing scores."""
+    tcr = _tcr()
+    threats = [
+        {
+            "t_id": "T-001",
+            "component_id": "worker",
+            "title": "Worker issue",
+            "risk": "High",
+            "impact": "High",
+            "likelihood": "Medium",
+            "primary_cwe": "CWE-20",
+        },
+        {
+            "t_id": "T-002",
+            "component_id": "payments",
+            "title": "Payment issue",
+            "risk": "High",
+            "impact": "High",
+            "likelihood": "Medium",
+            "primary_cwe": "CWE-20",
+        },
+    ]
+    data = _minimal_yaml(threats)
+    data["components"] = [{"id": "worker"}, {"id": "payments"}]
+    data["mitigations"] = [
+        {"m_id": "M-001", "addresses": ["T-001"], "effort": "Medium"},
+        {"m_id": "M-002", "addresses": ["T-002"], "effort": "Medium"},
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+    (tmp_path / ".stride-analyst-context.json").write_text(
+        json.dumps(
+            {
+                "payments": {
+                    "business_context": {
+                        "business_purpose": "Accept payments.",
+                        "impact_if_compromised": "Orders cannot be completed.",
+                        "security_obligations": ["Protect cardholder data."],
+                        "security_assumptions": ["The provider remains available."],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ranking = tcr.compute_ranking(tmp_path)
+
+    findings = ranking["views"]["top_findings"]["findings_ranked"]
+    assert [row["id"] for row in findings] == ["T-002", "T-001"]
+    assert findings[0]["score"] == findings[1]["score"]
+    assert findings[0]["raw_severity"] == findings[1]["raw_severity"] == "High"
+    assert findings[0]["business_context_basis"] == [
+        "impact_if_compromised",
+        "security_obligations",
+    ]
+    assert "business_context_basis" not in findings[1]
+    assert ranking["views"]["top_findings"]["sort_key"].endswith("then_business_context")
+
+    mitigations = ranking["views"]["prioritized_mitigations"]["mitigations_ranked"]
+    assert [row["id"] for row in mitigations] == ["M-002", "M-001"]
+    assert mitigations[0]["score"] == mitigations[1]["score"]
+    assert mitigations[0]["business_relevant_findings"] == ["T-002"]
+    assert mitigations[0]["business_context_basis"] == [
+        "impact_if_compromised",
+        "security_obligations",
+    ]
+    serialized = json.dumps(ranking)
+    assert "Orders cannot be completed" not in serialized
+    assert "Protect cardholder data" not in serialized
+
+
+def test_malformed_business_context_sidecar_preserves_empty_basis(tmp_path: Path):
+    tcr = _tcr()
+    sidecar = tmp_path / ".stride-analyst-context.json"
+    sidecar.write_text("{not-json", encoding="utf-8")
+    assert tcr._business_context_basis_by_component(tmp_path) == {}
+
+    sidecar.write_text(
+        json.dumps(
+            {
+                "payments": {
+                    "business_context": {
+                        "impact_if_compromised": ["wrong type"],
+                        "sensitive_assets": "wrong type",
+                        "security_obligations": [],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert tcr._business_context_basis_by_component(tmp_path) == {}
+
+
+def test_business_context_never_overrides_a_higher_technical_score(tmp_path: Path):
+    """Business relevance is a final tie-break, never a severity or priority lift."""
+    tcr = _tcr()
+    threats = [
+        {
+            "t_id": "T-001",
+            "component_id": "worker",
+            "title": "Higher technical risk",
+            "risk": "High",
+            "impact": "High",
+            "likelihood": "Medium",
+            "primary_cwe": "CWE-20",
+        },
+        {
+            "t_id": "T-002",
+            "component_id": "payments",
+            "title": "Business relevant medium risk",
+            "risk": "Medium",
+            "impact": "Medium",
+            "likelihood": "Medium",
+            "primary_cwe": "CWE-20",
+        },
+    ]
+    data = _minimal_yaml(threats)
+    data["components"] = [{"id": "worker"}, {"id": "payments"}]
+    data["mitigations"] = [
+        {"m_id": "M-001", "addresses": ["T-001"], "effort": "Medium"},
+        {"m_id": "M-002", "addresses": ["T-002"], "effort": "Medium"},
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+    (tmp_path / ".stride-analyst-context.json").write_text(
+        json.dumps(
+            {
+                "payments": {
+                    "business_context": {
+                        "sensitive_assets": ["Payment instructions"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ranking = tcr.compute_ranking(tmp_path)
+
+    findings = ranking["views"]["top_findings"]["findings_ranked"]
+    assert [row["id"] for row in findings] == ["T-001", "T-002"]
+    assert findings[0]["effective_severity"] == "High"
+    assert findings[1]["effective_severity"] == "Medium"
+    mitigations = ranking["views"]["prioritized_mitigations"]["mitigations_ranked"]
+    assert [row["id"] for row in mitigations] == ["M-001", "M-002"]
+
+
+def test_mitigation_business_context_provenance_deduplicates_finding_ids():
+    ranked = _tcr()._rank_mitigations(
+        [{"m_id": "M-001", "addresses": ["T-001", "T-001"], "effort": "Low"}],
+        {"T-001": "High"},
+        {"T-001": ("sensitive_assets",)},
+    )
+
+    assert ranked[0]["business_relevant_findings"] == ["T-001"]
+
+
 # ---------------------------------------------------------------------------
 # compute_ranking with categories (members unresolved) + chains + mitigations
 # ---------------------------------------------------------------------------

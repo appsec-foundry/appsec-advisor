@@ -120,6 +120,13 @@ properties:
                     raw_severity:
                       type: string
                       enum: [Critical, High, Medium, Low]
+                    business_context_basis:
+                      type: array
+                      minItems: 1
+                      uniqueItems: true
+                      items:
+                        type: string
+                        enum: [impact_if_compromised, sensitive_assets, security_obligations]
           prioritized_mitigations:
             type: object
             required: [mitigations_ranked]
@@ -136,6 +143,20 @@ properties:
                       type: string
                       pattern: "^M-\\d{3,}$"
                     rank: { type: integer, minimum: 1 }
+                    business_context_basis:
+                      type: array
+                      minItems: 1
+                      uniqueItems: true
+                      items:
+                        type: string
+                        enum: [impact_if_compromised, sensitive_assets, security_obligations]
+                    business_relevant_findings:
+                      type: array
+                      minItems: 1
+                      uniqueItems: true
+                      items:
+                        type: string
+                        pattern: "^[FT]-\\d{3,}$"
           chains:
             type: object
             required: [chains_ranked]

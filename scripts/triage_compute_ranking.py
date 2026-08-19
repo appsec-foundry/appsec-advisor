@@ -2,12 +2,14 @@
 """triage_compute_ranking.py — deterministic Phase-10b Step 6.
 
 Replaces the LLM-driven Step 6 of ``appsec-triage-validator`` with a Python
-script. The agent's spec for Step 6 (sub-steps 6a–6g) is fully deterministic
-rule application against YAML configs (breach-distance-patterns,
-compound-chain-patterns, severity-caps, critical-criteria, cwe-taxonomy).
-LLM reasoning is not required, and the LLM consistently mis-emits the ranking
-schema (the 2026-04-26 juice-shop run wrote ``version: 1`` with no ranking
-block after 6 minutes of work).
+script. The agent's spec for Step 6 (sub-steps 6a–6g) is deterministic rule
+application against YAML configs (breach-distance-patterns,
+compound-chain-patterns, severity-caps, critical-criteria, cwe-taxonomy). The
+deterministic owner also uses validated component business overlays only as a
+final tie-break between otherwise equal scores. LLM reasoning is not required,
+and the LLM consistently mis-emits the ranking schema (the 2026-04-26
+juice-shop run wrote ``version: 1`` with no ranking block after 6 minutes of
+work).
 
 Inputs (in $OUTPUT_DIR unless absolute):
     threat-model.yaml         — augmented in-place with per-finding/category
@@ -65,6 +67,11 @@ DATA_DIR = PLUGIN_ROOT / "data"
 
 _SEV_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 _SEV_LABEL = {0: "Low", 1: "Medium", 2: "High", 3: "Critical"}
+_MATERIAL_BUSINESS_CONTEXT_FIELDS = (
+    "impact_if_compromised",
+    "sensitive_assets",
+    "security_obligations",
+)
 
 
 def _sev_rank(s: str) -> int:
@@ -107,6 +114,49 @@ def _load_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def _business_context_basis_by_component(output_dir: Path) -> dict[str, tuple[str, ...]]:
+    """Return material mapped field names without copying business content.
+
+    The control analyst already maps validated project or organization context
+    onto known component IDs. Ranking consumes only the presence of the three
+    fields that can affect remediation attention; purpose and assumptions are
+    descriptive and never influence order. Missing or malformed optional state
+    preserves the legacy ranking.
+    """
+    raw = _load_json(output_dir / ".stride-analyst-context.json")
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, tuple[str, ...]] = {}
+    for component_id, entry in raw.items():
+        if not isinstance(component_id, str) or not isinstance(entry, dict):
+            continue
+        business = entry.get("business_context")
+        if not isinstance(business, dict):
+            continue
+        basis = tuple(
+            field
+            for field in _MATERIAL_BUSINESS_CONTEXT_FIELDS
+            if (
+                field == "impact_if_compromised"
+                and isinstance(business.get(field), str)
+                and bool(business[field].strip())
+                or field != "impact_if_compromised"
+                and isinstance(business.get(field), list)
+                and any(isinstance(item, str) and item.strip() for item in business[field])
+            )
+        )
+        if basis:
+            out[component_id] = basis
+    return out
+
+
+def _finding_business_context_basis(finding: dict, basis_by_component: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    component_id = finding.get("component") or finding.get("component_id")
+    if not isinstance(component_id, str):
+        return ()
+    return basis_by_component.get(component_id, ())
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +822,14 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         # Nothing to rank; emit empty v2 block.
         return _empty_ranking_block()
 
+    business_basis_by_component = _business_context_basis_by_component(output_dir)
+    business_basis_by_id = {}
+    for finding in findings:
+        finding_id = _finding_id(finding)
+        basis = _finding_business_context_basis(finding, business_basis_by_component)
+        if finding_id and basis:
+            business_basis_by_id[finding_id] = basis
+
     # Load reference data
     bd_patterns = _load_yaml(DATA_DIR / "breach-distance-patterns.yaml", {})
     chains_yaml = _load_yaml(DATA_DIR / "compound-chain-patterns.yaml", {})
@@ -920,19 +978,20 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         bd = bd_by_id.get(tid, 2)
         role = role_by_id.get(tid)
         s = _finding_score(t, eff, bd, role, caps, taxonomy)
-        fnd_scored.append(
-            {
-                "rank": 0,
-                "id": tid,
-                "effective_severity": eff,
-                "raw_severity": _finding_severity(t),
-                "chain_role": role or "none",
-                "breach_distance": bd,
-                "score": s,
-                "compound_chain_ids": chain_membership.get(tid, []),
-                "verified_chain_ids": verified_membership.get(tid, []),
-            }
-        )
+        entry = {
+            "rank": 0,
+            "id": tid,
+            "effective_severity": eff,
+            "raw_severity": _finding_severity(t),
+            "chain_role": role or "none",
+            "breach_distance": bd,
+            "score": s,
+            "compound_chain_ids": chain_membership.get(tid, []),
+            "verified_chain_ids": verified_membership.get(tid, []),
+        }
+        if business_basis_by_id.get(tid):
+            entry["business_context_basis"] = list(business_basis_by_id[tid])
+        fnd_scored.append(entry)
     # 6f-bis — design-risk weaknesses (P1.4 / proposal §9.3). A pervasive design
     # weakness with ZERO confirmed instances is not in threats[], yet may be the
     # report's #1 risk. Fold each such weakness into findings_ranked as a
@@ -968,7 +1027,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             }
         )
 
-    fnd_scored.sort(key=lambda x: (-x["score"], x["id"]))
+    fnd_scored.sort(key=lambda x: (-x["score"], -int(bool(x.get("business_context_basis"))), x["id"]))
     for i, f in enumerate(fnd_scored, start=1):
         f["rank"] = i
 
@@ -994,7 +1053,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         )
 
     # 6g — mitigations ranked by addressed severity
-    mits_ranked = _rank_mitigations(yaml_data.get("mitigations") or [], eff_by_id)
+    mits_ranked = _rank_mitigations(yaml_data.get("mitigations") or [], eff_by_id, business_basis_by_id)
 
     chains_ranked = sorted(
         active_chains,
@@ -1051,13 +1110,21 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
                 "categories_ranked": top_threats,
             },
             "top_findings": {
-                "sort_key": "finding_score_impact_weighted",
+                "sort_key": (
+                    "finding_score_impact_weighted_then_business_context"
+                    if business_basis_by_id
+                    else "finding_score_impact_weighted"
+                ),
                 "threshold": "effective_severity == Critical",
                 "max_rows": min(5, len(fnd_scored)),
                 "findings_ranked": fnd_scored[:50],  # cap to avoid bloat
             },
             "prioritized_mitigations": {
-                "sort_key": "addressed_severity_desc_then_effort_asc",
+                "sort_key": (
+                    "addressed_severity_desc_then_effort_asc_then_business_context"
+                    if business_basis_by_id
+                    else "addressed_severity_desc_then_effort_asc"
+                ),
                 "mitigations_ranked": mits_ranked,
             },
             "chains": {
@@ -1139,9 +1206,14 @@ def _category_reasons(members, eff_by_id, bd_by_id, role_by_id, taxonomy) -> lis
     return out
 
 
-def _rank_mitigations(mits: list, eff_by_id: dict[str, str]) -> list[dict]:
+def _rank_mitigations(
+    mits: list,
+    eff_by_id: dict[str, str],
+    business_basis_by_id: dict[str, tuple[str, ...]] | None = None,
+) -> list[dict]:
     if not mits:
         return []
+    business_basis_by_id = business_basis_by_id or {}
     effort_order = {"low": 0, "medium": 1, "high": 2}
     scored = []
     for m in mits:
@@ -1154,16 +1226,24 @@ def _rank_mitigations(mits: list, eff_by_id: dict[str, str]) -> list[dict]:
         for tid in addressed:
             r = _sev_rank(eff_by_id.get(str(tid), ""))
             max_addressed_rank = max(max_addressed_rank, r)
-        scored.append(
-            {
-                "id": m.get("m_id") or m.get("id") or "",
-                "addresses_findings": addressed,
-                "effort": m.get("effort", "Medium"),
-                "score": 1000 * max_addressed_rank - 10 * effort_order.get((m.get("effort") or "Medium").lower(), 1),
-                "_max_eff_rank": max_addressed_rank,
-            }
+        relevant_findings = list(dict.fromkeys(str(tid) for tid in addressed if business_basis_by_id.get(str(tid))))
+        basis = tuple(
+            field
+            for field in _MATERIAL_BUSINESS_CONTEXT_FIELDS
+            if any(field in business_basis_by_id.get(tid, ()) for tid in relevant_findings)
         )
-    scored.sort(key=lambda x: (-x["score"], x["id"]))
+        entry = {
+            "id": m.get("m_id") or m.get("id") or "",
+            "addresses_findings": addressed,
+            "effort": m.get("effort", "Medium"),
+            "score": 1000 * max_addressed_rank - 10 * effort_order.get((m.get("effort") or "Medium").lower(), 1),
+            "_max_eff_rank": max_addressed_rank,
+        }
+        if basis:
+            entry["business_context_basis"] = list(basis)
+            entry["business_relevant_findings"] = relevant_findings
+        scored.append(entry)
+    scored.sort(key=lambda x: (-x["score"], -int(bool(x.get("business_context_basis"))), x["id"]))
     for i, e in enumerate(scored, start=1):
         e["rank"] = i
         e.pop("_max_eff_rank", None)

@@ -103,6 +103,7 @@ def _valid_triage() -> dict:
                     "breach_distance": 2,
                     "score": 410,
                     "compound_chain_ids": [],
+                    "business_context_basis": ["impact_if_compromised", "security_obligations"],
                 }
             ]
         ),
@@ -146,6 +147,22 @@ def test_triage_flags_valid_inputs_pass(builder: Callable[[], dict]) -> None:
     assert ok, errors
 
 
+def test_triage_flags_business_context_ranking_fields_pass() -> None:
+    data = _valid_triage()
+    data["ranking"]["views"]["prioritized_mitigations"]["mitigations_ranked"] = [
+        {
+            "rank": 1,
+            "id": "M-001",
+            "business_context_basis": ["sensitive_assets"],
+            "business_relevant_findings": ["T-001"],
+        }
+    ]
+
+    ok, errors = validate_triage_flags(data)
+
+    assert ok, errors
+
+
 def _mutate(setter: Callable[[dict], None]) -> Callable[[dict], None]:
     """Tiny helper to let the table below stay readable."""
     return setter
@@ -170,6 +187,15 @@ _TRIAGE_NEG: list[tuple[str, Callable[[dict], None], list | None]] = [
         None,
     ),
     ("invalid-type-enum", _mutate(lambda d: d["flags"][0].__setitem__("type", "not-a-real-type")), None),
+    (
+        "invalid-business-context-basis",
+        _mutate(
+            lambda d: d["ranking"]["views"]["top_findings"]["findings_ranked"][0].__setitem__(
+                "business_context_basis", ["business_purpose"]
+            )
+        ),
+        None,
+    ),
 ]
 
 

@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Business context now breaks technically equal finding and mitigation ranking ties without changing severity or mitigation priority.
 - Attack walkthroughs now balance chain relevance with threat-category diversity across the findings the register shows as Critical, reserving coverage for Critical Access Control and LLM Abuse findings when present.
 - Verified findings at a confirmed internet ingress can now be raised by one severity band, up to High, within CWE caps.
 - Findings of the same kind at different trust boundaries now stay separate instead of consolidating into one row.

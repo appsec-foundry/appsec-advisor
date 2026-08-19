@@ -304,7 +304,7 @@ Applicable policy, contractual, legal, or regulatory duties.
 Conditions you assume rather than enforce in code.
 ```
 
-Partial answers are fine. Named sensitive assets also cause their components to receive full-depth analysis.
+Partial answers are fine. Named sensitive assets keep their components in standard scope and protect them from ceiling drops. They do not by themselves disable cheap STRIDE. When technical ranking scores are equal, mapped compromise impact, sensitive assets, or obligations place affected findings and mitigations first. This tie-breaker does not change severity or mitigation priority.
 
 On a fresh interactive run, you can paste this context or provide a raw Markdown or plain-text URL. The URL is checked before it is fetched, and content containing a credential is refused. Use `--skip-context` if you do not want the question. A headless run accepts `--context <url|path>` for that run only; it never writes `docs/business-context.md`.
 
