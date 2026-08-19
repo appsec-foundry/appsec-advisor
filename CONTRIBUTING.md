@@ -130,7 +130,7 @@ python3 scripts/validate_intermediate.py <file.json>  # intermediate file schema
 ```bash
 python3 scripts/mock-server.py [port]             # mock REST endpoints: context + requirements (default 4444)
 ./scripts/run-headless.sh --repo /path --output /out --yaml --sarif
-python3 scripts/harvest_requirements.py           # regenerate fallback requirements YAML
+python3 scripts/harvest_requirements.py           # regenerate fallback requirements YAML (use --format all for spec exports)
 python3 scripts/threat_fixture.py freeze --run /out --into tests/fixtures/golden/<name> --repo /path
 python3 scripts/threat_fixture.py replay --fixture tests/fixtures/golden/<name> --repo /path
 python3 scripts/diagnostic_bundle.py collect --run /out --into . --repo-root /path  # user → maintainer

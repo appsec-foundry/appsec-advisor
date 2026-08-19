@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The requirements harvester can emit selected functional requirements as single-file OpenSpec and SpecDD specifications.
 - The context-v2 analysis runtime projects only component-specific facts and reduced reference API cost by 39.8 % at quick depth and 26.8 % at thorough depth.
 - A new or rebuilt analysis now takes optional business context from pasted text or a URL, interactively, through `--context`, or not at all with `--skip-context`. See `docs/threat-modeler.md`.
 - A context-v2 scan now shows Stage 1 as one task per analysis step, each numbered within its stage and carrying a component counter while STRIDE runs, instead of a single task for its whole duration.

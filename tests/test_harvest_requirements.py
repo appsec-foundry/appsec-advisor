@@ -7,10 +7,25 @@ import pytest
 import requests
 
 
-def _args(config=None, output=None, *, dry_run=False, verbose=False, req_only=False, blueprint_only=False, token=None):
+def _args(
+    config=None,
+    output=None,
+    *,
+    dry_run=False,
+    verbose=False,
+    req_only=False,
+    blueprint_only=False,
+    token=None,
+    output_formats=None,
+    openspec_output=None,
+    specdd_output=None,
+):
     return SimpleNamespace(
         config=str(config) if config else None,
         output=str(output) if output else None,
+        output_formats=output_formats,
+        openspec_output=str(openspec_output) if openspec_output else None,
+        specdd_output=str(specdd_output) if specdd_output else None,
         token=token,
         dry_run=dry_run,
         verbose=verbose,
@@ -319,6 +334,241 @@ def test_run_reference_url_and_schema_errors_return_2(monkeypatch, tmp_path, cap
     captured = capsys.readouterr()
     assert "schema warning: warning only" in captured.out
     assert "schema error: bad category" in captured.err
+
+
+def test_source_outputs_are_opt_in_and_requested_formats_are_repeatable():
+    assert harvester.source_outputs({}) == {"catalog"}
+    assert harvester.source_outputs({"outputs": ["openspec", "specdd"]}) == {"openspec", "specdd"}
+    assert harvester.requested_outputs(SimpleNamespace(output_formats=None)) == {"catalog"}
+    assert harvester.requested_outputs(SimpleNamespace(output_formats=["openspec", "specdd"])) == {
+        "openspec",
+        "specdd",
+    }
+    assert harvester.requested_outputs(SimpleNamespace(output_formats=["all"])) == {
+        "catalog",
+        "openspec",
+        "specdd",
+    }
+
+    with pytest.raises(ValueError, match="non-empty array"):
+        harvester.source_outputs({"outputs": []})
+    with pytest.raises(ValueError, match="unknown outputs"):
+        harvester.source_outputs({"outputs": ["unknown"]})
+
+
+def test_functional_renderers_preserve_identity_escape_content_and_skip_advisory_entries():
+    categories = [
+        {
+            "id": "AUTH",
+            "title": "Authentication <behavior>",
+            "requirements": [
+                {
+                    "id": "AUTH-001",
+                    "text": "Users must authenticate before opening <admin> pages",
+                    "priority": "MUST",
+                    "url": "https://example.test/auth",
+                },
+                {
+                    "id": "AUTH-002",
+                    "text": "Applications should offer remembered devices",
+                    "priority": "SHOULD",
+                    "url": "javascript:alert(1)",
+                },
+            ],
+        }
+    ]
+
+    openspec, openspec_skipped = harvester.render_openspec(categories, title="Example <Spec>")
+    specdd, specdd_skipped = harvester.render_specdd(categories, name="Example Spec")
+
+    assert "# Example &lt;Spec&gt;" in openspec
+    assert "### Requirement: AUTH-001" in openspec
+    assert "Users MUST authenticate before opening &lt;admin&gt; pages." in openspec
+    assert "#### Scenario: AUTH-001 behavior is satisfied" in openspec
+    assert "<https://example.test/auth>" in openspec
+    assert "AUTH-002" not in openspec
+    assert openspec_skipped == ["AUTH-002"]
+
+    assert specdd.startswith("Spec: Example Spec\n")
+    assert "Must:\n  # Category: Authentication <behavior>" in specdd
+    assert "AUTH-001: Users must authenticate before opening <admin> pages" in specdd
+    assert "Scenario: AUTH-001 behavior is satisfied" in specdd
+    assert "AUTH-002" not in specdd
+    assert specdd_skipped == ["AUTH-002"]
+
+
+def test_specdd_renderer_neutralizes_imported_paths_and_symbol_references():
+    categories = [
+        {
+            "id": "FILES",
+            "requirements": [
+                {
+                    "id": "FILES-001",
+                    "text": "The service MUST reject ./private/data and notify @Administrator",
+                    "priority": "MUST",
+                }
+            ],
+        }
+    ]
+
+    rendered, skipped = harvester.render_specdd(categories)
+
+    assert skipped == []
+    assert "`./private/data`" in rendered
+    assert r"\@Administrator" in rendered
+
+
+def test_functional_renderers_reject_ids_that_could_create_sections():
+    categories = [
+        {
+            "id": "AUTH",
+            "requirements": [
+                {
+                    "id": "AUTH-001\nOwns: ./repository",
+                    "text": "The service MUST authenticate the caller",
+                    "priority": "MUST",
+                }
+            ],
+        }
+    ]
+
+    with pytest.raises(ValueError, match="invalid functional requirement ID"):
+        harvester.render_openspec(categories)
+    with pytest.raises(ValueError, match="invalid functional requirement ID"):
+        harvester.render_specdd(categories)
+
+
+def test_functional_examples_are_selected_from_the_existing_catalog():
+    root = Path(__file__).parents[1]
+    catalog = harvester.yaml.safe_load(
+        (root / "examples" / "appsec-requirements-example.yaml").read_text(encoding="utf-8")
+    )
+    catalog_ids = {
+        requirement["id"] for category in catalog["categories"] for requirement in category.get("requirements", [])
+    }
+    selected_ids = {"AC-003", "AC-004", "AC-006", "EH-002", "WEB-001"}
+    assert selected_ids <= catalog_ids
+
+    openspec = (root / "examples" / "appsec-requirements-example.openspec.md").read_text(encoding="utf-8")
+    specdd = (root / "examples" / "appsec-requirements-example.sdd").read_text(encoding="utf-8")
+
+    assert {
+        line.removeprefix("### Requirement: ") for line in openspec.splitlines() if line.startswith("### Requirement: ")
+    } == selected_ids
+    assert openspec.count("### Requirement:") == openspec.count("#### Scenario:") == len(selected_ids)
+    assert specdd.startswith("Spec: Example Application Behavior\n")
+    assert specdd.count("Scenario:") == len(selected_ids)
+    assert "Owns:" not in specdd
+    assert "Can modify:" not in specdd
+
+
+def test_run_all_writes_catalog_and_both_functional_formats(monkeypatch, tmp_path):
+    catalog_output = tmp_path / "requirements.yaml"
+    openspec_output = tmp_path / "application.openspec.md"
+    specdd_output = tmp_path / "application.sdd"
+    config = _write_config(
+        tmp_path,
+        {
+            "description": "Mixed requirements",
+            "openspec": {"title": "Example Application"},
+            "specdd": {"name": "Example Application"},
+            "sources": [
+                {
+                    "id": "functional",
+                    "type": "requirement",
+                    "crawl_url": "https://example.test/functional",
+                    "outputs": ["openspec", "specdd"],
+                },
+                {
+                    "id": "secure-coding",
+                    "type": "requirement",
+                    "crawl_url": "https://example.test/secure-coding",
+                },
+                {
+                    "id": "blueprint",
+                    "type": "blueprint",
+                    "crawl_url": "https://example.test/blueprint",
+                },
+            ],
+        },
+    )
+
+    def fake_requirements(_session, _cfg, source, _verbose):
+        req_id = "FUN-001" if source["id"] == "functional" else "SEC-001"
+        return [
+            {
+                "id": req_id.rsplit("-", 1)[0],
+                "source_id": source["id"],
+                "title": source["id"],
+                "requirements": [
+                    {
+                        "id": req_id,
+                        "url": f"https://example.test/{req_id.lower()}",
+                        "text": "The system MUST produce the requested result",
+                        "priority": "MUST",
+                    }
+                ],
+            }
+        ]
+
+    monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(harvester, "harvest_requirements_source", fake_requirements)
+    monkeypatch.setattr(harvester, "harvest_blueprints_source", lambda *args, **kwargs: [{"id": "BP-X"}])
+    monkeypatch.setattr(harvester.rstate, "validate_catalog", lambda _body: ([], []))
+
+    result = harvester.run(
+        _args(
+            config=config,
+            output=catalog_output,
+            output_formats=["all"],
+            openspec_output=openspec_output,
+            specdd_output=specdd_output,
+        )
+    )
+
+    assert result == 0
+    catalog = harvester.yaml.safe_load(catalog_output.read_text(encoding="utf-8"))
+    assert [category["id"] for category in catalog["categories"]] == ["SEC"]
+    assert [meta["id"] for meta in catalog["sources_meta"]] == ["secure-coding", "blueprint"]
+    assert "FUN-001" in openspec_output.read_text(encoding="utf-8")
+    assert "SEC-001" not in openspec_output.read_text(encoding="utf-8")
+    assert "FUN-001" in specdd_output.read_text(encoding="utf-8")
+    assert "SEC-001" not in specdd_output.read_text(encoding="utf-8")
+
+
+def test_run_rejects_blueprint_functional_target_and_output_collisions(monkeypatch, tmp_path, capsys):
+    config = _write_config(
+        tmp_path,
+        {
+            "sources": [
+                {
+                    "id": "bad-blueprint",
+                    "type": "blueprint",
+                    "crawl_url": "https://example.test/blueprint",
+                    "outputs": ["specdd"],
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
+
+    assert harvester.run(_args(config=config, output_formats=["specdd"])) == 1
+    assert "blueprints can target only the catalog" in capsys.readouterr().err
+
+    same_path = tmp_path / "same.out"
+    assert (
+        harvester.run(
+            _args(
+                config=config,
+                output=same_path,
+                output_formats=["all"],
+                openspec_output=same_path,
+                specdd_output=tmp_path / "other.sdd",
+            )
+        )
+        == 1
+    )
+    assert "different paths" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +1071,14 @@ def test_main_parses_cli_arguments_and_exits(monkeypatch, tmp_path):
             str(tmp_path / "config.json"),
             "--output",
             str(tmp_path / "out.yaml"),
+            "--format",
+            "openspec",
+            "--format",
+            "specdd",
+            "--openspec-output",
+            str(tmp_path / "out.openspec.md"),
+            "--specdd-output",
+            str(tmp_path / "out.sdd"),
             "--token",
             "tok",
             "--dry-run",
@@ -836,6 +1094,9 @@ def test_main_parses_cli_arguments_and_exits(monkeypatch, tmp_path):
     assert exc.value.code == 7
     assert seen["args"].config == str(tmp_path / "config.json")
     assert seen["args"].output == str(tmp_path / "out.yaml")
+    assert seen["args"].output_formats == ["openspec", "specdd"]
+    assert seen["args"].openspec_output == str(tmp_path / "out.openspec.md")
+    assert seen["args"].specdd_output == str(tmp_path / "out.sdd")
     assert seen["args"].token == "tok"
     assert seen["args"].dry_run is True
     assert seen["args"].verbose is True

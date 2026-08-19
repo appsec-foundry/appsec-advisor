@@ -1,0 +1,40 @@
+Spec: Example Application Behavior
+
+Purpose:
+  Translate the observable, mandatory application behavior from appsec-requirements-example.yaml into one SpecDD root specification while leaving implementation-only secure-coding guidance in the YAML catalog.
+
+Must:
+  # Category: Authentication & Access Control
+  AC-003: The application MUST rate-limit every externally reachable API endpoint.
+  AC-004: The application MUST authenticate end users through a central identity provider using OIDC or SAML and mandatory MFA.
+  AC-006: The application MUST authorize access to each requested resource against the authenticated identity.
+  # Category: Error Handling & Security Events
+  EH-002: The application MUST return generic error messages to clients and retain detailed diagnostics only in server-side logs.
+  # Category: Web & Frontend Security
+  WEB-001: The application MUST protect session-authenticated state changes against cross-site request forgery and MUST NOT perform them through HTTP GET.
+
+Scenario: repeated API requests are throttled
+  Given a client is sending requests to an externally reachable API endpoint
+  When the client exceeds the permitted request rate
+  Then the application throttles further requests from that client
+
+Scenario: end user starts a session
+  Given an end user has no authenticated session
+  When the user signs in
+  Then the application authenticates the user through the central identity provider
+  And the identity provider requires MFA
+
+Scenario: user requests another user's resource
+  Given an authenticated user does not own the requested resource and has no delegated access
+  When the user requests that resource by its identifier
+  Then the application denies access
+
+Scenario: request processing fails unexpectedly
+  When request processing raises an unexpected error
+  Then the application returns a generic error response without internal details
+  And the application records the detailed diagnostic server-side
+
+Scenario: cross-site state-changing request
+  Given a user has an authenticated browser session
+  When another site submits a state-changing request without valid CSRF proof
+  Then the application rejects the request

@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-harvest-requirements.py — Crawls configured source URLs for security requirements
-and blueprints, then writes a structured YAML consumed by the appsec plugin.
+harvest-requirements.py — Crawls configured source URLs for requirements and
+blueprints, then writes a catalog YAML and optional functional-spec exports.
 
 Usage:
     python harvest-requirements.py [OPTIONS]
 
 Options:
     --config PATH       Path to harvest-config.json (default: next to this script)
-    --output PATH       Override the output path from the config
+    --output PATH       Override the catalog YAML output path
+    --format FORMAT     Output yaml, openspec, specdd, or all (repeatable)
+    --openspec-output PATH
+                        Override the single-file OpenSpec output path
+    --specdd-output PATH
+                        Override the single-file SpecDD output path
     --token TOKEN       Bearer token (overrides HARVEST_AUTH_TOKEN env var)
     --dry-run           Fetch and parse but do not write the output file
     --verbose, -v       Print each parsed item
@@ -18,7 +23,9 @@ Options:
 Configuration:
     The config file is a JSON document with a top-level `sources` array. Each
     source declares {id, type, title, crawl_url, mode, [max_pages],
-    [section_max_chars], [reference_url]}.
+    [section_max_chars], [reference_url], [outputs]}. Existing sources default
+    to outputs=["catalog"]. Add "openspec" and/or "specdd" only to sources
+    that describe observable functional behavior.
 
     For a full template, see harvest-config.example.json (copy it to
     harvest-config.json and edit). Key sections:
@@ -45,6 +52,7 @@ Authentication:
 """
 
 import argparse
+import html as html_lib
 import json
 import os
 import re
@@ -96,6 +104,11 @@ BADGE_ID_PATTERN = re.compile(r'class="badge"[^>]*>\s*[A-Z][A-Z0-9]*[-\u2011]', 
 PRIORITY_LABEL_PATTERN = re.compile(r"(must|should|may)-label", re.IGNORECASE)
 # Any ID reference in free text — generic prefix, same shape as REQ_ID_PATTERN without brackets.
 REF_ID_PATTERN = re.compile(r"\b(" + _ID_BODY + r")\b")
+
+CATALOG_OUTPUT = "catalog"
+OPENSPEC_OUTPUT = "openspec"
+SPECDD_OUTPUT = "specdd"
+VALID_SOURCE_OUTPUTS = {CATALOG_OUTPUT, OPENSPEC_OUTPUT, SPECDD_OUTPUT}
 
 
 # ---------------------------------------------------------------------------
@@ -918,6 +931,230 @@ def add_references_to_blueprints(blueprints: list[dict], req_url_map: dict) -> i
 
 
 # ---------------------------------------------------------------------------
+# Functional specification exports
+# ---------------------------------------------------------------------------
+
+
+def source_outputs(source: dict) -> set[str]:
+    """Return output targets for a source, preserving catalog-only defaults."""
+    configured = source.get("outputs")
+    if configured is None:
+        return {CATALOG_OUTPUT}
+    if not isinstance(configured, list) or not configured:
+        raise ValueError("outputs must be a non-empty array")
+    if any(not isinstance(value, str) for value in configured):
+        raise ValueError("outputs entries must be strings")
+    outputs = set(configured)
+    unknown = sorted(outputs - VALID_SOURCE_OUTPUTS)
+    if unknown:
+        raise ValueError(f"unknown outputs value(s): {', '.join(unknown)}")
+    return outputs
+
+
+def requested_outputs(args: argparse.Namespace) -> set[str]:
+    """Translate repeatable CLI format names to internal output targets."""
+    formats = getattr(args, "output_formats", None) or ["yaml"]
+    if "all" in formats:
+        return set(VALID_SOURCE_OUTPUTS)
+    mapping = {"yaml": CATALOG_OUTPUT, "openspec": OPENSPEC_OUTPUT, "specdd": SPECDD_OUTPUT}
+    return {mapping[value] for value in formats}
+
+
+def _flatten_text(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _markdown_inline(value: object) -> str:
+    """Flatten harvested text so it cannot create Markdown structure or HTML."""
+    return html_lib.escape(_flatten_text(value), quote=False)
+
+
+def _safe_http_url(value: object) -> Optional[str]:
+    """Return a safe HTTP(S) URL for an autolink, or None when malformed."""
+    raw = str(value or "").strip()
+    if not raw or any(char.isspace() or ord(char) < 32 for char in raw):
+        return None
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    return html_lib.escape(raw, quote=False)
+
+
+def _mandatory_requirements(categories: list[dict]) -> tuple[list[tuple[dict, dict]], list[str]]:
+    """Select hard functional requirements and reject ambiguous identity."""
+    selected: list[tuple[dict, dict]] = []
+    skipped: list[str] = []
+    seen_ids: set[str] = set()
+    duplicate_ids: set[str] = set()
+
+    for category in categories:
+        for requirement in category.get("requirements", []) or []:
+            req_id = str(requirement.get("id") or "").strip()
+            if not req_id or not str(requirement.get("text") or "").strip():
+                raise ValueError("functional requirements must contain non-empty id and text fields")
+            if re.fullmatch(_ID_BODY, req_id, flags=re.IGNORECASE) is None:
+                raise ValueError(f"invalid functional requirement ID: {req_id!r}")
+            if req_id in seen_ids:
+                duplicate_ids.add(req_id)
+                continue
+            seen_ids.add(req_id)
+            if str(requirement.get("priority") or "MUST").upper() != "MUST":
+                skipped.append(req_id)
+                continue
+            selected.append((category, requirement))
+
+    if duplicate_ids:
+        raise ValueError(f"duplicate functional requirement IDs: {', '.join(sorted(duplicate_ids))}")
+    if not selected:
+        raise ValueError("no MUST requirements were selected for functional specification output")
+    return selected, skipped
+
+
+def _openspec_statement(requirement: dict) -> str:
+    """Render a requirement body accepted by OpenSpec's SHALL/MUST gate."""
+    text = _markdown_inline(requirement.get("text"))
+    modal = re.search(r"\b(shall|must)\b", text, flags=re.IGNORECASE)
+    if modal:
+        text = text[: modal.start()] + modal.group(1).upper() + text[modal.end() :]
+        return text.rstrip(".") + "."
+    return f"The system MUST satisfy this harvested behavior: {text.rstrip('.')}."
+
+
+def render_openspec(
+    categories: list[dict],
+    *,
+    title: str = "Application Specification",
+    purpose: Optional[str] = None,
+) -> tuple[str, list[str]]:
+    """Render selected functional requirements as one OpenSpec Markdown file."""
+    selected, skipped = _mandatory_requirements(categories)
+    rendered_title = _markdown_inline(title) or "Application Specification"
+    rendered_purpose = _markdown_inline(
+        purpose
+        or "This specification defines observable application behavior harvested from the functional requirement sources selected in the harvester configuration."
+    )
+    lines = [f"# {rendered_title}", "", "## Purpose", "", rendered_purpose, "", "## Requirements", ""]
+
+    for category, requirement in selected:
+        req_id = str(requirement["id"]).strip()
+        category_title = _markdown_inline(category.get("title") or category.get("id") or "Uncategorized")
+        statement = _openspec_statement(requirement)
+        lines.extend(
+            [
+                f"### Requirement: {req_id}",
+                "",
+                statement,
+                "",
+                f"**Category:** {category_title}",
+            ]
+        )
+        source_url = _safe_http_url(requirement.get("url"))
+        if source_url:
+            lines.extend(["", f"**Source:** <{source_url}>"])
+        lines.extend(
+            [
+                "",
+                f"#### Scenario: {req_id} behavior is satisfied",
+                "",
+                f"- **WHEN** the behavior governed by `{req_id}` is exercised",
+                f"- **THEN** {statement}",
+                "",
+            ]
+        )
+
+    content = "\n".join(lines).rstrip() + "\n"
+    requirement_count = len(re.findall(r"(?m)^### Requirement: ", content))
+    scenario_count = len(re.findall(r"(?m)^#### Scenario: ", content))
+    if requirement_count != scenario_count:
+        raise ValueError("every OpenSpec requirement must contain one scenario")
+    return content, skipped
+
+
+def _specdd_text(value: object) -> str:
+    """Keep imported prose literal in SpecDD instead of creating authority links."""
+    text = _flatten_text(value).replace("`", "'").replace("@", r"\@")
+
+    def quote_explicit_path(match: re.Match) -> str:
+        return f"`{match.group(0)}`"
+
+    return re.sub(r"(?<!\S)(?:\.\.?/|/)[^\s,;]+", quote_explicit_path, text)
+
+
+def render_specdd(
+    categories: list[dict],
+    *,
+    name: str = "Application Behavior",
+    purpose: Optional[str] = None,
+) -> tuple[str, list[str]]:
+    """Render selected functional requirements as one root-level SpecDD file."""
+    selected, skipped = _mandatory_requirements(categories)
+    spec_name = _specdd_text(name) or "Application Behavior"
+    spec_purpose = _specdd_text(
+        purpose
+        or "Describe the observable functional behavior harvested from the requirement sources selected in the harvester configuration."
+    )
+    positive: list[tuple[dict, dict, str]] = []
+    negative: list[tuple[dict, dict, str]] = []
+    for category, requirement in selected:
+        statement = _specdd_text(requirement.get("text"))
+        has_negative_modal = bool(re.search(r"\b(?:MUST|SHALL)\s+NOT\b", statement, re.IGNORECASE))
+        has_positive_modal = bool(re.search(r"\b(?:MUST|SHALL)\b(?!\s+NOT)", statement, re.IGNORECASE))
+        target = negative if has_negative_modal and not has_positive_modal else positive
+        target.append((category, requirement, statement))
+
+    lines = [f"Spec: {spec_name}", "", "Purpose:", f"  {spec_purpose}"]
+    for label, entries in (("Must", positive), ("Must not", negative)):
+        if not entries:
+            continue
+        lines.extend(["", f"{label}:"])
+        current_category: Optional[str] = None
+        for category, requirement, statement in entries:
+            category_title = _specdd_text(category.get("title") or category.get("id") or "Uncategorized")
+            if category_title != current_category:
+                lines.append(f"  # Category: {category_title}")
+                current_category = category_title
+            lines.append(f"  {requirement['id']}: {statement}")
+
+    for _category, requirement in selected:
+        req_id = str(requirement["id"]).strip()
+        statement = _specdd_text(requirement.get("text"))
+        lines.extend(
+            [
+                "",
+                f"Scenario: {req_id} behavior is satisfied",
+                f"  When the behavior governed by {req_id} is exercised",
+                f"  Then {statement}",
+            ]
+        )
+
+    content = "\n".join(lines).rstrip() + "\n"
+    if not content.startswith("Spec: ") or "\t" in content:
+        raise ValueError("SpecDD output violates the required file header or indentation")
+    if len(re.findall(r"(?m)^Scenario: ", content)) != len(selected):
+        raise ValueError("every SpecDD requirement must contain one generated scenario")
+    return content, skipped
+
+
+def resolve_functional_output_path(
+    kind: str,
+    args: argparse.Namespace,
+    cfg: dict,
+    config_path: Path,
+    catalog_output_path: Path,
+) -> Path:
+    """Resolve an export path only from operator-controlled CLI or configuration."""
+    explicit = getattr(args, f"{kind}_output", None)
+    if explicit:
+        return Path(explicit)
+    kind_cfg = cfg.get(kind, {})
+    configured = kind_cfg.get("output") if isinstance(kind_cfg, dict) else None
+    if configured:
+        return (config_path.parent / configured).resolve()
+    suffix = ".openspec.md" if kind == OPENSPEC_OUTPUT else ".sdd"
+    return catalog_output_path.with_name(f"{catalog_output_path.stem}{suffix}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -929,9 +1166,20 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
     cfg = load_config(config_path)
-    output_path = (
+    output_path: Path = (
         Path(args.output) if args.output else ((config_path.parent / cfg.get("output", "requirements.yaml")).resolve())
     )
+    requested = requested_outputs(args)
+    export_paths = {
+        kind: resolve_functional_output_path(kind, args, cfg, config_path, output_path)
+        for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT)
+        if kind in requested
+    }
+    paths = ([output_path] if CATALOG_OUTPUT in requested else []) + list(export_paths.values())
+    resolved_paths = [path.resolve() for path in paths]
+    if len(resolved_paths) != len(set(resolved_paths)):
+        print("Requested outputs must use different paths.", file=sys.stderr)
+        return 1
 
     req_cfg: dict = cfg.get("request", {})
     timeout: int = req_cfg.get("timeout_seconds", 15)
@@ -997,20 +1245,46 @@ def run(args: argparse.Namespace) -> int:
         print("No sources configured — nothing to do.", file=sys.stderr)
         return 1
 
+    selected_sources: list[dict] = []
+    for source in sources:
+        source_id = source.get("id", "unknown")
+        try:
+            outputs = source_outputs(source)
+        except ValueError as exc:
+            print(f"Source '{source_id}': {exc}", file=sys.stderr)
+            return 1
+        if source.get("type", "requirement") == "blueprint" and outputs & {OPENSPEC_OUTPUT, SPECDD_OUTPUT}:
+            print(f"Source '{source_id}': blueprints can target only the catalog output.", file=sys.stderr)
+            return 1
+        if outputs & requested:
+            selected_sources.append(source)
+    sources = selected_sources
+
+    if not sources:
+        print(
+            "No sources target the selected format. Add the format to a functional requirement source's outputs array.",
+            file=sys.stderr,
+        )
+        return 1
+
     req_categories: list[dict] = []
+    functional_categories: dict[str, list[dict]] = {OPENSPEC_OUTPUT: [], SPECDD_OUTPUT: []}
     blueprints: list[dict] = []
     sources_meta: list[dict] = []
     failed = 0
+    processed_sources = 0
 
     for source in sources:
         source_id = source.get("id", "unknown")
         source_type = source.get("type", "requirement")
         crawl_url = source.get("crawl_url", "")
+        outputs = source_outputs(source)
 
         if not crawl_url:
             print(f"\n[SKIP] Source '{source_id}': no crawl_url configured")
             continue
 
+        processed_sources += 1
         indexed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         items_count = 0
 
@@ -1018,7 +1292,11 @@ def run(args: argparse.Namespace) -> int:
             print(f"\n— Requirements: {source.get('title', source_id)} —")
             cats = harvest_requirements_source(session, cfg, source, args.verbose)
             if cats:
-                req_categories.extend(cats)
+                if CATALOG_OUTPUT in outputs and CATALOG_OUTPUT in requested:
+                    req_categories.extend(cats)
+                for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
+                    if kind in outputs and kind in requested:
+                        functional_categories[kind].extend(cats)
                 items_count = sum(len(c.get("requirements", [])) for c in cats)
             else:
                 failed += 1
@@ -1048,7 +1326,8 @@ def run(args: argparse.Namespace) -> int:
         }
         if source.get("reference_url"):
             meta["reference_url"] = source["reference_url"]
-        sources_meta.append(meta)
+        if CATALOG_OUTPUT in outputs and CATALOG_OUTPUT in requested:
+            sources_meta.append(meta)
 
     # Resolve cross-references: scan blueprint section content for requirement IDs
     # and attach {id, url} links to any section that references a known requirement.
@@ -1075,51 +1354,107 @@ def run(args: argparse.Namespace) -> int:
     )
 
     total_reqs = sum(len(c.get("requirements", [])) for c in req_categories)
+    export_contents: dict[str, str] = {}
+    export_counts: dict[str, int] = {}
+    for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
+        if kind not in requested:
+            continue
+        kind_cfg = cfg.get(kind, {})
+        if not isinstance(kind_cfg, dict):
+            print(f"The top-level '{kind}' configuration must be an object.", file=sys.stderr)
+            return 1
+        try:
+            if kind == OPENSPEC_OUTPUT:
+                content, skipped = render_openspec(
+                    functional_categories[kind],
+                    title=kind_cfg.get("title", "Application Specification"),
+                    purpose=kind_cfg.get("purpose"),
+                )
+                count = len(re.findall(r"(?m)^### Requirement: ", content))
+            else:
+                content, skipped = render_specdd(
+                    functional_categories[kind],
+                    name=kind_cfg.get("name", "Application Behavior"),
+                    purpose=kind_cfg.get("purpose"),
+                )
+                count = len(re.findall(r"(?m)^Scenario: ", content))
+        except ValueError as exc:
+            print(f"{kind} output error: {exc}", file=sys.stderr)
+            return 2
+        if skipped:
+            print(
+                f"  [WARN] {kind} skipped non-mandatory requirements: {', '.join(skipped)}",
+                file=sys.stderr,
+            )
+        export_contents[kind] = content
+        export_counts[kind] = count
 
     if args.dry_run:
         print("\nDry run — output not written.")
+        print(f"  Sources:      {processed_sources}")
+        print(f"  Categories:   {len(req_categories)}")
+        print(f"  Requirements: {total_reqs}")
+        print(f"  Blueprints:   {len(blueprints)}")
+        for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
+            if kind in export_counts:
+                print(f"  {kind}: {export_counts[kind]} requirements")
+        return 0
+
+    if CATALOG_OUTPUT in requested:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            yaml.dump(doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120)
+
+        print(f"\nWritten: {output_path}")
         print(f"  Sources:      {len(sources_meta)}")
         print(f"  Categories:   {len(req_categories)}")
         print(f"  Requirements: {total_reqs}")
         print(f"  Blueprints:   {len(blueprints)}")
-        return 0
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        yaml.dump(doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120)
+        # Validate the harvested output against the canonical catalog schema so a
+        # malformed crawl is caught here rather than silently under-parsed by the
+        # skills that consume it.
+        cat_errors, cat_warnings = rstate.validate_catalog(output_path.read_bytes())
+        for warning in cat_warnings:
+            print(f"  ⚠ schema warning: {warning}")
+        if cat_errors:
+            for error in cat_errors[:6]:
+                print(f"  ✗ schema error: {error}", file=sys.stderr)
+            print(
+                "✗ Harvested catalog failed schema validation (see schemas/requirements-catalog.schema.yaml).",
+                file=sys.stderr,
+            )
+            return 2
 
-    print(f"\nWritten: {output_path}")
-    print(f"  Sources:      {len(sources_meta)}")
-    print(f"  Categories:   {len(req_categories)}")
-    print(f"  Requirements: {total_reqs}")
-    print(f"  Blueprints:   {len(blueprints)}")
-
-    # Validate the harvested output against the canonical catalog schema so a
-    # malformed crawl is caught here rather than silently under-parsed by the
-    # skills that consume it.
-    cat_errors, cat_warnings = rstate.validate_catalog(output_path.read_bytes())
-    for w in cat_warnings:
-        print(f"  ⚠ schema warning: {w}")
-    if cat_errors:
-        for e in cat_errors[:6]:
-            print(f"  ✗ schema error: {e}", file=sys.stderr)
-        print(
-            "✗ Harvested catalog failed schema validation (see schemas/requirements-catalog.schema.yaml).",
-            file=sys.stderr,
-        )
-        return 2
+    for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
+        if kind not in export_contents:
+            continue
+        export_path = export_paths[kind]
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        export_path.write_text(export_contents[kind], encoding="utf-8")
+        print(f"\nWritten: {export_path}")
+        print(f"  Requirements: {export_counts[kind]}")
 
     return 0 if failed == 0 else 2
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Crawl and harvest security requirements and blueprints into a plugin YAML.",
+        description="Harvest a catalog YAML and optional single-file OpenSpec and SpecDD exports.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     parser.add_argument("--config", metavar="PATH")
     parser.add_argument("--output", metavar="PATH")
+    parser.add_argument(
+        "--format",
+        dest="output_formats",
+        action="append",
+        choices=("yaml", "openspec", "specdd", "all"),
+        help="repeat to combine formats; 'all' writes every format",
+    )
+    parser.add_argument("--openspec-output", metavar="PATH")
+    parser.add_argument("--specdd-output", metavar="PATH")
     parser.add_argument("--token", metavar="TOKEN")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true")

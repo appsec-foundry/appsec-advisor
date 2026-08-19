@@ -2,6 +2,16 @@
   "description": "ACME Corp Application Security Requirements",
   "url": "https://security.acme-corp.example.com",
   "output": "../data/appsec-requirements-fallback.yaml",
+  "openspec": {
+    "output": "../data/application-requirements.openspec.md",
+    "title": "ACME Application Specification",
+    "purpose": "Defines observable application behavior harvested from ACME's functional requirement sources."
+  },
+  "specdd": {
+    "output": "../data/application-requirements.sdd",
+    "name": "ACME Application Behavior",
+    "purpose": "Describe observable application behavior harvested from ACME's functional requirement sources."
+  },
 
   "request": {
     "timeout_seconds": 15,
@@ -24,6 +34,7 @@
       "type": "requirement",
       "mode": "structured",
       "title": "Secure Coding Guidelines",
+      "outputs": ["catalog"],
       "crawl_url": "https://security.acme-corp.example.com/scg",
       "reference_url": "https://security.acme-corp.example.com/scg"
     },
@@ -32,14 +43,25 @@
       "type": "requirement",
       "mode": "structured",
       "title": "Secure Software Development Lifecycle",
+      "outputs": ["catalog"],
       "crawl_url": "https://security.acme-corp.example.com/ssdlc",
       "reference_url": "https://security.acme-corp.example.com/ssdlc"
+    },
+    {
+      "id": "application-behavior",
+      "type": "requirement",
+      "mode": "structured",
+      "title": "Application Functional Requirements",
+      "outputs": ["openspec", "specdd"],
+      "crawl_url": "https://product.acme-corp.example.com/requirements",
+      "reference_url": "https://product.acme-corp.example.com/requirements"
     },
     {
       "id": "appsec-blueprints",
       "type": "blueprint",
       "mode": "full",
       "title": "Application Security Blueprints",
+      "outputs": ["catalog"],
       "_note": "crawl_url is indexed itself, then direct same-origin child links under this path are indexed up to max_pages.",
       "crawl_url": "https://security.acme-corp.example.com/blueprints",
       "section_max_chars": 50000
