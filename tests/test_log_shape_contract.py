@@ -113,3 +113,43 @@ def test_phase_nine_is_anchored_without_a_bracketed_boundary(run_dir: Path):
     assert "[Phase 9/" not in log.read_text(encoding="utf-8")
 
     assert record_component_durations._read_phase_9_start(log) is not None
+
+
+def test_watchdog_events_never_lose_the_agent_that_emitted_them():
+    """The agent identity must survive to the consumer, in either line shape.
+
+    `budget_watchdog.format_detail` flattens a structured payload into display
+    text. When the emitter also left the component column empty, every consumer
+    keyed on that column read `""` — which degraded the fix recommender that
+    needs the agent to locate its definition, and folded distinct agents into a
+    single `?` bucket. Both shapes appear in the corpus: the historical 5-field
+    line that carries the name only in the detail, and the 6-field line the
+    fixed emitter writes.
+    """
+    watchdog = {"MAX_TURNS", "BUDGET_WARN", "BUDGET_CRITICAL"}
+    seen = {}
+    for line in _corpus_lines():
+        parsed = aggregate_run_issues._parse_event_line(line)
+        if parsed and parsed["event"] in watchdog:
+            seen[parsed["event"]] = aggregate_run_issues._emitting_agent(parsed)
+
+    assert watchdog <= set(seen), "the corpus must exercise every watchdog event"
+    assert all(seen.values()), f"an unattributed watchdog event reaches the consumer: {seen}"
+    assert seen["MAX_TURNS"] == "ms-renderer"
+
+
+def test_the_emitted_component_column_round_trips_through_both_readers():
+    """A component longer than COMPONENT_WIDTH overflows its column; the fixed
+    offsets then miss and only the whitespace-split fallback recovers it. Agent
+    names on both sides of that boundary must parse identically in the canonical
+    reader and in the aggregator's own."""
+    for agent in ("ms-renderer", "stride-analyzer-v2", "abuse-case-verifier"):
+        line = event_log.format_line(
+            "MAX_TURNS", f"agent={agent}  turns=1/1  pct=100%", level="WARN", component=agent, sid="aa40ceb8"
+        )
+        canonical = event_log.parse_line(line)
+        aggregated = aggregate_run_issues._parse_event_line(line)
+
+        assert canonical is not None and canonical.component == agent
+        assert aggregated is not None and aggregate_run_issues._emitting_agent(aggregated) == agent
+        assert canonical.event == aggregated["event"] == "MAX_TURNS"

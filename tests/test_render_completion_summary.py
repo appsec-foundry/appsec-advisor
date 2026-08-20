@@ -8,6 +8,7 @@ exercises the extraction + rendering contract in isolation.
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 import textwrap
@@ -1399,13 +1400,26 @@ class TestRenderFiles:
         """The summary prints the line only when the compact completion passes the flag.
         Regression guard: `--write-threatdragon` was once defined but no
         completion call site used it, so the artifact was written and never reported.
-        Every site that passes `--write-sarif` must also pass this pair."""
+        Every site that passes `--write-sarif` must also pass this pair.
+
+        This used to grep the doc for the phrase "the true/false pairs", which
+        proved nothing: the prose it matched described an argv the parser had
+        long stopped accepting, and the call still aborted with exit 2. Assert
+        the documented invocation itself instead.
+        """
         impl = (
             Path(__file__).resolve().parents[1] / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
         ).read_text(encoding="utf-8")
-        assert "the true/false pairs" in impl
-        assert "WRITE_SARIF" in impl
-        assert "WRITE_THREATDRAGON" in impl
+        invocation = re.search(
+            r"scripts/render_completion_summary\.py\"?(?P<args>(?:\\\n|[^\n`])*)", impl
+        )
+        assert invocation, "the runtime doc must show a literal render_completion_summary.py invocation"
+        args = invocation.group("args")
+
+        for flag in ("--repo-root", "--reasoning-model", "--assessment-depth"):
+            assert flag in args, f"{flag} is required by the parser and must appear in the documented argv"
+        for pair in ("write-sarif", "write-threatdragon", "write-yaml"):
+            assert re.search(rf"--(?:no-)?{pair}\b", args), f"--[no-]{pair} must be passed explicitly"
         assert "PDF and HTML have no summary flags" in impl
 
 

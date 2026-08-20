@@ -100,10 +100,37 @@ def test_missing_late_and_reordered_transitions_are_visible_or_noops(tmp_path: P
     assert duplicate_spawn[0].event == "AGENT_LIFECYCLE_REJECTED"
 
     lifecycle.register_call(tmp_path, _identity("toolu_old"))
-    events = lifecycle.register_call(tmp_path, _identity("toolu_new", agent="architecture-analyst"))
+    events = lifecycle.register_call(tmp_path, _identity("toolu_new", agent="recon-scanner"))
     assert [event.event for event in events] == ["AGENT_FAILED", "AGENT_SPAWN", "AGENT_RUNNING"]
     assert events[0].reason == "superseded_without_return"
     assert lifecycle.finish_call(tmp_path, "toolu_old") == []
+
+
+def test_a_different_agent_never_supersedes_a_running_one(tmp_path: Path) -> None:
+    """Superseding is scoped to a re-dispatch of the same job, and `agent_type`
+    is part of that scope.
+
+    `_identity` drops job_id/component_id when unset, so two *different* agents
+    dispatched under one action both compared `None == None` and the second
+    spawn killed the first. On the 2026-08-20 run the Stage-2 renderers went out
+    in one message and `secarch-renderer` was marked `superseded_without_return`
+    two seconds after spawn — while it went on to run 14 minutes and deliver its
+    fragment in full.
+
+    The damage is not confined to the event log. `unique_running_call` returns a
+    call only while exactly one is running, precisely so tool uses cannot be
+    misattributed. Forcing one of two parallel calls to `failed` re-opens that
+    guard, and the budget watchdog then charged *both* renderers' tool uses to
+    the survivor: 32 turns counted against `ms-renderer` inside 78 seconds, for
+    an agent whose authoritative `tool_uses` was 22. Every BUDGET_CRITICAL and
+    MAX_TURNS downstream of that is a phantom.
+    """
+    lifecycle.register_call(tmp_path, _identity("toolu_secarch", agent="secarch-renderer"))
+    events = lifecycle.register_call(tmp_path, _identity("toolu_ms", agent="ms-renderer"))
+
+    assert [event.event for event in events] == ["AGENT_SPAWN", "AGENT_RUNNING"]
+    assert {call["agent_call_id"] for call in lifecycle.running_calls(tmp_path)} == {"toolu_secarch", "toolu_ms"}
+    assert lifecycle.unique_running_call(tmp_path, "shared01") is None
 
 
 def test_subagent_stop_usage_lands_on_an_already_terminal_call(tmp_path: Path) -> None:

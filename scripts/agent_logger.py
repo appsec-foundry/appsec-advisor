@@ -920,8 +920,8 @@ _HIGH_SIGNAL_EVENTS = frozenset(
 )
 
 
-def _write(level: str, event: str, detail: str, sid: str = "") -> None:
-    line = format_line(event, detail, level=level, sid=sid)
+def _write(level: str, event: str, detail: str, sid: str = "", component: str | None = None) -> None:
+    line = format_line(event, detail, level=level, sid=sid, component=component)
     try:
         log_file = _log_path()
         _rotate_if_needed(log_file)
@@ -2742,7 +2742,10 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
 
             crossing = observe_tool_uses(runtime_call, tool_uses, _output_dir())
             if crossing is not None:
-                _write("WARN ", crossing["event"], format_detail(crossing), sid)
+                # The emitting agent belongs in the component column, not only
+                # in the free-text detail: consumers key on the column, and a
+                # detail-only name is invisible to them (see _write).
+                _write("WARN ", crossing["event"], format_detail(crossing), sid, component=crossing.get("agent"))
         except Exception:
             pass
     if has_usage and runtime_agent_id:
@@ -3263,7 +3266,7 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         if call is not None:
             crossing = tally_and_check(call, _output_dir())
             if crossing is not None:
-                _write("WARN ", crossing["event"], format_detail(crossing), sid)
+                _write("WARN ", crossing["event"], format_detail(crossing), sid, component=crossing.get("agent"))
     except Exception:
         # Watchdog must never break a run.
         pass

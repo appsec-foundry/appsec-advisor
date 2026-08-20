@@ -264,11 +264,24 @@ def register_call(output_dir: str | Path, identity: dict[str, Any]) -> list[Life
             # session-wide superseding leaves exactly one alive and marks the
             # rest `superseded_without_return`, which then breaks every
             # per-component lookup that requires its call to be running.
+            #
+            # `agent_type` is part of the scope because job_id/component_id are
+            # dropped from the identity when unset (see `_identity`), so two
+            # *different* agents dispatched in parallel under one action — the
+            # Stage-2 secarch + ms renderers — both compare `None == None` and
+            # the second spawn silently kills the first. That also re-opens the
+            # misattribution `unique_running_call` guards against: with one of
+            # two parallel calls forced to `failed`, exactly one call is left
+            # running and the budget watchdog then tallies *both* agents' tool
+            # uses against it, producing phantom BUDGET_CRITICAL/MAX_TURNS.
+            # A genuine re-dispatch of the same job keeps the same agent_type,
+            # so the intended supersede is unaffected.
             for existing in state["calls"]:
                 if (
                     existing.get("state") == "running"
                     and not existing.get("background")
                     and existing.get("session_id") == new_call["session_id"]
+                    and existing.get("agent_type") == new_call.get("agent_type")
                     and existing.get("action_id") == new_call.get("action_id")
                     and existing.get("job_id") == new_call.get("job_id")
                     and existing.get("component_id") == new_call.get("component_id")

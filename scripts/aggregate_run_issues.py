@@ -431,6 +431,27 @@ def _parse_event_line(line: str) -> dict[str, str] | None:
     return {**fields, "source": first, **event_match.groupdict()}
 
 
+def _emitting_agent(ev: dict[str, str]) -> str:
+    """Resolve the agent that emitted an event.
+
+    The component column is authoritative. Watchdog events written before the
+    emitter passed ``component=`` carry the name only inside the detail payload
+    (``agent=ms-renderer  turns=32/32``), where every consumer keyed on the
+    column read an empty string — which then degraded the fix recommenders that
+    need the agent to locate its definition, and collapsed distinct agents into
+    one ``?`` bucket when folding. Fall back to the detail payload so historical
+    logs stay readable.
+    """
+    source = (ev.get("source") or "").strip()
+    if source:
+        return source
+    match = re.search(r"\bagent=(\S+)", ev.get("detail") or "")
+    if match:
+        return match.group(1)
+    match = re.search(r"\bagent_type=(\S+)", ev.get("detail") or "")
+    return match.group(1) if match else ""
+
+
 # ---------------------------------------------------------------------------
 # Phase duration extraction
 # ---------------------------------------------------------------------------
@@ -599,7 +620,7 @@ def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, 
                             "log_line": ln,
                             "raw_event": raw[:300],
                             "timestamp_iso": ev["ts"],
-                            "source_agent": ev["source"],
+                            "source_agent": _emitting_agent(ev),
                         },
                     }
                 )
@@ -638,7 +659,7 @@ def _extract_budget_events(agent_log: list[tuple[int, str]]) -> list[dict]:
                     "log_line": ln,
                     "raw_event": raw[:300],
                     "timestamp_iso": ev["ts"],
-                    "source_agent": ev["source"],
+                    "source_agent": _emitting_agent(ev),
                 },
             }
         )
@@ -953,7 +974,7 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
                 "log_line": ln,
                 "raw_event": raw[:300],
                 "timestamp_iso": ev["ts"],
-                "source_agent": ev["source"],
+                "source_agent": _emitting_agent(ev),
                 "stop_reason": reason,
                 "output_tokens": out_tokens,
                 "cost_usd": cost,

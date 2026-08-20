@@ -78,7 +78,15 @@ verdicts.
 ## Logging and completion
 
 Use `scripts/log_event.py` for `AGENT_START`, semantic step events, and
-`AGENT_END` in `$OUTPUT_DIR/.agent-run.log`. Never emit controller-owned
+`AGENT_END` in `$OUTPUT_DIR/.agent-run.log`. Emit every event with one of these
+exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
+a kind of its own, and `--agent` is what fills the component column:
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent evidence-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent evidence-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent evidence-verifier
+```
+Never emit controller-owned
 dispatch, phase, gate, or routing events. Follow
 `shared/completion-contract.md` and finish with
 `Wrote <N> evidence verdicts to <OUTPUT_DIR>/.evidence-verification.json.`
