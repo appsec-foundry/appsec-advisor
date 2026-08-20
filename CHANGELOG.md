@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A scan cancelled before it started (`/clear`, Esc, crash) no longer blocks the next scan for five minutes: its lock is cleared automatically after two minutes.
+- A scan blocked by a held lock now says who holds it, when the lock clears itself, and offers waiting or taking it over, instead of reporting "Another assessment is running".
 - A scan that reaches the merge step twice now repeats the dispatch it already issued instead of aborting with every STRIDE result on disk.
 - A weakness that falls back to its weakness class for a mechanism ID now gets a valid one instead of aborting the scan at merge validation.
 - The QA gate no longer demands an attack walkthrough the renderer did not select, so a report whose §3 gives a reserved slot to a triage-elevated finding passes instead of entering a repair loop.

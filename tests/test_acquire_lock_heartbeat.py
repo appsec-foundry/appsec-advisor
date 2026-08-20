@@ -618,3 +618,144 @@ def test_legacy_v2_lock_has_empty_run_id(tmp_path: Path):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()))  # no run-id
     assert acquire_lock._read_run_id(lp) == ""
+
+
+# ---------------------------------------------------------------------------
+# Abandoned locks (v3 `acquired=` field).
+#
+# `prepare` takes the lock as its first durable side effect, but nothing
+# heartbeats it until the orchestrator starts its watchdog in Stage 1. A session
+# killed in that window (/clear, Esc, crash) left a lock whose heartbeat stayed
+# *within* the freshness threshold for its full duration while no holder existed,
+# so a new run was told "Another assessment is running" for 300 s. These pin the
+# rule that resolves it: heartbeat == acquired means literally zero heartbeats,
+# and only such a lock may be reaped early.
+# ---------------------------------------------------------------------------
+
+DEAD_PID = 99_999_999  # never alive, so the acquirer is provably gone
+
+
+def _abandoned_lock(tmp_path: Path, age: int, run_id: str = "RUN-GONE") -> Path:
+    """A v3 lock taken ``age`` seconds ago that has never heartbeated."""
+    lp = _lock_path(tmp_path)
+    taken = int(time.time()) - age
+    acquire_lock._write_lock(lp, DEAD_PID, taken, run_id, acquired_ts=taken)
+    return lp
+
+
+def test_a_lock_that_never_heartbeated_is_reaped_once_past_its_grace(tmp_path: Path, capsys):
+    grace = acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS
+    lp = _abandoned_lock(tmp_path, grace + 10)
+    assert acquire_lock._classify_lock(lp)[0] == "abandoned"
+    assert acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"]) == 0
+    assert "LOCK_ACQUIRED" in capsys.readouterr().out
+
+
+def test_a_lock_inside_the_never_heartbeated_grace_still_blocks(tmp_path: Path, capsys):
+    # The grace exists so a holder that is merely slow to reach Stage 1 — or is
+    # waiting on an interactive prompt — is not taken over underneath it.
+    lp = _abandoned_lock(tmp_path, max(1, acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS // 4))
+    assert acquire_lock._classify_lock(lp)[0] == "fresh"
+    assert acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"]) == 1
+    assert "LOCK_BLOCKED" in capsys.readouterr().out
+
+
+def test_a_lock_that_heartbeated_even_once_is_never_judged_abandoned(tmp_path: Path):
+    # The anti-false-reap guard: one heartbeat disarms the rule permanently, so
+    # a live run is judged only by heartbeat freshness however old it is.
+    lp = _lock_path(tmp_path)
+    grace = acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS
+    threshold = acquire_lock._stale_threshold_for_lock(lp)
+    assert grace + 10 < threshold, "fixture must sit past the grace but inside the freshness threshold"
+    taken = int(time.time()) - 3600
+    acquire_lock._write_lock(lp, DEAD_PID, int(time.time()) - (grace + 10), "RUN-LIVE", acquired_ts=taken)
+    state, info = acquire_lock._classify_lock(lp)
+    assert state == "fresh"
+    assert not info.get("never_heartbeated")
+
+
+def test_a_never_heartbeated_lock_whose_acquirer_still_runs_is_not_abandoned(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    taken = int(time.time()) - (acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS + 10)
+    acquire_lock._write_lock(lp, os.getpid(), taken, "RUN-GONE", acquired_ts=taken)
+    assert acquire_lock._classify_lock(lp)[0] != "abandoned"
+
+
+def test_a_pre_v3_lock_is_not_judged_by_the_never_heartbeated_rule(tmp_path: Path):
+    # Without an `acquired=` field "never heartbeated" is unknowable, so such a
+    # lock keeps the legacy heartbeat/mtime behaviour rather than being guessed at.
+    lp = _lock_path(tmp_path)
+    hb = int(time.time()) - (acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS + 10)
+    acquire_lock._write_lock(lp, DEAD_PID, hb, "RUN-GONE")  # no acquired_ts
+    state, info = acquire_lock._classify_lock(lp)
+    assert state == "fresh"
+    assert info.get("acquired") is None
+
+
+def test_a_first_heartbeat_in_the_acquisition_second_still_records_as_later(tmp_path: Path):
+    # This is what makes `heartbeat == acquired` an exact "never beat" test
+    # rather than a one-second race that could reap a live run.
+    lp = _lock_path(tmp_path)
+    now = int(time.time())
+    acquire_lock._write_lock(lp, DEAD_PID, now, "RUN-LIVE", acquired_ts=now)
+    acquire_lock._do_heartbeat(lp)
+    _, heartbeat = acquire_lock._parse_lock(lp)
+    assert heartbeat > acquire_lock._read_acquired_ts(lp)
+
+
+def test_heartbeat_preserves_the_acquisition_stamp(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    taken = int(time.time()) - 90
+    acquire_lock._write_lock(lp, DEAD_PID, taken, "RUN-LIVE", acquired_ts=taken)
+    acquire_lock._do_heartbeat(lp)
+    assert acquire_lock._read_acquired_ts(lp) == taken
+    assert acquire_lock._read_run_id(lp) == "RUN-LIVE"
+
+
+def test_the_acquisition_stamp_is_read_by_label_not_position(tmp_path: Path):
+    # A v3 lock written without a run id puts `acquired=` on the run-id line;
+    # reading by position would hand that string back as the run id.
+    lp = _lock_path(tmp_path)
+    now = int(time.time())
+    acquire_lock._write_lock(lp, DEAD_PID, now, "", acquired_ts=now)
+    assert acquire_lock._read_run_id(lp) == ""
+    assert acquire_lock._read_acquired_ts(lp) == now
+
+
+def test_an_acquired_lock_records_its_acquisition_stamp(tmp_path: Path):
+    lp = _lock_path(tmp_path)
+    assert acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"]) == 0
+    assert acquire_lock._read_acquired_ts(lp) is not None
+
+
+# ---------------------------------------------------------------------------
+# The blocked message is the operator's only basis for deciding wait-vs-delete.
+# ---------------------------------------------------------------------------
+
+
+def test_the_blocked_message_never_presents_the_stored_pid_as_holder_liveness(tmp_path: Path, capsys):
+    # The stored PID belongs to the short-lived helper that wrote the lock and
+    # is dead for a healthy run too, so reporting it as "not running" would read
+    # as "safe to delete" on a run that is very much alive.
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, DEAD_PID, int(time.time()), "RUN-LIVE")
+    acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
+    out = capsys.readouterr().out
+    assert "LOCK_BLOCKED" in out
+    assert str(DEAD_PID) not in out
+
+
+def test_the_blocked_message_offers_both_a_wait_and_a_takeover_path(tmp_path: Path, capsys):
+    lp = _lock_path(tmp_path)
+    acquire_lock._write_lock(lp, DEAD_PID, int(time.time()), "RUN-LIVE")
+    acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
+    out = capsys.readouterr().out
+    assert "clears itself" in out  # wait path, with an ETA
+    assert str(lp) in out  # takeover path names the exact file
+    assert "RUN-LIVE" in out  # and who holds it
+
+
+def test_the_blocked_message_names_the_never_heartbeated_cause(tmp_path: Path, capsys):
+    lp = _abandoned_lock(tmp_path, max(1, acquire_lock.NEVER_HEARTBEATED_GRACE_SECONDS // 4))
+    acquire_lock.main(["acquire_lock.py", str(lp), "--run-id=RUN-NEW"])
+    assert "never heartbeated" in capsys.readouterr().out

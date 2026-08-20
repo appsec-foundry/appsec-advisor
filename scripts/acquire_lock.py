@@ -34,18 +34,41 @@ Options:
 
 Lock file format
 ----------------
-Version 2 (current):
+Version 3 (current):
     <pid>\n
     <heartbeat_unix_ts>\n
+    <run_id>\n           (optional)
+    acquired=<unix_ts>\n (optional, labeled)
+
+Version 2:
+    <pid>\n
+    <heartbeat_unix_ts>\n
+    <run_id>\n           (optional)
 
 Version 1 (pre-heartbeat, still accepted for reads):
     <pid>\n
+
+Lines after the first two are read by label, not by position, so the
+``acquired=`` field is found whether or not a run id precedes it. Readers that
+only need pid and heartbeat (``check_state._read_lock``) are unaffected.
 
 When a v2 lock's heartbeat timestamp is older than HEARTBEAT_STALE_SECONDS
 (5 min), the lock is considered **hung** — the PID is alive but the
 orchestrator has not emitted any observable progress in a threshold window.
 The lock is reaped in that case as if the PID were dead. V1 locks continue
 to use the legacy mtime-based STALE_SECONDS fallback (1 h).
+
+The ``acquired=`` field exists to separate "abandoned before it ever ran" from
+"running". ``prepare`` takes the lock as its first durable side effect, but the
+heartbeat is driven by the orchestrator session, which only starts its watchdog
+once Stage 1 dispatches. A session killed in that window (``/clear``, ESC,
+crash) leaves a lock whose heartbeat stays *within* the freshness threshold for
+its full duration while no holder exists — the false ``LOCK_BLOCKED`` this field
+resolves. Because ``_do_heartbeat`` guarantees a bumped heartbeat is strictly
+greater than the acquisition timestamp, ``heartbeat == acquired`` means
+literally zero heartbeats have ever fired, and such a lock is reaped after
+NEVER_HEARTBEATED_GRACE_SECONDS. A lock that heartbeated even once is never
+judged by this rule.
 
 Exit codes:
   0  — LOCK_ACQUIRED / DIRS_RESET / HEARTBEAT_OK; directories created
@@ -79,6 +102,15 @@ STALE_SECONDS = 3600  # 1h mtime fallback for v1 / ambiguous locks
 # pick a phase-specific threshold from data/phase-budgets.yaml; classify
 # uses the same lookup against the on-disk .appsec-checkpoint.
 HEARTBEAT_STALE_SECONDS = phase_budgets.default_heartbeat_stale_seconds() if phase_budgets else 300
+
+# Grace for a lock that has never heartbeated once (see the module docstring).
+# It must stay comfortably above the watchdog's 60 s heartbeat interval and
+# above the pre-Stage-1 gap in which the runtime may hold the lock while an
+# interactive prompt waits on the operator (SKILL-full-runtime.md §2a/§2b).
+# 120 s buys that margin and still clears an abandoned lock in well under half
+# the phase-agnostic HEARTBEAT_STALE_SECONDS window.
+NEVER_HEARTBEATED_GRACE_SECONDS = 120
+_ACQUIRED_PREFIX = "acquired="
 
 # Hook-log line shape mirrors agent_logger._write so a HEARTBEAT line is
 # indistinguishable from any other event for downstream parsers. Session-ID
@@ -173,25 +205,55 @@ def _parse_lock(lock_path: Path) -> tuple[int | None, int | None]:
     return (pid, heartbeat)
 
 
-def _write_lock(lock_path: Path, pid: int, heartbeat_ts: int, run_id: str = "") -> None:
+def _write_lock(
+    lock_path: Path,
+    pid: int,
+    heartbeat_ts: int,
+    run_id: str = "",
+    acquired_ts: int | None = None,
+) -> None:
     body = f"{pid}\n{heartbeat_ts}\n"
     if run_id:
         # Optional 3rd line — a stable per-run token so an agent dispatched by
         # the same logical run can re-acquire a skill-held lock (see main()).
         body += f"{run_id}\n"
+    if acquired_ts is not None:
+        # Labeled, so its meaning does not depend on whether a run id was
+        # written above it.
+        body += f"{_ACQUIRED_PREFIX}{acquired_ts}\n"
     lock_path.write_text(body, encoding="utf-8")
+
+
+def _tail_lines(lock_path: Path) -> list[str]:
+    try:
+        return [l.strip() for l in lock_path.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
+    except OSError:
+        return []
 
 
 def _read_run_id(lock_path: Path) -> str:
     """Return the optional run-id on the lock's 3rd line, or '' if absent.
 
-    Backward compatible: v2 locks (pid + heartbeat only) return ''.
+    Backward compatible: v2 locks (pid + heartbeat only) return ''. A labeled
+    field such as ``acquired=`` is never mistaken for a run id, so a v3 lock
+    written without a run id still reports ''.
     """
-    try:
-        lines = [l for l in lock_path.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
-    except OSError:
+    lines = _tail_lines(lock_path)
+    if len(lines) < 3:
         return ""
-    return lines[2].strip() if len(lines) >= 3 else ""
+    candidate = lines[2]
+    return "" if candidate.startswith(_ACQUIRED_PREFIX) else candidate
+
+
+def _read_acquired_ts(lock_path: Path) -> int | None:
+    """Return the ``acquired=`` timestamp, or None for a pre-v3 lock."""
+    for line in _tail_lines(lock_path):
+        if line.startswith(_ACQUIRED_PREFIX):
+            try:
+                return int(line[len(_ACQUIRED_PREFIX) :].split()[0])
+            except (ValueError, IndexError):
+                return None
+    return None
 
 
 def release_lock(lock_path: Path, run_id: str = "") -> str:
@@ -298,7 +360,7 @@ def _stale_threshold_for_lock(lock_path: Path) -> int:
 
 
 def _classify_lock(lock_path: Path) -> tuple[str, dict]:
-    """Return (state, info). state in {'fresh', 'hung', 'dead', 'stale_mtime', 'malformed', 'absent'}.
+    """Return (state, info). state in {'fresh', 'abandoned', 'hung', 'dead', 'stale_mtime', 'malformed', 'absent'}.
 
     Classification precedence (heartbeat-first, because the stored PID is an
     ephemeral Python-subprocess PID that is always dead shortly after
@@ -307,6 +369,13 @@ def _classify_lock(lock_path: Path) -> tuple[str, dict]:
       'fresh'        — v2 heartbeat is within the phase-aware threshold
                        (data/phase-budgets.yaml; depth-agnostic default
                        300 s when no phase context is resolvable).
+      'abandoned'    — v3 lock that has never heartbeated once
+                       (heartbeat == acquired) and is older than
+                       NEVER_HEARTBEATED_GRACE_SECONDS, with a dead PID. The
+                       holder died between acquisition and its first
+                       heartbeat, so its still-young heartbeat proves nothing.
+                       Checked before 'fresh' — it is the only state that can
+                       out-rank a young heartbeat.
       'hung'         — v2 heartbeat exceeds the phase-aware threshold
                        AND the stored PID is still alive. A live PID with a
                        silent heartbeat is the signature of a thinking-loop
@@ -335,17 +404,29 @@ def _classify_lock(lock_path: Path) -> tuple[str, dict]:
 
     alive = _pid_alive(pid)
     threshold = _stale_threshold_for_lock(lock_path)
+    acquired = _read_acquired_ts(lock_path)
     info = {
         "pid": pid,
         "heartbeat": heartbeat,
         "mtime_age": int(age_mtime),
         "threshold": threshold,
+        "alive": alive,
+        "acquired": acquired,
     }
 
     # v2 lock with heartbeat — heartbeat freshness is authoritative.
     if heartbeat is not None:
         hb_age = time.time() - heartbeat
         info["heartbeat_age"] = int(hb_age)
+        # Never-heartbeated locks are judged first: their heartbeat is just the
+        # acquisition stamp, so freshness would only be measuring how recently
+        # the holder died. The dead-PID condition keeps the reap conservative —
+        # a still-running acquirer is never taken over.
+        never_beat = acquired is not None and heartbeat == acquired
+        if never_beat:
+            info["never_heartbeated"] = True
+            if not alive and (time.time() - acquired) > NEVER_HEARTBEATED_GRACE_SECONDS:
+                return ("abandoned", info)
         if hb_age <= threshold:
             return ("fresh", info)
         # Stale heartbeat — distinguish hung (PID still alive) from dead.
@@ -405,14 +486,61 @@ def _do_heartbeat(lock_path: Path, phase: str = "?", step: str = "") -> int:
         )
         print("HEARTBEAT_SKIP: lock file malformed", file=sys.stderr)
         return 0
-    # Preserve the original acquirer PID and run-id — only bump the heartbeat.
+    # Preserve the original acquirer PID, run-id and acquisition stamp — only
+    # bump the heartbeat. The bump is forced strictly past the acquisition
+    # stamp so that `heartbeat == acquired` keeps meaning "never heartbeated"
+    # even when the first heartbeat lands in the same second as acquisition;
+    # without that, _classify_lock could reap a live run (see module docstring).
+    acquired = _read_acquired_ts(lock_path)
     now = int(time.time())
-    _write_lock(lock_path, pid, now, _read_run_id(lock_path))
+    if acquired is not None and now <= acquired:
+        now = acquired + 1
+    _write_lock(lock_path, pid, now, _read_run_id(lock_path), acquired_ts=acquired)
     _emit_hook_event(
         output_dir, "INFO", _HEARTBEAT_EVENT, f"pid={pid}  phase={phase}{('  step=' + step) if step else ''}  ts={now}"
     )
     print("HEARTBEAT_OK")
     return 0
+
+
+def _blocked_message(lock_path: Path, info: dict) -> str:
+    """Explain a refused acquisition in terms an operator can act on.
+
+    The former one-liner asserted "Another assessment is running" and offered
+    "Remove ... if stale" with nothing to decide *if stale* by. It read as a
+    hard error even when the holder was demonstrably gone, and gave no way to
+    tell waiting from cleaning up. This names the heartbeat evidence, when the
+    lock clears itself, and what taking it over costs.
+
+    It deliberately does NOT present the stored PID's liveness as the holder's:
+    that PID belongs to the short-lived Python helper that wrote the lock and is
+    dead for a healthy run too (see ``_do_heartbeat``), so "pid not running"
+    would read as "safe to delete" on a run that is very much alive. The
+    heartbeat is the only liveness signal, and it is what the text reasons from.
+    """
+    hb = info.get("heartbeat_age")
+    threshold = info.get("threshold", HEARTBEAT_STALE_SECONDS)
+    run_id = _read_run_id(lock_path) or "unknown"
+    lines = [f"LOCK_BLOCKED: {lock_path.parent} is held by another assessment (run {run_id})."]
+    if hb is None:
+        lines.append(f"  Legacy lock without a heartbeat; it clears itself {STALE_SECONDS}s after its mtime.")
+    elif info.get("never_heartbeated"):
+        grace = max(0, int(NEVER_HEARTBEATED_GRACE_SECONDS - hb))
+        lines.append(
+            f"  Taken {hb}s ago and it has never heartbeated once — that is what a run killed "
+            f"before it started leaves behind (/clear, Esc, crash)."
+        )
+        lines.append(f"  Re-run in ~{grace}s: the lock clears itself once that is certain.")
+    else:
+        remaining = max(0, int(threshold - hb))
+        lines.append(
+            f"  Last heartbeat {hb}s ago. A running assessment heartbeats at least every 60s, "
+            f"so it is most likely still alive."
+        )
+        lines.append(f"  If it is not, the lock clears itself in ~{remaining}s; re-run then.")
+    lines.append(f"  To take over now, delete {lock_path} — only when you are sure no scan is running.")
+    lines.append("  Two runs sharing one output directory corrupt each other's artifacts.")
+    return "\n".join(lines)
 
 
 def main(argv: list[str]) -> int:
@@ -478,19 +606,21 @@ def main(argv: list[str]) -> int:
         # genuinely different run carries a different (or no) run-id and blocks.
         existing_run_id = _read_run_id(lock_path)
         if run_id and existing_run_id and run_id == existing_run_id:
-            _write_lock(lock_path, os.getpid(), int(time.time()), run_id)
+            now = int(time.time())
+            _write_lock(lock_path, os.getpid(), now, run_id, acquired_ts=now)
             print("LOCK_ACQUIRED")
             return 0
-        hb = info.get("heartbeat_age")
-        hb_str = f", hb_age={hb}s" if hb is not None else ""
-        print(
-            f"LOCK_BLOCKED: Another assessment is running "
-            f"(pid={info['pid']}, mtime_age={info['mtime_age']}s{hb_str}). "
-            f"Remove {lock_path} if stale."
-        )
+        print(_blocked_message(lock_path, info))
         return 1
 
-    if state == "hung":
+    if state == "abandoned":
+        print(
+            f"LOCK_STALE: prior lock (run {_read_run_id(lock_path) or 'unknown'}) never "
+            f"heartbeated in {int(time.time() - (info.get('acquired') or 0))}s and its PID "
+            f"{info['pid']} is gone — the holder died before starting; reaped.",
+            file=sys.stderr,
+        )
+    elif state == "hung":
         hb = info.get("heartbeat_age", "?")
         threshold = info.get("threshold", HEARTBEAT_STALE_SECONDS)
         print(
@@ -515,7 +645,8 @@ def main(argv: list[str]) -> int:
         )
     # state == "absent" — fall through and write a fresh lock.
 
-    _write_lock(lock_path, os.getpid(), int(time.time()), run_id)
+    now = int(time.time())
+    _write_lock(lock_path, os.getpid(), now, run_id, acquired_ts=now)
     print("LOCK_ACQUIRED")
     return 0
 
