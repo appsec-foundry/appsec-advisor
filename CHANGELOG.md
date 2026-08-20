@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A completed component is no longer discarded, and the scan no longer aborted, when optional metadata such as an over-long `reason` or a malformed discovery escape fails the schema: the affected entry is dropped and logged, while a defect in the findings themselves still stops the run.
 - A scan cancelled before it started (`/clear`, Esc, crash) no longer blocks the next scan for five minutes: its lock is cleared automatically after two minutes.
 - A scan blocked by a held lock now says who holds it, when the lock clears itself, and offers waiting or taking it over, instead of reporting "Another assessment is running".
 - A scan that reaches the merge step twice now repeats the dispatch it already issued instead of aborting with every STRIDE result on disk.

@@ -168,6 +168,119 @@ def test_completion_rejects_th_unclassified_when_cwe_is_unmappable(tmp_path: Pat
     assert reason is not None and "TH-UNCLASSIFIED" in reason
 
 
+# --------------------------------------------------------------------------
+# Optional-branch pruning before the schema gate.
+#
+# A schema failure keeps the component unpromoted, so it burns its two-attempt
+# budget and aborts the run (OR-14). That is correct for core evidence and
+# wrong for advisory metadata. These tests pin the boundary between the two
+# rather than any single field: the repeated outages (2026-07-20, 2026-07-31,
+# 2026-08-02, 2026-08-20) were each one previously unlisted optional field.
+# --------------------------------------------------------------------------
+
+_LONG = "x" * 600
+
+
+def _valid_stride_component() -> dict:
+    data = json.loads((FIXTURES / "valid_stride.json").read_text(encoding="utf-8"))
+    data["component_id"] = "service-01"
+    data["partial"] = False
+    data["skipped_categories"] = []
+    return data
+
+
+def _write_component(tmp_path: Path, data: dict) -> Path:
+    path = tmp_path / ".stride-service-01.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _escape(**overrides) -> dict:
+    escape = {"reason": "missing-control-proof", "decision_key": "k", "search_paths": ["src/"]}
+    escape.update(overrides)
+    return escape
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate"),
+    [
+        # 2026-08-20 web-ui: 232 chars against maxLength 200 lost a complete
+        # component and aborted the run.
+        ("reason too long", lambda d: d.update(resolved_prior_findings=[{"prior_id": "P-1", "reason": _LONG}])),
+        ("reason missing", lambda d: d.update(resolved_prior_findings=[{"prior_id": "P-1"}])),
+        (
+            "unexpected property",
+            lambda d: d.update(resolved_prior_findings=[{"prior_id": "P-1", "reason": "ok", "confidence": "high"}]),
+        ),
+        ("escape key too long", lambda d: d.update(discovery_escapes=[_escape(decision_key=_LONG)])),
+        ("escape path too long", lambda d: d.update(discovery_escapes=[_escape(search_paths=[_LONG])])),
+        ("escape reason off-enum", lambda d: d.update(discovery_escapes=[_escape(reason="unclear-evidence")])),
+        ("escapes over maxItems", lambda d: d.update(discovery_escapes=[_escape() for _ in range(12)])),
+    ],
+)
+def test_optional_metadata_defect_never_costs_the_component(tmp_path: Path, label: str, mutate) -> None:
+    """A malformed OPTIONAL branch is pruned, not fatal — and pruning never
+    touches the findings. Parametrized over constraint kinds (maxLength,
+    required, additionalProperties, enum, maxItems) because the outage class is
+    the branch being optional, not any one constraint."""
+    data = _valid_stride_component()
+    expected_threats = len(data["threats"])
+    mutate(data)
+    path = _write_component(tmp_path, data)
+
+    assert waves.completion_error(tmp_path, "service-01") is None, label
+
+    repaired = json.loads(path.read_text(encoding="utf-8"))
+    assert len(repaired["threats"]) == expected_threats, "pruning must never drop a finding"
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate"),
+    [
+        ("root component_id", lambda d: d.pop("component_id")),
+        ("root component_name", lambda d: d.pop("component_name")),
+        ("root threats", lambda d: d.pop("threats")),
+        ("threats not an array", lambda d: d.update(threats="nope")),
+        ("threat local_id", lambda d: d["threats"][0].pop("local_id")),
+        ("threat scenario", lambda d: d["threats"][0].pop("scenario")),
+        ("threat stride off-enum", lambda d: d["threats"][0].update(stride="Xenomorph")),
+        ("threat risk off-enum", lambda d: d["threats"][0].update(risk="Katastrophal")),
+    ],
+)
+def test_core_evidence_defect_stays_fatal(tmp_path: Path, label: str, mutate) -> None:
+    """Pruning must not reach core evidence. Required fields are protected by
+    the schema itself — removing one raises a fresh `required` error, which
+    rolls the attempt back — and `threats[i]` elements are never candidates, so
+    a broken finding fails loudly instead of silently disappearing."""
+    data = _valid_stride_component()
+    mutate(data)
+    _write_component(tmp_path, data)
+
+    assert waves.completion_error(tmp_path, "service-01") is not None, label
+
+
+def test_pruning_an_optional_branch_does_not_mask_a_core_defect(tmp_path: Path) -> None:
+    """The dangerous failure mode: an optional defect is pruned successfully
+    while a core defect in the same payload is swallowed with it."""
+    data = _valid_stride_component()
+    data["resolved_prior_findings"] = [{"prior_id": "P-1", "reason": _LONG}]
+    data["threats"][0].pop("scenario")
+    _write_component(tmp_path, data)
+
+    assert waves.completion_error(tmp_path, "service-01") is not None
+
+
+def test_a_clean_component_is_left_byte_identical(tmp_path: Path) -> None:
+    """The net must be inert on valid input — otherwise every poll rewrites the
+    file and churns its mtime, which the wave logic reads as progress."""
+    data = _valid_stride_component()
+    path = _write_component(tmp_path, data)
+    before = path.read_bytes()
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    assert path.read_bytes() == before
+
+
 def test_completion_normalizes_drifted_cvss_v4_shape(tmp_path: Path) -> None:
     """A component whose only defect is a cvss_v4 in the analyzer's common
     drifted shape ({version, score} instead of {base_score, source}) is
@@ -410,7 +523,16 @@ def test_completion_canonicalizes_discovery_escape_field_aliases(tmp_path: Path)
     }
 
 
-def test_completion_rejects_conflicting_discovery_escape_aliases(tmp_path: Path) -> None:
+def test_conflicting_discovery_escape_aliases_never_resolve_to_one_value(tmp_path: Path) -> None:
+    """A canonical field and its alias holding different values is ambiguous,
+    and the plugin must never guess which one was meant.
+
+    The canonicalizer deliberately leaves the conflict in place instead of
+    picking a side. Since 2026-08-20 the ambiguous entry is dropped by the
+    optional-branch prune rather than costing the whole component — the
+    invariant pinned here is the one that always mattered: neither value
+    survives as the resolved decision. The drop is logged, so the lost
+    uncertainty signal is not silent."""
     data = _stride_component_with("CWE-89", "TH-09")
     data["discovery_escapes"] = [
         {
@@ -423,9 +545,13 @@ def test_completion_rejects_conflicting_discovery_escape_aliases(tmp_path: Path)
     path = tmp_path / ".stride-service-01.json"
     path.write_text(json.dumps(data), encoding="utf-8")
 
-    reason = waves.completion_error(tmp_path, "service-01")
-    assert reason is not None
-    assert "unresolved_decision" in reason
+    assert waves.completion_error(tmp_path, "service-01") is None
+
+    repaired = json.loads(path.read_text(encoding="utf-8"))
+    surviving = json.dumps(repaired.get("discovery_escapes", []))
+    assert "canonical-decision" not in surviving
+    assert "different-decision" not in surviving
+    assert "STRIDE_OPTIONAL_PRUNED" in (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
 
 
 def test_plan_fingerprint_rejects_changed_manifest() -> None:
@@ -602,14 +728,10 @@ def test_blocked_claim_reports_the_component_validation_reason(tmp_path: Path, c
     plan["attempts"]["service-01"] = waves.DEFAULT_MAX_ATTEMPTS
     (tmp_path / waves.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8")
     data = _stride_component_with("CWE-89", "TH-09")
-    data["discovery_escapes"] = [
-        {
-            "reason": "component-path-sampling",
-            "decision_key": "admin-route-authentication",
-            "search_paths": ["routes/"],
-            "unexpected": True,
-        }
-    ]
+    # A CORE-evidence defect: an optional-branch defect would now be pruned
+    # instead of blocking, and this test is about the message a blocked claim
+    # reports, not about which payloads block.
+    data["threats"][0].pop("scenario")
     (tmp_path / ".stride-service-01.json").write_text(json.dumps(data), encoding="utf-8")
 
     assert waves.main(["claim", str(tmp_path)]) == 1

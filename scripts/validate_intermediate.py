@@ -11,6 +11,13 @@ Draft 2020-12 cannot express are enforced as Python post-checks:
   - Trimmed length >= 10 chars on stride `scenario`
   - Boundary-reference uniqueness and evidence ownership
 
+`prune_optional_schema_violations` is the pre-gate counterpart to
+`validate_stride`: it removes OPTIONAL branches that fail the schema so a
+complete component is not lost to advisory metadata, while every core-evidence
+violation stays fatal. `scripts/stride_dispatch_waves.py` calls it immediately
+before its schema gate; see that function's docstring for the two invariants
+(drop-never-truncate, and schema-confirmed optionality).
+
 Can be used in two ways:
 
   1. As a module:
@@ -26,6 +33,7 @@ Stdout: "VALID: <summary>" or "INVALID: <error list>"
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -601,6 +609,167 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
             errors.extend(_check_threat_category_id_set(_data_with_source))
         errors.extend(_check_boundary_refs(data))
     return len(errors) == 0, errors
+
+
+#: Root array whose elements ARE the findings. Its elements are never pruned:
+#: dropping one would silently delete a threat instead of failing loudly.
+_STRIDE_CORE_ARRAY = "threats"
+#: Bound on the prune fixpoint. Each round removes at most one branch, so this
+#: caps work on a payload whose optional metadata is broken in many places.
+_PRUNE_MAX_ROUNDS = 12
+
+
+def _error_signatures(errors) -> set[str]:
+    return {f"{list(e.absolute_path)}|{e.validator}|{e.message}" for e in errors}
+
+
+def _format_target(target: list) -> str:
+    """Render a prune target the way _format_error_path renders an error path."""
+    parts: list[str] = []
+    for segment in target:
+        if isinstance(segment, int):
+            parts.append(f"[{segment}]")
+        else:
+            parts.append(f".{segment}" if parts else str(segment))
+    return "".join(parts)
+
+
+def _prune_targets(path: list) -> list[list]:
+    """Prune candidates for one error path, finest carrier first.
+
+    A path ending in an int deletes that array element; otherwise the whole
+    property is deleted. Innermost array elements come first so a single bad
+    entry does not cost its entire branch.
+    """
+    targets: list[list] = []
+    for i in range(len(path) - 1, -1, -1):
+        if isinstance(path[i], int):
+            targets.append(path[: i + 1])
+    if path and isinstance(path[0], str):
+        targets.append([path[0]])
+    seen: set[str] = set()
+    unique: list[list] = []
+    for target in targets:
+        key = repr(target)
+        if key not in seen:
+            seen.add(key)
+            unique.append(target)
+    return unique
+
+
+def _is_core_evidence(target: list) -> bool:
+    """True for `threats` itself and for a whole `threats[i]` element."""
+    if not target:
+        return True
+    if target[0] != _STRIDE_CORE_ARRAY:
+        return False
+    return len(target) <= 2
+
+
+def _delete_at(data: Any, target: list) -> bool:
+    node = data
+    for segment in target[:-1]:
+        try:
+            node = node[segment]
+        except (KeyError, IndexError, TypeError):
+            return False
+    last = target[-1]
+    try:
+        if isinstance(last, int):
+            if not isinstance(node, list) or last >= len(node):
+                return False
+            node.pop(last)
+        elif isinstance(node, dict) and last in node:
+            del node[last]
+        else:
+            return False
+    except (KeyError, IndexError, TypeError):
+        return False
+    return True
+
+
+def prune_optional_schema_violations(data: dict) -> list[str]:
+    """Drop optional branches that fail the STRIDE schema.
+
+    Returns the formatted paths that were removed, in the order removed; an
+    empty list means the payload was left untouched. The caller is expected to
+    surface a non-empty result: `discovery_escapes` in particular records where
+    the analyzer could NOT resolve evidence, so dropping it silently would make
+    a component look more certain than it is.
+
+    A STRIDE component that fails its schema is never promoted, so it stays
+    `incomplete`, burns its two-attempt budget and aborts the run (OR-14). That
+    is right for core evidence and wrong for advisory metadata: four times an
+    otherwise complete component was lost to one over-long or malformed
+    OPTIONAL field (2026-07-20 seed_only, 2026-07-31 skipped_categories and
+    empty attack_steps, 2026-08-02 a 272-char attack step, 2026-08-20 a 232-char
+    `resolved_prior_findings[].reason` against maxLength 200). Each was repaired
+    field by field afterwards, so the next unlisted field repeats the outage.
+
+    This is that repair as a rule instead of a list, and it binds every optional
+    branch — including ones no run has hit yet.
+
+    Two invariants make it safe:
+
+    * **Drop, never truncate.** Shortening looks tempting for prose but the same
+      `maxLength` guards `discovery_escapes[].search_paths` (500),
+      `boundary_refs[].evidence_locations[].file` (512) and
+      `origin_component_id` (128). A truncated path or ID VALIDATES and points
+      nowhere — silent corruption, strictly worse than the loud failure. Prose
+      fields that are worth preserving keep their dedicated trimmers in
+      merge_threats.py, which run before this net.
+    * **The schema decides what is optional, not a list here.** A candidate is
+      applied only when it strictly shrinks the error set without introducing a
+      new one. Pruning a required branch raises a fresh `required` error and is
+      rolled back, so core fields (`component_id`, `component_name`,
+      `analyzed_at`, `threats`, and each threat's `local_id`, `stride`,
+      `scenario`, `likelihood`, `impact`, `risk`) stay fatal by construction.
+      `threats[i]` elements are additionally never candidates — dropping one
+      would shrink the error set while deleting a finding.
+
+    Scope — sibling surfaces deliberately NOT routed through this, so the next
+    reader does not "finish the job" by reflex:
+
+    * The recon producer (`orchestration_controller._recon_producer_retry`)
+      already answers this failure class properly: it redispatches the producer
+      WITH the validator errors, so the analyzer can correct the exact field.
+      That is strictly better than dropping the branch. STRIDE has no such path
+      — its retry only raises the turn budget, which a malformed field ignores.
+    * The other context-v2 boundary producers (`.stride-analyst-context.json`,
+      the post-STRIDE synthesis artifacts) do carry optional LLM-written text
+      under `maxLength` and would fail the same way, but each writes a single
+      artifact: there is no set of already-valid siblings to save, so the
+      trade-off that justifies pruning here does not transfer unexamined.
+      Extend this only against a real incident, not on suspicion.
+    """
+    if not isinstance(data, dict):
+        return []
+    validator = _validator("stride")
+    pruned: list[str] = []
+    for _ in range(_PRUNE_MAX_ROUNDS):
+        errors = list(validator.iter_errors(data))
+        if not errors:
+            break
+        before = _error_signatures(errors)
+        progressed = False
+        for error in errors:
+            for target in _prune_targets(list(error.absolute_path)):
+                if _is_core_evidence(target):
+                    continue
+                trial = copy.deepcopy(data)
+                if not _delete_at(trial, target):
+                    continue
+                if _error_signatures(validator.iter_errors(trial)) < before:
+                    data.clear()
+                    data.update(trial)
+                    pruned.append(_format_target(target))
+                    progressed = True
+                    break
+            if progressed:
+                break
+        if not progressed:
+            break
+    return pruned
 
 
 def _check_architecture_coverage_invariants(data: dict) -> list[str]:

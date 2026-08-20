@@ -30,6 +30,7 @@ from typing import Any
 
 import agent_lifecycle
 import budget_watchdog
+from event_log import format_line
 from jsonschema import Draft202012Validator
 from merge_threats import (
     backfill_threat_attack_steps,
@@ -38,7 +39,7 @@ from merge_threats import (
     backfill_threat_cvss_v4,
     drop_invalid_threat_boundary_refs,
 )
-from validate_intermediate import validate_stride
+from validate_intermediate import prune_optional_schema_violations, validate_stride
 
 DEFAULT_CONCURRENCY = 5
 # One context-v2 component can require eleven immediate receipt checks: bundle,
@@ -278,6 +279,30 @@ def attempt_artifact(component_id: str, attempt: int) -> str:
     return f"{ATTEMPT_DIR_NAME}/{component_id}.attempt-{attempt}.json"
 
 
+def _log_pruned_branches(output_dir: Path, component_id: str, pruned: list[str]) -> None:
+    """Record which optional branches were dropped to keep a component.
+
+    Pruning trades an advisory branch for the component. That trade is right,
+    but it must not be invisible: a dropped `discovery_escapes` entry is the
+    analyzer's own record that it could not resolve some evidence, and a
+    silently thinner component reads as more certain than it is.
+    """
+    try:
+        with (output_dir / ".agent-run.log").open("a", encoding="utf-8") as handle:
+            handle.write(
+                format_line(
+                    "STRIDE_OPTIONAL_PRUNED",
+                    f"{component_id}: dropped {', '.join(pruned)}",
+                    level="WARN ",
+                    component="stride-waves",
+                )
+            )
+    except OSError:
+        # Reporting must never fail the wave check the way the defect it
+        # reports on already did.
+        pass
+
+
 def _promote_attempt_output(source: Path, canonical: Path) -> None:
     """Publish validated attempt bytes without giving another attempt the same target."""
     try:
@@ -355,6 +380,9 @@ def completion_error(
     #     already rejected the component.
     #   * discovery_escapes aliases from the analyzer's pre-contract wording,
     #     renamed to the exact schema fields without changing their values.
+    # These stay field-specific because each PRESERVES a value the generic net
+    # below would only drop. They are not the boundary of what gets repaired:
+    # prune_optional_schema_violations() catches every other optional branch.
     # Persist the repaired output so merge and any resume see the canonical form.
     if _canonicalize_discovery_escape_aliases(data):
         repaired = True
@@ -370,6 +398,16 @@ def completion_error(
                 repaired = True
             if drop_invalid_threat_boundary_refs(threat):
                 repaired = True
+    # Safety net under the field-specific repairs above: drop any remaining
+    # OPTIONAL branch that still fails the schema, so an otherwise complete
+    # component is not lost to advisory metadata. Core-evidence violations are
+    # left untouched and stay fatal below -- see the function's docstring for
+    # why this drops rather than truncates, and how the schema (not a list
+    # here) decides what counts as optional.
+    pruned = prune_optional_schema_violations(data)
+    if pruned:
+        repaired = True
+        _log_pruned_branches(output_dir, component_id, pruned)
     if repaired:
         _atomic_write_json(path, data)
     ok, errors = validate_stride(data)
