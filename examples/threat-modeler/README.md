@@ -1,8 +1,8 @@
 # Threat-Modeler — Example Reports
 
-Sample outputs from the **threat-modeler** plugin, run against public and
-internal test applications. Use them to see the report structure, depth levels
-and artifact formats before running a scan of your own.
+Sample outputs from the **threat-modeler** plugin, run against public test
+applications. Use them to see the report structure, depth levels and artifact
+formats before running a scan of your own.
 
 > For more examples (additional targets, depths and historical runs), see the
 > companion repo: **<https://github.com/matthiasrohr/appsec-advisor-examples>**
@@ -17,6 +17,9 @@ Each run produces a set of files that share a common slug
 | `.md` | Human-readable threat-model report (Management Summary → Threat Register). |
 | `.yaml` | Machine-readable model — findings, STRIDE mapping, mitigations, abuse cases. |
 | `.pdf` | Rendered report with cover and TOC (where included). |
+| `.html` | Browser-readable report (where included). |
+| `.sarif.json` | SARIF v2.1 results for code-scanning integrations (where included). |
+| `.threatdragon.json` | Alpha, opt-in OWASP Threat Dragon v2 export for Threat Dragon and ThreatAtlas (where included). |
 | `.figure1.svg` | Figure 1 — Architecture & Top Threats. |
 | `.figure2.svg` | Figure 2 — Risk Flow (Actor → Tier → Impact). |
 
@@ -29,17 +32,25 @@ different releases stay side by side and comparable.
 insecure web shop:
 
 - **Tech stack:** Angular, Node.js, Express, Socket.IO, Sequelize, SQLite, Docker.
-- `threat-model-juice-shop-quick-v0.4.*` — quick depth.
-- `threat-model-juice-shop-requirements-quick-v0.4.md` — quick depth with a
-  requirements-compliance section (findings mapped to security requirements).
-- `threat-model-juice-shop-standard-v0.5.*` — standard depth (broader STRIDE
-  coverage, abuse cases).
+- [Quick report](threat-model-juice-shop-quick-v0.5.2.md) — quick depth.
+- [Standard report](threat-model-juice-shop-standard-v0.5.2.md) — standard
+  depth.
+- [Thorough report](threat-model-juice-shop-thorough-v0.5.2.md) — thorough
+  depth.
 
-**Insecure WebApp** — internal test project:
+**[Damn Vulnerable Web Application (DVWA)](https://github.com/digininja/DVWA)**
+— deliberately vulnerable PHP/MariaDB web application:
 
-- **Tech stack:** Java 17, Spring Boot, Spring Security, Spring Data JPA,
-  Thymeleaf, H2, Docker.
-- `threat-model-insecure-webapp-standard-v0.5.2.*` — standard depth.
+- **Tech stack:** PHP, MariaDB, Docker.
+- [Standard report](threat-model-dvwa-standard-v0.5.2.md) and its
+  [unversioned copy](threat-model-dvwa.md) — standard depth.
+
+**[OWASP VulnerableApp](https://github.com/SasanLabs/VulnerableApp)** —
+vulnerable application for demonstrating and testing security issues:
+
+- **Tech stack:** Java, Spring Boot, JSP, PHP.
+- [Standard report](threat-model-owasp-vulnerableapp-standard-v0.5.2.md) —
+  standard depth.
 
 ## Assessment depths
 
