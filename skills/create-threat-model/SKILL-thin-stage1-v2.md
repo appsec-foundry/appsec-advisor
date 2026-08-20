@@ -24,7 +24,7 @@ reaches console text, an Agent description, or a task row.
 ## Lifecycle
 
 Before the first boundary command, start the fixed heartbeat watchdog from the parent runtime
-with `run_in_background: true`; retain `HEARTBEAT_TASK_ID`.
+with `run_in_background: true`; retain its task id, never printed.
 
 ## Boundary loop
 

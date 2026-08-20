@@ -224,7 +224,11 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     assert "Before the first boundary command" in text
     assert "fixed heartbeat watchdog from the parent runtime" in flat
     assert "run_in_background: true" in text
-    assert "HEARTBEAT_TASK_ID" in text
+    # The watchdog task id is held for TaskStop, not announced: an all-caps
+    # variable token made the runtime echo `HEARTBEAT_TASK_ID=<id>` to the
+    # console, which the no-meta-narration rule above already forbids.
+    assert "retain its task id, never printed" in flat
+    assert "HEARTBEAT_TASK_ID" not in text
 
     # Per-role measurement must be executable, not a prose suggestion. R9
     # recorded only abuse verification and rendering despite dispatching all
