@@ -408,6 +408,12 @@ finding_types:
     cwe_any: [CWE-732, CWE-829]
     title_hints: ["bypassPermissions", "autoApprove", "auto-approve", "approval_policy", "allow-all-tools", "enableAllProjectMcpServers", "trusted MCP server"]
 
+  - id: FT-182
+    name: "Coding-Agent Hook Executes Untrusted Content"
+    parent_category: TH-14
+    cwe_any: [CWE-829, CWE-78]
+    title_hints: ["hook", "PreToolUse", "UserPromptSubmit", "curl | sh", "command substitution"]
+
   # ---------- Catch-all ----------
   - id: FT-998
     name: "Configuration / IaC Misconfiguration (Other)"

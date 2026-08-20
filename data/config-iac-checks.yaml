@@ -531,3 +531,51 @@ checks:
     finding_type: FT-180
     rationale: "The committed workflow or script starts an agent with approvals and isolation switched off, with repository write access and CI secrets in its environment and no human in the loop."
     remediation: "Drop the bypass flag and grant the agent the specific tools the job needs"
+
+  - id: IAC-072
+    name: "Committed agent hooks must not run remote or constructed commands"
+    iac_type: agent_config
+    file_pattern: ".claude/*.json"
+    expect: structured
+    evaluator: claude_hook_runs_untrusted_command
+    severity_if_violated: High
+    cwe: CWE-829
+    finding_type: FT-182
+    rationale: "A hook runs on every matching event, before anyone reviews the result. Piping fetched content into a shell executes whatever the remote host serves that day, and building the command through substitution lets the tool payload or the prompt text decide what runs."
+    remediation: "Replace the hook body with a checked-in script that takes no interpolated input and fetches nothing at run time"
+
+  - id: IAC-073
+    name: "Committed agent hooks must not egress or delete on every trigger"
+    iac_type: agent_config
+    file_pattern: ".claude/*.json"
+    expect: structured
+    evaluator: claude_hook_egresses_or_destroys
+    severity_if_violated: Medium
+    cwe: CWE-668
+    finding_type: FT-182
+    rationale: "The hook sends data outward or removes files each time its event fires, for every contributor, with whatever the session holds in scope."
+    remediation: "Drop the network call or destructive command from the hook, or gate it behind an explicit local opt-in"
+
+  - id: IAC-074
+    name: "Committed permission rules must not grant shell or credential access"
+    iac_type: agent_config
+    file_pattern: ".claude/settings*.json"
+    expect: structured
+    evaluator: claude_permission_grants_host_control
+    severity_if_violated: High
+    cwe: CWE-732
+    finding_type: FT-181
+    rationale: "A pre-approved `Bash(*)`, a high-risk command wildcard, an unrestricted write, or a rule naming a credential-bearing path removes the prompt for exactly the calls the prompt exists for — and it does so for everyone who opens the repository."
+    remediation: "Narrow each allow rule to the command or path the workflow needs, and keep credential paths in permissions.deny"
+
+  - id: IAC-075
+    name: "Committed permission rules must not grant unrestricted read or fetch"
+    iac_type: agent_config
+    file_pattern: ".claude/settings*.json"
+    expect: structured
+    evaluator: claude_permission_grants_broad_access
+    severity_if_violated: Medium
+    cwe: CWE-668
+    finding_type: FT-181
+    rationale: "An unrestricted `Read` reaches files outside the project, and a `WebFetch` without a domain list is a usable channel for sending what it read anywhere."
+    remediation: "Scope Read rules to project paths and pin WebFetch to the domains the work needs"

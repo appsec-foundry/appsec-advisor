@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- A scan now reports the sandbox, approval and tool-trust posture set by a repository's committed coding-agent configuration for Claude Code, Codex, Copilot, Gemini CLI and Kiro.
+- A scan now reports the sandbox, approval, hook and tool-trust posture set by a repository's committed coding-agent configuration for Claude Code, Codex, Copilot, Gemini CLI and Kiro.
 - The requirements harvester can emit selected functional requirements as single-file OpenSpec and SpecDD specifications.
 - The context-v2 analysis runtime projects only component-specific facts and reduced reference API cost by 39.8 % at quick depth and 26.8 % at thorough depth.
 - A new or rebuilt analysis now takes optional business context from pasted text or a URL, interactively, through `--context`, or not at all with `--skip-context`. See `docs/threat-modeler.md`.

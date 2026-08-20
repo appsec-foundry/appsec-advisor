@@ -68,7 +68,9 @@ import re
 import stat
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable
+
+from agent_config_checks import classify_hook_command, classify_permission_rule, iter_hook_commands
 
 # Try to load the central exclude policy. Fall back to a minimal built-in
 # set if scan_excludes is unavailable — the script must not hard-fail when
@@ -2651,96 +2653,14 @@ def _scan_mcp_servers(path: Path, rel: str) -> list[dict[str, Any]]:
 
 # --- Cat 28b: Claude Code permission model (deterministic) -----------------
 # The flat `_CAT28_DANGEROUS` regex only ever matched literal `Bash(*)`. The
-# checks below parse `permissions.allow` / `defaultMode` structurally so the
+# scan below parses `permissions.allow` / `defaultMode` structurally so the
 # recon template's 7.32 "dangerous permission patterns" table has a real
 # producer. Only `allow` is graded: `deny`/`ask` entries are protective, and a
-# thin or absent deny-list is hygiene, not an exploitable weakness.
+# thin or absent deny-list is hygiene, not an exploitable weakness. The grading
+# itself lives in `agent_config_checks.py`, which the config/IaC catalog uses
+# to raise the same signal as a finding.
 
 _CLAUDE_SETTINGS_NAMES = {"settings.json", "settings.local.json"}
-_PERM_RULE_RE = re.compile(r"^(?P<tool>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\((?P<arg>.*)\))?$", re.DOTALL)
-_PERM_WILDCARDS = {"", "*", "*:*", "**", "**/*"}
-# Commands that hand over the host (or an exfil channel) when granted with a
-# `:*` argument wildcard. Deliberately narrow: `git`/`npm`/`pip` are omitted
-# because `Bash(git:*)`-style rules are near-universal and mostly benign, and a
-# noisy Cat 28b table would get ignored wholesale.
-_BASH_HIGH_RISK = {
-    "sudo",
-    "su",
-    "rm",
-    "chmod",
-    "chown",
-    "ssh",
-    "scp",
-    "nc",
-    "ncat",
-    "eval",
-    "exec",
-    "dd",
-    "mkfs",
-    "curl",
-    "wget",
-}
-_SENSITIVE_PATH_RE = re.compile(
-    r"(?i)(\.ssh|\.aws|\.gnupg|\.kube|\.netrc|\.npmrc|\.env\b|id_rsa|id_ed25519|credential|\.git/config)"
-)
-
-
-def _classify_permission_rule(rule: str) -> dict[str, str] | None:
-    """Grade one `permissions.allow` entry. Returns None when not a real risk."""
-    match = _PERM_RULE_RE.match(rule.strip())
-    if not match:
-        return None
-    tool = match.group("tool")
-    arg = (match.group("arg") or "").strip()
-    arg_is_wildcard = arg in _PERM_WILDCARDS
-
-    if tool == "Bash":
-        if arg_is_wildcard:
-            return {
-                "severity": "Critical",
-                "reason": f"`{rule}` grants unrestricted shell execution without a permission prompt",
-            }
-        command = arg.split(":", 1)[0].strip()
-        if command in _BASH_HIGH_RISK:
-            return {
-                "severity": "High",
-                "reason": f"`{rule}` pre-approves the high-risk command `{command}` with an argument wildcard",
-            }
-        return None
-
-    if tool in {"Write", "Edit", "MultiEdit", "NotebookEdit"}:
-        if arg_is_wildcard:
-            return {
-                "severity": "High",
-                "reason": f"`{rule}` allows unprompted writes to any path",
-            }
-        if _SENSITIVE_PATH_RE.search(arg):
-            return {
-                "severity": "High",
-                "reason": f"`{rule}` allows unprompted writes to a credential-bearing path",
-            }
-        return None
-
-    if tool == "Read":
-        if _SENSITIVE_PATH_RE.search(arg):
-            return {
-                "severity": "High",
-                "reason": f"`{rule}` grants read access to a credential-bearing path",
-            }
-        if arg_is_wildcard:
-            return {
-                "severity": "Medium",
-                "reason": f"`{rule}` grants unrestricted read access, including files outside the project",
-            }
-        return None
-
-    if tool in {"WebFetch", "WebSearch"} and (arg_is_wildcard or arg.lower() in {"domain:*", "domain:  *"}):
-        return {
-            "severity": "Medium",
-            "reason": f"`{rule}` permits requests to any host — a usable exfiltration channel",
-        }
-
-    return None
 
 
 def _find_line(text: str, needle: str) -> int | None:
@@ -2783,7 +2703,7 @@ def _scan_claude_permissions(path: Path, rel: str) -> list[dict[str, Any]]:
         for entry in allow:
             if not isinstance(entry, str):
                 continue
-            classified = _classify_permission_rule(entry)
+            classified = classify_permission_rule(entry)
             if classified is None:
                 continue
             findings.append(
@@ -2816,79 +2736,9 @@ def _scan_claude_permissions(path: Path, rel: str) -> list[dict[str, Any]]:
 # --- Cat 28c: hook command bodies (deterministic) --------------------------
 # `_CAT28_DANGEROUS` only ever matched the literal event-key names, so a benign
 # formatter hook was flagged while an exfiltrating `curl` hook was not, and
-# `UserPromptSubmit` was absent from the regex entirely. The checks below walk
-# the hook structure and grade the actual `command` bodies.
-
-_HOOK_EVENTS = {
-    "PreToolUse",
-    "PostToolUse",
-    "UserPromptSubmit",
-    "Stop",
-    "SubagentStop",
-    "SessionStart",
-    "SessionEnd",
-    "Notification",
-    "PreCompact",
-}
-_HOOK_PIPE_TO_SHELL_RE = re.compile(r"(?i)\b(?:curl|wget)\b[^|;&]*\|\s*(?:sudo\s+)?(?:ba)?sh\b")
-_HOOK_SUBSTITUTION_RE = re.compile(r"\$\(|`")
-_HOOK_EGRESS_RE = re.compile(r"(?i)(\bcurl\b|\bwget\b|\bnc\b|\bncat\b|\bscp\b|https?://)")
-_HOOK_DESTRUCTIVE_RE = re.compile(r"(?i)(\brm\s+-[rf]{1,2}\b|\bchmod\s+777\b|\bdd\s+if=)")
-
-
-def _classify_hook_command(event: str, command: str) -> dict[str, str] | None:
-    """Grade one hook `command` body. Returns None when not a real risk."""
-    if _HOOK_PIPE_TO_SHELL_RE.search(command):
-        return {
-            "severity": "Critical",
-            "reason": f"`{event}` hook fetches and pipes remote content into a shell — remote code execution on every trigger",
-        }
-    if _HOOK_SUBSTITUTION_RE.search(command):
-        if event == "UserPromptSubmit":
-            # Attacker-controlled prompt text reaches the command line before
-            # any filtering, so substitution here is directly injectable.
-            return {
-                "severity": "Critical",
-                "reason": "`UserPromptSubmit` hook builds a shell command via substitution — prompt text reaches the command line unfiltered",
-            }
-        return {
-            "severity": "High",
-            "reason": f"`{event}` hook uses shell command substitution — tool payload can influence the executed command",
-        }
-    if _HOOK_EGRESS_RE.search(command):
-        return {
-            "severity": "High",
-            "reason": f"`{event}` hook network-egresses on every trigger — a continuous exfiltration channel",
-        }
-    if _HOOK_DESTRUCTIVE_RE.search(command):
-        return {
-            "severity": "High",
-            "reason": f"`{event}` hook runs a destructive command on every trigger",
-        }
-    return None
-
-
-def _iter_hook_commands(data: Any) -> Iterator[tuple[str, str]]:
-    """Yield (event, command) for every hook entry in a settings/hooks object."""
-    if not isinstance(data, dict):
-        return
-    events = data.get("hooks") if isinstance(data.get("hooks"), dict) else data
-    if not isinstance(events, dict):
-        return
-    for event, groups in events.items():
-        if event not in _HOOK_EVENTS or not isinstance(groups, list):
-            continue
-        for group in groups:
-            if not isinstance(group, dict):
-                continue
-            entries = group.get("hooks")
-            entries = entries if isinstance(entries, list) else [group]
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                command = entry.get("command")
-                if isinstance(command, str) and command.strip():
-                    yield str(event), command
+# `UserPromptSubmit` was absent from the regex entirely. The scan below walks
+# the hook structure and grades the actual `command` bodies through the shared
+# graders in `agent_config_checks.py`.
 
 
 def _find_hook_line(raw: str, event: str, command: str) -> int | None:
@@ -2909,8 +2759,8 @@ def _scan_hook_commands(path: Path, rel: str) -> list[dict[str, Any]]:
         return []
 
     findings: list[dict[str, Any]] = []
-    for event, command in _iter_hook_commands(data):
-        classified = _classify_hook_command(event, command)
+    for event, command in iter_hook_commands(data):
+        classified = classify_hook_command(event, command)
         if classified is None:
             continue
         findings.append(

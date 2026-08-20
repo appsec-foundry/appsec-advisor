@@ -3226,6 +3226,7 @@ _IAC_SURFACE_GLOBS = (
     # repository can carry an agent posture and no IaC file at all.
     ".claude/settings.json",
     ".claude/settings.local.json",
+    ".claude/hooks.json",
     ".codex/config.toml",
     ".gemini/settings.json",
     ".kiro/settings/mcp.json",
