@@ -35,12 +35,6 @@ insecure web shop:
 - `threat-model-juice-shop-standard-v0.5.*` — standard depth (broader STRIDE
   coverage, abuse cases).
 
-**[Damn Vulnerable Web Application (DVWA)](https://github.com/digininja/DVWA)** —
-deliberately insecure PHP/MySQL web application:
-
-- **Tech stack:** PHP, MariaDB/MySQL, Apache, Docker.
-- `threat-model-dvwa-v0.5.2.*` — standard depth.
-
 **Insecure WebApp** — internal test project:
 
 - **Tech stack:** Java 17, Spring Boot, Spring Security, Spring Data JPA,
