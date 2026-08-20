@@ -2,9 +2,8 @@
 
 `prepare` selects this runtime; no other Stage-1 runtime is supported.
 
-**No meta-narration.** This runtime emits no console text at all: a dispatch, a
-waiter exit, a wave, a retry, a returned job, and a completion count are progress
-the task row already carries. Only an abort speaks, and a command, boundary, or id never
+**No meta-narration.** This runtime emits no console text at all; the task row
+carries progress. Only an abort speaks, and a command, boundary, or id never
 reaches console text, an Agent description, or a task row.
 
 ## Invariants
@@ -31,21 +30,21 @@ with `run_in_background: true`; retain `HEARTBEAT_TASK_ID`.
 
 Call:
 
-   ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
-     <command> --output-dir "$OUTPUT_DIR"
-   ```
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+  <command> --output-dir "$OUTPUT_DIR"
+```
 
 Send foreground `dispatch_jobs[]` together. Immediately before dispatch call
 `verify-receipts` with every artifact receipt and STRIDE
 `taxonomy_slice_path`/`taxonomy_slice_sha256`. This is the last filesystem
 operation. `run_gate` completes; fix and repeat `reject`; else terminal.
 
-   ```bash
-   python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
-     verify-receipts --output-dir "$OUTPUT_DIR" \
-     --receipt "<artifact_path>" "<sha256>" [...]
-   ```
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
+  verify-receipts --output-dir "$OUTPUT_DIR" \
+  --receipt "<artifact_path>" "<sha256>" [...]
+```
 
 After launching STRIDE, join only the current action's components:
 
@@ -112,8 +111,8 @@ the shared effective plan or registry, or inline untrusted artifacts.
 The ten `ACTION.task_rows` follow the jobs' `semantic_role` order.
 
 Set a job's row `in_progress` before dispatch and `completed` on return. Complete
-earlier open rows because depth and cache state skip jobs. While joining STRIDE, set its active form to
-`STRIDE <ready>/<expected> components` from the waiter's last
+earlier open rows: depth and cache state skip jobs. While joining STRIDE, set its
+active form to `STRIDE <ready>/<expected> components` from the waiter's last
 `[stride] <ready>/<expected> ready` line. ASCII only in an active form.
 
 ## Logging and stats
@@ -129,4 +128,4 @@ For each group run `record_stage_stats.py "$OUTPUT_DIR" --stage 1 --variant "<se
 ## Close
 
 After `action=run_gate`, heartbeat, stop the watchdog, mark Stage 1 done, and
-continue. The gate wrote `phase=10b status=completed need_render=true runtime_generation=context-v2`.
+continue. The gate already wrote the completed checkpoint.
