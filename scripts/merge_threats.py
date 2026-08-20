@@ -104,13 +104,43 @@ def _load_cwe_to_th_map() -> dict[str, str]:
     return result
 
 
+@functools.lru_cache(maxsize=1)
+def _load_finding_type_to_th_map() -> dict[str, str]:
+    """Load FT-NNN → parent TH-NN from data/finding-types.yaml."""
+    path = Path(__file__).resolve().parent.parent / "data" / "finding-types.yaml"
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except OSError:
+        return {}
+    result: dict[str, str] = {}
+    for entry in doc.get("finding_types") or []:
+        if not isinstance(entry, dict):
+            continue
+        parent = entry.get("parent_category")
+        if isinstance(entry.get("id"), str) and isinstance(parent, str):
+            result[entry["id"]] = parent
+    return result
+
+
 def _threat_category_id_for(t: dict) -> str | None:
-    """Return the TH-XX id for a threat based on its CWE, or None."""
+    """Return the TH-XX id for a threat based on its CWE, or None.
+
+    Falls back to the parent category of the threat's finding type. Several
+    CWEs are deliberately absent from ``cwe_to_th`` because they are context-
+    overloaded (CWE-732 is a container permission and an app-level ACL bug),
+    which left the findings carrying them unclassified in the register. Only
+    the config-scan and source-auth catalogs supply ``finding_type_id``, and
+    both fix that context in the check definition, so the type's parent is the
+    authoritative answer there. The CWE mapping still wins where it exists.
+    """
     cwe = t.get("cwe")
-    if not isinstance(cwe, str):
-        return None
     mapping = _load_cwe_to_th_map()
-    return mapping.get(cwe)
+    if isinstance(cwe, str) and cwe in mapping:
+        return mapping[cwe]
+    finding_type = t.get("finding_type_id")
+    if isinstance(finding_type, str):
+        return _load_finding_type_to_th_map().get(finding_type)
+    return None
 
 
 def backfill_threat_category_id(threat: dict) -> bool:
@@ -1979,6 +2009,16 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
         survivor["merged_cwes"] = cwes
     if additional_categories:
         survivor["additional_categories"] = additional_categories
+    # A folded scanner member carries the anchors the deterministic remediation
+    # backfill keys off. Losing them to an LLM-authored survivor would downgrade
+    # the fix card to generic prose for a finding a check catalog can answer.
+    for field in ("config_check_id", "config_check_slug", "source_check_id", "mitigation_title"):
+        if survivor.get(field):
+            continue
+        for member in members:
+            if member.get(field):
+                survivor[field] = member[field]
+                break
     boundary_refs = _select_boundary_refs(
         members,
         preferred_component_id=survivor.get("component_id"),

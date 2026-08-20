@@ -196,6 +196,35 @@ class TestEvidenceDedup:
         assert kept["instance_count"] == 2
         assert [i["file"] for i in kept["instances"]] == ["routes/b2bOrder.ts", "routes/b2bOrder.ts"]
 
+    def test_scanner_anchors_survive_a_fold_into_an_llm_finding(self, mt):
+        """A config-scan member folded into a higher-risk STRIDE finding carries
+        the check id the deterministic remediation backfill keys off; without it
+        the fix card falls back to generic prose."""
+        evidence = {"file": ".github/workflows/ci.yml", "line": 3}
+        stride = _threat(
+            cwe="CWE-732",
+            threat_category_id="TH-14",
+            risk="High",
+            title="Workflow token permissions unrestricted",
+            evidence=dict(evidence),
+        )
+        config = _threat(
+            cwe="CWE-732",
+            threat_category_id="TH-14",
+            risk="Medium",
+            title="GitHub Actions workflow-level permissions block",
+            source="config-scan",
+            config_check_id="IAC-010",
+            mitigation_title="Set an explicit permissions block",
+            evidence=dict(evidence),
+        )
+
+        result = mt._dedupe_evidence([stride, config])
+
+        assert len(result) == 1
+        assert result[0]["config_check_id"] == "IAC-010"
+        assert result[0]["mitigation_title"] == "Set an explicit permissions block"
+
     def test_higher_risk_member_wins(self, mt):
         ev = {"file": "routes/x.ts", "line": 9}
         low = _threat(
@@ -2865,3 +2894,15 @@ def test_validate_decisions_cli_uses_the_shared_contract(mt, tmp_path):
         )
         == 0
     )
+
+
+def test_finding_type_supplies_the_category_when_the_cwe_map_cannot(mt):
+    """CWE-732 is deliberately absent from cwe_to_th (container permission vs
+    app-level ACL). For a catalog-driven finding the check already fixed that
+    context by assigning the finding type, so its parent is authoritative."""
+    assert mt._threat_category_id_for({"cwe": "CWE-732", "finding_type_id": "FT-143"}) == "TH-14"
+    assert mt._threat_category_id_for({"cwe": "CWE-328", "finding_type_id": "FT-172"}) == "TH-03"
+    # An explicit CWE mapping still wins over the finding type.
+    assert mt._threat_category_id_for({"cwe": "CWE-89", "finding_type_id": "FT-143"}) == "TH-01"
+    # Neither source resolves — the finding stays unclassified rather than guessed.
+    assert mt._threat_category_id_for({"cwe": "CWE-99999", "finding_type_id": None}) is None
