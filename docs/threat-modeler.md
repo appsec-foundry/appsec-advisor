@@ -221,7 +221,7 @@ Thorough increases both component coverage and per-component analysis depth.
 
 ### Measured cost by depth
 
-The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session on v0.5.2-dev. Results vary with repository, cache state, and model routing.
+The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session on v0.5.2. Results vary with repository, cache state, and model routing.
 
 | Mode | Best fit | Review depth | Measured API cost and time |
 |---|---|---|---|
