@@ -38,5 +38,8 @@
     "ask": [
       "Edit(/specs/**)"
     ]
+  },
+  "sandbox": {
+    "enabled": true
   }
 }

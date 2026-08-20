@@ -35,6 +35,11 @@ python3 -m venv .venv
 
 The `Makefile` uses `.venv/bin/python3` automatically.
 
+**Claude Code sandbox:** `.claude/settings.json` turns the sandbox on, because the
+pipeline reads untrusted target repositories. Two things need an unsandboxed retry:
+PDF export (mermaid drives a headless Chrome over a local socket) and any write to
+`.git/config`, `.github/`, or `.claude/`, which the sandbox denies by default.
+
 ## Commands
 
 ### Tests
