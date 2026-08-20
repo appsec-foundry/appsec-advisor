@@ -647,6 +647,54 @@ def test_components_table_no_scope_column_without_selection(tmp_path: Path) -> N
     assert "Scope |" not in out
 
 
+def test_component_type_column_agrees_with_the_diagram() -> None:
+    """The §2.3 table and the §2.3 diagram sit in the same section, so they must
+    not put one component in two tiers. The table's fallback classifier used to
+    be a hand-kept copy of the pre-generator's and drifted: bare-substring hints
+    matched `ui` inside `build-service` and `juiceshop.sqlite`.
+    """
+    import pregenerate_fragments as pregen
+
+    for comp in (
+        {"id": "build-service", "name": "Build Service", "paths": ["src/build/pipeline.ts"]},
+        {"id": "juiceshop-store", "name": "Juiceshop Store", "paths": ["data/juiceshop.sqlite"]},
+        {"id": "spa", "name": "Angular SPA", "paths": ["frontend/**"]},
+    ):
+        assert compose._classify_component_tier(comp) == pregen._classify_tier(comp), comp["id"]
+
+
+def test_components_table_orders_linked_threats_by_severity(tmp_path: Path) -> None:
+    """§2.3 stacks one severity circle per linked finding, so the cell has to
+    run worst-first — id order renders as an unsorted mix of red and amber."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    comps = [
+        {
+            "id": "api",
+            "name": "API",
+            "tier": "application",
+            "paths": ["src/api"],
+            "threat_ids": ["T-004", "T-007", "T-017", "T-021"],
+        }
+    ]
+    threats = [
+        {"id": "T-004", "title": "CSRF protection disabled", "risk": "High"},
+        {"id": "T-007", "title": "Missing ownership validation", "risk": "High"},
+        {"id": "T-017", "title": "Mass assignment of role flag", "risk": "Critical"},
+        {"id": "T-021", "title": "Unverified password change", "risk": "Medium"},
+    ]
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={"components": comps, "threats": threats},
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
+    out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n")
+    row = next(ln for ln in out.splitlines() if ln.startswith("|") and "| API |" in ln)
+    assert row.index("F-017") < row.index("F-004") < row.index("F-007") < row.index("F-021")
+
+
 def test_figure1_victim_classes_draw_a_dotted_edge_to_the_shop_user(tmp_path: Path) -> None:
     """Victim-targeting classes (XSS / CSRF) draw an explicit dotted consequence
     edge ONTO the Shop User node, labelled with the targeting class ("① XSS"), so

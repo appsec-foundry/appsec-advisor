@@ -98,6 +98,8 @@ from _manifest_readers import (
 # `_MULTI_MATCH_WARNED` is re-exported so existing call sites/tests keep
 # mutating the shared warned-CWE set.
 from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
+from pregenerate_fragments import _TIER_HINTS as _pregen_tier_hints
+from pregenerate_fragments import _classify_tier as _pregen_classify_tier
 from pregenerate_fragments import gen_architecture_diagrams
 from prepare_trust_boundary_context import (
     CROSSING_TYPE_LEGS,
@@ -5193,6 +5195,25 @@ _FINDING_INDEX_SEVERITY_RANK = {
 }
 
 
+def _severity_ordered_ids(ctx: RenderContext, ids: list[str]) -> list[str]:
+    """Order `T-NNN`/`F-NNN` references by visible severity, then numeric id.
+
+    Table cells that stack finding links carry a severity circle per link, so
+    an id-ordered stack reads as an unsorted mix of red, amber and yellow.
+    Unknown ids sort last but keep their relative id order.
+    """
+    sev_by_num = _severity_by_finding_num(ctx.yaml_data.get("threats") or [])
+    order = {tid: i for i, tid in enumerate(ids)}
+
+    def _key(tid: str) -> tuple[int, int, int]:
+        m = re.search(r"(\d+)$", str(tid).strip())
+        num = int(m.group(1)) if m else 10**6
+        rank = _FINDING_INDEX_SEVERITY_RANK.get((sev_by_num.get(num) or "").strip().lower(), 99)
+        return (rank, num, order.get(tid, 0))
+
+    return sorted(ids, key=_key)
+
+
 def _severity_ordered_finding_nums(nums: list[int], sev_by_num: dict[int, str]) -> list[int]:
     """Order finding links by visible criticality, then stable numeric ID."""
     return sorted(
@@ -10276,7 +10297,7 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
         runtime = (c.get("runtime") or "").strip() or "—"
         paths = c.get("paths") or []
         paths_cell = "<br/>".join(f"`{p}`" for p in paths[:5]) or "—"
-        th_ids = c.get("threat_ids") or []
+        th_ids = _severity_ordered_ids(ctx, c.get("threat_ids") or [])
         # Render every linked threat with its title — we used to cap at 5
         # and suffix "+N more" to keep the cell visually short, but the cap
         # silently truncated real data on components with 6+ threats and
@@ -13113,42 +13134,18 @@ def _agent_dispatch_rows(ctx: RenderContext, agents_yaml: list[dict]) -> list[di
     return list(by_name.values())
 
 
-# M3.3 / D1 — tier classifier (mirror of pregenerate_fragments._classify_tier)
-# Used by the §2.3 Components-table post-processor to fill the "Type" column
-# when the orchestrator yaml lacks an explicit `type`/`kind`/`tier` field.
-_COMPONENT_TIER_HINTS = {
-    "client": ("frontend", "spa", "ui", "browser", "angular", "react", "vue", "client"),
-    "data": (
-        "nosql",
-        "sql",
-        "mongo",
-        "postgres",
-        "mysql",
-        "redis",
-        "datalayer",
-        "data-layer",
-        "persistence",
-        "store",
-        "db",
-        "database",
-    ),
-    # 'application' is the catch-all default
-}
-
-
-def _classify_component_tier(component: dict) -> str:
-    """Return 'client' | 'application' | 'data' for a component dict."""
-    haystack = " ".join(
-        [
-            (component.get("id") or "").lower(),
-            (component.get("name") or "").lower(),
-            " ".join(component.get("paths") or []).lower(),
-        ]
-    )
-    for tier, hints in _COMPONENT_TIER_HINTS.items():
-        if any(h in haystack for h in hints):
-            return tier
-    return "application"
+# M3.3 / D1 — tier classifier for the §2.3 Components-table "Type" column when
+# the orchestrator yaml lacks an explicit `type`/`kind`/`tier` field.
+#
+# This used to be a hand-kept COPY of `pregenerate_fragments._classify_tier`,
+# and the copies drifted: the pre-generator anchors its hints at a token start,
+# this one matched bare substrings, so `ui` inside `b·ui·ld-service` and
+# `j·ui·ceshop.sqlite` put a component in the Client tier here while the §2.3
+# diagram — built by the pre-generator from the same component — placed it in
+# Application / Data. The table and the diagram sit in the same section, so a
+# reader saw the component in two tiers at once. One implementation, imported.
+_COMPONENT_TIER_HINTS = _pregen_tier_hints
+_classify_component_tier = _pregen_classify_tier
 
 
 def _read_stage_stats(output_dir: Path) -> list[dict]:

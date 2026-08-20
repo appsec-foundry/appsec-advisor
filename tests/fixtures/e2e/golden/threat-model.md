@@ -243,7 +243,7 @@ flowchart TD
         REPO_READ["fa:fa-code-branch Internal Developer"]:::threat
     end
     subgraph APP["Application Tier"]
-        c_01["fa:fa-server C-01 REST API<br/>+ C-02<br/><i>3 threats</i>"]:::risk
+        c_01["fa:fa-server C-01 REST API<br/>+ C-02<br/><i>4 threats</i>"]:::risk
     end
     INTERNET_ANON -.->|"injection · auth bypass · RCE"| c_01
     REPO_READ -.->|"leaked credentials · auth bypass"| c_01

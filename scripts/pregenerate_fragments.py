@@ -130,8 +130,18 @@ _TIER_HINTS = {
 }
 
 
+_TIER_VALUES = ("client", "application", "data")
+
+
 def _classify_tier(component: dict) -> str:
     """Return 'client' | 'application' | 'data' for a component.
+
+    An explicit ``tier`` / ``kind`` / ``type`` on the component wins. The §2.3
+    component table renders that field verbatim, so deriving the diagram tier
+    from id/name/paths instead put the same component in two places: a
+    server-side module living under a ``.../landscape/client/`` package landed
+    in the browser-client zone while the table called it ``application``.
+    The heuristic below is the fallback for components that carry no tier.
 
     Hints match at a token-start boundary (``(?<![a-z0-9])``), not as bare
     substrings. A bare ``h in haystack`` lets a short hint false-match the
@@ -143,6 +153,9 @@ def _classify_tier(component: dict) -> str:
     matches (``mongo``→``mongodb``, ``sql``→``sqlite``) while dropping the
     mid-token hits.
     """
+    declared = (component.get("tier") or component.get("kind") or component.get("type") or "").strip().lower()
+    if declared in _TIER_VALUES:
+        return declared
     haystack = " ".join(
         [
             (component.get("id") or "").lower(),
@@ -919,9 +932,20 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         "[§8 Findings Register](#8-findings-register)."
     )
     lines.append("")
-    _c23_diagram = _components_diagram_compact(yaml_data, by_tier)
+    _c23_diagram, _c23_folded_out = _components_diagram_compact(yaml_data, by_tier)
     lines.extend(_c23_diagram)
     lines.append("")
+    # Same rule as the §2.2 container cap: a component the tier node could not
+    # name is named here, not dropped.
+    if _c23_folded_out:
+        _folded = ", ".join(
+            f"{c.get('name') or c.get('id')} (`{c.get('id')}`)" for c in _c23_folded_out if isinstance(c, dict)
+        )
+        lines.append(
+            f"*Also folded into the tier nodes above, unnamed there for space: {_folded} — "
+            f"every component is in the table below.*"
+        )
+        lines.append("")
     # Resolve the `tb-N` ids the crossing edges carry into §1. Gated on a
     # crossing arrow actually appearing in the rendered block — a boundary the
     # diagram could not place (no node at either end) must not be announced as
@@ -1464,7 +1488,7 @@ def _select_external_actors_for_diagram(
     return out
 
 
-def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]]) -> list[str]:
+def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]]) -> tuple[list[str], list[dict]]:
     """§2.3 Components — compact 4-tier `flowchart TD` per the contract.
 
     Layout: 4 subgraphs (EXT / CLIENT / APP / DATA), one main node per
@@ -1473,6 +1497,10 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     All four subgraph slots are taken, so a resolved trust boundary cannot be
     drawn as its own zone here (that device is §2.1/§2.2's). It is marked on
     the edges instead — see `_components_crossings` for which edges qualify.
+
+    Returns ``(mermaid_lines, folded_out)``; ``folded_out`` holds the
+    components a tier node could not name in its label, for the caller to list
+    under the diagram.
     """
     rules = _load_diagram_compactness().get("2.3 Components") or {}
     layout = rules.get("layout_keyword", "flowchart TD")
@@ -1518,17 +1546,22 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
         "data": "Data Tier",
     }
 
-    def _tier_main_node(tier_key: str) -> tuple[str, str, str] | None:
-        """Return (mermaid_node_id, label, css_class) for the tier's main
-        component. Sub-components are appended as `<br/>+ C-NN <name>`
-        bullets in the label."""
+    def _tier_main_node(tier_key: str) -> tuple[str, str, str, list[dict]] | None:
+        """Return (mermaid_node_id, label, css_class, omitted) for the tier's
+        main component. Sub-components are folded into the label as
+        `<br/>+ <id>` bullets; those that no longer fit the line budget come
+        back as ``omitted`` so the caller can name them under the diagram.
+
+        The threat count covers EVERY component folded into the node, not just
+        the primary — the node stands for the whole tier, so counting one
+        component understated the tier a reader sees."""
         comps = by_tier.get(tier_key) or []
         if not comps:
             return None
         primary = comps[0]
         cid = (primary.get("id") or "").strip()
         cname = (primary.get("name") or cid or "?").strip()
-        n_threats = len(primary.get("threat_ids") or [])
+        n_threats = sum(len(c.get("threat_ids") or []) for c in comps)
         node_id = _safe_node_id(cid)
         icon = TIER_ICON.get(tier_key, "fa:fa-cube")
         # Headline — strip embedded plain-text id when name already starts
@@ -1538,24 +1571,31 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
         # change in compose._build_tier_cards (components_line) and
         # security-posture-diagram.md.j2 (actor + tier labels).
         head = f"{icon} {head_text}"
-        threats_line = f"<i>{n_threats} threats</i>" if n_threats else ""
+        threats_line = f"<i>{n_threats} {'threat' if n_threats == 1 else 'threats'}</i>" if n_threats else ""
         # Sub-component bullets — show ID only (not full name) so the
-        # aggregated line fits within max_chars even with 3+ subs.
+        # aggregated line fits within max_chars even with 3+ subs. Fill the
+        # line component by component instead of truncating a joined string:
+        # a mid-id ellipsis leaves the reader unable to tell which components
+        # the node covers, and the ones that do not fit must be nameable.
         bullets: list[str] = []
+        omitted: list[dict] = []
         for extra in comps[1:]:
             ecid = (extra.get("id") or "?").strip()
-            bullets.append(f"+ {ecid}")
+            chunk = f"+ {ecid}"
+            if omitted or len(" ".join([*bullets, chunk])) > max_chars:
+                omitted.append(extra)
+                continue
+            bullets.append(chunk)
         # Compose label — head + (bullets joined) + threats_line. Cap to
         # max_lines lines AND every line ≤ max_chars (truncate per line).
         label_lines = [head]
         if bullets:
-            joined = " ".join(bullets)
-            label_lines.append(_truncate_label_line(joined, max_chars))
+            label_lines.append(" ".join(bullets))
         if threats_line and len(label_lines) < max_lines:
             label_lines.append(threats_line)
         label_lines = [_truncate_label_line(ln, max_chars) for ln in label_lines[:max_lines]]
         label = "<br/>".join(label_lines)
-        return (node_id, label, "risk")
+        return (node_id, label, "risk", omitted)
 
     lines: list[str] = []
     lines.append("```mermaid")
@@ -1571,9 +1611,11 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
 
     # 2) CLIENT — titled as part of the untrusted zone (browser code runs on
     # the user's device); the contract carries the wording and the reason.
+    folded_out: list[dict] = []
     client_node = _tier_main_node("client")
     if client_node:
-        nid, lbl, css = client_node
+        nid, lbl, css, _omitted = client_node
+        folded_out.extend(_omitted)
         lines.append(f'    subgraph CLIENT["{sg_titles.get("CLIENT") or TIER_TITLE["client"]}"]')
         lines.append(f'        {nid}["{lbl}"]:::{css}')
         lines.append("    end")
@@ -1581,7 +1623,8 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     # 3) APP
     app_node = _tier_main_node("application")
     if app_node:
-        nid, lbl, css = app_node
+        nid, lbl, css, _omitted = app_node
+        folded_out.extend(_omitted)
         lines.append(f'    subgraph APP["{sg_titles.get("APP") or TIER_TITLE["application"]}"]')
         lines.append(f'        {nid}["{lbl}"]:::{css}')
         lines.append("    end")
@@ -1589,7 +1632,8 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
     # 4) DATA — cylinder shape per audit actor convention.
     data_node = _tier_main_node("data")
     if data_node:
-        nid, lbl, css = data_node
+        nid, lbl, css, _omitted = data_node
+        folded_out.extend(_omitted)
         lines.append(f'    subgraph DATA["{sg_titles.get("DATA") or TIER_TITLE["data"]}"]')
         lines.append(f'        {nid}[("{lbl}")]:::{css}')
         lines.append("    end")
@@ -1656,7 +1700,7 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
             lines.append(f"    linkStyle {','.join(str(i) for i in idxs)} {style}")
 
     lines.append("```")
-    return lines
+    return lines, folded_out
 
 
 def _render_layer_tables(yaml_data: dict, components: list[dict]) -> list[str]:
@@ -3262,16 +3306,35 @@ def gen_attack_surface(yaml_data: dict) -> str:
         (t.get("t_id") or t.get("id") or "").upper(): t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)
     }
 
+    def _displayed_severity(threat: dict) -> str:
+        """The severity the reader sees beside a finding link.
+
+        `effective_severity` is the post-triage rating the report renders,
+        groups and prioritises by (`RenderContext._build_severity_index`).
+        Reading `risk` alone made the Risk column contradict its own row —
+        stating High next to a finding shown as Critical — and would order the
+        Notes cell by a severity that appears nowhere.
+        """
+        return (
+            (
+                threat.get("effective_severity")
+                or threat.get("risk")
+                or threat.get("severity")
+                or threat.get("impact")
+                or ""
+            )
+            .strip()
+            .title()
+        )
+
     def _entry_risk(entry: dict) -> str:
         """Highest severity across the entry's linked threats. `—` when none."""
-        linked = entry.get("linked_threats") or entry.get("threats") or []
         worst_name = ""
         worst_rank = -1
-        for ref in linked:
+        for ref in entry.get("linked_threats") or entry.get("threats") or []:
             if not isinstance(ref, str):
                 continue
-            t = threat_by_id.get(ref.strip().upper()) or {}
-            sev = (t.get("risk") or t.get("severity") or t.get("impact") or "").strip().title()
+            sev = _displayed_severity(threat_by_id.get(ref.strip().upper()) or {})
             rank = _sev_rank.get(sev, -1)
             if rank > worst_rank:
                 worst_rank = rank
@@ -3287,10 +3350,25 @@ def gen_attack_surface(yaml_data: dict) -> str:
         for ref in entry.get("linked_threats") or entry.get("threats") or []:
             if not isinstance(ref, str):
                 continue
-            t = threat_by_id.get(ref.strip().upper()) or {}
-            sev = (t.get("risk") or t.get("severity") or t.get("impact") or "").strip().title()
-            worst = max(worst, _sev_rank.get(sev, -1))
+            worst = max(worst, _sev_rank.get(_displayed_severity(threat_by_id.get(ref.strip().upper()) or {}), -1))
         return worst
+
+    # The Notes cell stacks one severity-dotted link per linked finding, so it
+    # has to read worst-first. `_derive_attack_surface_links` ranks by how well
+    # a finding matches the route — the right question for WHICH findings
+    # belong on the row, the wrong one for the order they are shown in, and the
+    # cap it applies makes an unordered cell able to hide a Critical.
+    def _link_sort_key(ref: str) -> tuple[int, str]:
+        sev = _displayed_severity(threat_by_id.get(str(ref).strip().upper()) or {})
+        return (-_sev_rank.get(sev, -1), str(ref))
+
+    for entry in unauth + auth:
+        if not isinstance(entry, dict):
+            continue
+        for key in ("linked_threats", "threats"):
+            refs = entry.get(key)
+            if isinstance(refs, list) and len(refs) > 1 and all(isinstance(r, str) for r in refs):
+                entry[key] = sorted(refs, key=_link_sort_key)
 
     lines = ["## 5. Attack Surface", ""]
     lines.append(
@@ -4803,6 +4881,13 @@ _AUTH_INV_RISK_BADGE = {"critical": "🔴 Critical", "high": "🟠 High", "mediu
 _AUTH_INV_RISK_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
 
+def _auth_mech_finding_sort_key(threat: dict) -> tuple[int, int]:
+    """Order findings worst-severity first, then by numeric id."""
+    sev = (threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "").strip().lower()
+    m = re.search(r"(\d+)$", (threat.get("id") or threat.get("t_id") or "").strip())
+    return (-_AUTH_INV_RISK_RANK.get(sev, 0), int(m.group(1)) if m else 10**6)
+
+
 def _auth_mech_finding_link(threat: dict) -> str | None:
     raw = (threat.get("id") or threat.get("t_id") or "").strip()
     m = re.search(r"(\d+)$", raw)
@@ -4860,7 +4945,10 @@ def _build_auth_mechanism_inventory(yaml_data: dict) -> list[str]:
             status = "✅ Present"
         seen: set[str] = set()
         flinks: list[str] = []
-        for t in m_threats:
+        # Worst first — the cell is capped at 6 links, so id order both reads
+        # as an unsorted mix of severity circles and can hide a Critical
+        # behind six lower-severity findings.
+        for t in sorted(m_threats, key=_auth_mech_finding_sort_key):
             lk = _auth_mech_finding_link(t)
             if lk and lk not in seen:
                 seen.add(lk)

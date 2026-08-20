@@ -2365,6 +2365,241 @@ class TestOutOfScope:
 # ---------------------------------------------------------------------------
 
 
+class TestDeclaredTierWins:
+    """A component's own `tier` decides where the §2/§2.3 diagrams place it.
+
+    The §2.3 table renders that field verbatim, so a path-based guess put the
+    same component in two tiers at once: a server-side module under
+    `.../landscape/client/` landed in the browser-client zone while the table
+    beside it read `application`.
+    """
+
+    SERVER_MODULE = {
+        "id": "landscape-module",
+        "name": "Service Landscape Module",
+        "tier": "application",
+        "paths": ["src/main/java/app/landscape/client/ClientAdapter.java"],
+    }
+
+    def test_declared_tier_beats_path_heuristic(self):
+        assert pf._classify_tier(self.SERVER_MODULE) == "application"
+
+    def test_declared_tier_beats_name_heuristic(self):
+        comp = {"id": "input-validation", "name": "Input Validation and SQL Access", "tier": "application"}
+        assert pf._classify_tier(comp) == "application"
+
+    def test_declared_data_tier_survives_absent_hint(self):
+        comp = {"id": "domain-layer", "name": "Domain Entities and JPA Repositories", "tier": "data"}
+        assert pf._classify_tier(comp) == "data"
+
+    def test_heuristic_still_applies_without_a_declared_tier(self):
+        comp = dict(self.SERVER_MODULE)
+        del comp["tier"]
+        assert pf._classify_tier(comp) == "client"
+
+    def test_unknown_declared_tier_falls_back_to_heuristic(self):
+        comp = dict(self.SERVER_MODULE, tier="service-mesh")
+        assert pf._classify_tier(comp) == "client"
+
+
+class TestComponentsDiagramFolding:
+    """§2.3 folds a whole tier into one node — the node must not understate it.
+
+    The label counts every folded component's threats, and components the
+    label has no room to name are listed under the diagram instead of
+    disappearing.
+    """
+
+    def _data(self, n_app: int):
+        comps = [{"id": "web", "name": "Web UI", "tier": "client", "paths": [], "threat_ids": ["T-001"]}]
+        comps += [
+            {
+                "id": f"application-module-{i:02d}",
+                "name": f"Application Module {i:02d}",
+                "tier": "application",
+                "paths": [],
+                "threat_ids": [f"T-1{i:02d}", f"T-2{i:02d}"],
+            }
+            for i in range(n_app)
+        ]
+        return {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": comps,
+            "trust_boundaries": [],
+            "attack_surface": {},
+            "threats": [],
+            "security_controls": [],
+        }
+
+    def _section_2_3(self, md: str) -> str:
+        return md.split("### 2.3")[1].split("### 2.4")[0]
+
+    def test_threat_count_sums_the_folded_group(self):
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data(3)))
+        assert "<i>6 threats</i>" in block
+
+    def test_single_threat_reads_singular(self):
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data(1)))
+        assert "<i>1 threat</i>" in block
+
+    def test_components_that_do_not_fit_the_label_are_named_below(self):
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data(6)))
+        node_label = next(ln for ln in block.splitlines() if "application_module_00[" in ln)
+        for i in range(1, 6):
+            cid = f"application-module-{i:02d}"
+            assert cid in block, f"{cid} vanished from §2.3"
+            if cid not in node_label:
+                assert f"(`{cid}`)" in block, f"{cid} was folded away without being named"
+
+    def test_no_note_when_every_component_fits(self):
+        block = self._section_2_3(pf.gen_architecture_diagrams(self._data(1)))
+        assert "unnamed there for space" not in block
+
+
+class TestAuthMechanismFindingOrder:
+    """§6.2 caps the Findings cell at 6 links — worst severity must come first."""
+
+    def test_findings_sorted_worst_first(self):
+        threats = [
+            {"id": "T-010", "title": "Password reset token is predictable", "cwe": "CWE-640", "risk": "Medium"},
+            {"id": "T-011", "title": "Password reset without verification", "cwe": "CWE-640", "risk": "Critical"},
+            {"id": "T-012", "title": "Password reset rate limit missing", "cwe": "CWE-640", "risk": "High"},
+        ]
+        rows = pf._build_auth_mechanism_inventory(
+            {"threats": threats, "security_controls": [], "meta": {}},
+        )
+        cell = next(ln for ln in rows if ln.startswith("| Password reset"))
+        assert cell.index("F-011") < cell.index("F-012") < cell.index("F-010")
+
+
+_SEVERITY_DOT_RANK = {"🔴": 0, "🟠": 1, "🟡": 2, "🟢": 3, "⚪": 4}
+
+
+def _unsorted_link_cells(markdown: str, severity_by_num: dict[int, str]) -> list[str]:
+    """Every table cell in `markdown` that stacks 2+ finding links out of
+    severity order. Producer-agnostic: it reads the rendered cell, not the
+    builder, so a new table that orders its own way is caught too."""
+    rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    offenders: list[str] = []
+    for line in markdown.splitlines():
+        if not line.lstrip().startswith("|"):
+            continue
+        for cell in line.split("|"):
+            nums = [int(n) for n in re.findall(r"\[[TF]-(\d+)\]", cell)]
+            if len(nums) < 2:
+                continue
+            ranks = [rank.get((severity_by_num.get(n) or "").lower(), 9) for n in nums]
+            if ranks != sorted(ranks):
+                offenders.append(cell.strip()[:90])
+    return offenders
+
+
+class TestStackedFindingLinksAreSeverityOrdered:
+    """Every table cell that stacks finding links reads worst-first.
+
+    Each link carries a severity dot, so id order renders as an unsorted mix of
+    red, amber and yellow. Several of these cells are also capped (§5 keeps 3
+    links, §6.2 keeps 6), which lets an unordered cell drop a Critical and show
+    lower-severity findings in its place. The defect was independently present
+    in three unrelated builders, so this test scans rendered output rather than
+    any one of them.
+    """
+
+    SEVERITY_BY_NUM = {1: "Critical", 2: "High", 3: "Critical", 4: "Medium", 5: "High"}
+
+    def _model(self):
+        titles = {
+            1: "SQL injection in the order search query",
+            2: "Password reset without verification",
+            3: "Mass assignment of the role field on registration",
+            4: "Password reset token is predictable",
+            5: "Missing rate limit on password reset",
+        }
+        threats = [
+            {
+                "id": f"T-{n:03d}",
+                "title": titles[n],
+                "risk": sev,
+                "cwe": "CWE-640",
+                "component_id": "api",
+                "evidence": [{"file": "src/api/orders.ts", "line": 10}],
+            }
+            for n, sev in self.SEVERITY_BY_NUM.items()
+        ]
+        return {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [
+                {
+                    "id": "api",
+                    "name": "API",
+                    "tier": "application",
+                    "paths": ["src/api/orders.ts"],
+                    "threat_ids": [f"T-{n:03d}" for n in sorted(self.SEVERITY_BY_NUM)],
+                }
+            ],
+            "threats": threats,
+            "security_controls": [],
+            "trust_boundaries": [],
+            "attack_surface": {
+                "unauthenticated": [
+                    {
+                        "entry_point": "POST /orders",
+                        "notes": "order search",
+                        "linked_threats": [f"T-{n:03d}" for n in sorted(self.SEVERITY_BY_NUM)],
+                    }
+                ]
+            },
+        }
+
+    def test_attack_surface_cells_ordered(self):
+        out = pf.gen_attack_surface(self._model())
+        assert _unsorted_link_cells(out, self.SEVERITY_BY_NUM) == []
+
+    def test_auth_mechanism_cells_ordered(self):
+        out = "\n".join(pf._build_auth_mechanism_inventory(self._model()))
+        assert _unsorted_link_cells(out, self.SEVERITY_BY_NUM) == []
+
+    def test_the_fixture_would_expose_unordered_output(self):
+        """The model must actually contain a mixed-severity multi-link cell —
+        otherwise the two tests above pass vacuously."""
+        out = pf.gen_attack_surface(self._model())
+        cells = [c for line in out.splitlines() for c in line.split("|") if len(re.findall(r"\[[TF]-\d+\]", c)) >= 2]
+        assert cells, "fixture produces no stacked-link cell — the guard would be vacuous"
+        shuffled = {**self.SEVERITY_BY_NUM, 1: "Low"}
+        assert _unsorted_link_cells(out, shuffled), "guard cannot detect an out-of-order cell"
+
+
+class TestAttackSurfaceRiskColumn:
+    """§5's Risk column names the same severity the linked findings show.
+
+    It read `risk` while every dot in the report reads `effective_severity`,
+    so a row stated High beside a finding the register groups as Critical.
+    """
+
+    def _model(self, **threat_fields):
+        return {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [],
+            "threats": [{"id": "T-001", "title": "SSRF via unvalidated URL", **threat_fields}],
+            "security_controls": [],
+            "trust_boundaries": [],
+            "attack_surface": {
+                "unauthenticated": [{"entry_point": "GET /fetch", "notes": "remote fetch", "linked_threats": ["T-001"]}]
+            },
+        }
+
+    def test_promoted_finding_sets_the_row_risk(self):
+        out = pf.gen_attack_surface(self._model(risk="High", effective_severity="Critical"))
+        row = next(ln for ln in out.splitlines() if "/fetch" in ln)
+        assert "🔴 Critical" in row
+        assert "🟠 High" not in row
+
+    def test_falls_back_to_risk_when_untriaged(self):
+        out = pf.gen_attack_surface(self._model(risk="High"))
+        row = next(ln for ln in out.splitlines() if "/fetch" in ln)
+        assert "🟠 High" in row
+
+
 class TestTierClassification:
     @pytest.mark.parametrize(
         "comp,expected",
