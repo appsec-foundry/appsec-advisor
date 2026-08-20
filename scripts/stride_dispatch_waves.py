@@ -94,7 +94,45 @@ def _close_agent_jobs(output_dir: Path, job_ids: list[str], *, success: bool, re
 # made the component fail, not as a way to retry the same thing harder.
 DEFAULT_MAX_ATTEMPTS = 2
 MAX_ATTEMPTS_CEILING = 5
+#: Floor for the cumulative wave-join deadline — the value this was a fixed
+#: constant at, so no wave ever gets less time than it used to.
 WAIT_DEADLINE_SECONDS = 15 * 60
+#: Fixed cost a wave pays regardless of depth: dispatch, context load, the
+#: write-first pre-seed, and the final write.
+WAIT_DEADLINE_BASE_SECONDS = 5 * 60
+#: Seconds budgeted per allowed turn. The highest rate observed across a full
+#: wave is 14.8 s/turn (2026-08-20, api-auth: 61 turns in 895.8 s), so 20 keeps
+#: roughly a third in reserve for a slower model or a loaded host.
+WAIT_DEADLINE_SECONDS_PER_TURN = 20
+#: Ceiling, so a genuinely hung wave is still cut loose. Staleness is caught
+#: earlier and independently by skill_watchdog.py; this is the backstop.
+WAIT_DEADLINE_CEILING_SECONDS = 60 * 60
+
+
+def wave_deadline_seconds(manifest: dict[str, Any], component_ids: list[str]) -> int:
+    """Cumulative join deadline for one dispatched wave.
+
+    A fixed 15 minutes was decoupled from everything that decides how long a
+    wave actually runs. `DEPTH_PARAMS` raises the per-component turn budget with
+    depth (complex: 31 at standard, 35 at thorough) and retries escalate it
+    further, but the deadline stayed put — so on 2026-08-20 the slowest
+    component finished at 895.8 s against a 900 s deadline, a 4.2 s margin, and
+    the same repository at `--thorough` would have exceeded it outright. The
+    fixed value made the timeout a function of nothing.
+
+    Scaling on `max_turns` binds it to the one number that already tracks the
+    allowed work per component, and it is bounded on both sides: never below the
+    historical floor, never above the ceiling that still frees a hung wave. The
+    wave is joined as a whole, so the widest component in it sets the deadline.
+    """
+    turns = [
+        component.get("max_turns")
+        for component in _manifest_components(manifest)
+        if component.get("component_id") in set(component_ids)
+    ]
+    widest = max((t for t in turns if isinstance(t, int) and not isinstance(t, bool) and t > 0), default=0)
+    scaled = WAIT_DEADLINE_BASE_SECONDS + WAIT_DEADLINE_SECONDS_PER_TURN * widest
+    return min(WAIT_DEADLINE_CEILING_SECONDS, max(WAIT_DEADLINE_SECONDS, scaled))
 
 
 def max_attempts() -> int:
@@ -725,13 +763,15 @@ def wait_status(
         return {"status": "unstarted", "component_ids": component_ids, "incomplete": incomplete}
     started_at = min(starts)
     elapsed = max(0, current - started_at)
+    deadline = wave_deadline_seconds(manifest, component_ids)
     result = {
-        "status": "expired" if elapsed >= WAIT_DEADLINE_SECONDS else "pending",
+        "status": "expired" if elapsed >= deadline else "pending",
         "component_ids": component_ids,
         "incomplete": incomplete,
         "wait_started_at": started_at,
         "elapsed_seconds": elapsed,
-        "remaining_seconds": max(0, WAIT_DEADLINE_SECONDS - elapsed),
+        "deadline_seconds": deadline,
+        "remaining_seconds": max(0, deadline - elapsed),
     }
     if result["status"] == "expired":
         _close_agent_jobs(

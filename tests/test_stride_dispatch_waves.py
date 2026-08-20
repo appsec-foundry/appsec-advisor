@@ -270,6 +270,87 @@ def test_pruning_an_optional_branch_does_not_mask_a_core_defect(tmp_path: Path) 
     assert waves.completion_error(tmp_path, "service-01") is not None
 
 
+# --------------------------------------------------------------------------
+# Wave-join deadline.
+#
+# The deadline was a fixed 15 minutes while everything driving a wave's runtime
+# — depth turn budgets, retry escalation — scaled without it. On 2026-08-20 the
+# slowest component landed at 895.8 s against 900 s. These tests pin the rule
+# (the deadline covers the work the depth actually allows), not that number.
+# --------------------------------------------------------------------------
+
+#: Highest per-turn rate observed across a full wave (2026-08-20, api-auth:
+#: 61 turns in 895.8 s). The deadline must stay above this for any budget the
+#: depth configuration can hand out.
+_OBSERVED_SECONDS_PER_TURN = 14.8
+
+
+def _manifest_with_turns(*turns: int) -> dict:
+    manifest = _manifest(len(turns))
+    for component, allowed in zip(manifest["components"], turns):
+        component["max_turns"] = allowed
+    return manifest
+
+
+def test_deadline_covers_the_turn_budget_every_depth_can_hand_out() -> None:
+    """Bound to DEPTH_PARAMS, not to a constant: raising a depth's turn budget
+    without raising the deadline must fail here rather than in a run."""
+    for depth, params in resolve_config.DEPTH_PARAMS.items():
+        turns = params["complex"]
+        manifest = _manifest_with_turns(turns)
+        deadline = waves.wave_deadline_seconds(manifest, ["service-01"])
+        assert deadline >= turns * _OBSERVED_SECONDS_PER_TURN, (
+            f"{depth}: deadline {deadline}s cannot cover {turns} turns at the observed rate"
+        )
+
+
+@pytest.mark.parametrize("turns", [31, 35, 46, 61, 67, 120])
+def test_deadline_covers_an_escalated_budget(turns: int) -> None:
+    """Retries escalate the per-component budget well past the depth default,
+    which is exactly when the fixed deadline used to bite."""
+    deadline = waves.wave_deadline_seconds(_manifest_with_turns(turns), ["service-01"])
+    assert deadline >= turns * _OBSERVED_SECONDS_PER_TURN
+
+
+def test_deadline_grows_with_the_turn_budget() -> None:
+    """The property the fixed constant lacked: a function of the work allowed."""
+    deadlines = [waves.wave_deadline_seconds(_manifest_with_turns(t), ["service-01"]) for t in (10, 31, 35, 50, 67)]
+    assert deadlines == sorted(deadlines)
+    assert deadlines[0] < deadlines[-1]
+
+
+def test_the_widest_component_in_the_wave_sets_the_deadline() -> None:
+    """A wave is joined as a whole, so its slowest member decides — not the
+    first, the last, or an average."""
+    manifest = _manifest_with_turns(12, 67, 20)
+    ids = ["service-01", "service-02", "service-03"]
+    assert waves.wave_deadline_seconds(manifest, ids) == waves.wave_deadline_seconds(
+        _manifest_with_turns(67), ["service-01"]
+    )
+
+
+def test_deadline_never_drops_below_the_historical_floor() -> None:
+    """The fix must not shorten any wave: 15 minutes was the value before, so a
+    small wave keeps it."""
+    assert waves.wave_deadline_seconds(_manifest_with_turns(1), ["service-01"]) == waves.WAIT_DEADLINE_SECONDS
+
+
+def test_deadline_stays_bounded_so_a_hung_wave_is_still_freed() -> None:
+    """Scaling must not turn into 'wait forever' on an absurd budget."""
+    assert (
+        waves.wave_deadline_seconds(_manifest_with_turns(100_000), ["service-01"])
+        == waves.WAIT_DEADLINE_CEILING_SECONDS
+    )
+
+
+@pytest.mark.parametrize("bad", [None, 0, -5, True, "31", 3.7])
+def test_an_unusable_turn_budget_falls_back_to_the_floor(bad) -> None:
+    """Manifest damage must not silently produce a shorter or absurd deadline."""
+    manifest = _manifest(1)
+    manifest["components"][0]["max_turns"] = bad
+    assert waves.wave_deadline_seconds(manifest, ["service-01"]) == waves.WAIT_DEADLINE_SECONDS
+
+
 def test_a_clean_component_is_left_byte_identical(tmp_path: Path) -> None:
     """The net must be inert on valid input — otherwise every poll rewrites the
     file and churns its mtime, which the wave logic reads as progress."""
