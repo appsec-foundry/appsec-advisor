@@ -1410,9 +1410,7 @@ class TestRenderFiles:
         impl = (
             Path(__file__).resolve().parents[1] / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
         ).read_text(encoding="utf-8")
-        invocation = re.search(
-            r"scripts/render_completion_summary\.py\"?(?P<args>(?:\\\n|[^\n`])*)", impl
-        )
+        invocation = re.search(r"scripts/render_completion_summary\.py\"?(?P<args>(?:\\\n|[^\n`])*)", impl)
         assert invocation, "the runtime doc must show a literal render_completion_summary.py invocation"
         args = invocation.group("args")
 
