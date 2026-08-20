@@ -17,6 +17,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -42,6 +44,13 @@ jobs:
 
       - name: Fragment-registry drift
         run: python3 scripts/check_fragment_registry.py
+
+      - name: Validate product requirements and bindings
+        run: python3 scripts/check_specs.py
+
+      - name: Require a proposal for changed requirements or decisions
+        if: github.event_name == 'pull_request'
+        run: python3 scripts/check_specs.py --changed-against "${{ github.event.pull_request.base.sha }}"
 
       - name: Run pytest
         run: pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing --cov-report=xml

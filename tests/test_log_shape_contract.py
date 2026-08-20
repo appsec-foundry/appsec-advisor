@@ -9,7 +9,7 @@ Two such drifts shipped and neither test suite noticed, because every fixture
 invented the shape it wanted to see:
 
   * `check_stride_dispatch` matched `COMPONENT_ID=` while the hook writes
-    `component_id=`, so the serial-dispatch guard (REQ-FLW-001) read an empty
+    `component_id=`, so the serial-dispatch guard (decision OR-5) read an empty
     set on every real run and could never report a serial wave.
   * `record_component_durations` required `PHASE_START [Phase 9/…]`, a bracket
     the context-v2 runtime does not emit, so it recorded nothing at all.
@@ -77,7 +77,7 @@ def test_the_corpus_carries_the_events_consumers_key_on():
 
 
 def test_serial_dispatch_detection_sees_the_wave(run_dir: Path):
-    """REQ-FLW-001 — a detector that reads nothing can never report a defect."""
+    """OR-5 — a detector that reads nothing can never report a defect."""
     starts = check_stride_dispatch._context_v2_dispatch_starts(run_dir, None)
 
     assert set(starts) == STRIDE_COMPONENTS

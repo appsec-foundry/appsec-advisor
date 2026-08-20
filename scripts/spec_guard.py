@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Ask before an identifiable tool call writes under a protected directory.
+"""Ask before an identifiable tool call mutates a protected specification path.
 
 The project requirements say that specifications change only with operator
 approval. This Claude Code ``PreToolUse`` hook reinforces that rule for native
 file writes, recognizable shell writes, and recognizable MCP mutations.
 
-The protected directory is required through ``--protected-dir`` so the hook
-registration, rather than this script, owns the protected surface. Reads and
-recognized read-only shell calls are left alone. Writer detection is
-conservative: prompting for a command that merely names a protected path is
-preferable to silently missing a mutation.
+The protected file or directory is required through ``--protected-path`` so the
+hook registration owns the protected surface. Reads and recognized read-only
+shell calls are left alone. Writer detection is conservative: prompting for a
+command that could mutate the protected path is preferable to silently missing
+the mutation.
 
 Malformed relevant input and internal resolution failures fail closed. The hook
 cannot infer an opaque program's hidden writes; project instructions and diff
@@ -88,8 +88,8 @@ PATH_KEYS = {
 }
 
 REASON = (
-    "This call would change {target} under the protected directory "
-    "{protected_dir}. The project requirements require the user's explicit "
+    "This call would change {target}, which can affect the protected specification "
+    "{protected_path}. The project requirements require the user's explicit "
     "approval. Describe the proposed specification change and let the user decide. "
     "Reading protected files needs no approval."
 )
@@ -100,22 +100,22 @@ class InvalidPayload(ValueError):
 
 
 class InvalidConfiguration(ValueError):
-    """The hook did not identify a safe protected directory."""
+    """The hook did not identify a safe protected path."""
 
 
-def parse_protected_dir(argv: Sequence[str]) -> Path:
-    """Return the required absolute protected directory from hook arguments."""
-    if len(argv) != 2 or argv[0] != "--protected-dir" or not argv[1]:
-        raise InvalidConfiguration("expected --protected-dir with one path")
+def parse_protected_path(argv: Sequence[str]) -> Path:
+    """Return the required absolute protected file or directory."""
+    if len(argv) != 2 or argv[0] != "--protected-path" or not argv[1]:
+        raise InvalidConfiguration("expected --protected-path with one path")
     candidate = Path(argv[1]).expanduser()
     if not candidate.is_absolute():
-        raise InvalidConfiguration("protected directory must be absolute")
-    protected_dir = candidate.resolve()
-    if protected_dir == Path(protected_dir.anchor):
-        raise InvalidConfiguration("protected directory must not be a filesystem root")
-    if protected_dir.exists() and not protected_dir.is_dir():
-        raise InvalidConfiguration("protected directory points to a non-directory")
-    return protected_dir
+        raise InvalidConfiguration("protected path must be absolute")
+    protected_path = candidate.resolve()
+    if protected_path == Path(protected_path.anchor):
+        raise InvalidConfiguration("protected path must not be a filesystem root")
+    if not protected_path.exists():
+        raise InvalidConfiguration("protected path does not exist")
+    return protected_path
 
 
 def expand_known_roots(value: str, cwd: Path) -> str:
@@ -141,15 +141,25 @@ def expand_known_roots(value: str, cwd: Path) -> str:
     return value
 
 
-def under_protected(path: str, protected_dir: Path, base: Path) -> bool:
-    """Return whether ``path`` names the protected directory or a child."""
+def touches_protected(
+    path: str,
+    protected_path: Path,
+    base: Path,
+    *,
+    include_ancestors: bool = False,
+) -> bool:
+    """Return whether ``path`` can identify or contain the protected path."""
     if not path:
         return False
     candidate = Path(expand_known_roots(path, base)).expanduser()
     if not candidate.is_absolute():
         candidate = base / candidate
     resolved = candidate.resolve()
-    return resolved == protected_dir or protected_dir in resolved.parents
+    if resolved == protected_path:
+        return True
+    if protected_path.is_dir() and protected_path in resolved.parents:
+        return True
+    return include_ancestors and resolved in protected_path.parents
 
 
 def payload_cwd(payload: Mapping[str, object]) -> Path:
@@ -163,14 +173,14 @@ def payload_cwd(payload: Mapping[str, object]) -> Path:
     return cwd.resolve()
 
 
-def protected_path_reference(protected_dir: Path) -> re.Pattern[str]:
-    """Match embedded paths containing the protected directory's basename."""
-    name = re.escape(protected_dir.name)
+def protected_path_reference(protected_path: Path) -> re.Pattern[str]:
+    """Match embedded paths containing the protected path's basename."""
+    name = re.escape(protected_path.name)
     return re.compile(r"(?<![\w.-])(?:[A-Za-z]:)?(?:[~.\w-]*[\\/])*" + name + r"(?:[\\/][\w.~ -]*)?")
 
 
-def path_candidates(command: str, cwd: Path, protected_dir: Path) -> Iterator[str]:
-    """Yield shell tokens and embedded references to the protected directory."""
+def path_candidates(command: str, cwd: Path, protected_path: Path) -> Iterator[str]:
+    """Yield shell tokens and embedded references to the protected path."""
     expanded = expand_known_roots(command, cwd)
     try:
         words = shlex.split(expanded, comments=False)
@@ -184,11 +194,11 @@ def path_candidates(command: str, cwd: Path, protected_dir: Path) -> Iterator[st
             value = cleaned.split("=", 1)[1]
             if value:
                 yield value.strip("'\"")
-    pattern = protected_path_reference(protected_dir)
+    pattern = protected_path_reference(protected_path)
     yield from (match.group(0) for match in pattern.finditer(expanded))
 
 
-def shell_targets(command: str, cwd: Path, tool_name: str, protected_dir: Path) -> list[str]:
+def shell_targets(command: str, cwd: Path, tool_name: str, protected_path: Path) -> list[str]:
     """Return protected paths named by a recognizable shell writer."""
     writes = SHELL_WRITES.search(command)
     if tool_name == "PowerShell":
@@ -197,11 +207,9 @@ def shell_targets(command: str, cwd: Path, tool_name: str, protected_dir: Path) 
         return []
     targets = {
         candidate
-        for candidate in path_candidates(command, cwd, protected_dir)
-        if under_protected(candidate, protected_dir, cwd)
+        for candidate in path_candidates(command, cwd, protected_path)
+        if touches_protected(candidate, protected_path, cwd, include_ancestors=True)
     }
-    if under_protected(str(cwd), protected_dir, cwd):
-        targets.add(str(cwd))
     return sorted(targets)
 
 
@@ -232,16 +240,22 @@ def mcp_targets(
     tool_name: str,
     tool_input: Mapping[str, object],
     cwd: Path,
-    protected_dir: Path,
+    protected_path: Path,
 ) -> list[str]:
     """Return protected targets from a recognizably mutating MCP tool."""
     action = tool_name.rsplit("__", 1)[-1]
     if not MCP_MUTATION.search(action):
         return []
-    return sorted({path for path in mcp_path_values(tool_input) if under_protected(path, protected_dir, cwd)})
+    return sorted(
+        {
+            path
+            for path in mcp_path_values(tool_input)
+            if touches_protected(path, protected_path, cwd, include_ancestors=True)
+        }
+    )
 
 
-def decide(payload: dict, protected_dir: Path) -> dict | None:
+def decide(payload: dict, protected_path: Path) -> dict | None:
     """Return an ask decision for a protected mutation, otherwise ``None``."""
     if payload.get("hook_event_name") != "PreToolUse":
         raise InvalidPayload("expected a PreToolUse payload")
@@ -255,19 +269,19 @@ def decide(payload: dict, protected_dir: Path) -> dict | None:
         path = tool_input.get(WRITE_TOOLS[tool_name])
         if not isinstance(path, str) or not path:
             raise InvalidPayload(f"{tool_name} requires a path")
-        if not under_protected(path, protected_dir, cwd):
+        if not touches_protected(path, protected_path, cwd):
             return None
         target = path
     elif tool_name in {"Bash", "PowerShell"}:
         command = tool_input.get("command")
         if not isinstance(command, str) or not command:
             raise InvalidPayload(f"{tool_name} requires a command")
-        targets = shell_targets(command, cwd, tool_name, protected_dir)
+        targets = shell_targets(command, cwd, tool_name, protected_path)
         if not targets:
             return None
         target = ", ".join(targets)
     elif tool_name.startswith("mcp__"):
-        targets = mcp_targets(tool_name, tool_input, cwd, protected_dir)
+        targets = mcp_targets(tool_name, tool_input, cwd, protected_path)
         if not targets:
             return None
         target = ", ".join(targets)
@@ -278,7 +292,7 @@ def decide(payload: dict, protected_dir: Path) -> dict | None:
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "ask",
-            "permissionDecisionReason": REASON.format(target=target, protected_dir=protected_dir),
+            "permissionDecisionReason": REASON.format(target=target, protected_path=protected_path),
         }
     }
 
@@ -288,11 +302,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv = sys.argv[1:]
     raw = sys.stdin.read()
     try:
-        protected_dir = parse_protected_dir(argv)
+        protected_path = parse_protected_path(argv)
         payload = json.loads(raw or "{}")
         if not isinstance(payload, dict):
             raise InvalidPayload("hook payload must be an object")
-        response = decide(payload, protected_dir)
+        response = decide(payload, protected_path)
     except (json.JSONDecodeError, InvalidConfiguration, InvalidPayload) as exc:
         print(f"spec guard: invalid input ({exc}); blocking", file=sys.stderr)
         return 2

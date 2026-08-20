@@ -13,6 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 GUARD = ROOT / "scripts" / "spec_guard.py"
 SPECS = ROOT / "specs"
+REQUIREMENTS = SPECS / "requirements.md"
 
 
 def invoke(
@@ -24,7 +25,7 @@ def invoke(
         [
             sys.executable,
             str(GUARD),
-            *(args if args is not None else ["--protected-dir", str(SPECS)]),
+            *(args if args is not None else ["--protected-path", str(REQUIREMENTS)]),
         ],
         input=json.dumps(payload) if not isinstance(payload, str) else payload,
         capture_output=True,
@@ -45,14 +46,14 @@ def decision(tool_name: str, tool_input: dict, *, cwd: Path = ROOT) -> dict | No
     ("tool_name", "tool_input"),
     [
         ("Write", {"file_path": "specs/requirements.md", "content": "x"}),
-        ("Edit", {"file_path": "specs/changes/guard/tasks.md", "new_string": "x"}),
+        ("Edit", {"file_path": "specs/requirements.md", "new_string": "x"}),
         ("Bash", {"command": "echo x > specs/requirements.md"}),
         ("Bash", {"command": "sed -i 's/a/b/' specs/requirements.md"}),
         ("Bash", {"command": "find specs -type f -delete"}),
-        ("Bash", {"command": "curl -o specs/download.md https://example.invalid/file"}),
-        ("PowerShell", {"command": "Set-Content -Path specs/x.md -Value x"}),
-        ("mcp__filesystem__write_file", {"path": "specs/x.md", "content": "x"}),
-        ("mcp__filesystem__update_file", {"nested": {"target_path": "specs/x.md"}}),
+        ("Bash", {"command": "curl -o specs/requirements.md https://example.invalid/file"}),
+        ("PowerShell", {"command": "Set-Content -Path specs/requirements.md -Value x"}),
+        ("mcp__filesystem__write_file", {"path": "specs/requirements.md", "content": "x"}),
+        ("mcp__filesystem__remove", {"path": "specs"}),
     ],
 )
 def test_identifiable_spec_mutations_require_approval(tool_name, tool_input):
@@ -60,15 +61,17 @@ def test_identifiable_spec_mutations_require_approval(tool_name, tool_input):
     assert result is not None
     output = result["hookSpecificOutput"]
     assert output["permissionDecision"] == "ask"
-    assert str(SPECS) in output["permissionDecisionReason"]
+    assert str(REQUIREMENTS) in output["permissionDecisionReason"]
 
 
 @pytest.mark.parametrize(
     ("tool_name", "tool_input"),
     [
         ("Write", {"file_path": "tests/result.txt", "content": "x"}),
+        ("Edit", {"file_path": "specs/changes/guard/tasks.md", "new_string": "x"}),
         ("Bash", {"command": "cat specs/requirements.md"}),
         ("Bash", {"command": "git diff -- specs/"}),
+        ("Bash", {"command": "echo x > specs/changes/note.md"}),
         ("Bash", {"command": "echo x > tests/result.txt"}),
         ("PowerShell", {"command": "Get-Content specs/requirements.md"}),
         ("mcp__filesystem__read_file", {"path": "specs/requirements.md"}),
@@ -79,10 +82,14 @@ def test_non_mutating_or_out_of_scope_calls_are_unaffected(tool_name, tool_input
     assert decision(tool_name, tool_input) is None
 
 
-def test_relative_write_from_a_specs_working_directory_requires_approval():
-    result = decision("Bash", {"command": "touch changes/x.md"}, cwd=SPECS)
+def test_relative_write_from_specs_to_catalog_requires_approval():
+    result = decision("Bash", {"command": "touch requirements.md"}, cwd=SPECS)
     assert result is not None
     assert result["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+def test_relative_write_to_change_record_does_not_require_specification_approval():
+    assert decision("Bash", {"command": "touch changes/x.md"}, cwd=SPECS) is None
 
 
 @pytest.mark.parametrize(
@@ -96,7 +103,7 @@ def test_relative_write_from_a_specs_working_directory_requires_approval():
     ],
 )
 def test_project_root_spellings_are_resolved(spelling):
-    result = decision("Bash", {"command": f'echo x > "{spelling}/specs/x.md"'})
+    result = decision("Bash", {"command": f'echo x > "{spelling}/specs/requirements.md"'})
     assert result is not None
     assert result["hookSpecificOutput"]["permissionDecision"] == "ask"
 
@@ -116,7 +123,7 @@ def test_project_root_spellings_are_resolved(spelling):
                 "hook_event_name": "PreToolUse",
                 "cwd": str(ROOT),
                 "tool_name": "Write",
-                "tool_input": {"file_path": "specs/x.md"},
+                "tool_input": {"file_path": "specs/requirements.md"},
             },
             [],
         ),
@@ -125,18 +132,18 @@ def test_project_root_spellings_are_resolved(spelling):
                 "hook_event_name": "PreToolUse",
                 "cwd": str(ROOT),
                 "tool_name": "Write",
-                "tool_input": {"file_path": "specs/x.md"},
+                "tool_input": {"file_path": "specs/requirements.md"},
             },
-            ["--protected-dir", "specs"],
+            ["--protected-path", "specs/requirements.md"],
         ),
         (
             {
                 "hook_event_name": "PreToolUse",
                 "cwd": str(ROOT),
                 "tool_name": "Write",
-                "tool_input": {"file_path": "specs/x.md"},
+                "tool_input": {"file_path": "specs/requirements.md"},
             },
-            ["--protected-dir", "/"],
+            ["--protected-path", "/"],
         ),
     ],
 )
@@ -148,7 +155,7 @@ def test_invalid_input_and_configuration_fail_closed(payload, args):
 
 def test_spec_guard_registration_and_decisions():
     settings = json.loads((ROOT / ".claude" / "settings.json").read_text())
-    assert settings["permissions"] == {"ask": ["Edit(/specs/**)"]}
+    assert settings["permissions"] == {"ask": ["Edit(/specs/requirements.md)"]}
     groups = settings["hooks"]["PreToolUse"]
     spec_groups = [
         group
@@ -170,7 +177,7 @@ def test_spec_guard_registration_and_decisions():
     handler = group["hooks"][0]
     assert handler["args"] == [
         "${CLAUDE_PROJECT_DIR}/scripts/spec_guard.py",
-        "--protected-dir",
-        "${CLAUDE_PROJECT_DIR}/specs",
+        "--protected-path",
+        "${CLAUDE_PROJECT_DIR}/specs/requirements.md",
     ]
     assert handler["timeout"] == 10

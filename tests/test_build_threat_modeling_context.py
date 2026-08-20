@@ -95,9 +95,8 @@ def test_header_names_the_business_context_file_that_was_read(tmp_path):
 
 
 def test_supplied_reference_document_is_admitted_as_fenced_and_named_data(tmp_path):
-    """REQ-MOD-008: a document the operator hands to the run is analyzed like a
-    declared input and carries its own source, and a control it claims arrives
-    as text inside the untrusted fence rather than as a finding."""
+    """REQ-MOD-005/REQ-BIZ-001: supplied context remains named untrusted data;
+    a control it claims does not arrive as a finding."""
     repo = _repo(tmp_path)
     output = tmp_path / "output"
     output.mkdir()

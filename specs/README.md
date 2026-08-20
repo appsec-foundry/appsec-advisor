@@ -1,105 +1,89 @@
 # How the plugin changes
 
-`requirements.md` says what the plugin must do, in sentences a person writes.
-Development happens against it: a change that contradicts a requirement is a
-change to the requirement first.
+`requirements.md` is the approved product specification. It contains only
+stable behavior a user would recognize and must stay readable in one sitting.
 
-The format follows `ai-secure-coding-baseline/specs/`. Two things differ,
-because the product here is not one Markdown file: an entry names the paths it
-applies to, and its evidence is a deterministic guard rather than a stochastic
-model case.
+Implementation bindings live separately in `data/requirement-bindings.yaml`.
+They connect each requirement to affected paths, technical decisions, source
+documents, and exact pytest node IDs without making those volatile details part
+of the specification.
 
-- `requirements.md` — the catalog of current requirements.
-- `changes/<name>/` — a change being worked on.
-- `archive/<date>-<name>/` — a change that is finished.
+- `requirements.md` — current normative product requirements.
+- `changes/<name>/` — proposals and work records for requirement changes.
+- `archive/<date>-<name>/` — completed change records.
 
-## Where requirements come from
+## What belongs in the specification
 
-Three sources, and no fourth: what you asked for, what this repository already
-documents, or a commit that established the behavior. Name the source in the
-entry. If none of them settles a question, ask. Do not fill the gap with a rule,
-a test obligation, or a scope extension of your own.
+A sentence belongs in `requirements.md` when a person using the plugin would
+recognize it as a promise and would be let down if it broke. The requirement
+states the outcome, not the mechanism used to produce it.
 
-## Who writes what
+Roles, step order, retries, model names, budgets, paths, test names, internal
+limits, and fallback algorithms do not belong there. Non-obvious architectural
+choices belong in `docs/internal/decisions.md`; shapes and vocabularies belong in
+schemas and data files; implementation details belong in code and contracts.
 
-You approve the requirement: the title and the sentence. Whoever writes the
-test fills in the guard. An agent cannot edit anything under `specs/` silently;
-`scripts/spec_guard.py` routes identifiable writes through a user permission
-prompt.
+## Who approves what
 
-## What belongs here, and what belongs in the decision register
+The operator approves a requirement's ID, title, and normative text. Creating a
+proposal or changing a technical binding uses the normal code-review process and
+does not require a separate specification permission prompt.
 
-A sentence belongs here when someone using the plugin would recognise it as a
-promise and would be let down if it broke. It belongs in
-`docs/internal/decisions.md` when it is a build decision: it could have gone
-another way, and what matters is the choice and what holds it.
+An incompatible implementation change updates and receives approval for the
+requirement before the implementation lands. Requirement IDs are never reused;
+removed IDs are recorded in the bindings file.
 
-When both are true, the sentence stands here and the entry cites the decision ID
-as its source. The register keeps the reasoning and the guard. The sentence has
-one home.
-
-Two things belong in neither. Values — numbers, vocabularies, paths, caps — live
-in `data/` and `schemas/`; a requirement states the rule, never the value. And a
-sentence that only refines an existing requirement goes to the register: the
-register may grow, this file has to stay readable in one sitting.
-
-## Entry format
+## Requirement format
 
 ```markdown
 ## Section name
 
 ### REQ-CLN-001 — Short title
 
-The requirement, in one or two plain sentences. Written the way you would say
-it to a colleague, without the mechanism.
-
-**Applies to:** `scripts/runtime_cleanup.py`
-**Source:** `docs/internal/contracts/cleanup-whitelist.md`, decision `RA-6`
-**Guard:** `test_some_name`, `test_other_name`
+The stable product requirement in one or two short sentences, without paths,
+tests, internal components, or implementation parameters.
 ```
 
-`Applies to` takes repository-relative paths or globs and decides where the
-requirement is surfaced. `Source` says where the rule is written. `Guard` takes
-test function names or pytest node ids.
+## Technical bindings
 
-## Requirement IDs
+`data/requirement-bindings.yaml` is validated against
+`schemas/requirement-bindings.schema.yaml`. Each active requirement has one
+binding with:
 
-`REQ-<AREA>-NNN`. The ID belongs to the behavior, not to the heading: reword the
-requirement and it keeps its ID, split it and the new half gets a new one,
-remove it and the ID retires. Never reuse one. The prefix collides with no
-report anchor (`T`, `F`, `M`, `W`, `C`, `TH`) and no decision prefix.
+- `applies_to` — repository-relative paths or globs used by `--for` and the edit hook;
+- `decisions` and `documents` — technical context for maintainers;
+- `guards` — exact pytest node IDs;
+- `coverage` — `direct`, `partial`, or `advisory` evidence.
 
-## What is enforced
+`direct` means the named tests exercise the requirement's central behavior.
+`partial` is honest supporting evidence for a broader product promise.
+`advisory` means no deterministic guard currently proves it.
 
-`python3 scripts/check_specs.py` runs inside `make check`, takes about a second,
-and calls no model. It fails on a missing, duplicate, or malformed ID, a missing
-field, a guard that no test defines, a decision ID the register does not carry,
-and an applies-to path that matches nothing.
+Bindings may change during an implementation refactor without changing or
+reapproving the product requirement. Review still checks whether their paths and
+tests remain complete and semantically relevant.
 
-`python3 scripts/check_specs.py --for <path>` prints the requirements that apply
-to a file. Run it before changing that file.
+## Enforcement
 
-`python3 scripts/check_specs.py --changed-against <ref>` fails when this file or
-the decision register changed with no change directory under `changes/`. It
-belongs in CI, where the base ref is always resolvable.
+`python3 scripts/check_specs.py` validates the catalog, the binding schema,
+retired IDs, referenced paths and decisions, and exact test node IDs.
 
-`scripts/spec_guard.py` asks for user approval before an agent changes a file
-under `specs/` through `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, a
-recognizable Bash or PowerShell writer, or a recognizable mutating MCP tool.
-Malformed hook input fails closed. The hook is wired in this checkout's
-`.claude/settings.json` and is not shipped with the plugin.
+`python3 scripts/check_specs.py --for <path>` prints the requirements and guard
+coverage bound to a file. The development hook supplies the same context before
+a supported direct file edit.
 
-`scripts/requirements_hook.py` still surfaces the requirements that govern an
-edited implementation file and separately holds the decision register. It is
-also development-only.
+`python3 scripts/check_specs.py --changed-against <ref>` requires a changed
+proposal when the normative catalog or decision register changes. It records the
+change process but cannot prove that a person approved it.
 
-## What is not enforced
+`scripts/spec_guard.py` asks before an identifiable mutation of the normative
+`specs/requirements.md` file. It does not hold proposals, archived records, or
+technical bindings.
 
-A requirement no test expresses carries `— (no guard written)`, or
-`— (guard not located)` when one may exist and was not found. The vocabulary is
-the decision register's. Such an entry is advisory: it is surfaced, not held,
-and the catalog says so rather than implying enforcement it does not have.
+`scripts/requirements_hook.py` surfaces applicable requirements and separately
+holds the decision register. Both hooks are development-only and do not ship in
+the plugin.
 
-A deterministic check keeps the structure and the references honest. It cannot
-tell whether a requirement is faithful to its source or whether a named guard
-really bites. That stays a review.
+Structural checks cannot determine whether a test truly proves a product
+promise. The coverage classification and code review must state that limitation
+instead of implying stronger enforcement.

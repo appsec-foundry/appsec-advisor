@@ -1,9 +1,8 @@
 """Pin the compact completion runtime-cleanup whitelist.
 
 The plugin's completion runtime removes a small set of transient files after a
-successful run. The whitelist is documented in the cleanup contract and
-additionally summarized in `AGENTS.md`. This test pins the list and the safety
-gates so that:
+successful run. The whitelist is documented in the cleanup contract. This test
+pins the list and the safety gates so that:
 
   * adding a new transient artifact (e.g. a future `.merger.stderr`) forces
     an update here — that is the drift guard;
@@ -28,7 +27,6 @@ import pytest
 import runtime_cleanup as rc
 
 PLUGIN_ROOT = Path(__file__).parent.parent
-AGENTS_MD = PLUGIN_ROOT / "AGENTS.md"
 CLEANUP_WHITELIST_MD = PLUGIN_ROOT / "docs" / "internal" / "contracts" / "cleanup-whitelist.md"
 SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
 FULL_RUNTIME_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
@@ -39,9 +37,8 @@ RUNTIME_CLEANUP_PY = PLUGIN_ROOT / "scripts" / "runtime_cleanup.py"
 # ---------------------------------------------------------------------------
 # Whitelist — pinned. To add a new transient artifact:
 #   1) add it to the cleanup contract and runtime_cleanup.py
-#   2) add it to AGENTS.md "Runtime artifact cleanup" section
-#   3) add it here
-# All three live-fire failures (cleanup, doc, doc) become test failures
+#   2) add it here
+# The live-fire implementation and contract checks become test failures
 # until the lists are in sync.
 # ---------------------------------------------------------------------------
 # "Always" wave — removed regardless of QA / architect stage. These map 1:1
@@ -173,11 +170,6 @@ NEVER_CLEANUP = {
     "pentest-tasks.yaml",
     "analysis-model.md",
 }
-
-
-@pytest.fixture(scope="module")
-def agents_text() -> str:
-    return AGENTS_MD.read_text()
 
 
 @pytest.fixture(scope="module")
@@ -438,26 +430,12 @@ class TestScriptWhitelist:
 
 
 # ---------------------------------------------------------------------------
-# Documentation in AGENTS.md
+# Cleanup contract documentation
 # ---------------------------------------------------------------------------
 
 
 class TestCleanupWhitelistDoc:
-    """The cleanup whitelist is documented in `docs/internal/contracts/cleanup-whitelist.md`
-    (single human-readable mirror of the constants in
-    `scripts/runtime_cleanup.py`). AGENTS.md retains the policy paragraphs
-    and a pointer.
-    """
-
-    def test_agents_md_section_exists(self, agents_text):
-        assert "Runtime artifact cleanup" in agents_text, (
-            "AGENTS.md must keep the 'Runtime artifact cleanup' section as the policy anchor."
-        )
-
-    def test_agents_md_points_at_whitelist_doc(self, agents_text):
-        assert "docs/internal/contracts/cleanup-whitelist.md" in agents_text, (
-            "AGENTS.md cleanup section must reference docs/internal/contracts/cleanup-whitelist.md so readers can find the full list."
-        )
+    """The cleanup contract is the human-readable mirror of the constants."""
 
     @pytest.mark.parametrize(
         "filename",
@@ -469,8 +447,8 @@ class TestCleanupWhitelistDoc:
             f"docs/internal/contracts/cleanup-whitelist.md must mention {filename!r} so the doc stays in sync with the script."
         )
 
-    def test_keep_runtime_files_flag_mentioned(self, agents_text):
-        assert "--keep-runtime-files" in agents_text, "AGENTS.md must reference the --keep-runtime-files opt-out flag"
+    def test_keep_runtime_files_flag_mentioned(self, whitelist_text):
+        assert "--keep-runtime-files" in whitelist_text
 
 
 # ---------------------------------------------------------------------------

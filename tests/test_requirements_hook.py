@@ -1,9 +1,9 @@
 """Guards for `scripts/requirements_hook.py`.
 
-The hook is the only part of the specs mechanism that acts before an edit
-rather than after it. These tests pin both halves: the catalog and the decision
-register require explicit user approval, and every other governed file arrives
-with its requirements attached.
+The hook acts before a direct implementation edit. These tests pin both halves:
+the decision register requires explicit user approval, and every governed file
+arrives with the product requirement and external guard coverage attached. The
+separate specification guard owns catalog approval.
 """
 
 from __future__ import annotations
@@ -34,23 +34,28 @@ def output(response: dict | None) -> dict:
     return response["hookSpecificOutput"]
 
 
-@pytest.mark.parametrize("held", ["specs/requirements.md", "docs/internal/decisions.md"])
 @pytest.mark.parametrize("tool", ["Edit", "Write", "MultiEdit", "NotebookEdit"])
-def test_held_files_require_user_approval(held, tool):
+def test_decision_register_requires_user_approval(tool):
+    held = "docs/internal/decisions.md"
     decision = output(requirements_hook.decide(payload(tool=tool, path=held)))
     assert decision["permissionDecision"] == "ask"
     assert held in decision["permissionDecisionReason"]
 
 
-def test_held_file_requires_approval_through_an_absolute_path():
-    absolute = str(ROOT / "specs" / "requirements.md")
+def test_decision_register_requires_approval_through_an_absolute_path():
+    absolute = str(ROOT / "docs" / "internal" / "decisions.md")
     assert output(requirements_hook.decide(payload(path=absolute)))["permissionDecision"] == "ask"
+
+
+def test_catalog_approval_is_left_to_the_specification_guard():
+    assert requirements_hook.decide(payload(path="specs/requirements.md")) is None
 
 
 def test_governed_file_carries_its_requirements():
     context = output(requirements_hook.decide(payload()))["additionalContext"]
     assert "scripts/merge_threats.py" in context
-    assert "REQ-" in context
+    assert "REQ-MOD-001" in context
+    assert "Guard coverage: partial" in context
 
 
 def test_ungoverned_file_is_left_alone():
@@ -92,12 +97,10 @@ def bash(command: str) -> dict:
 @pytest.mark.parametrize(
     "command",
     [
-        "cat > specs/requirements.md",
         "echo x >> docs/internal/decisions.md",
-        "sed -i 's/a/b/' specs/requirements.md",
-        "python3 - <<'EOF'\nPath('specs/requirements.md').write_text('')\nEOF",
         "rm docs/internal/decisions.md",
-        "git checkout other -- specs/requirements.md",
+        "python3 - <<'EOF'\nPath('docs/internal/decisions.md').write_text('')\nEOF",
+        "git checkout other -- docs/internal/decisions.md",
     ],
 )
 def test_a_shell_write_to_a_held_file_requires_user_approval(command):
@@ -108,6 +111,7 @@ def test_a_shell_write_to_a_held_file_requires_user_approval(command):
     "command",
     [
         "grep REQ- specs/requirements.md",
+        "cat > specs/requirements.md",
         "wc -l docs/internal/decisions.md",
         "python3 scripts/check_specs.py",
         "echo hello > /tmp/note.txt",

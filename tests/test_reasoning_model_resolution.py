@@ -10,7 +10,7 @@ parameters. Touching any of:
     * scripts/resolve_config.py                  (source of truth)
     * skills/create-threat-model/SKILL.md        (must mention the flag + delegate)
     * scripts/orchestration_controller.py        (must own role routing)
-    * AGENTS.md                                  (must describe flag + opus-cheap)
+    * docs/model-selection.md                    (user-facing model choices)
 
 without updating the others will surface here.
 """
@@ -28,7 +28,7 @@ SKILL_MD = ROOT / "skills" / "create-threat-model" / "SKILL.md"
 SKILL_FULL_RUNTIME_MD = ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
 SKILL_RERENDER_RUNTIME_MD = ROOT / "skills" / "create-threat-model" / "SKILL-rerender-runtime.md"
 HELP_TXT = ROOT / "skills" / "create-threat-model" / "HELP.txt"
-AGENTS_MD = ROOT / "AGENTS.md"
+MODEL_SELECTION_MD = ROOT / "docs" / "model-selection.md"
 RESOLVE_CONFIG_PY = ROOT / "scripts" / "resolve_config.py"
 CONTROLLER_PY = ROOT / "scripts" / "orchestration_controller.py"
 
@@ -319,10 +319,9 @@ class TestDispatchThreading:
         assert '"threat_merger": "merger_model"' in text
 
 
-class TestAgentsMdDocumentsFlag:
+class TestModelSelectionDocumentsFlag:
     def test_flag_mentioned(self):
-        assert "--reasoning-model" in AGENTS_MD.read_text(), "AGENTS.md must document the --reasoning-model flag"
+        assert "--reasoning-model" in MODEL_SELECTION_MD.read_text()
 
     def test_opus_cheap_mode_described(self):
-        text = AGENTS_MD.read_text()
-        assert "opus-cheap" in text, "AGENTS.md must describe the opus-cheap mode"
+        assert "opus-cheap" in MODEL_SELECTION_MD.read_text()

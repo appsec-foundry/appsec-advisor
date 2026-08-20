@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: hold the requirements catalog, and surface it where it applies.
+"""PreToolUse hook: hold decisions and surface product requirements on edits.
 
 This hook is for developing appsec-advisor, not for running it. It is wired in
 this repository's `.claude/settings.json` and is deliberately absent from
 `hooks/hooks.json`, which ships to users — nothing here should reach an install.
 
-Two behaviors, one reason. `specs/requirements.md` and
-`docs/internal/decisions.md` say what development may not deviate from, so an
-agent must not change them without the operator: the write is routed through an
-explicit permission prompt. For every other file, the hook looks up which
-requirements govern it and puts them in front of the agent at the moment it
-edits that file — the only moment they can still change the edit. A rule read
-at session start is a rule the model can forget; this one arrives with the
-edit.
+The decision register cannot change without the operator. The separate
+`spec_guard.py` owns approval for the normative requirements catalog. For every
+other directly edited file, this hook joins the product catalog with
+`data/requirement-bindings.yaml` and puts applicable requirements in front of
+the agent while the edit can still change.
 
 It allows on anything it cannot positively identify, because a malformed
 payload must not block real work.
@@ -27,7 +24,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from check_specs import CATALOG, HELD_PATHS, ROOT, applicable, parse, render  # noqa: E402
+from check_specs import (  # noqa: E402
+    BINDINGS,
+    CATALOG,
+    REGISTER,
+    ROOT,
+    applicable,
+    load_binding_document,
+    parse,
+    parse_bindings,
+    render,
+)
 
 _PATH_FIELDS = {
     "Edit": "file_path",
@@ -45,6 +52,8 @@ _WRITE_HINT_RE = re.compile(
     r"|\bgit\s+(?:apply|checkout|restore|mv|rm)\b"
     r"|\b(?:python3?|perl|ruby|node)\b"
 )
+
+_HELD_PATH = REGISTER.relative_to(ROOT).as_posix()
 
 _REASON = (
     "Approval required: {target} states what development may not deviate from. "
@@ -78,7 +87,7 @@ def held_in_command(command: str) -> str:
     """The held file a shell command could write to, or empty when none can."""
     if not _WRITE_HINT_RE.search(command):
         return ""
-    return next((path for path in HELD_PATHS if path in command), "")
+    return _HELD_PATH if _HELD_PATH in command else ""
 
 
 def decide(payload: dict) -> dict | None:
@@ -102,15 +111,17 @@ def decide(payload: dict) -> dict | None:
     if not wanted:
         return None
 
-    if wanted in HELD_PATHS:
+    if wanted == _HELD_PATH:
         return ask(wanted)
 
-    if not CATALOG.exists():
+    if not CATALOG.exists() or not BINDINGS.exists():
         return None
-    hits = applicable(parse(CATALOG.read_text()), wanted)
+    entries = parse(CATALOG.read_text(encoding="utf-8"))
+    bindings = parse_bindings(load_binding_document())
+    hits = applicable(entries, bindings, wanted)
     if not hits:
         return None
-    body = "\n".join(render(entry) for entry in hits)
+    body = "\n".join(render(entry, binding) for entry, binding in hits)
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

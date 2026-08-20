@@ -55,7 +55,7 @@ Removing an entry means listing it here in the same change.
 | OR-2 | `Edit` stays limited to the two repair roles, pinned by `EDIT_TOOL_OWNERS` | `tests/test_agent_definitions.py` | comment at the constant |
 | OR-3 | A stage refuses to proceed on a missing required upstream artifact; optional enrichment degrades only where its contract names the fail-open behavior | `test_post_stage1_fails_closed_on_missing_artifact` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-4 | Rebuild archives before it clears, and fails closed if archiving fails | `test_rebuild_archive_failure_aborts_before_deletion` | `docs/internal/contracts/audit-artifacts.md` |
-| OR-5 | Serial STRIDE dispatch is detected and reported as a defect; parallel is the intended shape | `tests/test_stride_serial_dispatch_detection.py` *(guards the detector, not the prohibition)* | `AGENTS.md` → Orchestration |
+| OR-5 | Serial STRIDE dispatch is detected and reported as a defect; parallel is the intended shape | `tests/test_stride_serial_dispatch_detection.py` *(guards the detector, not the prohibition)* | `scripts/check_stride_dispatch.py` |
 | OR-6 | Only the call-scoped hook lifecycle terminalizes a call; a semantic event such as `SCAN_END` publishes output and is never presented as an outcome | `test_postfix6_recon_sequence_renders_one_start_and_one_terminal_outcome` | `agents/shared/logging-standard.md` |
 | OR-7 | Call telemetry stays observational: a disagreement between accepted output, lifecycle, budget, and stage stats is reported, and blocks only under `APPSEC_TELEMETRY_STRICT` | `test_boundary_reports_by_default_and_aborts_only_under_strict` | `docs/internal/contracts/orchestration-actions.md` |
 | OR-8 | Every non-clean exit converges on one terminal state through a single terminator, which releases only a lock its own run holds | `test_interrupt_converges_every_terminal_surface`, `test_a_live_foreign_lock_is_left_alone` | `docs/internal/contracts/orchestration-actions.md` |
@@ -84,17 +84,17 @@ Removing an entry means listing it here in the same change.
 | CE-1 | Every listed prompt surface stays within its byte budget; exceeding it is fixed by shortening the prompt, not by raising the number | `test_each_live_prompt_surface_stays_within_budget` | `data/context-budgets.yaml` |
 | CE-2 | Everything loaded resident is a listed surface | — *(no guard written)* | `data/context-budgets.yaml` |
 | CE-3 | Stage 2 context stays cumulatively bounded | `test_thin_full_cumulative_stage2_context_is_bounded` | `data/context-budgets.yaml`; see `docs/internal/analysis/analysis-context-compaction-thorough-runs-2026-07-16.md` |
-| CE-4 | Phase groups load at their boundary, never inline | `tests/test_lazy_phase_group_loading.py` | `AGENTS.md` → Orchestration and context |
-| CE-5 | Dispatch prompts run stable → specific → volatile | `tests/test_dispatch_prompt_cache_order.py` | `AGENTS.md` → Prompt caching contract |
+| CE-4 | Phase groups load at their boundary, never inline | `tests/test_lazy_phase_group_loading.py` | `docs/internal/contracts/orchestration-actions.md` |
+| CE-5 | Dispatch prompts run stable → specific → volatile | `tests/test_dispatch_prompt_cache_order.py` | `skills/create-threat-model/SKILL-thin-stage1-v2.md` |
 
 ## Depth and turn budgets
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| DT-1 | All six STRIDE categories stay mandatory for every dispatched component at every depth tier and in every depth mode — cheap-stride and quick mode are pacing levers, never coverage cuts | `test_profile_does_not_skip_stride_categories` | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md` |
-| DT-2 | `_cheap_stride_target` is the only place that decides which components are screened | `test_builder_cheap_stride_spares_auth_and_core_backend`, `test_builder_cheap_stride_spares_untrusted_input_entry_points`, `test_builder_cheap_stride_spares_datastores_not_crown_jewels` | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/design-cheap-stride-layer-2026-07-23.md` |
-| DT-3 | Exposure steers component selection, and unknown exposure fails safe to full depth — an off-vocabulary zone becomes exposure-unknown, never internal | `test_builder_cheap_stride_never_screens_exposure_unknown` | `AGENTS.md` → Model and depth configuration; see `docs/internal/analysis/proposal-stride-depth-tiering-2026-07-23.md` |
-| DT-5 | Turn ceilings are computed per component at dispatch time, never declared in agent frontmatter; a ceiling paces work and never caps coverage | — *(no guard written)* | `AGENTS.md` → Model and depth configuration |
+| DT-1 | All six STRIDE categories stay mandatory for every dispatched component at every depth tier and in every depth mode — cheap-stride and quick mode are pacing levers, never coverage cuts | `test_profile_does_not_skip_stride_categories` | `docs/internal/analysis/analysis-cheap-stride-vs-standard-2026-07-25.md` |
+| DT-2 | `_cheap_stride_target` is the only place that decides which components are screened | `test_builder_cheap_stride_spares_auth_and_core_backend`, `test_builder_cheap_stride_spares_untrusted_input_entry_points`, `test_builder_cheap_stride_spares_datastores_not_crown_jewels` | `docs/internal/analysis/design-cheap-stride-layer-2026-07-23.md` |
+| DT-3 | Exposure steers component selection, and unknown exposure fails safe to full depth — an off-vocabulary zone becomes exposure-unknown, never internal | `test_builder_cheap_stride_never_screens_exposure_unknown` | `docs/internal/analysis/proposal-stride-depth-tiering-2026-07-23.md` |
+| DT-5 | Turn ceilings are computed per component at dispatch time, never declared in agent frontmatter; a ceiling paces work and never caps coverage | — *(no guard written)* | `scripts/build_stride_dispatch_manifest.py` |
 | DT-6 | A ceiling lift or a dropped overflow is surfaced as a run issue, never silently absorbed | `test_stride_ceiling_lift_is_surfaced`, `test_stride_ceiling_overflow_dropped_is_surfaced` | `scripts/aggregate_run_issues.py` |
 
 ## Depth modes and rescans
@@ -114,7 +114,7 @@ Removing an entry means listing it here in the same change.
 | MD-2 | Every mode fills all three slots — a mode is a complete routing triple, not a partial override | `test_every_mode_has_three_slots` | `docs/model-selection.md` |
 | MD-3 | Economy modes never move the STRIDE pass below sonnet; cost is saved elsewhere | `test_haiku_economy_keeps_stride_on_sonnet` | `docs/model-selection.md` |
 | MD-4 | The session model controls the orchestrator and is the primary cost lever; the pipeline centrally routes subagents, while no agent selects its own model | — *(no guard written)* | `docs/model-selection.md` |
-| MD-5 | Session-model detection is advisory and fails open; routing resolves with no session model present | `test_effective_routing_empty_session_model` | `AGENTS.md` → Sources and merge behavior |
+| MD-5 | Session-model detection is advisory and fails open; routing resolves with no session model present | `test_effective_routing_empty_session_model` | `scripts/resolve_config.py` |
 | MD-6 | An organization may cap Opus org-wide; absent policy defaults to permitted | `test_policy_disable_opus_absent_defaults_false` | `schemas/org-profile.schema.yaml` → `policy.disable_opus` |
 
 ## Trust boundaries
@@ -138,8 +138,8 @@ Removing an entry means listing it here in the same change.
 | FE-1 | CVSS is assigned only to evidence-backed dependency and known-vulnerability findings and to eligible STRIDE CWEs with file-and-line evidence | `tests/test_cvss_eligibility.py` | `data/cvss-eligible-cwes.yaml` |
 | FE-2 | A control is rated only from what the pipeline actually invokes — never from a tool name in a comment, a step label, or string data | `tests/test_assess_supply_chain_controls.py` *(name-level check open)* | `CHANGELOG.md` |
 | FE-3 | Client-side code is not modelled as a trust zone | `tests/test_prepare_trust_boundary_context.py` *(name-level check open)* | `CHANGELOG.md` |
-| FE-4 | Findings require target evidence from source, configuration, git history or target-owned declarations; validated external context may seed only an unverified hypothesis, and walkthroughs, solution guides or bundled vulnerability prose seed nothing | `test_cross_repo_mismatch_requires_target_evidence` | `AGENTS.md` → Protect trust and compatibility |
-| FE-5 | Supply-chain analysis is passive: files and git history only, no package manager, no network CVE scanner | — *(no guard written)* | `AGENTS.md` → Sources and merge behavior; see `docs/internal/analysis/analysis-supply-chain-coverage-improvement.md` |
+| FE-4 | Findings require target evidence from source, configuration, git history or target-owned declarations; validated external context may seed only an unverified hypothesis, and walkthroughs, solution guides or bundled vulnerability prose seed nothing | `test_cross_repo_mismatch_requires_target_evidence` | `docs/internal/analysis/analysis-external-threat-model-ingestion.md` |
+| FE-5 | Supply-chain analysis is passive: files and git history only, no package manager, no network CVE scanner | — *(no guard written)* | `docs/internal/analysis/analysis-supply-chain-coverage-improvement.md` |
 | FE-6 | Every remote fetch goes through a URL allow-list and an SSRF guard | `tests/test_url_guard.py`, see TR-4 | `schemas/org-profile.schema.yaml` → `policy.url_allowlist` |
 | FE-7 | Declared business context weights and flags; it never sets or raises a severity. It may mark a component crown-jewel and it may raise a triage flag, and the severity caps stay authoritative | `test_step5b_flags_low_impact_where_context_declares_assets`, `test_declared_business_assets_make_a_component_crown_jewel` | `scripts/triage_validate_ratings.py`; `scripts/build_stride_dispatch_manifest.py`; `data/severity-caps.yaml` |
 | FE-8 | An organization's LLM policy answers what code cannot: without a declared list the permitted-data and approval questions stay unanswered rather than guessed | `test_llm_policy_reaches_the_effective_profile`, `test_llm_policy_absent_stays_none` | `schemas/org-profile.schema.yaml` → `llm_policy`; `agents/shared/owasp-llm-top10.md` |
@@ -168,7 +168,7 @@ Removing an entry means listing it here in the same change.
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| RN-1 | The render path is a mutation sequence and its order is load-bearing: `compose_threat_model.py --strict`, then `apply_prose_fixes.py`, then `qa_checks.py autofix` | — *(guard not located)* | `AGENTS.md` → Validation and repair |
+| RN-1 | The render path is a mutation sequence and its order is load-bearing: `compose_threat_model.py --strict`, then `apply_prose_fixes.py`, then `qa_checks.py autofix` | — *(guard not located)* | `docs/internal/contracts/orchestration-actions.md` |
 | RN-2 | A normalization pass is idempotent; running it twice changes nothing, or a re-render invents differences | `test_apply_fixes_is_idempotent_for_core_rewrites`, `test_autofix_is_idempotent_on_paths`, `test_r7_full_pipeline_is_idempotent` | `scripts/apply_prose_fixes.py`, `scripts/qa_checks.py` |
 | RN-4 | The deterministic emitters run in a fixed sequence | `test_emitter_sequence_preserved_in_order` | `scripts/auto_emitter_pass.sh` |
 
@@ -178,9 +178,9 @@ Removing an entry means listing it here in the same change.
 |---|---|---|---|
 | RA-1 | Every artifact crossing a stage boundary has a schema and a validation path | `tests/test_schema_integrity.py`, `scripts/validate_intermediate.py` | `docs/internal/contracts/schema-invariants.md` |
 | RA-2 | A document never duplicates a schema; it points at the authoritative file | `tests/test_schema_drift.py` | `docs/internal/contracts/schema-invariants.md` |
-| RA-3 | `T`/`F` identity survives incremental runs; `M` may be regenerated, `W` follows display order, and deliberate `--rebuild` may reassign all IDs | — *(guard not located)* | `AGENTS.md` → Protect trust and compatibility; see `docs/internal/analysis/backlog-numbering-native-contiguous-2026-07-05.md` |
+| RA-3 | `T`/`F` identity stays consistent across artifacts derived from one model; compatibility helpers preserve it when reading prior incremental artifacts, while `M` may be regenerated, `W` follows display order, and deliberate `--rebuild` may reassign all IDs | — *(guard not located)* | `docs/internal/contracts/schema-invariants.md`; see `docs/internal/analysis/backlog-numbering-native-contiguous-2026-07-05.md` |
 | RA-4 | Reference formats are fixed per context; locators are stripped, never invented | `tests/test_reference_format.py` | `schema-invariants.md` §4a, `qa-crossref-rules.md` |
-| RA-5 | Structure and integrity gates after the review stages are read-only | — *(guard not located)* | `AGENTS.md` → Validation and repair |
+| RA-5 | Structure and integrity gates after the review stages are read-only | — *(guard not located)* | `docs/internal/contracts/orchestration-actions.md` |
 | RA-6 | Audit artifacts and `.appsec-cache/baseline.json` survive normal cleanup; `--rebuild` is the only exception | `tests/test_runtime_cleanup.py` | `docs/internal/contracts/cleanup-whitelist.md` |
 | RA-7 | Every surface that shows a reader an aggregate finding tally takes it from `_severity_rollup`; a surface never counts `threats[]` itself. Triage surfaces that tally the finding list they operate on are a different basis and say so | `TestSeverityBasisMatchesTheReport`, `tests/test_severity_rollup.py` | `scripts/_severity_rollup.py` module docstring |
 
@@ -216,10 +216,10 @@ Removing an entry means listing it here in the same change.
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| EXP-1 | The Threat Dragon export stays alpha and opt-in, and is never part of the `--formats all` expansion | `test_threat_dragon_is_alpha_and_opt_in`, `test_summary_description_marks_the_export_alpha` | `AGENTS.md` → Threat Dragon export |
+| EXP-1 | The Threat Dragon export stays alpha and opt-in, and is never part of the `--formats all` expansion | `test_threat_dragon_is_alpha_and_opt_in`, `test_summary_description_marks_the_export_alpha` | `docs/threat-dragon-export.md` |
 | EXP-2 | Emitted values stay inside Threat Dragon's own vocabulary; the envelope is v2 | `test_envelope_is_threat_dragon_v2` | `docs/threat-dragon-export.md`; see `docs/internal/analysis/analysis-threatatlas-export-format-2026-07-30.md` |
 | EXP-3 | Component tiers map to fixed DFD shapes rather than to whatever the renderer prefers | `test_tier_maps_to_dfd_shape` | `docs/threat-dragon-export.md` |
-| EXP-4 | `threat-model.md` stays authoritative and SARIF stays the scanner export; a deliberately lossy export never becomes the source of truth | — *(no guard written)* | `AGENTS.md` → Threat Dragon export |
+| EXP-4 | `threat-model.md` stays authoritative and SARIF stays the scanner export; a deliberately lossy export never becomes the source of truth | — *(no guard written)* | `docs/threat-dragon-export.md` |
 
 ## Repository trust
 
@@ -238,7 +238,7 @@ Removing an entry means listing it here in the same change.
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| RR-1 | `docs/related-repos.yaml` is the only source for cross-repository finding deep-reads; a filesystem sibling may annotate a C4 diagram and nothing else | — *(guard not located)* | `AGENTS.md` → Sources and merge behavior |
+| RR-1 | `docs/related-repos.yaml` is the only source for cross-repository finding deep-reads; a filesystem sibling may annotate a C4 diagram and nothing else | — *(guard not located)* | `docs/threat-modeler.md` |
 | RR-2 | A remote related-repo fetch requires the URL allow-list; an untrusted run enforces it | `tests/test_url_guard.py` | see TR-4, FE-6 |
 | RR-3 | A stale or unresolvable repository path is rejected before it reaches component analysis, never carried as an unverified claim | `tests/test_build_cross_repo_register.py` *(name-level check open)* | `CHANGELOG.md` |
 
@@ -255,8 +255,8 @@ Removing an entry means listing it here in the same change.
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
 | EX-1 | An organization extends the plugin only through its org profile and package policy | `tests/test_org_profile_schema.py`, `tests/test_package_internal_plugin.py` | `docs/internal/contracts/org-profile-invariants.md` |
-| EX-2 | Agents are core-owned; a profile cannot add or change one | `tests/test_package_internal_plugin.py` | `AGENTS.md` → What an organization can package |
-| EX-3 | `create-threat-model` cannot be removed from a build | `tests/test_skill_policy_gate.py` | `AGENTS.md` → What an organization can package |
+| EX-2 | Agents are core-owned; a profile cannot add or change one | `tests/test_package_internal_plugin.py` | `docs/internal/contracts/org-profile-invariants.md` |
+| EX-3 | `create-threat-model` cannot be removed from a build | `tests/test_skill_policy_gate.py` | `docs/internal-plugin-packaging.md` |
 | EX-4 | A package policy takes `include` or `exclude` per surface, never both, and the same rule applies to org-added skills | `test_policy_surface_explicit_block`, `test_policy_surface_fallback_to_root`, `test_the_package_policy_can_exclude_an_added_skill` | `docs/internal-plugin-packaging.md` |
 | EX-5 | What a build kept and what it dropped is recorded in `.claude-plugin/package-surface.json`, so a shipped plugin can be audited against its policy | — *(guard not located)* | `docs/internal-plugin-packaging.md` |
 | EX-6 | An organization baseline replaces the upstream copy instead of shipping both | `test_org_baseline_drops_the_unused_upstream_copy` | `scripts/package_internal_plugin.py` |

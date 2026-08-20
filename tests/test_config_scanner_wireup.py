@@ -4,7 +4,6 @@ Verifies:
   - Schema is registered in validate_intermediate.py
   - Schema accepts well-formed examples and rejects malformed ones
   - orchestration_controller.py owns the dispatch block
-  - AGENTS.md lists Phase 2.5
 """
 
 from __future__ import annotations
@@ -154,7 +153,7 @@ class TestSchemaValidation:
 
 
 # ---------------------------------------------------------------------------
-# Spec docs reference Phase 2.5
+# Runtime integration
 # ---------------------------------------------------------------------------
 
 
@@ -173,21 +172,6 @@ class TestSpecIntegration:
     def test_controller_routes_the_config_scanner(self):
         text = (ROOT / "scripts" / "orchestration_controller.py").read_text()
         assert '"agent": "appsec-config-scanner"' in text
-
-    def test_agents_md_lists_phase_2_5(self):
-        text = (ROOT / "AGENTS.md").read_text()
-        assert "2.5. Config" in text or "Phase 2.5" in text, "AGENTS.md phase list must include Phase 2.5"
-
-    def test_agents_md_no_longer_calls_config_scanner_wip(self):
-        """The Roadmap entry should be removed once wire-up is done."""
-        text = (ROOT / "AGENTS.md").read_text()
-        assert (
-            "WIP agent" not in text
-            or "appsec-config-scanner"
-            not in (t.split("WIP agent")[1].split("\n")[0] for t in [text] if "WIP agent" in text).__next__()
-            if "WIP agent" in text
-            else True
-        )
 
 
 # ---------------------------------------------------------------------------

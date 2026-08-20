@@ -13,8 +13,8 @@
             "command": "python3",
             "args": [
               "${CLAUDE_PROJECT_DIR}/scripts/spec_guard.py",
-              "--protected-dir",
-              "${CLAUDE_PROJECT_DIR}/specs"
+              "--protected-path",
+              "${CLAUDE_PROJECT_DIR}/specs/requirements.md"
             ],
             "timeout": 10
           }
@@ -36,7 +36,7 @@
   },
   "permissions": {
     "ask": [
-      "Edit(/specs/**)"
+      "Edit(/specs/requirements.md)"
     ]
   },
   "sandbox": {
