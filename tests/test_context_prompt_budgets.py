@@ -269,6 +269,13 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     # surface the reader sees, not narration alone.
     assert "a command, boundary, or id never reaches console text, an Agent description, or a task row" in flat
 
+    # Naming the banned vocabulary was not enough: a run still printed "Waiter
+    # exited with code 1", "Controller returned another STRIDE wave" and
+    # "4/5 STRIDE done", which name nothing on that list. The ban is positive —
+    # no console text from this runtime, abort excepted.
+    assert "This runtime emits no console text at all" in flat
+    assert "Only an abort speaks" in flat
+
     # It must not carry the removed generation's stage machinery.
     assert "SKILL-thin-stage1.md" not in text
     assert "STAGE1_PHASE_LIMIT" not in text

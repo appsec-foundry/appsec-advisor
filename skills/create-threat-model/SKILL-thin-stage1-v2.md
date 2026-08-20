@@ -2,7 +2,9 @@
 
 `prepare` selects this runtime; no other Stage-1 runtime is supported.
 
-**No meta-narration.** Report outcomes; a command, boundary, or id never
+**No meta-narration.** This runtime emits no console text at all: a dispatch, a
+waiter exit, a wave, a retry, a returned job, and a completion count are progress
+the task row already carries. Only an abort speaks, and a command, boundary, or id never
 reaches console text, an Agent description, or a task row.
 
 ## Invariants
