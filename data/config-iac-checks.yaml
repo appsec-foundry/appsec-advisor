@@ -398,7 +398,7 @@ checks:
     cwe: CWE-250
     finding_type: FT-180
     rationale: "The committed settings pre-approve tool calls but declare no sandbox, so the agent runs with the contributor's full filesystem and network reach. An instruction planted in repository content, a dependency, or an issue body then reaches the shell with no boundary around it."
-    remediation: "Add a sandbox block with enabled: true and explicit filesystem allow-lists"
+    remediation: "Set sandbox.enabled to true in the committed settings; keep filesystem allow-lists in user settings, where absolute host paths belong"
 
   - id: IAC-061
     name: "Claude Code settings must not disable permission prompts"

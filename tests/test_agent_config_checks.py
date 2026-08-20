@@ -68,6 +68,36 @@ def test_claude_settings_without_autonomy_are_not_reported(repo):
     assert _scan(repo) == []
 
 
+def test_claude_read_only_allow_rules_are_not_autonomy(repo):
+    """Pre-approving reads reaches no shell and writes no file, so the missing
+    sandbox costs nothing — reporting it would fire on healthy repos."""
+    _write(
+        repo,
+        ".claude/settings.json",
+        json.dumps({"permissions": {"allow": ["Read(src/**)", "Grep", "Glob(**/*.py)"]}}),
+    )
+
+    assert _scan(repo) == []
+
+
+def test_claude_one_executing_allow_rule_is_enough(repo):
+    _write(
+        repo,
+        ".claude/settings.json",
+        json.dumps({"permissions": {"allow": ["Read(src/**)", "Bash(npm test:*)"]}}),
+    )
+
+    assert [row["check_id"] for row in _scan(repo)] == ["IAC-060"]
+
+
+def test_claude_unknown_allow_rule_counts_as_a_grant(repo):
+    """An unrecognised tool may still reach a shell; the check does not assume
+    it is harmless."""
+    _write(repo, ".claude/settings.json", json.dumps({"permissions": {"allow": ["mcp__deploy__release"]}}))
+
+    assert [row["check_id"] for row in _scan(repo)] == ["IAC-060"]
+
+
 def test_claude_accept_edits_default_counts_as_autonomy(repo):
     _write(repo, ".claude/settings.json", json.dumps({"permissions": {"defaultMode": "acceptEdits"}}))
 

@@ -11,7 +11,9 @@ Shared false-positive exclusion for the absence checks: a repository that
 commits no agent autonomy is never flagged. Missing isolation is a violation
 only where the same committed file pre-approves tool use — a permission
 allow-list, an accept-edits default, auto-accepted tool calls, or a trusted
-MCP server. Explicit weakening is covered by the regex checks in the catalog.
+MCP server. An allow-list that grants nothing but read access does not count:
+it reaches no shell and writes no file, so isolation buys nothing there.
+Explicit weakening is covered by the regex checks in the catalog.
 
 An unparsable file yields no violation: it carries no evidence of a posture,
 and the surrounding recon inventory already reports the file itself.
@@ -29,6 +31,9 @@ from typing import Any, Callable, Iterator
 # routes through a decision the user can see, so only the unambiguous grants
 # count as a reason to expect isolation.
 _CLAUDE_AUTONOMOUS_MODES = {"acceptEdits", "bypassPermissions", "dontAsk"}
+# Tools whose allow rules grant read access only. An unrecognised tool name
+# counts as a grant: a rule the catalog does not know may still reach a shell.
+_CLAUDE_READ_ONLY_TOOLS = {"Glob", "Grep", "LS", "NotebookRead", "Read"}
 # Gemini CLI accepts a boolean or a container runtime name for `sandbox`.
 _GEMINI_SANDBOX_RUNTIMES = {"docker", "podman"}
 
@@ -71,10 +76,18 @@ def _claude_sandbox_enabled(data: dict[str, Any]) -> bool:
     return _mapping(sandbox).get("enabled") is True
 
 
+def _grants_more_than_read(rule: Any) -> bool:
+    """True for an allow rule that reaches beyond reading, e.g. ``Bash(...)``."""
+    if not isinstance(rule, str) or not rule.strip():
+        return False
+    tool = rule.split("(", 1)[0].strip()
+    return tool not in _CLAUDE_READ_ONLY_TOOLS
+
+
 def _claude_grants_autonomy(data: dict[str, Any]) -> bool:
     permissions = _mapping(data.get("permissions"))
     allow = permissions.get("allow")
-    if isinstance(allow, list) and any(isinstance(rule, str) and rule.strip() for rule in allow):
+    if isinstance(allow, list) and any(_grants_more_than_read(rule) for rule in allow):
         return True
     mode = permissions.get("defaultMode") or data.get("defaultMode")
     if isinstance(mode, str) and mode.strip() in _CLAUDE_AUTONOMOUS_MODES:
