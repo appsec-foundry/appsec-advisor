@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
+PLUGIN_ROOT = Path(__file__).parent.parent
+PLUGIN_SCRIPTS = PLUGIN_ROOT / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
 
 import budget_watchdog as bw  # noqa: E402
@@ -92,9 +93,16 @@ def test_get_max_turns_falls_back_when_file_missing(monkeypatch, tmp_path):
     assert bw.get_max_turns("does-not-exist") == bw.DEFAULT_MAX_TURNS
 
 
-def test_get_max_turns_falls_back_when_plugin_root_unset(monkeypatch):
+def test_get_max_turns_reads_the_own_tree_when_plugin_root_unset(monkeypatch):
+    """Without the env var the ceiling still comes from the shipped agent file.
+
+    Falling back to DEFAULT_MAX_TURNS there put every threshold out of reach,
+    so a child that burned its whole ceiling produced no budget event.
+    """
     monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
-    assert bw.get_max_turns("anything") == bw.DEFAULT_MAX_TURNS
+    shipped = (PLUGIN_ROOT / "agents" / "appsec-recon-scanner.md").read_text(encoding="utf-8")
+    assert bw.get_max_turns("recon-scanner") == int(bw._MAXTURNS_RE.search(shipped).group(1))
+    assert bw.get_max_turns("does-not-exist") == bw.DEFAULT_MAX_TURNS
 
 
 def test_get_max_turns_falls_back_when_no_frontmatter_field(env, tmp_path):

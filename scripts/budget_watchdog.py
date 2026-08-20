@@ -38,22 +38,35 @@ STATE_SCHEMA_VERSION = 2
 _MAXTURNS_RE = re.compile(r"^maxTurns:\s*(\d+)\s*$", re.MULTILINE)
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _COMPONENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,99}$")
-_MAX_TURNS_CACHE: dict[str, int] = {}
+_MAX_TURNS_CACHE: dict[tuple[str, str], int] = {}
 
 
 def _plugin_root() -> Optional[Path]:
+    """Locate the agent definitions: `$CLAUDE_PLUGIN_ROOT`, else this tree.
+
+    A hook invoked without the environment variable still runs inside the
+    plugin, and without the fallback every ceiling became DEFAULT_MAX_TURNS —
+    several times the real ones, so no threshold was ever reachable and the run
+    got no budget event at all.
+    """
     root = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    return Path(root) if root and Path(root).is_dir() else None
+    if root and Path(root).is_dir():
+        return Path(root)
+    here = Path(__file__).resolve().parent.parent
+    return here if (here / "agents").is_dir() else None
 
 
 def get_max_turns(agent_name: str) -> int:
     if not agent_name:
         return DEFAULT_MAX_TURNS
-    if agent_name in _MAX_TURNS_CACHE:
-        return _MAX_TURNS_CACHE[agent_name]
     root = _plugin_root()
+    # Keyed by root as well: a value read under one plugin root says nothing
+    # about another, and a process that resolves both must not serve the first.
+    cache_key = (str(root or ""), agent_name)
+    if cache_key in _MAX_TURNS_CACHE:
+        return _MAX_TURNS_CACHE[cache_key]
     if not root:
-        _MAX_TURNS_CACHE[agent_name] = DEFAULT_MAX_TURNS
+        _MAX_TURNS_CACHE[cache_key] = DEFAULT_MAX_TURNS
         return DEFAULT_MAX_TURNS
     candidates = [agent_name]
     if not agent_name.startswith("appsec-"):
@@ -66,11 +79,11 @@ def get_max_turns(agent_name: str) -> int:
             match = _MAXTURNS_RE.search(path.read_text(encoding="utf-8", errors="replace"))
             if match:
                 value = int(match.group(1))
-                _MAX_TURNS_CACHE[agent_name] = value
+                _MAX_TURNS_CACHE[cache_key] = value
                 return value
         except OSError:
             continue
-    _MAX_TURNS_CACHE[agent_name] = DEFAULT_MAX_TURNS
+    _MAX_TURNS_CACHE[cache_key] = DEFAULT_MAX_TURNS
     return DEFAULT_MAX_TURNS
 
 
