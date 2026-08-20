@@ -24,6 +24,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote_plus
 
 # Markers that indicate a value has already been masked / redacted.
@@ -173,6 +174,16 @@ def _is_keyword_echo_value(value: str, keyword: str | None, quoted: bool) -> boo
     return norm(value) == norm(keyword)
 
 
+# Trailing sentence punctuation the loose value charclass swallows but that is
+# never part of a credential. scan_text() and mask_text() MUST strip the same
+# set before consulting the false-positive guards: while only the detector did,
+# the guards saw ``presence`` and stayed silent while the masker saw
+# ``presence.``, failed _PROSE_WORD_RE on the full stop, and rewrote the
+# sentence to ``#access_token= **** (9 chars)`` — a corrupted evidence line in
+# every rendered report, with a clean scan afterwards to hide it (juice-shop
+# 2026-08-20). Sharing one constant is what keeps the twins in step.
+_VALUE_PUNCTUATION = ".,;:!?"
+
 # A natural-language word: letters only, optionally hyphenated ("existing",
 # "Authorization", "attacker-controlled"). Every segment is capped at 13 chars
 # because that is the longest word a threat model plausibly writes after a
@@ -190,6 +201,29 @@ _PROSE_VOWEL_RE = re.compile(r"[aeiouyAEIOUY]")
 # start mid-token, so sentence position must be measured from the token's left
 # edge, not from the keyword.
 _TOKEN_CHAR_RE = re.compile(r"[A-Za-z0-9_\-#?&/.]")
+
+# "The prose sentence continues past the value": another word follows, or the
+# clause ends. A clause terminator counts as sentence-shaped only when nothing
+# but whitespace, the line end, or a SERIALIZATION WRAPPER follows it.
+#
+# The wrapper alternative is what makes the guard format-independent. scan_text
+# runs over raw bytes, but the same evidence sentence is serialized differently
+# per artifact: PyYAML wraps a scalar in `'…'`, JSON/SARIF in `"…"`, an HTML
+# cell appends `<br>`, markdown may close a backtick or a parenthesis. Without
+# it, only unwrapped markdown reached this test and every other artifact class
+# fell through to a false positive — `…routes on #access_token= presence.'`
+# masked the English word "presence" as a 9-character credential and blocked
+# the release gate on threat-model.yaml (juice-shop 2026-08-20). Because the
+# guard still requires an unquoted plain-word value (`_PROSE_WORD_RE`) preceded
+# by an English word, tolerating a closing delimiter cannot admit a real
+# literal: a credential carries digits or separators and fails that test first.
+_SENTENCE_CONTINUES_RE = re.compile(
+    r"""(?x)
+      \s+[A-Za-z]                            # another word follows
+    | [.,;]                                  # or the clause ends, followed by
+      (?: \s | $ | ['"`)\]}|] | <br\s*/?> )  # space, EOL, or a wrapper
+    """
+)
 
 
 def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool, text: str, start: int) -> bool:
@@ -216,8 +250,11 @@ def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool
       position — measured from the left edge of the whole token, so that
       ``#access_token`` counts as mid-sentence while a bare ``  secret: x``
       YAML key, preceded by indent only, stays flagged,
-    * the sentence continues after the value (another word, or a clause-ending
-      ``.,;`` ). A config value is line-final or followed by a quote,
+    * the sentence continues after the value — another word, or a clause-ending
+      ``.,;`` followed by whitespace, the line end, or the serialization
+      wrapper the artifact happens to use (``'``/``"`` for YAML/JSON scalars,
+      ``<br>`` for an HTML cell, a closing backtick or bracket). A config value
+      is line-final,
     * the operator is ``:``, or ``=`` **with** whitespace before the value. No
       URL, env file, or query string ever puts a space after ``=``, so this is
       what separates ``token= fragment`` in prose from ``token=<literal>``.
@@ -252,7 +289,7 @@ def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool
 
     # The sentence has to keep going; a config value ends its line.
     after = line[line.find(value, offset) + len(value) :]
-    return bool(re.match(r"(?:\s+[A-Za-z]|[.,;](?:\s|$))", after))
+    return bool(_SENTENCE_CONTINUES_RE.match(after))
 
 
 # A JWT header segment that decodes to ``{"alg":"none"}``. An unsigned token
@@ -411,7 +448,7 @@ def scan_text(text: str) -> list[SecretHit]:
                 # 'password'``) and let the exact-value redactor rewrite every
                 # ``password``-prefixed token in the document, corrupting prose
                 # and code samples alike (2026-07-19 insecure-python-app run).
-                value = value.rstrip(".,;:!?")
+                value = value.rstrip(_VALUE_PUNCTUATION)
                 if _value_is_masked(value):
                     continue
                 # Unquoted code-identifier reference (variable name in an
@@ -466,9 +503,15 @@ def _mask_match(pat: _Pattern, m: re.Match[str]) -> str:
         return matched[:4] + "****"
     # generic_credential_assignment — mask only the captured value, preserve the
     # key + operator + opening quote so the line stays readable and valid.
+    # Trailing sentence punctuation is not part of the value (the loose
+    # charclass includes ``.``), so it is carried through rather than swallowed:
+    # masking a sentence-final value used to delete the full stop and report a
+    # length one character too long.
     value = m.group("val")
+    stripped = value.rstrip(_VALUE_PUNCTUATION)
+    tail = value[len(stripped) :]
     prefix = matched[: m.start("val") - m.start(0)]
-    return f"{prefix}**** ({len(value)} chars)"
+    return f"{prefix}**** ({len(stripped)} chars){tail}"
 
 
 def mask_text(text: str) -> tuple[str, list[str]]:
@@ -490,6 +533,11 @@ def mask_text(text: str) -> tuple[str, list[str]]:
             groups = m.groupdict() or {}
             value = m.group("val") if "val" in groups else m.group(0)
             if not _pat.strict:
+                # Same normalization as scan_text(), in the same position — every
+                # guard below must judge the value the detector judges, or the
+                # twins disagree and the masker corrupts what the scan then
+                # reports as clean.
+                value = value.rstrip(_VALUE_PUNCTUATION)
                 if _value_is_masked(value):
                     return m.group(0)
                 if not groups.get("q") and _looks_like_code_reference(value):
@@ -522,9 +570,71 @@ def mask_text(text: str) -> tuple[str, list[str]]:
     return text, list(seen.keys())
 
 
+def mask_structure(node: Any) -> tuple[Any, list[str]]:
+    """Mask every string INSIDE a decoded document, before it is serialized.
+
+    The masking twin of mask_text() for the data layer. Use this — never
+    mask_text() — on anything that will be written as YAML or JSON.
+
+    Text-level masking of a serialized document is not safe. The credential
+    replacement is ``**** (N chars)``, and a value that starts with ``*`` at the
+    head of a plain YAML scalar is an alias indicator: rewriting the unquoted
+    ``api_key: aB3xK9mQ7zR2pL5w`` into ``api_key: **** (16 chars)`` produces a
+    document PyYAML can no longer parse, i.e. a corrupt canonical model that the
+    completeness gate then blocks on. Masking the decoded strings instead leaves
+    quoting to the serializer, which quotes exactly when it has to, so the
+    corruption class cannot occur regardless of where the value sits.
+
+    Keys are left alone — a mapping key is structure, not analyst prose, and
+    rewriting one would silently drop a field. They are still READ: the loose
+    credential-assignment pattern needs ``keyword <op> value`` in one string, and
+    decoding splits exactly that shape across a key and its value, so
+    ``{"api_key": "aB3x…"}`` would otherwise be invisible to a masker that only
+    ever sees the bare value. Each string value is therefore also probed once in
+    the context of its own key. Returns
+    ``(masked_node, applied_pattern_names)``."""
+    applied: list[str] = []
+
+    def _mask_leaf(value: str, key: Any) -> str:
+        masked, names = mask_text(value)
+        if names:
+            applied.extend(names)
+            return masked
+        if isinstance(key, str) and key:
+            # Reunite key and value so `keyword: value` can match, then take the
+            # value side back. Only an exact prefix match is trusted, so a
+            # rewrite that touched the key can never be folded into the value.
+            prefix = f"{key}: "
+            probed, probe_names = mask_text(prefix + value)
+            if probe_names and probed.startswith(prefix):
+                applied.extend(probe_names)
+                return probed[len(prefix) :]
+        return value
+
+    def _walk(value: Any, key: Any = None) -> Any:
+        if isinstance(value, str):
+            return _mask_leaf(value, key)
+        if isinstance(value, dict):
+            return {k: _walk(v, k) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_walk(v, key) for v in value]
+        if isinstance(value, tuple):
+            return tuple(_walk(v, key) for v in value)
+        return value
+
+    masked_node = _walk(node)
+    seen: dict[str, None] = {}
+    for name in applied:
+        seen.setdefault(name, None)
+    return masked_node, list(seen.keys())
+
+
 def mask_file(path: Path) -> list[str]:
     """Mask secrets in ``path`` in place. Returns the applied pattern names
-    (empty list when nothing changed). Best-effort: unreadable files no-op."""
+    (empty list when nothing changed). Best-effort: unreadable files no-op.
+
+    Text-level: correct for markdown and HTML. For YAML/JSON use
+    mask_structure() on the decoded document instead — see its docstring."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:

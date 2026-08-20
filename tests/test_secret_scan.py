@@ -202,6 +202,102 @@ def test_prose_guard_does_not_swallow_real_assignments(secret_scan, raw):
     )
 
 
+# One evidence sentence whose credential-adjacent word is the LAST word before
+# the wrapper. scan_text runs over raw bytes, so the same sentence reaches it
+# differently per artifact — this is the axis the guard has to be blind to.
+_PROSE_SENTENCE = "confirms the oauthMatcher routes on #access_token= presence"
+
+_SERIALIZATION_WRAPPERS = {
+    "markdown_raw": _PROSE_SENTENCE + ".",
+    "markdown_table_cell": "| " + _PROSE_SENTENCE + ". |",
+    "yaml_single_quoted": _PROSE_SENTENCE + ".'",
+    "yaml_double_quoted": _PROSE_SENTENCE + '."',
+    "json_string": '{"evidence_summary": "' + _PROSE_SENTENCE + '."}',
+    "sarif_message_text": '"text": "' + _PROSE_SENTENCE + '."',
+    "html_cell_break": _PROSE_SENTENCE + ".<br>",
+    "closing_paren": "(" + _PROSE_SENTENCE + ".)",
+    "closing_backtick": _PROSE_SENTENCE + ".`",
+}
+
+
+@pytest.mark.parametrize("wrapper", sorted(_SERIALIZATION_WRAPPERS))
+def test_prose_guard_is_serialization_independent(secret_scan, wrapper):
+    """The prose false-positive guard must not depend on how the artifact
+    serializes the sentence.
+
+    The 2026-08-20 juice-shop release-blocker: the guard's "sentence continues"
+    test accepted a clause terminator only when whitespace or the line end
+    followed it. PyYAML wraps a scalar in ``'…'``, so the sentence-final period
+    was followed by a quote, the guard fell through, and the English word
+    "presence" was reported as a 9-character credential in threat-model.yaml —
+    blocking the release gate with no automatic repair path. Only unwrapped
+    markdown was ever covered; 7 of these 9 shapes false-positived.
+    """
+    raw = _SERIALIZATION_WRAPPERS[wrapper]
+    hits = [h for h in secret_scan.scan_text(raw) if h.pattern == "generic_credential_assignment"]
+    assert hits == [], f"{wrapper}: prose must not flag: {raw!r}, got {[h.value for h in hits]}"
+    masked, _ = secret_scan.mask_text(raw)
+    assert masked == raw, f"{wrapper}: masker must leave prose intact -> {masked!r}"
+
+
+@pytest.mark.parametrize("wrapper", sorted(_SERIALIZATION_WRAPPERS))
+@pytest.mark.parametrize(
+    "literal",
+    ["api_key= aB3xK9mQ7zR2pL5w", "password= Hunter2Winter99", "secret= s3cr3tvalue123"],
+)
+def test_wrapper_tolerance_does_not_hide_real_literals(secret_scan, wrapper, literal):
+    """Tolerating a closing delimiter must not open a false-negative hole: the
+    same wrappers carrying a REAL credential still have to flag."""
+    raw = _SERIALIZATION_WRAPPERS[wrapper].replace("#access_token= presence", literal)
+    assert any(h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)), (
+        f"{wrapper}: real literal must still flag: {raw!r}"
+    )
+
+
+def test_mask_structure_keeps_yaml_parseable(secret_scan):
+    """Masking must happen on the decoded document, never on serialized YAML.
+
+    ``**** (N chars)`` at the head of a plain scalar is a YAML alias indicator,
+    so text-level masking of ``api_key: aB3xK9mQ7zR2pL5w`` yields a document
+    PyYAML cannot parse — a corrupt canonical model. mask_structure() masks the
+    string and leaves quoting to the serializer.
+    """
+    yaml = pytest.importorskip("yaml")
+    doc = {"meta": {"api_key": "aB3xK9mQ7zR2pL5w"}, "threats": [{"evidence": "uses token=aB3xK9mQ7zR2pL5w here"}]}
+
+    text_masked, _ = secret_scan.mask_text(yaml.safe_dump(doc, sort_keys=False))
+    with pytest.raises(yaml.YAMLError):
+        yaml.safe_load(text_masked)  # documents the corruption mask_structure avoids
+
+    masked_doc, applied = secret_scan.mask_structure(doc)
+    assert applied, "a real literal must be masked"
+    roundtripped = yaml.safe_load(yaml.safe_dump(masked_doc, sort_keys=False))
+    assert roundtripped == masked_doc
+    assert "aB3xK9mQ7zR2pL5w" not in yaml.safe_dump(masked_doc)
+    assert secret_scan.scan_text(yaml.safe_dump(masked_doc)) == []
+
+
+def test_mask_structure_leaves_keys_and_non_strings_alone(secret_scan):
+    """Mapping keys are structure, not analyst prose — rewriting one would drop
+    a field. Non-string leaves pass through untouched."""
+    doc = {"api_key": "n/a", "count": 7, "flag": True, "none": None, "items": ["plain", 3]}
+    masked, applied = secret_scan.mask_structure(doc)
+    assert applied == []
+    assert masked == doc
+    assert list(masked) == list(doc)
+
+
+def test_mask_structure_reads_the_key_for_context(secret_scan):
+    """Decoding splits ``keyword: value`` across a key and its value, so a
+    key-blind masker would never see ``{"api_key": "<literal>"}``. The key is
+    read for context but never rewritten."""
+    doc = {"api_key": "aB3xK9mQ7zR2pL5w"}
+    masked, applied = secret_scan.mask_structure(doc)
+    assert applied == ["generic_credential_assignment"]
+    assert list(masked) == ["api_key"], "the key itself must survive verbatim"
+    assert masked["api_key"] == "**** (16 chars)"
+
+
 @pytest.mark.parametrize(
     "raw",
     [

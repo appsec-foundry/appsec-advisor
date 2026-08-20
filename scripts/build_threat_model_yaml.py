@@ -62,6 +62,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
 import load_business_context  # noqa: E402
+import secret_scan  # noqa: E402
 from _atomic_io import atomic_write_text  # noqa: E402
 from _boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from _boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
@@ -2619,6 +2620,25 @@ def main() -> int:
             f"  trust boundaries renumbered contiguously for delivery: {len(tb_remap)} id(s) remapped "
             f"(e.g. {next(iter(tb_remap))} → {tb_remap[next(iter(tb_remap))]})\n"
         )
+
+    # Canonical secret mask — the single upstream point where analyst-authored
+    # evidence becomes a delivered artifact. Everything downstream is a pure
+    # function of this document (threat-model.md composes from it, SARIF and
+    # Threat Dragon export from it), so masking HERE means no rendered artifact
+    # can carry a value the release gate would block on.
+    #
+    # The gate (qa_checks.unmasked_secrets) scans threat-model.md, .yaml,
+    # .sarif.json, .threatdragon.json, .html and .fragments/*.md, but the only
+    # pattern masker in the pipeline ran inside the composer, on the markdown
+    # string alone. A literal an analyst copied into evidence prose therefore
+    # reached the yaml unmasked and hard-blocked the release with no repair path
+    # — the Stage-3 repair loop owns .qa-repair-plan.json, not secret hits, so
+    # the only exit was a hand edit of a delivered artifact (juice-shop
+    # 2026-08-20). Masking the decoded document keeps serialization safe; see
+    # secret_scan.mask_structure for why text-level masking of YAML is not.
+    doc, masked_patterns = secret_scan.mask_structure(doc)
+    if masked_patterns:
+        sys.stderr.write(f"  secret mask applied to model: {', '.join(masked_patterns)}\n")
 
     # Render
     rendered = yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False, width=120)
