@@ -13,72 +13,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A scan now reports the sandbox, approval, hook and tool-trust posture set by a repository's committed coding-agent configuration for Claude Code, Codex, Copilot, Gemini CLI and Kiro.
 - The requirements harvester can emit selected functional requirements as single-file OpenSpec and SpecDD specifications.
-- The context-v2 analysis runtime projects only component-specific facts and reduced reference API cost by 39.8 % at quick depth and 26.8 % at thorough depth.
-- A new or rebuilt analysis now takes optional business context from pasted text or a URL, interactively, through `--context`, or not at all with `--skip-context`. See `docs/threat-modeler.md`.
-- A context-v2 scan now shows Stage 1 as one task per analysis step, each numbered within its stage and carrying a component counter while STRIDE runs, instead of a single task for its whole duration.
-- An organization profile can declare an `llm_policy` of permitted data classes and approval-required actions. See `docs/org-profiles.md`.
-- The LLM lens now asks four questions the OWASP Top 10 leaves out, from prompt-only guardrails to permitted data classes.
-- Named sensitive assets in `docs/business-context.md` now mark the components that handle them for full-depth analysis.
-- New alpha export: `--formats threatdragon` writes OWASP Threat Dragon v2 JSON, which also imports into OWASP ThreatAtlas; `create-threat-model --threatdragon` writes it during a scan. See `docs/threat-dragon-export.md`.
+- New and rebuilt analyses can collect optional business context interactively or through `--context`, use it to give named sensitive-asset components full-depth analysis and break ranking ties, or bypass collection with `--skip-context`.
+- LLM analysis now checks prompt-only behavioural limits, action auditability, permitted data classes, and approval gates, with organization policy supplied through `llm_policy`. See `docs/org-profiles.md`.
+- Threat models can now be exported as alpha OWASP Threat Dragon v2 JSON for Threat Dragon and ThreatAtlas with `--formats threatdragon` or `create-threat-model --threatdragon`. See `docs/threat-dragon-export.md`.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
 - New `install-baseline`, `verify-baseline` and `remove-baseline` skills manage a secure-coding baseline in Claude Code's instruction files, with `verify-baseline --enforce` as a CI gate.
 - New `help` skill lists available commands and the context, profile, and coach configuration in effect.
-- New `examples/abuse-cases.yaml` is a commented, ready-to-adapt abuse case for `--abuse-case-file` and `<repo>/.appsec/abuse-cases/`. See `docs/org-profiles.md`.
 - Sessions now open with a status banner naming the plugin, threat model, and loaded baseline; `APPSEC_BANNER=0` disables it.
 - Organization profiles can ship custom skills, a secure-coding baseline, and a banner, and disable shipped skills.
 - A run that recorded an error now points at `/appsec-advisor:report-error`, which builds a local anonymised bundle and sends nothing.
-- Architecture decisions are now recorded in `docs/internal/decisions.md`, each with the guard that enforces it.
-
-### Fixed
-
-- Container, workflow, crypto and dependency findings from the deterministic checks now appear under their weakness category in the register instead of remaining unclassified.
-- A completed component is no longer discarded, and the scan no longer aborted, when optional metadata such as an over-long `reason` or a malformed discovery escape fails the schema: the affected entry is dropped and logged, while a defect in the findings themselves still stops the run.
-- A STRIDE wave no longer times out on a deep or retried analysis: the wait now scales with the turn budget the components were actually given instead of a fixed 15 minutes, which `--thorough` could exceed on its own.
-- A scan cancelled before it started (`/clear`, Esc, crash) no longer blocks the next scan for five minutes: its lock is cleared automatically after two minutes.
-- A scan blocked by a held lock now says who holds it, when the lock clears itself, and offers waiting or taking it over, instead of reporting "Another assessment is running".
-- A scan that reaches the merge step twice now repeats the dispatch it already issued instead of aborting with every STRIDE result on disk.
-- A weakness that falls back to its weakness class for a mechanism ID now gets a valid one instead of aborting the scan at merge validation.
-- The QA gate no longer demands an attack walkthrough the renderer did not select, so a report whose §3 gives a reserved slot to a triage-elevated finding passes instead of entering a repair loop.
-- A scan records per-agent token usage again, and says so when part of its compute went unrecorded.
-- The running-total banner and `--max-cost` now count sub-agent spend and stop at the end of the run instead of the end of the session.
-- An abuse-case file or case id named for a single scan now runs at any depth, and a scan that cannot use it says so instead of skipping it silently.
-- The findings register lists an unrestricted CI/CD workflow token permission once instead of twice.
-- A guardrail named only in a system prompt no longer counts as a control against the prompt-injection abuse case.
-- Cross-repository expectation mismatches now remain hypotheses until target-repository evidence supports a finding.
-- An endpoint that reaches a language model is now always modelled: reconnaissance records the call as a structured signal, marks the route, and matches a prompt-injection abuse case.
-- A scan no longer ends when an analysis agent writes a malformed artifact: the controller asks that agent once to correct it, naming the exact contract violations.
-- Quick-depth scans no longer abort after the architecture stage.
-- An interrupted or failed run now releases its lock and reports its abort immediately instead of showing an unknown phase until the heartbeat ages out.
-- Headless runs no longer report every completed agent as failed with zero tokens; per-agent usage and cost come from the agent's own return.
-- Live progress now reports one start and one outcome per agent, follows the freshest phase, and treats turn consumption as progress instead of a warning.
-- Inspecting a run's status no longer writes to its state.
-- Final QA now counts rendered finding cards instead of stray global anchors, and preserves F/T cross-references when finding IDs have gaps.
-- Client-side code is no longer modelled as a trust zone, preventing invalid browser-boundary crossings.
-- `Automated SCA scanning` is now rated only from scanners the pipeline actually invokes, not from a tool name in a comment, a step label, or string data.
-- Requested exports are now always written and listed in the completion summary.
-- Reconnaissance now reserves its final turns for validated output, so large repositories cannot crowd out required security sections.
-- Reconnaissance now excludes prior assessment directories even when the output path was user-named.
-- Reconnaissance now surfaces predictable OAuth-derived and bundled client credentials.
-- The Findings index now orders entries by effective severity, with Critical findings first and stable IDs within each tier.
-- Completion summaries now distinguish STRIDE-analyzed components from the full modeled inventory.
-- Composer dependency analysis now retains real packages whose names begin with `php`, including known-bad PHPUnit versions.
-- Final threat-model YAML is now schema-validated before it replaces the prior canonical artifact.
 
 ### Changed
 
-- Threat modeling now uses the compact runtime exclusively and rejects incremental, resume, assessment dry-run, runtime deadline, and live-phase modes before dispatch.
-- The retired `--qa-scan-repo` compatibility option is no longer accepted.
-- Quick scans now use the Management Summary renderer while retaining the deterministic report and QA gates.
-- Business context now breaks technically equal finding and mitigation ranking ties without changing severity or mitigation priority.
-- The risk distribution now reports Low as `n/a` and names the reporting threshold when the register severity floor excluded it, instead of showing `0`.
-- Attack walkthroughs now balance chain relevance with threat-category diversity across the findings the register shows as Critical, reserving coverage for Critical Access Control and LLM Abuse findings when present.
-- Verified findings at a confirmed internet ingress can now be raised by one severity band, up to High, within CWE caps.
-- Findings of the same kind at different trust boundaries now stay separate instead of consolidating into one row.
+- Threat analysis now costs 39.8% less at quick depth and 26.8% less at thorough depth in reference runs.
+- Live progress now shows each analysis step and current STRIDE component without duplicate or stale agent statuses.
+- Quick scans now use the Management Summary format, and report summaries and scope sections now explain the implementation-level limits of a code-derived threat model.
+- The risk distribution now reports Low as `n/a` and names the reporting threshold when Low findings were excluded, instead of showing `0`.
+- Critical attack walkthroughs now cover a broader mix of threat categories, prioritising Access Control and LLM Abuse when present.
+- Verified findings at confirmed internet entry points can now be raised by one severity level, up to High.
+- Findings of the same kind at different trust boundaries now stay separate instead of being consolidated into one row.
 - Every finding in the register now names its STRIDE category next to the weakness class.
-- `threat-model.yaml` now includes the report verdict.
-- `show-threat-model` now reports matching finding IDs and severity counts, opens with the report verdict and worst-case scenarios, and triage warns when the model is stale.
-- The Management Summary, §1 Scope and §11 now state that the report is a code-derived threat model at implementation level, and what that does not cover.
-- The pre-flight summary states the STRIDE depth and the depth tradeoff in one line each instead of repeating what the configuration rows already show.
+- The report verdict now appears in `threat-model.yaml` and leads `show-threat-model`, which also reports worst-case scenarios, matching finding IDs and severity counts, and stale-model warnings.
+
+### Removed
+
+- Threat-model runs now support only full, rebuild, and rerender, while incremental, resume, PR mode, assessment dry runs, baseline restore, `--max-wall-time`, `--max-cost`, and `APPSEC_LIVE_PHASE=1` are rejected before a run starts.
+- The retired `--qa-scan-repo` option is no longer accepted.
+
+### Fixed
+
+- Architecture diagrams now place components in their declared tiers, include every folded component in tier finding counts, and identify components omitted from shortened labels.
+- Finding registers and tables now classify scanner findings, avoid duplicate workflow-permission entries, sort by severity, keep risk labels consistent, and preserve finding references when IDs have gaps.
+- Long, retried, interrupted, or partially malformed scans now recover or terminate cleanly without discarding completed work, while lock conflicts identify their owner and offer wait or takeover.
+- Run summaries now distinguish analyzed components from the full inventory, include all completed agents in token and cost totals, and flag incomplete accounting.
+- Per-run abuse-case selections now work at every depth and explain when they cannot be used.
+- LLM endpoints are now included in the architecture, and prompt text alone no longer counts as a control against prompt injection.
+- Cross-repository expectations and earlier assessment output no longer count as target-repository evidence.
+- Client-side code is no longer modelled as a trust zone, preventing invalid browser-boundary crossings.
+- Supply-chain analysis now rates only scanners the project actually runs and retains dependencies whose names begin with `php`, including vulnerable PHPUnit versions.
+- Requested exports are now always written and listed, and invalid generated YAML can no longer replace the last valid report artifact.
+- Large repositories can no longer crowd required security sections out of reconnaissance results.
+- Reconnaissance now detects predictable OAuth-derived and bundled client credentials.
 
 ## 0.5.1-beta (2026-07-26)
 
