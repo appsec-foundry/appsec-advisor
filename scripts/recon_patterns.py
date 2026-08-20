@@ -2276,6 +2276,11 @@ _AI_CONFIG_PATTERNS = (
     ".codeium/instructions.md",
     ".codeiumignore",
     ".github/copilot-instructions.md",
+    ".codex/config.toml",
+    ".gemini/settings.json",
+    ".kiro/settings/mcp.json",
+    # `.vscode/` stays scan-excluded; the deterministic agent_config checks in
+    # data/config-iac-checks.yaml own the VS Code agent-mode settings.
     ".aider.conf.yml",
     ".aider.model.settings.yml",
     ".aiderignore",
@@ -2288,6 +2293,9 @@ _AI_CONFIG_DIRS = (
     ".claude/agents",
     ".claude/skills",
     ".claude/commands",
+    ".codex",
+    ".gemini",
+    ".kiro/steering",
     ".cursor",
     ".windsurf",
     ".continue/assistants",
@@ -2596,6 +2604,34 @@ def _scan_mcp_servers(path: Path, rel: str) -> list[dict[str, Any]]:
                 "match": classified["reason"],
             }
         )
+        approved = server_cfg.get("autoApprove")
+        approved_tools = (
+            [tool for tool in approved if isinstance(tool, str) and tool.strip()] if isinstance(approved, list) else []
+        )
+        if approved_tools and server_cfg.get("disabled") is not True:
+            findings.append(
+                {
+                    "category": 28,
+                    "subcategory": "mcp-auto-approved-tools",
+                    "file": rel,
+                    "line": None,
+                    "server": str(server_name),
+                    "severity": "Medium",
+                    "match": f"tools run without confirmation: {', '.join(sorted(approved_tools)[:5])}",
+                }
+            )
+        if server_cfg.get("trust") is True:
+            findings.append(
+                {
+                    "category": 28,
+                    "subcategory": "mcp-trusted-server",
+                    "file": rel,
+                    "line": None,
+                    "server": str(server_name),
+                    "severity": "High",
+                    "match": "`trust: true` bypasses every tool-call confirmation for this server",
+                }
+            )
         url = _first_http_url(server_cfg)
         if isinstance(url, str) and url.lower().startswith("http://"):
             findings.append(
@@ -2964,7 +3000,9 @@ def scan_ai_assistant_configs(repo_root: Path) -> dict[str, Any]:
                     "match": text.strip(),
                 }
             )
-        if _is_mcp_config_path(rel):
+        # Every JSON config is offered to the MCP parser: Gemini and Kiro declare
+        # servers inside their settings file, not in a file named `mcp.json`.
+        if _is_mcp_config_path(rel) or rel.endswith(".json"):
             findings.extend(_scan_mcp_servers(path, rel))
         if _is_claude_settings_path(rel):
             findings.extend(_scan_claude_permissions(path, rel))

@@ -40,6 +40,8 @@ $defs:
       - npm_config
       - kubernetes
       - terraform
+      - agent_config
+      - agent_automation
 
   breachVector:
     type: string

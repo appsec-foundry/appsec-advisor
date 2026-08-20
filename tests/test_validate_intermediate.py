@@ -1282,6 +1282,13 @@ def test_source_auth_check_id_pattern_covers_catalog():
     assert not unmatched, f"catalog check ids not covered by schema pattern: {unmatched}"
 
 
+_CONFIG_CATALOG_SIZE = len(
+    yaml.safe_load((Path(__file__).parent.parent / "data" / "config-iac-checks.yaml").read_text(encoding="utf-8"))[
+        "checks"
+    ]
+)
+
+
 def test_config_scan_accepts_check_slug_and_null_check_id():
     """A synthesised config finding (not in config-iac-checks.yaml) carries
     check_id:null + a kebab-case check_slug — per agents/appsec-config-scanner.md.
@@ -1298,7 +1305,7 @@ def test_config_scan_accepts_check_slug_and_null_check_id():
     doc = {
         "version": 1,
         "generated_at": "2026-07-24T00:00:00Z",
-        "checks_run": 24,
+        "checks_run": _CONFIG_CATALOG_SIZE,
         "violations": 1,
         "findings": [finding],
     }
@@ -1311,7 +1318,7 @@ def test_config_scan_rejects_bad_check_slug():
     doc = {
         "version": 1,
         "generated_at": "2026-07-24T00:00:00Z",
-        "checks_run": 24,
+        "checks_run": _CONFIG_CATALOG_SIZE,
         "violations": 1,
         "findings": [
             {

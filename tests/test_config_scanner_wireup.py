@@ -15,11 +15,13 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).parent.parent
 SCHEMAS_DIR = ROOT / "schemas"
 SCHEMA_PATH = SCHEMAS_DIR / "config-scan-findings.schema.yaml"
 VALIDATE = ROOT / "scripts" / "validate_intermediate.py"
+CATALOG_SIZE = len(yaml.safe_load((ROOT / "data" / "config-iac-checks.yaml").read_text(encoding="utf-8"))["checks"])
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +49,7 @@ def valid_findings_doc():
     return {
         "version": 1,
         "generated_at": "2026-05-01T10:00:00Z",
-        "checks_run": 24,
+        "checks_run": CATALOG_SIZE,
         "violations": 2,
         "findings": [
             {

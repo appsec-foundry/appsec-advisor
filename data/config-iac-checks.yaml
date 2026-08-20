@@ -43,6 +43,18 @@ file_patterns_by_type:
   dependabot:
     - "**/.github/dependabot.yml"
     - "**/.github/dependabot.yaml"
+  # Where repository automation lives. Deliberately not `**/*.sh`: a vendored
+  # tree would contribute both scan cost and findings nobody maintains.
+  agent_automation:
+    - "**/.github/workflows/*.yml"
+    - "**/.github/workflows/*.yaml"
+    - ".github/**/*.sh"
+    - "*.sh"
+    - "scripts/**/*.sh"
+    - "bin/**/*.sh"
+    - "ci/**/*.sh"
+    - "tools/**/*.sh"
+    - "Makefile"
 
 checks:
   # ============ Dockerfile ============
@@ -364,3 +376,158 @@ checks:
     finding_type: FT-171
     rationale: "postinstall hooks execute arbitrary code at install time — the attack surface for supply-chain compromise."
     remediation: "Remove postinstall if possible; else document why required and use --ignore-scripts in CI and audit the hook content"
+
+  # ============ Coding-agent configuration ============
+  # Signals: agent configuration a repository commits — Claude Code, OpenAI
+  # Codex, GitHub Copilot / VS Code agent mode, Gemini CLI, Kiro. Machine-local
+  # setup (`~/.claude`, `~/.codex`, IDE user settings) is out of reach and out
+  # of scope.
+  #
+  # False-positive exclusion shared by every absence check below: a repository
+  # that commits no agent autonomy produces no finding. Missing isolation is
+  # only a violation where the same committed file also pre-approves tool use.
+  # Explicit weakening (sandbox off, approvals off, tools auto-trusted) is a
+  # violation on its own.
+  - id: IAC-060
+    name: "Claude Code project settings must enable the command sandbox"
+    iac_type: agent_config
+    file_pattern: ".claude/settings*.json"
+    expect: structured
+    evaluator: claude_sandbox_absent
+    severity_if_violated: Medium
+    cwe: CWE-250
+    finding_type: FT-180
+    rationale: "The committed settings pre-approve tool calls but declare no sandbox, so the agent runs with the contributor's full filesystem and network reach. An instruction planted in repository content, a dependency, or an issue body then reaches the shell with no boundary around it."
+    remediation: "Add a sandbox block with enabled: true and explicit filesystem allow-lists"
+
+  - id: IAC-061
+    name: "Claude Code settings must not disable permission prompts"
+    iac_type: agent_config
+    file_pattern: ".claude/settings*.json"
+    pattern: "\"defaultMode\"\\s*:\\s*\"bypassPermissions\""
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-732
+    finding_type: FT-181
+    rationale: "bypassPermissions removes the approval prompt for every tool call, for every contributor who opens the repository. Agent-generated commands reach the shell unreviewed."
+    remediation: "Remove defaultMode: bypassPermissions and grant narrow permissions.allow rules instead"
+
+  - id: IAC-062
+    name: "Claude Code settings must not auto-trust repository MCP servers"
+    iac_type: agent_config
+    file_pattern: ".claude/settings*.json"
+    pattern: "\"enableAllProjectMcpServers\"\\s*:\\s*true"
+    expect: absent
+    severity_if_violated: Medium
+    cwe: CWE-829
+    finding_type: FT-181
+    rationale: "Every MCP server declared in the repository is approved without review, so a pull request can add a server whose tools the agent then calls."
+    remediation: "Remove enableAllProjectMcpServers and approve MCP servers individually"
+
+  - id: IAC-063
+    name: "Codex project config must not disable the sandbox"
+    iac_type: agent_config
+    file_pattern: ".codex/config.toml"
+    pattern: "(?m)^\\s*(?:[A-Za-z_][\\w.-]*\\.)?sandbox_mode\\s*=\\s*[\"']danger-full-access[\"']"
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-250
+    finding_type: FT-180
+    rationale: "danger-full-access runs Codex with no filesystem or network boundary for anyone who trusts this project, so a generated command reaches the whole machine."
+    remediation: "Set sandbox_mode = \"workspace-write\" (or \"read-only\") in .codex/config.toml"
+
+  - id: IAC-064
+    name: "Codex project config must not disable approvals"
+    iac_type: agent_config
+    file_pattern: ".codex/config.toml"
+    pattern: "(?m)^\\s*(?:[A-Za-z_][\\w.-]*\\.)?approval_policy\\s*=\\s*[\"']never[\"']"
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-732
+    finding_type: FT-181
+    rationale: "approval_policy = \"never\" executes generated commands without asking, so the sandbox boundary is the only remaining control."
+    remediation: "Use approval_policy = \"on-request\" or \"untrusted\" in the committed project config"
+
+  - id: IAC-065
+    name: "Codex sandbox must not be granted network access"
+    iac_type: agent_config
+    file_pattern: ".codex/config.toml"
+    pattern: "(?m)^\\s*(?:[A-Za-z_][\\w.-]*\\.)?network_access\\s*=\\s*true"
+    expect: absent
+    severity_if_violated: Medium
+    cwe: CWE-668
+    finding_type: FT-180
+    rationale: "The workspace-write sandbox blocks outbound traffic by default; enabling it gives commands the agent runs a direct exfiltration channel for anything readable in the workspace."
+    remediation: "Drop network_access = true, or constrain traffic with the network_proxy domain policy"
+
+  - id: IAC-066
+    name: "VS Code workspace settings must not auto-approve every agent tool"
+    iac_type: agent_config
+    file_pattern: ".vscode/settings.json"
+    pattern: "\"chat\\.tools\\.global\\.autoApprove\"\\s*:\\s*true"
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-732
+    finding_type: FT-181
+    rationale: "Global auto-approval runs every Copilot agent tool call, terminal commands included, without a confirmation dialog."
+    remediation: "Remove chat.tools.global.autoApprove and allow-list individual commands via chat.tools.terminal.autoApprove"
+
+  - id: IAC-067
+    name: "VS Code workspace settings must not turn the agent sandbox off"
+    iac_type: agent_config
+    file_pattern: ".vscode/settings.json"
+    pattern: "\"chat\\.agent\\.sandbox\\.enabled\"\\s*:\\s*\"off\""
+    expect: absent
+    severity_if_violated: Medium
+    cwe: CWE-250
+    finding_type: FT-180
+    rationale: "Committing the sandbox off removes the filesystem and network isolation around agent terminal commands for everyone who opens the workspace."
+    remediation: "Set chat.agent.sandbox.enabled to \"on\" or drop the key so the user's own setting applies"
+
+  - id: IAC-068
+    name: "Gemini CLI project settings must enable sandboxing"
+    iac_type: agent_config
+    file_pattern: ".gemini/settings.json"
+    expect: structured
+    evaluator: gemini_sandbox_absent
+    severity_if_violated: Medium
+    cwe: CWE-250
+    finding_type: FT-180
+    rationale: "The committed settings auto-accept tool calls or trust an MCP server while sandboxing stays off (its default), so shell commands and file writes run directly on the host."
+    remediation: "Set tools.sandbox to \"docker\" or \"podman\" in .gemini/settings.json"
+
+  - id: IAC-069
+    name: "Gemini CLI project settings must not auto-trust tools"
+    iac_type: agent_config
+    file_pattern: ".gemini/settings.json"
+    expect: structured
+    evaluator: gemini_tool_auto_trust
+    severity_if_violated: Medium
+    cwe: CWE-829
+    finding_type: FT-181
+    rationale: "A server marked trust: true bypasses all tool-call confirmations, and autoAccept approves tool calls without review — both for anyone who opens the project."
+    remediation: "Remove trust: true and autoAccept from the committed settings"
+
+  - id: IAC-070
+    name: "Kiro workspace MCP servers must not auto-approve tools"
+    iac_type: agent_config
+    file_pattern: ".kiro/settings/mcp.json"
+    expect: structured
+    evaluator: kiro_mcp_auto_approve
+    severity_if_violated: Medium
+    cwe: CWE-732
+    finding_type: FT-181
+    rationale: "Tools listed in autoApprove run without a confirmation, so any repository content that steers the agent reaches those tools directly."
+    remediation: "Empty the autoApprove list, or keep only read-only tools in it"
+
+  - id: IAC-071
+    name: "Automation must not run a coding agent without sandbox or approvals"
+    iac_type: agent_automation
+    file_pattern: ".github/workflows/*.yml"
+    pattern: "--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--allow-all-tools|--approval-mode[ =]yolo|--sandbox[ =]danger-full-access|--permission-mode[ =]bypassPermissions|(?<![\\w-])--yolo(?![\\w-])"
+    expect: absent
+    severity_if_violated: High
+    cwe: CWE-250
+    finding_type: FT-180
+    rationale: "The committed workflow or script starts an agent with approvals and isolation switched off, with repository write access and CI secrets in its environment and no human in the loop."
+    remediation: "Drop the bypass flag and grant the agent the specific tools the job needs"

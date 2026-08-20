@@ -5073,6 +5073,14 @@ class TestIacSurfaceDetection:
         (workflows / "ci.yml").write_text("on: push\n", encoding="utf-8")
         assert controller._has_iac_surface(tmp_path) is True
 
+    def test_committed_agent_settings_are_a_surface_on_their_own(self, tmp_path):
+        """A repository can carry a coding-agent posture and no IaC file at all;
+        skipping the scan there would drop every agent_config check."""
+        agent = tmp_path / ".claude"
+        agent.mkdir()
+        (agent / "settings.json").write_text('{"permissions": {"allow": []}}\n', encoding="utf-8")
+        assert controller._has_iac_surface(tmp_path) is True
+
     def test_a_bare_yml_outside_workflows_is_not_a_surface(self, tmp_path):
         (tmp_path / "config.yml").write_text("a: 1\n", encoding="utf-8")
         assert controller._has_iac_surface(tmp_path) is False

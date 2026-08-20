@@ -70,6 +70,9 @@ The script reads `$CLAUDE_PLUGIN_ROOT/data/config-iac-checks.yaml` once and buil
 - `docker_compose`
 - `dependabot`
 - `npm_config`
+- `agent_config` — committed coding-agent settings (Claude Code, Codex, VS Code
+  agent mode, Gemini CLI, Kiro)
+- `agent_automation` — workflows and scripts that start a coding agent
 - `kubernetes` / `terraform` (not used in initial version, room for extension)
 
 ### Step 2 — Inventory target files
@@ -88,8 +91,10 @@ Glob beneath `REPO_ROOT` for each file-pattern relevant to loaded checks:
 - `renovate.json` / `renovate.json5` / `.renovaterc`
 - `package.json` (every workspace — but usually only root for lockfile checks)
 - `package-lock.json`
+- `.claude/settings*.json` / `.codex/config.toml` / `.gemini/settings.json` /
+  `.kiro/settings/mcp.json` / `.vscode/settings.json`
 
-When `ASSESSMENT_DEPTH=quick`, limit to the first 5 files per category. Otherwise scan all.
+When `ASSESSMENT_DEPTH=quick`, limit to the first 5 files per category. Otherwise scan all. `agent_config` is exempt: it holds one settings path per coding agent, so a cap would drop a whole tool rather than sample it.
 
 ### Step 3 — Run checks per file
 
@@ -97,10 +102,13 @@ The script applies every check matching each target file's `iac_type`:
 
 1. **`expect: present`** — file must contain a match for `pattern`. Violation when no match.
 2. **`expect: absent`** — file must NOT contain `pattern`. Violation when match is found.
-3. **`expect: all_third_party_actions`** — for `uses:` statements in GitHub Actions, every third-party action reference (not `actions/*`) must match `pattern` (the SHA-pin form). Violation when any non-pinned third-party action is found.
-4. **`expect: any_of_present`** — any of the patterns in `pattern_any_of` must match. Violation when none match.
-5. **`expect: file_exists`** — file must be present in the glob result. Violation when the glob returned zero files.
-6. **`expect: absent_or_documented`** — pattern absent OR adjacent comment with keyword `// audited:` / `# audited:` / `<!-- audited:` immediately before/after the matching line.
+3. **`expect: structured`** — the named `evaluator` in
+   `scripts/agent_config_checks.py` parses the document and decides. Used where
+   a regex cannot tell an enabled sandbox from an absent one.
+4. **`expect: all_third_party_actions`** — for `uses:` statements in GitHub Actions, every third-party action reference (not `actions/*`) must match `pattern` (the SHA-pin form). Violation when any non-pinned third-party action is found.
+5. **`expect: any_of_present`** — any of the patterns in `pattern_any_of` must match. Violation when none match.
+6. **`expect: file_exists`** — file must be present in the glob result. Violation when the glob returned zero files.
+7. **`expect: absent_or_documented`** — pattern absent OR adjacent comment with keyword `// audited:` / `# audited:` / `<!-- audited:` immediately before/after the matching line.
 
 For every violation emit one finding entry into the in-memory results list.
 

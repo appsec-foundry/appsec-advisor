@@ -1165,6 +1165,37 @@ class TestAdditionalDeterministicCategories:
         assert mcp["secret"]["subcategory"] == "mcp-hardcoded-secret"
         assert mcp["secret"]["severity"] == "Critical"
 
+    def test_auto_approved_and_trusted_mcp_servers_are_flagged(self, repo):
+        """Kiro grants tool autonomy through `autoApprove`, Gemini through
+        `trust`. Both live in a settings file the transport checks would
+        otherwise pass as an ordinary local server."""
+        (repo / ".kiro" / "settings").mkdir(parents=True)
+        (repo / ".kiro" / "settings" / "mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "approved": {"command": "node", "args": ["a.js"], "autoApprove": ["run_shell"]},
+                        "off": {"command": "node", "args": ["b.js"], "disabled": True, "autoApprove": ["run_shell"]},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (repo / ".gemini").mkdir()
+        (repo / ".gemini" / "settings.json").write_text(
+            json.dumps({"mcpServers": {"trusted": {"command": "node", "args": ["c.js"], "trust": True}}}),
+            encoding="utf-8",
+        )
+
+        out = rp.scan_ai_assistant_configs(repo)
+        approved = [f for f in out["findings"] if f["subcategory"] == "mcp-auto-approved-tools"]
+        trusted = [f for f in out["findings"] if f["subcategory"] == "mcp-trusted-server"]
+
+        assert [f["server"] for f in approved] == ["approved"]
+        assert approved[0]["severity"] == "Medium"
+        assert [f["server"] for f in trusted] == ["trusted"]
+        assert trusted[0]["file"] == ".gemini/settings.json"
+
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------

@@ -119,6 +119,7 @@ Before it runs STRIDE, the plugin maps routes, authentication flows, trust bound
 | **Frontend security** | XSS-prone patterns, browser storage, exposed data, and security-relevant bundle content. |
 | **Operations and configuration** | CORS, security headers, management endpoints, verbose errors, and stack traces. |
 | **Supply chain** | Dependency and lockfile signals, GitHub Actions, container images, and build configuration. |
+| **Coding-agent configuration** | Sandbox, approval, and tool-trust settings a repository commits for Claude Code, Codex, Copilot, Gemini CLI, and Kiro, plus agent bypass flags in workflows and scripts. |
 | **GenAI and LLM security** | Prompt injection, tool boundaries, vector-store access, model APIs, and OWASP LLM risks. |
 | **Threat actors** | Insider, supply-chain, partner, and adjacent-tenant threats where applicable. |
 | **Abuse cases** | Catalog scenarios selected from repository signals and verified step-by-step against code evidence. |

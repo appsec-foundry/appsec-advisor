@@ -3222,6 +3222,14 @@ _IAC_SURFACE_GLOBS = (
     ".renovaterc",
     ".npmrc",
     ".yarnrc.yml",
+    # Committed coding-agent configuration is a config surface of its own: a
+    # repository can carry an agent posture and no IaC file at all.
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".codex/config.toml",
+    ".gemini/settings.json",
+    ".kiro/settings/mcp.json",
+    ".vscode/settings.json",
 )
 _CONFIG_SCAN_STUB = '{"parse_error": "skipped: no IaC surface detected", "findings": []}\n'
 

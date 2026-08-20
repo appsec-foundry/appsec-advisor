@@ -11,10 +11,15 @@ from typing import Any
 
 import yaml
 from _atomic_io import atomic_write_json
+from agent_config_checks import EVALUATORS
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CHECKS = PLUGIN_ROOT / "data" / "config-iac-checks.yaml"
 QUICK_FILES_PER_CATEGORY = 5
+# The quick-depth cap bounds categories whose file count grows with the
+# repository. `agent_config` holds one settings path per coding agent, so
+# capping it would silently drop a whole tool's posture instead of sampling.
+UNCAPPED_CATEGORIES = frozenset({"agent_config"})
 AUDIT_MARKERS = ("// audited:", "# audited:", "<!-- audited:")
 
 
@@ -68,6 +73,8 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
                 re.compile(pattern, re.MULTILINE | re.DOTALL)
             except re.error as exc:
                 raise ConfigScanError(f"{check_id} has an invalid pattern: {exc}") from exc
+        if check["expect"] == "structured" and check.get("evaluator") not in EVALUATORS:
+            raise ConfigScanError(f"{check_id} names an unknown evaluator {check.get('evaluator')!r}")
         if check["expect"] in {"any_of", "any_of_present"}:
             alternatives = check.get("pattern_any_of")
             if (
@@ -112,7 +119,11 @@ def _selected_files(
         category_files.setdefault(check["iac_type"], set()).update(by_check[check["id"]])
     admitted = {
         category: set(
-            sorted(paths, key=lambda path: path.relative_to(repo_root.resolve()).as_posix())[:QUICK_FILES_PER_CATEGORY]
+            paths
+            if category in UNCAPPED_CATEGORIES
+            else sorted(paths, key=lambda path: path.relative_to(repo_root.resolve()).as_posix())[
+                :QUICK_FILES_PER_CATEGORY
+            ]
         )
         for category, paths in category_files.items()
     }
@@ -177,6 +188,8 @@ def _violation(check: dict[str, Any], path: Path, text: str) -> tuple[int, str] 
         if pattern is None:
             raise ConfigScanError(f"{check['id']} requires a pattern")
         return _undocumented_match(pattern, text)
+    if expect == "structured":
+        return EVALUATORS[check["evaluator"]](text, path)
     if expect == "file_exists":
         return None
     raise ConfigScanError(f"{check['id']} has unsupported expectation {expect!r}")

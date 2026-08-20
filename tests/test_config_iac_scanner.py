@@ -102,7 +102,8 @@ def test_shipped_catalog_scans_nested_compose_yaml(tmp_path):
 
     result = scanner.scan(repo, scanner.DEFAULT_CHECKS, depth="standard", output=tmp_path / "result.json")
 
-    assert result["checks_run"] == 24
+    shipped = yaml.safe_load(scanner.DEFAULT_CHECKS.read_text(encoding="utf-8"))["checks"]
+    assert result["checks_run"] == len(shipped)
     assert any(
         row["check_id"] == "IAC-020" and row["file"] == "services/api/compose.dev.yaml" for row in result["findings"]
     )

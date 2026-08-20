@@ -182,6 +182,14 @@ cwes:
     owasp_top10_2025: A06   # officially mapped under A04 Insecure Design
     owasp_asvs: V4.1
     cwe_top25_2024: null
+  CWE-250:
+    title: "Execution with Unnecessary Privileges"
+    url: "https://cwe.mitre.org/data/definitions/250.html"
+    pillar: CWE-284
+    canonical_parent: CWE-269
+    owasp_top10_2025: A01
+    owasp_asvs: V1.4
+    cwe_top25_2024: null
   CWE-732:
     title: "Incorrect Permission Assignment for Critical Resource"
     url: "https://cwe.mitre.org/data/definitions/732.html"
@@ -192,6 +200,13 @@ cwes:
     cwe_top25_2024: null
 
   # ---------- Resource Control (CWE-664 pillar) ----------
+  CWE-668:
+    title: "Exposure of Resource to Wrong Sphere"
+    url: "https://cwe.mitre.org/data/definitions/668.html"
+    pillar: CWE-664
+    owasp_top10_2025: A01
+    owasp_asvs: V1.4
+    cwe_top25_2024: null
   CWE-22:
     title: "Path Traversal"
     url: "https://cwe.mitre.org/data/definitions/22.html"
