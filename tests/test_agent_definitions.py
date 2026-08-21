@@ -436,6 +436,29 @@ class TestBodyContentConsistency:
             assert "AGENT_START" in body and "AGENT_END" in body
             assert "AGENT_INVOKE" in body and "AGENT_DONE" in body
 
+    def test_every_agent_that_opens_a_lifecycle_also_closes_it(self):
+        """An agent that documents AGENT_START must document how it ends.
+
+        The lifecycle invariant used to be asserted only over
+        KERNEL_PRELOAD_ROLES, so any agent outside that set could open a
+        lifecycle and never close it without a test noticing. The abuse-case
+        verifier did exactly that: 11 dispatches logged AGENT_START and none
+        logged AGENT_END, leaving verify_run_costs.py unable to bind their
+        usage. Scope this to every agent definition so it cannot rot again for
+        the next role added outside the kernel set.
+
+        Closing counts either way — a literal AGENT_END emitted through
+        log_event.py, or a delegated call to log_agent_end.py.
+        """
+        for path in sorted(AGENTS_DIR.glob("appsec-*.md")):
+            _, body = parse_frontmatter(path)
+            if "AGENT_START" not in body:
+                continue
+            assert "AGENT_END" in body or "log_agent_end" in body, (
+                f"{path.name} documents AGENT_START but never closes the lifecycle — "
+                "add an AGENT_END emission (or a log_agent_end.py call)"
+            )
+
     def test_context_v2_control_analyst_does_not_author_stride_profile(self):
         _, body = parse_frontmatter(AGENTS_DIR / "appsec-control-analyst.md")
         assert "top-level keys" in body

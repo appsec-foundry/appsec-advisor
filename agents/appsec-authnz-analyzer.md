@@ -112,7 +112,12 @@ Use the canonical emitter exclusively — never hand-roll a log line:
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent authnz-analyzer
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent authnz-analyzer
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "authnz-analyzer started (model: <MODEL_ID>)" --agent authnz-analyzer
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_END   "authnz-analyzer finished (<n> finding(s))" --agent authnz-analyzer
 ```
+`AGENT_END` is mandatory and is your last log call, emitted once the report is
+written — including when you finish with no findings. Cost accounting binds a
+dispatch's usage through the AGENT_START/AGENT_END pair, so an unclosed
+lifecycle drops this dispatch from the run's cost figures.
 
 **Print on startup:**
 ```

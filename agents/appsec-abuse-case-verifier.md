@@ -52,7 +52,13 @@ export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent abuse-case-verifier
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent abuse-case-verifier
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<AC-ID> started (model: <MODEL_ID>)" --agent abuse-case-verifier
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_END   "<AC-ID> finished (<n> verdict(s))" --agent abuse-case-verifier
 ```
+`AGENT_END` is mandatory and is your last log call, emitted once the verdict
+file is written — including when you finish with no verdict. Cost accounting
+binds a dispatch's usage through the AGENT_START/AGENT_END pair, so an unclosed
+lifecycle drops this dispatch from the run's cost figures.
+
 Do **NOT**: hand-roll a `echo "$(date …) … "` log line; write log lines with the `Write` tool; embed a literal `$(date …)` anywhere; hardcode a timestamp (e.g. `2026-06-02T10:00:00Z`); or invent a JSON / `[bracket]` log schema. The only legal way to write `.agent-run.log` is through `log_event.py`.
 
 **Print on startup:**
