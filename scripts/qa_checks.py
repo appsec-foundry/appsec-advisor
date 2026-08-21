@@ -4831,6 +4831,25 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     return 0 if total_issues == 0 else 1
 
 
+# `check_toc_contract` mixes three structural failures — an unreadable
+# contract, a missing `## Table of Contents`, a TOC/chapter mismatch — with one
+# advisory: a duplicate explicit anchor. Both targets of a duplicate exist and
+# Markdown resolves the link to the first, so nothing becomes unreachable.
+# `cmd_repair_plan` already grades it non-actionable (exit 4), but
+# `cmd_final_structure` summed raw issue counts and returned 1 for the same
+# finding. The mandatory Stage-3 release gate in SKILL-thin-completion.md §1
+# ("any non-zero release gate aborts") therefore contradicted the canonical QA
+# gate, and the run could only continue by overriding a release gate by hand
+# (2026-08-21 insecure-large-spring-app). Grade the advisory here too; every
+# structural issue still aborts.
+_TOC_ADVISORY_ISSUE_RE = re.compile(r"^duplicate explicit anchor id:")
+
+
+def _toc_contract_blocking_issues(report: dict) -> list[str]:
+    """`toc_contract` issues that must still abort the release gate."""
+    return [i for i in report.get("issues", []) if not _TOC_ADVISORY_ISSUE_RE.match(i)]
+
+
 def cmd_final_structure(
     md_path: Path,
     contract_path: Path = DEFAULT_CONTRACT_PATH,
@@ -4842,7 +4861,12 @@ def cmd_final_structure(
         "toc_closure": check_toc_closure(md_path).as_dict(),
     }
     print(json.dumps(reports, indent=2))
-    return 0 if sum(r["issue_count"] for r in reports.values()) == 0 else 1
+    blocking = (
+        reports["contract"]["issue_count"]
+        + len(_toc_contract_blocking_issues(reports["toc_contract"]))
+        + reports["toc_closure"]["issue_count"]
+    )
+    return 0 if blocking == 0 else 1
 
 
 # ---------------------------------------------------------------------------

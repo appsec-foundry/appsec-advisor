@@ -140,6 +140,36 @@ def test_duplicate_explicit_anchor_fails_toc_contract(tmp_path: Path) -> None:
     assert any("duplicate explicit anchor" in issue for issue in qa.check_toc_contract(md, contract).issues)
 
 
+def test_duplicate_anchor_does_not_abort_the_release_gate(tmp_path: Path) -> None:
+    """`cmd_repair_plan` grades a duplicate anchor non-actionable (exit 4). The
+    release gate must agree, or Stage 3 aborts a report the canonical QA gate
+    passed and the run continues only by overriding a release gate by hand.
+    """
+    md = _report(tmp_path)
+    contract = _contract(tmp_path)
+    md.write_text(
+        md.read_text(encoding="utf-8") + '\n<a id="duplicate"></a>\n<a id="duplicate"></a>\n',
+        encoding="utf-8",
+    )
+
+    assert any("duplicate explicit anchor" in issue for issue in qa.check_toc_contract(md, contract).issues)
+    assert qa.cmd_final_structure(md, contract) == 0
+
+
+def test_structural_toc_break_still_aborts_the_release_gate(tmp_path: Path) -> None:
+    """Grading that advisory must not disarm the gate: a TOC that no longer
+    matches the chapter set stays a hard failure.
+    """
+    md = _report(tmp_path)
+    contract = _contract(tmp_path)
+    md.write_text(
+        md.read_text(encoding="utf-8").replace("## Table of Contents", "## Inhalt", 1),
+        encoding="utf-8",
+    )
+
+    assert qa.cmd_final_structure(md, contract) == 1
+
+
 def test_duplicate_top_level_heading_fails_contract(tmp_path: Path) -> None:
     md = _report(tmp_path)
     contract = _contract(tmp_path)
