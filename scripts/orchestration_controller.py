@@ -1606,6 +1606,33 @@ def _duration_estimate(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _dispatch_values_transition(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Config subset for a mid-run transition, not a binding point.
+
+    The session binds every alias once, from ``prepare`` (SKILL-full-runtime.md
+    §3). Every later boundary action re-sent the whole resolved config verbatim,
+    so one context-v2 Stage 1 replayed it 22 times at ~736 tokens a copy — about
+    16k tokens of pure repetition per run, on any repository, and the largest
+    plugin-attributable share of the orchestrator's context growth. The compact
+    form costs ~167 tokens, so the loop gives back roughly 12k.
+
+    Emit only what a consumer actually reads at a transition: the keys the
+    controller itself validates a dispatch against (``output_dir``, the
+    semantic-role model keys, ``stride_profile``) plus the run-identifying
+    paths. Everything else stays available through ``config_path``, which every
+    action already returns.
+    """
+    keys = {"output_dir", "repo_root", "plugin_root", "run_id", "assessment_depth"}
+    keys.update(SEMANTIC_ROLE_MODEL_KEYS.values())
+    values = {key: cfg.get(key) for key in sorted(keys) if key in _DISPATCH_KEYS or key in cfg}
+    values["plugin_root"] = str(PLUGIN_ROOT)
+    values["stride_profile"] = cfg.get("stride_profile") or {"stride_profile_label": "full"}
+    values["actor_discovery_model"] = (
+        cfg.get("actor_discovery_model") or os.environ.get("APPSEC_ACTOR_DISCOVERY_MODEL") or "sonnet"
+    )
+    return values
+
+
 def _dispatch_values(
     cfg: dict[str, Any],
     estimate: dict[str, Any] | None = None,
@@ -2327,13 +2354,15 @@ def _task_rows(cfg: dict[str, Any]) -> list[str]:
 
 
 def _context_v2_common(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    # Every boundary command in the Stage-1 loop lands here, so this is the
+    # single hottest transition in the run — it takes the compact config.
     return {
         "schema_version": 1,
         "mode": cfg["mode"],
         "stage": "stage1c",
         "instruction_file": str(THIN_STAGE1_V2_RUNTIME),
         "config_path": str(output_dir / ".skill-config.json"),
-        "dispatch_values": _dispatch_values(cfg),
+        "dispatch_values": _dispatch_values_transition(cfg),
     }
 
 
