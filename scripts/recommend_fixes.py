@@ -378,6 +378,45 @@ def _recommend_high_token_usage(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_abuse_case_inconclusive(issue: dict, output_dir: Path) -> dict:
+    """A verifier could not settle one step of an abuse-case chain.
+
+    Inconclusive is a real verdict, not a defect: the verifier found no code
+    evidence either way within its budget. It matters because the chain is
+    then reported without end-to-end confirmation, and the `✓ verified attack
+    path` badge is withheld — a reader may read that absence as "not
+    exploitable" rather than "not established".
+    """
+    ev = issue.get("evidence") or {}
+    ac_id = ev.get("abuse_case_id") or "the abuse case"
+    n_inc = ev.get("inconclusive_steps") or 1
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": f"{ac_id}: {n_inc} chain step(s) unresolved — the chain ships without end-to-end confirmation.",
+        "rationale": (
+            "An inconclusive step means the verifier found no evidence either way, not that "
+            "the step fails. The usual causes are that the step's evidence lives outside the "
+            "repository (deployment config, runtime state) or that the referenced finding "
+            "names no concrete code path to check. Confirm the step by hand before treating "
+            "the chain as broken; the missing badge understates the risk."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".abuse-case-verdicts.json",
+                "details": (
+                    f"Read the step_verdicts for {ac_id} and check whether the unresolved step "
+                    "depends on evidence a source-tree scan cannot see."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_tool_error(issue: dict, output_dir: Path) -> dict:
     """A tool returned is_error=true."""
     ev = issue["evidence"]
@@ -641,6 +680,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "stage1_excessive_duration": _recommend_stage1_excessive_duration,
     "session_stop_unknown": _recommend_session_stop_unknown,
     "high_token_usage": _recommend_high_token_usage,
+    "abuse_case_inconclusive": _recommend_abuse_case_inconclusive,
     "tool_error": _recommend_tool_error,
     "bash_warn": _recommend_bash_warn,
     "auto_retry_fired": _recommend_auto_retry_fired,

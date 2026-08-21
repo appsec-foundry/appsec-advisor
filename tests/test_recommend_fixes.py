@@ -1,8 +1,71 @@
 """Unit tests for scripts/recommend_fixes.py."""
 
 import json
+import re
+from pathlib import Path
 
 import recommend_fixes as rf
+
+SCRIPTS_DIR = Path(rf.__file__).parent
+
+# Categories the aggregator emits that deliberately carry no recommender:
+# `plugin_bug` and `pipeline_self_diagnosis_degraded` ARE the self-diagnosis
+# channel, so routing them back through it would be circular.
+_RECOMMENDER_EXEMPT_CATEGORIES = {"plugin_bug", "pipeline_self_diagnosis_degraded"}
+
+# Ratchet: categories known to lack a recommender. The set may only shrink.
+# Every entry here degrades to `no_recommender_for_category` at diagnosis time,
+# so a reader gets "manual review required" instead of guidance — several of
+# them (`run_incomplete`, `report_integrity`, `stride_ceiling_overflow_dropped`,
+# `watchdog_not_started`) are exactly the issues that most need it.
+_KNOWN_UNCOVERED_CATEGORIES = {
+    "agent_error",
+    "render_failed",
+    "report_integrity",
+    "run_incomplete",
+    "stride_ceiling_lifted",
+    "stride_ceiling_overflow_dropped",
+    "stride_model_mismatch",
+    "trust_boundary_coverage",
+    "trust_boundary_resolution",
+    "watchdog_not_started",
+}
+
+
+def _emitted_categories() -> set[str]:
+    """Issue categories `aggregate_run_issues.py` can put on the wire."""
+    src = (SCRIPTS_DIR / "aggregate_run_issues.py").read_text(encoding="utf-8")
+    literal = set(re.findall(r'"category":\s*"([a-z_]+)"', src))
+    # `_extract_errors` maps log EVENT names to categories through a dict.
+    mapped = set(re.findall(r'"[A-Z_]+":\s*"([a-z_]+)"', src))
+    # `"category": X if cond else "y"` — the else-branch literal.
+    conditional = set(re.findall(r'"category":[^,\n]*else\s*"([a-z_]+)"', src))
+    return literal | mapped | conditional
+
+
+def test_every_emitted_issue_category_has_a_recommender():
+    """The aggregator and the recommender form an unenforced contract: a
+    category added to one and not the other degrades silently to
+    `no_recommender_for_category`, so the run's self-diagnosis answers
+    "manual review required" for exactly the issues that most need guidance.
+
+    On the 2026-08-21 insecure-large-spring-app run 13 of 24 emitted
+    categories had no recommender — `abuse_case_inconclusive` merely happened
+    to be the one that fired. Close the set here so the next addition fails
+    loudly at test time instead of quietly at diagnosis time.
+    """
+    uncovered = _emitted_categories() - set(rf.RECOMMENDERS) - _RECOMMENDER_EXEMPT_CATEGORIES
+    new = sorted(uncovered - _KNOWN_UNCOVERED_CATEGORIES)
+    assert not new, (
+        f"aggregate_run_issues.py emits {len(new)} NEW categories with no entry in "
+        f"recommend_fixes.RECOMMENDERS: {new}. Add a recommender, or add the category to "
+        f"_RECOMMENDER_EXEMPT_CATEGORIES with the reason it is self-diagnosis."
+    )
+    closed = sorted(_KNOWN_UNCOVERED_CATEGORIES - uncovered)
+    assert not closed, (
+        f"These categories now have a recommender: {closed}. Remove them from "
+        f"_KNOWN_UNCOVERED_CATEGORIES so the ratchet keeps tightening."
+    )
 
 # ---------------------------------------------------------------------------
 # _read_agent_max_turns
