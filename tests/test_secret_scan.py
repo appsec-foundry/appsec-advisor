@@ -217,6 +217,13 @@ _SERIALIZATION_WRAPPERS = {
     "html_cell_break": _PROSE_SENTENCE + ".<br>",
     "closing_paren": "(" + _PROSE_SENTENCE + ".)",
     "closing_backtick": _PROSE_SENTENCE + ".`",
+    # Every shape above appends a clause terminator first, so none of them
+    # exercised a value left line-final by a FOLD rather than by a sentence end
+    # — the one serialization behaviour that still broke the guard
+    # (juice-shop 2026-08-21). `yaml.safe_dump(…, width=120)` breaks a long
+    # scalar mid-sentence, and the continuation lands on the next line.
+    "yaml_folded_scalar": "  evidence_summary: '" + _PROSE_SENTENCE + "\n    in the callback URL.'",
+    "yaml_folded_then_key": "  evidence_summary: '" + _PROSE_SENTENCE + "\n    in the callback URL.'\n  impact: High",
 }
 
 

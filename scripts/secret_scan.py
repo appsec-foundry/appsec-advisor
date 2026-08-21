@@ -289,7 +289,37 @@ def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool
 
     # The sentence has to keep going; a config value ends its line.
     after = line[line.find(value, offset) + len(value) :]
-    return bool(_SENTENCE_CONTINUES_RE.match(after))
+    if _SENTENCE_CONTINUES_RE.match(after):
+        return True
+
+    # Nothing follows on THIS line — but a serializer that folds long scalars
+    # puts the rest of the same sentence on the next one, and the value only
+    # looks line-final because of where the fold landed. `yaml.safe_dump(…,
+    # width=120)` in build_threat_model_yaml.py does exactly that, so whether an
+    # evidence sentence passed this guard depended on its character offset: the
+    # same finding blocked the release gate in threat-model.yaml and passed in
+    # threat-model.md (juice-shop 2026-08-21). Consult the folded continuation
+    # so the verdict is about the sentence, not about the column it broke at.
+    return _folded_sentence_continues(text, line_end) if not after.strip() else False
+
+
+def _folded_sentence_continues(text: str, line_end: int) -> bool:
+    """True when the next physical line continues a folded prose sentence.
+
+    Only a continuation is admitted, never a new mapping entry: a folded scalar
+    resumes with an ordinary lowercase word (``from an implicit-flow redirect``)
+    whereas the next YAML key is ``name:``/``name=`` shaped. Keeping that
+    distinction is what stops the unfold from excusing a genuine config value,
+    which ends its line with the following key beneath it.
+    """
+    if line_end >= len(text):
+        return False
+    next_end = text.find("\n", line_end + 1)
+    nxt = text[line_end + 1 : next_end if next_end != -1 else len(text)].strip()
+    first = nxt.split(" ", 1)[0] if nxt else ""
+    if not first or not first[:1].islower():
+        return False
+    return not first.rstrip(",.;").endswith((":", "="))
 
 
 # A JWT header segment that decodes to ``{"alg":"none"}``. An unsigned token
