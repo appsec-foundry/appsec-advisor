@@ -98,11 +98,22 @@ def main(argv: list[str] | None = None) -> int:
         if round_no < args.rounds:
             time.sleep(max(args.interval, 1))
 
+    # Only the pending path is repeatable, so only it may say so. The host
+    # renders every non-zero exit as a failed call; without this wording the
+    # operator reads a healthy wave-in-progress as a broken run.
+    if last_wave_status == "pending":
+        print(
+            "STRIDE join slice exhausted while the wave is still running and its cumulative "
+            "deadline has not expired. This is expected, not a failure: exit 75 means repeat "
+            "the identical waiter call.",
+            file=sys.stderr,
+        )
+        return PENDING_EXIT_CODE
     print(
-        "BASH_WARN STRIDE join slice exhausted while the cumulative wave deadline remains — repeat the same waiter",
+        "STRIDE join slice exhausted while the cumulative wave deadline remains",
         file=sys.stderr,
     )
-    return PENDING_EXIT_CODE if last_wave_status == "pending" else last_rc
+    return last_rc
 
 
 if __name__ == "__main__":

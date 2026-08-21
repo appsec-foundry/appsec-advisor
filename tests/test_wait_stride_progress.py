@@ -131,7 +131,7 @@ def test_wave_status_treats_real_write_first_seed_as_pending(tmp_path):
     assert wsp._wave_status(tmp_path, ["backend-api"]) == "pending"
 
 
-def test_main_pending_wave_cannot_exit_zero_at_poll_cap(tmp_path, monkeypatch):
+def test_main_pending_wave_cannot_exit_zero_at_poll_cap(tmp_path, monkeypatch, capsys):
     """OR-5: ready-looking seed counts must not turn a pending wave green."""
     root = _make_root_with_progress(tmp_path)
     (tmp_path / ".dispatch-waves.json").write_text("{}", encoding="utf-8")
@@ -154,6 +154,12 @@ def test_main_pending_wave_cannot_exit_zero_at_poll_cap(tmp_path, monkeypatch):
         )
         == wsp.PENDING_EXIT_CODE
     )
+    # The host renders exit 75 as a failed call, so the message must name the
+    # condition as expected rather than as a warning the operator should act on.
+    _out, err = capsys.readouterr()
+    assert "join slice exhausted" in err
+    assert "expected, not a failure" in err
+    assert "BASH_WARN" not in err
 
 
 def test_main_returns_high_rc_immediately(tmp_path, monkeypatch):
