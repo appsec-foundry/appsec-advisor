@@ -985,12 +985,77 @@ def _emit(action: dict[str, Any]) -> int:
     return int(action.get("exit_code", 0)) if action["action"] in {"abort", "reject"} else 0
 
 
+_MAX_ACTION_REASON = 1000  # schemas/orchestration-action.schema.json: reason.maxLength
+_REASON_ELISION = " … [truncated, full text in .agent-run.log] … "
+
+
+def _cap_reason(reason: str) -> str:
+    """Keep a failure reason inside the action schema's ceiling.
+
+    An over-long reason made `_validate_action` reject the *abort itself*, so
+    what reached the operator was `internal action-manifest validation failed:
+    '<the real reason>' is too long` — the cause present, but framed as a
+    meta-error about the controller (2026-08-21).
+
+    Head and tail are both kept because a subprocess puts its verdict at either
+    end: the run that exposed this printed nine normalization receipts *before*
+    the single INVALID line, so head-only truncation would have dropped exactly
+    the sentence worth reading.
+    """
+    reason = str(reason)
+    if len(reason) <= _MAX_ACTION_REASON:
+        return reason
+    budget = _MAX_ACTION_REASON - len(_REASON_ELISION)
+    head = budget * 3 // 5
+    return reason[:head].rstrip() + _REASON_ELISION + reason[-(budget - head) :].lstrip()
+
+
+def clear_abort(output_dir: Path, reason: str) -> dict[str, Any]:
+    """Reopen a latched run by APPENDING a ``RUN_ABORT_CLEARED`` event.
+
+    A fault at a late boundary does not destroy the run's substance: the
+    Stage-1 artifacts stay on disk and the deterministic rebuild takes seconds.
+    Until now the latch charged a full re-scan for that anyway, because nothing
+    could reopen it — which also made the abort message's own advice
+    ("preserve the runtime artifacts for diagnosis") unfollowable.
+
+    Nothing is deleted. Filtering ``RUN_ABORTED`` out of the log would be the
+    other way to continue, and it is audit manipulation; this exists so that is
+    never the only exit. The reason is recorded next to the clear so the
+    history reads as a decision rather than a gap.
+    """
+    output_dir = output_dir.resolve()
+    if not (output_dir / ".agent-run.log").is_file():
+        raise CallError(f"no run log to clear in {output_dir}")
+    if not cutoff_cause.detect_abort(output_dir):
+        return _validate_action(
+            {
+                "schema_version": 1,
+                "action": "run_gate",
+                "receipts": ["no active RUN_ABORTED latch for this run — nothing to clear"],
+            }
+        )
+    detail = " ".join(str(reason).split())[:400] or "cleared by operator"
+    _append_event(output_dir, "RUN_ABORT_CLEARED", detail, level="WARN")
+    return _validate_action(
+        {
+            "schema_version": 1,
+            "action": "run_gate",
+            "receipts": [
+                "RUN_ABORTED latch cleared; the RUN_ABORTED line is retained for audit",
+                f"reason: {detail}",
+                "re-invoke the boundary that aborted — a second abort latches again",
+            ],
+        }
+    )
+
+
 def _failure_action(exc: ControllerError) -> dict[str, Any]:
     """Answer a malformed call with `reject`, everything else with `abort`."""
     return {
         "schema_version": 1,
         "action": "reject" if isinstance(exc, CallError) else "abort",
-        "reason": str(exc),
+        "reason": _cap_reason(str(exc)),
         "exit_code": exc.exit_code,
     }
 
@@ -4763,6 +4828,17 @@ def _context_v2_finalize(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any
     # mitigation-detail hydration copy concrete steps and verification from
     # finding producers onto mitigation cards.
     _run_auto_emitter_pass(output_dir, cfg, receipts)
+    # Re-validate: nine emitters just rewrote the document the check above
+    # cleared, so without this the guarantee covers a model that no longer
+    # exists — `emit_clean_finding_titles` alone rewrites every title. Same
+    # rule as the abuse-case rebuild below: an invalid canonical model must not
+    # reach Stage 2, because everything downstream (threat-model.md, SARIF,
+    # Threat Dragon) is a pure function of it. A failure here is an emitter
+    # defect, and since `clear-abort` exists the run survives the diagnosis.
+    _run_script(
+        "validate_intermediate.py",
+        ["threat_model_output", str(output_dir / "threat-model.yaml")],
+    )
     _run_script("validate_mitigation_quality.py", [str(output_dir)])
     _run_script(
         "assert_completeness.py",
@@ -6062,6 +6138,9 @@ def main(argv: list[str] | None = None) -> int:
     verify_receipts_parser.add_argument(
         "--receipt", nargs=2, action="append", required=True, metavar=("PATH", "SHA256")
     )
+    clear_abort_parser = sub.add_parser("clear-abort")
+    clear_abort_parser.add_argument("--output-dir", required=True)
+    clear_abort_parser.add_argument("--reason", required=True)
     next_parser = sub.add_parser("next")
     next_parser.add_argument("--output-dir", required=True)
     args = parser.parse_args(argv)
@@ -6104,6 +6183,8 @@ def main(argv: list[str] | None = None) -> int:
             action = context_v2_post_triage(Path(args.output_dir))
         elif args.command == "context-v2-finalize":
             action = context_v2_finalize(Path(args.output_dir))
+        elif args.command == "clear-abort":
+            action = clear_abort(Path(args.output_dir), args.reason)
         elif args.command == "verify-receipts":
             action = verify_receipt_hashes(Path(args.output_dir), [tuple(pair) for pair in args.receipt])
         else:

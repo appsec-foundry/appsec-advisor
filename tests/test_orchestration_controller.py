@@ -14,6 +14,7 @@ import build_architecture_analysis_context as architecture_context
 import build_post_stride_contexts as post_stride_contexts
 import build_stride_evidence_bundles as evidence_bundles
 import context_routing
+import cutoff_cause
 import orchestration_controller as controller
 import pytest
 
@@ -5614,3 +5615,91 @@ class TestStage1TaskRows:
         assert controller._validate_action(action) == action
         assert action["instruction_file"] == str(controller.THIN_STAGE1_V2_RUNTIME)
         assert action["task_rows"][1:11] == list(controller.STAGE1_TASK_ROWS)
+
+
+class TestFailureReasonFitsTheActionSchema:
+    """A failure must be reportable as itself, not as a meta-error about it.
+
+    2026-08-21: `build_threat_model_yaml.py` failed with nine normalization
+    receipts followed by one INVALID line. The whole text became the abort
+    reason, overran `reason.maxLength` (1000), and `_validate_action` rejected
+    the ABORT — so the operator got `internal action-manifest validation
+    failed: '<the real reason>' is too long`.
+    """
+
+    def test_short_reason_is_untouched(self):
+        assert controller._cap_reason("plain failure") == "plain failure"
+
+    def test_long_reason_fits_and_keeps_both_ends(self):
+        reason = "HEAD-MARKER " + ("filler receipt line. " * 200) + " TAIL-MARKER"
+        assert len(reason) > controller._MAX_ACTION_REASON
+        capped = controller._cap_reason(reason)
+        assert len(capped) <= controller._MAX_ACTION_REASON
+        # The verdict sits at either end depending on the subprocess, so both
+        # survive: head-only truncation would have dropped the INVALID line.
+        assert capped.startswith("HEAD-MARKER")
+        assert capped.endswith("TAIL-MARKER")
+        assert ".agent-run.log" in capped
+
+    def test_capped_abort_action_passes_its_own_schema(self):
+        exc = controller.ControllerError("x" * 5000, 5)
+        action = controller._failure_action(exc)
+        assert controller._validate_action(action) is action
+        assert action["action"] == "abort"
+        assert action["exit_code"] == 5
+
+
+class TestAbortLatchIsReversibleAndAuditable:
+    """M6b — a repairable fault must not cost a completed Stage 1.
+
+    2026-08-21: a malformed title ended a run at `context-v2-finalize`. Every
+    Stage-1 artifact survived and the deterministic rebuild takes seconds, but
+    the one-way latch charged a full re-scan because nothing could reopen it —
+    which left filtering `RUN_ABORTED` out of the log as the only way on, i.e.
+    audit manipulation as the sanctioned path.
+    """
+
+    @staticmethod
+    def _latched_run(tmp_path: Path) -> Path:
+        import time
+
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".scan-start-epoch").write_text(str(int(time.time()) - 60), encoding="utf-8")
+        controller._append_event(out, "RUN_ABORTED", "build_threat_model_yaml.py failed with exit 5", level="WARN")
+        return out
+
+    def test_abort_latches_before_the_clear(self, tmp_path):
+        out = self._latched_run(tmp_path)
+        assert cutoff_cause.detect_abort(out) is True
+
+    def test_clear_reopens_the_run(self, tmp_path):
+        out = self._latched_run(tmp_path)
+        action = controller.clear_abort(out, "title normalizer fixed, rebuilding")
+        assert action["action"] == "run_gate"
+        assert cutoff_cause.detect_abort(out) is False
+
+    def test_clear_appends_and_never_deletes_the_abort_line(self, tmp_path):
+        out = self._latched_run(tmp_path)
+        controller.clear_abort(out, "operator decision")
+        log = (out / ".agent-run.log").read_text(encoding="utf-8")
+        assert "RUN_ABORTED" in log, "the audit trail must keep the abort"
+        assert "RUN_ABORT_CLEARED" in log
+        assert "operator decision" in log
+
+    def test_a_second_abort_latches_again(self, tmp_path):
+        out = self._latched_run(tmp_path)
+        controller.clear_abort(out, "first repair")
+        controller._append_event(out, "RUN_ABORTED", "still broken", level="WARN")
+        assert cutoff_cause.detect_abort(out) is True
+
+    def test_clearing_an_unlatched_run_is_a_no_op(self, tmp_path):
+        import time
+
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".scan-start-epoch").write_text(str(int(time.time()) - 60), encoding="utf-8")
+        controller._append_event(out, "RUN_START", "hello")
+        action = controller.clear_abort(out, "nothing to do")
+        assert action["action"] == "run_gate"
+        assert "RUN_ABORT_CLEARED" not in (out / ".agent-run.log").read_text(encoding="utf-8")

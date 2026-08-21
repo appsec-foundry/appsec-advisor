@@ -131,7 +131,19 @@ def detect_stall(output_dir: Path) -> bool:
 
 
 def detect_abort(output_dir: Path) -> bool:
-    """True iff a controller ``RUN_ABORTED`` event belongs to the current run."""
+    """True iff the current run's LATEST abort/clear event is an abort.
+
+    The latch used to be one-way: any in-window ``RUN_ABORTED`` blocked every
+    later boundary forever and no script cleared it, so the only exit from a
+    repairable fault was a full re-scan — 75 minutes of completed Stage-1
+    analysis discarded because one field of one finding was malformed
+    (2026-08-21, ``analysis-title-contract-abort-2026-08-21.md``).
+
+    ``RUN_ABORT_CLEARED`` reopens it and the later of the two wins, so a second
+    abort after a clear latches again. Clearing APPENDS an event and never
+    removes the ``RUN_ABORTED`` line: a latch you can erase is a latch nobody
+    can audit.
+    """
     log = output_dir / ".agent-run.log"
     start = _run_start_epoch(output_dir)
     if start is None:
@@ -140,14 +152,15 @@ def detect_abort(output_dir: Path) -> bool:
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception:
         return False
+    latched = False
     for line in lines:
         parsed = parse_line(line)
-        if parsed is None or parsed.event != "RUN_ABORTED":
+        if parsed is None or parsed.event not in ("RUN_ABORTED", "RUN_ABORT_CLEARED"):
             continue
         epoch = _line_epoch(line)
         if epoch is not None and epoch >= start:
-            return True
-    return False
+            latched = parsed.event == "RUN_ABORTED"
+    return latched
 
 
 def cause_for(output_dir: Path, default: str = "session_death") -> tuple[str, str]:
