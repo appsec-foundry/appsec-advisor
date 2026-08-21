@@ -443,11 +443,24 @@ def main(argv: list[str]) -> int:
             "ignoring partial argument and skipping dispatch derivation\n"
         )
     elif args.subagent_type and args.since_iso:
-        derived = _derive_dispatch_stats(
-            output_dir / HOOK_LOG_FILENAME,
-            args.subagent_type,
-            args.since_iso,
-        )
+        hook_log = output_dir / HOOK_LOG_FILENAME
+        derived = _derive_dispatch_stats(hook_log, args.subagent_type, args.since_iso)
+        if derived is None:
+            # A window that opens even seconds after the dispatch matches no
+            # AGENT_SPAWN, and the row then silently carries no dispatch_count
+            # at all — which the completion summary reads as one agent and
+            # reports as incomplete cost accounting for the whole run. The
+            # caller is meant to capture --since-iso before dispatching, but a
+            # late window must degrade to the truth rather than to a wrong
+            # number: retry unbounded, since a stats row is always written
+            # right after its own dispatches returned.
+            derived = _derive_dispatch_stats(hook_log, args.subagent_type, "")
+            if derived is not None:
+                sys.stderr.write(
+                    f"warn: --since-iso {args.since_iso} matched no dispatch of "
+                    f"{args.subagent_type}; derived from the full log instead "
+                    "(capture --since-iso before dispatching)\n"
+                )
         if derived is not None:
             record.update(derived)
 

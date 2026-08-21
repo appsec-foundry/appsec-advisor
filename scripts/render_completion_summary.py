@@ -570,7 +570,19 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
                 ms = rec.get("duration_ms")
                 if isinstance(ms, (int, float)) and ms > 0:
                     total_ms += int(ms)
-                recorded = rec.get("recorded_dispatch_count")
+                # Both sides of the coverage comparison must count AGENTS.
+                # ``recorded_dispatch_count`` counts stats ROWS, and one row
+                # routinely describes a whole fan-out wave — 7 abuse verifiers
+                # or 6 STRIDE components collapse into a single row. Comparing
+                # it against ``spawned_dispatches``, which counts AGENT_SPAWN
+                # events, understated coverage on every run that fans out and
+                # printed a false "PARTIAL … cost accounting incomplete".
+                # ``dispatch_count`` is derived from that same AGENT_SPAWN
+                # stream (record_stage_stats._derive_dispatch_stats), so it is
+                # the matching unit; the row counter is only the fallback.
+                recorded = rec.get("dispatch_count")
+                if not (isinstance(recorded, int) and recorded > 0):
+                    recorded = rec.get("recorded_dispatch_count")
                 stats["recorded_dispatches"] += recorded if isinstance(recorded, int) and recorded > 0 else 1
                 stats["stage_rows"].append(
                     (
