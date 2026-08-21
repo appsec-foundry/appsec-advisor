@@ -69,6 +69,11 @@ _CANONICAL_EVENTS = {
     "info": None,  # caller supplies the event name
 }
 
+# Catalog events are underscore-separated (`AGENT_START`); kinds are
+# hyphenated (`phase-start`). Requiring the underscore keeps a malformed kind
+# such as `bogus-kind` a usage error instead of an invented event.
+_EVENT_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+")
+
 _PHASE_RE = re.compile(r"\[Phase\s+(\d+)/(\d+)\]")
 _PHASE_LOOSE_RE = re.compile(r"\[Phase\s+([0-9]+b?|[0-9]+(?:\.[0-9]+)?)(?:/(\d+))?\]")
 _STEP_RE = re.compile(r"(?:\[Phase\s+[0-9]+b?(?:/\d+)?\]\s*)?\[(\d+)/(\d+)\]")
@@ -251,8 +256,26 @@ def main(argv: list[str]) -> int:
     output_dir = Path(argv[1])
     kind = argv[2]
     if kind not in _CANONICAL_EVENTS:
-        print(f"{argv[0]}: unknown kind {kind!r} (expected one of {sorted(_CANONICAL_EVENTS)})", file=sys.stderr)
-        return 2
+        # The event catalog in agents/shared/logging-standard.md names events
+        # (`AGENT_START`, `SCAN_END`, …) while this slot wants a *kind*, and the
+        # only route to a catalog event is the literal `info`. Callers that know
+        # the catalog put the event name here instead — 10 of 12 rejected calls
+        # on the 2026-08-21 insecure-large-spring-app run. Rejecting them lost
+        # the very lifecycle lines cost accounting is reconstructed from
+        # (20 AGENT_START vs 15 AGENT_END for 24 dispatched agents), and the
+        # non-zero exit went unnoticed behind the callers' `2>/dev/null`.
+        # Accept both spellings instead; the strict form is unchanged.
+        canonical = kind.strip().lower().replace("_", "-")
+        normalized_event = kind.strip().upper().replace("-", "_")
+        if canonical in _CANONICAL_EVENTS:
+            kind = canonical
+        elif _EVENT_NAME_RE.fullmatch(kind.strip()):
+            argv.insert(2, "info")
+            argv[3] = normalized_event
+            kind = "info"
+        else:
+            print(f"{argv[0]}: unknown kind {kind!r} (expected one of {sorted(_CANONICAL_EVENTS)})", file=sys.stderr)
+            return 2
 
     if kind == "info":
         # `info <event> <detail>` — positional arg order: output_dir info event detail
