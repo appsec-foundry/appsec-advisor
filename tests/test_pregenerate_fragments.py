@@ -3686,6 +3686,29 @@ class TestEmitV2SubcontrolBlock:
         assert "[F-001](#f-001) - alg confusion" in joined
         assert "[F-002](#f-002)" in joined
 
+    def test_friendly_side_anchor_is_not_emitted_twice(self):
+        """Two controls differing only by a trailing parenthetical collapse to
+        the same friendly title, so the friendly side anchor collided and
+        `check_toc_contract` reported a duplicate explicit anchor. Each control
+        keeps its unique name-derived anchor; the short one is emitted once.
+        """
+        import re
+
+        lines: list[str] = []
+        for idx, title in enumerate(
+            ("JWT Verification (Legacy / Unsigned)", "JWT Verification (Signed / SignedJwtService)"),
+            start=1,
+        ):
+            pf._emit_v2_subcontrol_block(
+                lines, {"title": title}, [], "6.2 Identity and Authentication Controls", section_id="6.2", idx=idx
+            )
+        ids = [a for line in lines for a in re.findall(r'<a id="([^"]+)"></a>', line)]
+
+        assert len(ids) == len(set(ids)), f"duplicate side anchor emitted: {ids}"
+        assert "jwt-verification-legacy-unsigned" in ids
+        assert "jwt-verification-signed-signedjwtservice" in ids
+        assert ids.count("jwt-verification") == 1
+
     def test_flow_type_diagram_placeholder(self):
         lines: list[str] = []
         sub = {"title": "Login", "type": "flow"}

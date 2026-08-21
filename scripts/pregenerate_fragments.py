@@ -3977,6 +3977,27 @@ def _control_verdict_for_heading(
     return ""
 
 
+_V2_ANCHOR_ID_RE = re.compile(r'<a id="([^"]+)"></a>')
+
+
+def _v2_anchor_ids(lines: list, *slugs: str) -> list[str]:
+    """Side-anchor ids for one §6 H4, minus any already emitted into `lines`.
+
+    Two controls whose names differ only by a trailing parenthetical collapse
+    to the same friendly title — `JWT Verification (Legacy / Unsigned)` and
+    `JWT Verification (Signed / SignedJwtService)` both become
+    `JWT Verification` — so the friendly side anchor was emitted twice and
+    `qa_checks.check_toc_contract` reported `duplicate explicit anchor id:
+    #jwt-verification appears 2 times` (2026-08-21 insecure-large-spring-app).
+
+    The name-derived slug is unique per control and always survives; only the
+    already-taken duplicate is dropped. The first block therefore keeps the
+    short link target and no anchor upstream links depend on is lost.
+    """
+    emitted = {a for line in lines for a in _V2_ANCHOR_ID_RE.findall(line)}
+    return sorted({s for s in slugs if s} - emitted)
+
+
 def _v2_slug(title: str) -> str:
     """Anchor slug used by the v2 §6 scaffold.
 
@@ -4481,11 +4502,12 @@ def _emit_v2_subcontrol_block(
     # `#721-jwt-authentication` (which would not match `**Controls
     # covered:**` link targets); the side anchors close that gap.
     if section_id and idx:
-        anchors = {_v2_slug(original_title), _v2_slug(title)}
+        anchors = _v2_anchor_ids(lines, _v2_slug(original_title), _v2_slug(title))
         # All anchors on ONE line: stacked empty <a id> lines render with
         # inconsistent vertical gaps before a heading (1 vs 2 anchors → uneven
         # whitespace, 2026-05-30 user "spacing" fix).
-        lines.append("".join(f'<a id="{s}"></a>' for s in sorted(anchors)))
+        if anchors:
+            lines.append("".join(f'<a id="{s}"></a>' for s in anchors))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
         lines.append(f"#### {title}")
@@ -4683,11 +4705,12 @@ def _emit_v2_subcontrol_legacy(
     # itself slugifies differently (e.g. `#721-jwt-authentication`); the
     # side anchors close that gap.
     if section_id and idx:
-        anchors = {_v2_slug(name), _v2_slug(title)}
+        anchors = _v2_anchor_ids(lines, _v2_slug(name), _v2_slug(title))
         # All anchors on ONE line: stacked empty <a id> lines render with
         # inconsistent vertical gaps before a heading (1 vs 2 anchors → uneven
         # whitespace, 2026-05-30 user "spacing" fix).
-        lines.append("".join(f'<a id="{s}"></a>' for s in sorted(anchors)))
+        if anchors:
+            lines.append("".join(f'<a id="{s}"></a>' for s in anchors))
         lines.append(f"#### {section_id}.{idx} {title}")
     else:
         lines.append(f"#### {title}")
