@@ -7,7 +7,6 @@
     "schema_version",
     "signals",
     "signal_evidence",
-    "signal_classification",
     "component_hints"
   ],
   "additionalProperties": false,
@@ -112,10 +111,8 @@
       }
     },
     "signal_classification": {
+      "$comment": "Retired 2026-08-21: no production consumer ever read this field, and asking a producer to label the reliability of its own output is not something it can answer. Still accepted so artifacts preserved from earlier runs keep validating under additionalProperties:false; the property is removed with the next schema_version bump.",
       "type": "object",
-      "required": [
-        "has_open_self_registration"
-      ],
       "additionalProperties": false,
       "properties": {
         "has_open_self_registration": {
@@ -133,8 +130,7 @@
         "required": [
           "component_id",
           "component_type",
-          "deployment_zones",
-          "classification"
+          "deployment_zones"
         ],
         "additionalProperties": false,
         "properties": {

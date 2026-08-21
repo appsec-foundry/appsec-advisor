@@ -1948,22 +1948,48 @@ def _run_auto_emitter_pass(output_dir: Path, cfg: dict[str, Any], receipts: list
         _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
 
 
-def _load_json_object(path: Path, *, contract: str) -> dict[str, Any]:
+def _document_fault(producer: str, message: str, errors: list[str] | None = None) -> ControllerError:
+    """Choose the error class for a fault in the artifact's own bytes.
+
+    The class follows the *producer*, not the validator that happened to fire
+    first. An LLM wrote the wrong shape and a redispatch carrying the errors can
+    fix it; a script that writes an invalid artifact is a defect and repeating it
+    would only hide that.
+
+    Only faults in the document itself route through here. A missing jsonschema
+    dependency or an unreadable schema file is a plugin fault, stays a
+    ``ControllerError`` unconditionally, and must never buy a producer retry —
+    the producer cannot fix the plugin, so the retry would be spent for nothing
+    and the real defect would be masked.
+    """
+    if producer == "llm":
+        return ProducerContractError(message, errors)
+    return ControllerError(message)
+
+
+def _load_json_object(path: Path, *, contract: str, producer: str = "deterministic") -> dict[str, Any]:
     """Load a controller-consumed JSON object or fail at the boundary."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ControllerError(f"cannot read {contract} artifact {path}: {exc}") from exc
+        raise _document_fault(producer, f"cannot read {contract} artifact {path}: {exc}") from exc
     if not isinstance(value, dict):
-        raise ControllerError(f"{contract} artifact must be a JSON object: {path}")
+        raise _document_fault(producer, f"{contract} artifact must be a JSON object: {path}")
     return value
 
 
-def _validate_json_artifact(path: Path, schema_path: Path, *, contract: str) -> dict[str, Any]:
-    """Validate one JSON artifact with the required structural dependency."""
+def _validate_json_artifact(
+    path: Path, schema_path: Path, *, contract: str, producer: str = "deterministic"
+) -> dict[str, Any]:
+    """Validate one JSON artifact with the required structural dependency.
+
+    ``producer`` names who wrote the artifact and therefore which faults are
+    repairable; it defaults to ``deterministic`` so every existing call site
+    keeps its terminal behaviour unchanged.
+    """
     if Draft202012Validator is None:
         raise ControllerError(f"cannot validate {contract}: jsonschema dependency is unavailable")
-    value = _load_json_object(path, contract=contract)
+    value = _load_json_object(path, contract=contract, producer=producer)
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -1971,8 +1997,18 @@ def _validate_json_artifact(path: Path, schema_path: Path, *, contract: str) -> 
     errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda item: list(item.path))
     if errors:
         detail = "; ".join(error.message for error in errors[:5])
-        raise ControllerError(f"{contract} validation failed: {detail}")
+        raise _document_fault(
+            producer,
+            f"{contract} validation failed: {detail}",
+            [f"{_schema_error_path(error)}: {error.message}" for error in errors[:32]],
+        )
     return value
+
+
+def _schema_error_path(error: Any) -> str:
+    """Name the offending location so a repair brief can point at it."""
+    parts = [f"[{p}]" if isinstance(p, int) else str(p) for p in error.absolute_path]
+    return ".".join(parts).replace(".[", "[") or "<root>"
 
 
 def _validate_yaml_artifact(path: Path, schema_path: Path, *, contract: str) -> dict[str, Any]:
@@ -2036,17 +2072,27 @@ def _validate_evidence_verification(path: Path, threats_path: Path | None = None
 
 
 def _validate_recon_signals(path: Path, repo_root: Path) -> dict[str, Any]:
-    """Validate the mandatory bounded actor/architecture signal artifact."""
+    """Validate the mandatory bounded actor/architecture signal artifact.
+
+    Every fault reachable here is a fault in what the recon producer wrote, so
+    all of them are repairable by the one redispatch the producer budget allows.
+    Splitting them by validator — schema terminal, semantics repairable — made a
+    single wrong enum token kill a paid run while a semantic slip in the same
+    write was repaired.
+    """
     try:
         byte_count = path.stat().st_size
     except OSError as exc:
-        raise ControllerError(f"cannot stat recon-signals-v2 artifact {path}: {exc}") from exc
+        raise ProducerContractError(f"cannot stat recon-signals-v2 artifact {path}: {exc}") from exc
     if byte_count > MAX_RECON_SIGNALS_BYTES:
-        raise ControllerError(f"recon-signals-v2 artifact exceeds the {MAX_RECON_SIGNALS_BYTES}-byte cap")
+        raise ProducerContractError(
+            f"recon-signals-v2 artifact exceeds the {MAX_RECON_SIGNALS_BYTES}-byte cap"
+        )
     value = _validate_json_artifact(
         path,
         PLUGIN_ROOT / "schemas" / "recon-signals.schema.json",
         contract="recon-signals-v2",
+        producer="llm",
     )
     valid, semantic_errors = intermediate_contract.validate_recon_signals(value, repo_root=repo_root)
     if not valid:

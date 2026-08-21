@@ -4549,9 +4549,24 @@ class TestContextV2PostRecon:
             controller.context_v2_post_recon(output)
 
     def test_post_recon_rejects_invalid_signal_contract(self, tmp_path, monkeypatch):
+        """An invalid signal contract is never accepted — it is repaired, then refused.
+
+        Until 2026-08-21 the first rejection ended the run. It now buys the one
+        producer retry, so the guarantee this test defends moved rather than
+        weakened: the artifact must still never pass, and a producer that repeats
+        the violation must still be refused.
+        """
         output = self._prepare(tmp_path)
         (output / ".recon-signals.json").write_text("{}", encoding="utf-8")
         monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        action = controller.context_v2_post_recon(output)
+        assert action["action"] == "dispatch_parallel"
+        assert action["dispatch_jobs"][0]["output_artifacts"] == [".recon-signals.json"], (
+            "the invalid artifact must be rewritten, never admitted"
+        )
+
+        (output / ".recon-signals.json").write_text("{}", encoding="utf-8")
         with pytest.raises(controller.ControllerError, match="recon-signals-v2 validation failed"):
             controller.context_v2_post_recon(output)
 
@@ -5236,6 +5251,138 @@ class TestProducerContractRetry:
         """Only LLM-written artifacts may be retried; scripts failing is a defect."""
         assert issubclass(controller.ProducerContractError, controller.ControllerError)
         assert not isinstance(controller.ControllerError("boom"), controller.ProducerContractError)
+
+    def test_a_schema_violation_is_repairable_like_a_semantic_one(self, tmp_path, monkeypatch):
+        """The 2026-08-21 juice-shop run died on one wrong enum token.
+
+        `_validate_recon_signals` checked the same LLM-written artifact twice:
+        schema first (terminal), semantics second (repairable). A producer slip
+        that landed in the first half killed the run while the identical slip in
+        the second half bought a redispatch. The class must follow the producer,
+        not whichever validator happens to fire first.
+        """
+        output = _context_v2_run(tmp_path)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+        signals = _valid_recon_signals()
+        # The exact byte the recon producer wrote: the neighbouring
+        # `signal_evidence` vocabulary in a `signal_classification` slot.
+        signals["signal_classification"] = {"has_open_self_registration": "candidate"}
+        (output / ".recon-signals.json").write_text(json.dumps(signals), encoding="utf-8")
+        _write_architecture_receipt_inputs(output)
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        action = controller.context_v2_post_recon(output)
+
+        assert action["action"] == "dispatch_parallel", "a schema slip must not end the run"
+        job = action["dispatch_jobs"][0]
+        assert job["semantic_role"] == "recon_scanner"
+        assert job["job_id"] == "phase2-recon:attempt-2"
+        brief_name = next(name for name in job["input_artifacts"] if name.startswith(".producer-repair/"))
+        brief = json.loads((output / brief_name).read_text(encoding="utf-8"))
+        assert any("has_open_self_registration" in error for error in brief["errors"]), (
+            "the repair brief must name the offending path, not just the contract"
+        )
+
+    def test_a_malformed_producer_artifact_is_repairable(self, tmp_path, monkeypatch):
+        """Unparseable bytes are a producer slip too, not a broken pipeline."""
+        output = _context_v2_run(tmp_path)
+        (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
+        (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
+        (output / ".recon-signals.json").write_text("{ not json", encoding="utf-8")
+        _write_architecture_receipt_inputs(output)
+        monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+
+        action = controller.context_v2_post_recon(output)
+        assert action["action"] == "dispatch_parallel"
+
+    def test_a_plugin_fault_stays_terminal(self, tmp_path):
+        """A retry can only fix what the producer controls.
+
+        An unreadable schema file or a missing jsonschema dependency is a defect
+        in the plugin, not in the artifact. Spending the producer's one retry on
+        it would waste a dispatch and hide the real fault, so these stay
+        `ControllerError` even for an LLM-written artifact.
+        """
+        artifact = tmp_path / ".recon-signals.json"
+        artifact.write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
+
+        with pytest.raises(controller.ControllerError, match="cannot load schema") as caught:
+            controller._validate_json_artifact(
+                artifact,
+                tmp_path / "does-not-exist.schema.json",
+                contract="recon-signals-v2",
+                producer="llm",
+            )
+        assert not isinstance(caught.value, controller.ProducerContractError)
+
+    def test_deterministic_call_sites_keep_terminal_schema_failures(self, tmp_path):
+        """The default must not change: only artifacts declared llm may retry."""
+        artifact = tmp_path / "broken.json"
+        artifact.write_text(json.dumps({"schema_version": 2}), encoding="utf-8")
+
+        with pytest.raises(controller.ControllerError) as caught:
+            controller._validate_json_artifact(
+                artifact,
+                ROOT / "schemas/recon-signals.schema.json",
+                contract="recon-signals-v2",
+            )
+        assert not isinstance(caught.value, controller.ProducerContractError)
+
+
+class TestRetiredSelfReportedProvenance:
+    """`signal_classification` and `component_hints[].classification` asked the
+    producer to grade the reliability of its own output — a question a model
+    that guesses cannot answer, and one no production code ever read. Both were
+    `required`, so a wrong enum token in either killed a paid run.
+
+    They stay declared until the next schema_version bump: `.recon-signals.json`
+    is on the NEVER-delete list, so artifacts preserved from earlier runs still
+    carry them and must keep validating under `additionalProperties: false`.
+    """
+
+    def _schema(self):
+        return json.loads((ROOT / "schemas/recon-signals.schema.json").read_text(encoding="utf-8"))
+
+    def test_neither_field_is_required(self):
+        schema = self._schema()
+        assert "signal_classification" not in schema["required"]
+        assert "classification" not in schema["properties"]["component_hints"]["items"]["required"]
+
+    def test_an_artifact_without_them_validates(self):
+        value = _valid_recon_signals()
+        value.pop("signal_classification")
+        value["component_hints"] = [
+            {"component_id": "backend-api", "component_type": "api-endpoint", "deployment_zones": ["internet"]}
+        ]
+        errors = list(controller.Draft202012Validator(self._schema()).iter_errors(value))
+        assert errors == []
+
+    def test_a_preserved_artifact_still_validates(self):
+        """A run's own earlier output must not become invalid mid-migration."""
+        value = _valid_recon_signals()
+        value["component_hints"] = [
+            {
+                "component_id": "backend-api",
+                "component_type": "api-endpoint",
+                "deployment_zones": ["internet"],
+                "classification": "deterministic",
+            }
+        ]
+        errors = list(controller.Draft202012Validator(self._schema()).iter_errors(value))
+        assert errors == []
+
+    def test_the_producer_prompt_no_longer_teaches_the_retired_vocabulary(self):
+        """The collision lived in the flattened template, not in the schema.
+
+        `has_open_self_registration` appeared as an object-valued key whose inner
+        `status` enum is `supporting|candidate|none`, and five lines later as a
+        direct enum key valued `deterministic|llm-fallback`. Keeping either
+        vocabulary in the prompt keeps the confusion available.
+        """
+        prompt = (ROOT / "agents/appsec-recon-scanner.md").read_text(encoding="utf-8")
+        assert "signal_classification" not in prompt
+        assert "llm-fallback" not in prompt
 
 
 class TestOrganizationLlmPolicy:
