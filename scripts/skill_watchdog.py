@@ -58,10 +58,15 @@ Exit codes
 
   0 — lock file disappeared, watchdog exited cleanly.
   2 — usage error.
+  3 — a tick raised; monitoring stopped early.
 
-The watchdog never returns a non-zero status while running. Anything
-fatal during a tick (filesystem error, permission denied) is logged with
-``WATCHDOG_ERROR`` and the loop continues.
+The watchdog never kills a task. Individual checks swallow their own
+filesystem errors, and anything that still escapes a tick is written to
+``.agent-run.log`` as ``WATCHDOG_ERROR`` before the process exits 3 — the run
+itself continues, unmonitored. The caller starts this in the background and
+does not inspect the status, so that log line is the only evidence;
+``_extract_watchdog_absence`` in ``aggregate_run_issues.py`` covers the case
+where the process dies before it can write anything at all.
 """
 
 from __future__ import annotations
@@ -76,12 +81,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from event_log import format_line
-from stride_outputs import stride_output_files
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# Guarded exactly like the siblings below. These two used to run bare at import
+# time, before `sys.path` was even extended, so a partial or shadowed sibling
+# raised before argv was parsed. The process then died with an unhandled
+# traceback — an exit status this module documents nowhere, which the skill
+# (`run_in_background`, task id kept only for a later TaskStop) never checks and
+# which no run-issue detector reported. Losing the watchdog costs every
+# stagnation check for the rest of the run, with nothing to say it happened.
+try:
+    from event_log import format_line  # type: ignore
+except Exception:  # pragma: no cover
+    format_line = None  # type: ignore[assignment]
+try:
+    from stride_outputs import stride_output_files  # type: ignore
+except Exception:  # pragma: no cover
+    stride_output_files = None  # type: ignore[assignment]
 
 # Reuse the central phase budgets so per-component-timeout defaults stay
 # in sync with the rest of the toolchain.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import phase_budgets  # type: ignore
 except Exception:  # pragma: no cover
@@ -434,7 +453,7 @@ def _scan_stride(output_dir: Path) -> dict[str, Any]:
     # selection, analyst context) land BEFORE the fan-out, so counting them
     # would keep `stride_count` permanently > 0 and silently disable the
     # `sc == 0` Phase-9 canary below.
-    stride_files = stride_output_files(output_dir)
+    stride_files = stride_output_files(output_dir) if stride_output_files else []
     stride_count = len(stride_files)
     stride_bytes = 0
     for f in stride_files:
@@ -963,17 +982,33 @@ def main(argv: list[str]) -> int:
 
     plugin_root = Path(args.plugin_root) if args.plugin_root else (Path(__file__).resolve().parent.parent)
 
-    return watch(
-        output_dir=Path(args.output_dir).resolve(),
-        plugin_root=plugin_root.resolve(),
-        heartbeat_interval=args.heartbeat_interval,
-        stride_stale_seconds=args.stride_stale_seconds,
-        stride_canary_seconds=args.stride_canary_seconds,
-        component_timeout_seconds=args.component_timeout_seconds,
-        max_iterations=args.max_iterations,
-        substep2_idle_seconds=args.substep2_idle_seconds,
-        run_idle_seconds=args.run_idle_seconds,
-    )
+    output_dir = Path(args.output_dir).resolve()
+    try:
+        return watch(
+            output_dir=output_dir,
+            plugin_root=plugin_root.resolve(),
+            heartbeat_interval=args.heartbeat_interval,
+            stride_stale_seconds=args.stride_stale_seconds,
+            stride_canary_seconds=args.stride_canary_seconds,
+            component_timeout_seconds=args.component_timeout_seconds,
+            max_iterations=args.max_iterations,
+            substep2_idle_seconds=args.substep2_idle_seconds,
+            run_idle_seconds=args.run_idle_seconds,
+        )
+    except KeyboardInterrupt:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        # A tick that raises must not leave the run with an undocumented exit
+        # status and no trace of why monitoring stopped. The skill launches this
+        # in the background and never inspects the code, so the log line is the
+        # only evidence that stagnation detection ended early.
+        _log_error_loud(
+            output_dir,
+            "WATCHDOG_ERROR",
+            f"{type(exc).__name__}: {exc}",
+            "monitoring stopped; the run continues unmonitored",
+        )
+        return 3
 
 
 if __name__ == "__main__":

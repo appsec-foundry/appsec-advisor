@@ -1097,6 +1097,42 @@ def _extract_render_integrity(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _extract_watchdog_absence(output_dir: Path, agent_log: list[tuple[int, str]]) -> list[dict]:
+    """Flag a run whose heartbeat watchdog never came up.
+
+    The skill starts ``skill_watchdog.py`` with ``run_in_background`` and keeps
+    only the task id for a later TaskStop — it never inspects the exit status.
+    A watchdog that dies at import time (or on its first tick) therefore takes
+    every stagnation check with it — STRIDE_STALE, STRIDE_CANARY_TIMEOUT,
+    SUBSTEP2_IDLE, RUN_IDLE — while the run proceeds normally and nothing
+    records the loss.
+
+    Keyed on ANY watchdog event, not on ``WATCHDOG_START`` alone: a watchdog
+    left over from an earlier session keeps watching the same output directory
+    and logs ``RUN_RESUMED``/``WATCHDOG_END`` into the new run's log without
+    ever emitting a fresh start (2026-08-21 juice-shop). That run was monitored
+    — by luck rather than design — so demanding WATCHDOG_START would report a
+    loss that did not happen. Only the complete absence of watchdog activity
+    proves nothing watched the run.
+    """
+    if any("WATCHDOG_" in line for _, line in agent_log):
+        return []
+    if not (output_dir / ".scan-start-epoch").is_file():
+        return []
+    return [
+        {
+            "category": "watchdog_not_started",
+            "severity": "warning",
+            "title": "Heartbeat watchdog never logged WATCHDOG_START — run proceeded unmonitored",
+            "evidence": {
+                "log_file": ".agent-run.log",
+                "log_line": 0,
+                "raw_event": "no WATCHDOG_* event in .agent-run.log",
+            },
+        }
+    ]
+
+
 def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     """Flag abuse-case chains the verifier fan-out could not confirm.
 
@@ -1588,6 +1624,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_recovery_events(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
+    issues.extend(_extract_watchdog_absence(output_dir, agent_log))
     issues.extend(_extract_stride_ceiling_events(output_dir))
     issues.extend(_extract_gate_events(output_dir))
     issues.extend(_extract_stride_model_mismatch(output_dir, hook_log, agent_log))
