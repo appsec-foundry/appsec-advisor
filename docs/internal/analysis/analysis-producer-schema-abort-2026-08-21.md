@@ -411,14 +411,19 @@ wird nachvollziehbar.
 
 ### Rangfolge
 
-| # | Maßnahme | Verifikationsstand | Warum hier |
-|---|---|---|---|
-| 1 | **M3** — Fehlerklasse am Erkennungsort wählen | verifiziert, ~15 Zeilen | eigener Defekt · universelle Abdeckung · größte Kostenstufe |
-| 2 | **M1 Stufe 1** — Felder aus `required` + Template | verifiziert inkl. Migrationspfad, ~10 Zeilen | entfernt die konkrete Ursache, rückwärtskompatibel |
-| 3 | **M4** — Retry rollen-generisch | Code gelesen | zieht M3s Abdeckung auf die 8 Producer ohne Pfad |
-| 4 | **M2** — Validierung zur Schreibzeit | **Spike nötig** | bester Interceptionspunkt, Mechanismus unbelegt |
-| 5 | M5 — Template-Lint | — | Hygiene |
-| 6 | M6 — Latch verengen/reversibel | — | Hygiene, aber blockiert aktuell jede Diagnose |
+> Status ergänzt nach der Umsetzung; die Neubewertung der offenen Punkte steht
+> in §5b. M4 ist dort **zurückgestellt** — die Rangfolge hier ist der Stand vor
+> der Umsetzung und erklärt nur, warum M3 und M1 zuerst gebaut wurden.
+
+| # | Maßnahme | Verifikationsstand | Warum hier | Status |
+|---|---|---|---|---|
+| 1 | **M3** — Fehlerklasse am Erkennungsort wählen | verifiziert, ~15 Zeilen | eigener Defekt · universelle Abdeckung · größte Kostenstufe | ✅ `bb8e158c` |
+| 2 | **M1 Stufe 1** — Felder aus `required` + Template | verifiziert inkl. Migrationspfad, ~10 Zeilen | entfernt die konkrete Ursache, rückwärtskompatibel | ✅ `bb8e158c` |
+| 3 | **M4** — Retry rollen-generisch | Code gelesen | zieht M3s Abdeckung auf die 8 Producer ohne Pfad | ⏸ zurückgestellt (§5b) |
+| 4 | **M2** — Validierung zur Schreibzeit | **Spike nötig** | bester Interceptionspunkt, Mechanismus unbelegt | offen |
+| 5 | M5 — Template-Lint | — | Hygiene | offen |
+| 6 | M6a — Abort-Guard verengen | verifiziert | blockiert aktuell jede Diagnose | empfohlen (§5b) |
+| 6 | M6b — Latch reversibel | — | Wert durch M3 gesunken | ⏸ zurückgestellt (§5b) |
 
 ### Warum M3 zuerst
 
@@ -469,6 +474,97 @@ tragen, solange sein Mechanismus unbelegt ist.
   einen Redispatch statt eines Edits.
 * **ohne M6a:** die Abbruchmeldung empfiehlt eine Diagnose, die ihr eigener
   Guard verhindert.
+
+---
+
+## 5a. Umsetzungsstand
+
+**Umgesetzt in `bb8e158c`** — M3 und M1 Stufe 1:
+
+| Datei | Änderung |
+|---|---|
+| `scripts/orchestration_controller.py` | `_document_fault()` wählt die Fehlerklasse am Erkennungsort; `producer`-Parameter (Default `deterministic`) an `_load_json_object` / `_validate_json_artifact`; `_validate_recon_signals` übergibt `producer="llm"` und macht Stat-/Byte-Cap-Fehler reparierbar; `_schema_error_path()` benennt die Fundstelle im Repair-Brief |
+| `schemas/recon-signals.schema.json` | `signal_classification` und `component_hints[].classification` aus `required`; Properties bleiben deklariert (Migrationspfad), `$comment` dokumentiert die Rücknahme |
+| `agents/appsec-recon-scanner.md` | beide Felder aus dem JSON-Template entfernt; drei Prosastellen, die `llm-fallback` lehrten, auf die Boolean-Regel umgeschrieben |
+| `tests/test_orchestration_controller.py` | +4 Tests M3, +4 Tests M1 (`TestRetiredSelfReportedProvenance`); `test_post_recon_rejects_invalid_signal_contract` auf die neue Semantik gehoben |
+
+**Verifikation:** volle Suite **13005 passed, 95 skipped**. End-to-End gegen das
+Artefakt, das den Lauf getötet hat:
+
+* Originaldefekt wird vom Self-Gate weiterhin abgelehnt (Property für die
+  Migration erhalten) — Exit 1.
+* Artefakt ohne die zurückgezogenen Felder → `VALID: ok`.
+* Die neu formulierte Template-Regel (mehrdeutiges Gating ⇒ Boolean `false`,
+  Fundstelle als `candidate`) erzeugt ein gültiges Artefakt.
+
+**Nebenbefund aus der End-to-End-Prüfung:** Das juice-shop-Artefakt enthielt
+**zwei** Producer-Verstöße, nicht einen — neben dem Enum-Fehler auch
+`has_open_self_registration: true` bei `status: "candidate"`, was die Kopplung
+*true ⇒ supporting* verletzt. Der zweite wäre vom bestehenden semantischen
+Retry-Pfad gefangen worden; der erste tötete den Lauf davor. Das bestätigt die
+Diagnose aus D3 an einem zweiten, unabhängigen Datenpunkt.
+
+## 5b. Offene Punkte — bewertet, nicht nur aufgelistet
+
+Nach der Umsetzung von M3/M1 hat sich der Wert der verbleibenden Maßnahmen
+verschoben. Die Liste ist daher eine Bewertung, keine Warteschlange.
+
+### Empfohlen
+
+**M6a — Abort-Guard verengen.** Verifizierter Defekt, reproduziert: der Guard
+prüft nur `event.is_agent_call` (`agent_logger.py:2287-2291`) und verweigert
+jeden Agent-Dispatch im Output-Verzeichnis, auch rein diagnostische. Die
+Verengung stellt die im Docstring behauptete Semantik her, weicht also nichts
+auf.
+
+> **Designvorbehalt — nicht als Listenkopie umsetzen.** Der Guard ist
+> fail-closed; eine Allowlist macht ihn **fail-open für Neuzugänge**. Ein
+> künftig ergänzter Producer-Agent, der nicht eingetragen wird, fällt
+> stillschweigend aus der Abdeckung — sichtbar erst, wenn nach einem Abbruch
+> etwas weiterläuft, was nicht dürfte. Die Liste aus `:2139-2153` schlicht zu
+> kopieren verdoppelt das Risiko (zwei driftende Listen).
+> Umsetzbar nur mit **einer** gemeinsamen Konstante für beide Guards plus einem
+> Test, der sie gegen die Dispatch-Registry des Controllers abgleicht.
+
+**Instrumentierung vor M4.** Ein strukturiertes Event je
+Producer-Contract-Verstoß (Rolle, Artefakt, Fehlerklasse). Klein, risikofrei,
+und es ersetzt die Vermutung hinter M4 durch Messwerte: welche Rollen verletzen
+überhaupt jemals ihren Contract?
+
+### Zurückgestellt — mit Begründung
+
+**M4 (Retry rollen-generisch) — nicht ohne Bedarfsnachweis.** Vier Gründe:
+
+1. **Keine Evidenz.** M3 hat das Artefakt repariert, das tatsächlich ausfällt.
+   Ob die anderen acht Producer je so scheitern, ist unbekannt. Acht Retry-Pfade
+   auf Verdacht sind spekulativer Code.
+2. **Kein Refactoring, sondern acht Einzelintegrationen.**
+   `_recon_producer_retry` rekonstruiert Eingaben rollenspezifisch (Summary
+   erhalten, Patterns-Receipt neu ausgestellt, attempt-qualifizierte Job-ID).
+   Jede Rolle hat andere Input-Artefakte, Receipts und Action-ID-Semantik; ein
+   generischer Helper bräuchte pro Rolle Konfiguration.
+3. **Bei teuren Rollen maskiert Retry statt zu reparieren.** Recon ist billig.
+   Ein stiller Redispatch von STRIDE oder Merger nach umfangreicher Vorarbeit
+   kann einen systematischen Prompt-Defekt verdecken — genau die Sorge, die der
+   Docstring `:474-476` für deterministische Producer formuliert.
+4. **Falsche Reihenfolge.** M4 mildert die *Folge*; M2 und M5 senken die *Rate*.
+
+**M6b (clear-abort) — Wert durch M3 gesunken.** Producer-Aborts sollten jetzt
+selten werden. Ein Notausstieg aus einem fail-closed-Zustand ist eine Schuld,
+die man sich nur für nachgewiesenen Bedarf einhandelt.
+
+### Unverändert offen
+
+**M2 (Write-Zeit-Validierung)** — größter Hebel auf die Verstoßrate, aber
+weiterhin **Spike zuerst**: kein Hook dieses Plugins nutzt bisher eine
+PostToolUse-Block-Entscheidung, und ob ein solcher Block einen *Subagenten*
+erreicht und zur Korrektur zwingt, ist unverifiziert. Fällt der Spike negativ
+aus, degradiert M2 auf Erkennung plus `SubagentStop`-Backstop.
+
+**M5 (Template-Lint)** — in der korrigierten Form (Template-Ebene, siehe K1).
+Der Kollisionsscan über alle 40 Schemas fand 14 Kollisionen, keine davon die
+tatsächliche; ein brauchbarer Lint muss die abgeflachten Agent-Vorlagen prüfen,
+nicht den Schema-Graphen.
 
 ---
 
