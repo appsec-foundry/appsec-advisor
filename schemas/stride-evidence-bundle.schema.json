@@ -100,9 +100,14 @@
                 "type": "array",
                 "maxItems": 24,
                 "uniqueItems": true,
-                "items": { "$ref": "#/$defs/routing_path" }
+                "items": { "$ref": "#/$defs/repository_path" }
               },
-              "omitted_files": { "type": "integer", "minimum": 0, "maximum": 100000 },
+              "omitted_files": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "description": "Files the component owns that the focus path reached but the projection did not admit, because they were empty or the source-slice and line budgets were already spent. Files outside the component are not omissions and are counted by 'unowned_files' instead; the two plus 'projected_files' make up 'candidate_files'."
+              },
               "unowned_files": {
                 "type": "integer",
                 "minimum": 0,
@@ -128,7 +133,7 @@
                 "type": "array",
                 "maxItems": 8,
                 "uniqueItems": true,
-                "items": { "$ref": "#/$defs/routing_path" },
+                "items": { "$ref": "#/$defs/repository_path" },
                 "description": "Mandatory or cited evidence paths this exclude would have hidden. Non-empty exactly when status is 'superseded': an exclude is an optional-discovery hint, so it yields to evidence and is dropped from the effective exclude_paths instead of aborting the run."
               }
             },
@@ -181,14 +186,7 @@
         ],
         "properties": {
           "repository_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
-          "path": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 500,
-            "not": {
-              "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
-            }
-          },
+          "path": { "$ref": "#/$defs/repository_path" },
           "start_line": { "type": "integer", "minimum": 1, "maximum": 10000000 },
           "end_line": { "type": "integer", "minimum": 1, "maximum": 10000000 },
           "signal_kind": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
@@ -233,13 +231,19 @@
     }
   },
   "$defs": {
-    "routing_path": {
+    "repository_path": {
+      "description": "A path to a file that exists in a repository, as the pipeline discovered it. Contained and traversal-free, but otherwise unrestricted: a legal filename may carry any character the filesystem allows, including the glob metacharacters that routing inputs must not use.",
       "type": "string",
       "minLength": 1,
       "maxLength": 500,
       "not": {
-        "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\|[*?\\[\\]{}!]"
+        "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
       }
+    },
+    "routing_path": {
+      "description": "A literal path a routing hint selects. A repository path that additionally carries no glob metacharacter, because a hint selects one named file or directory rather than a pattern.",
+      "allOf": [{ "$ref": "#/$defs/repository_path" }],
+      "not": { "pattern": "[*?\\[\\]{}!]" }
     },
     "routing_path_array": {
       "type": "array",

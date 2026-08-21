@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -526,7 +527,9 @@ def test_focus_directory_drops_files_the_component_glob_does_not_own(tmp_path):
     ``src/api`` is admitted through the literal prefix of ``src/api/**/*.py``,
     so the enumeration legitimately reaches a README the pattern never owns.
     The unowned file is dropped from the projection and receipted; it must not
-    abort the run, and it must not reach the bundle either.
+    abort the run, and it must not reach the bundle either. It is also not an
+    omission: the component owns one file here and that file was projected, so
+    the receipt reads ``projected`` and discloses the foreign file separately.
     """
     repo, output = _repo(tmp_path)
     api = repo / "src" / "api"
@@ -541,9 +544,9 @@ def test_focus_directory_drops_files_the_component_glob_does_not_own(tmp_path):
 
     assert receipt["projected_files"] == ["src/api/handler.py"]
     assert receipt["unowned_files"] == 1
-    assert receipt["omitted_files"] == 1
+    assert receipt["omitted_files"] == 0
     assert receipt["candidate_files"] == 2
-    assert receipt["reason"] == "partially-projected"
+    assert receipt["reason"] == "projected"
     assert "src/api/README.md" not in {row["path"] for row in bundle["source_slices"]}
     bundles.validate_bundle(
         output / manifest["components"][0]["evidence_bundle_path"],
@@ -659,7 +662,7 @@ def test_routing_defect_degrades_one_component_instead_of_the_run(tmp_path, monk
 
     def flaky(output_dir, component, registry, **kwargs):
         if component.get("focus_paths") or component.get("exclude_paths"):
-            raise bundles.BundleError("synthetic routing defect")
+            raise bundles.RoutingHintError("synthetic routing defect")
         return real_build_bundle(output_dir, component, registry, **kwargs)
 
     monkeypatch.setattr(bundles, "build_bundle", flaky)
@@ -667,7 +670,8 @@ def test_routing_defect_degrades_one_component_instead_of_the_run(tmp_path, monk
     entry = manifest["components"][0]
     bundle = json.loads((output / entry["evidence_bundle_path"]).read_text())
 
-    assert entry["focus_paths"] == []
+    # the manifest records what was asked for; the bundle records what took effect
+    assert entry["focus_paths"] == ["src/app.py"]
     assert bundle["path_routing"]["focus_paths"] == []
     # the drop must survive in the artifact, not only on stderr: a degraded
     # bundle would otherwise be indistinguishable from one that never had routing
@@ -683,7 +687,7 @@ def test_routing_defect_degrades_one_component_instead_of_the_run(tmp_path, monk
         expected_component_id="backend-api",
         expected_sha256=entry["evidence_bundle_sha256"],
         output_dir=output,
-        expected_focus_paths=[],
+        expected_focus_paths=["src/app.py"],
         expected_exclude_paths=[],
     )
 
@@ -717,12 +721,157 @@ def test_containment_retries_once_and_then_propagates(tmp_path, monkeypatch):
 
     def persistent(output_dir, component, registry, **kwargs):
         attempts.append(component.get("focus_paths"))
-        raise bundles.BundleError("persistent defect")
+        raise bundles.RoutingHintError("persistent defect")
 
     monkeypatch.setattr(bundles, "build_bundle", persistent)
     with pytest.raises(bundles.BundleError, match="persistent defect"):
         bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/app.py"])))
     assert len(attempts) == 2
+
+
+def test_containment_does_not_retry_a_failure_outside_routing(tmp_path, monkeypatch):
+    """Only RoutingHintError is contained; every other BundleError stays fatal.
+
+    Retrying any BundleError without the hints made "it builds without routing"
+    the proof that routing was at fault, which it is not. A producer defect that
+    merely happens to disappear with the hints was silently downgraded to a
+    degraded bundle and the run continued on data the validator had rejected.
+    """
+    repo, output = _repo(tmp_path)
+    attempts = []
+
+    def unrelated_defect(output_dir, component, registry, **kwargs):
+        attempts.append(component.get("focus_paths"))
+        raise bundles.BundleError("evidence bundle schema validation failed")
+
+    monkeypatch.setattr(bundles, "build_bundle", unrelated_defect)
+    with pytest.raises(bundles.BundleError, match="schema validation failed"):
+        bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/app.py"])))
+    assert attempts == [["src/app.py"]]
+
+
+def test_unreadable_file_under_a_focus_path_degrades_instead_of_aborting(tmp_path):
+    """The one condition the containment exists for, raised where it happens."""
+    repo, output = _repo(tmp_path)
+    api = repo / "src" / "api"
+    api.mkdir()
+    unreadable = api / "handler.py"
+    unreadable.write_text("handler = True\n", encoding="utf-8")
+    unreadable.chmod(0o000)
+    if os.access(unreadable, os.R_OK):  # running as root — the mode cannot bite
+        pytest.skip("cannot make a file unreadable for this user")
+
+    try:
+        manifest = bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/api"])))
+    finally:
+        unreadable.chmod(0o644)
+    entry = manifest["components"][0]
+    bundle = json.loads((output / entry["evidence_bundle_path"]).read_text())
+
+    assert bundle["path_routing"]["degraded"]["dropped_focus_paths"] == ["src/api"]
+    assert entry["focus_paths"] == ["src/api"]
+
+
+def test_escaping_symlink_in_a_focus_directory_is_skipped_not_fatal(tmp_path):
+    """The enumeration promises not to follow an escaping link, so it may not raise."""
+    repo, output = _repo(tmp_path)
+    outside = tmp_path / "outside.py"
+    outside.write_text("value = 1\n", encoding="utf-8")
+    api = repo / "src" / "api"
+    api.mkdir()
+    (api / "handler.py").write_text("handler = True\n", encoding="utf-8")
+    os.symlink(outside, api / "linked.py")
+
+    manifest = bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/api"])))
+    bundle = json.loads((output / manifest["components"][0]["evidence_bundle_path"]).read_text())
+    receipt = bundle["path_routing"]["focus_admission"][0]
+
+    assert receipt["projected_files"] == ["src/api/handler.py"]
+    assert receipt["candidate_files"] == 1
+    assert "degraded" not in bundle["path_routing"]
+
+
+def test_glob_metacharacters_in_a_discovered_path_do_not_break_the_bundle(tmp_path):
+    """A dynamic-route filename is a legal repository path, not a routing pattern.
+
+    Typing the discovered paths of the receipt like the literal routing inputs
+    rejected every ``app/[slug]/page.tsx`` a scan reaches, which cost the whole
+    component its routing on any framework that names files this way.
+    """
+    repo, output = _repo(tmp_path)
+    api = repo / "src" / "api"
+    api.mkdir()
+    (api / "[slug].py").write_text("route = True\n", encoding="utf-8")
+    _write_signal(output, file="src/api/[slug].py")
+
+    # one component reaches the file through a focus path, the other has it
+    # superseded out of an exclude — the two receipt fields that hold it
+    manifest = bundles.build_all(
+        output,
+        repo,
+        _manifest(
+            _component(focus_paths=["src/api"]),
+            _component(component_id="worker", exclude_paths=["src/api"]),
+        ),
+    )
+    focused, excluded = (
+        json.loads((output / entry["evidence_bundle_path"]).read_text()) for entry in manifest["components"]
+    )
+
+    assert "degraded" not in focused["path_routing"]
+    assert "degraded" not in excluded["path_routing"]
+    assert focused["path_routing"]["focus_admission"][0]["projected_files"] == ["src/api/[slug].py"]
+    assert excluded["path_routing"]["exclude_application"][0]["superseded_by"] == ["src/api/[slug].py"]
+    for entry in manifest["components"]:
+        bundles.validate_bundle(
+            output / entry["evidence_bundle_path"],
+            {"primary": repo},
+            expected_component_id=entry["component_id"],
+            expected_sha256=entry["evidence_bundle_sha256"],
+            output_dir=output,
+            expected_focus_paths=entry["focus_paths"],
+            expected_exclude_paths=entry["exclude_paths"],
+        )
+
+
+def test_second_build_repeats_itself_when_an_exclude_was_superseded(tmp_path):
+    """Supersession depends on the scanner artifacts, not on the manifest input.
+
+    Writing the effective set back over the request dropped the superseded row
+    from the receipt on the next build, so the boundary answered the same
+    manifest with different bytes.
+    """
+    repo, output = _repo(tmp_path)
+    _write_signal(output)
+    manifest = _manifest(_component(exclude_paths=["src/app.py"]))
+
+    first = bundles.build_all(output, repo, manifest)
+    first_payload = (output / first["components"][0]["evidence_bundle_path"]).read_bytes()
+    second = bundles.build_all(output, repo, first)
+    second_payload = (output / second["components"][0]["evidence_bundle_path"]).read_bytes()
+
+    assert second_payload == first_payload
+    assert second["components"][0]["exclude_paths"] == ["src/app.py"]
+
+
+def test_second_build_repeats_itself_after_routing_was_dropped(tmp_path, monkeypatch):
+    """A degraded bundle must stay degraded when its own manifest is rebuilt."""
+    repo, output = _repo(tmp_path)
+    real_build_bundle = bundles.build_bundle
+
+    def flaky(output_dir, component, registry, **kwargs):
+        if component.get("focus_paths"):
+            raise bundles.RoutingHintError("synthetic routing defect")
+        return real_build_bundle(output_dir, component, registry, **kwargs)
+
+    monkeypatch.setattr(bundles, "build_bundle", flaky)
+    first = bundles.build_all(output, repo, _manifest(_component(focus_paths=["src/app.py"])))
+    first_payload = (output / first["components"][0]["evidence_bundle_path"]).read_bytes()
+    second = bundles.build_all(output, repo, first)
+    second_payload = (output / second["components"][0]["evidence_bundle_path"]).read_bytes()
+
+    assert second_payload == first_payload
+    assert json.loads(second_payload)["path_routing"]["degraded"]["dropped_focus_paths"] == ["src/app.py"]
 
 
 def test_focus_directory_above_component_glob_prefix_is_rejected(tmp_path):
@@ -950,8 +1099,8 @@ def test_exclude_cannot_hide_mandatory_deterministic_signal(tmp_path):
             "superseded_by": ["src/app.py"],
         }
     ]
-    # the manifest must carry the effective set, or reconstruction reads drift
-    assert entry["exclude_paths"] == []
+    # the manifest keeps the request; the receipt accounts for its supersession
+    assert entry["exclude_paths"] == ["src/app.py"]
     bundles.validate_bundle(
         output / entry["evidence_bundle_path"],
         {"primary": repo},

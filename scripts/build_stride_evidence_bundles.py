@@ -103,6 +103,17 @@ class BundleError(RuntimeError):
     """A stale, unsafe, malformed, or oversized evidence bundle."""
 
 
+class RoutingHintError(BundleError):
+    """A focus or exclude hint the builder cannot honor for this component.
+
+    Routing is prioritization, not evidence, so this one class is what
+    ``build_all`` is allowed to contain by rebuilding without the hints. Every
+    other ``BundleError`` states that the bundle itself is invalid and must
+    stay fatal: retrying it without routing would turn a producer defect into a
+    silently degraded artifact.
+    """
+
+
 def _canonical_bytes(value: Any) -> bytes:
     return json.dumps(
         value,
@@ -875,6 +886,18 @@ def _owned_routing_path(component_paths: list[str], relative: str, *, is_directo
     return False
 
 
+def _requested_routing_paths(routing: dict[str, Any], kind: str) -> list[str]:
+    """Return the hints of one kind the dispatch entry asked this bundle for.
+
+    A hint reaches exactly one of two places: a receipt row when the build
+    considered it, or the dropped list of ``degraded`` when the build could not
+    honor it at all. Their concatenation is what the manifest still holds.
+    """
+    receipt = "focus_admission" if kind == "focus" else "exclude_application"
+    dropped = (routing.get("degraded") or {}).get(f"dropped_{kind}_paths", [])
+    return [row["path"] for row in routing[receipt]] + list(dropped)
+
+
 def _path_overlaps(left: str, right: str) -> bool:
     """Return whether two normalized literal paths contain one another."""
     return left == right or left.startswith(right + "/") or right.startswith(left + "/")
@@ -1238,7 +1261,13 @@ def _focus_candidate_files(repo_root: Path, relative: str) -> tuple[list[str], b
     retained: list[str] = []
     for candidate in candidates:
         candidate_relative = candidate.relative_to(repo_root).as_posix()
-        canonical = _canonical_under(repo_root, candidate_relative)
+        try:
+            canonical = _canonical_under(repo_root, candidate_relative)
+        except BundleError:
+            # An entry that resolves outside the repository is skipped, which is
+            # what this enumeration promises. Letting the containment check raise
+            # instead ended the whole run over one symlink in a hinted directory.
+            continue
         if not canonical.is_file() or is_excluded(candidate_relative) or is_oversize(canonical):
             continue
         retained.append(candidate_relative)
@@ -1260,6 +1289,10 @@ def _focus_admission_reason(
     projection gate drift apart in the first place.
     """
     if projected and (omitted or enumeration_truncated):
+        # ``omitted`` counts only files the component owns, so a focus directory
+        # that also holds foreign files still reads as fully projected. Folding
+        # ``unowned_files`` in here made a complete projection next to a README
+        # report itself as partial.
         return "partially-projected"
     if projected:
         return "projected"
@@ -1300,16 +1333,20 @@ def _focus_source_slices(
         files = [path for path in candidates if _owned(component_paths, path)]
         unowned = len(candidates) - len(files)
         projected: list[str] = []
-        omitted = unowned
+        omitted = 0
         for relative in files:
             if relative in retained_files:
                 projected.append(relative)
                 continue
-            path = _canonical_under(repo_root, relative)
             try:
+                path = _canonical_under(repo_root, relative)
                 line_count = len(path.read_bytes().splitlines())
-            except OSError as exc:
-                raise BundleError(f"cannot read focus path projection {relative}: {exc}") from exc
+            except (BundleError, OSError) as exc:
+                # The hint named a scope holding a file this build cannot turn
+                # into a slice — an unreadable file, or a link leaving the
+                # repository. That is the hint's problem, not a malformed
+                # bundle, so it is contained per component rather than fatal.
+                raise RoutingHintError(f"cannot read focus path projection {relative}: {exc}") from exc
             if line_count < 1:
                 omitted += 1
                 continue
@@ -1634,9 +1671,18 @@ def validate_bundle_bytes(
         if expected_focus_paths or expected_exclude_paths:
             raise BundleError("evidence-bundle path routing is missing for a routed dispatch entry")
     else:
-        if expected_focus_paths is not None and routing.get("focus_paths") != expected_focus_paths:
+        # The dispatch entry states what was requested; ``focus_paths`` and
+        # ``exclude_paths`` carry only what took effect. Every requested hint is
+        # accounted for either by a receipt row or by the dropped list of a
+        # degraded build, so the receipt is what the entry is compared against.
+        # Comparing the effective set instead forced the manifest to be
+        # overwritten with it, and a rebuild then could not repeat its own answer.
+        if expected_focus_paths is not None and _requested_routing_paths(routing, "focus") != expected_focus_paths:
             raise BundleError("evidence-bundle focus paths do not match the dispatch entry")
-        if expected_exclude_paths is not None and routing.get("exclude_paths") != expected_exclude_paths:
+        if (
+            expected_exclude_paths is not None
+            and _requested_routing_paths(routing, "exclude") != expected_exclude_paths
+        ):
             raise BundleError("evidence-bundle exclude paths do not match the dispatch entry")
     if bundle["limits"]["serialized_bytes"] != len(payload):
         raise BundleError("evidence-bundle serialized byte count is stale")
@@ -1743,10 +1789,8 @@ def validate_bundle_bytes(
                 raise BundleError("evidence-bundle focus and exclude paths overlap")
         for row in routing["focus_admission"]:
             projected_files = row["projected_files"]
-            if row["candidate_files"] != len(projected_files) + row["omitted_files"]:
+            if row["candidate_files"] != len(projected_files) + row["omitted_files"] + row["unowned_files"]:
                 raise BundleError("evidence-bundle focus admission counts are inconsistent")
-            if row["unowned_files"] > row["omitted_files"]:
-                raise BundleError("evidence-bundle focus admission unowned count exceeds its omissions")
             if (row["status"] == "admitted") != bool(projected_files):
                 raise BundleError("evidence-bundle focus admission status is inconsistent")
             expected_reason = _focus_admission_reason(
@@ -1809,12 +1853,22 @@ def _build_bundle_without_fatal_routing(
     ``focus_paths`` and ``exclude_paths`` are producer-authored prioritization
     hints: dropping them costs ordering, not evidence. A defect confined to them
     must therefore degrade this one component, not discard a Stage 1 that a dozen
-    agents already completed. Anything that still fails without routing is a real
-    contract violation and is raised unchanged.
+    agents already completed.
+
+    Only ``RoutingHintError`` says the hints are at fault. Catching every
+    ``BundleError`` here instead made "it builds without routing" the proof of
+    attribution, which it is not: a producer defect that merely happens to
+    disappear with the hints was silently downgraded to a degraded bundle, and
+    the run continued on data the validator had rejected.
+
+    The requested hints stay on the component. They are the manifest's record of
+    what was asked for, and the receipt in the bundle accounts for each of them;
+    overwriting them with the effective set left a rebuild unable to repeat this
+    same answer.
     """
     try:
         return build_bundle(output_dir, component, registry)
-    except BundleError as exc:
+    except RoutingHintError as exc:
         dropped_focus = list(component.get("focus_paths") or [])
         dropped_exclude = list(component.get("exclude_paths") or [])
         if not (dropped_focus or dropped_exclude):
@@ -1824,11 +1878,9 @@ def _build_bundle_without_fatal_routing(
             f"ROUTING_WARN: routing hints dropped for {component_id} after a bundle error — {exc}",
             file=sys.stderr,
         )
-        component["focus_paths"] = []
-        component["exclude_paths"] = []
         return build_bundle(
             output_dir,
-            component,
+            dict(component, focus_paths=[], exclude_paths=[]),
             registry,
             degraded={
                 "reason": "routing-hints-dropped",
@@ -1863,11 +1915,6 @@ def build_all(
         # build over the same manifest drop the two projections it had just
         # written, so the boundary could not repeat its own answer.
         bundle, payload = _build_bundle_without_fatal_routing(output_dir, component, registry)
-        # An exclude may have been superseded by cited evidence, so the manifest
-        # has to carry the effective set the bundle was built with; otherwise the
-        # reconstruction pass reads its own narrowing as drift.
-        component["exclude_paths"] = list(bundle["path_routing"]["exclude_paths"])
-        component["focus_paths"] = list(bundle["path_routing"]["focus_paths"])
         bundle_dir.mkdir(parents=True, exist_ok=True)
         bundle_path = bundle_dir / "evidence-bundle.json"
         atomic_write_text(bundle_path, payload.decode("utf-8"))
