@@ -38,7 +38,7 @@
           "paths": {
             "type": "array",
             "minItems": 1,
-            "description": "Canonical repository-relative glob patterns mapping the component to its source files. Every pattern must stay within the target repository and match at least one existing entry when the component inventory is finalized. Source of truth for the Phase-9 dirty-set mapping.",
+            "description": "Canonical repository-relative glob patterns mapping the component to its source files. Every pattern must stay within the target repository and match at least one existing entry when the component inventory is finalized. Glob semantics: '*' matches within one path segment and never crosses '/', '**' spans any number of segments — so 'pkg/*.java' covers only the files directly in 'pkg', and a component whose sources extend into subdirectories must use 'pkg/**/*.java'. Source of truth for the Phase-9 dirty-set mapping.",
             "items": {"type": "string", "minLength": 1}
           },
           "tier": {

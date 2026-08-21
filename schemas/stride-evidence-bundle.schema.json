@@ -79,6 +79,7 @@
               "candidate_files",
               "projected_files",
               "omitted_files",
+              "unowned_files",
               "enumeration_truncated"
             ],
             "properties": {
@@ -90,6 +91,7 @@
                   "partially-projected",
                   "enumeration-budget",
                   "source-budget",
+                  "outside-component",
                   "no-readable-files"
                 ]
               },
@@ -101,6 +103,12 @@
                 "items": { "$ref": "#/$defs/routing_path" }
               },
               "omitted_files": { "type": "integer", "minimum": 0, "maximum": 100000 },
+              "unowned_files": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "description": "Files enumerated under the focus path that the component's own path globs do not match. They are dropped from the projection, never added to the bundle; a non-zero value means the component's paths are narrower than its focus scope."
+              },
               "enumeration_truncated": { "type": "boolean" }
             },
             "additionalProperties": false
@@ -111,17 +119,36 @@
           "maxItems": 16,
           "items": {
             "type": "object",
-            "required": ["path", "status", "scope"],
+            "required": ["path", "status", "scope", "superseded_by"],
             "properties": {
               "path": { "$ref": "#/$defs/routing_path" },
-              "status": { "const": "applied" },
-              "scope": { "const": "optional-discovery-only" }
+              "status": { "enum": ["applied", "superseded"] },
+              "scope": { "const": "optional-discovery-only" },
+              "superseded_by": {
+                "type": "array",
+                "maxItems": 8,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/routing_path" },
+                "description": "Mandatory or cited evidence paths this exclude would have hidden. Non-empty exactly when status is 'superseded': an exclude is an optional-discovery hint, so it yields to evidence and is dropped from the effective exclude_paths instead of aborting the run."
+              }
             },
             "additionalProperties": false
           }
         },
         "protected_evidence_path_count": { "type": "integer", "minimum": 0, "maximum": 1000000 },
-        "protected_evidence_paths_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "protected_evidence_paths_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "degraded": {
+          "type": "object",
+          "description": "Present only when the component was rebuilt without its routing hints because they made the bundle unbuildable. Routing is prioritization, not evidence, so dropping it degrades one component instead of aborting the run — but the drop is recorded here so a degraded bundle stays distinguishable from one that never carried routing.",
+          "required": ["reason", "error", "dropped_focus_paths", "dropped_exclude_paths"],
+          "properties": {
+            "reason": { "const": "routing-hints-dropped" },
+            "error": { "type": "string", "minLength": 1, "maxLength": 500 },
+            "dropped_focus_paths": { "$ref": "#/$defs/routing_path_array" },
+            "dropped_exclude_paths": { "$ref": "#/$defs/routing_path_array" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

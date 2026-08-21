@@ -56,6 +56,11 @@ application, or data tier, and a simple, moderate, or complex rating. Map
 each component to every concrete file that implements the security role you
 assign it, including handlers, middleware, and delegated initialization code;
 an entrypoint alone is insufficient when it calls implementation elsewhere.
+In a path glob `*` stays inside one segment and never crosses `/`, so
+`pkg/*.java` reaches only the files directly in `pkg`; when the component's
+sources continue into subdirectories, write `pkg/**/*.java` instead. Verify
+against `REPO_ROOT` which form the layout requires — a pattern that stops at
+the top level silently drops every nested file from the component.
 Shared files may belong to multiple co-located security components when their
 observed behavior supports both roles. Do not broaden a component to an
 unrelated parent directory merely to include one file. Map

@@ -35,6 +35,7 @@ MAX_VALUE_CHARS = 4096
 MAX_ROUTING_PATHS = 16
 MAX_ROUTING_PATH_CHARS = 500
 MAX_FOCUS_ENUM_ENTRIES = 100_000
+MAX_SUPERSEDED_EVIDENCE_PATHS = 8
 BUSINESS_CONTEXT_FIELDS = (
     "business_purpose",
     "impact_if_compromised",
@@ -1244,6 +1245,33 @@ def _focus_candidate_files(repo_root: Path, relative: str) -> tuple[list[str], b
     return sorted(dict.fromkeys(retained)), truncated
 
 
+def _focus_admission_reason(
+    *,
+    projected: bool,
+    omitted: int,
+    enumeration_truncated: bool,
+    owned_candidates: int,
+    unowned_files: int,
+) -> str:
+    """Derive one focus-admission reason.
+
+    Builder and validator must agree byte-for-byte, so both call this. Keeping
+    the two ladders as separate copies is what let the admission gate and the
+    projection gate drift apart in the first place.
+    """
+    if projected and (omitted or enumeration_truncated):
+        return "partially-projected"
+    if projected:
+        return "projected"
+    if enumeration_truncated:
+        return "enumeration-budget"
+    if owned_candidates:
+        return "source-budget"
+    if unowned_files:
+        return "outside-component"
+    return "no-readable-files"
+
+
 def _focus_source_slices(
     repo_root: Path,
     focus_paths: list[str],
@@ -1260,11 +1288,19 @@ def _focus_source_slices(
     decisions: list[dict[str, Any]] = []
 
     for focus_path in focus_paths:
-        files, enumeration_truncated = _focus_candidate_files(repo_root, focus_path)
-        if any(not _owned(component_paths, path) for path in files):
-            raise BundleError(f"focus path projection escapes component paths: {focus_path!r}")
+        candidates, enumeration_truncated = _focus_candidate_files(repo_root, focus_path)
+        # A focus directory is admitted against the literal prefix of a component
+        # glob, so it may legitimately contain files that glob does not own:
+        # ``pkg`` is a valid narrow scope for ``pkg/*.py`` even though the pattern
+        # never reaches ``pkg/sub/deep.py``. Narrowing the projection to owned
+        # files keeps the component boundary exactly as strict as the pattern —
+        # the same disposition ``_source_slices`` already applies to unowned
+        # signal rows. Raising instead turned a benign over-broad focus hint into
+        # a fatal abort of the whole run.
+        files = [path for path in candidates if _owned(component_paths, path)]
+        unowned = len(candidates) - len(files)
         projected: list[str] = []
-        omitted = 0
+        omitted = unowned
         for relative in files:
             if relative in retained_files:
                 projected.append(relative)
@@ -1297,24 +1333,22 @@ def _focus_source_slices(
                 source_lines += end_line
             projected.append(relative)
 
-        if projected and (omitted or enumeration_truncated):
-            reason = "partially-projected"
-        elif projected:
-            reason = "projected"
-        elif enumeration_truncated:
-            reason = "enumeration-budget"
-        elif files:
-            reason = "source-budget"
-        else:
-            reason = "no-readable-files"
+        reason = _focus_admission_reason(
+            projected=bool(projected),
+            omitted=omitted,
+            enumeration_truncated=enumeration_truncated,
+            owned_candidates=len(files),
+            unowned_files=unowned,
+        )
         decisions.append(
             {
                 "path": focus_path,
                 "status": "admitted" if projected else "omitted",
                 "reason": reason,
-                "candidate_files": len(files),
+                "candidate_files": len(candidates),
                 "projected_files": sorted(projected),
                 "omitted_files": omitted,
+                "unowned_files": unowned,
                 "enumeration_truncated": enumeration_truncated,
             }
         )
@@ -1381,6 +1415,8 @@ def build_bundle(
     output_dir: Path,
     component: dict[str, Any],
     registry: dict[str, Path],
+    *,
+    degraded: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bytes]:
     component_id = component["component_id"]
     paths_value = component.get("component_paths") or []
@@ -1419,12 +1455,34 @@ def build_bundle(
         except BundleError:
             continue
         normalized_protected.add(relative.rstrip("/"))
+    # An exclude path is an optional-discovery hint — the receipt labels its own
+    # scope ``optional-discovery-only`` — while mandatory and cited evidence is a
+    # hard requirement. When the two collide the hint yields and the receipt
+    # discloses it. The producer cannot pre-empt the collision: protected paths
+    # come from the deterministic scanner artifacts, which the routing producer
+    # never receives, so enforcing the contract with an abort made a run-fatal
+    # error out of an obligation nothing could satisfy.
+    exclude_application: list[dict[str, Any]] = []
+    applied_excludes: list[str] = []
     for excluded in exclude_paths:
         conflicts = sorted(path for path in normalized_protected if _path_overlaps(excluded, path))
+        exclude_application.append(
+            {
+                "path": excluded,
+                "status": "superseded" if conflicts else "applied",
+                "scope": "optional-discovery-only",
+                "superseded_by": conflicts[:MAX_SUPERSEDED_EVIDENCE_PATHS],
+            }
+        )
         if conflicts:
-            raise BundleError(
-                f"exclude_paths for {component_id} would hide mandatory or cited evidence: " + ", ".join(conflicts[:5])
+            print(
+                f"ROUTING_WARN: exclude_paths for {component_id} superseded by cited evidence — "
+                + ", ".join(conflicts[:5]),
+                file=sys.stderr,
             )
+        else:
+            applied_excludes.append(excluded)
+    exclude_paths = applied_excludes
 
     source_slices, focus_decisions = _focus_source_slices(
         registry["primary"],
@@ -1475,13 +1533,16 @@ def build_bundle(
             "focus_paths": focus_paths,
             "exclude_paths": exclude_paths,
             "focus_admission": focus_decisions,
-            "exclude_application": [
-                {"path": path, "status": "applied", "scope": "optional-discovery-only"} for path in exclude_paths
-            ],
+            "exclude_application": exclude_application,
             "protected_evidence_path_count": len(normalized_protected),
             "protected_evidence_paths_sha256": hashlib.sha256(
                 _canonical_bytes(sorted(normalized_protected))
             ).hexdigest(),
+            # Present only when routing hints were dropped to keep the component
+            # buildable. It has to live in the artifact, not just on stderr: a
+            # degraded bundle is otherwise indistinguishable from one that never
+            # carried routing, and nothing downstream could tell the difference.
+            **({"degraded": degraded} if degraded else {}),
         },
         "evidence": evidence,
         "source_slices": source_slices,
@@ -1643,12 +1704,30 @@ def validate_bundle_bytes(
     if isinstance(routing, dict):
         focus_paths = routing["focus_paths"]
         exclude_paths = routing["exclude_paths"]
+        degraded = routing.get("degraded")
+        if degraded is not None:
+            # The hints were dropped to make this component buildable, so none may
+            # have survived into the effective routing.
+            if focus_paths or exclude_paths:
+                raise BundleError("evidence-bundle degraded routing still carries effective hints")
+            if not (degraded["dropped_focus_paths"] or degraded["dropped_exclude_paths"]):
+                raise BundleError("evidence-bundle degraded routing records no dropped hint")
         if [row["path"] for row in routing["focus_admission"]] != focus_paths:
             raise BundleError("evidence-bundle focus admission receipt is incomplete or reordered")
-        if [row["path"] for row in routing["exclude_application"]] != exclude_paths:
+        # The receipt lists every requested exclude; ``exclude_paths`` carries only
+        # the ones that survived the collision with cited evidence, in the same
+        # order. Comparing the applied subset keeps the receipt auditable without
+        # letting a superseded hint read as drift.
+        if [row["path"] for row in routing["exclude_application"] if row["status"] == "applied"] != exclude_paths:
             raise BundleError("evidence-bundle exclude application receipt is incomplete or reordered")
+        for row in routing["exclude_application"]:
+            if (row["status"] == "superseded") != bool(row["superseded_by"]):
+                raise BundleError("evidence-bundle exclude application status is inconsistent")
         component_paths = bundle["component"]["paths"]
-        for name, paths in (("focus_paths", focus_paths), ("exclude_paths", exclude_paths)):
+        for name, paths in (
+            ("focus_paths", focus_paths),
+            ("exclude_paths", [row["path"] for row in routing["exclude_application"]]),
+        ):
             for index, relative in enumerate(paths):
                 if relative != relative.strip().rstrip("/"):
                     raise BundleError(f"evidence-bundle {name} is not normalized: {relative!r}")
@@ -1666,18 +1745,16 @@ def validate_bundle_bytes(
             projected_files = row["projected_files"]
             if row["candidate_files"] != len(projected_files) + row["omitted_files"]:
                 raise BundleError("evidence-bundle focus admission counts are inconsistent")
+            if row["unowned_files"] > row["omitted_files"]:
+                raise BundleError("evidence-bundle focus admission unowned count exceeds its omissions")
             if (row["status"] == "admitted") != bool(projected_files):
                 raise BundleError("evidence-bundle focus admission status is inconsistent")
-            expected_reason = (
-                "partially-projected"
-                if projected_files and (row["omitted_files"] or row["enumeration_truncated"])
-                else "projected"
-                if projected_files
-                else "enumeration-budget"
-                if row["enumeration_truncated"]
-                else "source-budget"
-                if row["candidate_files"]
-                else "no-readable-files"
+            expected_reason = _focus_admission_reason(
+                projected=bool(projected_files),
+                omitted=row["omitted_files"],
+                enumeration_truncated=row["enumeration_truncated"],
+                owned_candidates=row["candidate_files"] - row["unowned_files"],
+                unowned_files=row["unowned_files"],
             )
             if row["reason"] != expected_reason:
                 raise BundleError("evidence-bundle focus admission reason is inconsistent")
@@ -1722,6 +1799,46 @@ def validate_bundle(
     )
 
 
+def _build_bundle_without_fatal_routing(
+    output_dir: Path,
+    component: dict[str, Any],
+    registry: dict[str, Path],
+) -> tuple[dict[str, Any], bytes]:
+    """Build one component bundle, never letting a routing hint kill the run.
+
+    ``focus_paths`` and ``exclude_paths`` are producer-authored prioritization
+    hints: dropping them costs ordering, not evidence. A defect confined to them
+    must therefore degrade this one component, not discard a Stage 1 that a dozen
+    agents already completed. Anything that still fails without routing is a real
+    contract violation and is raised unchanged.
+    """
+    try:
+        return build_bundle(output_dir, component, registry)
+    except BundleError as exc:
+        dropped_focus = list(component.get("focus_paths") or [])
+        dropped_exclude = list(component.get("exclude_paths") or [])
+        if not (dropped_focus or dropped_exclude):
+            raise
+        component_id = component.get("component_id")
+        print(
+            f"ROUTING_WARN: routing hints dropped for {component_id} after a bundle error — {exc}",
+            file=sys.stderr,
+        )
+        component["focus_paths"] = []
+        component["exclude_paths"] = []
+        return build_bundle(
+            output_dir,
+            component,
+            registry,
+            degraded={
+                "reason": "routing-hints-dropped",
+                "error": str(exc)[:500],
+                "dropped_focus_paths": dropped_focus,
+                "dropped_exclude_paths": dropped_exclude,
+            },
+        )
+
+
 def build_all(
     output_dir: Path,
     repo_root: Path,
@@ -1745,7 +1862,12 @@ def build_all(
         # The source fields stay in the manifest. Consuming them made a second
         # build over the same manifest drop the two projections it had just
         # written, so the boundary could not repeat its own answer.
-        bundle, payload = build_bundle(output_dir, component, registry)
+        bundle, payload = _build_bundle_without_fatal_routing(output_dir, component, registry)
+        # An exclude may have been superseded by cited evidence, so the manifest
+        # has to carry the effective set the bundle was built with; otherwise the
+        # reconstruction pass reads its own narrowing as drift.
+        component["exclude_paths"] = list(bundle["path_routing"]["exclude_paths"])
+        component["focus_paths"] = list(bundle["path_routing"]["focus_paths"])
         bundle_dir.mkdir(parents=True, exist_ok=True)
         bundle_path = bundle_dir / "evidence-bundle.json"
         atomic_write_text(bundle_path, payload.decode("utf-8"))
