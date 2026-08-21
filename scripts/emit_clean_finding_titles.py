@@ -134,9 +134,37 @@ def clean_weakness(raw_title: str) -> str:
     s = re.sub(r"\s{2,}", " ", s).strip(" -—–:,.")
     for pat, repl in _ACRONYM_FIX.items():
         s = re.sub(pat, repl, s)
-    if s and s[0].islower():
-        s = s[0].upper() + s[1:]
-    return s
+    return _force_pattern_lead(s)
+
+
+def _force_pattern_lead(s: str) -> str:
+    """Guarantee the schema's ``^[A-Z]`` lead on the derived title.
+
+    This module declares itself the single point responsible for schema-clean
+    titles, but enforced only the *lower-case* half: ``s[0].islower()`` is
+    False for a digit, path, quote or underscore, and ``.upper()`` is the
+    identity on all of them. Because the title is re-derived from the stashed
+    original on every run, a ``14 Named Accounts …`` source came back **after**
+    the schema gate had passed, leaving an invalid yaml on disk with nothing
+    downstream to catch it (2026-08-21,
+    ``analysis-title-contract-abort-2026-08-21.md``).
+
+    Sibling of ``build_threat_model_yaml._ensure_pattern_lead``, which owns the
+    same rule before the gate and additionally reports when the repair costs
+    information; here that loss is already accounted for upstream.
+    """
+    s = (s or "").strip()
+    if not s or s[0].isupper():
+        return s
+    if s[0].isalpha():
+        return s[0].upper() + s[1:]
+    match = re.search(r"[A-Za-z]", s)
+    if not match:
+        return s
+    kept = s[match.start() :].strip()
+    if kept.count('"') % 2:
+        kept = kept.replace('"', "").strip()
+    return (kept[0].upper() + kept[1:]) if kept else s
 
 
 # Schema ceiling for threats[].title (schemas/threat-model.output.schema.yaml).

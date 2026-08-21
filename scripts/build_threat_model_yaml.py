@@ -953,6 +953,146 @@ def _drop_partial_markup(fragment: str) -> str:
             return fragment.rstrip(" ,;:—-")
 
 
+_TITLE_MINLEN = 10  # schemas/threat-model.output.schema.yaml (threats[].title)
+_TITLE_FIRST_LETTER_RE = re.compile(r"[A-Za-z]")
+
+
+def _ensure_pattern_lead(title: str) -> tuple[str, bool]:
+    """Guarantee the schema's ``^[A-Z]`` lead. Returns ``(title, lossy)``.
+
+    ``str.upper()`` is the identity on every character without a case pairing,
+    so a bare ``s[0].upper()`` silently no-ops for a digit, path, quote or
+    underscore lead and yields a title the schema can never accept. That ended
+    a paid run at the Stage-2 handoff, 75 minutes after the title was written
+    (2026-08-21, `analysis-title-contract-abort-2026-08-21.md`).
+
+    A lead that is merely lower-case is fixed without loss. A lead that carries
+    no case at all can only be dropped, which costs information — `404 handler
+    …` becomes `Handler …` and loses which handler. There is no purely
+    syntactic repair that is also semantically sound, so the caller is told and
+    stashes the original rather than rewriting it silently.
+    """
+    s = (title or "").strip()
+    if not s or s[0].isupper():
+        return s, False
+    if s[0].isalpha():
+        return s[0].upper() + s[1:], False
+    match = _TITLE_FIRST_LETTER_RE.search(s)
+    if not match:
+        return "", True
+    kept = s[match.start() :].strip()
+    # Dropping the lead can orphan the opening half of a quoted token
+    # (`"password" is …` → `Password" is …`). An odd count proves the orphan;
+    # apostrophes are left alone because ordinary prose makes them odd.
+    if kept.count('"') % 2:
+        kept = kept.replace('"', "").strip()
+    if not kept:
+        return "", True
+    return kept[0].upper() + kept[1:], True
+
+
+def _fallback_title(threat: dict) -> str:
+    """Last-resort title when nothing of the original can satisfy the pattern."""
+    cwe = str(threat.get("cwe") or "").strip().upper()
+    return f"Unclassified security weakness ({cwe})" if cwe.startswith("CWE-") else "Unclassified security weakness"
+
+
+def _conform_title(threat: dict) -> bool:
+    """Write a schema-conforming ``title`` onto ``threat``; report if lossy.
+
+    The invariant this restores is the one already declared at the call site:
+    the deterministic builder always yields a schema-valid yaml. Only titles
+    that would have been rejected are changed — a conforming title passes
+    through byte-identical, so cross-run fingerprints do not churn.
+    """
+    raw = str(threat.get("title", "") or "")
+    cleaned, lossy = _ensure_pattern_lead(_clean_title(raw))
+    if lossy:
+        # Dropping the lead frees length budget, and `_clean_title` spends that
+        # budget on the `(file:line)` suffix — which it had already discarded
+        # while the lead was still there. Re-cleaning the lead-stripped ORIGINAL
+        # gets the locator back, so the repair costs only the lead it had to
+        # drop. Ordering matters: the first pass must stay `_clean_title` first,
+        # or a backtick/`@` lead it removes losslessly would be counted lossy.
+        restripped, _ = _ensure_pattern_lead(raw)
+        if restripped:
+            cleaned = _clean_title(restripped) or cleaned
+    if not cleaned or len(_clamp_title(cleaned)) < _TITLE_MINLEN:
+        cleaned, lossy = _fallback_title(threat), True
+    threat["title"] = _clamp_title(cleaned)
+    if lossy:
+        threat.setdefault("_title_source", raw)
+    return lossy
+
+
+_CANONICAL_CWE_RE = re.compile(r"^CWE-\d+$")  # schemas/threat-model.output.schema.yaml
+_CWE_RE = re.compile(r"CWE[-_ ]?(\d+)", re.IGNORECASE)
+_BARE_CWE_RE = re.compile(r"^\s*(\d{1,4})\s*$")
+_SEVERITY_WORDS = ("Critical", "High", "Medium", "Low", "Informational")
+# Only unambiguous spellings map. A word whose rank is a judgement call
+# ("catastrophic", "very high") is NOT guessed — inventing a severity is a
+# security claim, so it takes the reported fallback instead.
+_SEVERITY_SYNONYMS = {
+    "info": "Informational",
+    "informative": "Informational",
+    "negligible": "Informational",
+    "none": "Informational",
+    "minor": "Low",
+    "moderate": "Medium",
+    "med": "Medium",
+    "crit": "Critical",
+}
+
+
+def _normalize_cwe(value: Any) -> str | None:
+    """Coerce an analyst-written CWE reference to the schema's ``^CWE-\\d+$``.
+
+    STRIDE analyzers write the field as prose more often than as an id:
+    ``CWE-79, CWE-80`` (two classes in one string), ``CWE-798 (Hardcoded
+    Credentials)`` (id plus gloss), ``79`` (bare number), ``cwe-89`` (lower
+    case). Each of those ended the run at the Stage-2 handoff. Every form
+    carries the number unambiguously, so every form is repairable; ``cwe`` is
+    not a required property, so an unreadable value is dropped rather than
+    guessed. The FIRST id wins — a consolidated finding's primary class leads.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # A value the schema already accepts is returned byte-identical, zero
+    # padding included: `cwe` is part of the cross-run fingerprint
+    # (`_threat_fingerprint`), so rewriting `CWE-0079` to `CWE-79` would make an
+    # unchanged finding read as resolved-and-re-added in the next incremental
+    # run. Only values that would have been REJECTED are touched.
+    if _CANONICAL_CWE_RE.match(text):
+        return text
+    match = _CWE_RE.search(text) or _BARE_CWE_RE.match(text)
+    return f"CWE-{int(match.group(1))}" if match else None
+
+
+def _normalize_severity_word(value: Any) -> tuple[str | None, bool]:
+    """Coerce a severity-shaped field to the schema enum. Returns (value, guessed).
+
+    ``risk``, ``likelihood`` and ``impact`` are required and enum-bound, and an
+    analyst writing ``critical``, ``Critical (see notes)`` or ``moderate``
+    ended the run. Case and a trailing gloss are noise and are stripped without
+    loss. A word that is not an unambiguous spelling is NOT mapped by guesswork:
+    the caller is told so the fallback can be reported instead of silently
+    restating someone's severity judgement.
+    """
+    if value is None:
+        return None, False
+    text = re.sub(r"\s*\([^()]*\)\s*$", "", str(value)).strip()
+    if not text:
+        return None, False
+    for word in _SEVERITY_WORDS:
+        if text.lower() == word.lower():
+            return word, False
+    mapped = _SEVERITY_SYNONYMS.get(text.lower())
+    return (mapped, False) if mapped else (None, True)
+
+
 def _clamp_title(title: str, limit: int = _TITLE_MAXLEN) -> str:
     """Enforce the schema title maxLength, preserving a trailing
     ``file.ext:line`` (or ``— file.ext:line``) locator when present so the
@@ -1095,6 +1235,9 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
     skipped_stubs = 0
     skipped_below_floor = 0
     skipped_refuted = 0
+    lossy_titles = 0
+    dropped_cwe = 0
+    guessed_severities = 0
     for t in merged.get("threats", []):
         threat = dict(t)
         threat["id"] = threat.pop("t_id", threat.get("id"))
@@ -1123,7 +1266,28 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
             skipped_below_floor += 1
             continue
         threat["component"] = threat.pop("component_id", threat.get("component", ""))
-        threat["title"] = _clamp_title(_clean_title(threat.get("title", "")))
+        lossy_titles += _conform_title(threat)
+        # Same reason as the title (2026-08-21): these are enum- and
+        # pattern-bound fields an analyst writes as prose, and every spelling
+        # below ended a paid run at the Stage-2 handoff until it was coerced
+        # here. `cwe` is optional, so an unreadable one is dropped; the three
+        # severity words are required, so an unmappable one takes the same
+        # `medium` default this loop already uses for a missing severity — and
+        # says so, because a fallback severity is a claim nobody made.
+        if (cwe := _normalize_cwe(threat.get("cwe"))) is not None:
+            threat["cwe"] = cwe
+        elif "cwe" in threat:
+            threat.pop("cwe")
+            dropped_cwe += 1
+        for field in ("risk", "likelihood", "impact"):
+            if field not in threat:
+                continue
+            word, guessed = _normalize_severity_word(threat.get(field))
+            if word is None:
+                word = "Medium"
+                guessed = True
+            threat[field] = word
+            guessed_severities += guessed
         # Schema hard limits (output schema: title<=80, affected_parameter<=40)
         # + cvss_v4 shape ({vector, base_score, severity, source}, no extra
         # keys). STRIDE analyzers occasionally emit verbose titles, long
@@ -1152,6 +1316,21 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
         )
     if skipped_refuted:
         warnings.append(f"threats: {skipped_refuted} evidence-refuted candidate(s) excluded from active model")
+    if lossy_titles:
+        # Measured, not guessed: a recurring count here is evidence that the
+        # producing agent needs the title contract, which is the only thing that
+        # lowers the rate. Repairing silently would hide exactly that signal.
+        warnings.append(
+            f"threats: {lossy_titles} title(s) repaired lossily to satisfy the schema pattern "
+            "(original kept in _title_source) — the STRIDE analyzer is authoring titles the contract rejects"
+        )
+    if dropped_cwe:
+        warnings.append(f"threats: {dropped_cwe} unreadable cwe value(s) dropped (not of the form CWE-<number>)")
+    if guessed_severities:
+        warnings.append(
+            f"threats: {guessed_severities} severity field(s) fell back to Medium — the analyst word was "
+            "not an unambiguous enum spelling and a severity is not guessed"
+        )
     return out, warnings
 
 

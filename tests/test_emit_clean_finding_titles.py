@@ -202,3 +202,38 @@ def test_main_best_effort_noops_for_missing_and_unreadable_yaml(tmp_path, capsys
     (tmp_path / "threat-model.yaml").write_text("threats: [\n", encoding="utf-8")
     assert ecf.main([str(tmp_path)]) == 0
     assert "unreadable yaml" in capsys.readouterr().err
+
+
+# ── The derived title must satisfy the schema pattern (2026-08-21) ───────────
+#
+# This module re-derives the title from the stashed original on every run, so a
+# non-conforming lead came BACK after the schema gate had already passed and
+# left an invalid yaml on disk. `islower()` guarded only the lower-case half.
+
+import re as _re
+
+import pytest
+
+_TITLE_PATTERN = _re.compile(r"^[A-Z][^()@`]+?(?:\s*\([^()]+\))?$")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '14 Named Accounts Seeded with Hardcoded Password "password"',
+        "404 handler leaks stack traces",
+        "/admin routes are unauthenticated",
+        ".env file committed to the repository",
+        "__init__ exposes a debug route",
+        "$JWT_SECRET committed to the image",
+        "stored XSS in the profile page",
+    ],
+)
+def test_derived_title_always_satisfies_the_schema_lead(raw):
+    out = ecf.build_clean_title(raw, {"evidence": [{"file": "App.java", "line": 7}]})
+    assert _TITLE_PATTERN.match(out), f"{raw!r} → {out!r} violates the schema pattern"
+
+
+def test_conforming_lead_is_left_alone():
+    assert ecf._force_pattern_lead("SQL Injection") == "SQL Injection"
+    assert ecf._force_pattern_lead("stored XSS") == "Stored XSS"

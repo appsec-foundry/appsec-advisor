@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -118,7 +119,6 @@ def test_normalize_cvss_v4_keeps_valid_source():
 # --- Substep-2 schema-drift regressions (2026-06-02 juice-shop) ----------
 # Two builder/schema gaps forced Phase-11 Substep 2 into an 8-rebuild +
 # 5-hand-patch loop (4m37s instead of <30s). Both are now closed.
-import re
 
 import yaml
 
@@ -2912,3 +2912,176 @@ def test_main_delivers_contiguous_boundary_ids_from_a_sparse_ledger(tmp_path, mo
     # monotone and the pairing depends on the fixture's exposure mix.
     assert set(remap["mapping"]) == {f"tb-{i + 36}" for i in range(1, len(ids) + 1)}
     assert sorted(remap["mapping"].values()) == sorted(f"tb-{i}" for i in range(1, len(ids) + 1))
+
+
+# ── Title conformance is a PROPERTY, not an example list (2026-08-21) ────────
+#
+# The defect these pin: `_clean_title` capitalised the lead with `s[0].upper()`,
+# which is the identity on any character without a case pairing. A digit,
+# path, quote or underscore lead therefore passed through unchanged and the
+# schema rejected it at the Stage-2 handoff — terminal, 75 minutes in.
+# Example-based assertions had missed it because every example started with a
+# letter, so the acceptance criterion here is the schema's own pattern applied
+# to arbitrary input.
+
+_TITLE_PATTERN = re.compile(r"^[A-Z][^()@`]+?(?:\s*\([^()]+\))?$")
+
+_HOSTILE_TITLES = [
+    '14 Named Accounts Seeded with Hardcoded Password (SecurityConfig.java:71)',
+    '404 handler leaks stack traces (ErrorController.java:18)',
+    '/admin routes are unauthenticated (SecurityConfig.java:41)',
+    '.env file committed to the repository (env:1)',
+    '__init__ exposes a debug route (app.py:3)',
+    '$JWT_SECRET committed to the image (Dockerfile:7)',
+    '"password" is the seeded credential (Seeder.java:12)',
+    "'admin' role assignable by any user (Profile.java:44)",
+    '<script> injection in the profile page (Profile.html:8)',
+    'stored XSS in the profile page (Profile.java:8)',
+    '   leading whitespace then lowercase (X.java:1)',
+    '12345',
+    '!!!',
+    '',
+]
+
+
+def _schema_title_constraints():
+    """Read the real constraints so a schema change cannot outrun the cleaner."""
+    import yaml
+
+    doc = yaml.safe_load((ROOT / "schemas" / "threat-model.output.schema.yaml").read_text(encoding="utf-8"))
+    node = doc["properties"]["threats"]["items"]["properties"]["title"]
+    return node["pattern"], node["minLength"], node["maxLength"]
+
+
+def test_schema_pattern_is_the_one_the_test_enforces():
+    pattern, minimum, maximum = _schema_title_constraints()
+    assert pattern == _TITLE_PATTERN.pattern
+    assert (minimum, maximum) == (10, 80)
+
+
+@pytest.mark.parametrize("raw", _HOSTILE_TITLES)
+def test_conform_title_is_total_over_hostile_leads(raw):
+    pattern, minimum, maximum = _schema_title_constraints()
+    threat = {"title": raw, "cwe": "CWE-798"}
+    b._conform_title(threat)
+    out = threat["title"]
+    assert re.match(pattern, out), f"{raw!r} → {out!r} violates the schema pattern"
+    assert minimum <= len(out) <= maximum, f"{raw!r} → {out!r} has length {len(out)}"
+
+
+def test_conform_title_is_identity_on_conforming_input():
+    """No fingerprint churn: only titles that would have been REJECTED change."""
+    for raw in ("SQL Injection (routes/login.ts:34)", "Insecure Direct Object Reference"):
+        threat = {"title": raw}
+        assert b._conform_title(threat) is False
+        assert threat["title"] == raw
+        assert "_title_source" not in threat
+
+
+def test_lossy_repair_is_reported_and_stashes_the_original():
+    threat = {"title": "404 handler leaks stack traces (ErrorController.java:18)"}
+    assert b._conform_title(threat) is True
+    assert threat["_title_source"] == "404 handler leaks stack traces (ErrorController.java:18)"
+    assert threat["title"].startswith("Handler leaks stack traces")
+
+
+def test_lowercase_lead_is_repaired_without_loss():
+    threat = {"title": "stored XSS in the profile page (Profile.java:8)"}
+    assert b._conform_title(threat) is False
+    assert threat["title"] == "Stored XSS in the profile page (Profile.java:8)"
+
+
+def test_orphaned_quote_from_a_dropped_lead_is_removed():
+    threat = {"title": '"password" is the seeded credential (Seeder.java:12)'}
+    b._conform_title(threat)
+    assert '"' not in threat["title"]
+
+
+def test_unsalvageable_title_falls_back_and_names_the_cwe():
+    threat = {"title": "!!!", "cwe": "CWE-798"}
+    assert b._conform_title(threat) is True
+    assert threat["title"] == "Unclassified security weakness (CWE-798)"
+
+
+def test_dropping_the_lead_frees_budget_for_the_locator():
+    """The lead-strip re-clean is not cosmetic: it changes what ships.
+
+    In the 81-83 char band the `(file:line)` suffix is dropped only because the
+    non-conforming lead pushed the title over the cap. Re-cleaning the
+    lead-stripped original brings the locator back, so the repair costs the
+    lead and nothing else.
+    """
+    body = "Unauthenticated Admin Promotion Allows Role Escalation Everywhere"
+    raw = f"14 {body} (Sec.java:41)"
+    assert len(raw) > 80 and len(raw) - 3 <= 80, "fixture must sit in the band where the lead alone overflows"
+
+    single_pass, lossy = b._ensure_pattern_lead(b._clean_title(raw))
+    assert lossy and "Sec.java:41" not in single_pass
+
+    threat = {"title": raw}
+    assert b._conform_title(threat) is True
+    assert threat["title"] == f"{body} (Sec.java:41)"
+
+
+# ── The title was not a special case (2026-08-21) ────────────────────────────
+#
+# Injecting one plausible analyst spelling into .threats-merged.json and
+# rebuilding showed SEVEN of ten probes ending the run at the Stage-2 handoff.
+# `cwe` and the three severity words carry their intended value unambiguously
+# in every observed spelling, so they are coerced rather than fatal. `scenario`
+# below the minLength is deliberately NOT repaired: no transform can invent a
+# scenario, and dropping the finding or fabricating text would both be worse
+# than sending it back to the producer.
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("CWE-79, CWE-80", "CWE-79"),  # two classes in one string — primary leads
+        ("CWE-798 (Hardcoded Credentials)", "CWE-798"),  # id plus gloss
+        ("79", "CWE-79"),  # bare number
+        ("cwe_89", "CWE-89"),  # separator and case drift
+    ],
+)
+def test_cwe_spellings_are_coerced_to_the_schema_pattern(raw, expected):
+    assert b._normalize_cwe(raw) == expected
+    assert re.match(r"^CWE-\d+$", b._normalize_cwe(raw))
+
+
+@pytest.mark.parametrize("raw", ["siehe unten", "", None, "CWE-"])
+def test_unreadable_cwe_is_dropped_not_guessed(raw):
+    assert b._normalize_cwe(raw) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Critical (see notes)", "Critical"),  # trailing gloss is noise
+        ("critical", "Critical"),
+        ("MEDIUM", "Medium"),
+        ("moderate", "Medium"),
+        ("info", "Informational"),
+        ("minor", "Low"),
+    ],
+)
+def test_unambiguous_severity_spellings_map_without_a_guess(raw, expected):
+    assert b._normalize_severity_word(raw) == (expected, False)
+
+
+@pytest.mark.parametrize("raw", ["very high", "catastrophic", "severe", "blocker"])
+def test_ambiguous_severity_is_reported_never_invented(raw):
+    """Ranking an unknown word IS a security claim — the caller must be told."""
+    word, guessed = b._normalize_severity_word(raw)
+    assert word is None and guessed is True
+
+
+@pytest.mark.parametrize("raw", ["CWE-79", "CWE-0079", "CWE-000123"])
+def test_already_valid_cwe_is_returned_byte_identical(raw):
+    """Same identity rule as the title: only REJECTED values may change.
+
+    `cwe` is part of `_threat_fingerprint`, so canonicalising the zero padding
+    of an already-valid `CWE-0079` would make an unchanged finding read as
+    resolved-and-re-added in the next incremental run.
+    """
+    assert re.match(r"^CWE-\d+$", raw), "fixture must already satisfy the schema"
+    assert b._normalize_cwe(raw) == raw
