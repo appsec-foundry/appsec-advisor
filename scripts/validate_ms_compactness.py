@@ -31,7 +31,12 @@ from pathlib import Path
 # --- JSON schema: the schema preserves the shape, while this gate protects the
 # --- product-owner reading level and concise worst-case scenarios.
 VERDICT_OPENING_MAX_WORDS = 52
-VERDICT_BULLET_BODY_MAX_WORDS = 32
+# 32 never bound: the worked examples in agents/shared/ms-template.md ran
+# 17-25 words and the 2026-08-21 insecure-large-spring-app run produced 17-20,
+# so every bullet passed untouched while reading as padded. Those examples now
+# run 12-15 words; 20 keeps this a runaway catcher sitting above the 16-word
+# soft target in the authoring contract rather than a second authoring rule.
+VERDICT_BULLET_BODY_MAX_WORDS = 20
 VERDICT_CLOSING_MAX_CHARS = 220
 
 # Terms that expose an implementation, attack-class, protocol, or code-level

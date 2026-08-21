@@ -15,7 +15,7 @@
 cat "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md"
 ```
 
-Concretely for the MS: opening sentences carry the severity cue + the worst-case attacker capability — not metaphors. Bullet bodies name the mechanism (specific endpoint, file:line, library call). Architecture-Assessment defect descriptions describe the structural deficiency, not its rhetorical impact. Architecture-Assessment closing sentences are not sermons. Any sentence whose only job is to introduce the next sentence gets cut.
+Concretely for the MS: opening sentences carry the severity cue + the worst-case attacker capability — not metaphors. Bullet bodies add what the title does not already say — who reaches it and what they walk away with — in plain business language; they never name the mechanism (no endpoint, file:line, library call, or attack-class acronym: `validate_ms_compactness.py` rejects those here, and restating the title in other words is the failure mode that replaces them). Architecture-Assessment defect descriptions describe the structural deficiency, not its rhetorical impact. Architecture-Assessment closing sentences are not sermons. Any sentence whose only job is to introduce the next sentence gets cut.
 
 After the Threat Register and Mitigation Register are complete, generate a **Management Summary** section. This section is placed **after the Table of Contents and before Section 1** in the final output. **The Management Summary MUST be generated at every `ASSESSMENT_DEPTH` level — including `quick`.** It is the single most important section for stakeholders. Skipping it due to turn budget pressure is never acceptable — if turns are tight, reduce other sections (e.g., skip Architecture Assessment themes at quick depth) but always emit the Management Summary.
 
@@ -45,10 +45,10 @@ After the Threat Register and Mitigation Register are complete, generate a **Man
 
 <blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
 
-- **Full database theft without login** — A SQL Injection flaw in the product search lets any internet user extract the entire customer table in a single web request. *([F-009](#f-009))*
-- **Admin login without a password** — A SQL Injection flaw in the login endpoint allows an attacker to log in as any user, including administrators, without knowing the password. *([F-014](#f-014))*
-- **Server takeover from a normal user account** — Any logged-in user can send a crafted B2B order to run arbitrary OS commands on the server. *([F-010](#f-010))*
-- **Admin impersonation via a leaked source-code secret** — The RSA private key used to sign session tokens is committed to the public repository; an attacker downloads it and issues valid admin tokens offline. *([F-001](#f-001), [F-005](#f-005))*
+- **Full database theft without login** — Anyone on the internet can download the entire customer table in one request. *([F-009](#f-009))*
+- **Admin login without a password** — An attacker signs in as any user, including administrators, without knowing the password. *([F-014](#f-014))*
+- **Server takeover from a normal user account** — Any logged-in customer can make the server run commands of their choosing. *([F-010](#f-010))*
+- **Admin impersonation via a leaked secret** — A signing secret published in the source tree lets an attacker mint valid admin sessions. *([F-001](#f-001), [F-005](#f-005))*
 
 </blockquote>
 
