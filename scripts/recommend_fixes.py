@@ -66,6 +66,30 @@ def _read_agent_max_turns(agent_name: str) -> int | None:
     return int(m.group(1))
 
 
+# The denominator budget_watchdog actually measured against, from its own
+# `turns=<used>/<budget>` detail (budget_watchdog.format_detail).
+_EVENT_BUDGET_RE = re.compile(r"\bturns=\d+/(\d+)\b")
+
+
+def _event_turn_budget(issue: dict) -> int | None:
+    """Return the ceiling the run really exceeded, not the frontmatter one.
+
+    They are the same for most agents, but a STRIDE dispatch carries a PER-CALL
+    override: build_stride_dispatch_manifest computes a per-component budget
+    (a complexity tier, or the flat CHEAP_STRIDE_TURNS screening budget) into
+    context-plan.json, agent_logger forwards it as MAX_TURNS, and
+    budget_watchdog measures against THAT. Those budgets sit far below the
+    frontmatter ceiling, so a component overshooting its soft budget raised a
+    MAX_TURNS event while the hard limit was never approached and the agent
+    delivered complete output. Recommending a frontmatter bump there edits a
+    number nobody exceeded and quietly lifts the real ceiling for every
+    dispatch of that agent (juice-shop 2026-08-21: turns=21/8 against
+    `maxTurns: 96`).
+    """
+    m = _EVENT_BUDGET_RE.search(str(issue.get("evidence", {}).get("raw_event") or ""))
+    return int(m.group(1)) if m else None
+
+
 # ---------------------------------------------------------------------------
 # Recommenders — one per category
 # ---------------------------------------------------------------------------
@@ -98,6 +122,39 @@ def _recommend_max_turns_subagent(issue: dict, output_dir: Path) -> dict:
                     "type": "manual_review",
                     "target": "agents/",
                     "details": f"Locate the agent file for source {src!r} and bump its maxTurns by ~50%.",
+                }
+            ],
+            "verification": [],
+        }
+    measured = _event_turn_budget(issue)
+    if measured is not None and measured != current:
+        return {
+            "category": "investigate",
+            "auto_applicable": False,
+            "confidence": "low",
+            "risk_level": "low",
+            "summary": (
+                f"{src} exceeded a per-call budget of {measured} turns, not its "
+                f"maxTurns ceiling of {current} — do not bump the agent file."
+            ),
+            "rationale": (
+                f"budget_watchdog measured against {measured}, a per-component budget from "
+                f"context-plan.json (scripts/build_stride_dispatch_manifest.py: "
+                f"_component_turn_budget / CHEAP_STRIDE_TURNS), while the harness ceiling in "
+                f"agents/{agent_name}.md is {current}. Nothing was killed at {current}, so "
+                f"raising it neither addresses this event nor changes the screening behaviour — "
+                f"it only lifts the real limit for every dispatch of this agent. Decide instead "
+                f"whether the component deserved a larger budget."
+            ),
+            "actions": [
+                {
+                    "type": "manual_review",
+                    "target": "scripts/build_stride_dispatch_manifest.py",
+                    "details": (
+                        f"Budget {measured} came from _component_turn_budget. Either raise that "
+                        f"component's budget or accept the overshoot; leave "
+                        f"agents/{agent_name}.md at maxTurns: {current}."
+                    ),
                 }
             ],
             "verification": [],

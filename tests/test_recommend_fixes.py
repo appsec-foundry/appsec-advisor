@@ -63,6 +63,44 @@ def test_max_turns_subagent_found(tmp_path, monkeypatch):
     assert rec["actions"][0]["replace"] == "maxTurns: 120"
 
 
+def test_max_turns_per_call_budget_does_not_bump_frontmatter(tmp_path, monkeypatch):
+    """A per-call STRIDE budget is not the agent's ceiling.
+
+    budget_watchdog measures a STRIDE dispatch against the per-component budget
+    forwarded from context-plan.json, which sits far below the frontmatter
+    ceiling. Recommending a frontmatter bump there edits a number nobody
+    exceeded and lifts the real limit for every dispatch of that agent
+    (juice-shop 2026-08-21: `turns=21/8` against `maxTurns: 96`).
+    """
+    (tmp_path / "appsec-stride-analyzer-v2.md").write_text("maxTurns: 96\n")
+    monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
+    issue = {"evidence": {"source_agent": "stride-analyzer-v2", "raw_event": "MAX_TURNS turns=21/8 pct=262%"}}
+    rec = rf._recommend_max_turns_subagent(issue, tmp_path)
+    assert rec["auto_applicable"] is False
+    assert rec["confidence"] == "low"
+    assert "8" in rec["summary"] and "96" in rec["summary"]
+    assert not any(a["type"] == "edit_file" for a in rec["actions"]), "must not propose a frontmatter edit"
+
+
+def test_max_turns_matching_budget_still_bumps(tmp_path, monkeypatch):
+    """When the measured denominator IS the frontmatter ceiling, bump as before."""
+    (tmp_path / "appsec-foo.md").write_text("maxTurns: 80\n")
+    monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
+    issue = {"evidence": {"source_agent": "foo", "raw_event": "MAX_TURNS turns=80/80 pct=100%"}}
+    rec = rf._recommend_max_turns_subagent(issue, tmp_path)
+    assert rec["auto_applicable"] is True
+    assert "80 → 120" in rec["summary"]
+
+
+def test_max_turns_without_denominator_keeps_legacy_bump(tmp_path, monkeypatch):
+    """An event carrying no `turns=x/y` detail must not lose the old behaviour."""
+    (tmp_path / "appsec-foo.md").write_text("maxTurns: 80\n")
+    monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
+    rec = rf._recommend_max_turns_subagent({"evidence": {"source_agent": "foo"}}, tmp_path)
+    assert rec["auto_applicable"] is True
+    assert "80 → 120" in rec["summary"]
+
+
 def test_max_turns_subagent_already_prefixed(tmp_path, monkeypatch):
     (tmp_path / "appsec-foo.md").write_text("maxTurns: 10\n")
     monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
