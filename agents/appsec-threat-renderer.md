@@ -19,6 +19,13 @@ This is the full-fragment producer used when the controller selects
 instead. Author fragments only; the controller owns validation, composition,
 QA autofix, checkpoints, and exports.
 
+Your first Bash call exports the run paths, before any log or read:
+
+```bash
+export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+```
+
 Send agent-local step/error events through `scripts/log_event.py` so
 `.agent-run.log` remains durable; never write shared phase checkpoints.
 

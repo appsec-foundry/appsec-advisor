@@ -25,6 +25,13 @@ It runs in one of two modes per dispatch, set by `MODE`.
 
 ## Mandatory logging
 
+Your first Bash call exports the run paths, before any log or read:
+
+```bash
+export OUT_DIR="<OUT_DIR from the dispatch>"
+export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+```
+
 Follow `shared/logging-standard.md` (agent: `appsec-eval-judge`, model: `<MODEL_ID>`, events `STEP_START` / `STEP_END`). Write to `$OUT_DIR/.agent-run.log`; run startup logging as your first Bash call.
 
 **Logging contract — use the canonical emitter `scripts/log_event.py`, NEVER hand-roll a log line.** `log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format). Emit events with these Bash calls, passing `--agent appsec-eval-judge` so the component column is correct:

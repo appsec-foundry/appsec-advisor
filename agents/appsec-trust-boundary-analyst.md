@@ -251,6 +251,13 @@ Do not write `.trust-boundaries.json`, `.trust-boundary-coverage.json`,
 diagnostics, reports, findings, checkpoints, or any other semantic artifact.
 The deterministic Stage-1b gate owns canonical promotion.
 
+Your first Bash call exports the run paths, before any log or read:
+
+```bash
+export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+```
+
 Follow `$CLAUDE_PLUGIN_ROOT/agents/shared/logging-standard.md` through
 `scripts/log_event.py`, using agent
 name `trust-boundary-analyst` and writing to `$OUTPUT_DIR/.agent-run.log`.

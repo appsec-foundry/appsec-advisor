@@ -141,6 +141,13 @@ originating artifact and repeat the complete gate if either command fails.
 
 ## Logging and completion
 
+Your first Bash call exports the run paths, before any log or read:
+
+```bash
+export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+```
+
 Use `scripts/log_event.py` for `AGENT_START`, semantic step events, and
 `AGENT_END` in `$OUTPUT_DIR/.agent-run.log`. Emit every event with one of these
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not

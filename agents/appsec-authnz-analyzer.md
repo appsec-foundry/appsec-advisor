@@ -99,6 +99,13 @@ event types: `STEP_START`/`STEP_END`). Write all log entries to
 `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY
 FIRST Bash call, before any file reads.
 
+Your first Bash call exports the run paths, before any log or read:
+
+```bash
+export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+```
+
 Use the canonical emitter exclusively — never hand-roll a log line:
 
 ```bash

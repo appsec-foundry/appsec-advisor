@@ -333,15 +333,15 @@ def test_focused_renderer_line_slices_match_their_owned_contracts():
     ms = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
     secarch = (AGENTS_DIR / "appsec-secarch-renderer.md").read_text(encoding="utf-8")
 
-    assert "lines 136–349" in ms
-    assert renderer_lines[135].startswith("### MS prose")
-    assert renderer_lines[347].startswith("Map findings to requirements")
-    assert renderer_lines[348] == ""
-    assert "lines 350–675" in secarch
-    assert renderer_lines[349].startswith("### `security-architecture.md` authoring")
-    assert renderer_lines[673] == "```"
-    assert renderer_lines[674] == ""
-    assert renderer_lines[675].startswith("## Completion")
+    assert "lines 143–356" in ms
+    assert renderer_lines[142].startswith("### MS prose")
+    assert renderer_lines[354].startswith("Map findings to requirements")
+    assert renderer_lines[355] == ""
+    assert "lines 357–682" in secarch
+    assert renderer_lines[356].startswith("### `security-architecture.md` authoring")
+    assert renderer_lines[680] == "```"
+    assert renderer_lines[681] == ""
+    assert renderer_lines[682].startswith("## Completion")
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +591,32 @@ class TestBodyContentConsistency:
         assert 'export OUTPUT_DIR="' in stride, (
             "stride-analyzer must mandate `export OUTPUT_DIR=` as its first Bash call "
             "so agent_progress.sh / log_event.py see the path (RC-3)"
+        )
+
+    def test_every_log_event_caller_mandates_output_dir_export(self):
+        """Generalises the guard above to every agent that logs.
+
+        The 2026-06-21 fix only covered stride-analyzer-v2, so the same defect
+        recurred for the abuse-case verifiers on 2026-08-21: their doc handed
+        the model a copy-paste `log_event.py "$OUTPUT_DIR" …` block while the
+        dispatch supplies OUTPUT_DIR as prompt TEXT, never as a shell variable.
+        Nothing in the plugin exports it — agent_logger's mutation lives in the
+        hook process — so log_event refused to write and the run silently lost
+        AGENT_START/END coverage. An agent that invokes the emitter must carry
+        the export next to it, not only a pointer to the shared standard.
+        """
+        missing = []
+        for path in sorted(AGENTS_DIR.glob("appsec-*.md")):
+            _, body = parse_frontmatter(path)
+            if "log_event.py" not in body:
+                continue
+            # eval-judge is dispatched with OUT_DIR by its own dev-only skill.
+            if 'export OUTPUT_DIR="' in body or 'export OUT_DIR="' in body:
+                continue
+            missing.append(path.name)
+        assert not missing, (
+            "these agents invoke log_event.py but never mandate the export, so "
+            f"$OUTPUT_DIR is unset in their shell: {missing}"
         )
 
     def test_context_v2_stride_producer_carries_exact_boundary_and_progress_contracts(self):

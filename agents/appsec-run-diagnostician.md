@@ -116,6 +116,13 @@ output.
 
 ## Logging
 
+Your first Bash call exports the run paths, before any log or read:
+
+```bash
+export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+```
+
 Follow `shared/logging-standard.md` through `scripts/log_event.py`, using agent
 name `run-diagnostician` and model `<MODEL_ID>`, writing to
 `$OUTPUT_DIR/.agent-run.log`. Emit `STEP_START` before step 2 and `STEP_END`
