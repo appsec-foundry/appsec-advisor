@@ -57,7 +57,12 @@ EXPECTED_MAX_TURNS = {
     "appsec-evidence-verifier": 20,  # One bounded sample read plus periodic side-channel flushes; canonical annotations are controller-owned.
     "appsec-abuse-case-verifier": 28,  # Phase 10c: receipted source windows and one-write-per-decision pacing keep each candidate inside 28 turns.
     "appsec-trust-boundary-analyst": 24,
-    "appsec-fragment-fixer": 30,  # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE)
+    # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE).
+    # 30 → 45 after the 2026-08-21 insecure-large-spring-app run logged MAX_TURNS
+    # at 30/30 and the fixer's closing message was cut mid-sentence; 30 was both
+    # its budget and its ceiling, so there was no headroom to absorb a repair
+    # plan naming several fragments.
+    "appsec-fragment-fixer": 45,
     "appsec-reviewer": 40,  # embeddable diff-scoped security reviewer (requirements or best-practices); skill/CLI/direct
     "appsec-eval-judge": 30,  # dev/test semantic-quality judge for the eval-threat-model skill (JUDGE/VERIFY modes)
     "appsec-run-diagnostician": 45,  # APPSEC_PLUGIN_DEV post-run diagnosis: 12 issues x ~2 grounding reads + startup + write

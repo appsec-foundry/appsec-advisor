@@ -3,7 +3,7 @@ name: appsec-fragment-fixer
 description: "INTERNAL — lightweight repair executor for the create-threat-model re-render loop; rewrites only planned fragments and reruns deterministic composition without analysis stages."
 tools: Read, Edit, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 30
+maxTurns: 45
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by the `create-threat-model`
