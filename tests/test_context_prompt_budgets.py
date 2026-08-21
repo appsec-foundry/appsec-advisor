@@ -17,7 +17,10 @@ SURFACE_MAX_BYTES_RATCHET = {
     "thin_full_runtime": 13250,
     "thin_rerender_runtime": 10000,
     "thin_stage1_v2_runtime": 6400,
-    "thin_stage1d_runtime": 3400,
+    # 3400 -> 3600 (2026-08-21): the abuse waiter's nonzero exit gained a
+    # one-shot retry instruction, and at 3400 the file already sat at 89.6% of
+    # budget. See the note in data/context-budgets.yaml.
+    "thin_stage1d_runtime": 3600,
     "thin_stage2_runtime": 3600,
     "thin_stage3_runtime": 8000,
     "thin_stage4_runtime": 3600,

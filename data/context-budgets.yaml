@@ -35,7 +35,14 @@ surfaces:
     max_bytes: 6400
   thin_stage1d_runtime:
     path: skills/create-threat-model/SKILL-thin-stage1d.md
-    max_bytes: 3400
+    # 3400 -> 3600 (2026-08-21), matching thin_stage2_runtime. The waiter's
+    # nonzero exit needed a one-shot retry instruction: a verifier cut off at
+    # its turn ceiling leaves an unfinalized pre-seed, and without the repeat
+    # that chain ships as a plain `inconclusive`. At 3400 the file already sat
+    # at 89.6%, so the only way to fit it was deleting existing dispatch
+    # guidance. Raised instead, so the ten-percent headroom guard keeps doing
+    # its job rather than being worked around.
+    max_bytes: 3600
   thin_stage2_runtime:
     path: skills/create-threat-model/SKILL-thin-stage2.md
     max_bytes: 3600

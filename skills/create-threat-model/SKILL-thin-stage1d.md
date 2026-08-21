@@ -41,9 +41,10 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
      <candidate ids from dispatch_jobs[]> --interval 20 --rounds 45
    ```
 
-   Nonzero is fatal. Aggregate usage. Require concise status without reproducing evidence or artifact content.
-   `run_gate` needs no verifier. Abort or overflow
-   is fatal and must not silently drop candidates. The legacy shape lacks
+   On nonzero, repeat steps 2-3 once; a second nonzero is fatal. Aggregate usage.
+   Require concise status without reproducing evidence or artifact content.
+   `run_gate` needs no verifier. Abort or overflow is fatal and
+   must not silently drop candidates. The legacy shape lacks
    `dispatch_jobs[]`; retain its foreground `candidates[]` fan-out and
    `MATCH_RESULT_PATH=<OUTPUT_DIR>/.abuse-case-matches.json` alias.
 4. Run:
