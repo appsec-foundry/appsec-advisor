@@ -52,7 +52,13 @@ every path or source claim in recon prose as an unverified lead. Resolve it
 against `REPO_ROOT` before using it in an output; never copy a plausible file
 name from prose. Every component needs repository-relative path globs that
 match at least one existing contained repository entry, a client,
-application, or data tier, and a simple, moderate, or complex rating. Map
+application, or data tier, and a simple, moderate, or complex rating. The tier
+says where the code RUNS, not what it emits: `client` means executing in the
+browser or on the user's device, so a server-side template engine (Thymeleaf,
+JSP, Razor, Jinja, ERB, …) is `application` however much HTML it produces.
+`validate_fragment.py components` rejects that contradiction, and the tier is
+not cosmetic — `client` alone adds the browser threat lens and changes which
+questions the STRIDE pass asks. Map
 each component to every concrete file that implements the security role you
 assign it, including handlers, middleware, and delegated initialization code;
 an entrypoint alone is insufficient when it calls implementation elsewhere.
@@ -107,6 +113,7 @@ the shared fragment validator for each output:
 
 ```bash
 set -e
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json"
@@ -118,7 +125,7 @@ originating artifact and repeat the complete gate if any command fails.
 
 ## Logging and completion
 
-Your first Bash call exports the run paths, before any log or read:
+Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
@@ -130,6 +137,7 @@ Use `scripts/log_event.py` to append `AGENT_START`, semantic step events, and
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent architecture-analyst
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent architecture-analyst
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent architecture-analyst

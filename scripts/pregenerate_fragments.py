@@ -1566,7 +1566,10 @@ def _components_diagram_compact(yaml_data: dict, by_tier: dict[str, list[dict]])
         icon = TIER_ICON.get(tier_key, "fa:fa-cube")
         # Headline — strip embedded plain-text id when name already starts
         # with the id (avoids `C-01 C-01 Express Backend` redundancy).
-        head_text = cname if cname.lower().startswith(cid.lower()) else f"{cid} {cname}"
+        # A bare space runs the two identifiers together — `web-ui Thymeleaf Web
+        # UI Templates` reads as one long phrase with no visible boundary, and
+        # the icon prefix in front of it makes that worse. Separate them.
+        head_text = cname if cname.lower().startswith(cid.lower()) else f"{cid} · {cname}"
         # Plain head — bold reserved for diagram column headers. See parallel
         # change in compose._build_tier_cards (components_line) and
         # security-posture-diagram.md.j2 (actor + tier labels).

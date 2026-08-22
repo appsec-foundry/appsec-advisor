@@ -232,7 +232,6 @@ flowchart TB
 
 ### 2.3 Components
 
-
 Who reaches each component, and through which trust zone. Browser code runs on the user's device, so the client column is part of the untrusted zone, not a zone of its own - trust changes only where traffic enters the Application tier. Solid green arrows show legitimate data flow, dashed red arrows mark intrusion vectors. The component table directly below holds source paths and linked threats per `C-NN`; per-finding evidence is in [§8 Findings Register](#8-findings-register).
 
 ```mermaid
@@ -243,7 +242,7 @@ flowchart TD
         REPO_READ["fa:fa-code-branch Internal Developer"]:::threat
     end
     subgraph APP["Application Tier"]
-        c_01["fa:fa-server C-01 REST API<br/>+ C-02<br/><i>4 threats</i>"]:::risk
+        c_01["fa:fa-server C-01 · REST API<br/>+ C-02<br/><i>4 threats</i>"]:::risk
     end
     INTERNET_ANON -.->|"injection · auth bypass · RCE"| c_01
     REPO_READ -.->|"leaked credentials · auth bypass"| c_01
@@ -261,6 +260,7 @@ flowchart TD
 |----|------------|--------|-----------------|------------------------------------------------|
 | <a id="c-01"></a><span style="white-space:nowrap">C-01</span> | REST API | service | `routes/` | 🔴 [F-001](#f-001) — SQL injection in product search<br/>🔴 [F-002](#f-002) — SQL injection in login<br/>🟠 [F-010](#f-010) — Persistent XSS via bypassSecurityTrustHtml |
 | <a id="c-02"></a><span style="white-space:nowrap">C-02</span> | Auth Service | library | `lib/insecurity.ts` | 🔴 [F-003](#f-003) — Hardcoded RSA private key |
+
 ### 2.4 Technology Architecture
 
 The technology stack the system is built on. Each box names the framework or runtime that fills that role; per-component findings live in the [§2.3](#23-components) component table above, and the full per-finding catalogue is in [§8 Findings Register](#8-findings-register).

@@ -10353,7 +10353,22 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     insertion = "\n".join(table_lines)
     # Replace the section body (between `### 2.3 …` and the next `### `) with
     # the cleaned prose/mermaid followed by the deterministic table.
-    return md[: m.end()] + "\n" + cleaned_body.rstrip() + "\n" + insertion + md[section_end:]
+    #
+    # The trailing "" in table_lines only terminates the last row — `"\n".join`
+    # puts no newline after it. `section_end` points straight at the `#` of the
+    # next heading, so without the explicit blank line below the table and
+    # `### 2.4` end up on consecutive lines and most Markdown renderers merge
+    # them, dropping the component table from the rendered report. Every other
+    # table in the document arrives through a fragment joined with "\n\n" and
+    # is unaffected; this splice is the only place that has to add it itself.
+    #
+    # `.strip()`, not `.rstrip()`: `m.end()` already consumes the heading's
+    # newline and the `+ "\n"` below supplies the blank line after it, so a
+    # `cleaned_body` still carrying the previous pass's leading blank line
+    # gained another one every time. Compose runs two or three times whenever
+    # the repair loop fires, so §2.3 grew by a byte per pass and golden
+    # comparison depended on how often compose had run.
+    return md[: m.end()] + "\n" + cleaned_body.strip() + "\n" + insertion + "\n" + md[section_end:]
 
 
 _SEC7_TABLE_F_LINK_RE = re.compile(

@@ -681,3 +681,86 @@ def test_repair_plan_shares_composes_attempt_counter(tmp_path: Path):
     assert plan["attempt"] == 4
     assert plan["status"] == "exhausted"
     assert plan["actionable"] is False
+
+
+# ---------------------------------------------------------------------------
+# Tier self-contradiction (2026-08-22)
+# ---------------------------------------------------------------------------
+
+
+def _web_ui_component(**overrides):
+    """The real record from the 2026-08-21 insecure-large-spring-app run."""
+    component = {
+        "id": "web-ui",
+        "name": "Thymeleaf Web UI Templates",
+        "tier": "client",
+        "framework": "thymeleaf",
+        "description": ("Server-side HTML rendering layer using Thymeleaf templates."),
+    }
+    component.update(overrides)
+    return component
+
+
+def test_server_side_renderer_may_not_be_declared_client():
+    """`tier` drives the STRIDE lens, so this is analysis, not a label.
+
+    `build_stride_dispatch_manifest._is_frontend` returns True on
+    `tier == "client"` before consulting anything else, which adds the browser
+    threat lens and five scoping decisions. The shipped record carried
+    `framework: thymeleaf` and a "Server-side HTML rendering layer" description
+    next to `tier: client`, and nothing objected.
+    """
+    errors = vf._tier_contradiction_errors(_web_ui_component(), "web-ui")
+    assert len(errors) == 1
+    assert "renders on the server" in errors[0]
+    assert "tier 'application'" in errors[0]
+
+
+def test_application_tier_with_server_side_renderer_is_accepted():
+    assert vf._tier_contradiction_errors(_web_ui_component(tier="application"), "web-ui") == []
+
+
+def test_client_tier_without_a_server_side_framework_is_accepted():
+    """A judgement call about placement stays the analyst's."""
+    for framework in ("react", "angular", "vue", "handlebars", "next", ""):
+        assert vf._tier_contradiction_errors(_web_ui_component(framework=framework), "web-ui") == [], (
+            f"{framework!r} must not be rejected — a gate may not guess"
+        )
+
+
+def test_client_side_capable_engines_are_not_on_the_deny_list():
+    """Only unambiguously server-only engines may fail a run."""
+    for framework in ("handlebars", "mustache", "next", "nuxt", "remix"):
+        assert framework not in vf._SERVER_SIDE_RENDERERS
+
+
+def test_tier_contradiction_fails_the_cli_gate(tmp_path):
+    """The check must be reachable from the real CLI, not just importable.
+
+    `scripts/canonicalize_component_id.py` is the cautionary case: fully
+    implemented and unit-tested, but called from nowhere in the pipeline. A
+    validator nothing invokes protects nothing, so this drives the actual
+    entry point and asserts the run stops.
+    """
+    fragment = tmp_path / "components.json"
+    fragment.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": [
+                    {
+                        "id": "web-ui",
+                        "name": "Thymeleaf Web UI Templates",
+                        "description": "Server-side HTML rendering layer.",
+                        "tier": "client",
+                        "framework": "thymeleaf",
+                        "paths": ["scripts/**"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = _run(["components", str(fragment), "--repo-root", str(REPO_ROOT)])
+    assert proc.returncode != 0, "the CLI accepted a self-contradicting tier"
+    assert "renders on the server" in (proc.stdout + proc.stderr)

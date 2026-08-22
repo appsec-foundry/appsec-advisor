@@ -629,6 +629,67 @@ def test_components_table_scope_column_marks_out_of_scope(tmp_path: Path) -> Non
     assert worker_row.rstrip().endswith("Out of scope |")
 
 
+def test_components_table_is_separated_from_the_next_heading(tmp_path: Path) -> None:
+    """A table butted against a heading is dropped by most Markdown renderers.
+
+    `table_lines` ends with `""`, which only terminates the last row —
+    `"\\n".join` adds no newline after it — and `section_end` points straight at
+    the `#` of the following heading. The 2026-08-21 insecure-large-spring-app
+    report ended §2.3 with `| C-05 … |` on line 417 and `### 2.4 Technology
+    Architecture` on line 418, so the component table and that heading merged.
+    All 16 other tables in that report were fine: they arrive through fragments
+    joined with "\\n\\n", and this splice is the only one that must supply the
+    blank line itself. No QA gate covers table block termination, so nothing
+    caught it.
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={
+            "components": [{"id": "api", "name": "API", "tier": "application", "paths": ["src/api"]}],
+            "threats": [],
+        },
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
+    out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n### 2.4 Technology Architecture\n")
+    lines = out.splitlines()
+    heading_idx = next(i for i, ln in enumerate(lines) if ln.startswith("### 2.4"))
+    assert lines[heading_idx - 1].strip() == "", (
+        "the component table is not separated from the next heading:\n"
+        + "\n".join(lines[max(0, heading_idx - 3) : heading_idx + 1])
+    )
+
+
+def test_components_table_injection_is_idempotent(tmp_path: Path) -> None:
+    """Compose runs two or three times whenever the repair loop fires.
+
+    `cleaned_body` was only `rstrip()`-ed while `m.end()` already consumes the
+    heading's newline and the splice adds a blank line after it, so §2.3 gained
+    one blank line per pass — the file grew by a byte each time compose ran and
+    golden comparison silently depended on how often that had happened.
+    """
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={
+            "components": [{"id": "api", "name": "API", "tier": "application", "paths": ["src/api"]}],
+            "threats": [],
+        },
+        triage={},
+        fragments_dir=out_dir / ".fragments",
+    )
+    md = "### 2.3 Components\n\nIntro.\n### 2.4 Technology Architecture\n"
+    first = compose._inject_components_table(ctx, md)
+    second = compose._inject_components_table(ctx, first)
+    third = compose._inject_components_table(ctx, second)
+    assert first == second == third, "re-composing changed §2.3; it drifts on every repair pass"
+
+
 def test_components_table_no_scope_column_without_selection(tmp_path: Path) -> None:
     """Legacy / passthrough runs (no component_selection) keep the original
     column layout — no Scope column."""

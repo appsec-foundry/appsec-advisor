@@ -204,6 +204,7 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
             if not isinstance(component, dict):
                 continue
             component_id = str(component.get("id") or "<unknown>")
+            errors.extend(_tier_contradiction_errors(component, component_id))
             paths = component.get("paths", [])
             for raw in paths if isinstance(paths, list) else []:
                 canonical = _safe_repository_relative(raw)
@@ -220,6 +221,71 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
             evidence = flow.get("evidence", [])
             errors.extend(repository_evidence_errors(evidence, root, label=f"data flow {flow_id} evidence"))
     return errors
+
+
+# Template engines that render on the SERVER. The browser receives their
+# output, never the engine, so a component built on one belongs to the
+# application tier. Deliberately excludes anything that also runs client-side
+# (handlebars, mustache) and SSR frameworks that genuinely ship a client bundle
+# (next, nuxt, remix) — a gate may not produce false positives.
+_SERVER_SIDE_RENDERERS = frozenset(
+    {
+        "blade",
+        "django-templates",
+        "ejs",
+        "erb",
+        "facelets",
+        "freemarker",
+        "haml",
+        "jade",
+        "jinja",
+        "jinja2",
+        "jsf",
+        "jsp",
+        "mako",
+        "pug",
+        "razor",
+        "slim",
+        "smarty",
+        "thymeleaf",
+        "twig",
+        "velocity",
+    }
+)
+
+
+def _tier_contradiction_errors(component: dict, component_id: str) -> list[str]:
+    """Reject a component whose own fields contradict its declared tier.
+
+    `tier` is not a label. `build_stride_dispatch_manifest._is_frontend`
+    returns True on `tier == "client"` before it looks at anything else, and
+    that single bit adds the browser threat lens (`agents/shared/spa-threats.md`)
+    and drives five further scoping decisions. A server-side template engine
+    filed as `client` is therefore analysed with the wrong questions, and §2.3
+    then places it in the "Untrusted Zone - Browser Client" subgraph, moving its
+    findings into a trust zone they never occupied.
+
+    The 2026-08-21 insecure-large-spring-app run shipped exactly that: a
+    component carrying `framework: thymeleaf` and `description: Server-side HTML
+    rendering layer using Thymeleaf templates` alongside `tier: client`. Nothing
+    objected — every `tier` reference in `qa_checks.py` concerns diagram layout,
+    and the output schema constrains only the enum.
+
+    Only an unambiguous self-contradiction is an error here; a judgement call
+    about where a component belongs stays the analyst's.
+    """
+    tier = str(component.get("tier") or "").strip().lower()
+    if tier != "client":
+        return []
+    framework = str(component.get("framework") or "").strip().lower()
+    if framework not in _SERVER_SIDE_RENDERERS:
+        return []
+    return [
+        f"component {component_id} declares tier 'client' but framework "
+        f"{framework!r} renders on the server — the browser receives its output, "
+        f"not the engine. Use tier 'application', and split any genuinely "
+        f"browser-side assets into their own component if they need modelling."
+    ]
 
 
 def _load_schema(fragment_type: str) -> dict:
