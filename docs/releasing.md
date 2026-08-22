@@ -33,7 +33,7 @@ fails the gate just as leaving notes under it does. Commit all metadata changes
 together:
 
 ```bash
-git commit -am "release: 0.5.0b0"
+git commit -am "release: 0.6.0b1"
 ```
 
 > Until this commit exists, step 2 will fail at `check_release_meta.py` — that is
@@ -73,7 +73,7 @@ Optional, depending on what you changed:
 ```bash
 git checkout main
 git merge --no-ff dev
-git tag -a v0.4.0-beta -m "0.4.0 beta"
+git tag -a v0.6.0-beta.1 -m "0.6.0 beta 1"
 git push origin main --follow-tags
 ```
 
@@ -118,17 +118,23 @@ reachable from both branches and never needs re-tagging.
 
 ### Version formats
 
+A `-beta.N` suffix marks the Nth pre-release of the version in front of it, so
+`0.6.0-beta.1` is followed by further betas, optionally an `-rc.N`, and then the
+stable `0.6.0`. The tags `v0.4.0-beta` and `v0.5.x-beta` predate this rule: there
+`-beta` labelled the release line itself, which is why those lines have no stable
+release.
+
 The same version appears in four places, using PEP 440-equivalent spellings:
 
 | Where | Format | Example |
 |-------|--------|---------|
-| `pyproject.toml` | PEP 440 | `0.4.0b0` |
-| `.claude-plugin/plugin.json` | SemVer-style, PEP 440-equivalent | `0.4.0-beta` |
-| Git tag | leading `v` | `v0.4.0-beta` |
-| `CHANGELOG.md` heading | version + date | `## 0.4.0-beta (2026-06-28)` |
+| `pyproject.toml` | PEP 440 | `0.6.0b1` |
+| `.claude-plugin/plugin.json` | SemVer-style, PEP 440-equivalent | `0.6.0-beta.1` |
+| Git tag | leading `v` | `v0.6.0-beta.1` |
+| `CHANGELOG.md` heading | version + date | `## 0.6.0-beta.1 (2026-08-22)` |
 
-`scripts/check_release_meta.py` normalizes these before comparing, so `0.4.0b0`
-and `0.4.0-beta` count as equal. It also rejects pending `Unreleased` content
+`scripts/check_release_meta.py` normalizes these before comparing, so `0.6.0b1`
+and `0.6.0-beta.1` count as equal. It also rejects pending `Unreleased` content
 and validates the plugin's analysis-version compatibility declaration.
 
 ### The two gates
