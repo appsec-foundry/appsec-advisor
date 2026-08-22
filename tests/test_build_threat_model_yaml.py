@@ -2927,20 +2927,20 @@ def test_main_delivers_contiguous_boundary_ids_from_a_sparse_ledger(tmp_path, mo
 _TITLE_PATTERN = re.compile(r"^[A-Z][^()@`]+?(?:\s*\([^()]+\))?$")
 
 _HOSTILE_TITLES = [
-    '14 Named Accounts Seeded with Hardcoded Password (SecurityConfig.java:71)',
-    '404 handler leaks stack traces (ErrorController.java:18)',
-    '/admin routes are unauthenticated (SecurityConfig.java:41)',
-    '.env file committed to the repository (env:1)',
-    '__init__ exposes a debug route (app.py:3)',
-    '$JWT_SECRET committed to the image (Dockerfile:7)',
+    "14 Named Accounts Seeded with Hardcoded Password (SecurityConfig.java:71)",
+    "404 handler leaks stack traces (ErrorController.java:18)",
+    "/admin routes are unauthenticated (SecurityConfig.java:41)",
+    ".env file committed to the repository (env:1)",
+    "__init__ exposes a debug route (app.py:3)",
+    "$JWT_SECRET committed to the image (Dockerfile:7)",
     '"password" is the seeded credential (Seeder.java:12)',
     "'admin' role assignable by any user (Profile.java:44)",
-    '<script> injection in the profile page (Profile.html:8)',
-    'stored XSS in the profile page (Profile.java:8)',
-    '   leading whitespace then lowercase (X.java:1)',
-    '12345',
-    '!!!',
-    '',
+    "<script> injection in the profile page (Profile.html:8)",
+    "stored XSS in the profile page (Profile.java:8)",
+    "   leading whitespace then lowercase (X.java:1)",
+    "12345",
+    "!!!",
+    "",
 ]
 
 

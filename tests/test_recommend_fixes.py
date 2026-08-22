@@ -67,6 +67,7 @@ def test_every_emitted_issue_category_has_a_recommender():
         f"_KNOWN_UNCOVERED_CATEGORIES so the ratchet keeps tightening."
     )
 
+
 # ---------------------------------------------------------------------------
 # _read_agent_max_turns
 # ---------------------------------------------------------------------------

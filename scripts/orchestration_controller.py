@@ -2177,9 +2177,7 @@ def _validate_recon_signals(path: Path, repo_root: Path) -> dict[str, Any]:
     except OSError as exc:
         raise ProducerContractError(f"cannot stat recon-signals-v2 artifact {path}: {exc}") from exc
     if byte_count > MAX_RECON_SIGNALS_BYTES:
-        raise ProducerContractError(
-            f"recon-signals-v2 artifact exceeds the {MAX_RECON_SIGNALS_BYTES}-byte cap"
-        )
+        raise ProducerContractError(f"recon-signals-v2 artifact exceeds the {MAX_RECON_SIGNALS_BYTES}-byte cap")
     value = _validate_json_artifact(
         path,
         PLUGIN_ROOT / "schemas" / "recon-signals.schema.json",
