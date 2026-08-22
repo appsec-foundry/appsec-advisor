@@ -25,7 +25,7 @@ An assessment generates an architecture and security report from repository evid
 **Default outputs**
 
 - `threat-model.md` — report for engineers, architects, and security reviewers.
-- `threat-model.yaml` — structured model used by automation and incremental scans.
+- `threat-model.yaml` — structured model used by automation and the exports.
 
 **Optional outputs**
 
@@ -75,7 +75,7 @@ flowchart LR
 
 Use `/appsec-advisor:create-threat-model` for the first assessment. After a code change, `/appsec-advisor:create-threat-model --full` reassesses the repository while preserving report history. Incremental updates are not supported by the compact runtime.
 
-Incremental scans preserve T/F finding IDs. A shallower scan carries forward findings it could not reverify; an equal-or-deeper scan records non-reproduced findings as resolved. `--rebuild` deliberately clears the prior model and stable-ID cache, allowing IDs to be reassigned.
+`--full` overwrites the model but preserves changelog history, and prints a Change Summary against the previous run. `--rebuild` deliberately clears the prior model, cache, and history, allowing finding IDs to be reassigned; audit logs are kept.
 
 ### Ask about the model
 
@@ -229,7 +229,7 @@ The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session on 0.5
 | **Standard** *(default)* | Normal security reviews | Full analysis, abuse-case validation, and QA | $25.39 and 124 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.2.md)) |
 | **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $35.15 and about 138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.2.md)) |
 
-The standard run included one STRIDE retry. Incremental scans commonly use 70–90% fewer tokens when a previous model is available. Cost follows the number and complexity of analyzed components more closely than raw repository size.
+The standard run included one STRIDE retry. Cost follows the number and complexity of analyzed components more closely than raw repository size.
 
 ### Additional controls
 
