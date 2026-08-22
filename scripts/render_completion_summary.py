@@ -836,7 +836,7 @@ def build_next_steps(
     # visible in the numbered list rather than an easy-to-miss footer.
     lines.append(
         'Ask questions without changing the model, e.g. "what should I fix first?" or '
-        '"does it cover SSRF?": /appsec-advisor:ask-threat-model'
+        '"are there any access control weaknesses?": /appsec-advisor:ask-threat-model'
     )
 
     # Triage — whenever the run surfaced findings, point at the consumer skill
