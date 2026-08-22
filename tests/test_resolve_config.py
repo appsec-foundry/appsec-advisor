@@ -1155,7 +1155,7 @@ class TestCLI:
         profile.write_text(
             "api_version: appsec-advisor.org-profile/v2\n"
             'organization: { id: myorg, name: My Org, profile_version: "1" }\n'
-            'compatibility: { core: ">=0.4 <0.6" }\n'
+            'compatibility: { core: ">=0.4 <0.7" }\n'
             "default_preset: local-default\n"
             "presets:\n"
             "  local-default:\n"
