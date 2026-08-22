@@ -45,6 +45,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _atomic_io import atomic_write_json  # noqa: E402
 from preserve_lib import depth_rank, preservable_sections  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _path_guard import run_path_arg  # noqa: E402
+
 # Outcomes the composer emits that mean "present with real content".
 _PRESENT_OK = {"rendered", "fallback"}
 # Outcomes that mean "in scope but no substance" (a real gap).
@@ -291,7 +294,7 @@ def run(output_dir: Path, plugin_root: Path) -> int:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("output_dir", type=Path)
+    p.add_argument("output_dir", type=run_path_arg)
     p.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
     args = p.parse_args()
     if not args.output_dir.is_dir():

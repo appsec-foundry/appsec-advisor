@@ -49,6 +49,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _path_guard import run_path_arg  # noqa: E402
+
 # Phase budgets — single source of truth in data/phase-budgets.yaml. Loaded
 # via the shared phase_budgets module so this script, watch_run.py,
 # acquire_lock.py, check_state.py and skill_watchdog.py all see the same
@@ -1745,7 +1748,7 @@ def flag_degraded_recommendations(data: dict) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="aggregate_run_issues.py", description=__doc__.splitlines()[0])
-    p.add_argument("output_dir", type=Path)
+    p.add_argument("output_dir", type=run_path_arg)
     p.add_argument("--repo-root", type=Path, help="Repository root used for size-scaled phase budgets")
     p.add_argument("--depth", choices=["quick", "standard", "thorough"], default="standard")
     p.add_argument(

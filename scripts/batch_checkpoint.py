@@ -37,17 +37,20 @@ import datetime
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _path_guard import run_path_arg  # noqa: E402
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Batch checkpoint write + lock heartbeat")
-    parser.add_argument("output_dir", help="Assessment output directory")
+    parser.add_argument("output_dir", type=run_path_arg, help="Assessment output directory")
     parser.add_argument("--phase", required=True, help="Phase label")
     parser.add_argument("--step", required=True, help="Step label")
     parser.add_argument("--status", required=True, help="Status string")
     parser.add_argument("--lock", default=None, help="Lock file path (default: <output_dir>/.appsec-lock)")
     args = parser.parse_args()
 
-    output_dir = args.output_dir
+    output_dir = str(args.output_dir)
     lock_path = args.lock or os.path.join(output_dir, ".appsec-lock")
     checkpoint_path = os.path.join(output_dir, ".appsec-checkpoint")
     ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")

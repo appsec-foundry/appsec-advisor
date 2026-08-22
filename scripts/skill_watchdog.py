@@ -82,6 +82,9 @@ from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _path_guard import run_path_arg  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Guarded exactly like the siblings below. These two used to run bare at import
 # time, before `sys.path` was even extended, so a partial or shadowed sibling
@@ -923,7 +926,7 @@ def watch(
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="skill_watchdog.py", description=__doc__)
-    p.add_argument("output_dir", help="Path to $OUTPUT_DIR (the per-repo docs/security dir).")
+    p.add_argument("output_dir", type=run_path_arg, help="Path to $OUTPUT_DIR (the per-repo docs/security dir).")
     p.add_argument(
         "--plugin-root",
         default=os.environ.get("CLAUDE_PLUGIN_ROOT", ""),

@@ -39,6 +39,9 @@ from typing import Any
 
 import headless_usage
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _path_guard import run_path_arg  # noqa: E402
+
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -229,7 +232,7 @@ def measure(output_dir: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Compose .run-metrics.json from existing run telemetry.")
-    p.add_argument("output_dir", help="OUTPUT_DIR containing .stage-stats.jsonl + .hook-events.log")
+    p.add_argument("output_dir", type=run_path_arg, help="OUTPUT_DIR containing .stage-stats.jsonl + .hook-events.log")
     p.add_argument(
         "--out",
         default=None,

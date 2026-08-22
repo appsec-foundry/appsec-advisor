@@ -121,6 +121,9 @@ from typing import Any
 
 from event_log import format_line
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _path_guard import run_path_arg  # noqa: E402
+
 # --- whitelist -------------------------------------------------------------
 
 ALWAYS_FILES = [
@@ -472,7 +475,7 @@ def run_cleanup(
 
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(description="Remove transient artifacts after a successful assessment.")
-    p.add_argument("output_dir", type=Path, help="Absolute path to $OUTPUT_DIR")
+    p.add_argument("output_dir", type=run_path_arg, help="Absolute path to $OUTPUT_DIR")
     p.add_argument(
         "--stage",
         choices=["all", "pre-qa", "post-qa", "post-architect"],

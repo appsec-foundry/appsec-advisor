@@ -32,6 +32,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _path_guard import run_path_arg  # noqa: E402
+
 
 def _cat13_supplement(output_dir: Path) -> str:
     """Return a deterministic `known_llm_patterns` supplement from Cat-13 recon findings.
@@ -1625,7 +1628,7 @@ def format_selection_console(sel: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="build_stride_dispatch_manifest.py")
-    ap.add_argument("output_dir", type=Path)
+    ap.add_argument("output_dir", type=run_path_arg)
     ap.add_argument("--depth", default="standard", choices=["quick", "standard", "thorough"])
     ap.add_argument("--analyst-context", type=Path, default=None)
     ap.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)

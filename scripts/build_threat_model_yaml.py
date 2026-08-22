@@ -69,6 +69,9 @@ from _boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
 from merge_threats import normalize_cvss_v4 as _normalize_cvss_v4  # noqa: E402
 from stride_outputs import is_stride_output  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _path_guard import run_path_arg  # noqa: E402
+
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
 
@@ -2471,7 +2474,7 @@ def build_changelog(
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
-    ap.add_argument("output_dir", type=Path, help="$OUTPUT_DIR (e.g. docs/security)")
+    ap.add_argument("output_dir", type=run_path_arg, help="$OUTPUT_DIR (e.g. docs/security)")
     ap.add_argument("--repo-root", type=Path, default=None)
     ap.add_argument("--plugin-root", type=Path, default=Path(os.environ.get("CLAUDE_PLUGIN_ROOT", _SCRIPT_DIR.parent)))
     ap.add_argument("--dry-run", action="store_true", help="Print the composed yaml to stdout instead of writing.")

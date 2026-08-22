@@ -29,6 +29,9 @@ from pathlib import Path
 
 from event_log import format_line
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _path_guard import RunPathError, require_run_path  # noqa: E402
+
 
 def fmt_duration(seconds: int) -> str:
     return f"{seconds // 60} min {seconds % 60:02d} s"
@@ -39,7 +42,11 @@ def main(argv: list[str]) -> int:
         print(f"usage: {argv[0]} <output_dir> <agent_name> <model_id> <start_epoch>", file=sys.stderr)
         return 2
 
-    output_dir = Path(argv[1])
+    try:
+        output_dir = require_run_path(argv[1], argv[0])
+    except RunPathError as exc:
+        print(exc, file=sys.stderr)
+        return 2
     agent_name = argv[2]
     model_id = argv[3]
     try:

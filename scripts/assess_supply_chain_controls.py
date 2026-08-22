@@ -39,6 +39,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _path_guard import run_path_arg  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Effectiveness enum
 # ---------------------------------------------------------------------------
@@ -997,12 +1000,15 @@ def assess(output_dir: str, repo_root: str | None) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Deterministic supply chain control assessment for Phase 8")
-    parser.add_argument("output_dir", help="Assessment output directory (docs/security)")
+    parser.add_argument("output_dir", type=run_path_arg, help="Assessment output directory (docs/security)")
     parser.add_argument("--repo-root", default=None, help="Repository root (optional, improves detection)")
     parser.add_argument("--report-only", action="store_true", help="Print JSON to stdout instead of writing file")
     args = parser.parse_args()
 
-    result = assess(args.output_dir, args.repo_root)
+    # run_path_arg yields a Path; assess() and _load_recon() declare `str` and
+    # the test suite calls them that way. Convert at the boundary rather than
+    # loosening their signatures.
+    result = assess(str(args.output_dir), args.repo_root)
     payload = json.dumps(result, indent=2)
 
     if args.report_only:
