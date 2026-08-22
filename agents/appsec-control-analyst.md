@@ -132,6 +132,7 @@ Immediately after writing both artifacts, use one Bash tool call:
 
 ```bash
 set -e
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" security-controls "$OUTPUT_DIR/.security-controls.json"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" stride_analyst_context "$OUTPUT_DIR/.stride-analyst-context.json" --repo-root "$REPO_ROOT"
 ```
@@ -141,7 +142,7 @@ originating artifact and repeat the complete gate if either command fails.
 
 ## Logging and completion
 
-Your first Bash call exports the run paths, before any log or read:
+Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
@@ -153,6 +154,7 @@ Use `scripts/log_event.py` for `AGENT_START`, semantic step events, and
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent control-analyst
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent control-analyst
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent control-analyst

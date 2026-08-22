@@ -99,7 +99,7 @@ event types: `STEP_START`/`STEP_END`). Write all log entries to
 `$OUTPUT_DIR/.agent-run.log`. Execute the startup logging command as your VERY
 FIRST Bash call, before any file reads.
 
-Your first Bash call exports the run paths, before any log or read:
+Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
@@ -109,6 +109,7 @@ export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 Use the canonical emitter exclusively — never hand-roll a log line:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent authnz-analyzer
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent authnz-analyzer
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "authnz-analyzer started (model: <MODEL_ID>)" --agent authnz-analyzer

@@ -19,7 +19,7 @@ This is the full-fragment producer used when the controller selects
 instead. Author fragments only; the controller owns validation, composition,
 QA autofix, checkpoints, and exports.
 
-Your first Bash call exports the run paths, before any log or read:
+Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
@@ -147,6 +147,7 @@ Author `ms-verdict.json` **exactly once**. Do **NOT** re-open or rewrite an MS f
 After authoring the MS fragment, run the compactness gate **once**:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_ms_compactness.py" "$OUTPUT_DIR"
 ```
 

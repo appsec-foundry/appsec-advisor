@@ -242,6 +242,7 @@ foreign keys such as `candidate-1`; they are not stable IDs.
 Before finishing, run only:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
   trust-boundary-candidates \
   "$OUTPUT_DIR/.trust-boundary-candidates.json"
@@ -251,7 +252,7 @@ Do not write `.trust-boundaries.json`, `.trust-boundary-coverage.json`,
 diagnostics, reports, findings, checkpoints, or any other semantic artifact.
 The deterministic Stage-1b gate owns canonical promotion.
 
-Your first Bash call exports the run paths, before any log or read:
+Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"

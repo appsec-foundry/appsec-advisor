@@ -25,7 +25,7 @@ It runs in one of two modes per dispatch, set by `MODE`.
 
 ## Mandatory logging
 
-Your first Bash call exports the run paths, before any log or read:
+Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
 ```bash
 export OUT_DIR="<OUT_DIR from the dispatch>"
@@ -37,6 +37,7 @@ Follow `shared/logging-standard.md` (agent: `appsec-eval-judge`, model: `<MODEL_
 **Logging contract — use the canonical emitter `scripts/log_event.py`, NEVER hand-roll a log line.** `log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format). Emit events with these Bash calls, passing `--agent appsec-eval-judge` so the component column is correct:
 
 ```bash
+OUT_DIR="<OUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUT_DIR" info AGENT_START "eval judge <MODE> <DIMENSION> started (model: <MODEL_ID>)" --agent appsec-eval-judge
 date +%s
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUT_DIR" step-start "<message>" --agent appsec-eval-judge

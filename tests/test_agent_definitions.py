@@ -14,6 +14,12 @@ import yaml
 
 AGENTS_DIR = Path(__file__).parent.parent / "agents"
 
+# Run-path coupling: a Bash block that uses the output directory must also set
+# it, because shell state does not survive between Bash calls.
+_BASH_BLOCKS = re.compile(r"```bash\n(.*?)```", re.DOTALL)
+_RUN_PATH_USE = re.compile(r"\$\{?(?:OUTPUT_DIR|OUT_DIR)\b")
+_RUN_PATH_ASSIGN = re.compile(r"^\s*(?:export\s+)?(?:OUTPUT_DIR|OUT_DIR)=", re.MULTILINE)
+
 # Required frontmatter keys for every agent
 REQUIRED_KEYS = ["name", "description", "tools", "model", "maxTurns"]
 
@@ -54,8 +60,13 @@ EXPECTED_MAX_TURNS = {
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
-    "appsec-evidence-verifier": 20,  # One bounded sample read plus periodic side-channel flushes; canonical annotations are controller-owned.
-    "appsec-abuse-case-verifier": 28,  # Phase 10c: receipted source windows and one-write-per-decision pacing keep each candidate inside 28 turns.
+    # 20 → 40 (2026-08-22): 8fbbd534 had taken this from 60 to 20 while
+    # routing bounded context, leaving 20 turns for a sample set capped at 30.
+    # The 2026-08-21 run was killed at 20/20. See MIN_MAX_TURNS.
+    "appsec-evidence-verifier": 40,
+    # 28 → 36 (2026-08-22): restores the value 843afab8 set after the
+    # 2026-07-24 cut-off, which 022bf115 reverted without a measurement.
+    "appsec-abuse-case-verifier": 36,
     "appsec-trust-boundary-analyst": 24,
     # M2b: lean Re-Render-Loop repair executor (replaces heavy analyst REPAIR_MODE).
     # 30 → 45 after the 2026-08-21 insecure-large-spring-app run logged MAX_TURNS
@@ -67,6 +78,52 @@ EXPECTED_MAX_TURNS = {
     "appsec-eval-judge": 30,  # dev/test semantic-quality judge for the eval-threat-model skill (JUDGE/VERIFY modes)
     "appsec-run-diagnostician": 45,  # APPSEC_PLUGIN_DEV post-run diagnosis: 12 issues x ~2 grounding reads + startup + write
     "appsec-authnz-analyzer": 28,  # cross-component AuthN/AuthZ: consumes pre-extracted scanner JSON, no source re-read
+}
+
+# Floor for the same values. EXPECTED_MAX_TURNS is a cost ceiling — `mt <=
+# ceiling` can only notice a budget that grew, never one that shrank. Every
+# turn-kill this plugin has shipped was a budget that was too SMALL, and the
+# worst of them was introduced by a refactor that lowered one:
+#
+#   8fbbd534 (2026-08-09, "route bounded post-stride and abuse context") took
+#   appsec-evidence-verifier from 60 to 20 without touching
+#   evidence_verifier_max_findings, and 022bf115 the same day took
+#   appsec-abuse-case-verifier from 36 back to 28 with an empty message body,
+#   replacing a comment that cited two measured incidents with an unmeasured
+#   claim. Neither test went red: the ceiling assertion is blind downwards.
+#   Twelve days later both agents were cut off again on the
+#   insecure-large-spring-app run — the evidence verifier at 20/20, which left
+#   a budget-critical claim standing that skipped abuse-case verification
+#   entirely and shipped four unverified chains as "? Inconclusive".
+#
+# A floor makes lowering a deliberate, reviewable edit instead of a side effect.
+# Raising a budget stays free; only going below a value that a real run needed
+# requires touching this table and saying why.
+MIN_MAX_TURNS = {
+    # Workload is `evidence_verifier_max_findings` (30 at standard depth, 100
+    # at thorough, unbounded via --evidence-verifier-cap). The agent pre-seeds
+    # once and flushes every five verdicts, so 30 samples need ~6 flush turns
+    # on top of reading and judging them. 20 cannot cover that arithmetic; 40
+    # is the value the agent held from 2026-06-13 until the 07-21 escalation.
+    "appsec-evidence-verifier": 40,
+    # 843afab8 (2026-07-25) raised this to 36 after the 2026-07-24 juice-shop
+    # run shipped empty-excerpt verdicts from agents still grepping at the
+    # ceiling. 022bf115 reverted it; dec415fa (2026-08-21) recorded the next
+    # cut-off, where AC-T-003 needed three manual dispatches.
+    "appsec-abuse-case-verifier": 36,
+    # 743dd1be (2026-08-02): spring-web-app needed 65 turns for 47 files and
+    # died twice at 56. This is the one budget in the plugin that also scales
+    # per component; the frontmatter value is its hard ceiling.
+    "appsec-stride-analyzer-v2": 96,
+    # 7cceff0d (2026-08-21): cut off mid-sentence at 30/30 on a repair plan
+    # naming several fragments.
+    "appsec-fragment-fixer": 45,
+    # 240850ee (2026-08-02): large semantic repair plans exhausted 120 turns
+    # before the mandatory completion status.
+    "appsec-qa-reviewer": 200,
+    # 74846143 (2026-08-07): a live run consumed all 25 turns and skipped the
+    # required Markdown validator.
+    "appsec-recon-scanner": 36,
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -244,6 +301,36 @@ class TestMaxTurnsCeilings:
         mt = meta.get("maxTurns", 0)
         assert mt <= ceiling, f"{agent_name}: maxTurns {mt} exceeds ceiling {ceiling}"
 
+    @pytest.mark.parametrize("agent_name,floor", MIN_MAX_TURNS.items())
+    def test_max_turns_does_not_fall_below_floor(self, agent_name, floor):
+        """A budget a real run needed may not be lowered as a side effect.
+
+        See MIN_MAX_TURNS for the incidents. Raising a budget needs no change
+        here; lowering one below a measured need must edit that table and say
+        why, so it shows up in review instead of in the next run's log.
+        """
+        path = AGENTS_DIR / f"{agent_name}.md"
+        assert path.exists(), f"Agent file not found: {path}"
+        meta, _ = parse_frontmatter(path)
+        mt = meta.get("maxTurns", 0)
+        assert mt >= floor, (
+            f"{agent_name}: maxTurns {mt} is below the floor {floor} that a "
+            f"measured run needed. If this budget is genuinely no longer "
+            f"required, lower MIN_MAX_TURNS in the same commit and record what "
+            f"changed to make it sufficient."
+        )
+
+    def test_every_floor_has_a_ceiling(self):
+        """A floor without a ceiling could be raised past the cost guard."""
+        orphans = sorted(set(MIN_MAX_TURNS) - set(EXPECTED_MAX_TURNS))
+        assert not orphans, f"floors without a ceiling entry: {orphans}"
+
+    @pytest.mark.parametrize("agent_name,floor", MIN_MAX_TURNS.items())
+    def test_floor_does_not_exceed_ceiling(self, agent_name, floor):
+        """The two tables must leave a satisfiable range."""
+        ceiling = EXPECTED_MAX_TURNS[agent_name]
+        assert floor <= ceiling, f"{agent_name}: floor {floor} exceeds ceiling {ceiling} — no value can satisfy both"
+
 
 # ---------------------------------------------------------------------------
 # INTERNAL agent marker
@@ -338,15 +425,15 @@ def test_focused_renderer_line_slices_match_their_owned_contracts():
     ms = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
     secarch = (AGENTS_DIR / "appsec-secarch-renderer.md").read_text(encoding="utf-8")
 
-    assert "lines 143–356" in ms
+    assert "lines 143–357" in ms
     assert renderer_lines[142].startswith("### MS prose")
-    assert renderer_lines[354].startswith("Map findings to requirements")
-    assert renderer_lines[355] == ""
-    assert "lines 357–682" in secarch
-    assert renderer_lines[356].startswith("### `security-architecture.md` authoring")
-    assert renderer_lines[680] == "```"
-    assert renderer_lines[681] == ""
-    assert renderer_lines[682].startswith("## Completion")
+    assert renderer_lines[355].startswith("Map findings to requirements")
+    assert renderer_lines[356] == ""
+    assert "lines 358–683" in secarch
+    assert renderer_lines[357].startswith("### `security-architecture.md` authoring")
+    assert renderer_lines[681] == "```"
+    assert renderer_lines[682] == ""
+    assert renderer_lines[683].startswith("## Completion")
 
 
 # ---------------------------------------------------------------------------
@@ -645,6 +732,48 @@ class TestBodyContentConsistency:
         assert not missing, (
             "these agents invoke log_event.py but never mandate the export, so "
             f"$OUTPUT_DIR is unset in their shell: {missing}"
+        )
+
+    def test_run_path_is_assigned_in_every_block_that_uses_it(self):
+        """The export must sit in the SAME command as the use, not before it.
+
+        The guard above only asks whether `export OUTPUT_DIR=` appears
+        somewhere in the file, and agents/shared/logging-standard.md told
+        agents to spend their "very first Bash call" on exactly that export and
+        then use `$OUTPUT_DIR` in later blocks. Shell state does not survive
+        between Bash calls — agents/shared/validation-routine.md says so in as
+        many words — so the variable is empty again by the second block.
+
+        The 2026-08-21 insecure-large-spring-app run shows both halves: the
+        export succeeded at 19:13:13 and 19:47:44, and 4s resp. 68s later
+        log_event.py refused an empty <output_dir> in the very next block. That
+        cost the run its recon-scanner AGENT_START and left AGENT_START/END
+        unpaired, which is what makes a dispatch drop out of cost accounting.
+
+        A block that both assigns and uses the path is the only form that
+        works, so that is the form this asserts.
+        """
+        offenders: list[str] = []
+        # The shared standards are preloaded into agents, which copy their
+        # blocks verbatim — a template that omits the assignment teaches the
+        # defect to every agent at once, so they are checked here too.
+        docs = sorted(AGENTS_DIR.glob("appsec-*.md")) + sorted((AGENTS_DIR / "shared").glob("*.md"))
+        for path in docs:
+            body = path.read_text(encoding="utf-8")
+            if path.name.startswith("appsec-"):
+                _, body = parse_frontmatter(path)
+            if "log_event.py" not in body:
+                continue
+            for block in _BASH_BLOCKS.findall(body):
+                if not _RUN_PATH_USE.search(block):
+                    continue
+                if _RUN_PATH_ASSIGN.search(block):
+                    continue
+                first = next((ln.strip() for ln in block.splitlines() if ln.strip()), "")
+                offenders.append(f"{path.name}: {first[:70]}")
+        assert not offenders, (
+            "these Bash blocks use the run path but do not assign it in the "
+            "same block, so it expands to the empty string:\n  " + "\n  ".join(offenders)
         )
 
     def test_context_v2_stride_producer_carries_exact_boundary_and_progress_contracts(self):

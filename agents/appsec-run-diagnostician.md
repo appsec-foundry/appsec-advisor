@@ -116,7 +116,7 @@ output.
 
 ## Logging
 
-Your first Bash call exports the run paths, before any log or read:
+Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"

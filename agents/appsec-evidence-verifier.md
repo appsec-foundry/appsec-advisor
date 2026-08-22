@@ -3,13 +3,13 @@ name: appsec-evidence-verifier
 description: "INTERNAL context-v2 role that judges the controller-selected evidence sample from bounded receipted source windows."
 tools: Read, Bash, Write
 model: sonnet
-maxTurns: 20
+maxTurns: 40
 ---
 
 INTERNAL AGENT — do not invoke directly. The context-v2 controller dispatches
 this role after merge and before triage.
 
-Your first Bash call exports the run paths, before any read or log:
+Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
@@ -59,7 +59,7 @@ The controller accepts partial results when unresolved samples are counted as
 
 Write a schema-valid pre-seed before judging the first sample, then flush after
 every five verdicts and after the final verdict. This preserves partial work at
-the turn ceiling without changing the canonical artifact. At turn 14 of 20,
+the turn ceiling without changing the canonical artifact. At turn 30 of 40,
 stop judging, count every unresolved sample as `unchecked`, flush, and finish.
 
 ## Producer gate
@@ -67,6 +67,7 @@ stop judging, count every unresolved sample as `unchecked`, flush, and finish.
 After the final write, run:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" evidence_verification "$OUTPUT_DIR/.evidence-verification.json"
 ```
 
@@ -82,6 +83,7 @@ Use `scripts/log_event.py` for `AGENT_START`, semantic step events, and
 exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, not
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent evidence-verifier
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent evidence-verifier
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent evidence-verifier

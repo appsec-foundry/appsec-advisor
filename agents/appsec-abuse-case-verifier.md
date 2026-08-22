@@ -3,7 +3,7 @@ name: appsec-abuse-case-verifier
 description: "INTERNAL — verifies one receipted abuse-case candidate end-to-end against bounded candidate metadata and targeted code evidence."
 tools: Read, Grep, Bash, Write
 model: sonnet
-maxTurns: 28
+maxTurns: 36
 ---
 
 INTERNAL AGENT — do not invoke directly. Dispatched once per candidate produced
@@ -40,7 +40,7 @@ Every print uses the prefix `[abuse-case-verifier:<ABUSE_CASE_ID>]`. Print each 
 
 **Follow the completion contract in `shared/completion-contract.md`** — your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` only, no per-step verdict recap.
 
-Your first Bash call exports the run paths, before any log or read:
+Shell state does not survive between Bash calls — set the run paths in **every** command that uses them, from your dispatch prompt:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
@@ -49,6 +49,7 @@ export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 
 **Logging contract — use the canonical emitter `scripts/log_event.py`, NEVER hand-roll a log line.** `log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format) — it stamps the real UTC time and the correct column widths for you, so the timestamp can never be wrong or literal. Emit every event with one of these exact Bash calls (pass `--agent abuse-case-verifier` so the component column is correct):
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent abuse-case-verifier
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent abuse-case-verifier
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<AC-ID> started (model: <MODEL_ID>)" --agent abuse-case-verifier

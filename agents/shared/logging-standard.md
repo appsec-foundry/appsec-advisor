@@ -113,28 +113,33 @@ Pair every `⟶ Dispatching …` print with its `AGENT_INVOKE` log line (same Ba
 
 Execute this IMMEDIATELY before any file reads, globs, or greps.
 
-**Export `OUTPUT_DIR` as your very first Bash call**, substituting the literal
-path from your dispatch prompt:
+**Assign `OUTPUT_DIR` inside the same Bash command that uses it**, substituting
+the literal path from your dispatch prompt. Combine the startup log with
+`date +%s` to capture `START_EPOCH`:
 
 ```bash
-export OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
-```
-
-Then log, and combine with `date +%s` to capture `START_EPOCH`:
-
-```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 [ -n "${OUTPUT_DIR:-}" ] || { echo "OUTPUT_DIR unset — refusing to log" >&2; exit 2; }
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <AGENT>  AGENT_START   <AGENT> started (model: <MODEL>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 date +%s
 ```
 
 **Important:** the orchestrator injects `OUTPUT_DIR` into your prompt as *text*,
-not as shell state. Each Bash call starts a fresh shell, so `$OUTPUT_DIR` is
-unset until you export it — an earlier version of this rule claimed otherwise
-and forbade the export, which made agents improvise `mkdir -p "$OUTPUT_DIR"` on
-an empty variable and append to `/.agent-run.log` at filesystem root (juice-shop
-2026-08-18). Usually this failed silently, because the `2>/dev/null` on the echo
-discarded the error and the agent's own log lines were simply lost.
+not as shell state, and **each Bash call starts a fresh shell** — so a value you
+assign in one call is gone in the next. Repeat the assignment line in every
+command that references the path; `agents/shared/validation-routine.md` states
+the same rule for the validators.
+
+An earlier version of this rule forbade the assignment outright, which made
+agents improvise `mkdir -p "$OUTPUT_DIR"` on an empty variable and append to
+`/.agent-run.log` at filesystem root (juice-shop 2026-08-18). The correction
+mandated an `export` as the "very first Bash call", which does not survive to
+the second one and so failed the same way: on the 2026-08-21
+insecure-large-spring-app run the export succeeded at 19:13:13 and `log_event.py`
+refused an empty `<output_dir>` four seconds later in the very next block. Both
+failures are usually silent, because the `2>/dev/null` on the echo discards the
+error and the agent's own log lines are simply lost — which also unpairs
+AGENT_START/AGENT_END and drops that dispatch from the run's cost figures.
 
 Never derive, guess, or default the path, and never `mkdir` it — `acquire_lock.py`
 already created `$OUTPUT_DIR` before any sub-agent is dispatched. If the variable
@@ -149,6 +154,7 @@ Emit at the **start** and **end** of each step or check (see event catalog above
 
 ```bash
 # STEP_START / STEP_END pairs (stride-analyzer, context-resolver, triage-validator, orchestrator):
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent <AGENT>
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent <AGENT>
 
@@ -159,18 +165,21 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info <EVENT> "<
 **⚠ NEVER hand-roll the line via `python3 -c` calling `event_log.format_line` directly.** `format_line`'s `level` / `component` / `sid` parameters are **keyword-only** — a positional call (`format_line(ts, sid, event, detail)`) or an invented kwarg (`event_type=`) raises `TypeError: format_line() takes from 1 to 2 positional arguments…` and leaves `LOG_ERR` / traceback noise in `.agent-run.log` (observed on the 2026-06-20 Sonnet run). Always go through `log_event.py` above. If — and only if — that script is unavailable, fall back to a plain `echo` (never `python3 -c`):
 
 ```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   <AGENT>  <EVENT>   <message>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 ## File write logging
 
 ```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  INFO   <AGENT>  FILE_WRITE   <filepath>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
 ## Error logging
 
 ```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [--------]  ERROR  <AGENT>  AGENT_ERROR   <description>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
@@ -179,6 +188,7 @@ echo "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 0000-00-00T00:00:00Z)  [
 Use a `python3` call to compute the elapsed duration and write the final log entry — a compound `&&` chain starting with `END_EPOCH=$(...)` would begin with a variable assignment and cannot be matched by Claude Code's `Bash(...)` allow rules:
 
 ```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" \
   "$OUTPUT_DIR" "<AGENT>" "<MODEL>" "$START_EPOCH"
 ```
@@ -187,6 +197,7 @@ The helper script `scripts/log_agent_end.py` takes four positional arguments: ou
 
 If the script is unavailable, fall back to a plain echo (no duration):
 ```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <AGENT>  AGENT_END   <AGENT> completed (model: <MODEL>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
@@ -205,12 +216,14 @@ The orchestrator emits `ASSESSMENT_START` / `ASSESSMENT_END`, `PHASE_START` / `P
 
 **Phase events** (one per `▶`/`✓` line):
 ```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   threat-analyst  PHASE_START   <exact phase line>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `PHASE_END` for ✓ lines.
 
 **Sub-agent dispatch events** — the AGENT column is the **sub-agent's** name, not `threat-analyst`:
 ```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   <agent-name>  AGENT_INVOKE   <description> (model: <agent's model>)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 Use `AGENT_DONE` when the dispatched sub-agent returns. `AGENT_DISPATCH` marks a background launch.
