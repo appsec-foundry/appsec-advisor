@@ -764,3 +764,104 @@ def test_tier_contradiction_fails_the_cli_gate(tmp_path):
     proc = _run(["components", str(fragment), "--repo-root", str(REPO_ROOT)])
     assert proc.returncode != 0, "the CLI accepted a self-contradicting tier"
     assert "renders on the server" in (proc.stdout + proc.stderr)
+
+
+# ---------------------------------------------------------------------------
+# pre-render-gate must not be stricter than the composer it guards (2026-08-22)
+#
+# threat-model.yaml carries slug component ids, so the MS renderer echoes slugs
+# into affected_components where the schema demands ^C-\d{2,}$.
+# compose_threat_model repairs that before it validates. This gate runs FIRST
+# and did not, so it hard-failed fragments compose accepts and consumed both
+# repair retries while a direct compose run succeeded. Both now share
+# scripts/_ms_component_refs.py.
+# ---------------------------------------------------------------------------
+
+import yaml  # noqa: E402
+
+
+def _slug_output_dir(tmp_path: Path) -> Path:
+    (tmp_path / ".fragments").mkdir()
+    (tmp_path / "threat-model.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "components": [
+                    {"id": "web-ui", "name": "Web UI"},
+                    {"id": "auth-identity", "name": "Authentication"},
+                    {"id": "sqlite-legacy-auth", "name": "SQLite Legacy Auth"},
+                ]
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".fragments" / "ms-anti-patterns.json").write_text(
+        json.dumps(
+            {
+                "anti_patterns": [
+                    {
+                        "name": "Raw SQL string interpolation",
+                        "description": (
+                            "Queries are assembled by concatenation across several stores, so no "
+                            "single call site can be patched to close the class."
+                        ),
+                        "affected_components": ["auth-identity", "sqlite-legacy-auth"],
+                        "findings": [{"ref": "T-009", "label": "SQL injection authentication bypass"}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def _anti_patterns_refs(output_dir: Path) -> list[str]:
+    data = json.loads((output_dir / ".fragments" / "ms-anti-patterns.json").read_text(encoding="utf-8"))
+    return data["anti_patterns"][0]["affected_components"]
+
+
+def test_pre_render_gate_normalises_slug_component_refs(tmp_path):
+    output_dir = _slug_output_dir(tmp_path)
+
+    _run(["pre-render-gate", str(output_dir)])
+
+    assert _anti_patterns_refs(output_dir) == ["C-02", "C-03"]
+    report = json.loads((output_dir / ".pre-render-report.json").read_text(encoding="utf-8"))
+    failed = {entry["file"] for entry in report["failed"]}
+    assert "ms-anti-patterns.json" not in failed, report["failed"]
+
+
+def test_pre_render_gate_normalisation_is_idempotent(tmp_path):
+    output_dir = _slug_output_dir(tmp_path)
+
+    _run(["pre-render-gate", str(output_dir)])
+    first = _anti_patterns_refs(output_dir)
+    _run(["pre-render-gate", str(output_dir)])
+
+    assert _anti_patterns_refs(output_dir) == first
+
+
+def test_pre_render_gate_without_yaml_leaves_fragments_untouched(tmp_path):
+    """No threat-model.yaml means no slug -> C-NN mapping exists; the fragment
+    is validated as it stands rather than silently mangled."""
+    output_dir = _slug_output_dir(tmp_path)
+    (output_dir / "threat-model.yaml").unlink()
+
+    _run(["pre-render-gate", str(output_dir)])
+
+    assert _anti_patterns_refs(output_dir) == ["auth-identity", "sqlite-legacy-auth"]
+
+
+def test_unknown_component_slug_is_left_for_the_schema_to_reject(tmp_path):
+    output_dir = _slug_output_dir(tmp_path)
+    fragment = output_dir / ".fragments" / "ms-anti-patterns.json"
+    data = json.loads(fragment.read_text(encoding="utf-8"))
+    data["anti_patterns"][0]["affected_components"] = ["auth-identity", "not-a-component"]
+    fragment.write_text(json.dumps(data), encoding="utf-8")
+
+    _run(["pre-render-gate", str(output_dir)])
+
+    assert _anti_patterns_refs(output_dir) == ["C-02", "not-a-component"]
+    report = json.loads((output_dir / ".pre-render-report.json").read_text(encoding="utf-8"))
+    assert "ms-anti-patterns.json" in {entry["file"] for entry in report["failed"]}

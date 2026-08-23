@@ -63,6 +63,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import _ms_component_refs
 import _safe_cond
 import _severity_rollup
 import jinja2
@@ -1099,16 +1100,7 @@ def _component_slug_to_cnn_map(ctx: RenderContext) -> dict[str, str]:
     The C-NN assignment (``C-{idx:02d}`` by component array order) is identical
     to ``_component_lookup`` so anchors stay consistent across the document.
     """
-    cmap: dict[str, str] = {}
-    for idx, c in enumerate(ctx.yaml_data.get("components") or [], start=1):
-        if not isinstance(c, dict):
-            continue
-        raw = (c.get("id") or "").strip()
-        canonical = raw if re.match(r"^C-\d+$", raw) else f"C-{idx:02d}"
-        if raw:
-            cmap[raw.lower()] = canonical
-        cmap[canonical.lower()] = canonical
-    return cmap
+    return _ms_component_refs.slug_to_cnn_map(ctx.yaml_data.get("components"))
 
 
 def _normalize_affected_component_refs(refs: Any, cmap: dict[str, str]) -> tuple[Any, bool]:
@@ -1118,24 +1110,7 @@ def _normalize_affected_component_refs(refs: Any, cmap: dict[str, str]) -> tuple
     dict form the schemas permit. An already-canonical or unknown ref is left
     untouched so the schema still catches genuine garbage.
     """
-    if not isinstance(refs, list):
-        return refs, False
-    new_refs: list[Any] = []
-    changed = False
-    for r in refs:
-        if isinstance(r, str):
-            canon = cmap.get(r.strip().lower())
-            if canon and canon != r:
-                new_refs.append(canon)
-                changed = True
-                continue
-        elif isinstance(r, dict) and isinstance(r.get("id"), str):
-            canon = cmap.get(r["id"].strip().lower())
-            if canon and canon != r["id"]:
-                r = {**r, "id": canon}
-                changed = True
-        new_refs.append(r)
-    return new_refs, changed
+    return _ms_component_refs.normalize_refs(refs, cmap)
 
 
 def _normalize_fragment_component_refs(ctx: RenderContext, filename: str, list_key: str) -> None:
@@ -1149,28 +1124,12 @@ def _normalize_fragment_component_refs(ctx: RenderContext, filename: str, list_k
     (observed: anti-patterns 2026-06-12, ai-exposure 2026-06-21 juice-shop).
     Normalising here — once, before BOTH validation sites — makes the fragment
     schema-valid and any derived anchor resolvable. Idempotent.
+
+    The implementation lives in ``_ms_component_refs`` so the controller's
+    standalone pre-render gate applies exactly this repair before it validates;
+    when the two drifted, the gate rejected fragments compose accepts.
     """
-    path = ctx.fragments_dir / filename
-    if not path.is_file():
-        return
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return  # malformed JSON is the validator's problem, not ours
-    items = data.get(list_key)
-    if not isinstance(items, list):
-        return
-    cmap = _component_slug_to_cnn_map(ctx)
-    changed = False
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        new_refs, item_changed = _normalize_affected_component_refs(it.get("affected_components"), cmap)
-        if item_changed:
-            it["affected_components"] = new_refs
-            changed = True
-    if changed:
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _ms_component_refs.normalize_fragment_file(ctx.fragments_dir / filename, list_key, _component_slug_to_cnn_map(ctx))
 
 
 def _normalize_anti_pattern_component_refs(ctx: RenderContext) -> None:

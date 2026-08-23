@@ -31,10 +31,29 @@ from typing import Any
 import jsonschema
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _ms_component_refs
+import yaml
 from _atomic_io import atomic_write_json
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
+
+
+def _normalize_ms_component_refs(output_dir: Path, fragments_dir: Path) -> None:
+    """Repair slug component ids in MS fragments exactly as compose does.
+
+    Best-effort: without a readable threat-model.yaml there is no slug -> C-NN
+    mapping to apply, and the fragments are validated as they stand.
+    """
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        return
+    try:
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return
+    _ms_component_refs.normalize_ms_fragments(fragments_dir, data.get("components"))
+
 
 # Map fragment type → schema file. This is the single source of truth for
 # which fragments validate against which schemas.
@@ -422,6 +441,14 @@ def run_pre_render_gate(
                 file=sys.stderr,
             )
         return 1
+
+    # Apply the same slug -> C-NN repair compose_threat_model performs before it
+    # validates. Without it this gate is STRICTER than the composer it guards:
+    # the renderer echoes the slug component ids it read from threat-model.yaml,
+    # compose rewrites them and succeeds, but this gate — running first — failed
+    # hard and consumed both repair retries (2026-08-22). Shared implementation
+    # in _ms_component_refs so the two can no longer drift apart.
+    _normalize_ms_component_refs(output_dir, fragments_dir)
 
     # Check required fragment presence before schema validation so a missing
     # file is reported as "missing_required" instead of an invalid file.
