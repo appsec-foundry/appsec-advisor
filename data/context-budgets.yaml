@@ -42,7 +42,17 @@ surfaces:
     # at 89.6%, so the only way to fit it was deleting existing dispatch
     # guidance. Raised instead, so the ten-percent headroom guard keeps doing
     # its job rather than being worked around.
-    max_bytes: 3600
+    #
+    # 3600 -> 4000 (2026-08-23). That retry is now the controller's, keyed on
+    # the merged verdicts instead of the waiter's exit status, which a
+    # background launch reports as 0 no matter what the script returned. The
+    # runtime has to describe a second possible action from `finalize-abuse`,
+    # which is more text than the branch it replaces. At 3600 the file landed
+    # on 89.9% — passing only by rounding, and only after the wording had been
+    # cut past the point of clarity. 4000 restores headroom comparable to
+    # thin_stage2_runtime (81%), so the guard measures drift again rather than
+    # rationing a control-flow rule the orchestrator has to follow exactly.
+    max_bytes: 4000
   thin_stage2_runtime:
     path: skills/create-threat-model/SKILL-thin-stage2.md
     max_bytes: 3600

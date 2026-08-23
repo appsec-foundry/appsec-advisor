@@ -955,6 +955,111 @@ def test_prepare_abuse_still_dispatches_a_partially_finalized_verdict(tmp_path, 
     assert action["candidates"] == ["AC-T-001"]
 
 
+def _write_merged_verdicts(output: Path, verdicts: list[dict]) -> None:
+    (output / ".abuse-case-verdicts.json").write_text(
+        json.dumps({"schema_version": 1, "verdicts": verdicts}), encoding="utf-8"
+    )
+
+
+_PRESEED_STEP = {"step": 1, "verdict": "inconclusive", "state": "pending", "reason": "pre-seed: checking x"}
+
+
+def test_abuse_redispatchable_names_only_what_a_retry_can_safely_rerun(tmp_path):
+    # A retry re-runs the verifier against a FIXED verdict path, and the agent
+    # pre-seeds that file before investigating — so re-dispatching costs
+    # whatever the previous verifier already decided.
+    output = _abuse_output(tmp_path)
+    _write_merged_verdicts(
+        output,
+        [
+            # never wrote a file — the merge's stub. Nothing to lose.
+            {"abuse_case_id": "AC-T-001", "step_verdicts": [], "note": "no verifier verdict"},
+            # wrote the pre-seed, then died. Nothing to lose.
+            {"abuse_case_id": "AC-T-002", "step_verdicts": [dict(_PRESEED_STEP)]},
+            # decided step 1, cut off on step 2 — a retry would overwrite the
+            # decided step with a fresh pre-seed.
+            {
+                "abuse_case_id": "AC-T-003",
+                "step_verdicts": [
+                    {"step": 1, "verdict": "confirmed", "state": "decided", "reason": "sink reachable"},
+                    dict(_PRESEED_STEP, step=2),
+                ],
+            },
+            # fully decided.
+            {
+                "abuse_case_id": "AC-T-004",
+                "step_verdicts": [{"step": 1, "verdict": "confirmed", "state": "decided", "reason": "reachable"}],
+            },
+        ],
+    )
+    assert controller._abuse_redispatchable(output) == ["AC-T-001", "AC-T-002"]
+
+
+def test_abuse_redispatchable_is_empty_without_a_merge(tmp_path):
+    assert controller._abuse_redispatchable(_abuse_output(tmp_path)) == []
+
+
+def _finalize_with_empty_wave(output: Path, monkeypatch, candidates: list[str]):
+    """Run finalize_abuse over a wave where no verifier decided anything."""
+    _write_abuse_matches(output, candidates)
+    _write_merged_verdicts(output, [{"abuse_case_id": c, "step_verdicts": [dict(_PRESEED_STEP)]} for c in candidates])
+
+    def fake_script(name, args, **kwargs):
+        if "list-candidates" in args:
+            return _completed("\n".join(candidates) + "\n")
+        if name == "build_abuse_case_contexts.py":
+            _write_abuse_projections(output, candidates)
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_best_effort_script", lambda *a, **k: None)
+    return controller.finalize_abuse(output)
+
+
+def test_finalize_abuse_retries_a_wave_that_decided_nothing(tmp_path, monkeypatch):
+    # The 2026-08-22 juice-shop run: every verifier died seconds after dispatch,
+    # the merge reported it on stderr, and finalization returned run_gate anyway
+    # — so §9 shipped seven Critical chains that were never checked. The retry
+    # must come off the merged verdicts, not off the waiter's exit code, which a
+    # background launch reports as 0 whatever the script actually returned.
+    output = _abuse_output(tmp_path)
+    action = _finalize_with_empty_wave(output, monkeypatch, ["AC-T-001", "AC-T-002"])
+    assert action["action"] == "dispatch_parallel"
+    assert action["stage"] == "stage1d"
+    assert action["candidates"] == ["AC-T-001", "AC-T-002"]
+    assert any("re-dispatching once" in r for r in action["receipts"])
+    controller._validate_action(action)
+
+
+def test_finalize_abuse_spends_the_retry_once_and_then_says_it_is_unverified(tmp_path, monkeypatch):
+    output = _abuse_output(tmp_path)
+    first = _finalize_with_empty_wave(output, monkeypatch, ["AC-T-001"])
+    assert first["action"] == "dispatch_parallel"
+    # The budget is persisted, so a second empty wave finalizes instead of looping.
+    second = _finalize_with_empty_wave(output, monkeypatch, ["AC-T-001"])
+    assert second["action"] == "run_gate"
+    assert any("remain unverified" in r for r in second["receipts"])
+
+
+def test_finalize_abuse_does_not_retry_when_every_chain_was_decided(tmp_path, monkeypatch):
+    output = _abuse_output(tmp_path)
+    _write_abuse_matches(output, ["AC-T-001"])
+    _write_merged_verdicts(
+        output,
+        [
+            {
+                "abuse_case_id": "AC-T-001",
+                "step_verdicts": [{"step": 1, "verdict": "confirmed", "state": "decided", "reason": "r"}],
+            }
+        ],
+    )
+    monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+    monkeypatch.setattr(controller, "_best_effort_script", lambda *a, **k: None)
+    action = controller.finalize_abuse(output)
+    assert action["action"] == "run_gate"
+    assert not any("re-dispatching" in r for r in action["receipts"])
+
+
 def _failing_matcher(stderr: str):
     def fake_script(name, args, **kwargs):
         if args and args[0] == "match":

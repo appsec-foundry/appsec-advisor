@@ -5222,8 +5222,13 @@ def _context_v2_abuse_candidate_receipt(
     )
 
 
-def prepare_abuse(output_dir: Path) -> dict[str, Any]:
-    """Match abuse cases and return a bounded verifier fan-out action."""
+def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dict[str, Any]:
+    """Match abuse cases and return a bounded verifier fan-out action.
+
+    ``restrict_to`` narrows the fan-out to an explicit candidate set. The retry
+    in :func:`finalize_abuse` uses it to re-dispatch only the candidates that
+    are safe to overwrite; the normal first pass passes nothing.
+    """
     output_dir, cfg = _load_run_config(output_dir)
     config_path = output_dir / ".skill-config.json"
     common = {
@@ -5272,6 +5277,10 @@ def prepare_abuse(output_dir: Path) -> dict[str, Any]:
     if already := _finalized_abuse_verdicts(output_dir, candidates):
         receipts.append("already verified, not re-dispatched: " + ", ".join(already))
         candidates = [item for item in candidates if item not in already]
+    if restrict_to is not None:
+        allowed = set(restrict_to)
+        candidates = [item for item in candidates if item in allowed]
+        receipts.append("retry restricted to: " + (", ".join(candidates) if candidates else "(none)"))
     if not candidates or budget_watchdog.has_active_critical_claim(output_dir):
         return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
     projection_args = ["--output-dir", str(output_dir), "--repo-root", repo_root]
@@ -5348,13 +5357,85 @@ def _schema_failure_detail(message: str, limit: int = 700) -> str:
     return detail if len(detail) <= limit else detail[: limit - 1].rstrip() + "…"
 
 
+ABUSE_WAVE_RETRY_KEY = "abuse_verifier_wave"
+
+
+def _abuse_redispatchable(output_dir: Path) -> list[str]:
+    """Candidates a retry may re-run without destroying work already done.
+
+    The predicate lives in `verify_abuse_cases.is_safe_to_redispatch`, next to
+    the pre-seed semantics it reads; this only applies it to the merged file.
+    """
+    try:
+        sys.path.insert(0, str(SCRIPT_DIR))
+        import verify_abuse_cases  # noqa: PLC0415
+    except Exception:
+        return []
+    try:
+        doc = json.loads((output_dir / ".abuse-case-verdicts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out: list[str] = []
+    for verdict in doc.get("verdicts") or []:
+        if not isinstance(verdict, dict):
+            continue
+        cid = verdict.get("abuse_case_id")
+        if not isinstance(cid, str) or not _ABUSE_ID_RE.fullmatch(cid):
+            continue
+        if verify_abuse_cases.is_finalized_verdict(verdict):
+            continue
+        if verify_abuse_cases.is_safe_to_redispatch(verdict):
+            out.append(cid)
+    return sorted(out)
+
+
 def finalize_abuse(output_dir: Path) -> dict[str, Any]:
     """Merge verifier sidecars and materialize the final abuse-case artifacts."""
     output_dir, cfg = _load_run_config(output_dir)
     config_path = output_dir / ".skill-config.json"
     receipts: list[str] = []
+    _best_effort_script(output_dir, "verify_abuse_cases.py", ["merge", "--output-dir", str(output_dir)], receipts)
+
+    # Decide the retry from the merged artifacts, not from the waiter's exit
+    # code. `wait_abuse_progress.py` already returns 1 when its poll cap closes
+    # jobs as `join_deadline_expired`, and the Stage-1d runtime already grants
+    # one retry on nonzero — but that couples the decision to a process exit
+    # status, which is the one channel this pipeline does not treat as
+    # authoritative ("Returns carry status and blockers; filesystem is
+    # authoritative"). It is also lossy: launched as a background task the
+    # waiter's `EXIT:1` lands in the output body while the task itself reports
+    # exit 0, and the retry never fires. That is what shipped the 2026-08-22
+    # juice-shop run: all seven verifiers died seconds after dispatch, the
+    # merge correctly reported "7 verifier(s) did not finalize" on stderr, and
+    # finalization returned run_gate as though the stage had succeeded — §9
+    # went out with seven Critical chains marked inconclusive and no chain
+    # actually checked. Reading the verdicts here catches every cause of an
+    # empty wave (rate limit, crash, turn ceiling, a mis-invoked waiter) in
+    # any repo, and cannot be masked by how the waiter was called.
+    if redispatchable := _abuse_redispatchable(output_dir):
+        attempt = _claim_producer_retry(output_dir, ABUSE_WAVE_RETRY_KEY)
+        if attempt is None:
+            # Budget spent. Finalize, but never as a silent success — the
+            # chains ship provisional and the receipt has to say so.
+            receipts.append(
+                "abuse verifiers did not finalize after retry; chains remain unverified: " + ", ".join(redispatchable)
+            )
+        else:
+            retry = prepare_abuse(output_dir, restrict_to=redispatchable)
+            if retry.get("action") == "dispatch_parallel":
+                _append_event(
+                    output_dir,
+                    "ABUSE_WAVE_RETRY",
+                    f"attempt={attempt} candidates={','.join(redispatchable)}",
+                )
+                retry["receipts"] = [
+                    f"abuse verifier wave produced no decided chain for {len(redispatchable)} "
+                    f"candidate(s); re-dispatching once (attempt {attempt})",
+                    *retry.get("receipts", []),
+                ]
+                return retry
+
     for name, args in (
-        ("verify_abuse_cases.py", ["merge", "--output-dir", str(output_dir)]),
         ("match_abuse_cases.py", ["finalize", "--output-dir", str(output_dir)]),
         ("promote_verified_abuse_cases.py", ["--output-dir", str(output_dir)]),
     ):

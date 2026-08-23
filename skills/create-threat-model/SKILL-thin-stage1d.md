@@ -41,7 +41,8 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
      <candidate ids from dispatch_jobs[]> --interval 20 --rounds 45
    ```
 
-   On nonzero, repeat steps 2-3 once; a second nonzero is fatal. Aggregate usage.
+   The waiter's exit status is informational; step 4 owns the retry, so do not
+   branch on it or repeat steps 2-3 yourself. Aggregate usage.
    Require concise status without reproducing evidence or artifact content.
    `run_gate` needs no verifier. Abort or overflow is fatal and
    must not silently drop candidates. The legacy shape lacks
@@ -54,8 +55,11 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
      finalize-abuse --output-dir "$OUTPUT_DIR"
    ```
 
-   Require `action=run_gate`, `stage=stage1d`. The controller owns merge,
-   promotion, YAML rebuild, gates, ranking, and §9 rendering.
+   Require `stage=stage1d`. `run_gate` ends the stage; the controller owns
+   merge, promotion, YAML rebuild, gates, ranking, and §9 rendering.
+   `dispatch_parallel` is its one retry for verifiers that decided nothing:
+   dispatch that wave as in step 3, wait, then call `finalize-abuse` again.
+   The retry budget is persisted, so this cannot loop.
 5. Send the final heartbeat, stop the watchdog, record aggregated stats, and
    mark the task completed:
 

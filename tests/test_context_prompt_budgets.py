@@ -19,8 +19,12 @@ SURFACE_MAX_BYTES_RATCHET = {
     "thin_stage1_v2_runtime": 6400,
     # 3400 -> 3600 (2026-08-21): the abuse waiter's nonzero exit gained a
     # one-shot retry instruction, and at 3400 the file already sat at 89.6% of
-    # budget. See the note in data/context-budgets.yaml.
-    "thin_stage1d_runtime": 3600,
+    # budget. 3600 -> 4000 (2026-08-23): that retry moved to the controller,
+    # which decides it from the merged verdicts rather than an exit status a
+    # background launch reports as 0 regardless — so the runtime must describe
+    # a second possible `finalize-abuse` action, more text than the branch it
+    # replaces. See the note in data/context-budgets.yaml.
+    "thin_stage1d_runtime": 4000,
     "thin_stage2_runtime": 3600,
     "thin_stage3_runtime": 8000,
     "thin_stage4_runtime": 3600,

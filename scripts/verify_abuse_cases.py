@@ -128,6 +128,23 @@ def _unverified_preseed_steps(verdict: dict) -> list:
     return [s.get("step") for s in steps if _is_untouched_preseed_step(s)]
 
 
+def is_safe_to_redispatch(verdict: dict) -> bool:
+    """True when re-running this candidate's verifier destroys nothing.
+
+    A verifier writes to a fixed path and pre-seeds it before investigating, so
+    a second dispatch costs whatever the first one decided. That price is zero
+    for a verdict with no steps at all (the merge's stub for a candidate whose
+    verifier never wrote a file) and for one that is an untouched pre-seed
+    across every step — in both, nothing was ever examined. It is NOT zero for
+    a partially finalized verdict, whose decided steps the second pre-seed
+    would overwrite; `orchestration_controller.finalize_abuse` relies on that
+    exclusion when it claims its one retry.
+    """
+    if not (verdict.get("step_verdicts") or []):
+        return True
+    return _is_unfinalized_preseed(verdict)
+
+
 def is_finalized_verdict(verdict: dict) -> bool:
     """True when every step in a verdict file carries a decided verdict.
 
