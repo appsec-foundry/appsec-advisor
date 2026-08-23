@@ -169,7 +169,7 @@ Renders as the §1 Verdict block (red/yellow/green HTML blockquote). **Author EX
 {
   "severity": "red",                     // enum: "green" | "yellow" | "red" — REQUIRED. NOT "verdict_color"/"verdict_label".
   "opening": "<1-2 short-sentence posture statement, 60-450 chars>",   // REQUIRED. NO F-NNN/T-NNN ids (regex-blocked). Posture, not a finding list.
-  "bullets_intro": "<1 sentence introducing the blockquote, 20-200 chars>",  // OPTIONAL. No F/T ids.
+  "bullets_intro": "<1 sentence introducing the blockquote, 20-200 chars>",  // OPTIONAL. No F/T ids. No blanket precondition — see below.
   "bullets": [                           // REQUIRED, 2-8 items. NOT "worst_case_scenarios".
     {
       "title": "<plain-language business-outcome headline, 5-60 chars>",
@@ -180,6 +180,18 @@ Renders as the §1 Verdict block (red/yellow/green HTML blockquote). **Author EX
   "closing": "<one short plain-language wrap, 40-220 chars>"   // REQUIRED. NO F/T ids (regex-blocked). NOT "closing_prose".
 }
 ```
+
+**`bullets_intro` must not assert a precondition the bullets do not all share.**
+It introduces a heterogeneous list, so any blanket claim about access level
+("an unauthenticated attacker can reach each of the following"), effort, or
+time is false as soon as one bullet needs a logged-in session — and it is the
+sentence the reader trusts for all of them. Juice-shop 2026-08-22 shipped
+exactly that: the intro claimed unauthenticated reach while two of six bullets
+read "any logged-in user" and "any customer" in their own bodies. Each bullet
+already carries its own precondition in `body`; leave it there. Write a neutral
+frame ("The most serious business exposures identified, in order of impact:")
+or omit the key — it is optional, and the deterministic default is neutral.
+A uniform precondition is allowed only when EVERY bullet genuinely shares it.
 
 **Forbidden legacy keys** (they were the 2026-06-05 parallel-render drift): `verdict_label`, `verdict_color`, `worst_case_scenarios`, `closing_prose`, `verdict_prose`. The ONLY top-level keys are the five above. Do not cite exact severity counts in `opening` (the composer injects the authoritative `**Risk distribution:** …` line). Run the MS compactness gate after authoring (see "MS prose — single-pass discipline").
 
