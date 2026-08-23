@@ -215,6 +215,33 @@ def _write_progress(output_dir: Path, payload: dict) -> None:
         pass
 
 
+_USAGE_LINES = (
+    "usage: {prog} <output_dir> <kind> <detail> [<event>] [--agent NAME] [--component-id ID]",
+    "  kind: phase-start | phase-end | step-start | step-end | info",
+    "  info takes two more positionals: {prog} <output_dir> info <EVENT_NAME> <detail>",
+    "  the log file is always <output_dir>/.agent-run.log — there is no --log-file option",
+)
+
+
+def _reject(prog: str, message: str) -> int:
+    """Reject malformed argv *and* state the contract that was violated.
+
+    Every rejection path here is reached by an agent that is guessing, and a
+    bare "unknown kind" tells it what failed but not what would work — so it
+    guesses again. The 2026-08-23 insecure-large-spring-app run got this script's
+    contract wrong five different ways across 10 rejected calls: an invented
+    ``--log-file`` option, two unknown kinds (``complete``, ``STEP``), a missing
+    ``info`` positional, and six depth-validation failures. Only one of the eight
+    rejection paths carried a synopsis, and it was not one of those five.
+    Printing it on every path turns each failure into a single self-correcting
+    round trip.
+    """
+    print(f"{prog}: {message}", file=sys.stderr)
+    for line in _USAGE_LINES:
+        print(line.format(prog=prog), file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str]) -> int:
     argv = list(argv)
     agent = os.environ.get("APPSEC_LOG_AGENT", "threat-analyst").strip() or "threat-analyst"
@@ -224,21 +251,18 @@ def main(argv: list[str]) -> int:
         try:
             agent = argv[i + 1].strip() or agent
         except IndexError:
-            print(f"{argv[0]}: --agent requires a value", file=sys.stderr)
-            return 2
+            return _reject(argv[0], "--agent requires a value")
         del argv[i : i + 2]
     if "--component-id" in argv:
         i = argv.index("--component-id")
         try:
             component_id = argv[i + 1].strip()
         except IndexError:
-            print(f"{argv[0]}: --component-id requires a value", file=sys.stderr)
-            return 2
+            return _reject(argv[0], "--component-id requires a value")
         del argv[i : i + 2]
 
     if len(argv) < 4:
-        print(f"usage: {argv[0]} <output_dir> <kind> <detail> [<event>]", file=sys.stderr)
-        return 2
+        return _reject(argv[0], "missing required positional arguments")
 
     # An unset `$OUTPUT_DIR` reaches us as an empty argument, and `Path("")` is
     # the current directory — the target repository root for an agent. Writing
@@ -247,11 +271,9 @@ def main(argv: list[str]) -> int:
     # gate. An option name in this slot means the arguments shifted for the
     # same reason. Refuse both instead of logging to an arbitrary directory.
     if not argv[1].strip():
-        print(f"{argv[0]}: <output_dir> is empty — is $OUTPUT_DIR exported?", file=sys.stderr)
-        return 2
+        return _reject(argv[0], "<output_dir> is empty — is $OUTPUT_DIR exported?")
     if argv[1].startswith("-"):
-        print(f"{argv[0]}: <output_dir> looks like an option: {argv[1]!r}", file=sys.stderr)
-        return 2
+        return _reject(argv[0], f"<output_dir> looks like an option: {argv[1]!r}")
 
     output_dir = Path(argv[1])
     kind = argv[2]
@@ -274,14 +296,12 @@ def main(argv: list[str]) -> int:
             argv[3] = normalized_event
             kind = "info"
         else:
-            print(f"{argv[0]}: unknown kind {kind!r} (expected one of {sorted(_CANONICAL_EVENTS)})", file=sys.stderr)
-            return 2
+            return _reject(argv[0], f"unknown kind {kind!r} (expected one of {sorted(_CANONICAL_EVENTS)})")
 
     if kind == "info":
         # `info <event> <detail>` — positional arg order: output_dir info event detail
         if len(argv) < 5:
-            print(f"{argv[0]}: `info` requires <event-name> <detail>", file=sys.stderr)
-            return 2
+            return _reject(argv[0], "`info` requires <event-name> <detail>")
         event = argv[3]
         detail = argv[4]
     else:
@@ -289,8 +309,7 @@ def main(argv: list[str]) -> int:
         detail = argv[3]
 
     if agent == "stride-analyzer-v2" and not component_id:
-        print(f"{argv[0]}: stride-analyzer-v2 logging requires --component-id", file=sys.stderr)
-        return 2
+        return _reject(argv[0], "stride-analyzer-v2 logging requires --component-id")
     if not component_id:
         # A depth claim about a named component is validated whoever writes it.
         # Keying the check on the caller naming itself made it opt-out: a line
@@ -304,8 +323,7 @@ def main(argv: list[str]) -> int:
         try:
             call = authoritative_call(output_dir, component_id, Path(__file__).resolve().parent.parent)
         except (OSError, ValueError, json.JSONDecodeError, ValidationError) as exc:
-            print(f"{argv[0]}: cannot validate STRIDE logging depth: {exc}", file=sys.stderr)
-            return 2
+            return _reject(argv[0], f"cannot validate STRIDE logging depth: {exc}")
         detail = _DEPTH_TOKEN_RE.sub("", detail)
         detail = re.sub(r"\s{2,}", " ", detail).strip(" ,;()")
         detail = (
