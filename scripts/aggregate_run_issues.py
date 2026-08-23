@@ -300,6 +300,16 @@ _SESSION_STOP_RE = re.compile(
     r"stop_reason=(?P<reason>\S+).*?in=(?P<in>[\d,]+).*?out=(?P<out>[\d,]+).*?cost=\$(?P<cost>[\d.]+)"
 )
 
+# `agent_logger.handle_stop` writes `cache_read=` only when it is non-zero, so it
+# is matched separately instead of as an optional group — a lazy optional inside
+# the line above would silently skip it and report every session as uncached.
+# Cache reads are the dominant billed volume of an orchestrating session (context
+# size × turns), and they were on disk but unparsed: the 2026-08-23
+# insecure-large-spring-app run reported `out=192,912 tokens, cost=$11.29`
+# without the 19.0M cached tokens that actually produced that bill, so a
+# context-bloat problem read as ordinary long-session output.
+_SESSION_STOP_CACHE_RE = re.compile(r"cache_read=(?P<cache_read>[\d,]+)")
+
 
 def _parse_iso(ts: str) -> int | None:
     try:
@@ -591,6 +601,42 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+_SOFT_TURN_CROSSING_RE = re.compile(r"\bturns=(?P<used>\d+)/(?P<budget>\d+)")
+
+
+def _soft_turn_budget_crossing(detail: str) -> dict[str, int] | None:
+    """Classify a ``MAX_TURNS`` detail payload as a soft budget crossing.
+
+    Two producers emit this event name with opposite meanings. ``budget_watchdog``
+    fires while the agent is *still running*, against the per-component soft budget
+    from ``build_stride_dispatch_manifest`` (``turns=34/31  pct=109%``); the harness
+    ceiling in the agent definition is far higher (96 for stride-analyzer-v2), so
+    nothing is killed and the artifact is written normally. ``agent_logger`` fires
+    on the Stop hook with ``reason=max_turns`` — the real kill — and carries the
+    fixed literal ``Agent terminated — maxTurns limit reached`` with no counters.
+
+    Reporting both as ``error`` made the 2026-08-23 insecure-large-spring-app run
+    announce "1 error" for a component whose STRIDE output was complete and merged.
+    A soft crossing is a budget-calibration signal, not a failure: truncation is
+    owned by the wave completion gate and the deliverable gates, which fail loudly
+    on their own. Return the counters so the budget can be calibrated from data
+    instead of guessed; return ``None`` for the hard kill so ``error`` keeps a real
+    trigger.
+    """
+    if "terminated" in detail.lower():
+        return None
+    m = _SOFT_TURN_CROSSING_RE.search(detail or "")
+    if not m:
+        return None
+    used = int(m.group("used"))
+    budget = int(m.group("budget"))
+    if budget <= 0:
+        return None
+    # Truncate, matching how ``budget_watchdog`` renders the same ratio, so the
+    # issue and the raw log line do not disagree by a point.
+    return {"used": used, "budget": budget, "pct": int(used * 100 / budget)}
+
+
 def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, str]]) -> list[dict]:
     """TOOL_ERROR, MAX_TURNS, RENDER_FAILED, AGENT_ERROR.
 
@@ -613,17 +659,37 @@ def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, 
                 continue
             event = ev["event"]
             if event in ("TOOL_ERROR", "MAX_TURNS", "RENDER_FAILED", "AGENT_ERROR"):
+                category = categories[event]
+                severity = "error"
+                title = f"{event}: {_clip(ev['detail'], 80)}"
+                extra: dict = {}
+                if event == "MAX_TURNS":
+                    soft = _soft_turn_budget_crossing(ev["detail"])
+                    if soft:
+                        category = "turn_budget_exceeded"
+                        severity = "warning"
+                        title = (
+                            f"Soft turn budget exceeded: {_emitting_agent(ev)} used "
+                            f"{soft['used']} of {soft['budget']} budgeted turns ({soft['pct']}%) — "
+                            "harness ceiling not reached, output kept"
+                        )
+                        extra = {
+                            "turns_used": soft["used"],
+                            "turns_budgeted": soft["budget"],
+                            "pct_of_budget": soft["pct"],
+                        }
                 issues.append(
                     {
-                        "category": categories[event],
-                        "severity": "error",
-                        "title": f"{event}: {_clip(ev['detail'], 80)}",
+                        "category": category,
+                        "severity": severity,
+                        "title": title,
                         "evidence": {
                             "log_file": f".{source_path}",
                             "log_line": ln,
                             "raw_event": raw[:300],
                             "timestamp_iso": ev["ts"],
                             "source_agent": _emitting_agent(ev),
+                            **extra,
                         },
                     }
                 )
@@ -669,31 +735,75 @@ def _extract_budget_events(agent_log: list[tuple[int, str]]) -> list[dict]:
     return issues
 
 
+_BASH_WARN_SCRIPT_RE = re.compile(r"([\w.-]+\.(?:py|sh|mjs|js))")
+_BASH_WARN_RESP_RE = re.compile(r"resp=(?P<resp>.*)$", re.DOTALL)
+_BASH_WARN_VOLATILE_RE = re.compile(r"[0-9]+|/[^\s'\"]+")
+
+
+def _bash_warn_cause(detail: str) -> str:
+    """Collapse a BASH_WARN detail to the *cause* it reports.
+
+    A retrying agent emits the same diagnostic once per attempt: the 2026-08-23
+    insecure-large-spring-app run produced 13 ``bash_warn`` issues — 7 inside 90
+    seconds — for a single mistake, one invented ``--log-file`` option, and they
+    were 13 of the run's 15 warnings. Counting attempts as findings buries the
+    signal under its own repetitions and makes a one-line fix look like a
+    systemic problem. Key on the failing script plus the diagnostic it printed,
+    with paths and numbers normalised away so retries of the same mistake land in
+    one bucket while a genuinely different failure keeps its own.
+    """
+    script = _BASH_WARN_SCRIPT_RE.search(detail or "")
+    resp = _BASH_WARN_RESP_RE.search(detail or "")
+    payload = resp.group("resp") if resp else (detail or "")
+    payload = _BASH_WARN_VOLATILE_RE.sub("", payload)
+    payload = re.sub(r"\s+", " ", payload).strip()
+    return f"{script.group(1) if script else '?'}|{payload[:120]}"
+
+
 def _extract_warnings(hook_log: list[tuple[int, str]]) -> list[dict]:
-    """BASH_WARN events from PostToolUse hook.
+    """BASH_WARN events from PostToolUse hook, folded by cause.
 
     ``BASH_NOTE`` is deliberately not collected: it marks a read-only probe
     reporting a missing path — visible in the event log, but not an issue to
     triage.
     """
-    issues: list[dict] = []
+    by_cause: dict[str, dict] = {}
+    counts: dict[str, int] = {}
     for ln, raw in hook_log:
         ev = _parse_event_line(raw)
         if not ev or ev["event"] != "BASH_WARN":
             continue
-        issues.append(
-            {
-                "category": "bash_warn",
-                "severity": "warning",
-                "title": f"Bash command emitted a diagnostic on its own channel: {_clip(ev['detail'], 80)}",
-                "evidence": {
-                    "log_file": ".hook-events.log",
-                    "log_line": ln,
-                    "raw_event": raw[:300],
-                    "timestamp_iso": ev["ts"],
-                },
-            }
-        )
+        cause = _bash_warn_cause(ev["detail"])
+        counts[cause] = counts.get(cause, 0) + 1
+        if cause in by_cause:
+            # Keep the first occurrence — it is where the mistake was made, and
+            # therefore what a reader has to look at — but track the last one so
+            # the span of the retry loop stays visible.
+            by_cause[cause]["evidence"]["last_log_line"] = ln
+            by_cause[cause]["evidence"]["last_timestamp_iso"] = ev["ts"]
+            continue
+        by_cause[cause] = {
+            "category": "bash_warn",
+            "severity": "warning",
+            "title": f"Bash command emitted a diagnostic on its own channel: {_clip(ev['detail'], 80)}",
+            "evidence": {
+                "log_file": ".hook-events.log",
+                "log_line": ln,
+                "raw_event": raw[:300],
+                "timestamp_iso": ev["ts"],
+            },
+        }
+
+    issues: list[dict] = []
+    for cause, issue in sorted(by_cause.items(), key=lambda kv: kv[1]["evidence"]["log_line"]):
+        repeats = counts.get(cause, 1)
+        if repeats > 1:
+            issue["evidence"]["occurrences"] = repeats
+            issue["title"] += f" ({repeats}× — same cause)"
+        else:
+            issue["evidence"].pop("last_log_line", None)
+            issue["evidence"].pop("last_timestamp_iso", None)
+        issues.append(issue)
     return issues
 
 
@@ -950,6 +1060,11 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
         except ValueError:
             out_tokens = 0
         cost = float(m.group("cost"))
+        cache_m = _SESSION_STOP_CACHE_RE.search(ev["detail"])
+        try:
+            cache_read = int(cache_m.group("cache_read").replace(",", "")) if cache_m else 0
+        except ValueError:
+            cache_read = 0
         # Sprint 4C: skip the dominant noise source — `unknown` with a
         # moderate non-zero output is just a normal Subscription-mode
         # sub-agent stop. But still surface high-output stops (>50k
@@ -971,6 +1086,7 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
             "severity": "warning",
             "title": (
                 f"SESSION_STOP from {ev['source']}: reason={reason}, out={out_tokens:,} tokens, cost=${cost:.2f}"
+                + (f", cache_read={_fmt_tokens(cache_read)}" if cache_read else "")
             ),
             "evidence": {
                 "log_file": ".agent-run.log",
@@ -981,6 +1097,7 @@ def _extract_session_stop_anomalies(agent_log: list[tuple[int, str]]) -> list[di
                 "stop_reason": reason,
                 "output_tokens": out_tokens,
                 "cost_usd": cost,
+                "cache_read_tokens": cache_read,
             },
         }
         prev = by_source.get(key)
@@ -1433,6 +1550,16 @@ def _fmt_dur(seconds: int) -> str:
     if seconds < 60:
         return f"{seconds}s"
     return f"{seconds // 60}m {seconds % 60:02d}s"
+
+
+def _fmt_tokens(tokens: int) -> str:
+    """Cache-read volumes run into the millions; a raw digit string is unreadable
+    in a one-line issue title."""
+    if tokens >= 1_000_000:
+        return f"{tokens / 1_000_000:.1f}M"
+    if tokens >= 1_000:
+        return f"{tokens // 1_000}k"
+    return str(tokens)
 
 
 def _now_iso_z() -> str:

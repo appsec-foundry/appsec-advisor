@@ -675,6 +675,12 @@ def _recommend_default(issue: dict, output_dir: Path) -> dict:
 
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "max_turns_subagent": _recommend_max_turns_subagent,
+    # A soft budget crossing is the same finding at warning severity — the
+    # aggregator splits the category so the run stops reporting an error for a
+    # component that delivered complete output. The recommender already tells
+    # the two apart via _event_turn_budget and gives the soft case its own
+    # advice, so it must stay reachable under both names.
+    "turn_budget_exceeded": _recommend_max_turns_subagent,
     "max_turns_orchestrator": _recommend_max_turns_orchestrator,
     "perf_anomaly_phase": _recommend_perf_anomaly_phase,
     "stage1_excessive_duration": _recommend_stage1_excessive_duration,

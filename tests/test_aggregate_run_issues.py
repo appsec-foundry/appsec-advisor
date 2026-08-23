@@ -402,6 +402,26 @@ class TestSessionStopUnknownFilter:
         assert len(issues) == 1
         assert issues[0]["category"] == "high_token_usage"
 
+    def test_cache_read_is_captured_and_surfaced(self):
+        """2026-08-23 insecure-large-spring-app: the orchestrating session was
+        reported as ``out=192,912 tokens, cost=$11.29`` while 19.0M cached tokens
+        — the volume that actually produced the bill, and the signature of a
+        context that grew until it compacted — sat unparsed in the same line."""
+        log = [(1, self._stop_line(out_tokens=99_999, reason="end_turn"))]
+        (issue,) = agg._extract_session_stop_anomalies(log)
+        assert issue["evidence"]["cache_read_tokens"] == 2_612_375
+        assert "cache_read=2.6M" in issue["title"]
+
+    def test_missing_cache_read_reports_zero_not_a_crash(self):
+        """``agent_logger`` omits ``cache_read=`` when it is zero."""
+        line = (
+            "2026-04-27T18:10:12Z  [--------]  INFO   threat-analyst  SESSION_STOP   "
+            "stop_reason=end_turn  in=131  out=99,999  cost=$2.1882"
+        )
+        (issue,) = agg._extract_session_stop_anomalies([(1, line)])
+        assert issue["evidence"]["cache_read_tokens"] == 0
+        assert "cache_read" not in issue["title"]
+
     def test_cumulative_snapshots_collapse_to_one(self):
         """RC-5 (2026-06-21 juice-shop): SESSION_STOP fires repeatedly for the
         SAME session with a growing cumulative `out`. The aggregator must
@@ -753,6 +773,128 @@ class TestExtractErrors:
 
     def test_unparseable_lines_ignored(self):
         assert agg._extract_errors([(1, "junk")], [(1, "junk")]) == []
+
+
+class TestSoftTurnBudgetCrossing:
+    """2026-08-23 insecure-large-spring-app: ``budget_watchdog`` crossed the
+    per-component soft budget (``turns=34/31``) while the harness ceiling (96)
+    was never approached. The component's STRIDE artifact was complete and
+    merged, yet the run reported ``1 error`` — the only error it had."""
+
+    def test_soft_crossing_is_a_calibration_warning_with_counters(self):
+        agent = [
+            (
+                1,
+                _line(
+                    "2026-08-23T09:42:55Z",
+                    "MAX_TURNS",
+                    "agent=stride-analyzer-v2  agent_call_id=toolu_x  turns=34/31  pct=109%",
+                ),
+            )
+        ]
+        (issue,) = agg._extract_errors([], agent)
+        assert issue["severity"] == "warning"
+        assert issue["category"] == "turn_budget_exceeded"
+        assert issue["evidence"]["turns_used"] == 34
+        assert issue["evidence"]["turns_budgeted"] == 31
+        assert issue["evidence"]["pct_of_budget"] == 109
+
+    def test_harness_kill_stays_an_error(self):
+        agent = [
+            (
+                1,
+                _line(
+                    "2026-08-23T09:42:55Z",
+                    "MAX_TURNS",
+                    "Agent terminated — maxTurns limit reached",
+                ),
+            )
+        ]
+        (issue,) = agg._extract_errors([], agent)
+        assert issue["severity"] == "error"
+        assert issue["category"] == "max_turns_subagent"
+
+    def test_detail_without_counters_stays_an_error(self):
+        assert agg._soft_turn_budget_crossing("agent exhausted") is None
+
+    def test_zero_budget_is_not_treated_as_a_crossing(self):
+        assert agg._soft_turn_budget_crossing("turns=5/0") is None
+
+
+class TestSoftCrossingKeepsItsRecommender:
+    """Splitting ``MAX_TURNS`` into a soft category decoupled it from
+    ``recommend_fixes.RECOMMENDERS``, which dispatches by category — the soft
+    case would have silently lost the one recommendation that tells a reader NOT
+    to bump the agent file. Assert on behaviour, not on the table, so a later
+    rename cannot re-break it unnoticed."""
+
+    def test_soft_crossing_still_gets_a_non_degraded_recommendation(self, tmp_path):
+        import importlib.util as _ilu
+
+        spec = _ilu.spec_from_file_location("recommend_fixes", REPO_ROOT / "scripts" / "recommend_fixes.py")
+        rf = _ilu.module_from_spec(spec)
+        sys.modules["recommend_fixes"] = rf
+        spec.loader.exec_module(rf)
+
+        # Source column must carry the real emitter so the recommender can locate
+        # agents/appsec-stride-analyzer-v2.md and compare 31 against its ceiling.
+        raw = (
+            "2026-08-23T09:42:55Z  [4a9e80cf]  WARN   stride-analyzer-v2  MAX_TURNS   "
+            "agent=stride-analyzer-v2  agent_call_id=toolu_x  turns=34/31  pct=109%"
+        )
+        (issue,) = agg._extract_errors([], [(1, raw)])
+        assert issue["category"] in rf.RECOMMENDERS, "soft crossings must stay dispatchable"
+
+        enriched = rf.enrich_with_recommendations({"issues": [issue]}, tmp_path)
+        rec = enriched["issues"][0].get("fix_recommendation")
+        assert rec, "soft crossing lost its fix recommendation"
+        assert "do not bump the agent file" in rec["summary"].lower()
+
+
+class TestBashWarnFolding:
+    """A retrying agent emits the same diagnostic once per attempt. Counting
+    attempts as findings made a single wrong invocation look systemic on the
+    2026-08-23 insecure-large-spring-app run."""
+
+    def _warn(self, resp: str, cmd: str = "python3 /plugin/scripts/log_event.py --log-file /x") -> str:
+        return _hline("2026-08-23T09:40:03Z", "BASH_WARN", f"cmd={cmd}  resp={{'stdout': \"{resp}\"}}  dur=0s")
+
+    def test_same_cause_folds_to_one_issue_with_a_count(self):
+        log = [(i, self._warn("<output_dir> looks like an option")) for i in range(1, 8)]
+        (issue,) = agg._extract_warnings(log)
+        assert issue["evidence"]["occurrences"] == 7
+        assert "7×" in issue["title"]
+        assert issue["evidence"]["log_line"] == 1, "first occurrence is where the mistake was made"
+        assert issue["evidence"]["last_log_line"] == 7, "span of the retry loop stays visible"
+
+    def test_distinct_diagnostics_stay_separate(self):
+        log = [
+            (1, self._warn("<output_dir> looks like an option")),
+            (2, self._warn("unknown kind 'complete'")),
+            (3, self._warn("`info` requires <event-name> <detail>")),
+        ]
+        assert len(agg._extract_warnings(log)) == 3
+
+    def test_same_message_from_a_different_script_is_a_different_cause(self):
+        log = [
+            (1, self._warn("boom", cmd="python3 /plugin/scripts/log_event.py x")),
+            (2, self._warn("boom", cmd="python3 /plugin/scripts/write_stride_progress.py x")),
+        ]
+        assert len(agg._extract_warnings(log)) == 2
+
+    def test_single_occurrence_carries_no_fold_metadata(self):
+        (issue,) = agg._extract_warnings([(1, self._warn("only once"))])
+        assert "occurrences" not in issue["evidence"]
+        assert "last_log_line" not in issue["evidence"]
+        assert "×" not in issue["title"]
+
+    def test_volatile_paths_and_numbers_do_not_split_a_cause(self):
+        log = [
+            (1, self._warn("cannot validate depth: /tmp/run-1/x.json missing after 3 tries")),
+            (2, self._warn("cannot validate depth: /tmp/run-2/y.json missing after 9 tries")),
+        ]
+        (issue,) = agg._extract_warnings(log)
+        assert issue["evidence"]["occurrences"] == 2
 
 
 class TestExtractBudgetEvents:
