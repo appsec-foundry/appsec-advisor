@@ -365,6 +365,36 @@ def test_direct_attack_arrow_present_for_direct_path():
     assert ">direct attack<" in svg  # legend row (exact text node)
 
 
+def test_attack_arrowheads_come_to_rest_on_the_tier_band_edge():
+    """The tip touches the band outline; it never crosses it.
+
+    These arrows target the BAND, which is why `_land_y` puts them in the pad
+    strip above the first component row — the one place no box can claim the
+    head (2026-08-22: an arrow stopping 2px from C-09 was read as naming C-09).
+    Crossing the outline undoes that from the other side: the head then floats
+    in the band's empty fill with nothing under it, which reads as an arrow
+    aimed at a box inside and missed. It landed 12px past the edge until
+    2026-08-23 (user report). Touching the outline is how a box-and-arrow
+    notation says "this container is the target", so that is where it stops.
+    """
+    svg = _build(app=2, exposed=("app0",), xss=True)
+    root = ET.fromstring(svg)
+    svg_ns = "{http://www.w3.org/2000/svg}"
+
+    bands = [r for r in root.iter(f"{svg_ns}rect") if float(r.attrib["x"]) == F._PAD and r.attrib.get("rx") == "10"]
+    edges = {float(r.attrib["x"]) + float(r.attrib["width"]) for r in bands}
+    assert len(edges) == 1, f"tier bands must share one right edge, got {edges}"
+    edge = edges.pop()
+
+    heads = [p for p in root.iter(f"{svg_ns}path") if p.attrib.get("marker-end") == "url(#arrowred-rd)"]
+    assert heads, "no attack arrow carried the landing arrowhead"
+    for path in heads:
+        # `_rounded_orth` always closes on "L <x> <y>".
+        end_x = float(path.attrib["d"].split()[-2])
+        tip = end_x - F._ARROWHEAD_OVERSHOOT
+        assert tip == pytest.approx(edge), f"arrowhead tip at x={tip}, band edge at x={edge}"
+
+
 def test_victim_required_only_draws_indirect_not_direct():
     # When the ONLY attack path is victim-required (DOM XSS → client), the figure
     # draws an INDIRECT (dashed) arrow into the client tier and a matching legend

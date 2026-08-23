@@ -221,6 +221,12 @@ _OOS_GAP = 10  # gap above the out-of-scope box row inside a tier band
 #  so no repeated per-band caption is drawn)
 _BANDPAD = 20
 _BANDGAP = 34  # room for the flow arrow + its label between bands
+# How far the `arrowred-rd` marker's tip reaches beyond the end of the path it
+# terminates: its point is at x=12.5 in marker space against refX=10.5, and
+# markerUnits="userSpaceOnUse" over a 15-unit viewBox in a 15-unit viewport
+# makes that difference user units 1:1. Subtract it from a target edge to have
+# the path end short of it, add it to have the tip come to rest on it.
+_ARROWHEAD_OVERSHOOT = 2.0
 _GHOST_H = 44  # height of a dimmed ghost band (empty canonical tier)
 _LEGGAP = 70  # right lane: hosts the red attack corridor (2 lanes), then the legend
 _LEGW = 226
@@ -1401,7 +1407,20 @@ def build_figure1_svg(
 
     if direct or indirect:
         a_bottom = bands[0][1] + bands[0][2]  # actors band bottom
-        land_x = band_left + band_w - 12  # arrowheads land just inside the tier band
+        # The arrowhead TIP comes to rest ON the band's right edge, not past it.
+        # These arrows target the band (see `_land_y`), and touching a
+        # container's outline is how every box-and-arrow notation says so;
+        # crossing it reads as an arrow that was aimed at a box inside and
+        # missed. It landed 12px in until 2026-08-23, which put the head in the
+        # band's empty pad strip with nothing under it (user report).
+        #
+        # `_ARROWHEAD_OVERSHOOT` is how far the marker's tip sits beyond the
+        # path's own end: the `arrowred-rd` marker draws its point at x=12.5 in
+        # marker space against refX=10.5, and markerUnits="userSpaceOnUse" with
+        # a 15-unit viewBox in a 15-unit viewport makes that difference user
+        # units directly. So the path stops just outside and the tip lands on
+        # the edge.
+        land_x = band_left + band_w + _ARROWHEAD_OVERSHOOT
         # ONE clear origin between the attacker cards (the attacker zone — both
         # attackers, not a concrete actor): a ringed node so the arrow ORIGIN is
         # unmistakable. From it a SINGLE rounded manifold runs into the corridor;
