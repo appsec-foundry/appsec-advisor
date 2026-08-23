@@ -1221,11 +1221,23 @@ def _source_signals(
     for row in sorted(ordered, key=signal_rank):
         append_once(row)
 
+    # A focus path with no cited signal row can only enter the bundle as a fresh
+    # projection in ``_focus_source_slices``, which runs on whatever this loop
+    # leaves behind. Filling every slot here therefore silently overrides the
+    # routing decision that selected the path. What runs out is the slice
+    # counter, not the content ceilings it stands in for: enough single-line
+    # signal rows exhaust MAX_SOURCE_SLICES while spending one line each against
+    # MAX_SOURCE_LINES. Hold one slot per unprojected focus path — capped at half
+    # the budget so signal evidence can never be starved in turn.
+    unprojected_focus = sum(1 for matches in focus_matches if not matches)
+    reserved_slots = min(unprojected_focus, MAX_SOURCE_SLICES // 2)
+    signal_slice_budget = MAX_SOURCE_SLICES - reserved_slots
+
     retained: list[dict[str, Any]] = []
     source_lines = 0
     for row in candidates:
         span = row["end_line"] - row["start_line"] + 1
-        if len(retained) >= MAX_SOURCE_SLICES or source_lines + span > MAX_SOURCE_LINES:
+        if len(retained) >= signal_slice_budget or source_lines + span > MAX_SOURCE_LINES:
             continue
         retained.append({key: value for key, value in row.items() if not key.startswith("_")})
         source_lines += span

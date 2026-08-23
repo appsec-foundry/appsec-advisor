@@ -956,6 +956,51 @@ def test_later_focus_mechanism_cannot_be_starved_by_lexical_signal_fanout(tmp_pa
     assert bundle["limits"]["estimated_tokens"] <= bundles.MAX_ESTIMATED_TOKENS
 
 
+def test_unsignalled_focus_path_survives_a_full_signal_slice_budget(tmp_path):
+    """A focus path no scanner flagged must still reach the bundle.
+
+    Signal rows are frequently single-line, so enough of them exhaust the slice
+    counter while spending almost nothing against MAX_SOURCE_LINES. Without a
+    reservation the projection stage inherits an already-full budget and drops
+    the path as ``source-budget`` — silently overriding the routing decision
+    that selected it, and leaving the analyzer no read authorization for it.
+    """
+    repo, output = _repo(tmp_path)
+    noisy = repo / "src" / "a-noisy.py"
+    noisy.write_text("\n".join(f"value_{index} = {index}" for index in range(40)) + "\n", encoding="utf-8")
+    unsignalled = repo / "src" / "z-tooling.py"
+    unsignalled.write_text("def run(param):\n    return db.find(where='x == ' + param)\n", encoding="utf-8")
+    findings = [
+        {
+            "file": "src/a-noisy.py",
+            "line": index + 1,
+            "category": 10,
+            "subcategory": f"noise-{index}",
+            "severity": "High",
+        }
+        for index in range(bundles.MAX_SOURCE_SLICES + 5)
+    ]
+    (output / ".recon-patterns.json").write_text(json.dumps({"findings": findings}), encoding="utf-8")
+
+    manifest = bundles.build_all(
+        output,
+        repo,
+        _manifest(_component(focus_paths=["src/z-tooling.py"])),
+    )
+    bundle = json.loads((output / manifest["components"][0]["evidence_bundle_path"]).read_text())
+    receipt = bundle["path_routing"]["focus_admission"][0]
+
+    projected = [row for row in bundle["source_slices"] if row["path"] == "src/z-tooling.py"]
+    assert projected, "focus path was dropped by the signal-slice budget"
+    assert projected[0]["signal_kind"] == "focus-path"
+    assert receipt["status"] == "admitted"
+    assert receipt["reason"] == "projected"
+    assert len(bundle["source_slices"]) <= bundles.MAX_SOURCE_SLICES
+    assert bundle["limits"]["referenced_source_lines"] <= bundles.MAX_SOURCE_LINES
+    assert bundle["limits"]["serialized_bytes"] <= bundles.MAX_BUNDLE_BYTES
+    assert bundle["limits"]["estimated_tokens"] <= bundles.MAX_ESTIMATED_TOKENS
+
+
 def test_exclude_path_is_receipted_without_removing_bundle_evidence(tmp_path):
     repo, output = _repo(tmp_path)
     optional = repo / "src" / "optional"
