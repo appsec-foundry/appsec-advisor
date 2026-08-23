@@ -83,3 +83,21 @@ For component coverage criteria, cost, and runtime guidance, see
   analysis, abuse-case validation, and QA.
 - **thorough** — high-risk services and major releases; deeper component
   analysis and architecture review.
+
+## Large-component-count test fixture
+
+Files matching `threat-model-insecure-large-spring-app-v0.5.2*` were generated
+from the custom-built
+[Insecure Large Spring App](https://github.com/matthiasrohr/insecure-large-spring-app)
+repository. The fixture was built to test how the threat-modeling process handles
+applications with a large number of components.
+
+The repository defines 42 Docker Compose services across 7 network zones. The
+standard run represents the system as 11 logical components, identifies 122
+entry points and performs full STRIDE analysis on 8 components. The other 3
+remain in the inventory but are not analyzed individually at standard depth.
+
+Artifacts: [report](threat-model-insecure-large-spring-app-v0.5.2.md) ·
+[YAML](threat-model-insecure-large-spring-app-v0.5.2.yaml) ·
+[architecture figure 1](threat-model-insecure-large-spring-app-v0.5.2.figure1.svg) ·
+[architecture figure 2](threat-model-insecure-large-spring-app-v0.5.2.figure2.svg).
