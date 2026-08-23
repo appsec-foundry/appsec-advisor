@@ -167,12 +167,77 @@ def _force_pattern_lead(s: str) -> str:
     return (kept[0].upper() + kept[1:]) if kept else s
 
 
-# Schema ceiling for threats[].title (schemas/threat-model.output.schema.yaml).
-# emit_clean_finding_titles is the single point responsible for producing
-# schema-clean titles, so it MUST enforce this — otherwise a verbose source
-# (e.g. the source-auth scanner's "Class — qualifier clause" check names) ships
-# a >80-char title that fails validate_intermediate.
-_MAX_TITLE_LEN = 80
+# Constraints for threats[].title, read from the schema that actually gates the
+# run rather than restated here. This module is the single point responsible for
+# producing schema-clean titles, so it MUST enforce ALL of them — restating one
+# constraint at a time is how the same abort kept recurring: the >80-char cap and
+# the ``^[A-Z]`` lead were each added after a run died on them, and `minLength`
+# was still missing until an "SSRF via <detail>" source reduced to a 4-char
+# weakness class and aborted context-v2-finalize (2026-08-22). Every acronym in
+# ``_ACRONYM_FIX`` sits below that floor, so the gap was structural, not a
+# one-off. Deriving the set from the schema keeps them in lockstep.
+_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "threat-model.output.schema.yaml"
+
+
+def _load_title_constraints() -> tuple[int, int, re.Pattern[str] | None, tuple[re.Pattern[str], ...]]:
+    """Return (minLength, maxLength, pattern, forbidden) for threats[].title.
+
+    Falls back to the historical literals when the schema cannot be read, so a
+    packaging accident degrades to today's behaviour instead of crashing the
+    emitter mid-pipeline.
+    """
+    try:
+        spec = yaml.safe_load(_SCHEMA_PATH.read_text(encoding="utf-8")) or {}
+        title = spec["properties"]["threats"]["items"]["properties"]["title"]
+    except (OSError, yaml.YAMLError, KeyError, TypeError):
+        return 10, 80, None, ()
+    raw_pattern = title.get("pattern")
+    forbidden = tuple(
+        re.compile(entry["pattern"])
+        for entry in (title.get("not") or {}).get("anyOf") or []
+        if isinstance(entry, dict) and entry.get("pattern")
+    )
+    return (
+        int(title.get("minLength", 10)),
+        int(title.get("maxLength", 80)),
+        re.compile(raw_pattern) if raw_pattern else None,
+        forbidden,
+    )
+
+
+_MIN_TITLE_LEN, _MAX_TITLE_LEN, _TITLE_PATTERN, _TITLE_FORBIDDEN = _load_title_constraints()
+
+
+def _schema_ok(title: str) -> bool:
+    """Whether ``title`` satisfies every threats[].title constraint."""
+    if not title or not (_MIN_TITLE_LEN <= len(title) <= _MAX_TITLE_LEN):
+        return False
+    if _TITLE_PATTERN is not None and not _TITLE_PATTERN.match(title):
+        return False
+    return not any(bad.search(title) for bad in _TITLE_FORBIDDEN)
+
+
+def _sanitize_for_schema(title: str) -> str:
+    """Strip what the title pattern and payload blocklist forbid.
+
+    Only ever applied to a candidate that already failed ``_schema_ok`` — a
+    valid title is returned untouched by ``build_clean_title`` and never reaches
+    this function.
+    """
+    s = re.sub(r"[@`]", "", title or "")
+    for bad in _TITLE_FORBIDDEN:
+        s = bad.sub("", s)
+    # The pattern permits at most one trailing parenthetical; keep the last
+    # (the locator) and drop earlier asides.
+    parenthesised = re.findall(r"\([^()]*\)", s)
+    if len(parenthesised) > 1:
+        body = re.sub(r"\([^()]*\)", "", s).strip()
+        s = f"{body} {parenthesised[-1]}"
+    # Removing a mechanism token can leave the connector that introduced it.
+    s = re.sub(r"\s+(?:via|using|through)\s*\(", " (", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s+(?:via|using|through)\s*$", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\s{2,}", " ", s).strip(" -—–:,.")
+    return _force_pattern_lead(_truncate_to_words(s, _MAX_TITLE_LEN))
 
 
 def _truncate_to_words(text: str, budget: int) -> str:
@@ -188,7 +253,8 @@ def _truncate_to_words(text: str, budget: int) -> str:
     return cut.strip(" -—–:,.")
 
 
-def build_clean_title(raw_title: str, threat: dict) -> str:
+def _derive_title(raw_title: str, threat: dict) -> str:
+    """The canonical derivation: weakness class plus at most one locator."""
     weakness = clean_weakness(raw_title)
     if not weakness:
         return (raw_title or "").strip()
@@ -221,6 +287,39 @@ def build_clean_title(raw_title: str, threat: dict) -> str:
             title = _truncate_to_words(title, _MAX_TITLE_LEN)
         return title
     return _truncate_to_words(weakness, _MAX_TITLE_LEN)
+
+
+def build_clean_title(raw_title: str, threat: dict) -> str:
+    """Canonical title for one threat, enforced against the output schema.
+
+    The derivation above is authoritative whenever it already satisfies the
+    schema, so a well-formed source keeps exactly the title it had. Only a
+    candidate that would abort the run falls through to progressively less
+    normalised alternatives — the bare weakness class, then the original title —
+    each also tried with the forbidden characters and payload tokens removed.
+
+    A short weakness class is the recurring trigger: stripping "via <detail>"
+    from "SSRF via Unvalidated URL Parameter" yields a correct class that is
+    below ``minLength``, and a multi-instance finding gets no locator suffix to
+    carry it over the floor. Falling back to the raw title fixes that case but
+    not the sibling cases, because the raw title is precisely where the blocked
+    payload tokens live — hence the candidate chain rather than one fallback.
+    """
+    primary = _derive_title(raw_title, threat)
+    if _schema_ok(primary):
+        return primary
+    for candidate in (
+        primary,
+        _truncate_to_words(clean_weakness(raw_title), _MAX_TITLE_LEN),
+        _truncate_to_words((raw_title or "").strip(), _MAX_TITLE_LEN),
+    ):
+        for variant in (candidate, _sanitize_for_schema(candidate)):
+            if _schema_ok(variant):
+                return variant
+    # Nothing satisfied the schema. Return the canonical derivation so the
+    # invalid title stays visible to the validator instead of being masked by a
+    # worse-but-passing string; main() reports it by id.
+    return primary
 
 
 def apply(data: dict) -> int:
@@ -271,6 +370,16 @@ def main(argv: list[str] | None = None) -> int:
         tmp.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096), encoding="utf-8")
         tmp.replace(yaml_path)
     print(f"emit_clean_finding_titles: cleaned {n} finding title(s)")
+    # Name what this module could not bring into contract. Without this the
+    # only signal is a schema abort several stages later, pointing at an array
+    # index rather than at the title that caused it.
+    unresolved = [
+        f"{t.get('id')}: {t.get('title')!r}"
+        for t in data.get("threats") or []
+        if isinstance(t, dict) and t.get("title") and not _schema_ok(str(t["title"]))
+    ]
+    for entry in unresolved:
+        print(f"emit_clean_finding_titles: title violates threats[].title schema — {entry}", file=sys.stderr)
     return 0
 
 

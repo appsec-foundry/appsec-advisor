@@ -237,3 +237,99 @@ def test_derived_title_always_satisfies_the_schema_lead(raw):
 def test_conforming_lead_is_left_alone():
     assert ecf._force_pattern_lead("SQL Injection") == "SQL Injection"
     assert ecf._force_pattern_lead("stored XSS") == "Stored XSS"
+
+
+# ---------------------------------------------------------------------------
+# Schema postcondition (2026-08-22)
+#
+# The emitter enforced maxLength and the ``^[A-Z]`` lead but not minLength or
+# the payload blocklist, so "SSRF via Unvalidated URL Parameter" on a
+# multi-instance finding reduced to a correct-but-4-character weakness class
+# and aborted context-v2-finalize. Every acronym the module itself normalises
+# is below the floor, so the gap was structural. These tests assert the full
+# schema, not one constraint at a time.
+# ---------------------------------------------------------------------------
+
+_TITLE_SPEC = yaml.safe_load(
+    (Path(__file__).parent.parent / "schemas" / "threat-model.output.schema.yaml").read_text(encoding="utf-8")
+)["properties"]["threats"]["items"]["properties"]["title"]
+_FORBIDDEN = [entry["pattern"] for entry in _TITLE_SPEC["not"]["anyOf"]]
+
+
+def _schema_violation(title: str) -> str | None:
+    """Independent re-implementation of the schema check, for the tests only."""
+    import re as _re
+
+    if not title or not (_TITLE_SPEC["minLength"] <= len(title) <= _TITLE_SPEC["maxLength"]):
+        return f"length {len(title or '')}"
+    if not _re.match(_TITLE_SPEC["pattern"], title):
+        return "pattern"
+    for pattern in _FORBIDDEN:
+        if _re.search(pattern, title):
+            return f"blocklist {pattern}"
+    return None
+
+
+def _multi_instance(title: str) -> dict:
+    """A consolidated finding: two locations, so no file:line title suffix."""
+    return {
+        "id": "T-014",
+        "title": title,
+        "evidence": [{"file": "svc/Handler.java", "line": 42}],
+        "instances": [
+            {"file": "svc/Handler.java", "line": 42},
+            {"file": "svc/Other.java", "line": 7},
+        ],
+    }
+
+
+def test_short_acronym_class_still_meets_schema_minimum():
+    raw = "SSRF via Unvalidated URL Parameter (landscape/LandscapeExposureSupport.java:36)"
+    out = ecf.build_clean_title(raw, _multi_instance(raw))
+    assert _schema_violation(out) is None, f"{out!r}"
+    assert len(out) >= _TITLE_SPEC["minLength"]
+
+
+@pytest.mark.parametrize("acronym", sorted(set(ecf._ACRONYM_FIX.values())))
+def test_every_normalised_acronym_yields_a_schema_valid_title(acronym):
+    raw = f"{acronym} via Some Concrete Mechanism (svc/Handler.java:42)"
+    out = ecf.build_clean_title(raw, _multi_instance(raw))
+    assert _schema_violation(out) is None, f"{acronym}: {out!r}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "XSS via bypassSecurityTrustHtml (frontend/src/app/x.component.html:10)",
+        "SQLi via models.sequelize.query (routes/search.ts:23)",
+        "RCE via crypto.createHash collision (lib/insecurity.ts:41)",
+        "JWT Bypass via alg:none (routes/verify.ts:62)",
+        "XXE noent:true via libxml parser (routes/upload.ts:5)",
+    ],
+)
+def test_blocklisted_payload_tokens_never_reach_the_title(raw):
+    """Falling back to the raw title is where these tokens live — the reason a
+    single minLength fallback was not enough."""
+    out = ecf.build_clean_title(raw, _multi_instance(raw))
+    assert _schema_violation(out) is None, f"{raw!r} → {out!r}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "IDOR via user@example.com owner id (routes/b2b.ts:9)",
+        "XSS via `innerHTML` sink (routes/a.ts:1)",
+        "RCE via eval (x.ts:1) (y.ts:2)",
+    ],
+)
+def test_characters_the_pattern_forbids_are_removed(raw):
+    out = ecf.build_clean_title(raw, _multi_instance(raw))
+    assert _schema_violation(out) is None, f"{raw!r} → {out!r}"
+
+
+def test_a_schema_valid_derivation_is_returned_untouched():
+    """The postcondition must not rewrite titles that already conform —
+    otherwise every existing title drifts on the next run."""
+    raw = "Insecure Direct Object Reference via Client-Supplied Id (routes/a.ts:1)"
+    threat = _multi_instance(raw)
+    assert ecf.build_clean_title(raw, threat) == ecf._derive_title(raw, threat)
