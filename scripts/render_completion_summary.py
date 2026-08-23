@@ -200,6 +200,22 @@ def extract_metrics(
     }
 
     mitigations = yaml_data.get("mitigations") or []
+    # Priority split. "N linked" alone says nothing about how much of the
+    # backlog is urgent, which is the first thing a reader wants from the
+    # count. Anything the model did not prioritise is counted in its own
+    # bucket so the sub-counts always reconcile with the total — the rule the
+    # control-effectiveness line learned the hard way in 2026-06.
+    mitigations_by_priority = {"P1": 0, "P2": 0, "P3": 0}
+    mitigations_unprioritised = 0
+    for m in mitigations:
+        raw = (m.get("priority") if isinstance(m, dict) else None) or ""
+        key = str(raw).strip().upper()
+        if key.isdigit():
+            key = f"P{key}"
+        if key in mitigations_by_priority:
+            mitigations_by_priority[key] += 1
+        else:
+            mitigations_unprioritised += 1
 
     return {
         "threats_total": threats_total,
@@ -214,6 +230,8 @@ def extract_metrics(
         "control_status": control_status,
         "requirements": req_counts,
         "mitigations_total": len(mitigations),
+        "mitigations_by_priority": mitigations_by_priority,
+        "mitigations_unprioritised": mitigations_unprioritised,
     }
 
 
@@ -815,38 +833,46 @@ def build_next_steps(
 ) -> list[str]:
     """Apply the conditional rules from SKILL.md → "Next Steps block".
 
-    Returns a capped 5-item list (most actionable first). The report and
-    read-only question paths take priority, then triage, architect review,
-    SARIF, the reasoning-model hint, and the incremental baseline notice.
+    Returns a capped 5-item list of MUTUALLY ALTERNATIVE actions: read the
+    report, *or* triage it, *or* ask it a question. None of them requires the
+    one before, so `render_next_steps` joins them with "or" — which is also why
+    every entry must be an action the reader can actually take. Anything purely
+    informational belongs in `build_run_notes`, not here.
+
+    Entry 0 is the report step and stays first (it is the one most readers
+    want). Because the renderer ends every entry but the last with a trailing
+    "or", the following entry must read on from it — start entries after the
+    first with a lowercase verb ("triage the findings…", not "Triage…").
+
+    A step may carry `\\n`-separated continuation lines; the renderer indents
+    them under the step.
     """
     lines: list[str] = []
     sev = metrics["threats_by_sev"]
     critical = sev.get("Critical", 0)
     high = sev.get("High", 0)
 
-    # Keep the report overview and its highest-priority register slice in one
-    # reading action. Splitting them made one document look like two workflows.
-    report_step = f'Open {output_dir}/threat-model.md → "Management Summary" for verdict + top risks'
-    if critical or high:
-        top = "Critical" if critical else "High"
-        report_step += f', then Section 8 "Findings Register" for {top} findings'
-    lines.append(report_step)
-
-    # Asking is the non-mutating default exploration path and must remain
-    # visible in the numbered list rather than an easy-to-miss footer.
-    lines.append(
-        'Ask questions without changing the model, e.g. "what should I fix first?" or '
-        '"are there any access control weaknesses?": /appsec-advisor:ask-threat-model'
-    )
+    # One short line: path plus where to start reading. The register slice used
+    # to be appended here ('…then Section 8 "Findings Register" for Critical
+    # findings'), which made the entry twice as long as the two alternatives
+    # under it for a pointer the Management Summary already links to.
+    lines.append(f'Open the report — {output_dir}/threat-model.md → start at "Management Summary"')
 
     # Triage — whenever the run surfaced findings, point at the consumer skill
     # that turns them into a prioritised, owned remediation plan. Runs later and
     # independently of this pipeline, so it fits any follow-up session.
     if sum(sev.values()):
-        lines.append(
-            "Triage the findings into a prioritised remediation plan — verdict, then bulk-decide "
-            "mitigate/accept/defer: /appsec-advisor:review-threat-model"
-        )
+        lines.append("triage the findings via /appsec-advisor:review-threat-model")
+
+    # Asking is the non-mutating default exploration path and must stay visible
+    # rather than sink into an easy-to-miss footer. Show the questions, NOT
+    # `/appsec-advisor:ask-threat-model`: that skill routes itself from any
+    # natural-language query about the model ("the default surface for every
+    # natural-language query", its own description), so naming the command
+    # implies a step the reader does not have to take. The question IS the
+    # invocation. review-threat-model is the opposite case — a triage console
+    # with modes that has to be started — so it keeps its command.
+    lines.append('just ask — e.g. "What are the most critical findings?" or "What should I fix first?"')
 
     # Architect review — only surface the dot-file when it contains actionable defects.
     # Advisory-only reviews (technical_defects=0, no repair plan) are internal
@@ -863,24 +889,33 @@ def build_next_steps(
             except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 pass
         if _arch_has_defects:
-            lines.append(f"Review {output_dir}/.architect-review.md → architect-level verdict and findings")
+            lines.append(f"read the architect review — {output_dir}/.architect-review.md")
 
     # SARIF uploaded.
     if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
-        lines.append("Upload threat-model.sarif.json to GitHub Advanced Security / SonarQube / DefectDojo")
+        lines.append("upload threat-model.sarif.json to GitHub Advanced Security / SonarQube / DefectDojo")
 
     # Sonnet-only run with significant Critical/High.
     if cfg.get("reasoning_model") == "sonnet" and (critical + high) >= 3:
         lines.append(
-            "Re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)"
+            "re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)"
         )
-
-    # First-run baseline established.
-    if not (output_dir / ".appsec-cache" / "baseline.json").is_file() and cfg.get("mode") == "full":
-        lines.append("Future runs will auto-detect this baseline and switch to incremental mode (faster, cheaper)")
 
     # Cap at 5.
     return lines[:5]
+
+
+def build_run_notes(output_dir: Path, cfg: dict) -> list[str]:
+    """Informational lines that are NOT actions the reader can pick.
+
+    They used to sit in the Next Steps list, where "Future runs will auto-detect
+    this baseline" read as a fourth thing to go and do. Nothing is asked of the
+    reader here, so it renders as a note under the alternatives.
+    """
+    notes: list[str] = []
+    if not (output_dir / ".appsec-cache" / "baseline.json").is_file() and cfg.get("mode") == "full":
+        notes.append("Future runs auto-detect this baseline and switch to incremental mode (faster, cheaper).")
+    return notes
 
 
 def _has_dependency_manifest(repo_root: Path) -> bool:
@@ -989,7 +1024,13 @@ def render_metrics(metrics: dict, cfg: dict) -> list[str]:
         f"{cs['adequate']} adequate | {cs['partial']} partial | "
         f"{cs['weak']} weak | {cs['unsafe']} unsafe | {cs['missing']} missing"
     )
-    lines.append(f"  Mitigations: {metrics['mitigations_total']} linked")
+    mit_line = f"  Mitigations: {metrics['mitigations_total']} linked"
+    mp = metrics.get("mitigations_by_priority") or {}
+    if metrics["mitigations_total"] and mp:
+        mit_line += f" | {mp.get('P1', 0)} P1 | {mp.get('P2', 0)} P2 | {mp.get('P3', 0)} P3"
+        if metrics.get("mitigations_unprioritised"):
+            mit_line += f" | {metrics['mitigations_unprioritised']} unprioritised"
+    lines.append(mit_line)
     if cfg.get("check_requirements"):
         r = metrics["requirements"]
         lines.append(
@@ -1586,13 +1627,33 @@ def render_composition_health(health: Optional[dict]) -> list[str]:
     return lines
 
 
-def render_next_steps(next_steps: list[str]) -> list[str]:
+def render_next_steps(next_steps: list[str], notes: Optional[list[str]] = None) -> list[str]:
+    """Number the steps, but join them with "or" — they are alternatives.
+
+    A bare 1-2-3 list reads as "do all three, in this order". Reading the
+    report, triaging it, and asking it a question are none of that: each is a
+    complete way to continue on its own. Numbering keeps them scannable and
+    referable ("do 2"); a trailing "or" on every entry but the last carries the
+    choice, the way it falls in a spoken sentence. Entries after the first are
+    authored lowercase so they read on from it (`build_next_steps`).
+
+    The "or" attaches to the entry's LAST physical line, so a step with
+    continuation lines still ends on the conjunction rather than hiding it
+    mid-block.
+    """
     if not next_steps:
         return []
-    lines = [""]
-    lines.append("Next Steps")
-    for i, step in enumerate(next_steps, start=1):
-        lines.append(f"  {i}. {step}")
+    lines = ["", "Next Steps" + (" — pick one, they are alternatives" if len(next_steps) > 1 else "")]
+    last = len(next_steps) - 1
+    for i, step in enumerate(next_steps):
+        head, *rest = str(step).split("\n")
+        block = [f"  {i + 1}. {head}"] + [f"        {cont}" for cont in rest]
+        if i != last:
+            block[-1] += " or"
+        lines.extend(block)
+    for note in notes or []:
+        lines.append("")
+        lines.append(f"  Note: {note}")
     return lines
 
 
@@ -1644,13 +1705,18 @@ def render_log_files(output_dir: Path) -> list[str]:
 
 
 def _summary_duration(stats: dict) -> str:
-    # Prefer wall-clock as the headline "how long did this take" figure.
-    # Net agent compute is a lower bound (excludes orchestration + API wait)
-    # and misleads when most of the clock was idle. Wall is surfaced here;
-    # the net breakdown lives in the Run Statistics section below.
+    # Wall-clock stays the headline "how long did this take" figure — it is the
+    # time the user actually waited. Net agent compute is appended because the
+    # two answer different questions: on a fan-out run net EXCEEDS wall (agents
+    # ran in parallel), and where it falls far below, the gap is orchestration
+    # and API wait. Labelling both here stops the reader inferring one from the
+    # other; the full Net / Idle / Wall breakdown stays in Run Statistics.
     timing = stats.get("timing") or {}
     wall = timing.get("wall_secs") or stats.get("wall_secs") or 0
+    net = timing.get("net_compute_secs") or stats.get("total_secs_from_stages") or 0
     if wall:
+        if net:
+            return f"{_fmt_duration(wall)} wall · {_fmt_duration(net)} agent compute"
         return _fmt_duration(wall)
     # Fallback: net compute sum (pre-stage-stats runs or missing wall marker).
     total = stats.get("total_secs_from_stages")
@@ -1771,6 +1837,7 @@ def render_summary(
     stats = extract_run_statistics(output_dir, yaml_data)
     cost = extract_costs(output_dir, plugin_root)
     next_steps = build_next_steps(output_dir, repo_root, metrics, cfg)
+    run_notes = build_run_notes(output_dir, cfg)
 
     lines: list[str] = []
     lines.extend(render_run_overview(repo_root, output_dir, cfg, stats, cost, change))
@@ -1807,7 +1874,7 @@ def render_summary(
     # omitted entirely (no extra noise).
     run_issues = extract_run_issues(output_dir)
     lines.extend(render_run_issues(run_issues, plugin_dev=cfg.get("plugin_dev", False)))
-    lines.extend(render_next_steps(next_steps))
+    lines.extend(render_next_steps(next_steps, run_notes))
     lines.extend(render_security_notice(output_dir))
     lines.extend(render_run_statistics(stats, cost, verbose=cfg.get("verbose", False)))
     lines.extend(render_log_files(output_dir))

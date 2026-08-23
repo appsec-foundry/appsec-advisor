@@ -95,6 +95,35 @@ class TestExtractMetrics:
         # reconcile with the total.
         assert sum(cs.values()) == m["controls_total"] == 6
 
+    def test_mitigation_priority_split_reconciles_with_the_total(self):
+        yaml_data = {
+            "mitigations": [
+                {"priority": "P1"},
+                {"priority": "P1"},
+                {"priority": "P2"},
+                {"priority": "p3"},
+                {"priority": 3},
+            ]
+        }
+        m = rcs.extract_metrics(yaml_data, "")
+        mp = m["mitigations_by_priority"]
+        assert (mp["P1"], mp["P2"], mp["P3"]) == (2, 1, 2)
+        assert sum(mp.values()) + m["mitigations_unprioritised"] == m["mitigations_total"] == 5
+        assert "Mitigations: 5 linked | 2 P1 | 1 P2 | 2 P3" in "\n".join(rcs.render_metrics(m, {}))
+
+    def test_unprioritised_mitigations_get_their_own_bucket(self):
+        # Same reconciliation rule the control-effectiveness line learned: a
+        # mitigation the model left unrated must not vanish from the breakdown.
+        m = rcs.extract_metrics({"mitigations": [{"priority": "P1"}, {}, {"priority": "urgent"}]}, "")
+        assert m["mitigations_unprioritised"] == 2
+        rendered = "\n".join(rcs.render_metrics(m, {}))
+        assert "3 linked | 1 P1 | 0 P2 | 0 P3 | 2 unprioritised" in rendered
+
+    def test_no_priority_split_when_there_are_no_mitigations(self):
+        rendered = "\n".join(rcs.render_metrics(rcs.extract_metrics({"mitigations": []}, ""), {}))
+        assert "  Mitigations: 0 linked" in rendered
+        assert "P1" not in rendered
+
     def test_components_count_from_yaml(self):
         yaml_data = {"components": [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}]}
         m = rcs.extract_metrics(yaml_data, "")
@@ -590,15 +619,50 @@ class TestNextSteps:
     def test_always_line_1_present(self, tmp_path):
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
         assert "Management Summary" in lines[0]
-        assert "ask-threat-model" in lines[1]
-        assert "what should I fix first?" in lines[1]
+        ask = next(l for l in lines if "just ask" in l)
+        # A bare skill link does not tell the reader what to ask it.
+        assert "What should I fix first?" in ask
+        assert "What are the most critical findings?" in ask
 
-    def test_high_priority_register_slice_is_part_of_the_report_step(self, tmp_path):
-        lines_with = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), self._cfg())
-        assert "Management Summary" in lines_with[0]
-        assert 'Section 8 "Findings Register" for Critical findings' in lines_with[0]
-        lines_without = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
-        assert not any("Section 8" in l for l in lines_without)
+    def test_ask_step_does_not_name_the_skill_command(self, tmp_path):
+        # ask-threat-model routes itself from any natural-language question
+        # about the model, so printing the slash command implies a step the
+        # reader does not have to take — the question is the invocation.
+        # review-threat-model is a console you start, so it keeps its command.
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
+        assert not any("ask-threat-model" in l for l in lines)
+        assert any("review-threat-model" in l for l in lines)
+
+    def test_alternatives_after_the_first_read_on_from_or(self, tmp_path):
+        # render_next_steps prefixes every entry after the first with "or ", so
+        # "or Triage the findings" would be ungrammatical.
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), self._cfg())
+        assert len(lines) > 1
+        for step in lines[1:]:
+            first_word = step.split()[0]
+            assert first_word[0].islower(), f"step must read on from 'or ': {step!r}"
+
+    def test_baseline_notice_is_a_note_not_an_alternative(self, tmp_path):
+        # "Future runs auto-detect this baseline" asks nothing of the reader; in
+        # the steps list it read as a fourth thing to go and do.
+        steps = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
+        assert not any("incremental mode" in l for l in steps)
+        notes = rcs.build_run_notes(tmp_path, self._cfg())
+        assert any("incremental mode" in n for n in notes)
+
+    def test_no_baseline_note_once_a_baseline_exists(self, tmp_path):
+        (tmp_path / ".appsec-cache").mkdir()
+        (tmp_path / ".appsec-cache" / "baseline.json").write_text("{}")
+        assert rcs.build_run_notes(tmp_path, self._cfg()) == []
+
+    def test_report_step_is_one_short_line(self, tmp_path):
+        # The register slice used to be appended here, making the entry twice
+        # as long as the alternatives under it for a pointer the Management
+        # Summary already links to.
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), self._cfg())
+        assert "Management Summary" in lines[0]
+        assert "\n" not in lines[0]
+        assert not any("Findings Register" in l for l in lines)
 
     def test_triage_hint_only_when_findings_present(self, tmp_path):
         with_findings = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
@@ -1517,15 +1581,52 @@ class TestCompositionHealth:
 class TestRenderMisc:
     def test_render_next_steps(self):
         out = rcs.render_next_steps(["step a", "step b"])
-        assert out[1] == "Next Steps"
-        assert "1. step a" in out[2]
+        assert out[1].startswith("Next Steps")
+        assert any("step a" in line for line in out)
 
     def test_render_next_steps_empty(self):
         assert rcs.render_next_steps([]) == []
 
     def test_render_next_steps_does_not_append_hidden_actions(self):
         out = rcs.render_next_steps(["read", "ask"])
-        assert out == ["", "Next Steps", "  1. read", "  2. ask"]
+        assert out == [
+            "",
+            "Next Steps — pick one, they are alternatives",
+            "  1. read or",
+            "  2. ask",
+        ]
+
+    def test_render_next_steps_joins_alternatives_with_a_trailing_or(self):
+        # A bare 1-2-3 list reads as "do all of these, in this order". Reading,
+        # triaging and asking are each a complete way to continue on their own.
+        # The conjunction falls where it would in speech: at the end of the
+        # entry it separates, never on the last one.
+        out = rcs.render_next_steps(["read", "triage", "ask"])
+        assert out[2] == "  1. read or"
+        assert out[3] == "  2. triage or"
+        assert out[4] == "  3. ask"
+
+    def test_render_next_steps_indents_continuation_lines(self):
+        out = rcs.render_next_steps(["read", "ask\nexample question"])
+        assert "  2. ask" in out
+        assert "        example question" in out
+
+    def test_trailing_or_attaches_to_the_last_line_of_a_multiline_step(self):
+        # Otherwise the conjunction hides mid-block and the continuation line
+        # reads as if it belonged to the next alternative.
+        out = rcs.render_next_steps(["ask\nexample question", "read"])
+        assert out[2] == "  1. ask"
+        assert out[3] == "        example question or"
+        assert out[4] == "  2. read"
+
+    def test_render_next_steps_single_step_drops_the_pick_one_header(self):
+        out = rcs.render_next_steps(["read"])
+        assert out == ["", "Next Steps", "  1. read"]
+
+    def test_render_next_steps_renders_notes_below_the_alternatives(self):
+        out = rcs.render_next_steps(["read", "ask"], ["Baseline established."])
+        assert out[-1] == "  Note: Baseline established."
+        assert not any(line.startswith("  3.") for line in out)
 
     def test_render_log_files(self, tmp_path: Path):
         (tmp_path / ".qa-status.json").write_text("{}")
@@ -1582,6 +1683,17 @@ class TestSummaryHelpers:
 
     def test_summary_duration_na(self):
         assert rcs._summary_duration({}) == "n/a"
+
+    def test_summary_duration_reports_wall_and_agent_compute(self):
+        # Net can EXCEED wall on a fan-out run (agents ran in parallel), so both
+        # figures must be labelled — neither is inferable from the other.
+        assert (
+            rcs._summary_duration({"timing": {"wall_secs": 120, "net_compute_secs": 300}})
+            == "2m 00s wall · 5m 00s agent compute"
+        )
+
+    def test_summary_duration_omits_agent_compute_when_unknown(self):
+        assert rcs._summary_duration({"timing": {"wall_secs": 90}}) == "1m 30s"
 
     def test_summary_cost_variants(self):
         assert rcs._summary_cost(None) == "unavailable"

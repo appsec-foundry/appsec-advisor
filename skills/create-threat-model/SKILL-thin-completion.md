@@ -67,8 +67,13 @@ unreleased until these gates pass. Do not repair in completion.
 
 When requested, run `export_pdf.py` and `export_html.py --require-mermaid`
 unsandboxed so headless Chrome can render every diagram. Export failures are
-non-fatal but must remain visible; never weaken them with `--no-mermaid`. Run
-`stamp_threat_model.py` after PDF/HTML so the slug set includes them.
+non-fatal but must remain visible; never weaken them with `--no-mermaid`.
+
+Do **not** call `stamp_threat_model.py` yourself. `render_completion_summary.py`
+already exports and then stamps, in that order, idempotently and with its output
+captured. A separate call only re-prints the stamped copy set, which is
+build-internal bookkeeping the reader cannot act on — keep those paths out of
+the response for the same reason.
 
 Run `render_completion_summary.py` once more with the identical argv from §1
 minus `--patch-placeholders --no-print`. Capture stdout for the final response;
