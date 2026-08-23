@@ -37,11 +37,20 @@ pregeneration and the filesystem-authoritative compose handoff.
    Specialists write only their owned fragments and never compose. The profile
    never skips fragment validation, strict compose, prose fixes, QA autofix, or
    the Stage-3 secret gate.
-4. Send the final heartbeat, stop the watchdog, mark Stage 2 completed, and run
-   `record_stage_stats.py` (`output_dir` is positional). Use the dispatched
-   agent as `--agent`. For parallel, sum tokens and tool uses, use the larger
-   duration, and pass one comma-separated `--subagent-type` value together with
-   `--since-iso`.
+4. Send the final heartbeat, stop the watchdog, mark Stage 2 completed, and
+   record stats exactly as written — `--stage` takes the integer `2`, NOT the
+   `stage2` label the controller's JSON uses everywhere else, and `--name` is
+   required:
+
+   ```bash
+   python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+     --stage 2 --name "<renderer_profile>" --agent "<agent_type>" \
+     --model "<model>" --duration-ms <sum> --tool-uses <sum> --tokens <sum> \
+     --subagent-type "<agent_type>" --since-iso "$STAGE2_START_ISO"
+   ```
+
+   For parallel, sum tokens and tool uses, use the larger duration, and pass one
+   comma-separated `--subagent-type` value. Stats failure is non-blocking.
 5. Run:
 
    ```bash

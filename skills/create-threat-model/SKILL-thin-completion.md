@@ -92,7 +92,11 @@ figures were captured, and only the diagnostician may write `.run-bugs.json`.
 ## 3. Cleanup and response
 
 Mark the final task complete. Unless `KEEP_RUNTIME_FILES=true`, run
-`runtime_cleanup.py` for `post-qa` and, when enabled, `post-architect`. Cleanup
+`python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa`
+and, when enabled, the same call with `--stage post-architect`. The stage is a
+`--stage` flag with its own vocabulary (`all`, `pre-qa`, `post-qa`,
+`post-architect`) — neither a positional argument nor the `stageN` labels used
+elsewhere in this pipeline. Cleanup
 must preserve canonical deliverables, audit artifacts, and
 `.appsec-cache/baseline.json`. Always release `.appsec-lock` and remove this
 run's verbose/tracing markers. When runtime files are kept, skip both cleanup
