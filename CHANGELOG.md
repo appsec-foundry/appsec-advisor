@@ -9,11 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
-### Fixed
-
-- A run can no longer walk past abuse-case verification into report rendering, which left the verified attack chains out of the report without saying so.
-
-## 0.6.0-beta.1 (2026-08-22)
+## 0.6.0-beta.1 (2026-08-23)
 
 From this release a `-beta.N` suffix marks the Nth pre-release of the version in
 front of it, so 0.6.0 follows once the line is stable. In 0.4 and 0.5 `-beta`
@@ -29,7 +25,6 @@ labelled the release line itself.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.
 - New `install-baseline`, `verify-baseline` and `remove-baseline` skills manage a secure-coding baseline in Claude Code's instruction files, with `verify-baseline --enforce` as a CI gate.
 - New `help` skill lists available commands and the context, profile, and coach configuration in effect.
-- Sessions now open with a status banner naming the plugin, threat model, and loaded baseline; `APPSEC_BANNER=0` disables it.
 - Organization profiles can ship custom skills, a secure-coding baseline, and a banner, and disable shipped skills.
 - A run that recorded an error now points at `/appsec-advisor:report-error`, which builds a local anonymised bundle and sends nothing.
 
@@ -65,6 +60,12 @@ labelled the release line itself.
 - Requested exports are now always written and listed, and invalid generated YAML can no longer replace the last valid report artifact.
 - Large repositories can no longer crowd required security sections out of reconnaissance results.
 - Reconnaissance now detects predictable OAuth-derived and bundled client credentials.
+- A run can no longer walk past abuse-case verification into report rendering, which left the verified attack chains out of the report without saying so.
+- A run now says when it analysed a component from only a fraction of its files, and keeps focus paths that the source-slice budget used to drop.
+- A component that overshot its turn budget but finished its analysis is no longer reported as an error.
+- The closing summary now splits mitigations by priority and offers its follow-ups as choices.
+- Attack arrows in the architecture diagram now land on the tier band instead of inside it.
+- The pre-render gate no longer rejects reports the composer accepts.
 
 ## 0.5.1-beta (2026-07-26)
 
