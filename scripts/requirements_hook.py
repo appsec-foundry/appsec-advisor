@@ -7,7 +7,8 @@ this repository's `.claude/settings.json` and is deliberately absent from
 
 The decision register cannot change without the operator. The separate
 `spec_guard.py` owns approval for the normative requirements catalog. For every
-other directly edited file, this hook joins the product catalog with
+other edited file — named by a native write tool or by a write-shaped shell
+command — this hook joins the product catalog with
 `data/requirement-bindings.yaml` and puts applicable requirements in front of
 the agent while the edit can still change.
 
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -55,6 +57,10 @@ _WRITE_HINT_RE = re.compile(
 
 _HELD_PATH = REGISTER.relative_to(ROOT).as_posix()
 
+# A write-shaped command can name many files. Surfacing every one of them costs
+# more context than it informs, so report the first few and stop.
+_MAX_SHELL_TARGETS = 5
+
 _REASON = (
     "Approval required: {target} states what development may not deviate from. "
     "Show the operator the proposed wording, why it changes, and which test guards "
@@ -90,6 +96,55 @@ def held_in_command(command: str) -> str:
     return _HELD_PATH if _HELD_PATH in command else ""
 
 
+def shell_edit_targets(command: str) -> list[str]:
+    """Existing repository files a write-shaped shell command names.
+
+    Precision is not needed here: a token that is not a repository file cannot
+    match a binding pattern, so the binding lookup discards the flags, options,
+    and program names this returns alongside the real paths.
+    """
+    if not _WRITE_HINT_RE.search(command):
+        return []
+    try:
+        words = shlex.split(command, comments=False)
+    except ValueError:
+        words = command.split()
+    targets: list[str] = []
+    for word in words:
+        cleaned = word.strip("'\"`,;()[]{}<>")
+        if not cleaned:
+            continue
+        wanted = relative(cleaned)
+        if wanted and wanted not in targets and (ROOT / wanted).is_file():
+            targets.append(wanted)
+        if len(targets) == _MAX_SHELL_TARGETS:
+            break
+    return targets
+
+
+def requirements_context(paths: list[str]) -> dict | None:
+    """Additional context naming the requirements bound to ``paths``."""
+    if not paths or not CATALOG.exists() or not BINDINGS.exists():
+        return None
+    entries = parse(CATALOG.read_text(encoding="utf-8"))
+    bindings = parse_bindings(load_binding_document())
+    blocks = []
+    for wanted in paths:
+        hits = applicable(entries, bindings, wanted)
+        if not hits:
+            continue
+        body = "\n".join(render(entry, binding) for entry, binding in hits)
+        blocks.append(f"Requirements governing {wanted}:\n{body}")
+    if not blocks:
+        return None
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": "\n\n".join(blocks),
+        }
+    }
+
+
 def decide(payload: dict) -> dict | None:
     if payload.get("hook_event_name") != "PreToolUse":
         return None
@@ -99,7 +154,9 @@ def decide(payload: dict) -> dict | None:
         if not isinstance(command, str):
             return None
         target = held_in_command(command)
-        return ask(target) if target else None
+        if target:
+            return ask(target)
+        return requirements_context(shell_edit_targets(command))
 
     field = _PATH_FIELDS.get(tool)
     if not field:
@@ -114,20 +171,7 @@ def decide(payload: dict) -> dict | None:
     if wanted == _HELD_PATH:
         return ask(wanted)
 
-    if not CATALOG.exists() or not BINDINGS.exists():
-        return None
-    entries = parse(CATALOG.read_text(encoding="utf-8"))
-    bindings = parse_bindings(load_binding_document())
-    hits = applicable(entries, bindings, wanted)
-    if not hits:
-        return None
-    body = "\n".join(render(entry, binding) for entry, binding in hits)
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": f"Requirements governing {wanted}:\n{body}",
-        }
-    }
+    return requirements_context([wanted])
 
 
 def main() -> int:

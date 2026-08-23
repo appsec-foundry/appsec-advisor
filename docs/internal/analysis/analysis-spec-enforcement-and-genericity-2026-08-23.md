@@ -115,10 +115,13 @@ bindings, REQ-RPT-002 moved from `advisory` to `partial` with its two existing
 anchor guards, and `--for` now prints `No requirement is bound to <path>.`
 Coverage went from 15/7/3 to 15/8/2.
 
-Gap 2 is tracked separately. Gap 3 stays open: no reliable join exists between a
-proposal and the requirement it proposes, and extending the CI trigger from
-`pull_request` to `push` only pays off if requirement changes actually reach
-`dev` without a pull request.
+Gap 2 was closed next: `requirements_hook.py` now extracts the repository files
+a write-shaped shell command names and surfaces their requirements, capped at
+five files per command.
+
+Gap 3 stays open: no reliable join exists between a proposal and the requirement
+it proposes, and extending the CI trigger from `pull_request` to `push` only
+pays off if requirement changes actually reach `dev` without a pull request.
 
 ## Not a gap
 
