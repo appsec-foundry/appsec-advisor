@@ -1411,14 +1411,33 @@ def build_figure1_svg(
         feed_y = a_bottom + 16  # the single feeder runs here, in the band gap
         lane_dash = band_left + band_w + 8  # inner drop → client (indirect)
         lane_solid = band_left + band_w + 26  # outer drop → app/data (direct)
+
+        def _land_y(yt, h):
+            """Arrowhead height inside a tier band.
+
+            These arrows are TIER-level — `tier_attacks` is keyed by tier, and a
+            direct hit means the tier is attacker-reachable, not that one box in
+            it is. The band's vertical centre cannot say that, because the
+            component rows fill the band: the centre always falls inside a row,
+            so the arrowhead comes to rest against whichever box occupies the
+            right-hand column and reads as naming it. In the 2026-08-22
+            insecure-large-spring-app figure the application arrow stopped 2px
+            from C-09 · Legacy Admin Board, which a reader took to mean the top
+            threats were C-09's (user report).
+
+            The `_BANDPAD` strip above the first row is free of boxes in every
+            band by construction, so landing there addresses the band itself.
+            """
+            return yt + min(_BANDPAD, h) / 2
+
         if direct:
-            ys = [yt + h / 2 for _t, yt, h in direct]
+            ys = [_land_y(yt, h) for _t, yt, h in direct]
             _rounded_orth([(mx, atk_bottom), (mx, feed_y), (lane_solid, feed_y), (lane_solid, max(ys))], sw=3.4)
             for _t, yt, h in direct:
-                cy = yt + h / 2
+                cy = _land_y(yt, h)
                 _rounded_orth([(lane_solid, cy), (land_x, cy)], sw=4.0, marker="arrowred-rd")
         for j, (_t, yt, h) in enumerate(indirect):
-            cy = yt + h / 2
+            cy = _land_y(yt, h)
             if direct:
                 # A solid feeder already runs from the origin → the dashed drop
                 # just taps it at the inner lane (no second horizontal).
