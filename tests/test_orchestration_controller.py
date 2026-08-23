@@ -1215,6 +1215,81 @@ def test_prepare_stage2_quick_retry_stays_ms_only(tmp_path, monkeypatch):
     controller._validate_action(action)
 
 
+def _stage1_complete_run(tmp_path: Path, **overrides) -> Path:
+    """A run whose Stage-1 gate passed and whose report is not composed yet."""
+    output = tmp_path / "out"
+    output.mkdir(exist_ok=True)
+    cfg = _cfg(tmp_path)
+    cfg.update(overrides)
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    (output / ".appsec-checkpoint").write_text(
+        "phase=10b status=completed need_render=true runtime_generation=context-v2\n",
+        encoding="utf-8",
+    )
+    return output
+
+
+def test_next_action_routes_to_stage1d_when_abuse_verification_never_ran(tmp_path):
+    output = _stage1_complete_run(tmp_path)
+
+    action = controller.next_action(output)
+    assert action["stage"] == "stage1d"
+    assert action["instruction_file"] == str(controller.THIN_STAGE1D_RUNTIME)
+    controller._validate_action(action)
+
+    # Bounded: a session that ignores the redirect reaches Stage 2 rather than
+    # bouncing between the two transitions forever.
+    assert controller.next_action(output)["stage"] == "stage2"
+
+
+def test_prepare_stage2_returns_stage1d_before_preparing_fragments(tmp_path, monkeypatch):
+    output = _stage1_complete_run(tmp_path, enrich_arch_fragments=True)
+
+    def no_preparation(name, args, **kwargs):
+        # The duration estimate belongs to every action's dispatch values.
+        if name != "estimate_duration.py":
+            raise AssertionError(f"{name} ran while Stage 1d was still pending")
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", no_preparation)
+
+    action = controller.prepare_stage2(output)
+    assert action["stage"] == "stage1d"
+    assert action["instruction_file"] == str(controller.THIN_STAGE1D_RUNTIME)
+    controller._validate_action(action)
+
+
+@pytest.mark.parametrize(
+    ("sidecar", "overrides"),
+    [
+        (".abuse-case-matches.json", {}),
+        (".abuse-case-verdicts.json", {}),
+        (None, {"skip_abuse_case_verification": True}),
+        (None, {"mode": "rerender", "rerender": True}),
+    ],
+)
+def test_next_action_leaves_stage1d_alone_when_it_is_not_owed(tmp_path, sidecar, overrides):
+    output = _stage1_complete_run(tmp_path, **overrides)
+    if sidecar:
+        (output / sidecar).write_text("{}\n", encoding="utf-8")
+
+    assert controller.next_action(output)["stage"] == "stage2"
+    assert not (output / controller.PRODUCER_RETRY_LEDGER).exists()
+
+
+def test_next_action_ignores_abuse_sidecars_left_by_an_earlier_run(tmp_path):
+    """No preflight reaps the sidecars, so presence alone proves nothing."""
+    output = _stage1_complete_run(tmp_path)
+    checkpoint_ns = (output / ".appsec-checkpoint").stat().st_mtime_ns
+    for name in (".abuse-case-matches.json", ".abuse-case-verdicts.json"):
+        stale = output / name
+        stale.write_text("{}\n", encoding="utf-8")
+        os.utime(stale, ns=(checkpoint_ns - 10**9, checkpoint_ns - 10**9))
+
+    assert controller.next_action(output)["stage"] == "stage1d"
+
+
 def test_renderer_profile_must_match_stage2_dispatch_shape(tmp_path):
     action = {
         "schema_version": 1,
@@ -1313,6 +1388,9 @@ def test_next_action_recomposes_stale_report_when_checkpoint_needs_render(tmp_pa
     )
     (frag / "ms-verdict.json").write_text("{}", encoding="utf-8")
     (frag / "security-architecture.md").write_text("## 7\n", encoding="utf-8")
+    # Stage 1d already ran for this report, so the compose backstop is what
+    # this transition has to decide.
+    (output / ".abuse-case-matches.json").write_text('{"schema_version": 1, "matches": []}\n', encoding="utf-8")
 
     def fake_run(cmd, **kwargs):
         if any("compose_threat_model.py" in str(item) for item in cmd):

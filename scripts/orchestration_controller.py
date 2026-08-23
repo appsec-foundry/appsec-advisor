@@ -5222,6 +5222,69 @@ def _context_v2_abuse_candidate_receipt(
     )
 
 
+STAGE1D_ROUTE_NEXT_KEY = "stage1d_route_next"
+STAGE1D_ROUTE_STAGE2_KEY = "stage1d_route_stage2"
+
+
+def _stage1d_route(output_dir: Path, cfg: dict[str, Any], retry_key: str) -> dict[str, Any] | None:
+    """Return the Stage-1d action when abuse verification still owes this report.
+
+    Stage 1d was the one stage no controller transition selected: its entry
+    point existed only as a sentence in the session's runtime prose, so a
+    session that walked from the Stage-1 gate straight into Stage 2 dropped the
+    stage whole — nothing matched, §9 rendered its placeholder, no chain was
+    verified, and the open task row was the only trace (2026-08-23). Both
+    transitions that can reach Stage 2 ask here first.
+
+    The window is the Stage-1 checkpoint that still needs rendering: before it
+    the stage has no inputs, after the compose §9 is already report bytes.
+    A matcher sidecar written after that checkpoint proves the stage ran — the
+    matcher writes its match set before any verifier is dispatched, and a
+    repository with no candidate never produces a verdict. Freshness, not
+    presence, decides: no preflight reaps these two files, so a repository
+    scanned before carries a prior run's sidecars into this one. Each
+    transition claims its own single retry, so a session that ignores the
+    redirect costs one extra transition, not a loop.
+    """
+    if cfg.get("skip_abuse_case_verification") or cfg.get("mode") == "rerender":
+        return None
+    if not _checkpoint_needs_render(output_dir):
+        return None
+    try:
+        checkpoint_ns = (output_dir / ".appsec-checkpoint").stat().st_mtime_ns
+    except OSError:
+        return None
+    for name in (".abuse-case-verdicts.json", ".abuse-case-matches.json"):
+        try:
+            if (output_dir / name).stat().st_mtime_ns >= checkpoint_ns:
+                return None
+        except OSError:
+            continue
+    if _claim_producer_retry(output_dir, retry_key) is None:
+        _append_event(
+            output_dir,
+            "STAGE1D_ROUTE_SPENT",
+            "abuse verification did not run; the report ships without verified chains",
+        )
+        return None
+    _append_event(output_dir, "STAGE1D_ROUTED", "abuse verification had not run at the Stage-2 boundary")
+    return _validate_action(
+        {
+            "schema_version": 1,
+            "action": "dispatch_agent",
+            "mode": cfg["mode"],
+            "stage": "stage1d",
+            "instruction_file": str(THIN_STAGE1D_RUNTIME),
+            "config_path": str(output_dir / ".skill-config.json"),
+            "dispatch_values": _dispatch_values(cfg),
+            "receipts": [
+                "Stage 1d has not run for this report: load the returned Stage-1d runtime, "
+                "follow it, then repeat this transition"
+            ],
+        }
+    )
+
+
 def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dict[str, Any]:
     """Match abuse cases and return a bounded verifier fan-out action.
 
@@ -5503,6 +5566,8 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
 def prepare_stage2(output_dir: Path) -> dict[str, Any]:
     """Prepare structural fragments and select the compact Stage-2 dispatch."""
     output_dir, cfg = _load_run_config(output_dir)
+    if stage1d := _stage1d_route(output_dir, cfg, STAGE1D_ROUTE_STAGE2_KEY):
+        return stage1d
     config_path = output_dir / ".skill-config.json"
     receipts: list[str] = []
     _best_effort_script(
@@ -5984,6 +6049,9 @@ def next_action(output_dir: Path) -> dict[str, Any]:
             "stage": "stage1",
             "instruction_file": str(THIN_STAGE1_V2_RUNTIME),
         }
+    # Stage 1d owes §9 before any compose can put the report's bytes on disk.
+    if stage1d := _stage1d_route(output_dir, cfg, STAGE1D_ROUTE_NEXT_KEY):
+        return stage1d
     if not (output_dir / "threat-model.md").is_file() or _checkpoint_needs_render(output_dir):
         # Deterministic compose backstop: when the render fragments are already
         # on disk the remaining work is a pure compose, so finish it here rather

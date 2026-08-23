@@ -300,7 +300,11 @@ PreToolUse gate rejects foreground context-v2 verifier calls. One deterministic
 waiter requires every declared verdict to have all steps decided; a write-first
 pending verdict does not release the boundary. The complete match set stays
 controller-owned; merge, chain finalization, finding promotion, YAML rebuild,
-release gates, and ranking remain deterministic.
+release gates, and ranking remain deterministic. The controller also selects
+the stage: while the Stage-1 checkpoint still needs rendering, abuse
+verification is enabled, and no matcher sidecar is newer than that checkpoint,
+the `next` and `prepare-stage2` transitions return the Stage-1d runtime instead
+of Stage 2 — each at most once, so an ignored redirect cannot loop.
 
 Every semantic role is classified as producer-gated or controller-recovered
 before it can be dispatched. Producer-gated roles run the same deterministic

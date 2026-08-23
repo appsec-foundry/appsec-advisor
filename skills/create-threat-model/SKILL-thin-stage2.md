@@ -11,7 +11,9 @@ pregeneration and the filesystem-authoritative compose handoff.
    ```
 
    Require `stage=stage2`, `renderer_profile`, and a matching
-   `dispatch_agent` or `dispatch_parallel` action.
+   `dispatch_agent` or `dispatch_parallel` action. A returned `stage=stage1d`
+   means Stage 1d never ran: load `SKILL-thin-stage1d.md` in full, follow it,
+   then repeat this call.
 2. Mark `Stage 2 - Report rendering` in progress, capture
    `STAGE2_START_ISO`, print the fixed banner, and start the heartbeat:
 

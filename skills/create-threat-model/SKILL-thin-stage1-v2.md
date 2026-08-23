@@ -128,4 +128,4 @@ For each group run `record_stage_stats.py "$OUTPUT_DIR" --stage 1 --variant "<se
 ## Close
 
 After `action=run_gate`, heartbeat, stop the watchdog, mark Stage 1 done, and
-continue. The gate already wrote the completed checkpoint.
+continue with Stage 1d. The gate already wrote the completed checkpoint.

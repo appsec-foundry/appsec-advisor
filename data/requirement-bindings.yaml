@@ -190,6 +190,7 @@ requirements:
     coverage: partial
     guards:
       - tests/test_orchestration_controller.py::TestContextV2ArchitectureAndBoundary::test_post_stage1_fails_closed_on_missing_artifact
+      - tests/test_orchestration_controller.py::test_next_action_routes_to_stage1d_when_abuse_verification_never_ran
 
   REQ-REQ-001:
     applies_to:
