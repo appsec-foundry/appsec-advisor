@@ -968,6 +968,66 @@ class TestTrustBoundaryDiagnostics:
         assert agg._extract_trust_boundary_diagnostics(tmp_path) == []
 
 
+class TestComponentEvidenceCoverage:
+    def _component(self, tmp_path, name, file_count, paths, focus_admission=None):
+        d = tmp_path / ".dispatch-context" / name
+        d.mkdir(parents=True)
+        (d / "context-plan.json").write_text(
+            _json.dumps({"component_id": name, "analysis": {"file_count": file_count}}),
+            encoding="utf-8",
+        )
+        (d / "evidence-bundle.json").write_text(
+            _json.dumps(
+                {
+                    "source_slices": [
+                        {"repository_id": "primary", "path": p, "start_line": 1, "end_line": 1} for p in paths
+                    ],
+                    "path_routing": {"focus_admission": focus_admission or []},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_component_analyzed_from_few_of_its_files_is_reported(self, tmp_path):
+        self._component(
+            tmp_path,
+            "backend-api",
+            86,
+            ["server.ts", "routes/login.ts", "lib/insecurity.ts"],
+            focus_admission=[
+                {"path": "routes/chat.ts", "status": "omitted", "reason": "source-budget"},
+                {"path": "server.ts", "status": "admitted", "reason": "projected"},
+            ],
+        )
+
+        issues = agg._extract_component_evidence_coverage(tmp_path)
+
+        assert len(issues) == 1
+        assert issues[0]["category"] == "component_evidence_coverage"
+        assert issues[0]["severity"] == "warning"
+        assert issues[0]["evidence"]["evidence_files"] == 3
+        assert issues[0]["evidence"]["file_count"] == 86
+        assert issues[0]["evidence"]["unadmitted_focus_paths"] == ["routes/chat.ts"]
+
+    def test_component_covered_in_full_is_silent(self, tmp_path):
+        self._component(tmp_path, "ci-cd-pipeline", 17, [f"wf/{i}.yml" for i in range(16)])
+        assert agg._extract_component_evidence_coverage(tmp_path) == []
+
+    def test_trivially_small_component_is_exempt(self, tmp_path):
+        # A low ratio over a handful of files says nothing about coverage.
+        self._component(tmp_path, "realtime", 4, [])
+        assert agg._extract_component_evidence_coverage(tmp_path) == []
+
+    def test_component_with_no_evidence_at_all_is_reported(self, tmp_path):
+        self._component(tmp_path, "data-persistence", 23, [])
+        issues = agg._extract_component_evidence_coverage(tmp_path)
+        assert len(issues) == 1
+        assert issues[0]["evidence"]["evidence_files"] == 0
+
+    def test_missing_dispatch_context_is_not_an_issue(self, tmp_path):
+        assert agg._extract_component_evidence_coverage(tmp_path) == []
+
+
 class TestTrustBoundaryCoverage:
     def test_unresolved_accounted_signals_are_visible_run_issue(self, tmp_path):
         (tmp_path / ".trust-boundary-coverage.json").write_text(

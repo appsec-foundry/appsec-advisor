@@ -646,6 +646,44 @@ def _recommend_architect_status_not_pass(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_component_evidence_coverage(issue: dict, output_dir: Path) -> dict:
+    """A component reached STRIDE with evidence for few of its in-scope files."""
+    ev = issue.get("evidence", {})
+    dropped = ev.get("unadmitted_focus_paths") or []
+    drop_note = (
+        f" {len(dropped)} focus path(s) were not admitted: {', '.join(map(str, dropped[:5]))}."
+        if dropped
+        else " Every focus path was admitted, so the narrow view comes from routing selection, not the budget."
+    )
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "medium",
+        "risk_level": "medium",
+        "summary": (
+            f"{ev.get('component_id', '?')} was analyzed from {ev.get('evidence_files', '?')} of "
+            f"{ev.get('file_count', '?')} in-scope file(s)."
+        ),
+        "rationale": (
+            "The bundle directs the analyzer's attention. Where it names few of a component's "
+            "files, the rest were covered only if the analyzer independently looked, which makes "
+            "coverage depend on exploration rather than on routing." + drop_note
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ev.get("log_file", ".dispatch-context"),
+                "details": (
+                    "Compare path_routing.focus_paths against the component's paths. A component "
+                    "far larger than its focus list either needs narrower components or more "
+                    "focus paths; unadmitted paths point at the slice budget instead."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_default(issue: dict, output_dir: Path) -> dict:
     """Fallback for unknown categories."""
     return {
@@ -674,6 +712,7 @@ def _recommend_default(issue: dict, output_dir: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
+    "component_evidence_coverage": _recommend_component_evidence_coverage,
     "max_turns_subagent": _recommend_max_turns_subagent,
     # A soft budget crossing is the same finding at warning severity — the
     # aggregator splits the category so the run stops reporting an error for a

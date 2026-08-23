@@ -891,6 +891,81 @@ def _extract_trust_boundary_coverage(output_dir: Path) -> list[dict]:
     ]
 
 
+_EVIDENCE_COVERAGE_MIN_FILES = 5
+_EVIDENCE_COVERAGE_FLOOR = 0.25
+
+
+def _extract_component_evidence_coverage(output_dir: Path) -> list[dict]:
+    """Report components whose analyzer saw evidence for few of their files.
+
+    A STRIDE analyzer is not confined to its bundle — it can still read and
+    grep — but the bundle is what directs its attention, and a component whose
+    routing surfaced a handful of files out of many is one where coverage
+    rested on the analyzer happening to look elsewhere. Nothing else in the run
+    reports that: ``focus_admission`` records each decision inside the bundle,
+    and no consumer reads it, so a component analyzed from three of eighty-six
+    files finishes without a single issue against it.
+
+    The floor sits in the empty middle of the observed distribution rather than
+    on a tuned value: a component is either covered essentially in full or it
+    is covered by a handful of files, and the gap between those two populations
+    is wide. Trivially small components are exempt because a low ratio there
+    says nothing.
+    """
+    root = output_dir / ".dispatch-context"
+    if not root.is_dir():
+        return []
+    issues: list[dict] = []
+    for component_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        try:
+            bundle = json.loads((component_dir / "evidence-bundle.json").read_text(encoding="utf-8"))
+            plan = json.loads((component_dir / "context-plan.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        file_count = (plan.get("analysis") or {}).get("file_count")
+        if not isinstance(file_count, int) or file_count < _EVIDENCE_COVERAGE_MIN_FILES:
+            continue
+        slices = bundle.get("source_slices")
+        if not isinstance(slices, list):
+            continue
+        covered = len(
+            {
+                row.get("path")
+                for row in slices
+                if isinstance(row, dict) and row.get("repository_id") == "primary" and row.get("path")
+            }
+        )
+        if covered >= file_count * _EVIDENCE_COVERAGE_FLOOR:
+            continue
+        component_id = str(plan.get("component_id") or component_dir.name)
+        dropped = sorted(
+            str(row.get("path"))
+            for row in (bundle.get("path_routing") or {}).get("focus_admission") or []
+            if isinstance(row, dict) and row.get("status") != "admitted" and row.get("path")
+        )
+        detail = (
+            f"{component_id}: {covered} of {file_count} in-scope file(s) carried evidence "
+            f"into STRIDE ({covered / file_count:.0%})"
+        )
+        issues.append(
+            {
+                "category": "component_evidence_coverage",
+                "severity": "warning",
+                "title": detail,
+                "evidence": {
+                    "log_file": f".dispatch-context/{component_dir.name}/evidence-bundle.json",
+                    "log_line": 1,
+                    "raw_event": detail,
+                    "component_id": component_id,
+                    "file_count": file_count,
+                    "evidence_files": covered,
+                    "unadmitted_focus_paths": dropped[:20],
+                },
+            }
+        )
+    return issues
+
+
 def _extract_perf_anomalies(
     phase_durs: list[dict],
     depth: str,
@@ -1748,6 +1823,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_warnings(hook_log))
     issues.extend(_extract_trust_boundary_diagnostics(output_dir))
     issues.extend(_extract_trust_boundary_coverage(output_dir))
+    issues.extend(_extract_component_evidence_coverage(output_dir))
     issues.extend(_extract_budget_events(agent_log))
     issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))
