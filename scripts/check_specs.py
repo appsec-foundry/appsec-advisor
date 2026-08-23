@@ -371,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.target:
         hits = applicable(entries, bindings, args.target)
         if not hits:
+            # Say so explicitly: silence reads the same as the tool not running.
+            print(f"No requirement is bound to {args.target}.")
             return 0
         print(f"Requirements for {args.target}:")
         for entry, binding in hits:

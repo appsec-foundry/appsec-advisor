@@ -210,9 +210,9 @@ def test_main_for_prints_governing_requirement_and_coverage(capsys):
     assert "Guard coverage: partial" in output
 
 
-def test_main_for_unknown_file_prints_nothing(capsys):
+def test_main_for_unbound_file_says_no_requirement_is_bound(capsys):
     assert check_specs.main(["--for", "scripts/does_not_exist.py"]) == 0
-    assert capsys.readouterr().out == ""
+    assert "No requirement is bound to scripts/does_not_exist.py." in capsys.readouterr().out
 
 
 def test_held_file_without_changed_proposal_is_unapproved():

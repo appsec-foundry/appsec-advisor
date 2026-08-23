@@ -180,6 +180,7 @@ requirements:
     applies_to:
       - scripts/orchestration_controller.py
       - scripts/validate_intermediate.py
+      - scripts/compose_threat_model.py
       - schemas/**
     decisions:
       - OR-3
@@ -191,6 +192,8 @@ requirements:
     guards:
       - tests/test_orchestration_controller.py::TestContextV2ArchitectureAndBoundary::test_post_stage1_fails_closed_on_missing_artifact
       - tests/test_orchestration_controller.py::test_next_action_routes_to_stage1d_when_abuse_verification_never_ran
+      - tests/test_compose_threat_model.py::test_schema_violation_raises
+      - tests/test_compose_threat_model.py::test_cli_exit_1_on_missing_fragment
 
   REQ-REQ-001:
     applies_to:
@@ -280,12 +283,18 @@ requirements:
       - scripts/build_threat_model_yaml.py
       - scripts/query_threat_model.py
       - scripts/review_threat_model.py
+      - scripts/export_sarif.py
+      - scripts/export_threat_dragon.py
+      - scripts/export_html.py
+      - scripts/export_pdf.py
     decisions:
       - RA-3
     documents:
       - docs/internal/contracts/schema-invariants.md
-    coverage: advisory
-    guards: []
+    coverage: partial
+    guards:
+      - tests/test_compose_depth_scoped_crossrefs.py::TestSection6BackLink::test_every_emitted_anchor_is_injectable
+      - tests/test_export_threat_dragon.py::test_title_carries_the_report_anchor_not_the_yaml_id
 
   REQ-RPT-003:
     applies_to:
