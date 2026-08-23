@@ -189,9 +189,15 @@ sentence the reader trusts for all of them. Juice-shop 2026-08-22 shipped
 exactly that: the intro claimed unauthenticated reach while two of six bullets
 read "any logged-in user" and "any customer" in their own bodies. Each bullet
 already carries its own precondition in `body`; leave it there. Write a neutral
-frame ("The most serious business exposures identified, in order of impact:")
-or omit the key — it is optional, and the deterministic default is neutral.
+frame — on red or yellow "What an attacker can do today, worst first:", on
+green "Residual risks worth monitoring, most significant first:" — or omit the
+key; it is optional, and the deterministic default is the same neutral pair.
 A uniform precondition is allowed only when EVERY bullet genuinely shares it.
+
+The frame names what the bullets ARE, so do not spend `opening` on a second
+forward pointer to them ("the scenarios below summarise…"): the reader then
+gets "look below" twice in a row. Keep `opening` on posture and let this line
+hand over.
 
 **Forbidden legacy keys** (they were the 2026-06-05 parallel-render drift): `verdict_label`, `verdict_color`, `worst_case_scenarios`, `closing_prose`, `verdict_prose`. The ONLY top-level keys are the five above. Do not cite exact severity counts in `opening` (the composer injects the authoritative `**Risk distribution:** …` line). Run the MS compactness gate after authoring (see "MS prose — single-pass discipline").
 

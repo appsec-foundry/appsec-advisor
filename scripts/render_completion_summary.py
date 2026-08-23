@@ -1628,14 +1628,14 @@ def render_composition_health(health: Optional[dict]) -> list[str]:
 
 
 def render_next_steps(next_steps: list[str], notes: Optional[list[str]] = None) -> list[str]:
-    """Number the steps, but join them with "or" — they are alternatives.
+    """Bullet the steps and join them with "or" — they are alternatives.
 
-    A bare 1-2-3 list reads as "do all three, in this order". Reading the
+    A numbered 1-2-3 list reads as "do all three, in this order". Reading the
     report, triaging it, and asking it a question are none of that: each is a
-    complete way to continue on its own. Numbering keeps them scannable and
-    referable ("do 2"); a trailing "or" on every entry but the last carries the
-    choice, the way it falls in a spoken sentence. Entries after the first are
-    authored lowercase so they read on from it (`build_next_steps`).
+    complete way to continue on its own. Bullets carry no sequence, so the list
+    no longer implies one; a trailing "or" on every entry but the last carries
+    the choice, the way it falls in a spoken sentence. Entries after the first
+    are authored lowercase so they read on from it (`build_next_steps`).
 
     The "or" attaches to the entry's LAST physical line, so a step with
     continuation lines still ends on the conjunction rather than hiding it
@@ -1647,7 +1647,7 @@ def render_next_steps(next_steps: list[str], notes: Optional[list[str]] = None) 
     last = len(next_steps) - 1
     for i, step in enumerate(next_steps):
         head, *rest = str(step).split("\n")
-        block = [f"  {i + 1}. {head}"] + [f"        {cont}" for cont in rest]
+        block = [f"  - {head}"] + [f"    {cont}" for cont in rest]
         if i != last:
             block[-1] += " or"
         lines.extend(block)

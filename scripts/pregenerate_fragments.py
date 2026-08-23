@@ -6275,20 +6275,33 @@ _VERDICT_OPENING = {
     "red": (
         "Not production-ready: this assessment confirmed weaknesses that let "
         "attackers reach customer data and core application functions without the "
-        "safeguards a live system requires. The scenarios below summarise the most "
-        "serious business exposures."
+        "safeguards a live system requires."
     ),
     "yellow": (
         "Production-ready with reservations: the assessment found weaknesses that "
         "should be resolved before launch, though none hand an attacker unrestricted "
-        "access on their own. The scenarios below outline the main business risks to "
-        "address."
+        "access on their own."
     ),
     "green": (
         "Production-ready: the assessment found no weakness that gives an attacker "
-        "meaningful access to customer data or core functions. The scenarios below "
-        "note residual risks worth monitoring."
+        "meaningful access to customer data or core functions."
     ),
+}
+# The line rendered in bold directly above the blockquote. It is the sentence
+# that says what the bullets ARE, so `opening` no longer ends on a forward
+# pointer of its own ("The scenarios below summarise…") — saying "look below"
+# twice in a row is what the reader saw before.
+#
+# Posture-keyed, because one fixed frame cannot serve all three. On green the
+# opening states that no weakness gives an attacker meaningful access, so
+# announcing what an attacker can do would contradict it one line later; green
+# frames the same bullets as residual risk. Neither variant asserts an access
+# level — the per-bullet precondition stays in `body` (see the renderer
+# contract's "must not assert a precondition the bullets do not all share").
+_VERDICT_BULLETS_INTRO = {
+    "red": "What an attacker can do today, worst first:",
+    "yellow": "What an attacker can do today, worst first:",
+    "green": "Residual risks worth monitoring, most significant first:",
 }
 _VERDICT_CLOSING = {
     "red": (
@@ -6441,7 +6454,7 @@ def gen_verdict(yaml_data: dict):
     payload = {
         "severity": severity,
         "opening": _VERDICT_OPENING[severity],
-        "bullets_intro": "The most serious business exposures identified, in order of impact:",
+        "bullets_intro": _VERDICT_BULLETS_INTRO[severity],
         "bullets": bullets[:8],
         "closing": _VERDICT_CLOSING[severity],
     }

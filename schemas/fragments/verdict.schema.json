@@ -24,7 +24,7 @@
       "minLength": 20,
       "maxLength": 200,
       "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
-      "description": "ONE short sentence that introduces the blockquote of worst-case scenarios below. Frames what the reader is about to see ('the attack paths driving this verdict', 'the scenarios behind the not-production-ready rating'). Renders in bold directly above the red HTML blockquote. Do NOT cite individual finding IDs here — the bullets do that. Example: 'Worst-case scenarios behind this verdict — what an attacker could do today:'."
+      "description": "ONE short sentence that introduces the blockquote of worst-case scenarios below. Frames what the reader is about to see and how it is ordered. Renders in bold directly above the red HTML blockquote. Do NOT cite individual finding IDs here — the bullets do that. On red or yellow use 'What an attacker can do today, worst first:'; on green, where the opening states that no weakness gives an attacker meaningful access, use 'Residual risks worth monitoring, most significant first:' instead. Assert no access level the bullets do not all share — each bullet carries its own precondition in body."
     },
     "bullets": {
       "type": "array",

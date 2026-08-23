@@ -1592,41 +1592,48 @@ class TestRenderMisc:
         assert out == [
             "",
             "Next Steps — pick one, they are alternatives",
-            "  1. read or",
-            "  2. ask",
+            "  - read or",
+            "  - ask",
         ]
 
     def test_render_next_steps_joins_alternatives_with_a_trailing_or(self):
-        # A bare 1-2-3 list reads as "do all of these, in this order". Reading,
-        # triaging and asking are each a complete way to continue on their own.
-        # The conjunction falls where it would in speech: at the end of the
-        # entry it separates, never on the last one.
+        # A numbered 1-2-3 list reads as "do all of these, in this order".
+        # Reading, triaging and asking are each a complete way to continue on
+        # their own, so they render as bullets. The conjunction falls where it
+        # would in speech: at the end of the entry it separates, never on the
+        # last one.
         out = rcs.render_next_steps(["read", "triage", "ask"])
-        assert out[2] == "  1. read or"
-        assert out[3] == "  2. triage or"
-        assert out[4] == "  3. ask"
+        assert out[2] == "  - read or"
+        assert out[3] == "  - triage or"
+        assert out[4] == "  - ask"
+
+    def test_render_next_steps_uses_bullets_not_numbers(self):
+        # Numbers imply a sequence the reader is meant to work through; these
+        # entries are alternatives.
+        out = rcs.render_next_steps(["read", "triage", "ask"])
+        assert not any(re.match(r"\s*\d+\.", line) for line in out)
 
     def test_render_next_steps_indents_continuation_lines(self):
         out = rcs.render_next_steps(["read", "ask\nexample question"])
-        assert "  2. ask" in out
-        assert "        example question" in out
+        assert "  - ask" in out
+        assert "    example question" in out
 
     def test_trailing_or_attaches_to_the_last_line_of_a_multiline_step(self):
         # Otherwise the conjunction hides mid-block and the continuation line
         # reads as if it belonged to the next alternative.
         out = rcs.render_next_steps(["ask\nexample question", "read"])
-        assert out[2] == "  1. ask"
-        assert out[3] == "        example question or"
-        assert out[4] == "  2. read"
+        assert out[2] == "  - ask"
+        assert out[3] == "    example question or"
+        assert out[4] == "  - read"
 
     def test_render_next_steps_single_step_drops_the_pick_one_header(self):
         out = rcs.render_next_steps(["read"])
-        assert out == ["", "Next Steps", "  1. read"]
+        assert out == ["", "Next Steps", "  - read"]
 
     def test_render_next_steps_renders_notes_below_the_alternatives(self):
         out = rcs.render_next_steps(["read", "ask"], ["Baseline established."])
         assert out[-1] == "  Note: Baseline established."
-        assert not any(line.startswith("  3.") for line in out)
+        assert sum(1 for line in out if line.startswith("  - ")) == 2
 
     def test_render_log_files(self, tmp_path: Path):
         (tmp_path / ".qa-status.json").write_text("{}")
