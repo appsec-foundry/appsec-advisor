@@ -41,6 +41,32 @@ An installed wrapper can be invoked from its plugin directory. Set
 `CLAUDE_PLUGIN_DIR` when several installed copies exist and the desired one is
 otherwise ambiguous.
 
+### Claude launcher wrappers
+
+Set `APPSEC_CLAUDE_EXECUTABLE` when the environment must start Claude Code
+through a gateway, authentication, or observability wrapper. The value names
+one executable; command prefixes and shell fragments are not accepted. The
+headless runner uses it for both the authentication preflight and the assessment
+process. Without the variable, it continues to invoke `claude` from `PATH`.
+
+For example, keep a LiteLLM-specific launcher outside the plugin:
+
+```sh
+#!/bin/sh
+exec lite --base-url "${LITELLM_PROXY_URL:?}" claude "$@"
+```
+
+Then select it for one run:
+
+```bash
+APPSEC_CLAUDE_EXECUTABLE=/opt/company/bin/claude-via-lite \
+LITELLM_PROXY_URL=https://litellm.example.com \
+./scripts/run-headless.sh --repo /repos/team-api --full
+```
+
+Use an absolute path in unattended environments. Store proxy credentials in the
+environment's secret store rather than in the launcher or plugin configuration.
+
 ## Common workflows
 
 Scan the current repository and write to `docs/security/`:
@@ -175,6 +201,9 @@ cleanup, and fail-closed report gate in every supported assessment mode.
 | `--dry-run` with cleanup | Preview deterministic cleanup without writing. |
 | `--verbose` | Stream detailed runtime events. |
 | `--quiet` | Suppress live progress. |
+
+`APPSEC_CLAUDE_EXECUTABLE` selects one Claude-compatible executable for the
+authentication check and assessment launch. It defaults to `claude` on `PATH`.
 
 The wrapper accepts removed mode flags only to reject them with a stable,
 actionable error. There is no environment-variable opt-out that restores the

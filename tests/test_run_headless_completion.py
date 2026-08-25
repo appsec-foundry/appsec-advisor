@@ -113,7 +113,7 @@ def test_effective_mode_is_admitted_before_output_creation_and_dispatch() -> Non
     admission = 'ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py"'
     assert admission in body
     assert body.index(admission) < body.index('mkdir -p "$OUTPUT_PATH"')
-    assert body.index(admission) < body.index('eval "$CLAUDE_CMD"')
+    assert body.index(admission) < body.index('"$@" < /dev/null')
 
 
 def test_headless_has_no_generation_escape_hatch() -> None:
@@ -245,9 +245,78 @@ def test_resolved_output_dir_is_exported_before_claude_launch() -> None:
     """Every hook process, including Stop and Bash, must share run-local state."""
     body = _body()
     export = 'export OUTPUT_DIR="$RESULT_DIR"'
-    launch = 'eval "$CLAUDE_CMD" < /dev/null'
+    launch = '"$@" < /dev/null'
     assert export in body
     assert body.index(export) < body.index(launch)
+
+
+def test_configured_claude_executable_is_used_for_auth_and_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launcher wrapper must own both Claude invocations, not only the scan."""
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    marker = tmp_path / "launcher-args"
+    launcher = tmp_path / "claude-via-gateway"
+    launcher.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then\n'
+        "  printf '{\"loggedIn\": true}\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'printf "%s\\n" "$@" > "$CLAUDE_LAUNCH_MARKER"\n'
+        "exit 42\n",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    monkeypatch.setenv("APPSEC_CLAUDE_EXECUTABLE", str(launcher))
+    monkeypatch.setenv("CLAUDE_LAUNCH_MARKER", str(marker))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--repo",
+            str(repo),
+            "--output",
+            str(output),
+            "--trust-mode",
+            "trusted",
+            "--quiet",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 42, result.stdout + result.stderr
+    launched_args = marker.read_text(encoding="utf-8").splitlines()
+    assert launched_args[0] == "-p"
+    assert "--plugin-dir" in launched_args
+    assert "--output-format" in launched_args
+
+
+def test_configured_claude_executable_is_not_evaluated_as_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    marker = tmp_path / "must-not-exist"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("APPSEC_CLAUDE_EXECUTABLE", f"claude;touch {marker}")
+
+    result = subprocess.run(
+        [str(SCRIPT), "--repo", str(repo), "--trust-mode", "trusted", "--quiet"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 1
+    assert "Configured Claude executable not found or not executable" in result.stderr
+    assert not marker.exists()
 
 
 # ── Untrusted-preflight abort message ───────────────────────────────────

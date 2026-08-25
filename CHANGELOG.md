@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Added
+
+- Headless runs can launch Claude Code through an environment-provided wrapper executable.
+
 ## 0.6.0-beta.1 (2026-08-23)
 
 From this release a `-beta.N` suffix marks the Nth pre-release of the version in
