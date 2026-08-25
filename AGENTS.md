@@ -60,6 +60,7 @@ reviewed implementation work.
 ### Keep the repository maintainable
 
 - Write code comments, docstrings, commits, and repository documents in English.
+- For new or substantively edited Markdown prose, follow `docs/internal/documentation-style.md`. Keep each prose paragraph, including prose in list items, on one source line; separate paragraphs with one blank line; and do not reflow untouched prose solely for formatting. Local contracts override the external style reference.
 - `CHANGELOG.md` contains one short sentence per user-visible change. Fold an
   unreleased feature and its fixes into one bullet, and omit internal machinery,
   ordinary refactors, test-only work, doc edits, and routine maintenance.
