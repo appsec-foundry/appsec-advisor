@@ -449,6 +449,11 @@ def test_functional_examples_are_selected_from_the_existing_catalog():
     catalog_ids = {
         requirement["id"] for category in catalog["categories"] for requirement in category.get("requirements", [])
     }
+    catalog_requirements = {
+        requirement["id"]: requirement
+        for category in catalog["categories"]
+        for requirement in category.get("requirements", [])
+    }
     selected_ids = {"AC-003", "AC-004", "AC-006", "EH-002", "WEB-001"}
     assert selected_ids <= catalog_ids
 
@@ -461,6 +466,10 @@ def test_functional_examples_are_selected_from_the_existing_catalog():
     assert openspec.count("### Requirement:") == openspec.count("#### Scenario:") == len(selected_ids)
     assert specdd.startswith("Spec: Example Application Behavior\n")
     assert specdd.count("Scenario:") == len(selected_ids)
+    for requirement_id in selected_ids:
+        statement = catalog_requirements[requirement_id]["text"]
+        assert statement in openspec
+        assert statement in specdd
     assert "Owns:" not in specdd
     assert "Can modify:" not in specdd
 

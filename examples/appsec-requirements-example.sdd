@@ -5,36 +5,36 @@ Purpose:
 
 Must:
   # Category: Authentication & Access Control
-  AC-003: The application MUST rate-limit every externally reachable API endpoint.
-  AC-004: The application MUST authenticate end users through a central identity provider using OIDC or SAML and mandatory MFA.
-  AC-006: The application MUST authorize access to each requested resource against the authenticated identity.
+  AC-003: Login, registration, credential recovery, verification, token issuance, and other abuse-prone endpoints MUST apply bounded request sizes and rate limits by both account or identifier and client source using a control effective across application instances.
+  AC-004: Workforce and privileged users MUST authenticate through the organization-managed identity provider using OIDC authorization code with PKCE or SAML, and privileged access MUST require phishing-resistant MFA where supported. A parallel local password path requires a documented operational need.
+  AC-006: Every request for a protected object MUST authorize the authenticated identity against that object's owner, tenant, state, and requested action. User-supplied identifiers and token possession alone MUST NOT grant access.
   # Category: Error Handling & Security Events
-  EH-002: The application MUST return generic error messages to clients and retain detailed diagnostics only in server-side logs.
+  EH-002: Client error responses MUST NOT expose stack traces, query text, internal paths, credentials, tokens, or raw exceptions. Diagnostic details MAY be recorded only in access-controlled server-side logs after sensitive values are removed.
   # Category: Web & Frontend Security
-  WEB-001: The application MUST protect session-authenticated state changes against cross-site request forgery and MUST NOT perform them through HTTP GET.
+  WEB-001: Applications that use cookie-based or other ambient browser credentials MUST reject forged cross-site state-changing requests with a framework CSRF control, a session-bound token, or a validated same-origin signal. SameSite cookies provide defense in depth and state-changing actions MUST NOT use HTTP GET.
 
-Scenario: repeated API requests are throttled
-  Given a client is sending requests to an externally reachable API endpoint
-  When the client exceeds the permitted request rate
-  Then the application throttles further requests from that client
+Scenario: repeated authentication attempts are throttled
+  Given repeated authentication attempts target one account from changing client sources
+  When either the account or a client source exceeds its permitted rate
+  Then the application throttles the attempts across every application instance
 
-Scenario: end user starts a session
-  Given an end user has no authenticated session
+Scenario: privileged workforce user starts a session
+  Given a privileged workforce user has no authenticated session
   When the user signs in
-  Then the application authenticates the user through the central identity provider
-  And the identity provider requires MFA
+  Then the application uses the organization-managed identity provider
+  And privileged access requires phishing-resistant MFA where supported
 
-Scenario: user requests another user's resource
-  Given an authenticated user does not own the requested resource and has no delegated access
+Scenario: user requests a resource from another tenant
+  Given an authenticated user supplies the identifier of a resource owned by another tenant
   When the user requests that resource by its identifier
-  Then the application denies access
+  Then the application denies access regardless of token possession or identifier validity
 
 Scenario: request processing fails unexpectedly
   When request processing raises an unexpected error
   Then the application returns a generic error response without internal details
-  And the application records the detailed diagnostic server-side
+  And any retained diagnostic is access-controlled and contains no sensitive values
 
 Scenario: cross-site state-changing request
   Given a user has an authenticated browser session
-  When another site submits a state-changing request without valid CSRF proof
+  When another site submits a state-changing request without a valid token or same-origin signal
   Then the application rejects the request

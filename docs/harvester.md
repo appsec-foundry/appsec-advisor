@@ -25,7 +25,7 @@ The script crawls configured pages and writes the catalog. Publish that file at 
 
 ### 1. Test with the bundled catalog
 
-The bundled mock server lets you test the audit before connecting an internal catalog:
+The bundled mock server lets you test the audit before connecting an internal catalog. Its catalog is a curated, OWASP-informed demonstration baseline rather than an official OWASP standard or a claim of complete coverage. It uses OWASP Top 10:2025 for risk classification and current ASVS and Cheat Sheet references for verifiable controls and implementation guidance.
 
 ```bash
 # Serve the bundled example requirements YAML on 127.0.0.1:4444
@@ -84,7 +84,7 @@ The output follows [`schemas/requirements-catalog.schema.yaml`](../schemas/requi
 python3 scripts/requirements_state.py --validate data/appsec-requirements-fallback.yaml [--strict]
 ```
 
-OpenSpec and SpecDD exports are single files. The renderer checks their required section and scenario structure without adding either project's CLI as a runtime dependency. The repository carries matching examples at [`examples/appsec-requirements-example.openspec.md`](../examples/appsec-requirements-example.openspec.md) and [`examples/appsec-requirements-example.sdd`](../examples/appsec-requirements-example.sdd).
+OpenSpec and SpecDD exports are single files. The renderer checks their required section and scenario structure without adding either project's CLI as a runtime dependency. The repository carries matching examples at [`examples/appsec-requirements-example.openspec.md`](../examples/appsec-requirements-example.openspec.md) and [`examples/appsec-requirements-example.sdd`](../examples/appsec-requirements-example.sdd); their requirement statements are tested against the bundled YAML, while their concrete scenarios remain illustrative.
 
 ### Selecting functional requirements
 
@@ -246,6 +246,6 @@ The plugin caches the fetched catalog. An explicit `--requirements <url>` overri
 
 **Auth token works interactively but fails in CI.** `HARVEST_AUTH_TOKEN` must be set as a CI secret *and* passed through in the job's `env:` block — secrets are not auto-exposed on recent GitHub / GitLab runners.
 
-**Mock server returns my old YAML after I ran the harvester.** The mock hardcodes `examples/appsec-requirements-example.yaml` as the `/requirements.yaml` payload. Either re-run the harvester with `--output examples/appsec-requirements-example.yaml`, or `ln -sf` the real output file to that location.
+**Mock server returns the bundled YAML after I ran the harvester.** The mock intentionally hardcodes `examples/appsec-requirements-example.yaml` as its demo payload and does not serve a harvested production catalog. To test a generated file without overwriting the bundled example, serve its containing directory on loopback with `python3 -m http.server 4445 --bind 127.0.0.1 --directory data` and pass the resulting URL explicitly with `--requirements`.
 
 **`--requirements` on the CLI is ignored.** The resolution order is: explicit `--requirements <url>` > config `requirements_yaml_url` (when `enabled: true`) > cache. If you passed `--no-requirements` earlier, it wins regardless.

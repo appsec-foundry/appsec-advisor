@@ -1,359 +1,401 @@
-generated: '2026-04-07T00:00:00Z'
-source: harvested
-description: Generic baseline using public OWASP references. Customize by setting requirements_yaml_url
-  in config.json to point to your organization's requirements.
+generated: '2026-08-26T00:00:00Z'
+source: bundled-example
+description: Curated demonstration baseline informed by OWASP ASVS 5.0.0, OWASP Top 10:2025, and OWASP Cheat Sheets. It is not an official OWASP standard and must be tailored to the application's technology, data, threat model, and risk policy before operational use.
 sources_meta:
-- id: owasp-requirements
+- id: owasp-informed-requirements
   type: requirement
-  title: OWASP Security Requirements
-  reference_url: https://owasp.org/Top10/
-  crawl_url: https://owasp.org/Top10/
-  indexed_at: '2026-04-07T00:00:00Z'
-  items_count: 25
-  mode: structured
-- id: owasp-cheatsheets
+  title: Curated OWASP-informed Demo Requirements
+  reference_url: https://owasp.org/www-project-application-security-verification-standard/
+  reviewed_at: '2026-08-26T00:00:00Z'
+  items_count: 73
+  mode: curated
+- id: owasp-informed-blueprints
   type: blueprint
-  title: OWASP Cheat Sheet Series
+  title: Curated Implementation Examples Based on OWASP Cheat Sheets
   reference_url: https://cheatsheetseries.owasp.org/
-  crawl_url: https://cheatsheetseries.owasp.org/
-  indexed_at: '2026-04-07T00:00:00Z'
-  items_count: 5
-  mode: full
+  reviewed_at: '2026-08-26T00:00:00Z'
+  items_count: 12
+  mode: curated
 categories:
 - id: CAT-WEB
-  source_id: owasp-requirements
-  url: https://owasp.org/Top10/A03_2021-Injection/
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/
   title: Web & Frontend Security
+  context: Applies to applications that serve browser content or accept cross-origin browser requests. OWASP Top 10:2025 A01, A02, and A05 are the primary risk mappings.
   requirements:
   - id: WEB-001
     url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
-    text: |-
-      Implement Anti-CSRF protection (e.g. via SameSite cookies) for user sessions. State-changing actions MUST NOT be performed via HTTP GET
+    text: Applications that use cookie-based or other ambient browser credentials MUST reject forged cross-site state-changing requests with a framework CSRF control, a session-bound token, or a validated same-origin signal. SameSite cookies provide defense in depth and state-changing actions MUST NOT use HTTP GET.
     priority: MUST
   - id: WEB-002
     url: https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html
-    text: Do not store sensitive data in any client-side storage mechanism (localStorage, sessionStorage, IndexedDB, cookies without HttpOnly)
+    text: Authentication tokens, secrets, and sensitive personal data MUST NOT be stored in browser storage accessible to JavaScript. Session cookies MUST use HttpOnly, Secure, and an appropriate SameSite value.
     priority: MUST
   - id: WEB-003
-    url: https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html
-    text: Configure CORS restrictively; use an explicit allowlist of trusted origins and never use wildcard (*) for authenticated APIs
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html
+    text: When cross-origin browser access is required, CORS MUST emit only the methods and headers needed and return an Access-Control-Allow-Origin value only for an exact-match trusted origin. Credentialed responses MUST NOT use a wildcard origin, and CORS MUST NOT replace authentication, authorization, or CSRF protection.
     priority: MUST
   - id: WEB-004
     url: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
-    text: Activate Content-Security-Policy (CSP) headers on all internet-facing applications; avoid unsafe-inline and unsafe-eval directives
-    priority: SHOULD
+    text: Browser applications MUST send a tested Content-Security-Policy that restricts content to required sources, blocks object embedding, restricts framing, and avoids unsafe-inline and unsafe-eval unless a documented nonce- or hash-based migration is in progress.
+    priority: MUST
   - id: WEB-005
     url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html
-    text: Set the Strict-Transport-Security (HSTS) response header on all internet-facing services with a minimum max-age of one year
+    text: Production browser applications served over HTTPS MUST send Strict-Transport-Security with a minimum max-age of one year. includeSubDomains and preload MUST be enabled only when every affected subdomain is HTTPS-ready and controlled by the organization.
     priority: MUST
   - id: WEB-006
     url: https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html
-    text: Use only mature, actively maintained frontend frameworks; enable strict TypeScript mode and production build hardening
-    priority: MUST
+    text: Frontend dependencies SHOULD be actively maintained, version-locked, integrity-verified, and built with the framework's production safety checks enabled. Language- or framework-specific strict modes apply only when that technology supports them.
+    priority: SHOULD
   - id: WEB-007
     url: https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
-    text: Encode all user-controlled output at the frontend to prevent Cross-Site Scripting (XSS); use framework-native binding rather than raw innerHTML
+    text: Untrusted data MUST be rendered with contextual output encoding or framework-native safe binding for the target HTML, attribute, URL, CSS, or JavaScript context. Unsafe DOM sinks such as raw innerHTML MUST NOT receive unsanitized content.
     priority: MUST
   - id: WEB-008
     url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html
-    text: Set Referrer-Policy and Permissions-Policy response headers to limit information leakage and browser feature exposure
-    priority: SHOULD
+    text: Browser responses MUST set X-Content-Type-Options, Referrer-Policy, an application-specific Permissions-Policy, and a framing restriction through CSP frame-ancestors or X-Frame-Options.
+    priority: MUST
 - id: CAT-EH
-  source_id: owasp-requirements
-  url: https://owasp.org/www-community/Improper_Error_Handling
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A10_2025-Mishandling_of_Exceptional_Conditions/
   title: Error Handling & Security Events
+  context: Applies to every application and service. Failures must preserve security invariants and expose no diagnostic internals to untrusted clients.
   requirements:
   - id: EH-001
     url: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html
-    text: |-
-      On any error (expected or unexpected) the application MUST remain in a secure state and MUST NOT disclose internal details (stack traces, SQL, paths) to clients
+    text: Expected and unexpected errors MUST leave the application in a defined secure state, roll back incomplete security-sensitive operations, and fail closed when authorization or security context is missing or ambiguous.
     priority: MUST
   - id: EH-002
     url: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html
-    text: Return generic error messages to clients; log detailed diagnostics server-side only
+    text: Client error responses MUST NOT expose stack traces, query text, internal paths, credentials, tokens, or raw exceptions. Diagnostic details MAY be recorded only in access-controlled server-side logs after sensitive values are removed.
     priority: MUST
   - id: EH-003
     url: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
-    text: Handle authentication and authorization failures consistently to avoid information disclosure through timing or response differences
+    text: Authentication, registration, password-reset, and authorization failures MUST use non-enumerating responses and MUST NOT reveal whether an account, tenant, or protected resource exists.
     priority: MUST
 - id: CAT-HN
-  source_id: owasp-requirements
-  url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/
   title: System Hardening
+  context: Applies to production services and their operational endpoints. Network placement is defense in depth and never replaces authentication or authorization.
   requirements:
   - id: HN-001
     url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Headers_Cheat_Sheet.html
-    text: Disable technology-disclosure headers (X-Powered-By, Server) or replace them with a non-descriptive value
+    text: Production responses MUST remove unnecessary technology-disclosure headers and default banners. Required protocol headers MUST reveal no more product or version detail than operationally necessary.
     priority: MUST
   - id: HN-002
     url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
-    text: Sensitive management and debug endpoints MUST NOT be reachable from public networks; serve them on a dedicated internal-only interface or port
+    text: Debug endpoints MUST be disabled in production. Required management endpoints MUST be authenticated and authorized, expose only necessary operations, and be isolated from public ingress on a dedicated interface, listener, or upstream route.
     priority: MUST
   - id: HN-003
-    url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
-    text: Disable all unused features, modules, and default accounts before deploying to production
+    url: https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/
+    text: Production deployments MUST disable unused features, modules, sample applications, directory listings, and debug modes, and MUST contain no default, shared, or vendor-supplied working account.
     priority: MUST
   - id: HN-004
-    url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
-    text: Deploy a Web Application Firewall (WAF) in front of all internet-facing applications
+    url: https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/
+    text: High-exposure internet-facing applications SHOULD use a managed WAF or equivalent edge control when the threat model justifies it. This control MUST NOT replace application authentication, authorization, validation, or timely remediation.
     priority: SHOULD
+- id: CAT-SD
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A06_2025-Insecure_Design/
+  title: Secure Design & Business Logic
+  context: Applies to systems with protected assets, privileged workflows, trust boundaries, or business rules whose abuse could cause material impact.
+  requirements:
+  - id: SD-001
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html
+    text: The system MUST maintain a threat model for protected assets, trust boundaries, entry points, privileged operations, and material abuse cases, and MUST review it when those elements change.
+    priority: MUST
+  - id: SD-002
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Abuse_Case_Cheat_Sheet.html
+    text: Security-sensitive business rules, including ownership, transaction limits, workflow ordering, and state transitions, MUST be enforced server-side and tested against representative bypass and replay attempts.
+    priority: MUST
+  - id: SD-003
+    url: https://owasp.org/Top10/2025/A06_2025-Insecure_Design/
+    text: High-impact or irreversible operations MUST require an authenticated and authorized actor, an explicit confirmation or approval appropriate to the risk, replay protection where applicable, and an attributable audit event.
+    priority: MUST
 - id: CAT-AC
-  source_id: owasp-requirements
-  url: https://owasp.org/Top10/A01_2021-Broken_Access_Control/
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A01_2025-Broken_Access_Control/
   title: Authentication & Access Control
+  context: Applies to every protected action and resource. Authentication establishes identity; authorization independently binds that identity to the requested operation, tenant, and resource.
   requirements:
   - id: AC-001
     url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
-    text: All API-to-API calls MUST use mutual authentication via a standard mechanism (e.g. OAuth 2.0 client credentials, mTLS)
+    text: Service-to-service calls MUST authenticate the calling workload with a dedicated identity using an approved mechanism such as OAuth 2.0 client credentials with confidential-client authentication, private-key JWT, workload identity, or mTLS. Credentials and scopes MUST be unique and least-privileged per service.
     priority: MUST
   - id: AC-002
     url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
-    text: Apply least-privilege and role-based access control (RBAC) to all endpoints; deny by default
+    text: Every protected operation MUST authorize the authenticated identity server-side using least privilege and deny by default. The policy MAY use roles, attributes, relationships, or capabilities, but MUST NOT rely on client-side checks.
     priority: MUST
   - id: AC-003
     url: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
-    text: Apply rate limiting to all externally reachable API endpoints to prevent brute-force and scraping attacks
+    text: Login, registration, credential recovery, verification, token issuance, and other abuse-prone endpoints MUST apply bounded request sizes and rate limits by both account or identifier and client source using a control effective across application instances.
     priority: MUST
   - id: AC-004
     url: https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html
-    text: End users MUST be authenticated through a central identity provider using a standard protocol (OIDC/SAML) with mandatory MFA
+    text: Workforce and privileged users MUST authenticate through the organization-managed identity provider using OIDC authorization code with PKCE or SAML, and privileged access MUST require phishing-resistant MFA where supported. A parallel local password path requires a documented operational need.
     priority: MUST
   - id: AC-005
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
-    text: Validate OAuth token claims (issuer, audience, expiry) on every request; do not cache authorization decisions beyond the token TTL
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
+    text: Resource servers MUST validate every access token before use. JWT validation MUST verify the signature with an allowlisted algorithm and expected issuer, audience, and expiry; opaque tokens MUST use authoritative introspection or an equivalent server-side mechanism. Cached results MUST NOT outlive token validity or revocation policy.
     priority: MUST
   - id: AC-006
     url: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
-    text: Enforce resource-level authorization checks to prevent Insecure Direct Object Reference (IDOR); compare token identity claims against the requested resource
+    text: Every request for a protected object MUST authorize the authenticated identity against that object's owner, tenant, state, and requested action. User-supplied identifiers and token possession alone MUST NOT grant access.
+    priority: MUST
+  - id: AC-007
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html
+    text: Stateful sessions MUST rotate their identifier after authentication and privilege changes, be invalidated server-side on logout and credential or MFA changes, and enforce documented idle and absolute expiration limits.
+    priority: MUST
+  - id: AC-008
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+    text: Authentication and recovery flows MUST issue one-time codes only through their addressed out-of-band channel, make them short-lived and single-use, and grant no full session or protected access before verification succeeds.
     priority: MUST
 - id: CAT-IV
-  source_id: owasp-requirements
-  url: https://owasp.org/Top10/A03_2021-Injection/
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A05_2025-Injection/
   title: Input Validation & Data Handling
+  context: Applies at every boundary where data, files, URLs, serialized objects, or commands enter from an untrusted source.
   requirements:
   - id: IV-001
     url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
-    text: Validate all external input as restrictively as possible; reject unknown fields rather than ignoring them (allowlist over denylist)
+    text: At each trust boundary, external input MUST be validated for expected type, length, range, format, and allowed values before use. Security-sensitive structured requests MUST reject unknown or ambiguous fields.
     priority: MUST
   - id: IV-002
     url: https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html
-    text: Harden XML parsers to prevent XXE attacks; disable external entity resolution and DTD processing
+    text: When XML is accepted, parsers MUST disable external entity resolution, external DTD loading, and network access unless a documented use case enables an allowlisted resource through an isolated parser.
     priority: MUST
   - id: IV-003
     url: https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html
-    text: Restrict and validate object graphs during deserialization; never deserialize untrusted data into privileged types
+    text: Untrusted data MUST use a safe, data-only parser with an explicit schema or type allowlist and MUST NOT be passed to a deserializer that can instantiate arbitrary or privileged types.
     priority: MUST
   - id: IV-004
     url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
-    text: Use parameterized queries, prepared statements, or ORM methods for all database access; never concatenate user input into query strings
+    text: Database queries MUST bind untrusted values through parameterized queries, prepared statements, or safe ORM parameters. Untrusted values MUST NOT be concatenated into query syntax or identifiers.
     priority: MUST
   - id: IV-005
     url: https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
-    text: Validate, sanitize, and securely store uploaded files; enforce content-type verification, size limits, and safe storage paths
+    text: File uploads MUST enforce size and count limits, verify content independently of the supplied name and media type, generate a server-controlled storage name, prevent path traversal and active-content execution, and store files outside executable or public paths unless explicitly required.
     priority: MUST
   - id: IV-006
     url: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
-    text: Apply strict limits on payload size, field length, array length, and JSON nesting depth to prevent resource exhaustion
+    text: Input-driven work MUST enforce request and decompressed-size limits, field and collection bounds, nesting limits, processing timeouts, and pagination or result caps before expensive parsing or downstream work.
+    priority: MUST
+  - id: IV-007
+    url: https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+    text: When untrusted input influences an outbound destination, the application MUST allowlist permitted schemes and destinations, resolve and validate the effective address, block loopback, link-local, private, metadata, and other forbidden networks, and revalidate or disable redirects.
+    priority: MUST
+  - id: IV-008
+    url: https://owasp.org/Top10/2025/A05_2025-Injection/
+    text: Untrusted values MUST NOT select filesystem paths, commands, interpreters, or process options. Filesystem access MUST use canonical contained paths, and process execution MUST use a shell-free argument array with an allowlisted executable and bounded runtime.
     priority: MUST
 - id: CAT-DP
-  source_id: owasp-requirements
-  url: https://owasp.org/Top10/A02_2021-Cryptographic_Failures/
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/
   title: Data Protection & Cryptography
+  context: Applies according to data classification and threat model. Cryptographic choices and retention periods must follow an approved organizational policy rather than an invented universal value.
   requirements:
   - id: DP-001
     url: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
-    text: Encrypt confidential data at rest using approved algorithms (AES-256-GCM or equivalent); apply full-disk or database-level encryption for all production data stores
+    text: Confidential data at rest MUST be protected with an organization-approved authenticated-encryption or platform storage mechanism, with keys separated from the protected data and access limited to the workload identities that require it.
     priority: MUST
   - id: DP-002
     url: https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
-    text: |-
-      Security tokens, API keys, and cryptographic keys MUST be generated using a cryptographically secure random source and be at least 256 bits (32 bytes) of entropy
+    text: Session, reset, activation, and other bearer tokens MUST be generated with a cryptographically secure random source and at least 128 bits of entropy. Cryptographic keys MUST use the algorithm-specific size and generation mechanism required by the approved cryptographic policy.
     priority: MUST
   - id: DP-003
     url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
-    text: Transmit sensitive data in the HTTP request body (POST/PUT) rather than in URLs or query parameters
+    text: Credentials, bearer tokens, one-time codes, and other sensitive values MUST NOT appear in URLs or query parameters. They MUST use an appropriate protected header or request body over TLS and be excluded from logs and analytics.
     priority: MUST
   - id: DP-004
     url: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
-    text: Do not store user credentials (passwords); delegate authentication to a central identity service
+    text: When local passwords are required, the application MUST reject inputs above its documented UTF-8 byte limit before hashing and store passwords only with a maintained Argon2id, scrypt, bcrypt, or PBKDF2 implementation using approved parameters and unique salts.
     priority: MUST
   - id: DP-005
     url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
-    text: Secrets (passwords, API keys, certificates) MUST be stored in a dedicated secret manager; rotate them regularly and on suspected compromise
+    text: Persistent credentials and cryptographic keys MUST come from external configuration or a managed secret store, remain stable until explicit rotation, be scoped to one workload and purpose, and be rotated on compromise and according to a documented lifecycle.
     priority: MUST
   - id: DP-006
     url: https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
-    text: All data transmitted over external networks MUST be encrypted with TLS 1.2 or higher; prefer TLS 1.3 and mTLS for service-to-service communication
+    text: Traffic that leaves the machine MUST use TLS 1.2 or later with an approved configuration; TLS 1.3 SHOULD be preferred. Plain HTTP MAY be used only on loopback, and workload authentication such as mTLS MUST be added when the trust model requires it.
     priority: MUST
   - id: DP-007
     url: https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
-    text: Do not disable TLS certificate verification; never set insecure flags such as verify=false, rejectUnauthorized=false, or equivalent
+    text: TLS clients MUST validate certificate chains and the expected service identity and MUST NOT expose a production switch that disables verification. Private trust anchors MUST be configured explicitly and scoped to their intended destinations.
+    priority: MUST
+  - id: DP-008
+    url: https://owasp.org/Top10/2025/A04_2025-Cryptographic_Failures/
+    text: Personal, confidential, and regulated data MUST have documented collection purpose, access policy, retention period, backup handling, and verifiable deletion behavior, and the application MUST retain no more data than those purposes require.
     priority: MUST
 - id: CAT-SC
-  source_id: owasp-requirements
-  url: https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A03_2025-Software_Supply_Chain_Failures/
   title: Supply Chain & Dependency Security
+  context: Applies to source, build, package, model, container, and deployment dependencies. Blocking thresholds and exceptions must be explicit, risk-based, time-bounded, and auditable.
   requirements:
   - id: SC-001
     url: https://owasp.org/www-project-dependency-check/
-    text: Integrate automated Software Composition Analysis (SCA) into the CI/CD pipeline; block builds on critical or high vulnerabilities with no fix available
+    text: CI MUST scan resolved direct and transitive dependencies against current vulnerability intelligence and block release for known-exploited or policy-defined critical or high findings. An exception MUST name an owner, compensating controls, justification, and expiry regardless of fix availability.
     priority: MUST
   - id: SC-002
     url: https://owasp.org/www-project-dependency-check/
-    text: Pin direct dependencies to exact versions and verify integrity (e.g. lockfiles, checksums, or hash pinning); do not use floating version ranges in production builds
+    text: Production builds MUST resolve dependencies from a committed lockfile or equivalent immutable manifest, verify package integrity, and use frozen installation so floating ranges cannot change the deployed dependency graph.
     priority: MUST
   - id: SC-003
     url: https://owasp.org/www-project-dependency-check/
-    text: Pull packages only from approved, internal registries or well-known public registries; do not reference packages from untrusted or personal namespaces
+    text: Build systems MUST use an explicit allowlist of trusted registries and namespaces, authenticate private sources, and prevent dependency-confusion fallback from private package names to public registries.
     priority: MUST
   - id: SC-004
     url: https://owasp.org/www-project-cyclonedx/
-    text: Generate and publish a Software Bill of Materials (SBOM) for each production release to enable rapid impact assessment during supply-chain incidents
+    text: Each production release SHOULD produce an SBOM from the resolved build graph, bind it to the released artifact, retain it with release evidence, and make it available to vulnerability-response owners.
     priority: SHOULD
   - id: SC-005
     url: https://owasp.org/www-project-dependency-check/
-    text: Review transitive dependency trees regularly; remove unused dependencies and replace abandoned packages with maintained alternatives
+    text: Dependency changes SHOULD receive automated policy review during each build, and owners SHOULD remove unused packages and replace unmaintained dependencies within a documented remediation period.
     priority: SHOULD
   - id: SC-006
     url: https://owasp.org/www-community/controls/Static_Code_Analysis
-    text: Run Static Application Security Testing (SAST) in the CI/CD pipeline on every pull request and fail builds on high-severity findings
+    text: CI MUST run applicable static security analysis on changed code and block policy-defined exploitable findings. Suppressions MUST identify the exact finding, rationale, approver, and expiry and MUST NOT disable the scanner or an entire rule class without review.
+    priority: MUST
+  - id: SC-007
+    url: https://owasp.org/Top10/2025/A08_2025-Software_or_Data_Integrity_Failures/
+    text: Release artifacts MUST be produced by an access-controlled build service from reviewed source, carry verifiable provenance and integrity metadata, and be promoted without rebuilding or accepting unsigned replacement artifacts.
     priority: MUST
 - id: CAT-LM
-  source_id: owasp-requirements
-  url: https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A09_2025-Security_Logging_and_Alerting_Failures/
   title: Security Logging & Monitoring
+  context: Applies to production services and security-relevant control planes. Logs must support investigation without becoming a secondary store of secrets or unnecessary personal data.
   requirements:
   - id: LM-001
     url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
-    text: Log all security-relevant events (authentication success/failure, authorization failure, privilege escalation, configuration changes) with sufficient context to support incident investigation
+    text: Applications MUST record security-relevant events including authentication and authorization failures, privilege and identity changes, sensitive configuration changes, administrative actions, and security-control throttling with an attributable actor, target, time, action, and outcome.
     priority: MUST
   - id: LM-002
     url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
-    text: Use structured log formats (e.g. JSON) with consistent fields (timestamp, request-id, user-id, action, outcome); avoid free-text-only log entries for security events
+    text: Security events MUST use a structured, versioned format with a timestamp, correlation identifier, actor or workload identifier where lawful, target, action, outcome, and source component.
     priority: MUST
   - id: LM-003
     url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
-    text: Forward security logs to a centralized, tamper-resistant log aggregation system; do not rely solely on local application logs
+    text: Production security events MUST be forwarded to an access-controlled centralized system that detects unauthorized modification or deletion and preserves events when an application instance is replaced or compromised.
     priority: MUST
   - id: LM-004
     url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
-    text: Retain security logs for a minimum of 90 days online and 12 months in cold storage to support forensic investigations and compliance requirements
+    text: Security logs SHOULD follow a documented retention and deletion policy derived from incident-response, legal, and privacy needs, with access restrictions and integrity protection throughout the retention period.
     priority: SHOULD
   - id: LM-005
     url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
-    text: Define alerting rules for anomalous patterns (e.g. repeated auth failures, privilege escalation, unusual data access volumes) and route alerts to an on-call channel
+    text: Alerting SHOULD cover defined high-confidence events such as repeated authentication failures, privilege changes, security-control disablement, unusual protected-data access, and log-pipeline failure, with a tested route to an accountable responder.
     priority: SHOULD
   - id: LM-006
     url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Vocabulary_Cheat_Sheet.html
-    text: Never include sensitive values (tokens, passwords, PII, credit-card numbers) in log entries at any severity level
+    text: Logs MUST NOT contain passwords, bearer tokens, private keys, session identifiers, one-time codes, or complete payment credentials. Personal data MUST be minimized, masked where possible, and limited to a documented investigation purpose.
     priority: MUST
 - id: CAT-IF
-  source_id: owasp-requirements
-  url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+  source_id: owasp-informed-requirements
+  url: https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/
   title: Infrastructure & Container Security
+  context: Applies only when the application builds or deploys containers, Kubernetes workloads, or infrastructure as code; otherwise these requirements are not applicable.
   requirements:
   - id: IF-001
     url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
-    text: Container images MUST be scanned for known vulnerabilities before deployment; block promotion of images with critical or high vulnerabilities that have a fix available
+    text: Container images MUST be scanned before promotion and continuously re-evaluated against current vulnerability intelligence. Promotion MUST block known-exploited or policy-defined critical or high findings unless a time-bounded approved exception exists.
     priority: MUST
   - id: IF-002
     url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
-    text: Containers MUST NOT run as root; set a non-root UID in the Dockerfile and enforce it via a security policy (e.g. PodSecurity admission, OPA)
+    text: Application containers MUST run as a non-root numeric identity, disallow privilege escalation, and be rejected by deployment policy when those properties are absent.
     priority: MUST
   - id: IF-003
     url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
-    text: Mount container filesystems as read-only where possible; use explicitly declared writable volume mounts for required data paths
+    text: Container root filesystems SHOULD be read-only, with explicitly declared, size-bounded writable mounts only for required runtime data and temporary files.
     priority: SHOULD
   - id: IF-004
     url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
-    text: Drop all Linux capabilities not required by the application; do not use privileged containers in production
+    text: Production containers MUST drop all Linux capabilities by default, add back only documented required capabilities, use a restrictive seccomp profile, and MUST NOT run privileged.
     priority: MUST
   - id: IF-005
     url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
-    text: Apply network policies (or equivalent micro-segmentation controls) to restrict pod-to-pod communication to explicitly required flows
+    text: Container workloads MUST use default-deny ingress and egress policy with explicit exceptions for documented service flows, DNS, telemetry, and required external destinations.
     priority: MUST
   - id: IF-006
     url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html
-    text: Infrastructure-as-Code (IaC) definitions MUST be scanned with a policy-as-code tool (e.g. tfsec, Checkov) in the CI/CD pipeline; block critical misconfigurations
+    text: Infrastructure-as-code MUST be validated in CI against an approved security policy and block policy-defined critical misconfigurations before deployment. Exceptions MUST be scoped, owned, justified, and time-bounded.
     priority: MUST
   - id: IF-007
     url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
-    text: Pin base images to an immutable digest (SHA256) rather than a mutable tag; rebuild images regularly to incorporate upstream security patches
+    text: Base images SHOULD be pinned by immutable digest and rebuilt automatically when an approved upstream image or required security update changes, within the remediation window defined by policy.
     priority: SHOULD
   - id: IF-008
     url: https://cheatsheetseries.owasp.org/cheatsheets/Infrastructure_as_Code_Security_Cheat_Sheet.html
-    text: Store IaC templates in version control; apply code review and approval gates before any infrastructure change reaches production
+    text: Infrastructure changes MUST originate from version-controlled reviewed definitions and pass required approval and policy gates before an automated identity with least privilege applies them to production.
     priority: MUST
 - id: CAT-LLM
-  source_id: owasp-requirements
+  source_id: owasp-informed-requirements
   url: https://genai.owasp.org/llm-top-10/
   title: AI / LLM Security (OWASP LLM Top 10)
+  context: Applies only to features that send data to or act on output from an LLM, embedding model, vector store, or model-connected tool. Model output and retrieved content are always untrusted.
   requirements:
   - id: LLM-001
     url: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
     text: |-
-      Sanitize and validate all user input before incorporating it into LLM prompts.
-      Use parameterized prompt templates with strict separation between system instructions and user content.
-      Never concatenate raw user input directly into system prompts via string formatting.
+      Prompts, retrieved documents, files, tool results, memory, and model output MUST be treated as untrusted content and clearly separated from operator instructions.
+      The application MUST assume prompt injection cannot be eliminated by delimiters, sanitization, or system instructions and MUST limit impact with deterministic authorization, least privilege, constrained tools, validated outputs, and adversarial tests for direct and indirect injection.
     priority: MUST
   - id: LLM-002
-    url: https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/
+    url: https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/
     text: |-
-      Filter LLM output before returning it to users to prevent leakage of PII, credentials, internal paths, or training data.
-      Implement output validation that checks for sensitive patterns (API keys, internal URLs, personal data) before delivery.
+      Before model invocation, the application MUST authorize and minimize every data item placed in the model context for the authenticated tenant and purpose.
+      Model output MUST be checked for policy-prohibited sensitive data before delivery, but pattern filtering MUST NOT replace source-data access control or tenant isolation.
     priority: MUST
   - id: LLM-003
-    url: https://genai.owasp.org/llmrisk/llm03-supply-chain/
+    url: https://genai.owasp.org/llmrisk/llm032025-supply-chain/
     text: |-
-      Pin LLM SDK and model versions explicitly. Verify model integrity via checksums when loading from external registries.
-      Use only trusted model sources and maintain an inventory of all AI/ML dependencies.
+      Model, adapter, tokenizer, dataset, prompt package, and LLM SDK versions MUST come from approved sources, be inventoried, pinned or immutably identified, and have integrity and provenance verified before deployment.
     priority: SHOULD
   - id: LLM-004
     url: https://genai.owasp.org/llmrisk/llm04-data-and-model-poisoning/
     text: |-
-      Validate and sanitize all data ingested into RAG knowledge bases and vector stores.
-      Restrict who can update the knowledge base and maintain an audit trail for all embedding updates.
+      RAG ingestion MUST authenticate and authorize the source, retain provenance and tenant ownership, reject or quarantine untrusted updates, and record attributable changes.
+      Retrieval MUST enforce the source document's access policy before content reaches the model context.
     priority: SHOULD
   - id: LLM-005
-    url: https://genai.owasp.org/llmrisk/llm05-improper-output-handling/
+    url: https://genai.owasp.org/llmrisk/llm052025-improper-output-handling/
     text: |-
-      Treat all LLM output as untrusted input. Never use LLM output directly in eval(), exec(), raw SQL queries,
-      shell commands, innerHTML, or downstream API calls without sanitization and validation.
+      Model output MUST be validated against a bounded schema and encoded for its destination before use.
+      It MUST NOT flow directly into eval, a shell, query syntax, HTML, filesystem paths, security decisions, or downstream actions; deterministic code must validate and mediate each sink.
     priority: MUST
   - id: LLM-006
-    url: https://genai.owasp.org/llmrisk/llm06-excessive-agency/
+    url: https://genai.owasp.org/llmrisk/llm062025-excessive-agency/
     text: |-
-      Implement a permission model for LLM tool use. Limit tool access to the minimum required capability.
-      Require human approval for destructive or irreversible operations (delete, write, execute, send).
+      Each model-connected tool action MUST be authenticated and authorized server-side for the current user, tenant, resource, and operation using a least-privileged tool identity and bounded parameters.
+      High-impact, external, destructive, or irreversible actions MUST require an explicit human approval at the point where the exact action and target are known.
     priority: MUST
   - id: LLM-007
-    url: https://genai.owasp.org/llmrisk/llm07-system-prompt-leakage/
+    url: https://genai.owasp.org/llmrisk/llm072025-system-prompt-leakage/
     text: |-
-      Keep system prompts server-side only; never include them in client-side bundles.
-      Do not log system prompts at debug level. Do not echo system prompt content in error messages.
+      System prompts MUST contain no credentials, personal data, tenant secrets, hidden authorization rules, or other information whose disclosure creates a security boundary failure.
+      Authorization and safety-critical behavior MUST be enforced outside the model because system-prompt confidentiality and instruction adherence cannot be relied upon.
     priority: MUST
   - id: LLM-008
-    url: https://genai.owasp.org/llmrisk/llm08-vector-and-embedding-weaknesses/
+    url: https://genai.owasp.org/llmrisk/llm082025-vector-and-embedding-weaknesses/
     text: |-
-      Enforce authentication and authorization on all vector database queries.
-      Rate-limit similarity search endpoints. Validate embedding dimensions and content before indexing.
+      Vector and embedding stores MUST isolate tenants and enforce document-level authorization for queries and updates.
+      Similarity search MUST enforce bounded result counts and rate limits, and ingestion MUST validate model identity, dimensions, content size, and provenance.
     priority: SHOULD
   - id: LLM-009
-    url: https://genai.owasp.org/llmrisk/llm09-misinformation/
+    url: https://genai.owasp.org/llmrisk/llm092025-misinformation/
     text: |-
-      Clearly label AI-generated content with appropriate disclaimers.
-      Ground LLM outputs against authoritative data sources where factual accuracy is required.
-      Log AI-generated responses for audit and correction.
+      When model output can materially affect a person, security decision, financial action, or regulated process, the application MUST ground claims in authorized sources, surface provenance and uncertainty, and require deterministic validation or qualified human review before acting.
     priority: SHOULD
   - id: LLM-010
-    url: https://genai.owasp.org/llmrisk/llm10-unbounded-consumption/
+    url: https://genai.owasp.org/llmrisk/llm102025-unbounded-consumption/
     text: |-
-      Set max_tokens limits on all LLM API calls. Implement per-user and per-session rate limits.
-      Monitor token consumption and set cost alerting thresholds. Implement circuit breakers for runaway costs.
+      LLM features MUST bound input size, output tokens, requests per user and source, tool calls, retrieval results, agent iterations, wall-clock time, concurrency, and cost.
+      Shared enforcement, monitoring, quotas, and circuit breakers MUST prevent one tenant or workflow from exhausting service or budget.
     priority: MUST
 blueprints:
 - id: BP-API-OVERVIEW
-  source_id: owasp-cheatsheets
+  source_id: owasp-informed-blueprints
   url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
   title: Security Blueprint for APIs
   summary: |-
@@ -373,7 +415,7 @@ blueprints:
       Service-to-Service Access — Authentication and authorization of product APIs
       CORS — Securing cross-origin access using CORS
 - id: BP-API-HARDENING
-  source_id: owasp-cheatsheets
+  source_id: owasp-informed-blueprints
   url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
   title: API Hardening
   summary: |-
@@ -388,10 +430,10 @@ blueprints:
   sections:
   - title: 1. Deploy a WAF on Internet-Facing Applications
     url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
-    content: Protect internet-facing applications using a Web Application Firewall (WAF).
+    content: Use a managed WAF or equivalent edge control when justified by the application's exposure and threat model, and keep application-layer controls authoritative.
     references:
     - id: HN-004
-      url: https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+      url: https://owasp.org/Top10/2025/A02_2025-Security_Misconfiguration/
   - title: 2. Transport Encryption
     url: https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
     content: Handle all API communication using TLS 1.3; for service-to-service calls prefer mTLS.
@@ -412,8 +454,8 @@ blueprints:
     url: https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html
     content: |-
       Prevent abuse (brute force, scraping) and protect availability by limiting excessive traffic.
-      Apply rate limiting at the edge/perimeter and at the application layer.
-      Example limits: 5 req/min/IP for login endpoints, 300 req/min/user for general API endpoints.
+      Apply shared rate limiting at the edge and application layer by both client source and authenticated account or identifier.
+      Define endpoint-specific limits from capacity and abuse testing rather than copying universal example numbers.
       Return HTTP 429 Too Many Requests on breach.
     references:
     - id: AC-003
@@ -429,7 +471,7 @@ blueprints:
     - id: SC-006
       url: https://owasp.org/www-community/controls/Static_Code_Analysis
 - id: BP-API-VALIDATION
-  source_id: owasp-cheatsheets
+  source_id: owasp-informed-blueprints
   url: https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
   title: Input Validation
   summary: Guidance for restrictive API input validation across different technology stacks.
@@ -472,7 +514,7 @@ blueprints:
     - id: IV-004
       url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
 - id: BP-SECRET-MANAGEMENT
-  source_id: owasp-cheatsheets
+  source_id: owasp-informed-blueprints
   url: https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
   title: Secret Storage
   summary: Guidance for secure secret storage and access across different deployment environments.
@@ -509,8 +551,8 @@ blueprints:
       you require dynamic secrets or fine-grained lease management, or you already operate a Vault cluster.
       For single-platform workloads the platform-native options above are simpler and sufficient.
 - id: BP-API-AUTHZ-ENDUSER
-  source_id: owasp-cheatsheets
-  url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+  source_id: owasp-informed-blueprints
+  url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
   title: End-User Authentication and Authorization via SSO
   summary: |-
     Applies to: Browser-based web applications (SPAs) and Mobile apps.
@@ -527,7 +569,7 @@ blueprints:
   - _resource_level_authz
   sections:
   - title: 1. Implement a Backend-for-Frontend (BFF)
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
       Implement a Backend-for-Frontend (BFF) for user-context API access in your SPA.
       This keeps tokens out of the browser runtime, reduces XSS/token exfiltration risk, and enables hardened cookie-based sessions.
@@ -545,12 +587,12 @@ blueprints:
     - id: AC-004
       url: https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html
   - title: 2.1. Handling Refresh Tokens
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
       Refresh tokens MUST stay server-side (e.g. in the BFF).
       Treat them as secrets; never expose or store them in the browser.
   - title: 2.2. Handling Access Tokens
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
       Preferred: transmit via secure cookies with HttpOnly, Secure, SameSite=Lax (or Strict if compatible).
       Avoid persistent client-side storage.
@@ -563,28 +605,27 @@ blueprints:
     - id: DP-003
       url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
   - title: 2.3. OAuth Redirect URI Validation
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
-      Redirect URI validation MUST use exact allowlist matching.
-      The redirect URI must be an absolute URI using the https scheme.
-      The URI must not include a fragment component, use localhost, or use a custom URI scheme.
+      Redirect URI validation MUST use exact matching against registered values.
+      Production web-client redirects must use HTTPS and contain no fragment; loopback and claimed HTTPS redirects for native applications follow the applicable OAuth profile instead of a web-client exception.
   - title: '3.1. Step 1: Issuer Validation'
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
       Verify that the token was issued by the correct identity provider.
       Configure the resource server with the issuer-uri or jwk-set-uri of your identity provider.
       Use a library that supports OIDC discovery and manual JWKS configuration.
     references:
     - id: AC-005
-      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
   - title: '3.2. Step 2: API-Level Authorization (via Audience)'
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
-      Ensure the token was issued for this API by validating the audience (aud) claim.
-      Validate that aud includes your application's client-id; reject the request before any route logic runs if it does not.
+      Ensure a JWT access token was issued for this resource server by validating its audience against the exact configured audience value.
+      Do not assume the audience equals an OAuth client identifier; opaque access tokens require authoritative introspection instead of local claim parsing.
     references:
     - id: AC-005
-      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
   - title: '3.3. Step 3: Method-Level Authorization'
     url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
     content: |-
@@ -604,7 +645,7 @@ blueprints:
     - id: AC-006
       url: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
 - id: BP-API-AUTHZ-SERVICE
-  source_id: owasp-cheatsheets
+  source_id: owasp-informed-blueprints
   url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
   title: Service-to-Service API Authentication and Authorization
   summary: 'Scope: Machine-to-machine (M2M) APIs using OAuth 2.0 client credentials.'
@@ -624,14 +665,14 @@ blueprints:
       Register a dedicated OAuth client per service in your identity provider.
       Use the client credentials grant (grant_type=client_credentials).
       Assign only the scopes strictly required by the calling service (least privilege).
-      Store client_id and client_secret in a secrets manager; never hard-code them.
-      Rotate client secrets regularly and immediately on suspected compromise.
+      Treat client_id as a public identifier and store only client secrets or private keys in a managed secret store; never hard-code credentials.
+      Prefer asymmetric client authentication where supported and rotate credentials on compromise and according to a documented lifecycle.
       Recommended settings: Access token TTL=5–15 minutes; do not use refresh tokens with client credentials.
     references:
     - id: AC-001
       url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
   - title: 2. Token Handling
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: 'Send tokens only in the HTTP header: Authorization: Bearer <token>'
     references:
     - id: DP-003
@@ -643,7 +684,7 @@ blueprints:
     - id: AC-001
       url: https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html
   - title: 3.1. Refresh Tokens
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: Do not use refresh tokens with client credentials flows.
   - title: 4. Authorizing Requests
     url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
@@ -657,22 +698,22 @@ blueprints:
     - id: AC-002
       url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
   - title: '4.1. Step 1: Issuer Validation'
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
       Verify that the token was issued by the correct identity provider.
       Configure the resource server with the issuer-uri or jwk-set-uri of your API gateway's IdP.
       For IdPs without OIDC discovery, use the JWKS URI directly.
     references:
     - id: AC-005
-      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
   - title: '4.2. Step 2: API-Level Authorization (via Audience)'
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
-      Ensure the token was issued for this API by validating the audience (aud) claim.
-      Validate that aud contains your API's client-id and reject the request before any route logic runs if it does not.
+      For JWT access tokens, validate the signature, allowed algorithm, issuer, expiry, and exact audience configured for this resource server.
+      Do not assume the audience is the API's OAuth client identifier; use authoritative introspection for opaque tokens.
     references:
     - id: AC-005
-      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+      url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
   - title: '4.3. Step 3: Method or Role-Level Authorization'
     url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
     content: |-
@@ -683,26 +724,26 @@ blueprints:
     - id: AC-002
       url: https://cheatsheetseries.owasp.org/cheatsheets/Access_Control_Cheat_Sheet.html
 - id: BP-API-CORS
-  source_id: owasp-cheatsheets
-  url: https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html
+  source_id: owasp-informed-blueprints
+  url: https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html
   title: CORS Enforcement
   summary: 'Limit which origins may call the API from a browser.'
   topics: []
   sections:
   - title: Overview
-    url: https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html
     content: |-
-      Limit which origins may call the API from a browser.
-      Use an explicit allowlist of trusted frontend origins.
-      Do not use wildcard origins (*) for authenticated APIs.
-      Allow only the HTTP methods and headers your API actually requires.
-      Validate the Origin header on every request and reject requests from unlisted origins.
+      Emit CORS response headers only on routes that require cross-origin browser access.
+      Match the Origin exactly against an explicit allowlist and echo it only after a match.
+      Do not use wildcard origins for credentialed responses, and allow only required methods and headers.
+      Treat requests without an Origin according to normal API authentication and authorization; CORS is a browser policy and is not an access-control mechanism.
+      Protect cookie-authenticated state changes separately against CSRF.
     references:
     - id: WEB-003
-      url: https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html
+      url: https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html
 - id: BP-SPA-BFF
-  source_id: owasp-cheatsheets
-  url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+  source_id: owasp-informed-blueprints
+  url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
   title: Security Blueprint for SPAs with BFF
   summary: |-
     This blueprint describes concrete measures to build a secure Single-Page Application (SPA) using a Backend-for-Frontend (BFF) and an identity provider.
@@ -736,7 +777,7 @@ blueprints:
     - id: WEB-006
       url: https://cheatsheetseries.owasp.org/cheatsheets/Third_Party_Javascript_Management_Cheat_Sheet.html
   - title: Use a Backend-for-Frontend (BFF)
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
       The SPA is a public client; the BFF is a confidential client that holds all OAuth tokens.
       All browser requests go through /bff/**.
@@ -747,7 +788,7 @@ blueprints:
     - id: AC-004
       url: https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html
   - title: Recommended Authentication Pattern
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
       Let the BFF handle the OAuth/OIDC flow, not the SPA.
       The BFF exposes: /bff/login, /bff/logout, /bff/user (minimal data and permissions).
@@ -763,9 +804,9 @@ blueprints:
   - title: Secure Session Cookies
     url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
     content: |-
-      Set: HttpOnly, Secure, SameSite=Lax or Strict.
-      Example: Set-Cookie: session=abc123; HttpOnly; Secure; SameSite=Lax
-      For cross-site SSO or iframe use cases, use SameSite=None.
+      Set HttpOnly, Secure, Path=/, and SameSite=Lax or Strict on the session cookie and omit Domain where host-only scope is sufficient.
+      Example: Set-Cookie: __Host-session=<opaque-random-session-id>; Path=/; HttpOnly; Secure; SameSite=Lax
+      For a justified cross-site SSO or iframe flow, SameSite=None also requires Secure and a separate CSRF defense.
       HttpOnly cookies are not accessible to JavaScript, making them resistant to XSS token theft.
     references:
     - id: WEB-001
@@ -773,9 +814,9 @@ blueprints:
   - title: CSRF Protection
     url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
     content: |-
-      SameSite=Lax cookie setting is sufficient for CSRF protection in most cases.
-      If your application has specific cross-site requirements, set SameSite=None and implement additional CSRF protections using anti-CSRF tokens.
-      The BFF must validate the CSRF token server-side for all state-changing requests.
+      Treat SameSite as defense in depth rather than the sole CSRF control.
+      The BFF must validate a framework-provided or session-bound CSRF token, or an explicitly designed same-origin signal, for every state-changing request authenticated by a cookie.
+      State-changing operations must not use GET, and cross-site flows using SameSite=None require the same server-side protection.
     references:
     - id: WEB-001
       url: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
@@ -818,7 +859,7 @@ blueprints:
     - id: WEB-004
       url: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
   - title: PWA / Service Worker Safety
-    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+    url: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_Cheat_Sheet.html
     content: |-
       Never cache sensitive endpoints (/bff/login, /bff/logout, /bff/user, /api/private/**).
       Cache only static assets: JS, CSS, HTML, images, fonts, /assets/**.
@@ -828,7 +869,8 @@ blueprints:
     url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html
     content: |-
       Serve SPA and BFF only over HTTPS.
-      Enable HSTS: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+      Enable HSTS with at least: Strict-Transport-Security: max-age=31536000
+      Add includeSubDomains and preload only after confirming every affected subdomain is controlled and permanently HTTPS-ready.
     references:
     - id: WEB-005
       url: https://cheatsheetseries.owasp.org/cheatsheets/HTTP_Strict_Transport_Security_Cheat_Sheet.html
@@ -860,7 +902,7 @@ blueprints:
     - id: SC-002
       url: https://owasp.org/www-project-dependency-check/
 - id: BP-CONTAINER-SECURITY
-  source_id: owasp-cheatsheets
+  source_id: owasp-informed-blueprints
   url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
   title: Container & Infrastructure Security
   summary: |-
@@ -954,7 +996,7 @@ blueprints:
     - id: IF-004
       url: https://cheatsheetseries.owasp.org/cheatsheets/Docker_Security_Cheat_Sheet.html
 - id: BP-SECURITY-LOGGING
-  source_id: owasp-cheatsheets
+  source_id: owasp-informed-blueprints
   url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
   title: Security Logging & Monitoring
   summary: |-
@@ -1039,7 +1081,7 @@ blueprints:
     - id: LM-004
       url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
 - id: BP-ERROR-HANDLING
-  source_id: owasp-cheatsheets
+  source_id: owasp-informed-blueprints
   url: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html
   title: Error Handling & Secure Failure
   summary: |-
@@ -1098,7 +1140,7 @@ blueprints:
     - id: LM-001
       url: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
 - id: BP-LLM-SECURITY
-  source_id: owasp-cheatsheets
+  source_id: owasp-informed-blueprints
   url: https://genai.owasp.org/llm-top-10/
   title: AI / LLM Application Security
   summary: |-
@@ -1115,75 +1157,66 @@ blueprints:
   - title: 1. Prompt Injection Defense
     url: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
     content: |-
-      Sanitize and validate all user input before incorporating it into LLM prompts.
-      Use parameterized prompt templates with strict separation between system instructions and user content.
-      Never concatenate raw user input directly into system prompts via string formatting.
-      Implement input length limits and character allowlists for user-supplied prompt content.
-      Use delimiter tokens (e.g. <user_input>...</user_input>) to clearly mark user content boundaries.
-      Test prompts with adversarial inputs (jailbreak attempts, instruction overrides) in CI.
+      Treat user prompts, retrieved documents, files, tool results, and memory as untrusted content, including indirect instructions hidden in non-text input.
+      Separate untrusted content from operator instructions, but do not treat delimiters, sanitization, or the system prompt as a security boundary.
+      Constrain model capabilities and validate structured output with deterministic code.
+      Authorize every data retrieval and tool action outside the model with least privilege.
+      Require approval for high-impact actions and test direct, indirect, encoded, multilingual, and cross-modal injection attempts.
     references:
     - id: LLM-001
       url: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
   - title: 2. Output Filtering & Validation
-    url: https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/
+    url: https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/
     content: |-
-      Treat all LLM output as untrusted input. Filter before returning to users or downstream systems.
-      Implement output validation that checks for: API keys (regex for common formats), internal URLs
-      and hostnames, PII patterns (email, phone, SSN), file paths, and training data artifacts.
-      Never use LLM output directly in eval(), exec(), raw SQL, shell commands, innerHTML,
-      or downstream API calls without sanitization and validation.
-      Log flagged outputs for review and model improvement.
+      Authorize and minimize source data before it enters the model context; output filtering cannot repair unauthorized retrieval.
+      Treat model output as untrusted and validate it against a bounded schema and the destination's policy.
+      Apply contextual encoding before display and deterministic validation before any downstream API or tool call.
+      Never pass output directly to eval, a shell, query syntax, innerHTML, filesystem paths, or an authorization decision.
+      Record validation failures without storing prompts, outputs, credentials, or personal data unnecessarily.
     references:
     - id: LLM-002
-      url: https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/
+      url: https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/
     - id: LLM-005
-      url: https://genai.owasp.org/llmrisk/llm05-improper-output-handling/
+      url: https://genai.owasp.org/llmrisk/llm052025-improper-output-handling/
   - title: 3. Tool Permission Model
-    url: https://genai.owasp.org/llmrisk/llm06-excessive-agency/
+    url: https://genai.owasp.org/llmrisk/llm062025-excessive-agency/
     content: |-
-      Implement a permission model for LLM tool use following least privilege:
-      - Define an explicit allowlist of tools the LLM may invoke
-      - Categorize tools by risk: read-only (low), write (medium), destructive/external (high)
-      - Require human-in-the-loop approval for destructive or irreversible operations
-        (delete, send email, execute code, make payments, modify infrastructure)
-      - Log every tool invocation with: tool name, parameters, invoking user, timestamp, outcome
-      - Rate-limit tool invocations per session and per user
+      Expose only tools required for the feature and give each tool a dedicated least-privileged identity.
+      Authorize every invocation server-side for the authenticated user, tenant, action, target resource, and bounded parameters.
+      Require a human to approve high-impact, external, destructive, or irreversible actions after the exact action and target are known.
+      Prevent cross-tenant state and memory reuse, cap invocations and iterations, and log the actor, tool, target, decision, and outcome without sensitive parameters.
     references:
     - id: LLM-006
-      url: https://genai.owasp.org/llmrisk/llm06-excessive-agency/
+      url: https://genai.owasp.org/llmrisk/llm062025-excessive-agency/
   - title: 4. RAG & Vector Store Security
-    url: https://genai.owasp.org/llmrisk/llm08-vector-and-embedding-weaknesses/
+    url: https://genai.owasp.org/llmrisk/llm082025-vector-and-embedding-weaknesses/
     content: |-
-      Validate and sanitize all data ingested into RAG knowledge bases and vector stores.
-      Enforce authentication and authorization on all vector database queries — apply the same
-      access control as the source data (if a user cannot access a document, they cannot query its embeddings).
-      Restrict who can update the knowledge base and maintain an audit trail for all embedding updates.
-      Rate-limit similarity search endpoints to prevent extraction attacks.
-      Validate embedding dimensions and content before indexing to prevent poisoned embeddings.
+      Authenticate and authorize every source and updater, retain provenance and tenant ownership, and quarantine content that fails the ingestion policy.
+      Enforce the source document's authorization before retrieval so a user cannot retrieve embeddings for inaccessible content.
+      Isolate tenant indexes and caches, bound result counts, and rate-limit similarity search to reduce extraction and resource abuse.
+      Validate the embedding model identity, dimensions, content size, and update history before indexing.
     references:
     - id: LLM-004
       url: https://genai.owasp.org/llmrisk/llm04-data-and-model-poisoning/
     - id: LLM-008
-      url: https://genai.owasp.org/llmrisk/llm08-vector-and-embedding-weaknesses/
+      url: https://genai.owasp.org/llmrisk/llm082025-vector-and-embedding-weaknesses/
   - title: 5. Cost Control & Rate Limiting
-    url: https://genai.owasp.org/llmrisk/llm10-unbounded-consumption/
+    url: https://genai.owasp.org/llmrisk/llm102025-unbounded-consumption/
     content: |-
-      Set max_tokens limits on all LLM API calls to prevent unbounded generation costs.
-      Implement per-user and per-session rate limits on LLM invocations.
-      Monitor token consumption and set cost alerting thresholds (e.g. alert at 80% of daily budget).
-      Implement circuit breakers that disable LLM features when costs exceed thresholds.
-      Track and attribute costs per user, team, and feature to identify abuse or misconfiguration.
+      Bound input bytes, output tokens, retrieval results, tool calls, agent iterations, concurrency, and wall-clock time.
+      Enforce shared quotas by authenticated tenant and user as well as client source.
+      Monitor and attribute consumption without logging prompt contents, and alert before approved budgets are exhausted.
+      Use graceful degradation and circuit breakers that stop expensive work without disabling authentication or authorization.
     references:
     - id: LLM-010
-      url: https://genai.owasp.org/llmrisk/llm10-unbounded-consumption/
+      url: https://genai.owasp.org/llmrisk/llm102025-unbounded-consumption/
   - title: 6. System Prompt Protection
-    url: https://genai.owasp.org/llmrisk/llm07-system-prompt-leakage/
+    url: https://genai.owasp.org/llmrisk/llm072025-system-prompt-leakage/
     content: |-
-      Keep system prompts server-side only; never include them in client-side bundles or API responses.
-      Do not log system prompts at debug level — treat them as sensitive configuration.
-      Do not echo system prompt content in error messages or API error responses.
-      Use a separate configuration store for system prompts with access controls and audit logging.
-      Version-control system prompts and review changes like code (they define security boundaries).
+      Store prompts as reviewed configuration and avoid returning unnecessary internal configuration in normal responses or errors.
+      Never place credentials, personal data, tenant secrets, hidden authorization rules, or other security-sensitive values in a prompt.
+      Assume users can infer or extract prompt content and enforce authorization, policy, tool permissions, and output constraints outside the model.
+      Version and review prompt changes because they affect behavior, while keeping deterministic controls authoritative.
     references:
     - id: LLM-007
-      url: https://genai.owasp.org/llmrisk/llm07-system-prompt-leakage/
+      url: https://genai.owasp.org/llmrisk/llm072025-system-prompt-leakage/

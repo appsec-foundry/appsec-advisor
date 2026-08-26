@@ -107,8 +107,14 @@ reviewed implementation work.
 
 - Run the relevant subset from `CONTRIBUTING.md` → Targeted tests. If the
   repository is already red, capture a baseline and distinguish regressions.
-- Then run `make lint` and `make test`. Use `make check` when a change spans more
-  than one module or contract.
+- Match broader gates to the change's blast radius instead of running them by
+  default. Run `make lint` after changing Python in `scripts/`, `tests/`, or
+  `hooks/`. Run `make test` when a change affects shared runtime behavior or
+  cannot be covered confidently by targeted tests. Run `make check` for
+  cross-cutting changes that span multiple runtime modules or contracts and at
+  release boundaries. Documentation, examples, fixtures, and isolated tests do
+  not require the full suite when their applicable validators and targeted tests
+  pass.
 - Add a matching `tests/test_*.py` for each new `scripts/` module and cover core
   behavior and failure paths.
 - For heuristic or scanner changes, use application-agnostic signals, neutral

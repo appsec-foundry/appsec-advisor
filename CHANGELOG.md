@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Threat-model Management Summaries now derive compliance status, counts, and a compact open-requirements table from the complete Section 7b assessment.
+- The bundled requirements demo now uses current OWASP 2025 references, scoped verifiable controls, and consistent source metadata.
 - The requirements harvester no longer duplicates blueprint index pages or requirement IDs re-listed under multiple categories, double-counts list/code blocks, joins words across inline tags, or drops headings without direct text.
 
 ## 0.6.0-beta.1 (2026-08-23)
