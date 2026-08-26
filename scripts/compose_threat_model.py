@@ -8310,9 +8310,40 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     )
 
 
+def _requirement_catalog_entries(ctx: RenderContext) -> dict[str, dict[str, str]]:
+    """Requirement metadata keyed by ID from ``.requirements.yaml``.
+
+    The compliance parser, Management Summary, and traceability renderer all
+    use this one catalog view so requirement links and priorities cannot drift.
+    Malformed or missing catalogs degrade to an empty map; the fragment parser
+    can still recognise IDs written in its table.
+    """
+    path = ctx.output_dir / ".requirements.yaml"
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for cat in data.get("categories", []) or []:
+        if not isinstance(cat, dict):
+            continue
+        for req in cat.get("requirements", []) or []:
+            if not isinstance(req, dict):
+                continue
+            rid = (req.get("id") or "").strip()
+            if rid and rid not in out:
+                out[rid] = {
+                    "url": (req.get("url") or "").strip(),
+                    "priority": (req.get("priority") or "").strip().upper(),
+                    "text": (req.get("text") or "").strip(),
+                }
+    return out
+
+
 def _known_requirement_ids(ctx: RenderContext) -> dict[str, str]:
-    """Map of requirement ID → source URL declared in ``.requirements.yaml``
-    (``categories[].requirements[].id`` / ``.url``).
+    """Map of requirement ID → source URL declared in ``.requirements.yaml``.
 
     Used to recognise a requirement that a STRIDE analyzer parked in a threat's
     ``remediation.reference`` (e.g. ``[SEC-AUTH-1](url)``) rather than in the
@@ -8322,24 +8353,7 @@ def _known_requirement_ids(ctx: RenderContext) -> dict[str, str]:
     degrades to the array-only behaviour (and the unit tests, which use a bare
     tmp dir, see no change).
     """
-    path = ctx.output_dir / ".requirements.yaml"
-    if not path.is_file():
-        return {}
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
-    out: dict[str, str] = {}
-    for cat in data.get("categories", []) or []:
-        if not isinstance(cat, dict):
-            continue
-        for req in cat.get("requirements", []) or []:
-            if not isinstance(req, dict):
-                continue
-            rid = (req.get("id") or "").strip()
-            if rid and rid not in out:
-                out[rid] = (req.get("url") or "").strip()
-    return out
+    return {rid: item.get("url", "") for rid, item in _requirement_catalog_entries(ctx).items()}
 
 
 _REQ_VIOLATION_STATUSES = frozenset({"FAIL", "PARTIAL", "ANTI-PATTERN"})
@@ -8350,6 +8364,7 @@ _REQ_HEADER_TOKENS = frozenset({"id", "requirement", "requirement id"})
 def _normalise_requirement_status(raw: Any) -> str:
     """Return a stable compliance status token from a §7b table cell."""
     text = re.sub(r"<[^>]+>", " ", str(raw or ""))
+    text = re.sub(r"\bNOT_APPLICABLE\b", "NOT APPLICABLE", text, flags=re.IGNORECASE)
     text = re.sub(r"[*_`]", "", text).upper()
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
@@ -8425,6 +8440,69 @@ def _split_md_table_row(line: str) -> list[str]:
     return cells
 
 
+def _requirements_compliance_rows(ctx: RenderContext) -> list[dict[str, Any]]:
+    """Parse the full §7b table into one canonical compliance evaluation.
+
+    Each declared requirement contributes at most one row. The structured rows
+    are the sole source for Management-Summary counts and its compact table;
+    the original Markdown remains the detailed §7b presentation. This parser
+    never infers a status or a requirement-to-finding edge.
+    """
+    catalog = _requirement_catalog_entries(ctx)
+    known_ids = set(catalog)
+    frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
+    if not frag_path.is_file():
+        return []
+    try:
+        lines = frag_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    header: list[str] | None = None
+    req_idx = status_idx = -1
+    priority_idx = -1
+    evidence_indexes: list[int] = []
+    for line in lines:
+        cells = _split_md_table_row(line)
+        if not cells:
+            continue
+        lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
+        if any(c in _REQ_HEADER_TOKENS for c in lowered) and "status" in lowered:
+            header = lowered
+            req_idx = next((i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS), -1)
+            status_idx = header.index("status")
+            priority_idx = next((i for i, c in enumerate(header) if c in {"priority", "obligation"}), -1)
+            evidence_indexes = [
+                i for i, c in enumerate(header) if c in {"evidence", "linked threats", "linked findings", "findings"}
+            ]
+            continue
+        if header is None or all(re.fullmatch(r":?-{3,}:?", c.strip()) for c in cells):
+            continue
+        if req_idx < 0 or status_idx < 0 or len(cells) <= max(req_idx, status_idx):
+            continue
+        rid = _extract_requirement_id_from_cell(cells[req_idx], known_ids)
+        status = _normalise_requirement_status(cells[status_idx])
+        if not rid or rid in seen or status not in (_REQ_VIOLATION_STATUSES | _REQ_NON_VIOLATION_STATUSES):
+            continue
+        evidence = " ".join(cells[i].strip() for i in evidence_indexes if i < len(cells) and cells[i].strip())
+        priority = cells[priority_idx].strip().upper() if priority_idx >= 0 and priority_idx < len(cells) else ""
+        if not priority:
+            priority = catalog.get(rid, {}).get("priority", "")
+        rows.append(
+            {
+                "req_id": rid,
+                "status": "N/A" if status in {"NA", "NOT APPLICABLE"} else status,
+                "priority": re.sub(r"[*_`]", "", priority).strip(),
+                "evidence": evidence,
+                "finding_ids": _extract_finding_ids_from_cell(evidence),
+            }
+        )
+        seen.add(rid)
+    return rows
+
+
 def _requirements_status_map(ctx: RenderContext) -> dict[str, str]:
     """Requirement ID -> PASS/FAIL/PARTIAL/N/A status from authoritative outputs.
 
@@ -8435,41 +8513,7 @@ def _requirements_status_map(ctx: RenderContext) -> dict[str, str]:
     Requirements lines. `.phase-8b-violations.json`, when present, supplements
     the map but never overrides an explicit full-table status.
     """
-    known_ids = set(_known_requirement_ids(ctx))
-    out: dict[str, str] = {}
-
-    frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
-    if frag_path.is_file():
-        try:
-            lines = frag_path.read_text(encoding="utf-8").splitlines()
-        except Exception:
-            lines = []
-        header: list[str] | None = None
-        req_idx = status_idx = -1
-        for line in lines:
-            cells = _split_md_table_row(line)
-            if not cells:
-                continue
-            lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
-            if any(c in _REQ_HEADER_TOKENS for c in lowered) and "status" in lowered:
-                header = lowered
-                req_idx = next(
-                    (i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS),
-                    -1,
-                )
-                status_idx = header.index("status")
-                continue
-            if header is None:
-                continue
-            # Markdown delimiter row.
-            if all(re.fullmatch(r":?-{3,}:?", c.strip()) for c in cells):
-                continue
-            if req_idx < 0 or status_idx < 0 or len(cells) <= max(req_idx, status_idx):
-                continue
-            rid = _extract_requirement_id_from_cell(cells[req_idx], known_ids)
-            status = _normalise_requirement_status(cells[status_idx])
-            if rid and status and (status in _REQ_VIOLATION_STATUSES or status in _REQ_NON_VIOLATION_STATUSES):
-                out.setdefault(rid, status)
+    out = {row["req_id"]: row["status"] for row in _requirements_compliance_rows(ctx)}
 
     phase8b = ctx.output_dir / ".phase-8b-violations.json"
     if phase8b.is_file():
@@ -8499,50 +8543,7 @@ def _extract_finding_ids_from_cell(cell: str) -> list[str]:
 
 def _requirements_evidence_findings_map(ctx: RenderContext) -> dict[str, list[str]]:
     """Requirement ID -> finding IDs explicitly cited by the §7b compliance row."""
-    known_ids = set(_known_requirement_ids(ctx))
-    out: dict[str, list[str]] = {}
-    frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
-    if not frag_path.is_file():
-        return out
-    try:
-        lines = frag_path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return out
-
-    header: list[str] | None = None
-    req_idx = -1
-    evidence_indexes: list[int] = []
-    for line in lines:
-        cells = _split_md_table_row(line)
-        if not cells:
-            continue
-        lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
-        if any(c in _REQ_HEADER_TOKENS for c in lowered) and "status" in lowered:
-            header = lowered
-            req_idx = next((i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS), -1)
-            evidence_indexes = [
-                i for i, c in enumerate(header) if c in {"evidence", "linked threats", "linked findings", "findings"}
-            ]
-            continue
-        if header is None:
-            continue
-        if all(re.fullmatch(r":?-{3,}:?", c.strip()) for c in cells):
-            continue
-        if req_idx < 0 or len(cells) <= req_idx:
-            continue
-        rid = _extract_requirement_id_from_cell(cells[req_idx], known_ids)
-        if not rid:
-            continue
-        fids: list[str] = []
-        for idx in evidence_indexes:
-            if len(cells) <= idx:
-                continue
-            for fid in _extract_finding_ids_from_cell(cells[idx]):
-                if fid not in fids:
-                    fids.append(fid)
-        if fids:
-            out.setdefault(rid, fids)
-    return out
+    return {row["req_id"]: row["finding_ids"] for row in _requirements_compliance_rows(ctx) if row["finding_ids"]}
 
 
 def _requirement_is_traceable_violation(rid: str, status_map: dict[str, str]) -> bool:
@@ -9093,22 +9094,106 @@ def _carried_provenance(output_dir: Path) -> dict | None:
         return None
 
 
+def _render_requirements_compliance_ms_table(
+    ctx: RenderContext,
+    compliance_rows: list[dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> str:
+    """Render open or unverified compliance rows for the Management Summary."""
+    actionable = _REQ_VIOLATION_STATUSES | {"UNVERIFIABLE", "NOT OBSERVABLE"}
+    status_rank = {"FAIL": 0, "ANTI-PATTERN": 1, "PARTIAL": 2, "UNVERIFIABLE": 3, "NOT OBSERVABLE": 4}
+    priority_rank = {"MUST": 0, "SHOULD": 1, "MAY": 2}
+    rows = [row for row in compliance_rows if row.get("status") in actionable]
+    rows.sort(
+        key=lambda row: (
+            status_rank.get(row.get("status", ""), 99),
+            priority_rank.get(row.get("priority", ""), 99),
+            row.get("req_id", ""),
+        )
+    )
+    if not rows:
+        return ""
+
+    known_ids = _known_requirement_ids(ctx)
+    traceability = {row["req_id"]: row for row in _build_requirements_mapping_rows(ctx)}
+    lines = [
+        "| Status | Priority | Requirement | Findings | Mitigations |",
+        "|--------|----------|-------------|----------|-------------|",
+    ]
+    status_emoji = {
+        "FAIL": "❌",
+        "ANTI-PATTERN": "⚠️",
+        "PARTIAL": "⚠️",
+        "UNVERIFIABLE": "❓",
+        "NOT OBSERVABLE": "❓",
+    }
+    for row in rows[:limit]:
+        status = row.get("status", "")
+        trace = traceability.get(row["req_id"], {})
+        findings = trace.get("findings", [])
+        measures = trace.get("measures", [])
+        finding_cell = ", ".join(f"[{fid}](#{fid.lower()})" for fid, _ in findings) or "—"
+        mitigation_cell = ", ".join(f"[{mid}](#{mid.lower()})" for mid in measures) or "—"
+        lines.append(
+            f"| {status_emoji.get(status, '')} {status} | {row.get('priority') or '—'} | "
+            f"{_format_requirement_link(row['req_id'], known_ids)} | {finding_cell} | {mitigation_cell} |"
+        )
+    if len(rows) > limit:
+        lines.append("")
+        lines.append(
+            f"_{len(rows) - limit} further requirement(s) in "
+            "[§7b — Requirements Compliance](#7b-requirements-compliance)._"
+        )
+    return "\n".join(lines)
+
+
+def _requirements_compliance_result(rows: list[dict[str, Any]]) -> tuple[str, str]:
+    """Return deterministic overall status and count line for compliance rows."""
+    counts = {
+        status: 0 for status in ("PASS", "FAIL", "ANTI-PATTERN", "PARTIAL", "N/A", "NOT OBSERVABLE", "UNVERIFIABLE")
+    }
+    for row in rows:
+        status = row.get("status", "")
+        if status in counts:
+            counts[status] += 1
+    if counts["FAIL"] or counts["ANTI-PATTERN"]:
+        overall = "❌ Action required"
+    elif counts["PARTIAL"]:
+        overall = "⚠️ Partially compliant"
+    elif counts["UNVERIFIABLE"] or counts["NOT OBSERVABLE"]:
+        overall = "❓ Verification required"
+    else:
+        overall = "✅ Passed"
+    result = (
+        f"{len(rows)} requirements assessed — {counts['PASS']} PASS · {counts['FAIL']} FAIL · "
+        f"{counts['ANTI-PATTERN']} ANTI-PATTERN · {counts['PARTIAL']} PARTIAL · {counts['N/A']} N/A · "
+        f"{counts['NOT OBSERVABLE']} NOT OBSERVABLE · {counts['UNVERIFIABLE']} UNVERIFIABLE"
+    )
+    return overall, result
+
+
+def _requirements_compliance_is_complete(ctx: RenderContext, rows: list[dict[str, Any]]) -> bool:
+    """Return whether the parsed assessment covers the configured catalog."""
+    if not rows:
+        return False
+    catalog_ids = set(_requirement_catalog_entries(ctx))
+    if not catalog_ids:
+        return True
+    row_ids = [row.get("req_id", "") for row in rows]
+    return len(row_ids) == len(catalog_ids) and set(row_ids) == catalog_ids
+
+
 def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
-    """Derive the ### Requirements Compliance MS subsection.
+    """Derive the Management-Summary compliance view from the full §7b table.
 
-    Extracts the baseline link + PASS/FAIL/ANTI-PATTERN/PARTIAL summary line
-    from the fragment when available, then appends a deterministic compact
-    traceability table built from threat-model.yaml.
-
-    Falls back gracefully when the fragment has been cleaned up (post-QA
-    runtime_cleanup removes .fragments/): the baseline is derived from
-    .requirements.yaml directly and the deterministic table from yaml threats.
-    Returns empty string only when requirements checking was not enabled at all
-    (no .requirements.yaml and no rows).
+    The parsed §7b rows are the single source for both deterministic counts and
+    the compact open-requirements table. Threat-model.yaml contributes only
+    explicit finding and mitigation links; it never supplies or changes a
+    compliance status.
     """
     frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
     baseline = ""
-    result_line = ""
 
     if frag_path.is_file():
         text = frag_path.read_text(encoding="utf-8")
@@ -9122,9 +9207,6 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
         else:
             baseline_m2 = re.search(r"from the ([^\n]+?) baseline", text)
             baseline = baseline_m2.group(1).strip() if baseline_m2 else ""
-        # --- Summary line from fragment ---
-        summary_m = re.search(r"\*\*Summary:\*\*\s*(.+?)(?:\n|$)", text)
-        result_line = summary_m.group(1).strip() if summary_m else ""
 
     # Derive baseline from .requirements.yaml when fragment is absent or baseline empty.
     if not baseline:
@@ -9144,24 +9226,37 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
         if not baseline:
             baseline = "configured baseline"
 
-    # Deterministic compact traceability table (FAIL/PARTIAL/ANTI-PATTERN only,
-    # highest-risk first, capped) built from threat-model.yaml.
-    rows = _build_requirements_mapping_rows(ctx)
+    compliance_rows = _requirements_compliance_rows(ctx)
+    traceability_rows = _build_requirements_mapping_rows(ctx)
 
-    # When the fragment is gone AND no rows exist in yaml, nothing to show.
-    if not frag_path.is_file() and not rows:
+    # When the fragment is gone AND no traceability remains, nothing to show.
+    if not frag_path.is_file() and not traceability_rows:
         return ""
 
     # --- Compose the subsection ---
     lines: list[str] = ["### Requirements Compliance", ""]
     lines.append(f"**Baseline:** {baseline}")
-    if result_line:
-        lines.append(f"**Result:** {result_line}")
+    assessment_complete = _requirements_compliance_is_complete(ctx, compliance_rows)
+    if assessment_complete:
+        overall, result = _requirements_compliance_result(compliance_rows)
+        lines.append(f"**Overall status:** {overall}")
+        lines.append(f"**Result:** {result}")
+    elif compliance_rows:
+        _, result = _requirements_compliance_result(compliance_rows)
+        expected = len(_requirement_catalog_entries(ctx))
+        coverage = f"{len(compliance_rows)} of {expected}" if expected else str(len(compliance_rows))
+        lines.append("**Overall status:** ❓ Assessment incomplete")
+        lines.append(f"**Result:** {coverage} requirements assessed; partial counts: {result.split('—', 1)[1].strip()}")
+    else:
+        lines.append("**Overall status:** ❓ Assessment unavailable")
+        lines.append(
+            "**Result:** Compliance totals are unavailable because no complete §7b assessment table was produced."
+        )
     lines.append("")
 
-    table = _render_requirements_mapping_table(ctx, rows, limit=6)
+    table = _render_requirements_compliance_ms_table(ctx, compliance_rows, limit=6)
     if table:
-        lines.append("**Failed or partial requirements → findings & mitigations:**")
+        lines.append("**Requirements requiring action or verification:**")
         lines.append("")
         lines.append(table)
         lines.append("")

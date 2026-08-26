@@ -2,16 +2,16 @@
 mapping in scripts/compose_threat_model.py.
 
 These pin the behaviour of the §7b "Requirements Traceability" table and the
-compact Management-Summary variant. Finding/mitigation links come from
-threat-model.yaml; PASS/N/A filtering comes from the Phase 8b compliance
-fragment when present:
+compact Management-Summary compliance table. Compliance statuses and counts
+come from one parsed view of the complete Phase 8b table; finding/mitigation
+links come only from threat-model.yaml:
 
   * threats sharing a requirement collapse into one row, max-severity wins
   * findings link to §8 (#f-nnn), mitigations to §9 (#m-nnn)
   * the legacy singular `requirement_id` field is honoured as a fallback
   * threats with no requirement link are excluded
   * an empty row set renders nothing (no orphan table header)
-  * the MS `limit` caps rows and emits an overflow pointer to §7b
+  * the MS table includes open or unverified requirements without inventing links
 """
 
 from __future__ import annotations
@@ -292,12 +292,34 @@ def _fixture_ctx_with_requirements(tmp_path: Path):
     threats[1]["violated_requirements"] = ["SEC-AUTH-1", "SEC-SQL-1"]
     threats[1]["remediation"] = {"blueprint": {"id": "BP-API", "url": "https://x/bp", "section": "API Auth"}}
 
+    (out / ".requirements.yaml").write_text(
+        "categories:\n"
+        "- id: C1\n"
+        "  requirements:\n"
+        "  - id: SEC-AUTH-1\n"
+        "    priority: MUST\n"
+        "    url: https://x/auth\n"
+        "  - id: SEC-SQL-1\n"
+        "    priority: SHOULD\n"
+        "    url: https://x/sql\n"
+        "  - id: SEC-LOG-1\n"
+        "    priority: MAY\n"
+        "    url: https://x/log\n",
+        encoding="utf-8",
+    )
+
     frag = out / ".fragments" / "requirements-compliance.md"
     frag.parent.mkdir(parents=True, exist_ok=True)
     frag.write_text(
         "## 7b. Requirements Compliance\n\n"
         "Compliance from the [OWASP ASVS](https://owasp.org/asvs) baseline.\n\n"
-        "**Summary:** 3 requirements assessed — 1 PASS · 2 FAIL · 0 ANTI-PATTERN · 0 PARTIAL · 0 N/A · 0 NOT OBSERVABLE · 0 UNVERIFIABLE\n"
+        "**Summary:** deliberately stale counts that the composer must ignore.\n\n"
+        "| Requirement | Status | Priority | Evidence |\n"
+        "|---|---|---|---|\n"
+        "| SEC-AUTH-1: Authentication | ❌ FAIL | MUST | Missing route guard; F-001 |\n"
+        "| SEC-SQL-1: Query safety | ❌ FAIL | SHOULD | Unsafe query; F-002 |\n"
+        "| SEC-LOG-1: Audit logging | ✅ PASS | MAY | Central audit sink at src/audit.ts:12 |\n",
+        encoding="utf-8",
     )
     contract = yaml.safe_load(CONTRACT.read_text())
     ctx = compose.RenderContext(
@@ -320,6 +342,7 @@ def test_7b_hybrid_inlines_fragment_and_appends_traceability(tmp_path: Path) -> 
     assert "| Requirement | Status | Risk | Findings | Maßnahmen | Guidance |" in body
     assert "[F-001](#f-001)" in body and "[M-001](#m-001)" in body
     assert "[BP-API](https://x/bp) · API Auth" in body
+    assert "SEC-LOG-1: Audit logging" in body  # full assessment remains in §7b
 
 
 def test_ms_subsection_carries_summary_and_links(tmp_path: Path) -> None:
@@ -327,10 +350,84 @@ def test_ms_subsection_carries_summary_and_links(tmp_path: Path) -> None:
     ms = compose._render_requirements_compliance_ms(ctx)
     assert ms.startswith("### Requirements Compliance")
     assert "OWASP ASVS" in ms  # baseline from fragment
-    assert "3 requirements assessed" in ms  # summary counts preserved
-    assert "**Failed or partial requirements → findings & mitigations:**" in ms
+    assert "**Overall status:** ❌ Action required" in ms
+    assert "3 requirements assessed — 1 PASS · 2 FAIL" in ms
+    assert "deliberately stale counts" not in ms
+    assert "**Requirements requiring action or verification:**" in ms
+    assert "| Status | Priority | Requirement | Findings | Mitigations |" in ms
+    assert "[`SEC-AUTH-1`](https://x/auth)" in ms
+    assert "SEC-LOG-1" not in ms  # PASS stays in §7b and the counts, not the compact table
     assert "[F-001](#f-001)" in ms  # G2 fix: links now present
     assert "#7b-requirements-compliance" in ms
+
+
+def test_ms_table_includes_unmapped_open_rows_without_inventing_links(tmp_path: Path) -> None:
+    (tmp_path / ".requirements.yaml").write_text(
+        "categories:\n- id: C1\n  requirements:\n"
+        "  - id: SEC-MFA-1\n    priority: MUST\n"
+        "  - id: SEC-OPS-1\n    priority: SHOULD\n"
+        "  - id: SEC-PASS-1\n    priority: MAY\n",
+        encoding="utf-8",
+    )
+    frag = tmp_path / ".fragments" / "requirements-compliance.md"
+    frag.parent.mkdir()
+    frag.write_text(
+        "## 7b. Requirements Compliance\n\n"
+        "| Requirement | Status | Evidence |\n"
+        "|---|---|---|\n"
+        "| SEC-MFA-1 | FAIL | Required MFA control is absent |\n"
+        "| SEC-OPS-1 | UNVERIFIABLE | Runtime enforcement is external |\n"
+        "| SEC-PASS-1 | PASS | Control is configured at config/app.yml:4 |\n",
+        encoding="utf-8",
+    )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": [], "mitigations": []},
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+        eval_context={"check_requirements": True},
+    )
+
+    ms = compose._render_requirements_compliance_ms(ctx)
+
+    assert "3 requirements assessed — 1 PASS · 1 FAIL" in ms
+    assert "1 UNVERIFIABLE" in ms
+    assert "| ❌ FAIL | MUST | `SEC-MFA-1` | — | — |" in ms
+    assert "| ❓ UNVERIFIABLE | SHOULD | `SEC-OPS-1` | — | — |" in ms
+    assert "SEC-PASS-1" not in ms
+
+
+def test_ms_never_reports_passed_for_an_incomplete_catalog_assessment(tmp_path: Path) -> None:
+    (tmp_path / ".requirements.yaml").write_text(
+        "categories:\n- id: C1\n  requirements:\n"
+        "  - id: SEC-AUTH-1\n    priority: MUST\n"
+        "  - id: SEC-LOG-1\n    priority: SHOULD\n",
+        encoding="utf-8",
+    )
+    frag = tmp_path / ".fragments" / "requirements-compliance.md"
+    frag.parent.mkdir()
+    frag.write_text(
+        "## 7b. Requirements Compliance\n\n"
+        "| Requirement | Status | Evidence |\n"
+        "|---|---|---|\n"
+        "| SEC-AUTH-1 | PASS | Route guard configured |\n",
+        encoding="utf-8",
+    )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": [], "mitigations": []},
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+        eval_context={"check_requirements": True},
+    )
+
+    ms = compose._render_requirements_compliance_ms(ctx)
+
+    assert "**Overall status:** ❓ Assessment incomplete" in ms
+    assert "1 of 2 requirements assessed" in ms
+    assert "✅ Passed" not in ms
 
 
 def _prepare_req_output_dir(tmp_path: Path) -> Path:
@@ -349,7 +446,10 @@ def _prepare_req_output_dir(tmp_path: Path) -> Path:
     frag.write_text(
         "## 7b. Requirements Compliance\n\n"
         "Compliance from the [OWASP ASVS](https://owasp.org/asvs) baseline.\n\n"
-        "**Summary:** 1 requirements assessed — 1 PASS · 0 FAIL · 0 ANTI-PATTERN · 0 PARTIAL · 0 N/A · 0 NOT OBSERVABLE · 0 UNVERIFIABLE\n"
+        "| Requirement | Status | Priority | Evidence |\n"
+        "|---|---|---|---|\n"
+        "| SEC-AUTH-1 | FAIL | MUST | Missing route guard; F-001 |\n",
+        encoding="utf-8",
     )
     return out
 
@@ -493,4 +593,5 @@ def test_full_render_emits_traceability_in_7b_and_ms(tmp_path: Path) -> None:
     assert "[F-001](#f-001)" in rendered
     # MS subsection rendered via the document.order conditional.
     assert "### Requirements Compliance" in rendered
-    assert "**Failed or partial requirements → findings & mitigations:**" in rendered
+    assert "**Overall status:** ❌ Action required" in rendered
+    assert "| Status | Priority | Requirement | Findings | Mitigations |" in rendered

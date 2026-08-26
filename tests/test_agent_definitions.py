@@ -425,15 +425,15 @@ def test_focused_renderer_line_slices_match_their_owned_contracts():
     ms = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
     secarch = (AGENTS_DIR / "appsec-secarch-renderer.md").read_text(encoding="utf-8")
 
-    assert "lines 143–375" in ms
+    assert "lines 143–377" in ms
     assert renderer_lines[142].startswith("### MS prose")
-    assert renderer_lines[373].startswith("Map findings to requirements")
-    assert renderer_lines[374] == ""
-    assert "lines 376–701" in secarch
-    assert renderer_lines[375].startswith("### `security-architecture.md` authoring")
-    assert renderer_lines[699] == "```"
-    assert renderer_lines[700] == ""
-    assert renderer_lines[701].startswith("## Completion")
+    assert renderer_lines[375].startswith("Finding severity does not determine compliance status")
+    assert renderer_lines[376] == ""
+    assert "lines 378–703" in secarch
+    assert renderer_lines[377].startswith("### `security-architecture.md` authoring")
+    assert renderer_lines[701] == "```"
+    assert renderer_lines[702] == ""
+    assert renderer_lines[703].startswith("## Completion")
 
     # The MS slice must actually carry the ms-verdict rules the MS renderer is
     # sent here for — an edit that lands one outside the bounds ships a rule no

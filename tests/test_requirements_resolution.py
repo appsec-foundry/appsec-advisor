@@ -438,6 +438,20 @@ class TestSkillApplicability:
         assert "fetch_requirements.py" in content
         assert "standalone_audit.enabled" in content
 
+    def test_audit_console_and_markdown_share_the_open_status_contract(self):
+        """Console and saved Markdown must expose the same requirement set."""
+        skill_md = PLUGIN_DIR / "skills" / "audit-security-requirements" / "SKILL.md"
+        content = skill_md.read_text()
+        console = content[content.index("## Step 3 — Render console output") : content.index("## Step 4 — Save output")]
+        markdown = content[
+            content.index("### 4a — If `save_md` is true") : content.index("### 4b — If `save_json` is true")
+        ]
+
+        assert '"Open" means\n`FAIL` or `PARTIAL`' in console
+        assert "Do not print `PASS` or `UNVERIFIABLE` items" in console
+        assert "only open requirements (`FAIL` and `PARTIAL`)" in markdown
+        assert "Do not include `PASS` or\n`UNVERIFIABLE` requirement entries" in markdown
+
     def test_create_skill_supports_both_flags(self):
         """Verify create-threat-model help defines --requirements and --no-requirements."""
         skill_md = PLUGIN_DIR / "skills" / "create-threat-model" / "HELP.txt"
