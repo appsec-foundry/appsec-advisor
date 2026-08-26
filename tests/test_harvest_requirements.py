@@ -678,6 +678,67 @@ def test_parse_requirements_fallback_strategies_and_sorting():
     assert by_id["ORG-CUSTOM"]["priority"] == "MAY"
 
 
+def test_parse_requirements_detects_unbracketed_leading_ids():
+    html = """
+    <main>
+      <h3>SEC-UNBR-1: Passwords must be hashed with a salted algorithm.</h3>
+      <ul>
+        <li><strong>SEC-UNBR-2</strong>: Sessions must expire after inactivity.</li>
+        <li><code>SEC-UNBR-3</code> - Use TLS for all outbound connections.</li>
+      </ul>
+      <dl>
+        <dt>SEC-UNBR-4</dt>
+        <dd>MUST log all authentication failures.</dd>
+      </dl>
+      <table>
+        <tr><td>SEC-UNBR-5</td><td>SHOULD rotate signing keys every 90 days.</td></tr>
+      </table>
+    </main>
+    """
+
+    reqs = harvester.parse_requirements_from_page(html, "https://example.test/unbracketed")
+    by_id = {r["id"]: r for r in reqs}
+
+    assert by_id["SEC-UNBR-1"]["text"] == "Passwords must be hashed with a salted algorithm"
+    assert by_id["SEC-UNBR-2"]["text"] == "Sessions must expire after inactivity"
+    assert by_id["SEC-UNBR-3"]["text"] == "Use TLS for all outbound connections"
+    assert by_id["SEC-UNBR-4"]["text"] == "MUST log all authentication failures"
+    assert by_id["SEC-UNBR-5"]["text"] == "SHOULD rotate signing keys every 90 days"
+
+
+def test_parse_requirements_unbracketed_id_ignores_hyphenated_technical_terms():
+    html = """
+    <main>
+      <p>UTF-8 encoding is required for all text fields.</p>
+      <h3>ISO-27001 certification roadmap</h3>
+      <li>Node-js apps must use TLS for all outbound calls.</li>
+    </main>
+    """
+
+    reqs = harvester.parse_requirements_from_page(html, "https://example.test/false-positives")
+
+    assert reqs == []
+
+
+def test_parse_requirements_unbracketed_id_ignores_code_samples_and_link_captions():
+    # A code example showing a header name mirrors the "ID: text" convention,
+    # and a hyperlink caption referencing another page's requirement mirrors
+    # the "ID - text" convention. Neither is a requirement definition.
+    html = """
+    <main>
+      <pre><code>Content-Security-Policy:
+  default-src 'self';</code></pre>
+      <ul>
+        <li><a href="/other-page">SEC-OTHER - See the other page</a></li>
+      </ul>
+    </main>
+    """
+
+    reqs = harvester.parse_requirements_from_page(html, "https://example.test/code-and-links")
+
+    assert reqs == []
+
+
 def test_parse_requirements_tolerates_invalid_duplicate_and_empty_markup():
     html = """
     <html>
@@ -791,6 +852,71 @@ def test_parse_blueprint_summary_and_flat_page_modes():
     assert flat["title"] == "https://example.test/flat"
     assert flat["sections"][0]["title"] == "Overview"
     assert len(flat["sections"][0]["content"]) <= 80
+
+
+def test_parse_blueprint_page_skips_nested_content_tags():
+    html = """
+    <html>
+      <body>
+        <article>
+          <h2 id="rules">Rules</h2>
+          <ul>
+            <li><p>Allow only required methods.</p></li>
+          </ul>
+          <pre><code>allowlist(["origin.example"])</code></pre>
+        </article>
+      </body>
+    </html>
+    """
+
+    parsed = harvester.parse_blueprint_page(html, "https://example.test/rules", mode="full")
+
+    content = parsed["sections"][0]["content"]
+    assert content.count("Allow only required methods.") == 1
+    assert content.count('allowlist(["origin.example"])') == 1
+
+
+def test_parse_blueprint_page_inserts_space_at_inline_tag_boundaries():
+    html = """
+    <html>
+      <body>
+        <article>
+          <h2 id="scope">Scope</h2>
+          <p>Limit which <strong>origins</strong> may call the API (per app).</p>
+        </article>
+      </body>
+    </html>
+    """
+
+    parsed = harvester.parse_blueprint_page(html, "https://example.test/scope", mode="full")
+
+    content = parsed["sections"][0]["content"]
+    assert "whichorigins" not in content
+    assert "Limit which origins may call the API (per app)." in content
+
+
+def test_parse_blueprint_page_keeps_heading_with_no_direct_content():
+    # A heading whose own text lives entirely in its nested sub-headings (a
+    # pure grouping heading with no paragraph of its own) must still appear
+    # in `sections` — dropping it loses that anchor/title from the structure.
+    html = """
+    <html>
+      <body>
+        <article>
+          <h2 id="grouping">Grouping Heading</h2>
+          <h3 id="child">Child Heading</h3>
+          <p>Child content.</p>
+        </article>
+      </body>
+    </html>
+    """
+
+    parsed = harvester.parse_blueprint_page(html, "https://example.test/grouping", mode="full")
+
+    titles = [section["title"] for section in parsed["sections"]]
+    assert titles == ["Grouping Heading", "Child Heading"]
+    assert parsed["sections"][0]["content"] == ""
+    assert parsed["sections"][1]["content"] == "Child content."
 
 
 def test_requirements_sources_without_crawl_url_warn(capsys):
@@ -938,6 +1064,43 @@ def test_blueprint_source_deduplicates_index_page_from_discovered_links(monkeypa
 
     def fake_crawl_index(session, base_url, label, max_pages):
         return [(base_url + "/", index_html)], (base_url, index_html)
+
+    monkeypatch.setattr(harvester, "crawl_index", fake_crawl_index)
+
+    blueprints = harvester.harvest_blueprints_source(
+        session=None,
+        cfg={"defaults": {"blueprints_mode": "full", "section_max_chars": 5000}},
+        source={
+            "id": "appsec-blueprints",
+            "type": "blueprint",
+            "crawl_url": "https://security.example.com/blueprints",
+        },
+        verbose=False,
+    )
+
+    assert len(blueprints) == 1
+    assert blueprints[0]["id"] == "BP-BLUEPRINTS"
+
+
+def test_blueprint_source_deduplicates_by_page_body_when_url_differs(monkeypatch):
+    # A redirect (crawl_url without a trailing slash landing on an explicit
+    # index page) combined with a relative self-link can rediscover the index
+    # page under a URL string that differs from idx_url by more than a
+    # trailing slash. Dedup must compare page bodies, not URL strings.
+    index_html = """
+    <html>
+      <body>
+        <main>
+          <h1>Blueprints</h1>
+          <h2 id="overview">Overview</h2>
+          <p>Blueprint catalog overview.</p>
+        </main>
+      </body>
+    </html>
+    """
+
+    def fake_crawl_index(session, base_url, label, max_pages):
+        return [(base_url + "/index.html", index_html)], (base_url, index_html)
 
     monkeypatch.setattr(harvester, "crawl_index", fake_crawl_index)
 

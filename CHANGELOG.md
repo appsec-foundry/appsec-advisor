@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Headless runs can launch Claude Code through an environment-provided wrapper executable.
+- The requirements harvester now recognizes requirement IDs written without brackets (e.g. `REQ-001: text`), not just the bracketed convention.
+
+### Fixed
+
+- The requirements harvester no longer loses blueprint content to duplicated index pages, double-counted list/code blocks, words run together across inline tags, or headings dropped for having no direct text of their own; it also no longer drops a requirement ID re-listed under more than one category.
 
 ## 0.6.0-beta.1 (2026-08-23)
 
