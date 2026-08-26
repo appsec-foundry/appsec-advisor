@@ -1,6 +1,5 @@
-"""Tests for scripts/source_auth_scanner.py (deterministic broken-access-control
-+ injection scanner, data/source-auth-checks.yaml → AUTHZ-001..102 + INJ-001..003)
-and its wiring.
+"""Tests for the deterministic access-control, injection, and direct LLM-flow
+checks in scripts/source_auth_scanner.py and their pipeline wiring.
 
 The scanner produces `.source-auth-findings.json`, ingested by
 `merge_threats.py:_load_source_auth_findings`. The producer is run by the
@@ -17,6 +16,8 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "source_auth_scanner.py"
@@ -275,6 +276,695 @@ def test_test_files_are_excluded(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Direct LLM-output handling (LLM05 / LLM06)
+# ---------------------------------------------------------------------------
+
+
+def _llm_js(body: str) -> str:
+    return (
+        'import OpenAI from "openai";\n'
+        "const completion = await client.chat.completions.create({ model: 'gpt-4o', messages });\n"
+        "const modelText = completion.choices[0].message.content;\n"
+        f"{body}"
+    )
+
+
+def test_llm_structured_output_without_schema_is_detected(tmp_path: Path) -> None:
+    (tmp_path / "decision.ts").write_text(
+        _llm_js("const decision = JSON.parse(modelText);\nreturn applyDecision(decision.action, decision.score);\n"),
+        encoding="utf-8",
+    )
+
+    findings = _scan(tmp_path)
+
+    finding = next(f for f in findings if f.check_id == "INJ-LLM-001")
+    assert finding.line == 4
+    assert finding.cwe == ["CWE-20"]
+    assert finding.title == "Improper LLM Output Validation (decision.ts:4)"
+
+
+def test_direct_nested_llm_structured_output_is_detected(tmp_path: Path) -> None:
+    (tmp_path / "direct-decision.ts").write_text(
+        "import { llm } from './model';\n"
+        "const decision = JSON.parse((await llm.invoke(prompt)).content);\n"
+        "return applyDecision(decision.action);\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_llm_structured_output_with_closed_schema_is_not_flagged(tmp_path: Path) -> None:
+    (tmp_path / "decision.ts").write_text(
+        "const DecisionSchema = z.object({\n"
+        "  action: z.enum(['read', 'summarize']),\n"
+        "  score: z.number().min(0).max(100),\n"
+        "  objectId: z.string().uuid(),\n"
+        "}).strict();\n"
+        + _llm_js(
+            "const rawDecision = JSON.parse(modelText);\n"
+            "const decision = DecisionSchema.parse(rawDecision);\n"
+            "return applyDecision(decision.action, decision.score);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" not in _ids(_scan(tmp_path))
+
+
+def test_llm_structured_output_with_permissive_schema_stays_flagged(tmp_path: Path) -> None:
+    (tmp_path / "decision.ts").write_text(
+        _llm_js(
+            "const rawDecision = JSON.parse(modelText);\n"
+            "const decision = DecisionSchema.parse(rawDecision);\n"
+            "return applyDecision(decision.action, decision.score);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" in _ids(_scan(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        "const DecisionSchema = z.object({ action: z.enum(['read']), score: z.number().min(0) });",
+        "const DecisionSchema = z.object({ action: z.string(), score: z.number().min(0) }).strict();",
+    ],
+)
+def test_llm_structured_schema_requires_closure_and_enum_allowlist(tmp_path: Path, schema: str) -> None:
+    (tmp_path / "decision.ts").write_text(
+        schema
+        + "\n"
+        + _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const decision = DecisionSchema.parse(raw);\n"
+            "return applyDecision(decision);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_closed_python_schema_suppresses_structured_finding(tmp_path: Path) -> None:
+    (tmp_path / "decision.py").write_text(
+        "from typing import Literal\n"
+        "from pydantic import BaseModel, ConfigDict, Field\n"
+        "class Decision(BaseModel):\n"
+        "    model_config = ConfigDict(extra='forbid')\n"
+        "    action: Literal['read', 'summarize']\n"
+        "    score: int = Field(ge=0, le=100)\n"
+        "from openai import OpenAI\n"
+        "completion = client.chat.completions.create(model='gpt-4o', messages=messages)\n"
+        "model_text = completion.choices[0].message.content\n"
+        "raw = json.loads(model_text)\n"
+        "decision = Decision.model_validate(raw)\n"
+        "apply_decision(decision)\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" not in _ids(_scan(tmp_path))
+
+
+def test_jsonschema_validation_suppresses_structured_finding(tmp_path: Path) -> None:
+    (tmp_path / "decision.py").write_text(
+        "DECISION_SCHEMA = {\n"
+        "    'type': 'object',\n"
+        "    'properties': {\n"
+        "        'action': {'type': 'string', 'enum': ['read', 'summarize']},\n"
+        "        'score': {'type': 'integer', 'minimum': 0, 'maximum': 100},\n"
+        "    },\n"
+        "    'additionalProperties': False,\n"
+        "}\n"
+        "from openai import OpenAI\n"
+        "completion = client.chat.completions.create(model='gpt-4o', messages=messages)\n"
+        "model_text = completion.choices[0].message.content\n"
+        "raw = json.loads(model_text)\n"
+        "jsonschema.validate(raw, DECISION_SCHEMA)\n"
+        "apply_decision(raw)\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" not in _ids(_scan(tmp_path))
+
+
+def test_llm_structured_output_requires_all_manual_validation_dimensions(tmp_path: Path) -> None:
+    partial = tmp_path / "partial.ts"
+    partial.write_text(
+        _llm_js(
+            "const decision = JSON.parse(modelText);\n"
+            "if (typeof decision.score !== 'number') throw new Error('bad');\n"
+            "return applyDecision(decision.action, decision.score);\n"
+        ),
+        encoding="utf-8",
+    )
+    assert "INJ-LLM-001" in _ids(_scan(tmp_path))
+
+    partial.write_text(
+        _llm_js(
+            "const decision = JSON.parse(modelText);\n"
+            "if (typeof decision.score !== 'number') throw new Error('bad');\n"
+            "if (decision.score < 0 || decision.score > 100) throw new Error('range');\n"
+            "if (!allowedActions.includes(decision.action)) throw new Error('enum');\n"
+            "return applyDecision(decision.action, decision.score);\n"
+        ),
+        encoding="utf-8",
+    )
+    assert "INJ-LLM-001" not in _ids(_scan(tmp_path))
+
+
+def test_llm_structured_validation_after_first_use_is_too_late(tmp_path: Path) -> None:
+    (tmp_path / "late-validation.ts").write_text(
+        _llm_js(
+            "const decision = JSON.parse(modelText);\n"
+            "applyDecision(decision.action);\n"
+            "DecisionSchema.parse(decision);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_ignored_non_throwing_schema_predicate_does_not_suppress_finding(tmp_path: Path) -> None:
+    (tmp_path / "ignored-safe-parse.ts").write_text(
+        "const DecisionSchema = z.object({\n"
+        "  action: z.enum(['read']),\n"
+        "  score: z.number().min(0).max(100),\n"
+        "}).strict();\n"
+        + _llm_js(
+            "const decision = JSON.parse(modelText);\n"
+            "DecisionSchema.safeParse(decision);\n"
+            "return applyDecision(decision.action);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_schema_invocation_is_not_mistaken_for_a_schema_definition(tmp_path: Path) -> None:
+    (tmp_path / "missing-schema.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const decision = DecisionSchema.parse(raw);\n"
+            "const unrelated = { type: 'number', minimum: 0, enum: ['read'] };\n"
+            "applyDecision(decision);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_incomplete_schema_does_not_borrow_constraints_from_a_neighbor(tmp_path: Path) -> None:
+    (tmp_path / "mixed-schemas.ts").write_text(
+        "const DecisionSchema = z.object({ score: z.number() });\n"
+        "const OtherSchema = z.object({ action: z.enum(['read']) }).strict().min(1);\n"
+        + _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const decision = DecisionSchema.parse(raw);\n"
+            "applyDecision(decision);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_llm_output_to_html_and_markdown_raw_html_is_detected(tmp_path: Path) -> None:
+    (tmp_path / "chat.ts").write_text(
+        _llm_js("const rendered = marked.parse(modelText);\ncontainer.innerHTML = rendered;\n"),
+        encoding="utf-8",
+    )
+
+    finding = next(f for f in _scan(tmp_path) if f.check_id == "INJ-LLM-002")
+
+    assert finding.line == 5
+    assert finding.cwe == ["CWE-79"]
+
+
+def test_llm_output_sanitized_at_html_sink_is_not_flagged(tmp_path: Path) -> None:
+    (tmp_path / "chat.ts").write_text(
+        _llm_js("container.innerHTML = DOMPurify.sanitize(marked.parse(modelText));\n"),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-002" not in _ids(_scan(tmp_path))
+
+
+def test_direct_model_output_sanitized_into_alias_is_not_flagged(tmp_path: Path) -> None:
+    (tmp_path / "chat.ts").write_text(
+        "import { llm } from './model';\n"
+        "const safe = DOMPurify.sanitize(\n"
+        "  (await llm.invoke(prompt)).content,\n"
+        ");\n"
+        "container.innerHTML = safe;\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-002" not in _ids(_scan(tmp_path))
+
+
+def test_unrelated_html_sanitizer_does_not_suppress_llm_sink(tmp_path: Path) -> None:
+    (tmp_path / "chat.ts").write_text(
+        _llm_js("const safeHelp = DOMPurify.sanitize(helpText);\ncontainer.innerHTML = modelText;\n"),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-002" in _ids(_scan(tmp_path))
+
+
+def test_html_sanitizer_after_sink_is_too_late(tmp_path: Path) -> None:
+    (tmp_path / "chat.ts").write_text(
+        _llm_js("container.innerHTML = modelText; DOMPurify.sanitize(modelText);\n"),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-002" in _ids(_scan(tmp_path))
+
+
+def test_static_html_sink_near_model_output_is_not_tainted(tmp_path: Path) -> None:
+    (tmp_path / "chat.ts").write_text(
+        _llm_js("container.innerHTML = '<p>Ready</p>';\nconsole.log(modelText);\n"),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-002" not in _ids(_scan(tmp_path))
+
+
+def test_static_html_sink_on_same_line_as_other_llm_use_is_not_tainted(tmp_path: Path) -> None:
+    (tmp_path / "chat.ts").write_text(
+        _llm_js("container.innerHTML = '<p>Ready</p>'; console.log(modelText);\n"),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-002" not in _ids(_scan(tmp_path))
+
+
+def test_llm_output_to_sql_shell_and_code_execution_is_detected(tmp_path: Path) -> None:
+    (tmp_path / "agent.ts").write_text(
+        _llm_js("db.query(modelText);\nexec(modelText);\neval(modelText);\n"),
+        encoding="utf-8",
+    )
+
+    findings = [f for f in _scan(tmp_path) if f.check_id == "INJ-LLM-003"]
+
+    assert {tuple(f.cwe) for f in findings} == {("CWE-89",), ("CWE-78",), ("CWE-94",)}
+
+
+def test_direct_nested_llm_outputs_reach_each_sink_class(tmp_path: Path) -> None:
+    (tmp_path / "direct-sinks.ts").write_text(
+        "import { llm } from './model';\n"
+        "panel.innerHTML = (await llm.invoke(prompt)).content;\n"
+        "eval((await llm.invoke(prompt)).content);\n"
+        "await fetch((await llm.invoke(prompt)).content);\n"
+        "await executeTool((await llm.invoke(prompt)).content);\n",
+        encoding="utf-8",
+    )
+
+    assert {
+        "INJ-LLM-002",
+        "INJ-LLM-003",
+        "INJ-LLM-004",
+        "AUTHZ-LLM-001",
+    } <= _ids(_scan(tmp_path))
+
+
+def test_unrelated_inline_sanitizer_does_not_hide_direct_model_output(tmp_path: Path) -> None:
+    (tmp_path / "direct-html.ts").write_text(
+        "import { llm } from './model';\n"
+        "panel.innerHTML = DOMPurify.sanitize(helpText) + (await llm.invoke(prompt)).content;\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-002" in _ids(_scan(tmp_path))
+
+
+def test_parameterized_sql_and_fixed_shell_free_process_are_not_flagged(tmp_path: Path) -> None:
+    (tmp_path / "agent.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const decision = DecisionSchema.parse(raw);\n"
+            "await db.query('SELECT id FROM jobs WHERE id = ?', [decision.id]);\n"
+            "execFile('/usr/bin/printf', ['%s', modelText]);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-003" not in _ids(_scan(tmp_path))
+
+
+def test_python_fixed_shell_free_argv_is_not_flagged(tmp_path: Path) -> None:
+    (tmp_path / "agent.py").write_text(
+        "from openai import OpenAI\n"
+        "completion = client.chat.completions.create(model='gpt-4o', messages=messages)\n"
+        "model_text = completion.choices[0].message.content\n"
+        "subprocess.run(['/usr/bin/printf', '%s', model_text], check=True)\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-003" not in _ids(_scan(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    ["[f'{model_text}', '--version']", "['/usr/bin/' + model_text, '--version']"],
+)
+def test_python_model_selected_executable_in_argv_is_detected(tmp_path: Path, argv: str) -> None:
+    (tmp_path / "agent.py").write_text(
+        "from openai import OpenAI\n"
+        "completion = client.chat.completions.create(model='gpt-4o', messages=messages)\n"
+        "model_text = completion.choices[0].message.content\n"
+        f"subprocess.run({argv}, check=True)\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-003" in _ids(_scan(tmp_path))
+
+
+def test_shell_mode_with_model_output_in_later_argument_is_detected(tmp_path: Path) -> None:
+    (tmp_path / "agent.ts").write_text(
+        _llm_js("spawn('/usr/bin/printf', ['%s', modelText], { shell: true });\n"),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-003" in _ids(_scan(tmp_path))
+
+
+@pytest.mark.parametrize(
+    "process_call",
+    [
+        "execFile('/bin/sh', ['-c', modelText]);",
+        "subprocess.run(['/usr/bin/python3', '-c', model_text], check=True)",
+    ],
+)
+def test_fixed_interpreter_code_flag_with_model_program_is_detected(tmp_path: Path, process_call: str) -> None:
+    suffix = ".py" if process_call.startswith("subprocess") else ".ts"
+    source = (
+        "from openai import OpenAI\n"
+        "completion = client.chat.completions.create(model='gpt-4o', messages=messages)\n"
+        "model_text = completion.choices[0].message.content\n"
+        if suffix == ".py"
+        else _llm_js("")
+    )
+    (tmp_path / f"interpreter{suffix}").write_text(source + process_call + "\n", encoding="utf-8")
+
+    assert "INJ-LLM-003" in _ids(_scan(tmp_path))
+
+
+def test_javascript_compile_helper_is_not_treated_as_code_execution(tmp_path: Path) -> None:
+    (tmp_path / "template.ts").write_text(_llm_js("compile(modelText);\n"), encoding="utf-8")
+
+    assert "INJ-LLM-003" not in _ids(_scan(tmp_path))
+
+
+def test_llm_selected_url_and_path_require_sink_specific_guards(tmp_path: Path) -> None:
+    (tmp_path / "resources.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const request = RequestSchema.parse(raw);\n"
+            "await fetch(request.url);\n"
+            "await fs.readFile(request.path);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    findings = [f for f in _scan(tmp_path) if f.check_id == "INJ-LLM-004"]
+
+    assert {tuple(f.cwe) for f in findings} == {("CWE-918",), ("CWE-22",)}
+
+
+def test_secondary_url_and_path_arguments_are_detected(tmp_path: Path) -> None:
+    (tmp_path / "resources.py").write_text(
+        "from openai import OpenAI\n"
+        "completion = client.chat.completions.create(model='gpt-4o', messages=messages)\n"
+        "model_text = completion.choices[0].message.content\n"
+        "requests.request('GET', model_text)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "resources.ts").write_text(
+        _llm_js("fs.rename('/srv/staging/file', modelText, callback);\n"),
+        encoding="utf-8",
+    )
+
+    findings = [f for f in _scan(tmp_path) if f.check_id == "INJ-LLM-004"]
+
+    assert {f.file for f in findings} == {"resources.py", "resources.ts"}
+
+
+def test_llm_selected_url_and_path_with_guards_are_not_flagged(tmp_path: Path) -> None:
+    (tmp_path / "resources.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const request = RequestSchema.parse(raw);\n"
+            "assertAllowedUrl(request.url);\n"
+            "await fetch(request.url);\n"
+            "const safePath = resolveContainedPath(request.path);\n"
+            "await fs.readFile(safePath);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-004" not in _ids(_scan(tmp_path))
+
+
+def test_unrelated_resource_guard_does_not_suppress_llm_url(tmp_path: Path) -> None:
+    (tmp_path / "resources.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const request = RequestSchema.parse(raw);\n"
+            "assertAllowedUrl(config.healthcheckUrl);\n"
+            "await fetch(request.url);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-004" in _ids(_scan(tmp_path))
+
+
+def test_resource_guard_after_sink_is_too_late(tmp_path: Path) -> None:
+    (tmp_path / "resources.ts").write_text(
+        _llm_js("await fetch(modelText); assertAllowedUrl(modelText);\n"),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-004" in _ids(_scan(tmp_path))
+
+
+def test_inline_resource_guard_is_accepted(tmp_path: Path) -> None:
+    (tmp_path / "resources.ts").write_text(
+        _llm_js("await fetch(assertAllowedUrl(modelText));\n"),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-004" not in _ids(_scan(tmp_path))
+
+
+def test_inline_resource_guard_is_accepted_for_direct_model_call(tmp_path: Path) -> None:
+    (tmp_path / "resources.ts").write_text(
+        "import { llm } from './model';\nawait fetch(assertAllowedUrl((await llm.invoke(prompt)).content));\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-004" not in _ids(_scan(tmp_path))
+
+
+def test_unrelated_inline_resource_guard_does_not_hide_direct_model_output(tmp_path: Path) -> None:
+    (tmp_path / "resources.ts").write_text(
+        "import { llm } from './model';\n"
+        "await fetch(combine(assertAllowedUrl(config.healthcheckUrl), (await llm.invoke(prompt)).content));\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-004" in _ids(_scan(tmp_path))
+
+
+def test_ignored_resource_predicate_does_not_suppress_llm_url(tmp_path: Path) -> None:
+    (tmp_path / "resources.ts").write_text(
+        _llm_js("isAllowedUrl(modelText);\nawait fetch(modelText);\n"),
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-004" in _ids(_scan(tmp_path))
+
+
+def test_llm_selected_object_and_tool_require_authorization(tmp_path: Path) -> None:
+    (tmp_path / "tools.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const action = ActionSchema.parse(raw);\n"
+            "await Account.findByPk(action.objectId);\n"
+            "await tools[action.tool](action.arguments);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    findings = [f for f in _scan(tmp_path) if f.check_id == "AUTHZ-LLM-001"]
+
+    assert len(findings) == 2
+    assert all(f.cwe == ["CWE-862"] for f in findings)
+
+
+def test_llm_selected_object_and_tool_with_allowlist_and_authz_are_not_flagged(tmp_path: Path) -> None:
+    (tmp_path / "tools.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const action = ActionSchema.parse(raw);\n"
+            "requireOwnership(req.user, action.objectId);\n"
+            "await Account.findByPk(action.objectId);\n"
+            "if (!allowedTools.includes(action.tool)) throw new Error('tool');\n"
+            "authorize(req.user, action.tool);\n"
+            "await tools[action.tool](action.arguments);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "AUTHZ-LLM-001" not in _ids(_scan(tmp_path))
+
+
+def test_direct_tool_selection_with_inline_allowlist_and_authz_is_not_flagged(tmp_path: Path) -> None:
+    (tmp_path / "tools.ts").write_text(
+        "import { llm } from './model';\n"
+        "await executeTool(authorize(req.user, assertAllowedTool((await llm.invoke(prompt)).content)));\n",
+        encoding="utf-8",
+    )
+
+    assert "AUTHZ-LLM-001" not in _ids(_scan(tmp_path))
+
+
+def test_tool_authorization_without_action_allowlist_stays_flagged(tmp_path: Path) -> None:
+    (tmp_path / "tools.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const action = ActionSchema.parse(raw);\n"
+            "authorize(req.user, action.tool);\n"
+            "await tools[action.tool](action.arguments);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "AUTHZ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_static_object_lookup_on_same_line_as_other_llm_use_is_not_tainted(tmp_path: Path) -> None:
+    (tmp_path / "tools.ts").write_text(
+        _llm_js("await Account.findByPk(accountId); console.log(modelText);\n"),
+        encoding="utf-8",
+    )
+
+    assert "AUTHZ-LLM-001" not in _ids(_scan(tmp_path))
+
+
+def test_inline_owner_filter_authorizes_llm_selected_object(tmp_path: Path) -> None:
+    (tmp_path / "tools.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const action = ActionSchema.parse(raw);\n"
+            "await Account.findOne({ where: { id: action.objectId, ownerId: req.user.id } });\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "AUTHZ-LLM-001" not in _ids(_scan(tmp_path))
+
+
+def test_authorization_after_object_sink_is_too_late(tmp_path: Path) -> None:
+    (tmp_path / "tools.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const action = ActionSchema.parse(raw);\n"
+            "await Account.findByPk(action.objectId); authorize(req.user, action.objectId);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "AUTHZ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_unrelated_authorization_marker_does_not_suppress_llm_object(tmp_path: Path) -> None:
+    (tmp_path / "tools.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const action = ActionSchema.parse(raw);\n"
+            "const currentUserLabel = req.user.name;\n"
+            "await Account.findByPk(action.objectId);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "AUTHZ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_identity_and_object_logging_does_not_count_as_authorization(tmp_path: Path) -> None:
+    (tmp_path / "tools.ts").write_text(
+        _llm_js(
+            "const action = JSON.parse(modelText);\n"
+            "logger.info({ currentUser: req.user, objectId: action.objectId });\n"
+            "await Account.findByPk(action.objectId);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "AUTHZ-LLM-001" in _ids(_scan(tmp_path))
+
+
+def test_explicit_caller_role_gate_can_authorize_llm_selected_object(tmp_path: Path) -> None:
+    (tmp_path / "admin-tools.ts").write_text(
+        _llm_js(
+            "const raw = JSON.parse(modelText);\n"
+            "const action = ActionSchema.parse(raw);\n"
+            "requireRole(req.user, 'account-admin');\n"
+            "await Account.findByPk(action.objectId);\n"
+        ),
+        encoding="utf-8",
+    )
+
+    assert "AUTHZ-LLM-001" not in _ids(_scan(tmp_path))
+
+
+def test_generic_response_variable_without_llm_surface_is_not_tainted(tmp_path: Path) -> None:
+    (tmp_path / "http.ts").write_text(
+        "const response = await fetch('/status');\ncontainer.innerHTML = response.text;\n",
+        encoding="utf-8",
+    )
+
+    assert not (_ids(_scan(tmp_path)) & S._LLM_OUTPUT_CHECK_IDS)
+
+
+def test_python_llm_output_to_process_is_detected(tmp_path: Path) -> None:
+    (tmp_path / "agent.py").write_text(
+        "from openai import OpenAI\n"
+        "completion = client.chat.completions.create(model='gpt-4o', messages=messages)\n"
+        "model_text = completion.choices[0].message.content\n"
+        "subprocess.run(model_text, shell=True)\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-003" in _ids(_scan(tmp_path))
+
+
+def test_multiline_llm_assignment_is_tracked(tmp_path: Path) -> None:
+    (tmp_path / "agent.ts").write_text(
+        'import OpenAI from "openai";\n'
+        "const completion =\n"
+        "  await client.chat.completions.create({ model: 'gpt-4o', messages });\n"
+        "const modelText = completion.choices[0].message.content;\n"
+        "eval(modelText);\n",
+        encoding="utf-8",
+    )
+
+    assert "INJ-LLM-003" in _ids(_scan(tmp_path))
+
+
+def test_llm_sinks_in_test_files_are_excluded(tmp_path: Path) -> None:
+    (tmp_path / "agent.spec.ts").write_text(_llm_js("eval(modelText);\n"), encoding="utf-8")
+
+    assert not (_ids(_scan(tmp_path)) & S._LLM_OUTPUT_CHECK_IDS)
+
+
+# ---------------------------------------------------------------------------
 # Sidecar schema + ingest wiring
 # ---------------------------------------------------------------------------
 
@@ -286,6 +976,7 @@ def test_emitted_sidecar_validates_against_schema(tmp_path: Path) -> None:
     (repo / "routes/order.ts").write_text(
         "export function getOrder(req, res) {\n  return Order.findAll({ where: { UserId: req.body.userId } });\n}\n"
     )
+    (repo / "routes/agent.ts").write_text(_llm_js("eval(modelText);\n"), encoding="utf-8")
     out.mkdir()
     rc = subprocess.run(
         [sys.executable, str(SCRIPT), "--repo-root", str(repo), "--output-dir", str(out), "--quiet"],
@@ -301,6 +992,7 @@ def test_emitted_sidecar_validates_against_schema(tmp_path: Path) -> None:
         text=True,
     ).returncode
     assert rc2 == 0
+    assert "INJ-LLM-003" in sidecar.read_text(encoding="utf-8")
 
 
 def test_main_rejects_invalid_repo_and_missing_output_dir(tmp_path: Path, capsys) -> None:

@@ -770,6 +770,11 @@ _AUTHZ_TO_STRIDE: dict[str, str] = {
     "INJ-001": "Tampering",  # SQL injection — request data in query string
     "INJ-002": "Elevation of Privilege",  # Command injection — shell RCE
     "INJ-003": "Information Disclosure",  # SSRF — reach internal targets
+    "INJ-LLM-001": "Tampering",  # Unvalidated structured model output
+    "INJ-LLM-002": "Tampering",  # Model output rendered as active content
+    "INJ-LLM-003": "Elevation of Privilege",  # Model output reaches an interpreter
+    "INJ-LLM-004": "Information Disclosure",  # Model-selected URL/path
+    "AUTHZ-LLM-001": "Elevation of Privilege",  # Model-selected object/tool without authz
 }
 
 
@@ -818,6 +823,8 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
     cwe = cwes[0] if cwes else ""
     check_id = f.get("check_id") or ""
     stride = _AUTHZ_TO_STRIDE.get(check_id, "Tampering")
+    if check_id == "INJ-LLM-003" and cwe == "CWE-89":
+        stride = "Tampering"
     severity = f.get("severity") or "Medium"
     file_path = f.get("file") or ""
     component_id, component_name = _guess_component_from_path(file_path)
@@ -852,6 +859,10 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         threat["mechanism_id"] = "application-owned-cryptography"
     elif check_id.startswith("CRYPTO-"):
         threat["mechanism_id"] = "weak-cryptographic-primitives"
+    if check_id.startswith("INJ-LLM-"):
+        threat["owasp_llm_ids"] = ["LLM05"]
+    elif check_id == "AUTHZ-LLM-001":
+        threat["owasp_llm_ids"] = ["LLM06"]
     category = _threat_category_id_for(threat)
     if category:
         threat["threat_category_id"] = category
