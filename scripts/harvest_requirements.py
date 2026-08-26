@@ -97,13 +97,10 @@ CATEGORY_FROM_NUMERIC_ID = re.compile(r"^([A-Z][A-Z0-9]*-[A-Z0-9]+)-\d+$")
 # Generic uppercase ID prefix (PREFIX-…), used for badge recognition and ID sanity-checks.
 ID_PREFIX_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*-")
 
-# Antora/AsciiDoc format: <span class="badge">PREFIX-ID</span> with any uppercase prefix.
-# Some pages use Unicode non-breaking hyphen U+2011 (‑) instead of ASCII hyphen after the prefix.
-BADGE_ID_PATTERN = re.compile(r'class="badge"[^>]*>\s*[A-Z][A-Z0-9]*[-\u2011]', re.IGNORECASE)
 # Priority label span classes: must-label, should-label, may-label
 PRIORITY_LABEL_PATTERN = re.compile(r"(must|should|may)-label", re.IGNORECASE)
 # Any ID reference in free text — generic prefix, same shape as REQ_ID_PATTERN without brackets.
-# Case-insensitive like REQ_ID_PATTERN/BADGE_ID_PATTERN: source pages often render a link's
+# Case-insensitive like REQ_ID_PATTERN: source pages often render a link's
 # visible text in title case (e.g. "SEC-Api-Exposure") even though the canonical ID is all caps.
 REF_ID_PATTERN = re.compile(r"\b(" + _ID_BODY + r")\b", re.IGNORECASE)
 
@@ -283,9 +280,9 @@ def crawl_index(
 
     pages: list[tuple[str, str]] = []
     for url in links:
-        html, _ = fetch(session, url, url)
+        html, page_final_url = fetch(session, url, url)
         if html is not None:
-            pages.append((url, html))
+            pages.append((page_final_url, html))
 
     return pages, (final_url, index_html)
 
@@ -326,8 +323,34 @@ def deduplicate_text(text: str) -> str:
     return " ".join(seen)
 
 
+UNBRACKETED_EXCLUDED_TAGS = ("pre", "code", "a")
+
+
+def extract_id_from_element(tag) -> Optional[tuple[str, str]]:
+    """Extract a requirement definition while respecting semantic markup.
+
+    Bracketed IDs remain explicit in every context. Unbracketed ID-shaped text
+    inside code samples or links is a reference/example, including when an
+    outer element supplies the separator and description.
+    """
+    raw = tag.get_text()
+    bracketed = REQ_ID_PATTERN.search(raw) is not None
+    allow_unbracketed = tag.name not in UNBRACKETED_EXCLUDED_TAGS and tag.find_parent(UNBRACKETED_EXCLUDED_TAGS) is None
+    extracted = extract_id_and_text(raw, allow_unbracketed=allow_unbracketed)
+    if not extracted or bracketed:
+        return extracted
+
+    req_id, _ = extracted
+    for nested in tag.find_all(UNBRACKETED_EXCLUDED_TAGS):
+        nested_extracted = extract_id_and_text(nested.get_text())
+        if nested_extracted and nested_extracted[0] == req_id:
+            return None
+    return extracted
+
+
 def page_has_requirements(html: str) -> bool:
-    return bool(REQ_ID_PATTERN.search(html)) or bool(BADGE_ID_PATTERN.search(html))
+    """Return whether the page contains at least one extractable requirement."""
+    return bool(parse_requirements_from_page(html, ""))
 
 
 def parse_page_intro(html: str) -> str:
@@ -349,8 +372,9 @@ def parse_page_intro(html: str) -> str:
 
     intro_parts: list[str] = []
     for el in main.find_all(["p", "div", "blockquote"], recursive=True):
-        # Stop at the first element that contains a requirement ID
-        if REQ_ID_PATTERN.search(el.get_text()):
+        # Stop at the first element that contains an extractable requirement.
+        # This shares the parser's bracketed/unbracketed and markup semantics.
+        if extract_id_from_element(el):
             break
         # Skip elements that contain child block elements (likely containers)
         if el.find(["p", "ul", "ol", "table", "section"]):
@@ -488,13 +512,7 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
     # Strategy 3: any element whose text names PREFIX-XX-N (bracketed, or a bare
     # ID at the start of the element followed by a separator, e.g. "REQ-001: text")
     for tag in soup.find_all(True):
-        raw = tag.get_text()
-        # Code samples ("Header-Name: value") and hyperlink captions ("ID - Title"
-        # linking to another page) commonly have the same shape as an unbracketed
-        # requirement definition but aren't one — only accept the bracket
-        # convention in those contexts.
-        allow_unbracketed = tag.name not in ("pre", "code", "a")
-        extracted = extract_id_and_text(raw, allow_unbracketed=allow_unbracketed)
+        extracted = extract_id_from_element(tag)
         if not extracted:
             continue
         req_id, remainder = extracted
@@ -838,8 +856,7 @@ def harvest_requirements_source(
     # single page (no sub-pages), or the index page may also contain requirements.
     if index_page:
         idx_url, idx_html = index_page
-        if page_has_requirements(idx_html):
-            pages_with_html = [(idx_url, idx_html)] + pages_with_html
+        pages_with_html = [(idx_url, idx_html)] + pages_with_html
 
     pages_to_parse = [(url, html, url, mode) for url, html in pages_with_html]
 
@@ -851,13 +868,9 @@ def harvest_requirements_source(
     # instead of silently duplicating the ID across categories in the final catalog.
     seen_req_urls: dict[str, str] = {}
     for url, html, title_hint, effective_mode in pages_to_parse:
-        if not page_has_requirements(html):
-            print(f"  [SKIP] No requirement-ID tokens found: {url}")
-            continue
-
         reqs = parse_requirements_from_page(html, url)
         if not reqs:
-            print(f"  [WARN] Page matched but no requirements extracted: {url}", file=sys.stderr)
+            print(f"  [SKIP] No requirement-ID tokens found: {url}")
             continue
 
         ptitle = page_title(html, title_hint)
@@ -940,16 +953,15 @@ def harvest_blueprints_source(
     pages_with_html, index_page = crawl_index(session, crawl_url, source_id, max_pages)
     if index_page:
         idx_url, idx_html = index_page
-        # Dedup by page body, not URL string: a redirect (e.g. a crawl_url
-        # without a trailing slash landing on .../index.html) combined with a
-        # relative self-link can rediscover the index page under a URL string
-        # that doesn't match idx_url even though it's the same document.
-        seen_bodies = {idx_html}
+        # crawl_index retains final redirect URLs. Deduplicate page identity by
+        # that URL while preserving distinct pages that happen to share content.
+        seen_urls = {idx_url.rstrip("/")}
         deduped_pages: list[tuple[str, str]] = []
         for url, html in pages_with_html:
-            if html in seen_bodies:
+            page_key = url.rstrip("/")
+            if page_key in seen_urls:
                 continue
-            seen_bodies.add(html)
+            seen_urls.add(page_key)
             deduped_pages.append((url, html))
         pages_with_html = [(idx_url, idx_html)] + deduped_pages
 

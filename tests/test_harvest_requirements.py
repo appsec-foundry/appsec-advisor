@@ -143,6 +143,8 @@ def test_crawl_index_fetch_failure_and_page_cap(monkeypatch, capsys):
     def fake_fetch(_session, url, _label):
         if url.endswith("/base/"):
             return html, url
+        if url.endswith("/a.html"):
+            return f"<html>{url}</html>", "https://example.test/base/canonical-a.html"
         return f"<html>{url}</html>", url
 
     monkeypatch.setattr(harvester, "fetch", fake_fetch)
@@ -150,6 +152,7 @@ def test_crawl_index_fetch_failure_and_page_cap(monkeypatch, capsys):
     pages, index_page = harvester.crawl_index(object(), "https://example.test/base/", "src", 2)
 
     assert len(pages) == 2
+    assert pages[0][0] == "https://example.test/base/canonical-a.html"
     assert index_page == ("https://example.test/base/", html)
     assert "Capping at 2 pages" in capsys.readouterr().err
 
@@ -582,7 +585,10 @@ def test_text_helpers_intro_and_requirement_detection():
     assert harvester.clean_text("[SEC-AUTH-1] MUST validate sessions.") == "MUST validate sessions"
     assert harvester.deduplicate_text("Use TLS. Use TLS. Pin certificates.") == "Use TLS. Pin certificates."
     assert harvester.deduplicate_text("Use TLS.\n\nPin certificates.") == "Use TLS. Pin certificates."
-    assert harvester.page_has_requirements('<span class="badge">ACME‑AUTH</span>') is True
+    badge_html = '<div class="sectionbody"><p><span class="badge">ACME‑AUTH</span></p><p>MUST authenticate.</p></div>'
+    assert harvester.page_has_requirements(badge_html) is True
+    assert harvester.page_has_requirements("<p>SEC-BARE-1: MUST validate every session.</p>") is True
+    assert harvester.page_has_requirements("<p><code>Content-Security-Policy</code>: default-src 'self'</p>") is False
     assert harvester.page_has_requirements("plain documentation") is False
 
     html = """
@@ -684,7 +690,7 @@ def test_parse_requirements_detects_unbracketed_leading_ids():
       <h3>SEC-UNBR-1: Passwords must be hashed with a salted algorithm.</h3>
       <ul>
         <li><strong>SEC-UNBR-2</strong>: Sessions must expire after inactivity.</li>
-        <li><code>SEC-UNBR-3</code> - Use TLS for all outbound connections.</li>
+        <li><span>SEC-UNBR-3</span> - Use TLS for all outbound connections.</li>
       </ul>
       <dl>
         <dt>SEC-UNBR-4</dt>
@@ -737,6 +743,21 @@ def test_parse_requirements_unbracketed_id_ignores_code_samples_and_link_caption
     reqs = harvester.parse_requirements_from_page(html, "https://example.test/code-and-links")
 
     assert reqs == []
+
+
+def test_parse_requirements_unbracketed_id_ignores_split_inline_code_and_links():
+    html = """
+    <main>
+      <p>[SEC-REAL-1] MUST set an explicit browser security policy.</p>
+      <p><code>Content-Security-Policy</code>: default-src 'self'</p>
+      <p><a href="/other-page">SEC-OTHER</a> - See the other page</p>
+      <p>SEC-REAL-2: SHOULD render <code>default-src</code> literally.</p>
+    </main>
+    """
+
+    reqs = harvester.parse_requirements_from_page(html, "https://example.test/inline-markup")
+
+    assert [req["id"] for req in reqs] == ["SEC-REAL-1", "SEC-REAL-2"]
 
 
 def test_parse_requirements_tolerates_invalid_duplicate_and_empty_markup():
@@ -1011,7 +1032,66 @@ def test_requirements_source_includes_index_merges_sorts_and_reports(monkeypatch
     assert "merged 2 more requirements" in captured.out
     assert "[SKIP] No requirement-ID tokens found" in captured.out
     assert "SEC-AUTH-10 [SHOULD]" in captured.out
-    assert "matched but no requirements extracted" in captured.err
+    assert captured.err == ""
+
+
+def test_requirements_source_harvests_unbracketed_page_without_context_duplication(monkeypatch, capsys):
+    index_html = "<main><p>General catalog navigation without requirements.</p></main>"
+    child_html = """
+    <main>
+      <h1>Session Requirements</h1>
+      <p>This introduction describes the session policy and its intended application scope.</p>
+      <p>SEC-SESSION-1: MUST rotate the session identifier after login.</p>
+      <p>SEC-SESSION-2 - SHOULD expire sessions after inactivity.</p>
+    </main>
+    """
+
+    def fake_crawl_index(_session, base_url, _label, _max_pages):
+        return [(f"{base_url}/sessions", child_html)], (base_url, index_html)
+
+    monkeypatch.setattr(harvester, "crawl_index", fake_crawl_index)
+
+    categories = harvester.harvest_requirements_source(
+        session=None,
+        cfg={"defaults": {"requirements_mode": "full"}},
+        source={"id": "app-reqs", "crawl_url": "https://example.test/requirements"},
+        verbose=False,
+    )
+
+    assert len(categories) == 1
+    assert [req["id"] for req in categories[0]["requirements"]] == ["SEC-SESSION-1", "SEC-SESSION-2"]
+    assert "introduction describes" in categories[0]["context"]
+    assert "SEC-SESSION" not in categories[0]["context"]
+    assert "No requirement-ID tokens found" in capsys.readouterr().out
+
+
+def test_requirements_source_keeps_first_duplicate_id_across_categories(monkeypatch, capsys):
+    index_html = "<main><p>[SEC-DUP-1] MUST keep the canonical index statement.</p></main>"
+    child_html = """
+    <main>
+      <p>[SEC-DUP-1] MUST not replace the canonical statement.</p>
+      <p>[ORG-OTHER] SHOULD keep this independent requirement.</p>
+    </main>
+    """
+
+    def fake_crawl_index(_session, base_url, _label, _max_pages):
+        return [(f"{base_url}/child", child_html)], (base_url, index_html)
+
+    monkeypatch.setattr(harvester, "crawl_index", fake_crawl_index)
+
+    categories = harvester.harvest_requirements_source(
+        session=None,
+        cfg={},
+        source={"id": "app-reqs", "crawl_url": "https://example.test/requirements"},
+        verbose=False,
+    )
+
+    requirements = [req for category in categories for req in category["requirements"]]
+    assert [req["id"] for req in requirements].count("SEC-DUP-1") == 1
+    duplicate = next(req for req in requirements if req["id"] == "SEC-DUP-1")
+    assert duplicate["text"] == "MUST keep the canonical index statement"
+    assert duplicate["url"].startswith("https://example.test/requirements")
+    assert "dropping duplicate requirement ID SEC-DUP-1" in capsys.readouterr().err
 
 
 def test_blueprint_source_indexes_configured_crawl_url(monkeypatch):
@@ -1062,8 +1142,10 @@ def test_blueprint_source_deduplicates_index_page_from_discovered_links(monkeypa
     </html>
     """
 
+    redirected_html = index_html.replace("Blueprint catalog overview.", "Redirect response changed dynamically.")
+
     def fake_crawl_index(session, base_url, label, max_pages):
-        return [(base_url + "/", index_html)], (base_url, index_html)
+        return [(base_url + "/", redirected_html)], (base_url, index_html)
 
     monkeypatch.setattr(harvester, "crawl_index", fake_crawl_index)
 
@@ -1082,11 +1164,7 @@ def test_blueprint_source_deduplicates_index_page_from_discovered_links(monkeypa
     assert blueprints[0]["id"] == "BP-BLUEPRINTS"
 
 
-def test_blueprint_source_deduplicates_by_page_body_when_url_differs(monkeypatch):
-    # A redirect (crawl_url without a trailing slash landing on an explicit
-    # index page) combined with a relative self-link can rediscover the index
-    # page under a URL string that differs from idx_url by more than a
-    # trailing slash. Dedup must compare page bodies, not URL strings.
+def test_blueprint_source_preserves_distinct_pages_with_identical_bodies(monkeypatch):
     index_html = """
     <html>
       <body>
@@ -1100,7 +1178,7 @@ def test_blueprint_source_deduplicates_by_page_body_when_url_differs(monkeypatch
     """
 
     def fake_crawl_index(session, base_url, label, max_pages):
-        return [(base_url + "/index.html", index_html)], (base_url, index_html)
+        return [(base_url + "/copy", index_html)], (base_url, index_html)
 
     monkeypatch.setattr(harvester, "crawl_index", fake_crawl_index)
 
@@ -1115,8 +1193,7 @@ def test_blueprint_source_deduplicates_by_page_body_when_url_differs(monkeypatch
         verbose=False,
     )
 
-    assert len(blueprints) == 1
-    assert blueprints[0]["id"] == "BP-BLUEPRINTS"
+    assert [blueprint["id"] for blueprint in blueprints] == ["BP-BLUEPRINTS", "BP-COPY"]
 
 
 def test_blueprint_source_summary_and_verbose_full_modes(monkeypatch, capsys):

@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The requirements harvester no longer loses blueprint content to duplicated index pages, double-counted list/code blocks, words run together across inline tags, or headings dropped for having no direct text of their own; it also no longer drops a requirement ID re-listed under more than one category.
+- The requirements harvester no longer duplicates blueprint index pages or requirement IDs re-listed under multiple categories, double-counts list/code blocks, joins words across inline tags, or drops headings without direct text.
 
 ## 0.6.0-beta.1 (2026-08-23)
 
