@@ -820,6 +820,36 @@ class TestSoftTurnBudgetCrossing:
     def test_zero_budget_is_not_treated_as_a_crossing(self):
         assert agg._soft_turn_budget_crossing("turns=5/0") is None
 
+    @staticmethod
+    def _by(source: str, detail: str) -> list[tuple[int, str]]:
+        """A MAX_TURNS line whose source column names the emitting agent."""
+        return [(1, f"2026-08-27T10:30:00Z  [--------]  INFO   {source}  MAX_TURNS   {detail}")]
+
+    def test_stride_crossing_reports_the_headroom_it_verified(self):
+        """A soft budget below the ceiling may say so — 31 against 96."""
+        (issue,) = agg._extract_errors([], self._by("stride-analyzer-v2", "turns=34/31  pct=109%"))
+        assert issue["evidence"]["harness_ceiling"] == 96
+        assert issue["evidence"]["at_harness_ceiling"] is False
+        assert "below the harness ceiling (96)" in issue["title"]
+
+    def test_crossing_at_the_ceiling_is_not_announced_as_headroom(self):
+        """Regression: an agent dispatched without a ``MAX_TURNS`` prompt
+        parameter is measured against its own frontmatter ``maxTurns``, so soft
+        budget and harness ceiling are the same number. Such a crossing means the
+        agent reached its real limit and its output may be truncated — it was
+        reported as "harness ceiling not reached" without anything being checked.
+        """
+        (issue,) = agg._extract_errors([], self._by("ms-renderer", "turns=61/60  pct=101%"))
+        assert issue["evidence"]["at_harness_ceiling"] is True
+        assert "output may be truncated" in issue["title"]
+        assert "not reached" not in issue["title"]
+
+    def test_unknown_agent_claims_nothing_about_the_ceiling(self):
+        """An unresolvable definition must not borrow the watchdog's default."""
+        (issue,) = agg._extract_errors([], self._by("not-a-real-agent", "turns=9/8  pct=112%"))
+        assert "harness_ceiling" not in issue["evidence"]
+        assert "ceiling" not in issue["title"]
+
 
 class TestSoftCrossingKeepsItsRecommender:
     """Splitting ``MAX_TURNS`` into a soft category decoupled it from

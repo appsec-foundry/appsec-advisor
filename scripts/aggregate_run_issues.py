@@ -63,6 +63,14 @@ try:
 except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
+# Harness ceilings — read from the same agent definitions the watchdog parses,
+# so a soft-budget crossing can be told apart from an agent that ran into its
+# actual ``maxTurns`` limit.
+try:
+    import budget_watchdog  # type: ignore  # noqa: E402
+except Exception:  # pragma: no cover
+    budget_watchdog = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # Performance thresholds — phase wall-time max (seconds) before anomaly.
@@ -604,16 +612,32 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
 _SOFT_TURN_CROSSING_RE = re.compile(r"\bturns=(?P<used>\d+)/(?P<budget>\d+)")
 
 
-def _soft_turn_budget_crossing(detail: str) -> dict[str, int] | None:
+def _agent_turn_ceiling(agent: str) -> int | None:
+    """Resolve an agent's frontmatter ``maxTurns``, or ``None`` when unknown.
+
+    ``budget_watchdog.get_max_turns`` never fails — it returns its module default
+    for an agent whose definition it cannot read. That sentinel says nothing about
+    the real ceiling, so it is reported as unknown here rather than compared.
+    """
+    if budget_watchdog is None or not agent or agent == "?":
+        return None
+    try:
+        ceiling = budget_watchdog.get_max_turns(agent)
+    except Exception:  # pragma: no cover — never let reporting break aggregation
+        return None
+    if ceiling == getattr(budget_watchdog, "DEFAULT_MAX_TURNS", None):
+        return None
+    return ceiling
+
+
+def _soft_turn_budget_crossing(detail: str, ceiling: int | None = None) -> dict[str, int] | None:
     """Classify a ``MAX_TURNS`` detail payload as a soft budget crossing.
 
     Two producers emit this event name with opposite meanings. ``budget_watchdog``
-    fires while the agent is *still running*, against the per-component soft budget
-    from ``build_stride_dispatch_manifest`` (``turns=34/31  pct=109%``); the harness
-    ceiling in the agent definition is far higher (96 for stride-analyzer-v2), so
-    nothing is killed and the artifact is written normally. ``agent_logger`` fires
-    on the Stop hook with ``reason=max_turns`` — the real kill — and carries the
-    fixed literal ``Agent terminated — maxTurns limit reached`` with no counters.
+    fires while the agent is *still running*, against the soft budget it was given;
+    ``agent_logger`` fires on the Stop hook with ``reason=max_turns`` — the real
+    kill — carrying the fixed literal ``Agent terminated — maxTurns limit reached``
+    with no counters.
 
     Reporting both as ``error`` made the 2026-08-23 insecure-large-spring-app run
     announce "1 error" for a component whose STRIDE output was complete and merged.
@@ -622,6 +646,14 @@ def _soft_turn_budget_crossing(detail: str) -> dict[str, int] | None:
     on their own. Return the counters so the budget can be calibrated from data
     instead of guessed; return ``None`` for the hard kill so ``error`` keeps a real
     trigger.
+
+    ``at_ceiling`` records whether the soft budget had any headroom left. It only
+    does for agents dispatched with an explicit ``MAX_TURNS`` prompt parameter —
+    STRIDE analysers run 31 against a ceiling of 96. An agent dispatched without
+    one falls back to its own frontmatter ``maxTurns``, making soft budget and
+    harness ceiling the same number, so a crossing there means the agent reached
+    its actual limit and its output may be truncated. Both cases used to be
+    announced as "harness ceiling not reached" without anything being checked.
     """
     if "terminated" in detail.lower():
         return None
@@ -634,7 +666,11 @@ def _soft_turn_budget_crossing(detail: str) -> dict[str, int] | None:
         return None
     # Truncate, matching how ``budget_watchdog`` renders the same ratio, so the
     # issue and the raw log line do not disagree by a point.
-    return {"used": used, "budget": budget, "pct": int(used * 100 / budget)}
+    out = {"used": used, "budget": budget, "pct": int(used * 100 / budget)}
+    if ceiling is not None:
+        out["ceiling"] = ceiling
+        out["at_ceiling"] = int(budget >= ceiling)
+    return out
 
 
 def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, str]]) -> list[dict]:
@@ -664,20 +700,32 @@ def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, 
                 title = f"{event}: {_clip(ev['detail'], 80)}"
                 extra: dict = {}
                 if event == "MAX_TURNS":
-                    soft = _soft_turn_budget_crossing(ev["detail"])
+                    agent = _emitting_agent(ev)
+                    soft = _soft_turn_budget_crossing(ev["detail"], _agent_turn_ceiling(agent))
                     if soft:
                         category = "turn_budget_exceeded"
                         severity = "warning"
+                        if soft.get("at_ceiling"):
+                            outcome = (
+                                f"soft budget equals the harness ceiling ({soft['ceiling']}) — "
+                                "output may be truncated; raise maxTurns"
+                            )
+                        elif "ceiling" in soft:
+                            outcome = f"below the harness ceiling ({soft['ceiling']}), output kept"
+                        else:
+                            outcome = "output kept"
                         title = (
-                            f"Soft turn budget exceeded: {_emitting_agent(ev)} used "
-                            f"{soft['used']} of {soft['budget']} budgeted turns ({soft['pct']}%) — "
-                            "harness ceiling not reached, output kept"
+                            f"Soft turn budget exceeded: {agent} used "
+                            f"{soft['used']} of {soft['budget']} budgeted turns ({soft['pct']}%) — {outcome}"
                         )
                         extra = {
                             "turns_used": soft["used"],
                             "turns_budgeted": soft["budget"],
                             "pct_of_budget": soft["pct"],
                         }
+                        if "ceiling" in soft:
+                            extra["harness_ceiling"] = soft["ceiling"]
+                            extra["at_harness_ceiling"] = bool(soft["at_ceiling"])
                 issues.append(
                     {
                         "category": category,
