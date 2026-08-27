@@ -55,7 +55,12 @@ EXPECTED_MAX_TURNS = {
     "appsec-threat-merger": 12,
     "appsec-threat-renderer": 80,
     "appsec-secarch-renderer": 60,
-    "appsec-ms-renderer": 32,
+    # 32 → 60 (2026-08-27): a standard-depth juice-shop run stopped this agent
+    # at 32/32 turns. It authors six fragments (verdict, critical attack tree,
+    # attack paths, anti-patterns, AI exposure, requirements compliance) against
+    # the secarch-renderer's one, yet carried the tighter of the two Stage-2
+    # ceilings. Matched to its sibling.
+    "appsec-ms-renderer": 60,
     "appsec-qa-reviewer": 200,
     "appsec-architect-reviewer": 40,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)

@@ -15,10 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deterministic source scans now detect direct unsafe LLM-output flows into structured data, browser rendering, interpreters, resources, and privileged actions, while LLM review covers indirect flows.
 - The requirements harvester now recognizes requirement IDs written without brackets (e.g. `REQ-001: text`), not just the bracketed convention.
 - The requirements harvester reports a clear message naming the missing sibling module when it is run outside a full checkout, instead of an import traceback.
+- The requirements audit names the catalog and the requirement categories it is about to grade before it starts scanning, and reports progress while it works.
 
 ### Fixed
 
-- Threat-model Management Summaries now derive compliance status, counts, and a compact open-requirements table from the complete Section 7b assessment.
+- Threat-model Management Summaries now derive compliance status, counts, and a table of the failed requirements — each named in words with the findings the assessment cited — from the complete Section 7b assessment, which itself lists failures first.
 - The bundled requirements demo now uses current OWASP 2025 references, scoped verifiable controls, and consistent source metadata.
 - The requirements harvester no longer duplicates blueprint index pages or requirement IDs re-listed under multiple categories, double-counts list/code blocks, joins words across inline tags, or drops headings without direct text.
 
@@ -169,4 +170,3 @@ First public release. Still a beta: good for guided use, but not ready to run un
 - Run `/appsec-advisor:check-permissions --update` once after installing.
 - Large repositories (more than ~8–10 components) are slower and not yet parallelized.
 - Supply-chain risk is reported as posture only, not per-CVE. Use a dedicated scanner such as Dependabot, Snyk, or Trivy for that.
-- The requirements audit names the catalog and the requirement categories it is about to grade before it starts scanning, and reports progress while it works.

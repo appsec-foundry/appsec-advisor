@@ -150,9 +150,9 @@ This section presents all mitigations in two tiers: prioritized (fix immediately
 **Overall status:** <deterministically composed from the §7b rows>
 **Result:** <N> requirements assessed — <N_pass> PASS · <N_fail> FAIL · <N_antipattern> ANTI-PATTERN · <N_partial> PARTIAL · <N_na> N/A · <N_not_observable> NOT OBSERVABLE · <N_unverifiable> UNVERIFIABLE
 
-<The composer owns the Overall status, Result counts, and compact table. It derives all three from the complete §7b assessment table, includes up to six FAIL / ANTI-PATTERN / PARTIAL / UNVERIFIABLE / NOT OBSERVABLE rows in status-priority-ID order, and adds only explicitly mapped finding and mitigation links. Do not hand-author or duplicate them.>
+<The composer owns the Overall status, Result counts, and compact table. It derives all three from the complete §7b assessment table, lists up to six failed requirements (MUST first) by ID plus short title, and adds only explicitly mapped finding and mitigation links. Partial and unverified requirements stay in the counts and §7b. Do not hand-author or duplicate them.>
 
-→ *Full compliance details in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*
+→ *All <N> assessed requirements in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*
 
 ### Operational Strengths
 

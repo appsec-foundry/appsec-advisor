@@ -681,6 +681,7 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
     # Pass 2: linkify bare T-NNN / M-NNN references
     in_fence = False
     in_section_8 = False
+    in_section_7b = False
     in_toc = False
     for i, line in enumerate(lines):
         stripped_lstrip = line.lstrip()
@@ -691,6 +692,12 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             continue
         if line.startswith("## "):
             in_section_8 = line.startswith("## 8.") or line.startswith("## 8 ")
+            # §7b Requirements Compliance: every reference in the Evidence
+            # column is a citation attached to the assessor's own sentence
+            # ("T-019: password-change action served as HTTP GET…"). Injecting
+            # the finding title there states the same fact twice in one cell,
+            # so this section gets links without label suffixes.
+            in_section_7b = line.startswith("## 7b")
             # Track Table of Contents section to avoid linkifying bare T-NNN /
             # M-NNN references inside TOC list items — those bare IDs are part
             # of the TOC link label text and must remain as plain text. If they
@@ -736,6 +743,8 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
             entry = label_idx.get(full.upper())
             if entry:
                 label, anchor = entry
+                if in_section_7b:
+                    return f"[{full}](#{anchor})"
                 return f"[{full}](#{anchor}) — {_canonical_label(label)}"
             return f"[{full}](#{fallback_anchor})"
 
@@ -842,6 +851,8 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
         if label_idx:
 
             def sub_existing(match: re.Match[str]) -> str:
+                if in_section_7b:
+                    return match.group(0)  # citation next to the assessor's own sentence
                 ref = match.group(1).upper()
                 entry = label_idx.get(ref)
                 if not entry:
@@ -4350,6 +4361,13 @@ _STRENGTH_TABLE_HEADERS_3 = ("Strength", "What's in Place", "Effectiveness")
 _STRENGTH_COL_WIDTHS_3 = ("20%", "33%", "47%")
 _STRENGTH_TABLE_HEADERS_4 = ("Strength", "What's in Place", "Effectiveness", "Mitigates")
 _STRENGTH_COL_WIDTHS_4 = ("18%", "30%", "40%", "12%")
+# §7b Requirements Compliance. Keep in sync with compose's
+# `_FIXED_LAYOUT_TABLE_HEADERS`, which exempts this table from soft-wrap.
+_REQ_COMPLIANCE_HEADERS = ("Requirement", "Status", "Priority", "Evidence")
+_REQ_COMPLIANCE_COL_WIDTHS = ("26%", "13%", "9%", "52%")
+# Management-Summary compliance table (requirement + its bare id links).
+_REQ_MS_HEADERS = ("Requirement", "Findings", "Mitigations")
+_REQ_MS_COL_WIDTHS = ("46%", "27%", "27%")
 # Each spec: (headers, widths, {col_idx: inline-style}, prose_col_indices).
 # - inline-style per column: `white-space:nowrap` pins short tokens so they never
 #   break at a hyphen. For wrapping, the two values are NOT interchangeable:
@@ -4407,6 +4425,25 @@ _FIXED_LAYOUT_SPECS = (
             3: "overflow-wrap:break-word",
         },
         frozenset(),
+    ),
+    (
+        _REQ_COMPLIANCE_HEADERS,
+        _REQ_COMPLIANCE_COL_WIDTHS,
+        # Requirement (short title) and Evidence (a sentence plus finding links)
+        # are prose; Status and Priority are single tokens that must never break.
+        {0: "overflow-wrap:break-word", 3: "overflow-wrap:break-word"},
+        # Both prose columns reflow to the fixed width. Reports rendered before
+        # compose exempted this table from soft-wrap carry stale 44-char breaks
+        # inside the Evidence sentence; stripping them here repairs those too.
+        frozenset({0, 3}),
+    ),
+    (
+        _REQ_MS_HEADERS,
+        _REQ_MS_COL_WIDTHS,
+        # Requirement carries the short title; the id columns hold comma-joined
+        # links that must not break inside an id.
+        {0: "overflow-wrap:break-word"},
+        frozenset({0}),
     ),
 )
 _AS_SEP_LINE_RE = re.compile(r"^\s*\|[\s:\-|]+\|\s*$")

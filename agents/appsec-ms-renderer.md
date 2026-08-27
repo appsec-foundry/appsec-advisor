@@ -3,7 +3,7 @@ name: appsec-ms-renderer
 description: INTERNAL specialist for Stage-2 Management Summary fragments. Authors only management-summary inputs; the controller owns composition and shared stage state.
 tools: Read, Bash, Write
 model: sonnet
-maxTurns: 32
+maxTurns: 60
 ---
 
 INTERNAL AGENT — do not invoke directly. Called only by the focused Stage-2 path of `create-threat-model`.

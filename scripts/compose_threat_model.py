@@ -8406,6 +8406,25 @@ def _extract_requirement_id_from_cell(cell: str, known_ids: set[str]) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _requirement_title_from_cell(cell: str, rid: str) -> str:
+    """Extract the requirement's short title from a §7b Requirement cell.
+
+    Phase 8b writes the cell as ``<ID>: <short title>`` (also seen with an
+    em-dash or a linked/backticked ID). The title is the only reader-facing
+    wording of the requirement the report carries — the catalog holds the full
+    normative sentence, which is too long for a table cell — so the compact
+    Management-Summary table sources it from here. Returns "" when the cell
+    carries nothing but the ID.
+    """
+    text = re.sub(r"<br\s*/?>", " ", cell or "", flags=re.IGNORECASE)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)  # drop link targets, keep text
+    text = re.sub(r"[*_`]", "", text)
+    if rid:
+        text = re.sub(r"(?<![\w-])" + re.escape(rid) + r"(?![\w-])", " ", text)
+    text = re.sub(r"^[\s:—–-]+", "", text)
+    return re.sub(r"\s+", " ", text).strip().rstrip(".")
+
+
 def _split_md_table_row(line: str) -> list[str]:
     """Split a simple Markdown table row into cells.
 
@@ -8495,6 +8514,7 @@ def _requirements_compliance_rows(ctx: RenderContext) -> list[dict[str, Any]]:
                 "req_id": rid,
                 "status": "N/A" if status in {"NA", "NOT APPLICABLE"} else status,
                 "priority": re.sub(r"[*_`]", "", priority).strip(),
+                "title": _requirement_title_from_cell(cells[req_idx], rid),
                 "evidence": evidence,
                 "finding_ids": _extract_finding_ids_from_cell(evidence),
             }
@@ -8561,6 +8581,13 @@ def _requirement_is_traceable_violation(rid: str, status_map: dict[str, str]) ->
 def _format_requirement_link(rid: str, known_ids: dict[str, str]) -> str:
     url = (known_ids.get(rid) or "").strip()
     return f"[`{rid}`]({url})" if url else f"`{rid}`"
+
+
+# A table row whose first cell is a requirement link (the two compliance
+# tables). Matches both forms `_format_requirement_link` emits; the ID shape —
+# dash-separated uppercase segments — keeps a code-span path cell in an
+# unrelated table from matching.
+_REQ_ROW_PREFIX_RE = re.compile(r"^\|\s*(?:\[`|`)[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+`")
 
 
 def _requirement_blueprints(ctx: RenderContext) -> dict[str, str]:
@@ -8658,8 +8685,12 @@ def _build_requirements_mapping_rows(ctx: RenderContext) -> list[dict[str, Any]]
     via the reverse link `mitigation.fulfills_requirements` so a mitigation that
     declares the requirement is included even if no threat lists it.
 
+    A requirement whose §7b compliance row cites findings gets a row even when
+    no threat declared it, because that citation is an explicit assessment-
+    authored edge (see the `evidence_fids` block below).
+
     Rows are sorted critical → low, then by requirement ID. Returns [] when no
-    requirement-linked threat exists (e.g. all requirements PASS).
+    requirement is linked to a finding at all (e.g. all requirements PASS).
     """
     threats = list((ctx.yaml_data or {}).get("threats", []) or [])
     known_ids = _known_requirement_ids(ctx)
@@ -8734,10 +8765,28 @@ def _build_requirements_mapping_rows(ctx: RenderContext) -> list[dict[str, Any]]
     # stale semantic matches where a threat kept an old `violated_requirements`
     # value even though the compliance table links the requirement to a different
     # finding. If the row cites no findings, fall back to the threat-derived edge.
+    #
+    # The citation also OPENS a row when no threat declared the requirement at
+    # all: STRIDE analyzers frequently leave `violated_requirements` empty, and
+    # the §7b row then carried the only explicit edge. Dropping it rendered a
+    # violated requirement with an empty Findings cell, which reads as "nothing
+    # was found here" — the opposite of its status (juice-shop 2026-08-27: all
+    # 36 FAIL rows cited findings, zero traceability rows were produced).
     for rid, fids in evidence_fids.items():
-        slot = by_req.get(rid)
-        if not slot or not _requirement_is_traceable_violation(rid, status_map):
+        if not _requirement_is_traceable_violation(rid, status_map):
             continue
+        slot = by_req.get(rid)
+        if slot is None:
+            slot = by_req.setdefault(
+                rid,
+                {
+                    "req_id": rid,
+                    "status": status_map.get(rid, ""),
+                    "findings": [],
+                    "measures": [],
+                    "blueprint": "",
+                },
+            )
         findings: list[tuple[str, str]] = []
         measures: list[str] = []
         for fid in fids:
@@ -8945,6 +8994,64 @@ def _render_requirements_scope_note(ctx: RenderContext) -> str:
     return "\n".join(lines) + "\n"
 
 
+_REQ_TABLE_STATUS_ORDER = {
+    "ANTI-PATTERN": 0,
+    "FAIL": 1,
+    "PARTIAL": 2,
+    "UNVERIFIABLE": 3,
+    "NOT OBSERVABLE": 4,
+    "PASS": 5,
+    "N/A": 6,
+}
+
+
+def _sort_requirements_assessment_table(md: str) -> str:
+    """Order the §7b assessment table by status, gaps first.
+
+    Phase 8b writes the rows in catalog order, so a reader looking for what
+    failed scrolls past every row static analysis could not verify. Sorting is
+    stable, so the catalog's category grouping survives inside each status
+    block, and no row is dropped or rewritten. Idempotent.
+    """
+    lines = md.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        cells = [re.sub(r"[*_`]", "", c).strip().lower() for c in _split_md_table_row(lines[i])]
+        is_header = (
+            len(cells) >= 3
+            and any(c in _REQ_HEADER_TOKENS for c in cells)
+            and "status" in cells
+            # `evidence` distinguishes the assessment table from the
+            # deterministic traceability table appended below it, which is
+            # ordered by severity and must keep that order.
+            and "evidence" in cells
+            and i + 1 < len(lines)
+            and all(re.fullmatch(r":?-{3,}:?", c.strip()) for c in _split_md_table_row(lines[i + 1]))
+        )
+        if not is_header:
+            out.append(lines[i])
+            i += 1
+            continue
+        status_idx = cells.index("status")
+        body_start = i + 2
+        end = body_start
+        while end < len(lines) and _split_md_table_row(lines[end]):
+            end += 1
+        body = lines[body_start:end]
+
+        def _rank(row: str) -> int:
+            row_cells = _split_md_table_row(row)
+            if len(row_cells) <= status_idx:
+                return 99
+            return _REQ_TABLE_STATUS_ORDER.get(_normalise_requirement_status(row_cells[status_idx]), 98)
+
+        out.extend(lines[i:body_start])
+        out.extend(sorted(body, key=_rank))
+        i = end
+    return "\n".join(out)
+
+
 def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """§7b — inline the LLM compliance narrative (status/priority/evidence,
     which the yaml does not carry) then append a deterministic Requirements
@@ -8958,7 +9065,7 @@ def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment,
     rows = _build_requirements_mapping_rows(ctx)
     table = _render_requirements_mapping_table(ctx, rows)
     try:
-        body = _render_markdown_fragment(ctx, "requirements_compliance", section)
+        body = _sort_requirements_assessment_table(_render_markdown_fragment(ctx, "requirements_compliance", section))
     except FragmentError:
         if not table:
             raise  # no fragment AND no mapping → genuinely nothing to show
@@ -9094,58 +9201,80 @@ def _carried_provenance(output_dir: Path) -> dict | None:
         return None
 
 
+_REQ_MS_TITLE_MAX = 72
+
+
+def _shorten_requirement_title(title: str, limit: int = _REQ_MS_TITLE_MAX) -> str:
+    """Trim a requirement title to `limit` chars at a word boundary."""
+    text = (title or "").strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(",;:")
+    return f"{cut or text[:limit]}…"
+
+
 def _render_requirements_compliance_ms_table(
     ctx: RenderContext,
     compliance_rows: list[dict[str, Any]],
     *,
     limit: int = 6,
-) -> str:
-    """Render open or unverified compliance rows for the Management Summary."""
-    actionable = _REQ_VIOLATION_STATUSES | {"UNVERIFIABLE", "NOT OBSERVABLE"}
-    status_rank = {"FAIL": 0, "ANTI-PATTERN": 1, "PARTIAL": 2, "UNVERIFIABLE": 3, "NOT OBSERVABLE": 4}
+) -> tuple[str, str]:
+    """Render the failed requirements for the Management Summary.
+
+    Returns ``(caption, table)``; both are "" when nothing failed. Scope is the
+    violated statuses only, MUST first — PARTIAL rows and the rows static
+    analysis could not verify stay in the Result counts and §7b, because a
+    Management Summary that lists six arbitrary open rows out of dozens reads
+    as a sample rather than as the top of the list (user 2026-08-27).
+
+    Each row names the requirement in words, not by ID alone: an ID plus two
+    dashes is unreadable without opening §7b, which is the point of a summary.
+    """
     priority_rank = {"MUST": 0, "SHOULD": 1, "MAY": 2}
-    rows = [row for row in compliance_rows if row.get("status") in actionable]
-    rows.sort(
-        key=lambda row: (
-            status_rank.get(row.get("status", ""), 99),
-            priority_rank.get(row.get("priority", ""), 99),
-            row.get("req_id", ""),
-        )
-    )
+    failed = [row for row in compliance_rows if row.get("status") in {"FAIL", "ANTI-PATTERN"}]
+    partial = [row for row in compliance_rows if row.get("status") == "PARTIAL"]
+    rows = [row for row in failed if row.get("priority") == "MUST"]
+    noun, verdict = "MUST-level requirement", "not met"
     if not rows:
-        return ""
+        rows, noun = failed, "Requirement"
+    if not rows:
+        rows, noun, verdict = partial, "Requirement", "only partially met"
+    if not rows:
+        return "", ""
+    rows.sort(key=lambda row: (priority_rank.get(row.get("priority", ""), 99), row.get("req_id", "")))
 
     known_ids = _known_requirement_ids(ctx)
     traceability = {row["req_id"]: row for row in _build_requirements_mapping_rows(ctx)}
     lines = [
-        "| Status | Priority | Requirement | Findings | Mitigations |",
-        "|--------|----------|-------------|----------|-------------|",
+        "| Requirement | Findings | Mitigations |",
+        "|-------------|----------|-------------|",
     ]
-    status_emoji = {
-        "FAIL": "❌",
-        "ANTI-PATTERN": "⚠️",
-        "PARTIAL": "⚠️",
-        "UNVERIFIABLE": "❓",
-        "NOT OBSERVABLE": "❓",
-    }
+
+    def _find_chip(fid: str) -> str:
+        emoji = ctx.severity_emoji(ctx.severity_for_ref(fid))
+        return f"{emoji} [{fid}](#{fid.lower()})" if emoji else f"[{fid}](#{fid.lower()})"
+
     for row in rows[:limit]:
-        status = row.get("status", "")
         trace = traceability.get(row["req_id"], {})
         findings = trace.get("findings", [])
         measures = trace.get("measures", [])
-        finding_cell = ", ".join(f"[{fid}](#{fid.lower()})" for fid, _ in findings) or "—"
-        mitigation_cell = ", ".join(f"[{mid}](#{mid.lower()})" for mid in measures) or "—"
-        lines.append(
-            f"| {status_emoji.get(status, '')} {status} | {row.get('priority') or '—'} | "
-            f"{_format_requirement_link(row['req_id'], known_ids)} | {finding_cell} | {mitigation_cell} |"
+        # Ids stay bare: the requirement title owns the row's meaning, and the
+        # glyph carries severity/priority. `_is_bare_finding_ref_line` keeps the
+        # global title-suffix passes off these cells.
+        finding_cell = ", ".join(_find_chip(fid) for fid, _ in findings) or "—"
+        mitigation_cell = (
+            ", ".join(f"{_measure_prio_prefix(ctx, mid)}[{mid}](#{mid.lower()})" for mid in measures) or "—"
         )
-    if len(rows) > limit:
-        lines.append("")
-        lines.append(
-            f"_{len(rows) - limit} further requirement(s) in "
-            "[§7b — Requirements Compliance](#7b-requirements-compliance)._"
-        )
-    return "\n".join(lines)
+        req_cell = _format_requirement_link(row["req_id"], known_ids)
+        title = _shorten_requirement_title(row.get("title", ""))
+        if title:
+            req_cell = f"{req_cell} — {title}"
+        lines.append(f"| {req_cell} | {finding_cell} | {mitigation_cell} |")
+    shown = min(limit, len(rows))
+    count = f"showing {shown} of {len(rows)}" if len(rows) > shown else str(len(rows))
+    plural = "" if len(rows) == 1 else "s"
+    caption = f"**{noun}{plural} {verdict} ({count}):**"
+    return caption, "\n".join(lines)
 
 
 def _requirements_compliance_result(rows: list[dict[str, Any]]) -> tuple[str, str]:
@@ -9254,14 +9383,16 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
         )
     lines.append("")
 
-    table = _render_requirements_compliance_ms_table(ctx, compliance_rows, limit=6)
+    caption, table = _render_requirements_compliance_ms_table(ctx, compliance_rows, limit=6)
     if table:
-        lines.append("**Requirements requiring action or verification:**")
+        lines.append(caption)
         lines.append("")
         lines.append(table)
         lines.append("")
 
-    lines.append("→ *Full compliance details in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*")
+    total = len(compliance_rows)
+    scope = f"all {total} assessed requirements" if total else "the full assessment"
+    lines.append(f"→ *{scope.capitalize()} in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*")
     return "\n".join(lines)
 
 
@@ -11195,6 +11326,14 @@ _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
         # and 4-col (with Mitigates) forms become fixed-layout HTML.
         ("Strength", "What's in Place", "Effectiveness"),
         ("Strength", "What's in Place", "Effectiveness", "Mitigates"),
+        # §7b Requirements Compliance (2026-08-27): both prose columns were
+        # broken at 44 chars while the Evidence cell still held a bare `T-NNN`,
+        # so the finding link the QA autofix built afterwards ended up wrapped
+        # mid-sentence in the HTML/PDF.
+        ("Requirement", "Status", "Priority", "Evidence"),
+        # Management-Summary compliance table — its Requirement cell carries the
+        # requirement's short title, which the 44-char break split mid-phrase.
+        ("Requirement", "Findings", "Mitigations"),
     }
 )
 
@@ -12582,6 +12721,12 @@ def _is_bare_finding_ref_line(line: str) -> bool:
     if "full detail in" in line and "#8-findings-register" in line:
         return True
     if '<a id="tb-' in line:
+        return True
+    # Requirements compliance / traceability row — opens with the requirement
+    # link `[`REQ-ID`](https://…)` that `_format_requirement_link` emits. The
+    # requirement names the row; appending every finding and mitigation title
+    # after it turns a compact status table into a wall of repeated titles.
+    if _REQ_ROW_PREFIX_RE.match(line):
         return True
     return False
 

@@ -210,6 +210,7 @@ requirements:
       - tests/test_requirements_mapping.py::test_mapping_is_prefix_agnostic_for_requirement_ids
       - tests/test_requirements_mapping.py::test_legacy_requirement_id_is_honoured_and_unlinked_threats_excluded
       - tests/test_requirements_mapping.py::test_remediation_reference_ignored_without_requirements_yaml
+      - tests/test_requirements_mapping.py::test_cited_finding_opens_a_row_when_no_threat_declares_the_requirement
 
   REQ-BIZ-001:
     applies_to:

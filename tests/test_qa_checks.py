@@ -2898,6 +2898,36 @@ class TestCrossReferenceLabellingInvariant:
         _, new_text = qa.linkify_anchors(md)
         assert "[TH-01](#th-01) — Injection" in new_text
 
+    def test_linkify_keeps_section_7b_citations_bare(self, tmp_path):
+        """§7b Evidence cells carry the assessor's own sentence — injecting the
+        finding title there states the same fact twice in one cell."""
+        md = self._write_pair(
+            tmp_path,
+            "## 7b. Requirements Compliance\n\n"
+            "| Requirement | Status | Priority | Evidence |\n"
+            "|---|---|---|---|\n"
+            "| WEB-001: Reject forged requests | FAIL | MUST | T-001: login query built by concatenation. |\n"
+            "| WEB-002: Parameterize queries | FAIL | MUST | [F-001](#f-001) confirms the unsafe query. |\n\n"
+            "## 8. Findings\n\nsee T-001 for the query.\n",
+        )
+        _, new_text = qa.linkify_anchors(md)
+        assert "[T-001](#t-001): login query built by concatenation." in new_text
+        assert "[F-001](#f-001) confirms the unsafe query." in new_text
+        assert "SQL Injection in login endpoint" not in new_text.split("## 8. Findings")[0]
+        # Outside §7b the label is still injected.
+        assert "[T-001](#t-001) — SQL Injection in login endpoint" in new_text.split("## 8. Findings")[1]
+
+    def test_requirements_compliance_table_becomes_fixed_layout(self, tmp_path):
+        md = (
+            "| Requirement | Status | Priority | Evidence |\n"
+            "|---|---|---|---|\n"
+            "| WEB-001: Reject forged requests | ❌ FAIL | MUST | [F-001](#f-001): served as HTTP GET. |\n"
+        )
+        html, converted = qa._attack_surface_tables_to_html(md)
+        assert converted == 1
+        assert "table-layout:fixed" in html
+        assert '<col width="26%"' in html
+
     def test_linkify_idempotent_on_rerun(self, tmp_path):
         """Running linkify_anchors twice must not produce double titles."""
         md_body = "see [F-001](#f-001), bare T-002, and M-001.\n"

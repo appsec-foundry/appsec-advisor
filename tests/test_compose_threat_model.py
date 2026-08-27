@@ -4799,6 +4799,48 @@ def test_softwrap_never_breaks_inside_backtick_span():
         assert seg.count("`") % 2 == 0
 
 
+def test_softwrap_exempts_requirements_compliance_table():
+    """§7b is fixed-layout HTML in the export; a 44-char break inserted here
+    survives verbatim as a mid-sentence line break in the HTML/PDF cell."""
+    md = (
+        "| Requirement | Status | Priority | Evidence |\n"
+        "|---|---|---|---|\n"
+        "| WEB-001: Reject forged cross-site state-changing requests | ❌ FAIL | MUST | "
+        "[F-019](#f-019): password-change action served as HTTP GET, accepting cross-origin "
+        "invocation without CSRF protection. |\n"
+    )
+    assert compose._softwrap_prose_table_cells(md, width=20) == md
+
+
+def test_requirements_assessment_table_is_sorted_by_status():
+    md = (
+        "## 7b. Requirements Compliance\n\n"
+        "| Requirement | Status | Priority | Evidence |\n"
+        "|---|---|---|---|\n"
+        "| WEB-001: A | ❓ UNVERIFIABLE | MUST | no runtime evidence |\n"
+        "| WEB-002: B | ✅ PASS | MUST | control present |\n"
+        "| WEB-003: C | ❌ FAIL | MUST | F-001 |\n"
+        "| WEB-004: D | ⚠️ PARTIAL | SHOULD | half done |\n"
+        "| WEB-005: E | ❌ FAIL | SHOULD | F-002 |\n"
+    )
+    out = compose._sort_requirements_assessment_table(md)
+    ids = [compose._split_md_table_row(line)[0][:7] for line in out.splitlines() if line.startswith("| WEB-")]
+    # Gaps first; catalog order preserved inside each status block (stable sort).
+    assert ids == ["WEB-003", "WEB-005", "WEB-004", "WEB-001", "WEB-002"]
+    assert compose._sort_requirements_assessment_table(out) == out  # idempotent
+
+
+def test_requirements_sort_leaves_the_traceability_table_alone():
+    """The appended traceability table is ordered by severity, not by status."""
+    md = (
+        "| Requirement | Status | Risk | Findings | Maßnahmen | Guidance |\n"
+        "|---|---|---|---|---|---|\n"
+        "| `AC-002` | ⚠️ PARTIAL | 🔴 Critical | [F-010](#f-010) | — | — |\n"
+        "| `AC-003` | ❌ FAIL | 🟡 Medium | [F-011](#f-011) | — | — |\n"
+    )
+    assert compose._sort_requirements_assessment_table(md) == md
+
+
 def test_softwrap_exempts_fixed_layout_trust_boundary_table():
     md = (
         "| ID | Boundary / crossing | Exposure | Kind / status | Assumption & verdict | Source | Linked findings |\n"

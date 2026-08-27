@@ -167,6 +167,43 @@ def test_remediation_reference_ignored_without_requirements_yaml() -> None:
     assert compose._build_requirements_mapping_rows(_ctx(threats)) == []
 
 
+def test_cited_finding_opens_a_row_when_no_threat_declares_the_requirement(tmp_path: Path) -> None:
+    """STRIDE analyzers often leave `violated_requirements` empty. The §7b row's
+    own citation is then the only explicit edge, and a violated requirement must
+    not render with an empty Findings cell."""
+    (tmp_path / ".requirements.yaml").write_text(
+        "categories:\n- id: C1\n  requirements:\n"
+        "  - id: SEC-AUTH-1\n    priority: MUST\n"
+        "  - id: SEC-LOG-1\n    priority: SHOULD\n",
+        encoding="utf-8",
+    )
+    frag = tmp_path / ".fragments" / "requirements-compliance.md"
+    frag.parent.mkdir()
+    frag.write_text(
+        "## 7b. Requirements Compliance\n\n"
+        "| Requirement | Status | Priority | Evidence |\n"
+        "|---|---|---|---|\n"
+        "| SEC-AUTH-1: Server-side authorization | ❌ FAIL | MUST | T-001: route guard absent. |\n"
+        "| SEC-LOG-1: Audit logging | ✅ PASS | SHOULD | central sink at src/audit.ts:12 |\n",
+        encoding="utf-8",
+    )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        # No `violated_requirements` anywhere.
+        yaml_data={"threats": [{"id": "T-001", "risk": "high", "mitigation_ids": ["M-001"]}], "mitigations": []},
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+    )
+
+    rows = compose._build_requirements_mapping_rows(ctx)
+
+    assert [r["req_id"] for r in rows] == ["SEC-AUTH-1"]  # PASS row stays out
+    assert [fid for fid, _ in rows[0]["findings"]] == ["F-001"]
+    assert rows[0]["measures"] == ["M-001"]
+    assert rows[0]["status"] == "FAIL"
+
+
 def test_no_requirement_linked_threats_yields_empty() -> None:
     rows = compose._build_requirements_mapping_rows(_ctx([{"id": "T-1", "source": "stride"}]))
     assert rows == []
@@ -353,15 +390,46 @@ def test_ms_subsection_carries_summary_and_links(tmp_path: Path) -> None:
     assert "**Overall status:** ❌ Action required" in ms
     assert "3 requirements assessed — 1 PASS · 2 FAIL" in ms
     assert "deliberately stale counts" not in ms
-    assert "**Requirements requiring action or verification:**" in ms
-    assert "| Status | Priority | Requirement | Findings | Mitigations |" in ms
-    assert "[`SEC-AUTH-1`](https://x/auth)" in ms
+    assert "**MUST-level requirement not met (1):**" in ms
+    assert "| Requirement | Findings | Mitigations |" in ms
+    assert "[`SEC-AUTH-1`](https://x/auth) — Authentication" in ms  # ID plus its short title
+    assert "SEC-SQL-1" not in ms  # SHOULD-level failure stays in §7b and the counts
     assert "SEC-LOG-1" not in ms  # PASS stays in §7b and the counts, not the compact table
     assert "[F-001](#f-001)" in ms  # G2 fix: links now present
-    assert "#7b-requirements-compliance" in ms
+    assert ms.count("#7b-requirements-compliance") == 1  # one pointer to §7b, not two
 
 
-def test_ms_table_includes_unmapped_open_rows_without_inventing_links(tmp_path: Path) -> None:
+def test_ms_table_falls_back_to_lower_priority_failures(tmp_path: Path) -> None:
+    """No MUST-level failure → the table shows the failures that exist."""
+    (tmp_path / ".requirements.yaml").write_text(
+        "categories:\n- id: C1\n  requirements:\n  - id: SEC-SQL-1\n    priority: SHOULD\n",
+        encoding="utf-8",
+    )
+    frag = tmp_path / ".fragments" / "requirements-compliance.md"
+    frag.parent.mkdir()
+    frag.write_text(
+        "## 7b. Requirements Compliance\n\n"
+        "| Requirement | Status | Priority | Evidence |\n"
+        "|---|---|---|---|\n"
+        "| SEC-SQL-1: Query safety | ❌ FAIL | SHOULD | Unsafe query; F-002 |\n",
+        encoding="utf-8",
+    )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": [], "mitigations": []},
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+        eval_context={"check_requirements": True},
+    )
+
+    ms = compose._render_requirements_compliance_ms(ctx)
+
+    assert "**Requirement not met (1):**" in ms
+    assert "[`SEC-SQL-1`] — Query safety" in ms or "SEC-SQL-1` — Query safety" in ms
+
+
+def test_ms_table_keeps_unmapped_failure_and_drops_unverified_rows(tmp_path: Path) -> None:
     (tmp_path / ".requirements.yaml").write_text(
         "categories:\n- id: C1\n  requirements:\n"
         "  - id: SEC-MFA-1\n    priority: MUST\n"
@@ -393,8 +461,11 @@ def test_ms_table_includes_unmapped_open_rows_without_inventing_links(tmp_path: 
 
     assert "3 requirements assessed — 1 PASS · 1 FAIL" in ms
     assert "1 UNVERIFIABLE" in ms
-    assert "| ❌ FAIL | MUST | `SEC-MFA-1` | — | — |" in ms
-    assert "| ❓ UNVERIFIABLE | SHOULD | `SEC-OPS-1` | — | — |" in ms
+    # A failure the assessment did not link to a finding keeps its row and shows
+    # no link, rather than being dropped or given an invented one.
+    assert "| `SEC-MFA-1` | — | — |" in ms
+    # Unverified and passing rows are carried by the counts and §7b only.
+    assert "SEC-OPS-1" not in ms
     assert "SEC-PASS-1" not in ms
 
 
@@ -594,4 +665,4 @@ def test_full_render_emits_traceability_in_7b_and_ms(tmp_path: Path) -> None:
     # MS subsection rendered via the document.order conditional.
     assert "### Requirements Compliance" in rendered
     assert "**Overall status:** ❌ Action required" in rendered
-    assert "| Status | Priority | Requirement | Findings | Mitigations |" in rendered
+    assert "| Requirement | Findings | Mitigations |" in rendered
