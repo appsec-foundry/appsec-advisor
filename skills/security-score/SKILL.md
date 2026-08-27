@@ -46,7 +46,11 @@ Run the script from the plugin root, passing the user's `--repo` and `--json` th
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_score.py" [--repo <path>] [--json]
 ```
 
-It takes roughly 15 to 30 seconds on a mid-sized repository. It writes its scanner sidecars to a temporary directory and removes them, so the target repository is untouched.
+Use exactly `Calculating the repository's security score` as the tool call's description. It is the only thing the user sees for the 15 to 30 seconds the scan takes, so it names the work, not the mechanism: not "Running the security score script", not "Executing security_score.py".
+
+Do not announce the run in prose beside it. "Running the security score script now", "Let me calculate the score" and their kin are forbidden even though they are true — the description line already says it. Just run it.
+
+The script writes its scanner sidecars to a temporary directory and removes them, so the target repository is untouched.
 
 ## Present the result
 
