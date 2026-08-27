@@ -169,3 +169,4 @@ First public release. Still a beta: good for guided use, but not ready to run un
 - Run `/appsec-advisor:check-permissions --update` once after installing.
 - Large repositories (more than ~8–10 components) are slower and not yet parallelized.
 - Supply-chain risk is reported as posture only, not per-CVE. Use a dedicated scanner such as Dependabot, Snyk, or Trivy for that.
+- The requirements audit names the catalog and the requirement categories it is about to grade before it starts scanning, and reports progress while it works.

@@ -16,10 +16,10 @@ the repository **silently**.
 Do **not** narrate reasoning or step transitions. Forbidden filler includes
 lines like "Now load threat model context…", "Banner first, then I'll grade",
 "Let me scan systematically", "Now gathering codebase evidence". Tool calls run
-without a running commentary. The only progress line permitted between the
-banner and the results is a single, optional `Auditing <n> requirements against
-the codebase…`. Internal caveats (e.g. an empty `violated_requirements` map)
-are not surfaced as prose — they simply produce empty cross-links.
+without a running commentary. Between the banner and the results the **only**
+permitted output is the batch progress line specified in Step 2 — one per
+batch, nothing else. Internal caveats (e.g. an empty `violated_requirements`
+map) are not surfaced as prose — they simply produce empty cross-links.
 
 **No prose summary of the verdict.** The result is exactly two things: the fixed
 `Results` count block (Step 3a) and the per-requirement open-finding blocks
@@ -388,46 +388,36 @@ fi
 
 #### Render the startup banner (always, before scanning)
 
-Read `REQ_RESOLUTION` and print a banner so the user always knows **which
-requirements are in effect and how current they are** before any findings.
-This banner — led by the title rule — is the **first user-visible output of the
-skill**; nothing precedes it (no preamble, no "loading…" narration). **Print it
-now, immediately after resolution and BEFORE Step 2 grading** — grading 60+
-requirements is the slow part (tens of seconds), so emitting the banner first
-gives the user fast feedback instead of a long silent wait. Do not batch all
-output until the end. (Skip the banner entirely under `--quiet`.) Derive a
-human "fetched N days ago" from `freshness.age_days`. Example:
+The banner tells the user **which catalog is in effect, how current it is, and
+which requirements are about to be graded**. `render_requirements_banner.py`
+composes it from the run state; run it now and print its stdout **verbatim** as
+the first user-visible output of the skill — nothing precedes it, no preamble,
+no "loading…" narration, and nothing is re-derived or reworded here.
 
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- AppSec Requirements Audit
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Requirements Source
-  Catalog  : Acme Application Security Requirements
-  Source   : remembered · https://security.example.com/appsec-requirements.yaml
-  Loaded   : plugin cache /home/you/appsec-advisor/.cache/requirements.yaml
-  Fetched  : 2026-06-05 (7 days ago) · catalog generated 2026-04-09
-  Count    : 63 requirements
-  Freshness: 🟢 fresh (cache < 30 days)
-  Override : --update (refresh) · --cache-only · --demo · --requirements <url> · --status · --clear-requirements
+```bash
+BANNER_ARGS=(--output-dir "$AUDIT_OUTPUT_DIR")
+[ -n "$CATEGORY_FILTER" ] && BANNER_ARGS+=(--filter "$CATEGORY_FILTER")
+[ -n "$PRESET_GATE_LINE" ] && BANNER_ARGS+=(--gate-line "$PRESET_GATE_LINE")
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_requirements_banner.py" "${BANNER_ARGS[@]}"
 ```
 
-After the banner, scan silently. The only line permitted before the Step 3
-results is a single optional `Auditing <n> requirements against the codebase…`.
+Set `PRESET_GATE_LINE` beforehand to `<enforce|advisory> · gate-on=<fail|partial>
+· floor=<MUST|SHOULD|MAY> (from preset <name>)` when — and only when — a preset
+gate took effect (Step 1b "Seed the gate policy from the active preset") and the
+user did not override it on the CLI; leave it empty otherwise.
 
-Banner rules:
-- **Always print a `Loaded   :` line** naming the concrete on-disk path the catalog bytes were actually read from **this run** — so it is never ambiguous that the `Source` URL was not necessarily contacted. Derive it from `disposition` + `cache_path` + `url`:
-  - `cache` / `cache_only` / `cache_after_fetch_fail` → `Loaded   : plugin cache <cache_path>`
-  - `fetched` → `Loaded   : freshly fetched from <url> → cached at <cache_path>`
-  - `local` → `Loaded   : local file <url>`
-  - `demo` → `Loaded   : packaged example <url>`
-  When the bytes came from the cache, the `Source` line still shows the remembered/configured URL (where the cache came from) and the `Loaded` line shows the cache file that was actually read.
-- If `demo` is `true`, title the catalog line `Catalog  : <desc>  ⚠ DEMO — not your organization's requirements` and colour it yellow. The audit still runs, but every report it writes must carry the DEMO stamp (Steps 3a/4a).
-- If `surfaced` is `true` (a local `docs/security/requirements.yaml` is in effect), add a line `Note     : using local repo catalog (overrides org profile)`.
-- If `freshness.stale` is `true`, render `Freshness: 🟡 STALE (cache ≥ 30 days) — refresh with --update`, and note that an `--update` attempt was already made this run if the disposition is `cache_after_fetch_fail`.
-- If `disposition` is `cache_after_fetch_fail`, add `Source    : unreachable this run — served the cached copy` so the user knows the network refresh failed.
-- If the active preset supplied a gate policy that took effect (Step 1b "Seed the gate policy from the active preset", and the user did not override it on the CLI), add a `Gate     : <enforce|advisory> · gate-on=<fail|partial> · floor=<MUST|SHOULD|MAY> (from preset <name>)` line. Omit it entirely when no preset gate is in effect.
-- If `STATUS_MODE` is set, print the banner and **stop here** — do not scan the repository, do not render findings, exit 0.
+**Print it BEFORE Step 2 grading.** Grading 60+ requirements takes minutes, and
+a user who cannot see the catalog and the scope has no idea what is being
+tested. Do not batch output until the end. Skip the banner entirely under
+`--quiet`.
+
+If `demo` is set in the resolution, the banner stamps the catalog line — every
+report the run writes must then carry the same DEMO stamp (Steps 3a/4a).
+
+After the banner, scan silently except for the Step 2 batch progress lines.
+
+If `STATUS_MODE` is set, print the banner and **stop here** — do not scan the
+repository, do not render findings, exit 0.
 
 Use `REQUIREMENTS_YAML` as the loaded catalog in Step 1c. The skill cannot
 produce meaningful results without this file.
@@ -499,6 +489,26 @@ This map is used in Step 3b to annotate violations with Threat Register links.
 ## Step 2 — Verify implementation for each requirement
 
 For each requirement, search the codebase for evidence using `Grep` and `Read`.
+
+### Batch the work and show progress
+
+Grade in catalog order, in batches of **up to 10 requirements** (a batch ends at
+a category boundary when one falls earlier). Search once per batch with a
+combined `Grep` where the requirements share a signal, rather than one search
+per requirement — the repeated single-requirement round trips are what make this
+step take minutes.
+
+After each batch, print exactly **one** line so the user sees the audit
+advancing, then continue silently:
+
+```
+  [10/63] Frontend Security · ✅2 ⚠️1 ❌6 ❓1
+  [20/63] Hardening → Secure Data Access · ✅1 ❌9
+```
+
+Shape: `  [<graded>/<total>] <first category>[ → <last category>] · <tallies>`.
+List only non-zero tallies, in the order ✅ ⚠️ ❌ ❓ ➖. No other text, no
+per-requirement lines, and no progress output at all under `--quiet`.
 
 Assign one of four statuses:
 
