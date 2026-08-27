@@ -136,7 +136,9 @@ DEPTH & MODEL
 TARGET & SCAN
   --repo <path>                Repository to analyze (default: current directory)
   --output <path>              Output directory (default: <repo>/docs/security)
-  --requirements [<url>]       Check tagged security requirements (e.g. [SEC-1])
+  --requirements [<url>]       Check the findings against a requirements
+                               catalog; without <url> the configured one is
+                               used. Tagging the code is not required.
   --no-requirements            Skip requirements check even if configured
                                Deprecated aliases: --with-requirements,
                                --ignore-requirements, --requirements-url <url>

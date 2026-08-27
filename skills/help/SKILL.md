@@ -63,6 +63,12 @@ Analyzing another repository:
 /appsec-advisor:create-threat-model --repo ../payment-service --output ./models/payment
 ```
 
+Checking the findings against your security requirements catalog — no separate setup command, the flag is enough:
+
+```text
+/appsec-advisor:create-threat-model --requirements https://URL/appsec-requirements.yaml
+```
+
 ## Ask about it
 
 No command needed — ask in plain language:
