@@ -15,8 +15,8 @@ Two independent parts:
     whether it applies at all (REQ-ARC-001: an absent surface is not
     applicable), which gives the score an honest denominator: rules that could
     not fire are excluded rather than counted as passes.
-  * Finding penalty — a capped deduction for the hard findings of the config/IaC
-    and source-auth scanners, weighted by their catalog severity.
+  * Finding penalty — a saturating deduction for the hard findings of the
+    config/IaC and source-auth scanners, weighted by their catalog severity.
 
 What it deliberately does NOT do
 --------------------------------
@@ -39,6 +39,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import shutil
 import subprocess
@@ -76,9 +77,27 @@ PENALTY_HALF_WEIGHT = 80.0
 # Below this many applicable rules the sample is too small to divide by.
 MIN_APPLICABLE_RULES = 5
 
+# Readable category names come from the control catalog rather than a second
+# vocabulary invented here, so the score names its categories exactly as the
+# report does.
+_CONTROLS_YAML = HERE.parent / "data" / "architectural-controls.yaml"
+
 # Per-scanner wall-clock ceiling. A pathological repository must not hang the
 # probe; a scanner that times out degrades the score to a warning, not a crash.
 SCANNER_TIMEOUT_S = 600
+
+
+@functools.lru_cache(maxsize=1)
+def domain_labels() -> dict[str, str]:
+    """Domain key → catalog label. Empty when the catalog is unreadable."""
+    try:
+        import yaml
+
+        doc = yaml.safe_load(_CONTROLS_YAML.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 — a missing label degrades to the raw key
+        return {}
+    labels = doc.get("domains") if isinstance(doc, dict) else None
+    return labels if isinstance(labels, dict) else {}
 
 
 def _run(argv: list[str], warnings: list[str], label: str) -> bool:
@@ -92,15 +111,15 @@ def _run(argv: list[str], warnings: list[str], label: str) -> bool:
             check=False,
         )
     except subprocess.TimeoutExpired:
-        warnings.append(f"{label}: timed out after {SCANNER_TIMEOUT_S}s, excluded from the score")
+        warnings.append(f"{label}: timed out, excluded")
         return False
     except OSError as exc:
-        warnings.append(f"{label}: could not run ({exc}), excluded from the score")
+        warnings.append(f"{label}: could not run, excluded ({exc})")
         return False
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "").strip().splitlines()
         tail = detail[-1] if detail else f"exit {proc.returncode}"
-        warnings.append(f"{label}: failed ({tail}), excluded from the score")
+        warnings.append(f"{label}: failed, excluded ({tail})")
         return False
     return True
 
@@ -109,7 +128,7 @@ def _load(path: Path, warnings: list[str], label: str) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        warnings.append(f"{label}: unreadable output ({exc}), excluded from the score")
+        warnings.append(f"{label}: unreadable output, excluded ({exc})")
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -211,8 +230,8 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
         "rules_applicable": len(applicable),
         "findings": counts,
         "findings_total": sum(counts.values()),
-        "penalty": round(penalty, 1),
-        "weakest_domains": [],
+        "penalty": round(penalty),
+        "categories": [],
     }
 
     if len(applicable) < MIN_APPLICABLE_RULES:
@@ -231,46 +250,61 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
     by_domain: dict[str, list[float]] = {}
     for rule in applicable:
         by_domain.setdefault(str(rule.get("domain") or "unknown"), []).append(STATUS_POINTS[rule["status"]])
-    ranked = sorted(
-        ({"domain": d, "points": round(100.0 * sum(p) / len(p)), "rules": len(p)} for d, p in by_domain.items()),
-        key=lambda row: (row["points"], row["domain"]),
-    )
+    labels = domain_labels()
 
     result["verdict"] = "scored"
     result["control_basis"] = round(basis)
     result["score"] = max(0, round(basis - penalty))
-    result["weakest_domains"] = [row for row in ranked if row["points"] < 100][:3]
+    result["categories"] = sorted(
+        (
+            {
+                "domain": domain,
+                "label": labels.get(domain, domain),
+                "points": round(100.0 * sum(points) / len(points)),
+                "rules": len(points),
+            }
+            for domain, points in by_domain.items()
+        ),
+        key=lambda row: (row["points"], row["label"]),
+    )
     return result
 
 
+BAR_WIDTH = 10
+
+
+def _bar(points: int) -> str:
+    filled = round(BAR_WIDTH * points / 100)
+    return "█" * filled + "·" * (BAR_WIDTH - filled)
+
+
 def render_text(result: dict[str, Any]) -> str:
-    """The human-readable report. The qualifiers travel with the number."""
-    lines: list[str] = []
-    applicable = result["rules_applicable"]
-    total = result["rules_total"]
+    """The human-readable report: a headline, the categories, then the caveats.
+
+    The qualifiers ride in the second line rather than in a closing paragraph —
+    the number must not travel without them, and prose would be skipped anyway.
+    """
+    counts = result["findings"]
+    scan = f"quick scan · {result['rules_applicable']} of {result['rules_total']} rules · no exposure context"
 
     if result["verdict"] == "undetermined":
-        lines.append(f"Security Score: undetermined — {result['reason']}")
-    else:
-        lines.append(
-            f"Security Score {result['score']} / 100 — quick scan, "
-            f"{applicable} of {total} rules applicable, no exposure context"
-        )
-        lines.append(f"  Control basis {result['control_basis']} / 100, finding penalty -{result['penalty']}")
+        return f"Security Score  undetermined\n{result['reason']}"
 
-    counts = result["findings"]
-    lines.append(
-        f"  Findings: {counts['critical']} critical, {counts['high']} high, "
-        f"{counts['medium']} medium, {counts['low']} low (catalog severity, uncapped by asset tier)"
-    )
+    lines = [f"Security Score  {result['score']} / 100", scan, ""]
 
-    for row in result["weakest_domains"]:
-        lines.append(f"  Weakest: {row['domain']} {row['points']} / 100 ({row['rules']} rules)")
+    width = max((len(row["label"]) for row in result["categories"]), default=0)
+    for row in result["categories"]:
+        lines.append(f"  {row['label']:<{width}}  {row['points']:>3}  {_bar(row['points'])}  {row['rules']}")
+
+    lines += [
+        "",
+        f"  controls {result['control_basis']} / 100 · findings -{result['penalty']}",
+        f"  {counts['critical']} critical · {counts['high']} high · {counts['medium']} medium · {counts['low']} low",
+    ]
 
     for warning in result.get("warnings") or []:
-        lines.append(f"  ! {warning}")
+        lines += ["", f"  {warning}"]
 
-    lines.append("  Not a risk rating. Run /appsec-advisor:create-threat-model for severities and mitigations.")
     return "\n".join(lines)
 
 
@@ -293,12 +327,10 @@ def main(argv: list[str] | None = None) -> int:
 
     findings, dropped = _drop_assessment_artifacts(findings, repo_root)
     if dropped:
-        warnings.append(f"{dropped} findings ignored: they quote a previous assessment stored in the repository")
+        warnings.append(f"ignored {dropped} findings quoting a previous assessment in the repo")
     contaminated = _contaminated_rules(rules, repo_root)
     if contaminated:
-        warnings.append(
-            "rules judged only on evidence from a previous assessment in the repository: " + ", ".join(contaminated)
-        )
+        warnings.append("judged on a previous assessment's evidence: " + ", ".join(contaminated))
 
     result = compute(rules, findings)
     result["repo"] = str(repo_root)

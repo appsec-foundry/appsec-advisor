@@ -141,11 +141,11 @@ def test_score_never_falls_below_zero():
 
 
 # --------------------------------------------------------------------------
-# Weakest domains
+# Categories
 # --------------------------------------------------------------------------
 
 
-def test_weakest_domains_are_ranked_and_exclude_the_clean_ones():
+def test_categories_carry_catalog_labels_and_rank_worst_first():
     rules = [
         _rule("ARCH-A-001", "anti_pattern", domain="DataProt"),
         _rule("ARCH-B-001", "partial", domain="AuthZ"),
@@ -156,9 +156,10 @@ def test_weakest_domains_are_ranked_and_exclude_the_clean_ones():
 
     result = ss.compute(rules, [])
 
-    domains = [row["domain"] for row in result["weakest_domains"]]
-    assert domains == ["DataProt", "InputVal", "AuthZ"]
-    assert "IAM" not in domains
+    assert [row["domain"] for row in result["categories"]] == ["DataProt", "InputVal", "AuthZ", "IAM"]
+    labels = [row["label"] for row in result["categories"]]
+    assert labels[:2] == ["Data Protection", "Input Validation & Output Encoding"]
+    assert [row["points"] for row in result["categories"]] == [0, 25, 50, 100]
 
 
 # --------------------------------------------------------------------------
@@ -208,8 +209,7 @@ def test_rendered_score_always_carries_its_qualifiers():
 
     assert "quick scan" in text
     assert "no exposure context" in text
-    assert "Not a risk rating" in text
-    assert "rules applicable" in text
+    assert "5 of 5 rules" in text
 
 
 def test_undetermined_renders_the_reason_instead_of_a_number():
@@ -219,14 +219,14 @@ def test_undetermined_renders_the_reason_instead_of_a_number():
     text = ss.render_text(result)
 
     assert "undetermined" in text
-    assert "/ 100" not in text.splitlines()[0]
+    assert "/ 100" not in text
 
 
 def test_warnings_are_rendered(tmp_path):
     result = ss.compute(_rules("present", "present", "present", "present", "present"), [])
     result["warnings"] = ["source-auth: timed out"]
 
-    assert "! source-auth: timed out" in ss.render_text(result)
+    assert "  source-auth: timed out" in ss.render_text(result)
 
 
 @pytest.mark.parametrize(

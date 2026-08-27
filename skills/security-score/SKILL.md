@@ -54,7 +54,9 @@ The script writes its scanner sidecars to a temporary directory and removes them
 
 ## Present the result
 
-Print the script's output as it is. Do not restate the number without the line it came with, do not convert it into a verdict such as "secure" or "at risk", and do not add severities, mitigations, or a risk judgement of your own — none of that is in the data.
+Print the script's output and stop. It is already the finished report: headline, categories, tallies, and any note the run produced.
+
+Add nothing after it. No summary of the number, no repetition of a note the output already carries, no verdict such as "secure" or "at risk", no severities or mitigations of your own — none of that is in the data, and a paragraph restating the block undoes the layout it was given.
 
 If the verdict is `undetermined`, say that the rule catalog did not cover this repository and name the languages it does cover: JavaScript/TypeScript, Python, Java/Spring, and parts of .NET.
 
