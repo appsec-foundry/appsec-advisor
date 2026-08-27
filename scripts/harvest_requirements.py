@@ -63,7 +63,18 @@ from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import requirements_state as rstate  # noqa: E402
+try:
+    import requirements_state as rstate  # noqa: E402
+except ImportError:
+    # Copying this script alone into another repository or CI job is a common
+    # way to run the harvester. It needs its sibling module for the catalog
+    # schema validation that guards the written output.
+    print(
+        "Missing sibling module requirements_state.py — copy it next to "
+        f"{Path(__file__).name} ({Path(__file__).resolve().parent}).",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 try:
     import requests
