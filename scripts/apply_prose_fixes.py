@@ -950,6 +950,18 @@ def _apply_rhetorical_severity(line: str) -> tuple[str, int]:
     return new, (1 if new != line else 0)
 
 
+# `**Violates:**` quotes normative requirement text verbatim from the configured
+# catalog. The prose passes exist to strip wording the model invented about
+# *this* system; a quoted requirement is neither invented nor a claim about it.
+# The perimeter strip in particular removes the whole sentence up to the first
+# `.`, which takes the label, the link and the requirement ID with it whenever a
+# catalog entry happens to mention WAF, SIEM, firewall or the like.
+# Anchored on the composer's own shape — the label followed by a requirement ID
+# in a code span — so an LLM-authored fragment cannot claim the exemption for
+# free prose that merely opens with the same label.
+_QUOTED_REQUIREMENT_LINE_RE = re.compile(r"^\s*\*\*Violates:\*\*\s*\[?`[A-Z]")
+
+
 def _apply_perimeter_claim_strip(line: str) -> tuple[str, int]:
     """Remove standalone perimeter-absence sentences. Only collapses
     interior runs of whitespace introduced by the deletion — the leading
@@ -1460,7 +1472,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
         # Attack Surface or §8 Findings Register doesn't read as code.
         new_line, n5 = _apply_label_as_code_unwrap(new_line)
         inline_fixes += n5
-        if not is_table_row:
+        if not is_table_row and not _QUOTED_REQUIREMENT_LINE_RE.match(line):
             new_line, n2 = _apply_ai_padding_fixes(new_line)
             padding_fixes += n2
             new_line, n3 = _apply_rhetorical_severity(new_line)

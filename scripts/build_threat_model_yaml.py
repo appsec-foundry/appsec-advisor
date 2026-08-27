@@ -1357,6 +1357,49 @@ def _remediation_how_text(t: dict) -> str:
     return str(rem.get("how") or "").strip()
 
 
+def _filter_violated_requirements(threats: list[dict], output_dir: Path) -> set[str]:
+    """Drop analyzer-declared requirement IDs the configured catalog lacks.
+
+    Requirements stay optional: with no readable `.requirements.yaml` nothing is
+    filtered, so a run without a catalog keeps whatever the analyzers wrote.
+    Returns the set of dropped IDs for reporting.
+    """
+    catalog_path = Path(output_dir) / ".requirements.yaml"
+    if not catalog_path.is_file():
+        return set()
+    try:
+        catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return set()
+    known = {
+        str(r.get("id") or "").strip()
+        for c in catalog.get("categories") or []
+        if isinstance(c, dict)
+        for r in c.get("requirements") or []
+        if isinstance(r, dict) and str(r.get("id") or "").strip()
+    }
+    if not known:
+        return set()
+    dropped: set[str] = set()
+    for t in threats:
+        declared = t.get("violated_requirements")
+        if not declared:
+            continue
+        kept = []
+        for rid in declared:
+            rid = str(rid or "").strip()
+            if rid in known:
+                if rid not in kept:
+                    kept.append(rid)
+            elif rid:
+                dropped.add(rid)
+        if kept:
+            t["violated_requirements"] = kept
+        else:
+            t.pop("violated_requirements", None)
+    return dropped
+
+
 def build_mitigations(threats: list[dict]) -> list[dict]:
     """Derive yaml.mitigations[] from threats' mitigation_ids + remediation.
 
@@ -1470,6 +1513,21 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
     sev_to_pri = {"Critical": "P1", "High": "P2", "Medium": "P3", "Low": "P4", "Informational": "P4"}
     for m in by_mid.values():
         m["priority"] = sev_to_pri.get(m["severity"], "P3")
+
+    # A mitigation satisfies whatever its addressed threats break, so the
+    # reverse link is derivable and needs no second author. Writing it into the
+    # YAML keeps it available to consumers that never read the Markdown
+    # (exports, query/review tooling), not just the mitigation register.
+    violated_by_threat = {t.get("id"): (t.get("violated_requirements") or []) for t in threats}
+    for m in by_mid.values():
+        fulfills: list[str] = []
+        for tid in m.get("threat_ids") or []:
+            for rid in violated_by_threat.get(tid) or []:
+                rid = str(rid or "").strip()
+                if rid and rid not in fulfills:
+                    fulfills.append(rid)
+        if fulfills:
+            m["fulfills_requirements"] = fulfills
 
     return sorted(by_mid.values(), key=lambda m: m["id"])
 
@@ -1755,7 +1813,16 @@ def apply_mitigation_overrides(baseline: list[dict], sidecar: dict | None) -> tu
         baseline by ID or threat_ids. Authored, non-empty values win;
         otherwise the baseline value is kept.
         """
-        for field in ("title", "description", "reference", "remediation", "how", "how_code", "verification"):
+        for field in (
+            "title",
+            "description",
+            "reference",
+            "remediation",
+            "how",
+            "how_code",
+            "verification",
+            "fulfills_requirements",
+        ):
             val = add.get(field)
             if isinstance(val, str):
                 val = val.strip()
@@ -1807,6 +1874,11 @@ def apply_mitigation_overrides(baseline: list[dict], sidecar: dict | None) -> tu
             **({"description": add["description"]} if add.get("description") else {}),
             **({"reference": add["reference"]} if add.get("reference") else {}),
             **({"remediation": add["remediation"]} if "remediation" in add else {}),
+            **(
+                {"fulfills_requirements": add["fulfills_requirements"]}
+                if add.get("fulfills_requirements")
+                else {}
+            ),
         }
         added += 1
 
@@ -2531,6 +2603,14 @@ def main() -> int:
     threats, threat_warnings = build_threats(merged, register_floor=skill_cfg.get("register_severity_floor", "medium"))
     for w in threat_warnings:
         sys.stderr.write(f"  {w}\n")
+
+    # The configured catalog decides what the organisation requires. An analyzer
+    # ID the catalog never declared is dropped here, before it can reach
+    # threats[], the derived mitigations[].fulfills_requirements, or any
+    # consumer that reads the YAML instead of the report.
+    dropped = _filter_violated_requirements(threats, od)
+    if dropped:
+        sys.stderr.write(f"  dropped {len(dropped)} undeclared requirement id(s): {', '.join(sorted(dropped)[:8])}\n")
 
     components = (sidecar_components or {}).get("components") or _carry_forward(
         prior_yaml, "components", ".components.json"

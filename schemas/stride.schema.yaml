@@ -254,6 +254,16 @@ $defs:
                       properties:
                         file: {type: string, minLength: 1, maxLength: 512}
                         line: {type: [integer, "null"], minimum: 1}
+            violated_requirements:
+              # OPTIONAL. IDs from the `requirements.component_context` slice
+              # that this threat's own evidence shows to be broken. Omit the
+              # field entirely when no slice was supplied — requirements are
+              # optional, and an absent catalog must never yield invented IDs.
+              # The composer drops any ID the configured catalog does not
+              # declare, so guessing gains nothing.
+              type: array
+              items: {type: string, minLength: 2, maxLength: 64}
+              maxItems: 8
             prior_finding_ref:
               type: [string, "null"]
             evidence_check:

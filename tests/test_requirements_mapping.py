@@ -560,7 +560,9 @@ def test_mitigation_register_renders_fulfills_and_blueprint(tmp_path: Path) -> N
     )
     out = compose._render_mitigation_register(ctx, None, {"heading": "## 10. Mitigation Register"})
     assert "**Fulfills Requirements:**" in out
-    assert "[SEC-AUTH-1](https://x/auth)" in out  # linked via declared URL
+    # Canonical `_format_requirement_link` shape: linked via the declared URL,
+    # ID in a code span so it cannot collide with the F-/T-/M- anchor namespace.
+    assert "[`SEC-AUTH-1`](https://x/auth)" in out
     assert "**Blueprint guidance:**" in out
     assert "BP-API" in out
 
@@ -592,7 +594,7 @@ def test_mitigation_register_requirement_reference_renders_as_fulfills_not_refer
     )
     out = compose._render_mitigation_register(ctx, None, {"heading": "## 10. Mitigation Register"})
     assert "**Fulfills Requirements:**" in out
-    assert "[SEC-AUTH-1](https://x/auth)" in out
+    assert "[`SEC-AUTH-1`](https://x/auth)" in out
     assert "**Reference:** [SEC-AUTH-1]" not in out
 
 

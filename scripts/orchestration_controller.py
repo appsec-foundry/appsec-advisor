@@ -4461,6 +4461,9 @@ def context_v2_prepare_stride(output_dir: Path) -> dict[str, Any]:
     _run_script("validate_fragment.py", ["security-controls", str(controls_path)])
     _normalize_context_v2_analyst_context(output_dir)
     _validate_context_v2_analyst_context(output_dir, repo_root=repo_root)
+    # Write the per-component requirements slice before the manifest indexes it.
+    # A no-op without a catalog, so runs without requirements are unaffected.
+    _run_script("build_requirements_contexts.py", ["--output-dir", str(output_dir)])
     build_args = [
         str(output_dir),
         "--depth",

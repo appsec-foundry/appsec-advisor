@@ -166,10 +166,12 @@ or mandatory evidence-backed finding.
 
 Apply every selected lens during the relevant category. LLM and agentic tags
 must be written as `owasp_llm_ids` and `owasp_asi_ids`. Do not duplicate one
-mechanism merely because two lenses name it. Requirements IDs may appear in
-`remediation.reference` only when the component's admitted Phase-8b violation
-matches its CWE family or STRIDE category; otherwise use one CWE, RFC, or OWASP
-reference. Never invent a requirement ID.
+mechanism merely because two lenses name it. Use one CWE, RFC, or OWASP
+`remediation.reference`.
+
+With a `requirements.component_context` slice, list in
+`violated_requirements` only its `id`s your cited evidence proves broken;
+without one, omit the field. Never write an ID from memory.
 
 ## Finding admission
 
@@ -240,6 +242,7 @@ these exact threat fields:
     "line": 1
   },
   "boundary_refs": [],
+  "violated_requirements": [],
   "evidence_check": "unchecked",
   "prior_finding_ref": null,
   "cvss_v4": null,

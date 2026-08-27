@@ -1075,6 +1075,12 @@ def check_unmasked_secrets(md_path: Path, output_dir: Path | None = None) -> Rep
     return report
 
 
+# The composer's `Violates:` line, quoting the configured catalog: label plus a
+# requirement ID in a code span. Free prose opening with the same label does not
+# match, so a fragment cannot use it to smuggle an unfounded claim past the check.
+_QUOTED_REQUIREMENT_LINE_RE = re.compile(r"^\s*\*\*Violates:\*\*\s*\[?`[A-Z]")
+
+
 def check_unfounded_perimeter_claims(md_path: Path) -> Report:
     """Flag unfounded claims that a deployment-time / runtime-environment
     control is absent. A source-tree scan has no signal on whether a WAF,
@@ -1094,6 +1100,13 @@ def check_unfounded_perimeter_claims(md_path: Path) -> Report:
     for line_no, line in enumerate(cleaned.splitlines(), start=1):
         stripped = line.strip()
         if not stripped or stripped.startswith("<!--"):
+            continue
+        # `**Violates:**` quotes the configured requirement catalog verbatim. A
+        # normative "MUST deploy a WAF" states what the application is measured
+        # against; it is not a claim by this report that no WAF exists. Anchored
+        # on the composer's own shape (label + requirement ID in a code span) so
+        # an LLM fragment cannot claim the exemption for free prose.
+        if _QUOTED_REQUIREMENT_LINE_RE.match(stripped):
             continue
         for token, pat in _PERIMETER_ABSENCE_PATTERNS:
             if pat.search(line):
