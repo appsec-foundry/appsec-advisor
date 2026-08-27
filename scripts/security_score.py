@@ -8,15 +8,21 @@ authority on severity and risk.
 
 What the number means
 ---------------------
-Two independent parts:
+One score per indicator — Output Handling, Access Control, Hardening and the
+rest of ``data/security-score-indicators.yaml`` — each built from that
+indicator's own signals:
 
-  * Control basis — the share of *applicable* architecture-coverage rules that
-    found a control signal. ``architecture_coverage_checks.py`` decides per rule
-    whether it applies at all (REQ-ARC-001: an absent surface is not
-    applicable), which gives the score an honest denominator: rules that could
-    not fire are excluded rather than counted as passes.
-  * Finding penalty — a saturating deduction for the hard findings of the
-    config/IaC and source-auth scanners, weighted by their catalog severity.
+  * the applicable architecture-coverage rules routed to it, where a rule that
+    only raised a hypothesis earns a quarter of the credit a confirmed control
+    earns. ``architecture_coverage_checks.py`` decides per rule whether it
+    applies at all (REQ-ARC-001: an absent surface is not applicable), which
+    gives each indicator an honest denominator.
+  * that indicator's own findings from the config/IaC and source-auth scanners,
+    as a saturating deduction weighted by catalog severity.
+
+The headline is the mean of the weaker half of the scored indicators. A
+repository is attacked where it is weakest, and averaging everything lets a
+well-covered aspect pay for a broken one.
 
 What it deliberately does NOT do
 --------------------------------
@@ -52,6 +58,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from scan_excludes import is_assessment_artifact  # noqa: E402
+from weakness_classifier import classify_cwe  # noqa: E402
 
 # Points per architecture-coverage status. `not_applicable` never reaches here —
 # it is what keeps the denominator honest.
@@ -66,38 +73,93 @@ STATUS_POINTS = {
 # Catalog severity → penalty points, summed into a raw weight.
 SEVERITY_WEIGHT = {"critical": 8.0, "high": 4.0, "medium": 1.5, "low": 0.5}
 
-# The raw weight is mapped through `CAP * raw / (raw + HALF)` rather than being
-# clipped. A hard cap saturates: measured on two real repositories, both ran far
-# past it and the penalty stopped separating them at all. The curve keeps small
-# and mid-sized repositories apart, and past a few hundred weighted points it
-# flattens on purpose — beyond that, "many findings" is the same statement.
-PENALTY_CAP = 30.0
-PENALTY_HALF_WEIGHT = 80.0
+# Per indicator, the raw weight is mapped through `CAP * raw / (raw + HALF)`
+# rather than being clipped. A hard cap saturates: measured on two repositories,
+# both ran past it and the penalty stopped separating them. The curve keeps the
+# low end apart and flattens where "many findings" stops being a new statement.
+# The cap spans the whole scale on purpose: an indicator carrying dozens of
+# confirmed findings is not rescued by a rule reporting the control as present.
+PENALTY_CAP = 100.0
+PENALTY_HALF_WEIGHT = 40.0
 
 # Below this many applicable rules the sample is too small to divide by.
 MIN_APPLICABLE_RULES = 5
 
-# Readable category names come from the control catalog rather than a second
-# vocabulary invented here, so the score names its categories exactly as the
-# report does.
-_CONTROLS_YAML = HERE.parent / "data" / "architectural-controls.yaml"
+# A rule's decision caps the control credit its status can earn: a hypothesis is
+# not a control, and a threat candidate is a control that failed.
+DECISION_CEILING = {
+    "emit_control_only": 1.0,
+    "emit_control_and_hypothesis": 0.25,
+    "emit_hypothesis_only": 0.25,
+    "emit_control_and_threat_candidate": 0.0,
+    "emit_anti_pattern_candidate": 0.0,
+}
+
+# The indicator vocabulary and its CWE / weakness-class routing.
+_INDICATORS_YAML = HERE.parent / "data" / "security-score-indicators.yaml"
+_RULES_YAML = HERE.parent / "data" / "architecture-coverage-rules.yaml"
 
 # Per-scanner wall-clock ceiling. A pathological repository must not hang the
 # probe; a scanner that times out degrades the score to a warning, not a crash.
 SCANNER_TIMEOUT_S = 600
 
 
-@functools.lru_cache(maxsize=1)
-def domain_labels() -> dict[str, str]:
-    """Domain key → catalog label. Empty when the catalog is unreadable."""
+def _load_yaml(path: Path) -> dict[str, Any]:
     try:
         import yaml
 
-        doc = yaml.safe_load(_CONTROLS_YAML.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001 — a missing label degrades to the raw key
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 — a missing catalog degrades, never crashes
         return {}
-    labels = doc.get("domains") if isinstance(doc, dict) else None
-    return labels if isinstance(labels, dict) else {}
+    return doc if isinstance(doc, dict) else {}
+
+
+@functools.lru_cache(maxsize=1)
+def indicators() -> tuple[list[tuple[str, str]], dict[str, str], dict[str, str], dict[str, str], str]:
+    """The indicator vocabulary: (order, by_cwe, by_class, by_scanner, default)."""
+    doc = _load_yaml(_INDICATORS_YAML)
+    order: list[tuple[str, str]] = []
+    by_cwe: dict[str, str] = {}
+    by_class: dict[str, str] = {}
+    by_scanner: dict[str, str] = {}
+    for entry in doc.get("indicators") or []:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            continue
+        indicator = str(entry["id"])
+        order.append((indicator, str(entry.get("label") or indicator)))
+        for cwe in entry.get("cwes") or []:
+            by_cwe.setdefault(str(cwe).strip().upper(), indicator)
+        for weakness_class in entry.get("weakness_classes") or []:
+            by_class.setdefault(str(weakness_class), indicator)
+        for scanner in entry.get("scanners") or []:
+            by_scanner.setdefault(str(scanner), indicator)
+    return order, by_cwe, by_class, by_scanner, str(doc.get("default") or "other")
+
+
+@functools.lru_cache(maxsize=1)
+def rule_cwes() -> dict[str, str]:
+    """Rule id → CWE, from the coverage catalog; the rule output omits it."""
+    doc = _load_yaml(_RULES_YAML)
+    mapping: dict[str, str] = {}
+    for family in ("hard_rules", "hypothesis_rules"):
+        for rule in doc.get(family) or []:
+            if isinstance(rule, dict) and rule.get("id") and rule.get("cwe"):
+                mapping[str(rule["id"])] = str(rule["cwe"])
+    return mapping
+
+
+def indicator_for(cwes: list[str], scanner: str | None = None) -> str:
+    """Route one CWE list to its indicator; see the catalog for the order."""
+    _, by_cwe, by_class, by_scanner, default = indicators()
+    normalized = [str(cwe or "").strip().upper() for cwe in cwes if cwe]
+    for cwe in normalized:
+        if cwe in by_cwe:
+            return by_cwe[cwe]
+    for cwe in normalized:
+        weakness_class = classify_cwe(cwe, warn=False)
+        if weakness_class in by_class:
+            return by_class[weakness_class]
+    return by_scanner.get(scanner or "", default)
 
 
 def _run(argv: list[str], warnings: list[str], label: str) -> bool:
@@ -178,7 +240,9 @@ def collect(repo_root: Path, work_dir: Path) -> tuple[list[dict], list[dict], li
         if not _run(argv, warnings, label):
             continue
         data = _load(work_dir / sidecar, warnings, label)
-        findings.extend(f for f in data.get("findings") or [] if isinstance(f, dict))
+        for finding in data.get("findings") or []:
+            if isinstance(finding, dict):
+                findings.append({**finding, "_scanner": label})
 
     return rules, findings, warnings
 
@@ -207,8 +271,28 @@ def _contaminated_rules(rules: list[dict], repo_root: Path) -> list[str]:
     return sorted(contaminated)
 
 
-def finding_penalty(findings: list[dict]) -> tuple[float, dict[str, int]]:
-    """Saturating severity-weighted deduction plus the per-severity tally."""
+def rule_points(rule: dict) -> float:
+    """Control credit for one applicable rule.
+
+    The status alone overrates a rule that only raised a hypothesis. A repository
+    whose sinks are all reached through unsanitized input scores ``partial`` on
+    the injection rules, because the deterministic layer cannot prove the flow —
+    proving it is the STRIDE stage's job. Half credit for that reads as "halfway
+    controlled", which is the opposite of what the rule saw. The rule's decision
+    therefore caps its credit: a hypothesis is not a control, and a threat
+    candidate is a control that failed.
+    """
+    points = STATUS_POINTS[rule["status"]]
+    return min(points, DECISION_CEILING.get(str(rule.get("decision") or ""), 1.0))
+
+
+def _cwe_list(item: dict) -> list[str]:
+    raw = item.get("cwe")
+    return [str(c) for c in raw] if isinstance(raw, list) else [str(raw)] if raw else []
+
+
+def _tally(findings: list[dict]) -> tuple[dict[str, int], float]:
+    """Per-severity counts and the raw severity weight of a finding set."""
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     raw = 0.0
     for finding in findings:
@@ -217,60 +301,93 @@ def finding_penalty(findings: list[dict]) -> tuple[float, dict[str, int]]:
             continue
         counts[severity] += 1
         raw += SEVERITY_WEIGHT[severity]
-    return PENALTY_CAP * raw / (raw + PENALTY_HALF_WEIGHT), counts
+    return counts, raw
+
+
+def finding_penalty(raw_weight: float) -> float:
+    """Saturating deduction for a raw severity weight."""
+    return PENALTY_CAP * raw_weight / (raw_weight + PENALTY_HALF_WEIGHT)
 
 
 def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
-    """Score the collected signals. Pure — no I/O, no subprocesses."""
+    """Score the collected signals. Pure — no subprocesses, catalogs only.
+
+    One score per security principle, from that principle's own rules and its
+    own findings; the headline is their mean. A global penalty spread over the
+    whole repository hid exactly what the breakdown is for — the category a
+    repository actually fails in.
+    """
     applicable = [r for r in rules if r.get("status") in STATUS_POINTS]
-    penalty, counts = finding_penalty(findings)
+    counts, _ = _tally(findings)
 
     result: dict[str, Any] = {
         "rules_total": len(rules),
         "rules_applicable": len(applicable),
         "findings": counts,
         "findings_total": sum(counts.values()),
-        "penalty": round(penalty),
         "categories": [],
     }
 
     if len(applicable) < MIN_APPLICABLE_RULES:
         result["verdict"] = "undetermined"
         result["score"] = None
-        result["control_basis"] = None
         result["reason"] = (
             f"only {len(applicable)} of {len(rules)} rules applied to this repository "
             f"({MIN_APPLICABLE_RULES} required) — the rule catalog does not cover it"
         )
         return result
 
-    earned = sum(STATUS_POINTS[r["status"]] for r in applicable)
-    basis = 100.0 * earned / len(applicable)
+    order, _, _, _, _ = indicators()
+    cwe_by_rule = rule_cwes()
+    buckets: dict[str, dict[str, Any]] = {indicator: {"points": [], "findings": []} for indicator, _ in order}
 
-    by_domain: dict[str, list[float]] = {}
+    def bucket_for(key: str) -> dict[str, Any]:
+        return buckets.setdefault(key, {"points": [], "findings": []})
+
     for rule in applicable:
-        by_domain.setdefault(str(rule.get("domain") or "unknown"), []).append(STATUS_POINTS[rule["status"]])
-    labels = domain_labels()
+        cwe = cwe_by_rule.get(str(rule.get("rule_id") or ""))
+        bucket_for(indicator_for([cwe] if cwe else []))["points"].append(rule_points(rule))
+    for finding in findings:
+        bucket_for(indicator_for(_cwe_list(finding), finding.get("_scanner")))["findings"].append(finding)
 
-    result["verdict"] = "scored"
-    result["control_basis"] = round(basis)
-    result["score"] = max(0, round(basis - penalty))
-    result["categories"] = sorted(
-        (
+    known = {indicator for indicator, _ in order}
+    categories = []
+    for indicator, label in [*order, *((key, key) for key in buckets if key not in known)]:
+        bucket = buckets[indicator]
+        points = bucket["points"]
+        if not points and not bucket["findings"]:
+            continue
+        found_counts, raw = _tally(bucket["findings"])
+        # An indicator no rule applied to has no control evidence. It still
+        # shows its findings, but scoring it would mean scoring an absence.
+        control = 100.0 * sum(points) / len(points) if points else None
+        categories.append(
             {
-                "domain": domain,
-                "label": labels.get(domain, domain),
-                "points": round(100.0 * sum(points) / len(points)),
+                "indicator": indicator,
+                "label": label,
+                "score": None if control is None else max(0, round(control - finding_penalty(raw))),
                 "rules": len(points),
+                "findings": sum(found_counts.values()),
             }
-            for domain, points in by_domain.items()
-        ),
-        key=lambda row: (row["points"], row["label"]),
-    )
+        )
+
+    categories.sort(key=lambda row: (row["score"] is None, row["score"], row["label"]))
+    result["verdict"] = "scored"
+    result["categories"] = categories
+
+    # The weaker half decides. Averaging every category lets a well-covered area
+    # pay for a broken one, which is not how a repository is attacked.
+    scored = sorted(row["score"] for row in categories if row["score"] is not None)
+    weaker_half = scored[: (len(scored) + 1) // 2]
+    result["score"] = round(sum(weaker_half) / len(weaker_half))
     return result
 
 
 BAR_WIDTH = 10
+
+
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
 
 
 def _bar(points: int) -> str:
@@ -294,11 +411,15 @@ def render_text(result: dict[str, Any]) -> str:
 
     width = max((len(row["label"]) for row in result["categories"]), default=0)
     for row in result["categories"]:
-        lines.append(f"  {row['label']:<{width}}  {row['points']:>3}  {_bar(row['points'])}  {row['rules']}")
+        score = "    no rule" if row["score"] is None else f"{row['score']:>3} / 100"
+        bar = " " * BAR_WIDTH if row["score"] is None else _bar(row["score"])
+        lines.append(
+            f"  {row['label']:<{width}}  {score}  {bar}"
+            f"  {_count(row['rules'], 'rule')} · {_count(row['findings'], 'finding')}"
+        )
 
     lines += [
         "",
-        f"  controls {result['control_basis']} / 100 · findings -{result['penalty']}",
         f"  {counts['critical']} critical · {counts['high']} high · {counts['medium']} medium · {counts['low']} low",
     ]
 

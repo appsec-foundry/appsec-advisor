@@ -20,12 +20,14 @@ FLAGS
   --json          Emit the result as machine-readable JSON
 
 WHAT THE NUMBER IS
-  Control basis    Share of the APPLICABLE architecture-coverage rules that
-                   found a control signal. Rules that cannot fire on this
-                   repository are excluded from the denominator.
-  Finding penalty  Saturating deduction for the hard findings of the
-                   config/IaC and source-auth scanners, weighted by their
-                   catalog severity.
+  One score per indicator — Output Handling, Frontend Security, Access
+  Control, Hardening & Configuration and the rest — from the coverage
+  rules routed to that indicator plus its own scanner findings. Rules
+  that cannot fire on this repository are excluded; an indicator no rule
+  applied to shows its findings but stays unscored.
+
+  The headline is the mean of the weaker half: a repository is attacked
+  where it is weakest.
 
 WHAT IT IS NOT
   No asset tier, no exposure, no abuse chain. Severities are catalog
