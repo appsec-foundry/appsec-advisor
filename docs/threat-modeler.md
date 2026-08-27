@@ -403,6 +403,7 @@ Agents read the repository and make the security judgments. Python checks their 
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable after publication checks. |
 | `/appsec-advisor:export-threat-model` | Export an existing model without another analysis. |
 | `/appsec-advisor:threat-model-health` | Check whether the model is fresh, stale, missing, or blocked. |
+| `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without a threat model. |
 | `/appsec-advisor:clean-run-state` | Remove stale state after an interrupted run. |
 | `/appsec-advisor:fix-run-issues` | Apply safe fixes or show repair guidance for the previous run. |
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |

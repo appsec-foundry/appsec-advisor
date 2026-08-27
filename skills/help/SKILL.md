@@ -132,6 +132,7 @@ APPSEC_COACH=0 claude ...     turn it off for one session
 ```text
 /appsec-advisor:status                 is a scan running
 /appsec-advisor:threat-model-health    is the stored model consistent
+/appsec-advisor:security-score         a quick 0-100 scan score, no model needed
 /appsec-advisor:export-threat-model    PDF, HTML, SARIF
 /appsec-advisor:publish-threat-model   push the report to its destination
 /appsec-advisor:report-error           anonymized bundle after a failed run

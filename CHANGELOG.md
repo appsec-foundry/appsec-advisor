@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `/appsec-advisor:security-score` reports a deterministic 0-100 score for a repository from the scanner layer alone, without running a threat model.
 - Headless runs can launch Claude Code through an environment-provided wrapper executable.
 - Deterministic source scans now detect direct unsafe LLM-output flows into structured data, browser rendering, interpreters, resources, and privileged actions, while LLM review covers indirect flows.
 - The requirements harvester now recognizes requirement IDs written without brackets (e.g. `REQ-001: text`), not just the bracketed convention.
