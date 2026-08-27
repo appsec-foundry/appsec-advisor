@@ -157,13 +157,20 @@ def _cache_summary(src: dict, cache: Path, disposition: str, fresh: dict | None,
 
     When ``body`` is given (a just-loaded catalog), its metadata wins — so a
     demo/local/CLI source that is never cached reports its own description and
-    count rather than whatever the sidecar last remembered.
+    count rather than whatever the sidecar last remembered. The freshness
+    verdict follows the same rule: it must describe the document actually
+    loaded, derived from that catalog's own ``generated`` stamp.
     """
     sidecar = rstate.read_sidecar(rstate.sidecar_path_for_cache(cache)) or {}
     if body is not None:
         meta = rstate.catalog_meta(body)
         generated, description, count = meta.get("generated"), meta.get("description"), meta.get("count")
         fetched_at = rstate.now_iso()
+        # An explicit source is fail_closed and therefore never cached, so the
+        # sidecar keeps pointing at an unrelated, older document. Reusing its
+        # age here reported a current baseline as months stale and contradicted
+        # the ``fetched_at`` emitted alongside it.
+        fresh = rstate.freshness(generated)
     else:
         generated, description, count = sidecar.get("generated"), sidecar.get("description"), sidecar.get("count")
         fetched_at = sidecar.get("fetched_at")
