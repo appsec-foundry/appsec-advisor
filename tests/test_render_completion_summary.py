@@ -1566,7 +1566,7 @@ class TestCompositionHealth:
     def test_render_none(self):
         assert rcs.render_composition_health(None) == []
 
-    def test_render_many_warnings_truncates(self):
+    def test_render_many_warnings_truncates(self, tmp_path: Path):
         health = {
             "status": "warned",
             "warning_count": 3,
@@ -1574,8 +1574,56 @@ class TestCompositionHealth:
             "section_retries": {},
             "auto_retries": 0,
         }
-        out = "\n".join(rcs.render_composition_health(health))
+        md = tmp_path / "threat-model.md"
+        md.write_text("## Appendix: Composition Notes\n", encoding="utf-8")
+        out = "\n".join(rcs.render_composition_health(health, md))
         assert "more in §Composition Notes" in out
+
+    def _health(self, n_warnings: int = 1) -> dict:
+        return {
+            "status": "warned",
+            "warning_count": n_warnings,
+            "warnings": [{"section": f"§{i}", "detail": "d" * 100} for i in range(n_warnings)],
+            "section_retries": {},
+            "auto_retries": 0,
+        }
+
+    def test_pointer_emitted_when_appendix_present(self, tmp_path: Path):
+        md = tmp_path / "threat-model.md"
+        md.write_text("intro\n\n## Appendix: Composition Notes\n\n- a warning\n", encoding="utf-8")
+        out = "\n".join(rcs.render_composition_health(self._health(), md))
+        assert "Composition Health" in out
+        assert "See `## Appendix: Composition Notes`" in out
+
+    def test_pointer_suppressed_when_appendix_absent(self, tmp_path: Path):
+        """The appendix renders on a threshold and a one-invocation lag the
+        summary does not share, so it is routinely absent while the summary has
+        warnings to report (juice-shop 2026-08-28). The health block must still
+        appear — it just must not send the reader to a section that is not
+        there.
+        """
+        md = tmp_path / "threat-model.md"
+        md.write_text("intro\n\n## Appendix: Run Statistics\n", encoding="utf-8")
+        out = "\n".join(rcs.render_composition_health(self._health(), md))
+        assert "Composition Health" in out
+        assert "Soft warning" in out
+        assert "Appendix: Composition Notes" not in out
+
+    def test_truncation_line_points_at_a_real_artifact_when_appendix_absent(self, tmp_path: Path):
+        md = tmp_path / "threat-model.md"
+        md.write_text("no appendix here\n", encoding="utf-8")
+        # 4 warnings: 2 render inline, so 2 remain unshown.
+        out = "\n".join(rcs.render_composition_health(self._health(4), md))
+        assert "2 more" in out, "the count of unshown warnings must survive"
+        assert "Composition Notes" not in out
+        assert ".compose-stats.json" in out
+
+    def test_pointer_suppressed_when_report_unknown(self, tmp_path: Path):
+        """No report path means the target cannot be confirmed. Fail closed:
+        an unverifiable cross-reference is the defect this guards against."""
+        out = "\n".join(rcs.render_composition_health(self._health()))
+        assert "Composition Health" in out
+        assert "Appendix: Composition Notes" not in out
 
 
 class TestRenderMisc:

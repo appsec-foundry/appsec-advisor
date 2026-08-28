@@ -1578,12 +1578,41 @@ def render_report_integrity(output_dir: Path) -> list[str]:
     return out
 
 
-def render_composition_health(health: Optional[dict]) -> list[str]:
+_COMPOSITION_NOTES_HEADING = "## Appendix: Composition Notes"
+
+
+def _has_composition_notes(report_md: Optional[Path]) -> bool:
+    """Whether the composed report actually carries the Composition Notes
+    appendix.
+
+    The appendix and this block are gated independently and cannot be assumed
+    to agree: the appendix needs ``warning_count >= 2`` while this block shows
+    from one warning, and its gate reads ``.compose-stats.json`` from the
+    PREVIOUS invocation by design (compose writes the current run's stats only
+    after the document is rendered). So the appendix is routinely absent while
+    there are warnings to report. Confirm it rather than infer it, and treat an
+    unknown or unreadable report as absent — an unverifiable cross-reference is
+    exactly the defect this guards against.
+    """
+    if report_md is None:
+        return False
+    try:
+        return _COMPOSITION_NOTES_HEADING in Path(report_md).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def render_composition_health(health: Optional[dict], report_md: Optional[Path] = None) -> list[str]:
     """Render the conditional Composition Health block. Returns an empty
     list when health is None (clean run) so the caller can extend
-    unconditionally."""
+    unconditionally.
+
+    ``report_md`` is the composed ``threat-model.md``; it decides whether the
+    block may point at the Composition Notes appendix.
+    """
     if not health:
         return []
+    has_appendix = _has_composition_notes(report_md)
     lines: list[str] = []
     lines.append("  -- Composition Health -------------------------------------")
     n_warn = health["warning_count"]
@@ -1615,14 +1644,17 @@ def render_composition_health(health: Optional[dict]) -> list[str]:
                 det = det[:87] + "…"
             lines.append(f"  Soft warning        : {sec} — {det}")
         if len(health["warnings"]) > 2:
-            lines.append(f"                        ({len(health['warnings']) - 2} more in §Composition Notes appendix)")
+            rest = len(health["warnings"]) - 2
+            where = "§Composition Notes appendix" if has_appendix else ".compose-stats.json"
+            lines.append(f"                        ({rest} more in {where})")
 
     if n_auto:
         lines.append(
             f"  Auto-retries        : {n_auto} inline-shortcut recovery cycle{'s' if n_auto != 1 else ''} (succeeded)"
         )
 
-    lines.append("  See `## Appendix: Composition Notes` in threat-model.md for the full picture.")
+    if has_appendix:
+        lines.append(f"  See `{_COMPOSITION_NOTES_HEADING}` in threat-model.md for the full picture.")
     lines.append("")
     return lines
 
@@ -1868,7 +1900,7 @@ def render_summary(
     # skill-level auto-retry loop fired. On a clean run the section is
     # skipped entirely (no extra noise in the canonical output).
     health = extract_composition_health(output_dir)
-    lines.extend(render_composition_health(health))
+    lines.extend(render_composition_health(health, Path(output_dir) / "threat-model.md"))
     # M2.15 — Sprint 7 observability. Conditional block: rendered only when
     # .run-issues.json reports issues. On a clean run the section is
     # omitted entirely (no extra noise).

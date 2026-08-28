@@ -41,6 +41,12 @@ _MASKING_MARKERS = (
     "…",
 )
 
+# The credential keywords that make a nearby literal look like a credential.
+# Named because redact_known_secrets reuses it to decide whether an occurrence
+# sits in credential context; a second hand-maintained copy there would drift
+# out of sync with this one.
+CREDENTIAL_KEYWORDS = r"password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth"
+
 
 @dataclass(frozen=True)
 class _Pattern:
@@ -99,7 +105,7 @@ _PATTERNS: list[_Pattern] = [
             # guards below exist for: a heading like ``## OAuth: Configuration``
             # would be masked as a secret. A two-line k8s ``name:``/``value:``
             # pair remains out of reach of this single-line pattern.
-            r"(?:\b|(?<=_))(?P<kw>password|passwd|pwd|secret|api[_-]?key|access[_-]?key|bearer|token|auth)"
+            r"(?:\b|(?<=_))(?P<kw>" + CREDENTIAL_KEYWORDS + r")"
             r"\s*(?P<op>[=:])\s*"
             # The value charset must cover password punctuation. It previously
             # stopped at the first character outside [A-Za-z0-9_\-+/=.], so a
@@ -202,6 +208,20 @@ _PROSE_VOWEL_RE = re.compile(r"[aeiouyAEIOUY]")
 # edge, not from the keyword.
 _TOKEN_CHAR_RE = re.compile(r"[A-Za-z0-9_\-#?&/.]")
 
+# A prose sentence can open a line behind punctuation instead of a word: the
+# quote of a JSON/YAML string scalar, a list bullet, a comment marker, a
+# blockquote. The backward "a word precedes the keyword" test reads all of
+# these as a key position and keeps the line flagged, which is how the prose
+# `"LLM_API_KEY: referenced in routes/chat.ts:111 …"` inside a prior run's
+# artifact yielded "referenced" as a 10-char credential (juice-shop
+# 2026-08-28). Pure indentation is deliberately NOT a lead-in — that is what a
+# real `  secret: changeme` YAML key looks like — so at least one marker
+# character is required and no alphanumeric may appear before the keyword.
+# Relief here only reaches the mid-sentence test; the forward
+# sentence-continuation test below still has to pass, and it is what keeps a
+# line-final config value flagged.
+_PROSE_LEAD_IN_RE = re.compile(r"^\s*[\"'`\-*+#/;>|]+\s*$")
+
 # "The prose sentence continues past the value": another word follows, or the
 # clause ends. A clause terminator counts as sentence-shaped only when nothing
 # but whitespace, the line end, or a SERIALIZATION WRAPPER follows it.
@@ -284,7 +304,8 @@ def _is_prose_credential_false_positive(value: str, op: str | None, quoted: bool
     token_start = offset
     while token_start > 0 and _TOKEN_CHAR_RE.match(line[token_start - 1]):
         token_start -= 1
-    if not re.search(r"[A-Za-z]{2,}\s+$", line[:token_start]):
+    lead_in = line[:token_start]
+    if not re.search(r"[A-Za-z]{2,}\s+$", lead_in) and not _PROSE_LEAD_IN_RE.match(lead_in):
         return False
 
     # The sentence has to keep going; a config value ends its line.

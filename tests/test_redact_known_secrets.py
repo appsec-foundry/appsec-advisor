@@ -69,6 +69,89 @@ def test_short_values_not_redacted(tmp_path: Path) -> None:
     assert "abc" not in secrets
 
 
+def _write_prior_assessment_output(repo: Path, rel: str) -> Path:
+    """A prior run's output directory, carrying the marker pair that
+    scan_excludes.is_assessment_output_dir() recognises."""
+    out = repo / rel
+    out.mkdir(parents=True)
+    (out / "threat-model.md").write_text("# Threat Model\n", encoding="utf-8")
+    (out / "threat-model.yaml").write_text("meta: {}\n", encoding="utf-8")
+    return out
+
+
+def test_prior_assessment_output_is_not_harvested(tmp_path: Path) -> None:
+    """A previous run's artifacts are the plugin's OWN prose about credentials
+    — the densest false-positive source there is. Harvesting them makes each
+    run poison the next one (juice-shop 2026-08-28: 204 prior-run artifacts
+    were read as repository source).
+
+    The static exclude list cannot carry this: ``--output-dir`` is
+    user-selectable and copies get arbitrary names, so detection must be
+    structural.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "server.js").write_text(f"const secret = '{SECRET}'\n", encoding="utf-8")
+
+    # Not `docs/security/` — the name the static path_prefix rule knows.
+    prior = _write_prior_assessment_output(repo, "reports/appsec-2026-08")
+    (prior / ".stride-backend.json").write_text(
+        '{"evidence": "the seeded config sets password: Zx9Kq2LmPv4Ts"}\n', encoding="utf-8"
+    )
+
+    secrets = R.collect_source_secrets(repo)
+    assert "Zx9Kq2LmPv4Ts" not in secrets, "value harvested out of a prior run's own output"
+    assert SECRET in secrets, "real source secrets must still be harvested"
+
+
+def test_word_shaped_value_does_not_corrupt_unrelated_prose(tmp_path: Path) -> None:
+    """Independent blast-radius bound on the global substring replace.
+
+    The module's premise is that the scanner never yields a false positive, so
+    a context-free ``str.replace`` over the whole report is safe. When that
+    premise fails, an ordinary English word is destroyed everywhere it occurs.
+    A word-shaped value must therefore be replaced only where the artifact
+    itself shows credential context — the realistic prose-leak shape — and
+    left alone in unrelated sentences.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    # Indent-only lead-in → a YAML key, so this stays flagged and is harvested
+    # as a word-shaped value.
+    (repo / "config.yml").write_text("  secret: referenced\n", encoding="utf-8")
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "threat-model.md").write_text(
+        "Each row links to the threat(s) referenced in its Notes column.\n"
+        "The signing secret is the literal referenced in server.js.\n",
+        encoding="utf-8",
+    )
+
+    rc = R.main(["--repo-root", str(repo), "--output-dir", str(out)])
+    assert rc == 0
+    text = (out / "threat-model.md").read_text(encoding="utf-8")
+
+    assert "threat(s) referenced in its Notes column" in text, "unrelated prose was corrupted"
+    assert "The signing secret is the literal referenced in" not in text, "credential-context leak survived"
+
+
+def test_high_entropy_value_still_replaced_in_bare_prose(tmp_path: Path) -> None:
+    """The context gate applies ONLY to word-shaped values. A real secret with
+    token shape keeps the unconditional global replace, including in a sentence
+    that names no credential keyword at all."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "server.js").write_text(f"const secret = '{SECRET}'\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "threat-model.md").write_text(f"An attacker replays {SECRET} against the API.\n", encoding="utf-8")
+
+    rc = R.main(["--repo-root", str(repo), "--output-dir", str(out)])
+    assert rc == 0
+    assert SECRET not in (out / "threat-model.md").read_text(encoding="utf-8")
+
+
 def test_no_source_secrets_is_noop(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
