@@ -466,9 +466,60 @@ def test_normalize_reference_titles_bare_url():
     )
 
 
-def test_normalize_reference_idempotent_for_existing_link():
-    src = "[CWE-89](https://cwe.mitre.org/data/definitions/89.html)"
-    assert compose._normalize_reference(src) == src
+def test_normalize_reference_canonicalizes_untitled_cwe_link():
+    """An existing link is normalised, not passed through.
+
+    The old passthrough on any value containing "](" is what let four shapes
+    reach one report. A bare-id CWE link is one of them: the same CWE arriving
+    as an id renders with its taxonomy title, so leaving this one untitled
+    keeps the inconsistency the contract forbids.
+    """
+    assert compose._normalize_reference("[CWE-89](https://cwe.mitre.org/data/definitions/89.html)") == (
+        "[CWE-89: Improper Neutralization of Special Elements used in an SQL Command (SQL Injection)]"
+        "(https://cwe.mitre.org/data/definitions/89.html)"
+    )
+
+
+def test_normalize_reference_drops_echoed_url():
+    """The link's own URL repeated behind `:` or `-` is redundant.
+
+    The echo reached the prose fixer as a bare URL and came back backticked, so
+    the card rendered the same address twice — once as the link, once as code.
+    """
+    canonical = "[CWE-798: Use of Hard-coded Credentials](https://cwe.mitre.org/data/definitions/798.html)"
+    for echo in (
+        "[CWE-798](https://cwe.mitre.org/data/definitions/798.html): "
+        "`https://cwe.mitre.org/data/definitions/798.html`",
+        "[CWE-798](https://cwe.mitre.org/data/definitions/798.html) - "
+        "https://cwe.mitre.org/data/definitions/798.html",
+    ):
+        assert compose._normalize_reference(echo) == canonical
+
+
+def test_normalize_reference_keeps_a_different_trailing_url():
+    """A tail that is NOT the link's own target is a second source, not an echo."""
+    src = "[CWE-89](https://cwe.mitre.org/data/definitions/89.html) - https://owasp.org/other"
+    assert "https://owasp.org/other" in compose._normalize_reference(src)
+
+
+def test_normalize_reference_links_unlinked_text_and_url():
+    assert compose._normalize_reference(
+        "OWASP LLM Top 10 LLM01: https://owasp.org/www-project-top-10-for-llm/"
+    ) == "[OWASP LLM Top 10 LLM01](https://owasp.org/www-project-top-10-for-llm/)"
+
+
+def test_normalize_reference_is_idempotent():
+    """Normalising an already-normalised value must be a no-op."""
+    for src in (
+        "[CWE-89](https://cwe.mitre.org/data/definitions/89.html)",
+        "[CWE-798](https://cwe.mitre.org/data/definitions/798.html) - "
+        "https://cwe.mitre.org/data/definitions/798.html",
+        "OWASP LLM Top 10 LLM01: https://owasp.org/www-project-top-10-for-llm/",
+        "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html",
+        "CWE-306",
+    ):
+        once = compose._normalize_reference(src)
+        assert compose._normalize_reference(once) == once
 
 
 def test_normalize_reference_empty_passthrough():

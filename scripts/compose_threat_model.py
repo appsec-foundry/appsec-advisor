@@ -12014,19 +12014,65 @@ def _reference_link_title(url: str) -> str:
     return f"{source}: {label}"
 
 
+_REF_LINK_RE = re.compile(r"\[([^\]]*)\]\((https?://[^)\s]+)\)")
+_CWE_URL_RE = re.compile(r"^https?://cwe\.mitre\.org/data/definitions/(\d+)\.html$", re.IGNORECASE)
+# A URL repeated after the link, optionally backticked, behind `:` or a dash.
+_REF_ECHOED_URL_RE = re.compile(r"^\s*[:–—-]\s*`?(https?://[^\s`]+)`?\s*$")
+# Free text that ends in a bare URL and carries no link at all.
+_REF_TEXT_THEN_URL_RE = re.compile(r"^(?P<title>.*?)\s*[:–—-]\s*`?(?P<url>https?://[^\s`]+)`?\s*$")
+
+
 def _normalize_reference(ref: str) -> str:
-    """Render a mitigation ``reference`` value as a consistent, titled Markdown
-    link. Handles the two shapes the analyst ships raw: a bare ``CWE-NNN`` and a
-    bare URL. Idempotent for values already containing a Markdown link; passes
-    free-text through (linkifying any embedded bare CWEs)."""
+    """Render a mitigation ``reference`` value as ONE shape: ``[title](url)``.
+
+    ``check_reference_format`` states the contract — "must be a titled Markdown
+    link, never a bare CWE-NNN and never a naked URL" — and names this function
+    as the producer, but the old passthrough on ``"](" in ref`` handed back
+    every shape the analyst happened to ship. Four survived into one report
+    (juice-shop 2026-08-27, 44 cards): the canonical link (18), the link with
+    its own URL echoed behind a colon (18) or a dash (5), and plain text with a
+    trailing URL and no link at all (3). The echo then reached the prose fixer
+    as a bare URL and came back backticked, so the line rendered the same
+    address twice, once as a link and once as code.
+
+    So: keep the link, drop an echo of its own target, build a link when text
+    and URL arrive unlinked, and route every cwe.mitre.org target through
+    `_cwe_reference_link` — a bare CWE URL otherwise picked up the generic
+    host-derived title (`cwe.mitre.org: 798`) while the same CWE arriving as an
+    id rendered `CWE-798: Use of Hard-coded Credentials`. Free text with no URL
+    is still passed through with its bare CWEs linkified.
+    """
     ref = (ref or "").strip()
-    if not ref or "](" in ref:  # empty, or already a Markdown link
+    if not ref:
         return ref
+
+    link = _REF_LINK_RE.search(ref)
+    if link:
+        url = link.group(2)
+        tail = ref[link.end():]
+        head = ref[: link.start()].strip()
+        echoed = _REF_ECHOED_URL_RE.match(tail)
+        # Only collapse when the tail repeats THIS link's target; a different
+        # URL is a second reference and stays visible.
+        if head or not (not tail.strip() or (echoed and echoed.group(1) == url)):
+            return _linkify_bare_cwes(ref)
+        cwe = _CWE_URL_RE.match(url)
+        return _cwe_reference_link(cwe.group(1)) if cwe else f"[{link.group(1)}]({url})"
+
     m = re.fullmatch(r"CWE-(\d+)", ref, re.IGNORECASE)
     if m:
         return _cwe_reference_link(m.group(1))
     if re.fullmatch(r"https?://\S+", ref):
-        return f"[{_reference_link_title(ref)}]({ref})"
+        cwe = _CWE_URL_RE.match(ref)
+        return _cwe_reference_link(cwe.group(1)) if cwe else f"[{_reference_link_title(ref)}]({ref})"
+    unlinked = _REF_TEXT_THEN_URL_RE.match(ref)
+    if unlinked:
+        url = unlinked.group("url")
+        title = unlinked.group("title").strip().rstrip(":-–— ")
+        cwe = _CWE_URL_RE.match(url)
+        if cwe:
+            return _cwe_reference_link(cwe.group(1))
+        return f"[{title or _reference_link_title(url)}]({url})"
     return _linkify_bare_cwes(ref)
 
 
