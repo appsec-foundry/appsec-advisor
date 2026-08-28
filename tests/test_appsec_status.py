@@ -661,6 +661,44 @@ class TestMain:
 
         assert checkpoint.read_text() == "phase=7 status=completed need_threat_analysis=true\n"
 
+    def test_the_skills_flag_names_are_accepted(self, appsec_status, tmp_path, monkeypatch, capsys):
+        """--repo/--output are what the skill passes through; --repo-root stays for scripts."""
+        captured = {}
+        monkeypatch.setattr(appsec_status, "_last_run_info", lambda od: {"has_baseline": False})
+        monkeypatch.setattr(appsec_status, "_fast_path_preview", lambda od, rr: None)
+        target = tmp_path / "custom-out"
+
+        rc = appsec_status.main(["--repo", str(tmp_path), "--output", str(target), "--json"])
+
+        assert rc == 0
+        captured = json.loads(capsys.readouterr().out)
+        assert captured["paths"]["output_dir"] == str(target.resolve())
+
+    def test_help_is_printed_by_the_helper_not_by_the_skill(self, appsec_status, capsys):
+        rc = appsec_status.main(["--help"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert out.startswith("/appsec-advisor:status")
+        for flag in ("--repo", "--output", "--json", "--live", "--check-updates"):
+            assert flag in out
+
+    @pytest.mark.parametrize(
+        ("argv", "token"),
+        [
+            (["--bogus"], "--bogus"),
+            (["extra"], "extra"),
+            (["--repo"], "--repo"),
+        ],
+    )
+    def test_an_argument_the_command_does_not_take_is_rejected(self, appsec_status, argv, token, capsys):
+        """Rejection is the helper's job: a prompt cannot be relied on to refuse."""
+        with pytest.raises(SystemExit) as exit_info:
+            appsec_status.main(argv)
+        assert exit_info.value.code == 2
+        err = capsys.readouterr().err
+        assert err.startswith(f"Error: unknown argument '{token}'")
+        assert "--help" in err
+
     def test_main_live_json(self, appsec_status, tmp_path, capsys):
         rc = appsec_status.main(["--repo-root", str(tmp_path), "--live", "--json"])
         assert rc == 0

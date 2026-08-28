@@ -5,96 +5,35 @@ description: Read-only overview of the AppSec plugin — version, available feat
 
 You are printing a status overview for the AppSec plugin. This skill is **read-only** — do not analyze the repository, do not write files, do not dispatch sub-agents.
 
-## `--help` — inline help (early exit)
+The helper below owns the whole command: the flag surface, the defaults, the
+`--help` text, the rejection message for an unknown flag, and the formatting of
+every line it prints. You run it and reprint what it says. Nothing in this
+skill is yours to decide.
 
-If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.
+## Step 1 — Run the helper
 
-```
-/appsec-advisor:status — Read-only plugin & repo status.
-
-USAGE
-  /appsec-advisor:status [--repo <path>] [--output <path>] [--json] [--live]
-                         [--check-updates]
-
-FLAGS
-  --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
-  --json            Emit the status as machine-readable JSON
-  --live            Print only the in-flight run snapshot (active tool calls,
-                    per-component progress, heartbeat freshness). Honours --json.
-                    Intended for fast, cron-style polling in a second terminal.
-  --check-updates   Also report whether the configured secure-coding baseline
-                    and the packaged appsec-advisor core are still the current
-                    ones. Fetches the baseline document and the upstream
-                    manifest; without the flag the command stays offline.
-
-The command is safe to run at any time. It never writes files or dispatches
-any agent.
-```
-
-After printing, exit.
-
-## Step 1 — Parse arguments
-
-Recognized flags:
-
-  `--repo <path>`  `--output <path>`  `--json`  `--live`  `--check-updates`  `--help` | `-h`
-
-Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `JSON_MODE`, `LIVE_MODE`, `CHECK_UPDATES`. Default
-`REPO_ROOT` to the current working directory; default `OUTPUT_DIR` to
-`$REPO_ROOT/docs/security`. `--live` and `--check-updates` are boolean toggles that consume no value.
-
-### Reject unknown arguments (hard fail)
-
-If the invocation contains **any** token that is not one of the recognized
-flags above — or is not the value consumed by `--repo` / `--output` — DO NOT
-proceed. Do not resolve `CLAUDE_PLUGIN_ROOT`, do not invoke the helper.
-Print the following block verbatim to stderr, substituting `<TOKEN>` with the
-first unknown token, then exit with status `2`:
-
-```
-Error: unknown argument '<TOKEN>'
-
-/appsec-advisor:status accepts only:
-  --repo <path>     Repository to inspect (default: current working dir)
-  --output <path>   Output directory to inspect (default: <repo>/docs/security)
-  --json            Emit the status as machine-readable JSON
-  --live            Print only the in-flight run snapshot (cron-style polling)
-  --check-updates   Check the baseline and core versions against their sources
-  --help, -h        Show full help and exit
-
-Run `/appsec-advisor:status --help` for details.
-```
-
-A flag that takes a value (e.g. `--repo` or `--output`) counts as unknown
-when its value is missing — treat the flag itself as the offending token in
-that case. Repeated occurrences of the same flag are allowed; the last value
-wins.
-
-## Step 2 — Run the status helper
-
-Delegate to the Python helper that owns the formatting:
+Pass the user's arguments through unchanged. Do not parse, validate, correct,
+expand, reorder, or drop any of them, and do not resolve `--repo` or `--output`
+defaults yourself. Quote each argument exactly as the user typed it, so a shell
+metacharacter inside one stays inert:
 
 ```bash
-ARGS="--repo-root $REPO_ROOT --output-dir $OUTPUT_DIR"
-[ "$JSON_MODE" = "true" ] && ARGS="$ARGS --json"
-[ "$LIVE_MODE" = "true" ] && ARGS="$ARGS --live"
-[ "$CHECK_UPDATES" = "true" ] && ARGS="$ARGS --check-updates"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" $ARGS
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" "<arg1>" "<arg2>" …
 ```
 
-Capture the helper's exit code and propagate it. Do not add any commentary to
-the output — the helper's formatting is the deliverable.
+With no arguments, run the script with none. Capture the exit code and
+propagate it; `2` means the helper rejected an argument and already printed why.
 
-If the helper cannot run (missing file, non-zero exit, empty stdout), that is
-the status: print the command you ran and its stderr verbatim, and stop. Never
+If the helper cannot run at all (missing file, empty stdout), that is the
+status: print the command you ran and its stderr verbatim, and stop. Never
 answer from your own knowledge of the plugin instead — a summary written here
 looks like a working status report and hides a broken installation.
 
-## Step 3 — Reprint the output
+## Step 2 — Reprint the output
 
-The user cannot see Bash tool output. Reprint the script's stdout
-**verbatim** in a fenced code block in your text response, every line of it,
-from the version headline to the last line. Do not summarise, shorten,
-reorder, or drop a table — the Versions table in particular is what a reader
-compares between machines. Add no commentary before or after the block.
+The user cannot see Bash tool output. Reprint the script's stdout **verbatim**
+in a fenced code block in your text response: every line, from the first to the
+last, including every table and every line inside it. Do not summarise,
+shorten, reorder, re-align, or drop a section — the Versions table in
+particular is what a reader compares between two machines, so a missing line
+there is a wrong answer. Add no commentary before or after the block.

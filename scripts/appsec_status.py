@@ -840,10 +840,77 @@ def _render_live(snap: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+HELP_TEXT = """/appsec-advisor:status — Read-only plugin & repo status.
+
+USAGE
+  /appsec-advisor:status [--repo <path>] [--output <path>] [--json] [--live]
+                         [--check-updates]
+
+FLAGS
+  --repo <path>     Repository to inspect (default: current working dir)
+  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --json            Emit the status as machine-readable JSON
+  --live            Print only the in-flight run snapshot (active tool calls,
+                    per-component progress, heartbeat freshness). Honours --json.
+                    Intended for fast, cron-style polling in a second terminal.
+  --check-updates   Also report whether the configured secure-coding baseline
+                    and the packaged appsec-advisor core are still the current
+                    ones. Fetches the baseline document and the upstream
+                    manifest; without the flag the command stays offline.
+
+The command is safe to run at any time. It never writes files or dispatches
+any agent.
+"""
+
+ARGUMENT_ERROR = """Error: unknown argument '{token}'
+
+/appsec-advisor:status accepts only:
+  --repo <path>     Repository to inspect (default: current working dir)
+  --output <path>   Output directory to inspect (default: <repo>/docs/security)
+  --json            Emit the status as machine-readable JSON
+  --live            Print only the in-flight run snapshot (cron-style polling)
+  --check-updates   Check the baseline and core versions against their sources
+  --help, -h        Show full help and exit
+
+Run `/appsec-advisor:status --help` for details.
+"""
+
+
+def _offending_token(message: str) -> str:
+    """The argument a reader has to correct, out of argparse's error message."""
+    if message.startswith("unrecognized arguments: "):
+        return message.removeprefix("unrecognized arguments: ").split()[0]
+    if message.startswith("argument ") and ": expected one argument" in message:
+        # A flag whose value is missing counts as the offending token itself.
+        return message.removeprefix("argument ").split(":", 1)[0].split("/")[0]
+    return message
+
+
+class _Parser(argparse.ArgumentParser):
+    """Argument handling belongs to this script, not to the skill's prose.
+
+    The skill is a prompt: every rule it states about parsing, rejecting, and
+    printing is a rule a model can drift from. Keeping the flag surface, the
+    help text, and the rejection message here means one behaviour on every
+    machine, and one place to change it.
+    """
+
+    def error(self, message: str):  # noqa: D102 — argparse hook
+        sys.stderr.write(ARGUMENT_ERROR.format(token=_offending_token(message)))
+        raise SystemExit(2)
+
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="appsec_status.py", description="Read-only plugin status dump.")
-    p.add_argument("--repo-root", default=os.getcwd())
-    p.add_argument("--output-dir", default=None, help="Override output directory (default: <repo>/docs/security).")
+    p = _Parser(prog="appsec_status.py", description="Read-only plugin status dump.", add_help=False)
+    p.add_argument("-h", "--help", action="store_true", help="Show the skill's help text and exit.")
+    p.add_argument("--repo", "--repo-root", dest="repo_root", default=os.getcwd())
+    p.add_argument(
+        "--output",
+        "--output-dir",
+        dest="output_dir",
+        default=None,
+        help="Override output directory (default: <repo>/docs/security).",
+    )
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     p.add_argument(
         "--check-updates",
@@ -862,6 +929,9 @@ def main(argv: list[str] | None = None) -> int:
         "tables — intended for fast cron-style polling.",
     )
     args = p.parse_args(argv if argv is not None else sys.argv[1:])
+    if args.help:
+        print(HELP_TEXT, end="")
+        return 0
 
     repo_root = Path(args.repo_root).resolve()
     output_dir = Path(args.output_dir).resolve() if args.output_dir else (repo_root / "docs" / "security")
