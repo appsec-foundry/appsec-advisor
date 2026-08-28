@@ -21,6 +21,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -641,6 +642,130 @@ def test_blueprint_precedes_the_general_reference(tmp_path: Path) -> None:
     # The catalog excerpt no longer competes with the authored steps.
     assert "Authorize every endpoint server-side." not in out
     assert "this blueprint governs" not in out
+
+
+def test_blueprint_reference_names_and_links_the_matched_sections(tmp_path: Path) -> None:
+    """A blueprint routinely cites several sources, so the section carries its
+    own URL — 36 of the 68 sections in the juice-shop catalog resolve somewhere
+    other than the blueprint's own page. Naming the blueprint alone sends the
+    reader to the wrong page for half of them.
+    """
+    (tmp_path / ".requirements.yaml").write_text(
+        "categories:\n"
+        "- id: C1\n"
+        "  requirements:\n"
+        "  - id: SEC-INJ-1\n"
+        "    url: https://x/inj\n"
+        "blueprints:\n"
+        "- id: BP-VALIDATION\n"
+        "  title: Input Validation\n"
+        "  url: https://x/input-validation\n"
+        "  sections:\n"
+        "  - title: 4. Parameterized Data Access\n"
+        "    url: https://x/sql-injection\n"          # deliberately NOT the blueprint url
+        "    content: Bind every value through the driver.\n"
+        "    references:\n"
+        "    - id: SEC-INJ-1\n",
+        encoding="utf-8",
+    )
+    threats = [
+        {
+            "id": "T-001",
+            "risk": "critical",
+            "title": "SQL injection in the login handler",
+            "violated_requirements": ["SEC-INJ-1"],
+            "mitigation_ids": ["M-001"],
+        },
+    ]
+    mitigations = [
+        {
+            "id": "M-001",
+            "title": "Use parameterized data access",
+            "threat_ids": ["T-001"],
+            "priority": "P1",
+            "severity": "Critical",
+            "steps": ["Replace the concatenated query with a bound statement."],
+        },
+    ]
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": threats, "mitigations": mitigations},
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"check_requirements": True},
+    )
+    out = compose._render_mitigation_register(ctx, None, {"heading": "## 10. Mitigation Register"})
+
+    assert "[BP-VALIDATION](https://x/input-validation)" in out
+    assert "[4. Parameterized Data Access](https://x/sql-injection)" in out, (
+        "the section must link to its own page, not the blueprint's"
+    )
+    # The excerpt stays out — that is what the analyst worked into **How:**.
+    assert "Bind every value through the driver." not in out
+
+
+class TestLinkifyBareRequirementRefs:
+    """§7b named requirements in prose and table cells without linking any of
+    them — 84 mentions in the juice-shop 2026-08-28 run — while §10 linked the
+    same IDs from the same catalog."""
+
+    def _ctx(self, tmp_path: Path) -> compose.RenderContext:
+        (tmp_path / ".requirements.yaml").write_text(
+            "categories:\n"
+            "- id: C1\n"
+            "  requirements:\n"
+            "  - id: AC-002\n"
+            "    url: https://x/ac2\n"
+            "  - id: WEB-001\n"
+            "    url: https://x/web1\n",
+            encoding="utf-8",
+        )
+        return compose.RenderContext(
+            output_dir=tmp_path,
+            contract={},
+            yaml_data={"threats": [], "mitigations": []},
+            triage={},
+            fragments_dir=tmp_path,
+            eval_context={"check_requirements": True},
+        )
+
+    def test_links_bare_ids_in_prose_and_table_cells(self, tmp_path: Path) -> None:
+        ctx = self._ctx(tmp_path)
+        md = "The gaps are in access control (AC-002).\n| WEB-001: CSRF protection | PARTIAL |\n"
+        out = compose._linkify_bare_requirement_refs(ctx, md)
+        assert "[`AC-002`](https://x/ac2)" in out
+        assert "[`WEB-001`](https://x/web1)" in out
+
+    def test_leaves_unknown_uppercase_tokens_alone(self, tmp_path: Path) -> None:
+        """Only IDs the catalog declares a URL for are touched, so neighbouring
+        identifier shapes keep their meaning."""
+        ctx = self._ctx(tmp_path)
+        md = "CWE-79 and RS256 and T-003 and F-012 and CAT-HN stay bare"
+        assert compose._linkify_bare_requirement_refs(ctx, md) == md
+
+    @pytest.mark.parametrize(
+        "md",
+        [
+            "see [`AC-002`](https://x/ac2) for detail",  # already a markdown link
+            "the config key is `AC-002` here",  # code span
+            '<a href="#ac-002">AC-002 detail</a>',  # inside an html anchor
+            '<td><a href="https://x/ac2"><code>AC-002</code></a> - route</td>',  # html + code
+            "## AC-002 Access Control",  # heading
+            "```yaml\nid: AC-002\n```",  # fenced code
+            '<a id="ac-002"></a> AC-002',  # anchor-declaration row
+        ],
+    )
+    def test_opaque_spans_are_passthrough(self, tmp_path: Path, md: str) -> None:
+        """The compliance tables reach this pass as HTML, where an ID may
+        already carry a link. Masking only the tags would leave the inner text
+        exposed and nest a markdown link inside the anchor."""
+        assert compose._linkify_bare_requirement_refs(self._ctx(tmp_path), md) == md
+
+    def test_idempotent(self, tmp_path: Path) -> None:
+        ctx = self._ctx(tmp_path)
+        once = compose._linkify_bare_requirement_refs(ctx, "gaps in access control (AC-002).")
+        assert once == compose._linkify_bare_requirement_refs(ctx, once)
 
 
 def test_mitigation_register_requirement_reference_renders_as_fulfills_not_reference(tmp_path: Path) -> None:

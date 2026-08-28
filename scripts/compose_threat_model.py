@@ -8624,6 +8624,7 @@ def _format_requirement_link(rid: str, known_ids: dict[str, str]) -> str:
 _REQ_ROW_PREFIX_RE = re.compile(r"^\|\s*(?:\[`|`)[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+`")
 
 
+_BLUEPRINT_MAX_SECTIONS = requirements_trace.MAX_SECTIONS_RENDERED
 _BLUEPRINT_MAX_PER_MITIGATION = requirements_trace.MAX_BLUEPRINTS_RENDERED
 
 
@@ -12635,6 +12636,73 @@ def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
         out: list[str] = []
         pos = 0
         for mm in _PROSE_MASK_RE.finditer(line):
+            if mm.start() > pos:
+                out.append(_rewrite_run(line[pos : mm.start()]))
+            out.append(mm.group(0))  # opaque span — passthrough
+            pos = mm.end()
+        if pos < len(line):
+            out.append(_rewrite_run(line[pos:]))
+        return "".join(out)
+
+    out_chunks: list[str] = []
+    for chunk in re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL):
+        if chunk.startswith("```"):
+            out_chunks.append(chunk)
+            continue
+        lines = chunk.split("\n")
+        for i, line in enumerate(lines):
+            if re.match(r"^\s{0,3}#{1,6}\s", line) or '<a id="' in line:
+                continue  # headings + anchor-declaration rows untouched
+            lines[i] = _process_line(line)
+        out_chunks.append("\n".join(lines))
+    return "".join(out_chunks)
+
+
+_BARE_REQ_ID_RE = re.compile(r"(?<![\w/#-])([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)(?![\w-])")
+
+# Like `_PROSE_MASK_RE`, but whole `<a>` / `<code>` ELEMENTS are opaque, not
+# just their tags. The compliance tables reach this pass as HTML, where an ID
+# already carries a link as `<a href="…"><code>AC-002</code></a>`; masking only
+# the tags would leave the inner text exposed and nest a markdown link inside
+# the anchor. Element alternatives precede the generic tag so they win.
+_REQ_PROSE_MASK_RE = re.compile(
+    r"`[^`]+`|\[[^\]]*\]\([^)]*\)|<a\b[^>]*>.*?</a>|<code\b[^>]*>.*?</code>|<[^>]+>",
+    re.DOTALL,
+)
+
+
+def _linkify_bare_requirement_refs(ctx: RenderContext, md: str) -> str:
+    """Linkify requirement IDs the LLM wrote as plain text, using the URL the
+    catalog declares for each.
+
+    The §7b narrative names requirements in table cells and prose ("the most
+    critical gaps are in access control (AC-002, AC-005)") without linking any
+    of them — 84 such mentions in the juice-shop 2026-08-28 run — while §10
+    links the same IDs through `_format_requirement_link`. Same catalog, same
+    reader, two treatments. This closes that, deterministically, rather than
+    asking the fragment author to remember.
+
+    Only IDs the catalog actually declares a URL for are touched, so an
+    unrelated uppercase token (``CWE-79``, ``RS256``, ``P1``) is left alone.
+    Mirrors `_linkify_bare_finding_refs`: fenced blocks, headings, code spans,
+    existing links and HTML tags are all passthrough, which also makes it
+    idempotent — the ID inside an emitted ``[`ID`](url)`` sits in a backtick
+    span the mask skips on a second run."""
+    known = _known_requirement_ids(ctx)
+    urls = {rid: u for rid, u in known.items() if (u or "").strip()}
+    if not urls:
+        return md
+
+    def _rewrite_run(run: str) -> str:
+        return _BARE_REQ_ID_RE.sub(
+            lambda m: _format_requirement_link(m.group(1), urls) if m.group(1) in urls else m.group(0),
+            run,
+        )
+
+    def _process_line(line: str) -> str:
+        out: list[str] = []
+        pos = 0
+        for mm in _REQ_PROSE_MASK_RE.finditer(line):
             if mm.start() > pos:
                 out.append(_rewrite_run(line[pos : mm.start()]))
             out.append(mm.group(0))  # opaque span — passthrough
@@ -17832,6 +17900,21 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     )
                     if _bp.blueprint_title:
                         _head += f" — {_bp.blueprint_title}"
+                    # Name the matched sections and link each to its OWN page.
+                    # A blueprint routinely cites several sources — 36 of the 68
+                    # sections in the juice-shop catalog resolve somewhere other
+                    # than the blueprint's own URL — so dropping the section link
+                    # sends the reader to the wrong page for half of them. The
+                    # section CONTENT stays out: it is what the analyst already
+                    # worked into `**How:**`, and repeating it here is what made
+                    # this a competing instruction block.
+                    _secs = [
+                        f"[{_sec.title}]({_sec.url})" if _sec.url else f"{_sec.title}"
+                        for _sec in _bp.sections[:_BLUEPRINT_MAX_SECTIONS]
+                        if _sec.title
+                    ]
+                    if _secs:
+                        _head += " · " + " · ".join(_secs)
                     _by = ", ".join(_format_requirement_link(_r, _known_req_ids) for _r in _bp.requirement_ids)
                     _blueprint_ref = f"{_head} (for {_by})" if _by else _head
                 elif _bp_cell:
@@ -18962,6 +19045,8 @@ def render(
     # component-scoped `auth-001`) BEFORE the dot retrofit so the new links get
     # their severity glyph too.
     rendered = _apply_outside_changelog(rendered, lambda s: _linkify_bare_finding_refs(ctx, s))
+    # Same treatment for requirement IDs, against the URL the catalog declares.
+    rendered = _apply_outside_changelog(rendered, lambda s: _linkify_bare_requirement_refs(ctx, s))
     rendered = _apply_outside_changelog(
         rendered,
         lambda s: _prepend_mitigation_prio_circles(ctx, _prepend_finding_severity_dots(ctx, s)),
