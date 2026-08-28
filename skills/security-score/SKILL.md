@@ -20,10 +20,12 @@ FLAGS
   --json          Emit the result as machine-readable JSON
 
 WHAT THE NUMBER IS
+  An indication, not a full security analysis.
+
   One score per indicator — Output Handling, Frontend Security, Access
   Control, Hardening & Configuration and the rest — from the coverage
-  rules routed to that indicator plus its own scanner findings. Rules
-  that cannot fire on this repository are excluded; an indicator no rule
+  checks routed to that indicator plus its own scanner findings. Checks
+  that cannot fire on this repository are excluded; an indicator no check
   applied to shows its findings but stays unscored.
 
   The headline is the mean of the weaker half: a repository is attacked
@@ -36,7 +38,7 @@ WHAT IT IS NOT
 
 EXIT CODES
   0  score computed
-  2  undetermined — too few rules applied to this repository
+  2  undetermined — too few checks applied to this repository
   1  error
 ```
 

@@ -53,8 +53,8 @@ def test_not_applicable_rules_leave_the_denominator():
 
     result = ss.compute(rules, [])
 
-    assert result["rules_total"] == 7
-    assert result["rules_applicable"] == 5
+    assert result["checks_total"] == 7
+    assert result["checks_applicable"] == 5
     assert result["score"] == 100
 
 
@@ -84,7 +84,7 @@ def test_unknown_status_is_ignored_rather_than_scored():
     rules = _rules(*(["present"] * 5))
     rules.append(_rule("ARCH-X-001", "something-new"))
 
-    assert ss.compute(rules, [])["rules_applicable"] == 5
+    assert ss.compute(rules, [])["checks_applicable"] == 5
 
 
 # --------------------------------------------------------------------------
@@ -270,9 +270,10 @@ def test_rendered_score_always_carries_its_qualifiers():
 
     text = ss.render_text(result)
 
+    assert ss.CAVEAT in text.splitlines()[0]
     assert "quick scan" in text
     assert "no exposure context" in text
-    assert "5 of 5 rules" in text
+    assert "5 of 5 checks" in text
 
 
 def test_every_scored_indicator_row_is_written_out_of_100():
@@ -280,9 +281,9 @@ def test_every_scored_indicator_row_is_written_out_of_100():
     result = ss.compute(rules, [])
     result["warnings"] = []
 
-    rows = [line for line in ss.render_text(result).splitlines() if "/ 100" in line or "no check" in line]
+    rows = [line for line in ss.render_text(result).splitlines() if line.startswith("  ") and "/100" in line]
 
-    assert len(rows) == len(result["categories"]) + 1  # the indicators plus the headline
+    assert len(rows) == len(result["categories"])
 
 
 def test_an_unscored_indicator_says_so_instead_of_showing_a_number():
@@ -302,20 +303,19 @@ def test_undetermined_renders_the_reason_instead_of_a_number():
     text = ss.render_text(result)
 
     assert "undetermined" in text
-    assert "/ 100" not in text
+    assert ss.CAVEAT in text
+    assert "/100" not in text
 
 
-def test_the_detail_line_names_what_the_checks_saw_and_what_was_found():
+def test_an_indicator_row_names_what_its_checks_saw_and_what_was_found():
     rules = _rules(*(["present"] * 4)) + [_rule("ARCH-SQLI-001", "partial", decision="emit_hypothesis_only")]
     result = ss.compute(rules, [_finding("Critical", cwe="CWE-89"), _finding("High", cwe="CWE-89")])
     result["warnings"] = []
 
-    lines = ss.render_text(result).splitlines()
-    detail = lines[lines.index(next(x for x in lines if "Output Handling" in x)) + 1]
+    row = next(line for line in ss.render_text(result).splitlines() if "Output Handling" in line)
 
-    assert "1 hypothesis" in detail
-    assert "1 critical" in detail
-    assert "1 high" in detail
+    assert "1 hypothesis" in row
+    assert "2 findings" in row
 
 
 def test_an_indicator_without_findings_says_so():

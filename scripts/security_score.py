@@ -342,8 +342,8 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
     counts, _ = _tally(findings)
 
     result: dict[str, Any] = {
-        "rules_total": len(rules),
-        "rules_applicable": len(applicable),
+        "checks_total": len(rules),
+        "checks_applicable": len(applicable),
         "findings": counts,
         "findings_total": sum(counts.values()),
         "categories": [],
@@ -353,7 +353,7 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
         result["verdict"] = "undetermined"
         result["score"] = None
         result["reason"] = (
-            f"only {len(applicable)} of {len(rules)} rules applied to this repository "
+            f"only {len(applicable)} of {len(rules)} checks applied to this repository "
             f"({MIN_APPLICABLE_RULES} required) — the rule catalog does not cover it"
         )
         return result
@@ -410,46 +410,33 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
     return result
 
 
-BAR_WIDTH = 10
-
-
 def _count(n: int, noun: str) -> str:
     return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
-
-
-def _bar(points: int) -> str:
-    filled = round(BAR_WIDTH * points / 100)
-    return "█" * filled + "·" * (BAR_WIDTH - filled)
 
 
 # Plural forms for the rule signals; "hypothesis" is the one that needs it.
 _PLURALS = {"hypothesis": "hypotheses", "anti-pattern": "anti-patterns"}
 
 
-def _detail(row: dict[str, Any]) -> str:
-    """The line under a score: what its checks saw, and what was found.
+# Rides in the headline itself, where it cannot be cropped away from the number.
+CAVEAT = "indication only, not a full security analysis"
 
-    Without it the row states a verdict and hides its two reasons — whether a
-    control was actually seen, and how bad the findings behind it are.
-    """
-    parts = []
+
+def _found(row: dict[str, Any]) -> str:
+    """The findings half of an indicator line."""
+    total = row.get("findings") or 0
+    return "no findings" if not total else _count(total, "finding")
+
+
+def _signals(row: dict[str, Any]) -> str:
+    """The checks half of an indicator line."""
     signals = row.get("signals") or {}
-    if signals:
-        parts.append(
-            ", ".join(
-                f"{n} {_PLURALS.get(signal, signal) if n > 1 else signal}"
-                for signal, n in sorted(signals.items(), key=lambda kv: (-kv[1], kv[0]))
-            )
-        )
-    else:
-        parts.append("no check applied")
-
-    severities = row.get("severities") or {}
-    if severities:
-        parts.append(", ".join(f"{n} {severity}" for severity, n in severities.items()))
-    else:
-        parts.append("no findings")
-    return " · ".join(parts)
+    if not signals:
+        return "no check applied"
+    return ", ".join(
+        f"{n} {_PLURALS.get(signal, signal) if n > 1 else signal}"
+        for signal, n in sorted(signals.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
 
 
 def render_text(result: dict[str, Any]) -> str:
@@ -459,19 +446,18 @@ def render_text(result: dict[str, Any]) -> str:
     the number must not travel without them, and prose would be skipped anyway.
     """
     counts = result["findings"]
-    scan = f"quick scan · {result['rules_applicable']} of {result['rules_total']} rules · no exposure context"
+    scan = f"quick scan · {result['checks_applicable']} of {result['checks_total']} checks · no exposure context"
 
     if result["verdict"] == "undetermined":
-        return f"Security Score  undetermined\n{result['reason']}"
+        return f"Security Score  undetermined — {CAVEAT}\n{result['reason']}"
 
-    lines = [f"Security Score  {result['score']} / 100", scan, ""]
+    lines = [f"Security Score  {result['score']} / 100 — {CAVEAT}", scan, ""]
 
     width = max((len(row["label"]) for row in result["categories"]), default=0)
+    found_width = max((len(_found(row)) for row in result["categories"]), default=0)
     for row in result["categories"]:
-        score = "  no check" if row["score"] is None else f"{row['score']:>3} / 100"
-        bar = " " * BAR_WIDTH if row["score"] is None else _bar(row["score"])
-        lines.append(f"  {row['label']:<{width}}  {score}  {bar}")
-        lines.append(f"      {_detail(row)}")
+        score = "no check" if row["score"] is None else f"{row['score']:>3}/100"
+        lines.append(f"  {score:>8}  {row['label']:<{width}}  {_found(row):>{found_width}} · {_signals(row)}")
 
     lines += [
         "",
