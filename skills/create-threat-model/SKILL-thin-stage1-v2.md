@@ -35,6 +35,29 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
   <command> --output-dir "$OUTPUT_DIR"
 ```
 
+When a boundary action overflows to a persisted tool-result file, never `Read`
+that file whole: it re-injects the payload the overflow just spared, and the
+STRIDE action grows with component count. Project it instead. This keeps every
+field this runtime names and drops only controller bookkeeping the session
+never reads:
+
+```bash
+python3 - "<persisted-tool-result-file>" <<'PY'
+import json, sys
+raw = open(sys.argv[1], encoding="utf-8").read()
+action = json.loads(raw[raw.index("{"):])
+drop = {"security_context_projections", "context_delivery_ids"}
+action["dispatch_jobs"] = [
+    {k: v for k, v in job.items() if k not in drop}
+    for job in action.get("dispatch_jobs", [])
+]
+action["artifact_receipts"] = [
+    [r["artifact_path"], r["sha256"]] for r in action.get("artifact_receipts", [])
+]
+print(json.dumps(action, indent=1))
+PY
+```
+
 Send foreground `dispatch_jobs[]` together. Immediately before dispatch call
 `verify-receipts` with every artifact receipt and STRIDE
 `taxonomy_slice_path`/`taxonomy_slice_sha256`. This is the last filesystem
