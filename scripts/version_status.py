@@ -158,14 +158,44 @@ def _package_block(manifest: dict) -> dict:
     }
 
 
+def _git_source(root: Path) -> dict:
+    """Branch, commit SHA, and commit date from the git repo — best-effort."""
+    import subprocess
+
+    def _run(*cmd: str) -> str:
+        try:
+            return subprocess.run(
+                list(cmd), capture_output=True, text=True, timeout=5, cwd=root
+            ).stdout.strip()
+        except Exception:
+            return ""
+
+    ref = _run("git", "branch", "--show-current")
+    log = _run("git", "log", "-1", "--format=%H %ci")
+    parts = log.split(None, 1)
+    return {
+        "ref": ref,
+        "commit": parts[0] if parts else "",
+        "committed_at": parts[1] if len(parts) > 1 else "",
+    }
+
+
 def _core_block(manifest: dict, surface: dict, *, check_updates: bool) -> dict:
     """The appsec-advisor revision underneath, and whether it is still current."""
     core_version = _text(manifest.get("appsec_advisor_core_version")) or _text(manifest.get("version"))
+    ref = _text(manifest.get("appsec_advisor_core_ref"))
+    commit = _text(manifest.get("appsec_advisor_core_commit"))
+    committed_at = _text(manifest.get("appsec_advisor_core_committed_at"))
+    if not ref and not commit:
+        git = _git_source(PLUGIN_ROOT)
+        ref = git.get("ref", "")
+        commit = git.get("commit", "")
+        committed_at = committed_at or git.get("committed_at", "")
     block = {
         "version": core_version,
-        "ref": _text(manifest.get("appsec_advisor_core_ref")),
-        "commit": _text(manifest.get("appsec_advisor_core_commit")),
-        "committed_at": _text(manifest.get("appsec_advisor_core_committed_at")),
+        "ref": ref,
+        "commit": commit,
+        "committed_at": committed_at,
         "published_version": "",
         "state": "not-checked",
         "note": "",

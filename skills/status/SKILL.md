@@ -86,6 +86,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" $ARGS
 Capture the helper's exit code and propagate it. Do not add any commentary to
 the output — the helper's formatting is the deliverable.
 
-## Step 3 — (No step 3)
+## Step 3 — Reprint the output
 
-The helper's output is the skill's output. Exit.
+The user cannot see Bash tool output. Reprint the script's stdout
+**verbatim** in a fenced code block in your text response, every line of it.
+Do not summarise, add commentary, or append anything after the block.
