@@ -274,6 +274,10 @@ banner:
 computed from the repository, so a configured headline can never claim a state
 that is not there.
 
+The same headline titles `/appsec-advisor:status`. Without one, a packaged build
+uses its own package name there, so the status header names your build rather
+than the upstream product.
+
 `url` is not printed in the banner; the `help` skill prints it under "More
 information". Point it at an internal repository or runbook.
 
@@ -624,7 +628,7 @@ it never overrides tool behaviour, gates, or severity.
 Org Profile
 -----------
   Status           active
-  Organization     acme
+  Organization     Acme Corp (acme)
   Version          2026.05.1
   Path             /workspace/internal-appsec-advisor/org-profile/org-profile.yaml
   Preset           ci-standard (base: standard)

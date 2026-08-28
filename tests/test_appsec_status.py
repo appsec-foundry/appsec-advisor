@@ -1003,3 +1003,62 @@ class TestLiveSnapshotSmoke:
         }
         out = appsec_status._render_live(snap)
         assert "no live tool-use markers" in out
+
+
+# ---------------------------------------------------------------------------
+# _display_name / _organization_label — whose build this is
+# ---------------------------------------------------------------------------
+
+
+class TestOrganizationIdentity:
+    """A packaged build must answer to the organization that packaged it.
+
+    Printing the upstream product name, or the profile slug where the
+    organization has a name, makes an internal build look like someone
+    else's example.
+    """
+
+    def test_banner_headline_wins(self, appsec_status, tmp_path, monkeypatch):
+        monkeypatch.setattr(appsec_status, "PLUGIN_ROOT", tmp_path)
+        (tmp_path / "config.json").write_text(json.dumps({"banner": {"headline": "Northwind AppSec"}}))
+        manifest = {"name": "northwind-appsec", "appsec_advisor_core_version": "0.6.0"}
+        assert appsec_status._display_name(manifest) == "Northwind AppSec"
+
+    def test_organization_build_falls_back_to_its_package_name(self, appsec_status, tmp_path, monkeypatch):
+        monkeypatch.setattr(appsec_status, "PLUGIN_ROOT", tmp_path)
+        (tmp_path / "config.json").write_text(json.dumps({"banner": {}}))
+        manifest = {"name": "northwind-appsec", "appsec_advisor_core_version": "0.6.0"}
+        assert appsec_status._display_name(manifest) == "northwind-appsec"
+
+    def test_upstream_build_keeps_the_product_name(self, appsec_status, tmp_path, monkeypatch):
+        monkeypatch.setattr(appsec_status, "PLUGIN_ROOT", tmp_path)
+        (tmp_path / "config.json").write_text(json.dumps({"banner": {}}))
+        assert appsec_status._display_name({"name": "appsec-advisor"}) == "AppSec Plugin"
+
+    def test_identity_line_prints_the_display_name(self, appsec_status):
+        data = _base_data()
+        data["plugin"]["display_name"] = "Northwind AppSec"
+        out = appsec_status.render_text(data)
+        assert out.splitlines()[0].startswith("Northwind AppSec v0.4")
+
+    def test_org_profile_row_names_the_organization(self, appsec_status):
+        data = _base_data()
+        data["org_profile"] = {
+            "active": True,
+            "id": "northwind",
+            "name": "Northwind Trading AG",
+            "version": "1.0",
+            "path": "/p",
+        }
+        out = appsec_status.render_text(data)
+        assert "Northwind Trading AG (northwind)" in out
+
+    def test_org_profile_row_falls_back_to_the_id(self, appsec_status):
+        assert appsec_status._organization_label({"id": "northwind"}) == "northwind"
+        assert appsec_status._organization_label({"id": "nw", "name": "nw"}) == "nw"
+        assert appsec_status._organization_label({}) == "?"
+
+    def test_active_profile_carries_the_organization_name(self, appsec_status, tmp_path):
+        eff = {"org_profile": {"active": True, "id": "northwind", "name": "Northwind Trading AG"}}
+        (tmp_path / ".org-profile-effective.json").write_text(json.dumps(eff))
+        assert appsec_status._org_profile_status(tmp_path)["name"] == "Northwind Trading AG"

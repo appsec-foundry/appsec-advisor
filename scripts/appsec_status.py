@@ -108,6 +108,25 @@ def _effective_config_path() -> Path:
     return local if local.is_file() else PLUGIN_ROOT / "config.json"
 
 
+def _display_name(plugin_json: dict) -> str:
+    """The name this build answers to on the identity line.
+
+    An organization build is not "the AppSec Plugin" to the people running it:
+    it carries its own package name and, when the profile declared one, a
+    ``banner.headline``. The precedence is session_banner.py's, so the banner
+    and the status header cannot disagree about whose build this is. An
+    upstream build keeps the product name.
+    """
+    banner = (_load_json(_effective_config_path()) or {}).get("banner") or {}
+    headline = banner.get("headline")
+    if isinstance(headline, str) and headline.strip():
+        return headline.strip()
+    name = plugin_json.get("name")
+    if plugin_json.get("appsec_advisor_core_version") and isinstance(name, str) and name.strip():
+        return name.strip()
+    return "AppSec Plugin"
+
+
 def _skill_exists(skill: str) -> bool:
     return (PLUGIN_ROOT / "skills" / skill / "SKILL.md").is_file()
 
@@ -207,6 +226,21 @@ def _registered_hook_ids() -> set[str]:
     return ids
 
 
+def _organization_label(org: dict) -> str:
+    """How the active organization is named on the Org Profile line.
+
+    The profile carries both a slug (`id`) and the organization's own name;
+    a reader recognises the name, while the id is what every configuration
+    path and error message uses. Printing only the id makes the build look
+    like it belongs to someone else's example.
+    """
+    name = str(org.get("name") or "").strip()
+    ident = str(org.get("id") or "").strip()
+    if name and ident and name != ident:
+        return f"{name} ({ident})"
+    return name or ident or "?"
+
+
 def _org_profile_status(output_dir: Path) -> dict:
     """Read ``.org-profile-effective.json`` if present.
 
@@ -218,6 +252,7 @@ def _org_profile_status(output_dir: Path) -> dict:
         return {
             "active": True,
             "id": eff["org_profile"].get("id"),
+            "name": eff["org_profile"].get("name"),
             "version": eff["org_profile"].get("version"),
             "path": eff["org_profile"].get("path"),
             "source": eff["org_profile"].get("source"),
@@ -580,7 +615,8 @@ def render_text(data: dict) -> str:
         buf.append("")
 
     buf.append(
-        f"AppSec Plugin v{meta.get('plugin_version', '?')}  (analysis_version={meta.get('analysis_version', '?')})"
+        f"{meta.get('display_name') or 'AppSec Plugin'} v{meta.get('plugin_version', '?')}"
+        f"  (analysis_version={meta.get('analysis_version', '?')})"
     )
     buf.append("=" * 72)
 
@@ -644,7 +680,7 @@ def render_text(data: dict) -> str:
     if org.get("active"):
         rows = [
             ("Status", "active"),
-            ("Organization", str(org.get("id") or "?")),
+            ("Organization", _organization_label(org)),
             ("Version", str(org.get("version") or "?")),
             ("Path", str(org.get("path") or "?")),
             (
@@ -1114,6 +1150,7 @@ def main(argv: list[str] | None = None) -> int:
             "plugin_version": plugin_json.get("version", "unknown"),
             "analysis_version": plugin_json.get("analysis_version"),
             "compatible_analysis_versions": plugin_json.get("compatible_analysis_versions", []),
+            "display_name": _display_name(plugin_json),
         },
         "paths": {
             "plugin_root": str(PLUGIN_ROOT),
