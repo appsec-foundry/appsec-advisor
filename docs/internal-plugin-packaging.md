@@ -343,6 +343,8 @@ The build writes the plugin to `build/acme-appsec/` and creates `dist/acme-appse
 
 Every build writes `.claude-plugin/package-surface.json` into the packaged tree. It records the included and removed skills, hooks, and MCP servers so CI and reviewers can verify the artifact surface without reverse-engineering the copied files.
 
+Every build also stamps the upstream revision it was built from into `.claude-plugin/plugin.json`: `appsec_advisor_core_version`, `appsec_advisor_core_ref` (the branch or tag, for example `main` or `dev`), `appsec_advisor_core_commit`, `appsec_advisor_core_committed_at`, and `appsec_advisor_packaged_at`. A build made from a modified checkout is marked `appsec_advisor_core_dirty`. The packaged tree carries no `.git`, so these fields are the only place an installed build can still answer where its code came from — `/<namespace>:status` prints them. Pass `--upstream-url` to record the source repository explicitly; without it the packager uses the source checkout's `origin` remote.
+
 Run the smoke test after every build. It checks the plugin identity, org-profile wiring, namespace rewrite, and the package-surface manifest when present:
 
 ```console

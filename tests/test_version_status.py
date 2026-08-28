@@ -43,6 +43,7 @@ def plugin(tmp_path: Path) -> Path:
                 "appsec_advisor_core_ref": "dev",
                 "appsec_advisor_core_commit": "9f2c1ab7c3d1" + "0" * 28,
                 "appsec_advisor_core_committed_at": "2026-08-23T19:09:53+02:00",
+                "appsec_advisor_packaged_at": "2026-08-24T07:30:00Z",
             }
         ),
         encoding="utf-8",
@@ -90,6 +91,7 @@ def test_local_versions_are_read_without_touching_the_network(plugin: Path, monk
         "name": "acme-appsec",
         "version": "1.2.0",
         "organization_build": True,
+        "packaged_at": "2026-08-24T07:30:00Z",
         "state": "unknown",
     }
     assert data["core"]["version"] == "0.6.0-beta.1"
@@ -117,7 +119,7 @@ def test_update_check_reports_outdated_baseline_and_current_core(plugin: Path, m
     rendered = dict(vs.rows(data))
     assert "outdated, published test-1.2" in rendered["Baseline"]
     assert "current" in rendered["Core"]
-    assert rendered["Package"] == "acme-appsec 1.2.0"
+    assert rendered["Package"] == "acme-appsec 1.2.0  (organization build)"
 
 
 def test_newer_published_core_is_reported_as_behind(plugin: Path, monkeypatch) -> None:
@@ -161,6 +163,38 @@ def test_document_without_a_marker_is_not_taken_as_current(plugin: Path, monkeyp
     assert data["baseline"]["state"] == "unknown"
     assert "declares no baseline id" in data["baseline"]["note"]
     assert data["core"]["state"] == "unknown"
+
+
+def test_every_identity_line_is_printed_for_a_packaged_build(plugin: Path, monkeypatch) -> None:
+    """A reader on another machine must see all of it without a second command."""
+    _served(monkeypatch, {})
+    rendered = dict(vs.rows(vs.collect(repo=None, plugin_root=plugin)))
+
+    assert rendered["Package"] == "acme-appsec 1.2.0  (organization build)"
+    assert rendered["Packaged"] == "2026-08-24T07:30:00Z"
+    assert rendered["Core"].startswith("0.6.0-beta.1 · dev @ 9f2c1ab7c3d1 · 2026-08-23")
+    assert rendered["Core source"] == "https://github.com/appsec-foundry/appsec-advisor"
+    assert rendered["Baseline"].startswith("test-1.0 — Test Baseline")
+    assert rendered["Baseline source"] == "https://raw.githubusercontent.test/baseline.md"
+    assert "Baseline loaded" in rendered
+
+
+def test_a_build_without_provenance_says_so_rather_than_dropping_the_line(tmp_path: Path, monkeypatch) -> None:
+    """The silent case the packager used to produce: a version number and nothing else."""
+    root = tmp_path / "plugin"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "acme-appsec", "version": "1.2.0"}), encoding="utf-8"
+    )
+    (root / "config.json").write_text(json.dumps({"baseline": {"enabled": False}}), encoding="utf-8")
+    _served(monkeypatch, {})
+    monkeypatch.setattr(vs, "_git_source", lambda root: {"ref": "", "commit": "", "committed_at": "", "origin": ""})
+
+    rendered = dict(vs.rows(vs.collect(repo=None, plugin_root=root)))
+
+    assert rendered["Package"] == "acme-appsec 1.2.0  (upstream build)"
+    assert "revision not recorded in this build" in rendered["Core"]
+    assert rendered["Core source"] == "not recorded in this build"
 
 
 def test_a_baseline_the_build_disabled_is_not_checked(tmp_path: Path, monkeypatch) -> None:

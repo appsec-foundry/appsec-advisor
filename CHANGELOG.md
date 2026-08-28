@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `/appsec-advisor:status` now names the package, core and secure-coding baseline versions it is running, and `--check-updates` says whether the configured baseline and the packaged core are still the published ones.
+- `/appsec-advisor:status` now always names the package, core and secure-coding baseline versions it is running, with the upstream branch, commit and date behind them and the source URLs they came from; `--check-updates` says whether the configured baseline and the packaged core are still the published ones. Packaged organization builds record that upstream revision at build time, so an installed package reports it too.
 - `/appsec-advisor:security-score` reports a deterministic 0-100 score for a repository from the scanner layer alone, without running a threat model: one score per security indicator, the ten most severe checks by name, and no value at all when the rule catalog does not cover the repository.
 - Headless runs can launch Claude Code through an environment-provided wrapper executable.
 - Deterministic source scans now detect direct unsafe LLM-output flows into structured data, browser rendering, interpreters, resources, and privileged actions, while LLM review covers indirect flows.

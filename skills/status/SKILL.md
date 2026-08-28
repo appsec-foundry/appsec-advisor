@@ -86,8 +86,15 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" $ARGS
 Capture the helper's exit code and propagate it. Do not add any commentary to
 the output — the helper's formatting is the deliverable.
 
+If the helper cannot run (missing file, non-zero exit, empty stdout), that is
+the status: print the command you ran and its stderr verbatim, and stop. Never
+answer from your own knowledge of the plugin instead — a summary written here
+looks like a working status report and hides a broken installation.
+
 ## Step 3 — Reprint the output
 
 The user cannot see Bash tool output. Reprint the script's stdout
-**verbatim** in a fenced code block in your text response, every line of it.
-Do not summarise, add commentary, or append anything after the block.
+**verbatim** in a fenced code block in your text response, every line of it,
+from the version headline to the last line. Do not summarise, shorten,
+reorder, or drop a table — the Versions table in particular is what a reader
+compares between machines. Add no commentary before or after the block.

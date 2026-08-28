@@ -154,19 +154,28 @@ def _package_block(manifest: dict) -> dict:
         "name": _text(manifest.get("name")),
         "version": version,
         "organization_build": bool(core_version),
+        "packaged_at": _text(manifest.get("appsec_advisor_packaged_at")),
         "state": "unknown" if core_version else "same-as-core",
     }
 
 
+def _https_remote(remote: str) -> str:
+    """An origin remote as a browsable https URL, or empty when it is neither."""
+    match = re.match(r"^(?:git\+)?ssh://git@([^/]+)/(.+?)(?:\.git)?/?$", remote) or re.match(
+        r"^git@([^:]+):(.+?)(?:\.git)?/?$", remote
+    )
+    if match:
+        return f"https://{match.group(1)}/{match.group(2)}"
+    return remote.removesuffix(".git") if remote.startswith("https://") else ""
+
+
 def _git_source(root: Path) -> dict:
-    """Branch, commit SHA, and commit date from the git repo — best-effort."""
+    """Branch, commit SHA, commit date, and origin from the git repo — best-effort."""
     import subprocess
 
     def _run(*cmd: str) -> str:
         try:
-            return subprocess.run(
-                list(cmd), capture_output=True, text=True, timeout=5, cwd=root
-            ).stdout.strip()
+            return subprocess.run(list(cmd), capture_output=True, text=True, timeout=5, cwd=root).stdout.strip()
         except Exception:
             return ""
 
@@ -177,6 +186,7 @@ def _git_source(root: Path) -> dict:
         "ref": ref,
         "commit": parts[0] if parts else "",
         "committed_at": parts[1] if len(parts) > 1 else "",
+        "origin": _https_remote(_run("git", "remote", "get-url", "origin")),
     }
 
 
@@ -186,16 +196,20 @@ def _core_block(manifest: dict, surface: dict, *, check_updates: bool) -> dict:
     ref = _text(manifest.get("appsec_advisor_core_ref"))
     commit = _text(manifest.get("appsec_advisor_core_commit"))
     committed_at = _text(manifest.get("appsec_advisor_core_committed_at"))
+    origin = _text(surface.get("upstream_url"))
     if not ref and not commit:
         git = _git_source(PLUGIN_ROOT)
         ref = git.get("ref", "")
         commit = git.get("commit", "")
         committed_at = committed_at or git.get("committed_at", "")
+        origin = origin or git.get("origin", "")
     block = {
         "version": core_version,
         "ref": ref,
         "commit": commit,
         "committed_at": committed_at,
+        "dirty": bool(manifest.get("appsec_advisor_core_dirty")),
+        "origin": origin.removesuffix(".git"),
         "published_version": "",
         "state": "not-checked",
         "note": "",
@@ -232,6 +246,8 @@ def _baseline_block(config: dict, loaded: dict, *, check_updates: bool) -> dict:
     block = {
         "enabled": bool(config.get("enabled")),
         "configured_id": _text(config.get("id")),
+        "name": _text(config.get("name")),
+        "url": _text(config.get("url")),
         "loaded_status": _text(loaded.get("status")),
         "loaded_id": "",
         "loaded_scopes": bc.scope_text(loaded.get("scopes")),
@@ -301,24 +317,37 @@ def collect(
 
 
 def rows(data: dict) -> list[tuple[str, str]]:
-    """The ``(label, value)`` lines a status dump prints for ``collect()``."""
+    """The ``(label, value)`` lines a status dump prints for ``collect()``.
+
+    Every line is unconditional. A reader diagnosing an installation on another
+    machine needs to see that a build records no revision or no source URL just
+    as much as they need the values — a row that disappears when its value is
+    missing reads as "nothing to report" and hides exactly the builds worth
+    asking about.
+    """
     package, core, baseline = data["package"], data["core"], data["baseline"]
     out: list[tuple[str, str]] = []
 
-    if package["organization_build"]:
-        out.append(("Package", f"{package['name']} {package['version']}".strip()))
+    kind = "organization build" if package["organization_build"] else "upstream build"
+    out.append(("Package", f"{package['name'] or '?'} {package['version'] or '?'}  ({kind})"))
+    if package["packaged_at"]:
+        out.append(("Packaged", package["packaged_at"]))
 
     core_parts = [core["version"] or "?"]
-    origin = " @ ".join(part for part in (core["ref"], core["commit"][:12]) if part)
-    if origin:
-        core_parts.append(origin)
+    revision = " @ ".join(part for part in (core["ref"], core["commit"][:12]) if part)
+    core_parts.append(revision or "revision not recorded in this build")
     if core["committed_at"]:
         core_parts.append(core["committed_at"][:10])
+    if core["dirty"]:
+        core_parts.append("built from a modified tree")
     out.append(("Core", f"{' · '.join(core_parts)}{_state_suffix(core, 'published_version')}"))
+    out.append(("Core source", core["origin"] or "not recorded in this build"))
 
     if baseline["enabled"]:
         configured = baseline["configured_id"] or "?"
-        out.append(("Baseline", f"{configured}{_state_suffix(baseline, 'published_id')}"))
+        name = f" — {baseline['name']}" if baseline["name"] else ""
+        out.append(("Baseline", f"{configured}{name}{_state_suffix(baseline, 'published_id')}"))
+        out.append(("Baseline source", baseline["url"] or "no URL configured in this build"))
         out.append(("Baseline loaded", _loaded_text(baseline)))
     else:
         out.append(("Baseline", "not configured in this build"))

@@ -9,6 +9,8 @@ and the main() orchestration via a minimal synthetic plugin root.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -183,13 +185,76 @@ def test_patch_plugin_json_default_and_override(tmp_path):
     build = tmp_path / "build"
     (build / ".claude-plugin").mkdir(parents=True)
     (build / ".claude-plugin" / "plugin.json").write_text(json.dumps({"name": "x"}), encoding="utf-8")
-    pkg.patch_plugin_json(build, "acme", "1.0.0", None)
+    pkg.patch_plugin_json(build, "acme", "1.0.0", None, tmp_path)
     data = json.loads((build / ".claude-plugin" / "plugin.json").read_text())
     assert data["name"] == "acme" and data["version"] == "1.0.0"
     assert "Internal packaged build" in data["description"]
-    pkg.patch_plugin_json(build, "acme", "1.0.0", "custom desc")
+    pkg.patch_plugin_json(build, "acme", "1.0.0", "custom desc", tmp_path)
     data = json.loads((build / ".claude-plugin" / "plugin.json").read_text())
     assert data["description"] == "custom desc"
+
+
+def _git_repo(root: Path) -> None:
+    """A one-commit checkout on branch ``dev``, enough to read provenance from."""
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"}
+    run = lambda *cmd: subprocess.run(cmd, cwd=root, check=True, capture_output=True, env={**os.environ, **env})
+    run("git", "init", "-q", "-b", "dev")
+    (root / "file.txt").write_text("x", encoding="utf-8")
+    run("git", "add", "file.txt")
+    run("git", "commit", "-qm", "init")
+    run("git", "remote", "add", "origin", "git@github.com:acme/appsec-advisor.git")
+
+
+def test_packaged_manifest_records_the_upstream_revision_it_was_built_from(tmp_path):
+    """A build tree carries no .git, so status can only report what is stamped here."""
+    source = tmp_path / "source"
+    source.mkdir()
+    _git_repo(source)
+    build = tmp_path / "build"
+    (build / ".claude-plugin").mkdir(parents=True)
+    (build / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "appsec-advisor", "version": "0.6.0-beta.2"}), encoding="utf-8"
+    )
+
+    pkg.patch_plugin_json(build, "acme", "1.0.0", None, source)
+
+    data = json.loads((build / ".claude-plugin" / "plugin.json").read_text())
+    assert data["version"] == "1.0.0"
+    assert data["appsec_advisor_core_version"] == "0.6.0-beta.2"
+    assert data["appsec_advisor_core_ref"] == "dev"
+    assert len(data["appsec_advisor_core_commit"]) == 40
+    assert data["appsec_advisor_core_committed_at"].startswith("2")
+    assert data["appsec_advisor_packaged_at"].endswith("Z")
+    assert "appsec_advisor_core_dirty" not in data
+
+
+def test_a_source_tree_without_git_still_records_the_core_version(tmp_path):
+    build = tmp_path / "build"
+    (build / ".claude-plugin").mkdir(parents=True)
+    (build / ".claude-plugin" / "plugin.json").write_text(json.dumps({"version": "0.6.0"}), encoding="utf-8")
+
+    pkg.patch_plugin_json(build, "acme", "1.0.0", None, tmp_path / "nowhere")
+
+    data = json.loads((build / ".claude-plugin" / "plugin.json").read_text())
+    assert data["appsec_advisor_core_version"] == "0.6.0"
+    assert "appsec_advisor_core_commit" not in data
+
+
+@pytest.mark.parametrize(
+    ("remote", "expected"),
+    [
+        ("git@github.com:acme/appsec-advisor.git", "https://github.com/acme/appsec-advisor"),
+        ("ssh://git@gitlab.example.com/team/advisor.git", "https://gitlab.example.com/team/advisor"),
+        ("https://github.com/acme/appsec-advisor.git", "https://github.com/acme/appsec-advisor"),
+        ("/srv/mirrors/appsec-advisor", None),
+    ],
+)
+def test_upstream_url_is_derived_from_the_origin_remote(tmp_path, remote, expected):
+    source = tmp_path / "source"
+    source.mkdir()
+    _git_repo(source)
+    subprocess.run(["git", "remote", "set-url", "origin", remote], cwd=source, check=True, capture_output=True)
+    assert pkg.upstream_url_from_git(source) == expected
 
 
 def test_patch_config(tmp_path):
@@ -1388,11 +1453,12 @@ def test_main_with_archive_skip_validation(tmp_path, capsys):
 def test_main_runs_validation(tmp_path, monkeypatch, capsys):
     calls = []
 
-    def fake_run(cmd, check):
+    def fake_run(cmd, check=False, **kwargs):
         calls.append(cmd)
 
         class R:
             returncode = 0
+            stdout = ""
 
         return R()
 
