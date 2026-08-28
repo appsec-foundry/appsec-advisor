@@ -17353,6 +17353,20 @@ _INLINE_CODE_PATTERNS: list[str] = [
 _INLINE_CODE_RE = re.compile("|".join(_INLINE_CODE_PATTERNS))
 
 
+def _norm_step(text: object) -> str:
+    """Normalise a remediation line for duplicate comparison.
+
+    Collapses whitespace, casefolds, and drops trailing punctuation so a step
+    is recognised as a restatement of `how` when the two differ only in how
+    the emitter happened to terminate the sentence. Deliberately no deeper
+    fuzzing: this decides whether a line is DROPPED, so a near-miss must fail
+    closed and keep the step.
+    """
+    if not isinstance(text, str):
+        return ""
+    return " ".join(text.split()).casefold().rstrip(".;: ")
+
+
 def _wrap_inline_code(text: str) -> str:
     """Wrap code-shaped tokens with backticks while preserving existing
     fenced/inline code regions verbatim. Idempotent — running this twice
@@ -18095,9 +18109,25 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 # ORDERED list (1. 2. 3.) so the implied execution order is
                 # explicit (2026-05-29 user request). A bullet list reads as an
                 # unordered set; remediation is a procedure.
+                # A step that merely restates `how` is not a second action —
+                # it ships the same sentence twice under one card, once as the
+                # paragraph and once as item 1. `_remediation_how` already
+                # guards this for finding-derived cards (M-038, 2026-07-02),
+                # but scanner cards resolve `how` and `steps[0]` from the SAME
+                # check `remediation:` string through two independent emitters
+                # (`_resolve_remediation` and `backfill_scanner_remediation`),
+                # so the per-emitter guard never sees them. Drop it here, at
+                # the single point every source funnels through — 5 of 55
+                # cards on juice-shop 2026-08-27 (M-032/33/34/49/51, all
+                # `config_check_id`). The quality gate counts `steps` in the
+                # data, not this rendering, so suppressing a duplicate line
+                # cannot push a card under its minimum.
+                _how_key = _norm_step(how)
                 _step_n = 0
                 for step in steps:
                     s = (step or "").strip() if isinstance(step, str) else ""
+                    if s and _norm_step(s) == _how_key:
+                        continue
                     if s:
                         # Inline-code-fence single-quotes that surround
                         # short identifiers so list items survive markdown
