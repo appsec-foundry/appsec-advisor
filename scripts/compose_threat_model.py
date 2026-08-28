@@ -2238,6 +2238,11 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
         lines.append("> - **No §3 Attack Walkthroughs** (entirely skipped at `--quick`)")
     else:
         lines.append("> - **§3 Attack Walkthroughs** limited to Critical findings")
+    # Quick drops the Stage-1d verifier fan-out by default, so §9 carries no
+    # chain verdict. Name the reduction here for the same reason §3 names its
+    # own: an unrun analysis must not read as a clean result.
+    if ctx.eval_context.get("skip_abuse_case_verification"):
+        lines.append("> - **No §9 abuse-case verification** (skipped at `--quick`; re-run with `--abuse-cases`)")
     # Incremental depth-downgrade transparency: prior threats re-injected by the
     # reconciler (build_threat_model_yaml.reconcile_incremental_threats) because
     # this shallower quick run could not re-confirm them. Surface the count once
@@ -17508,6 +17513,29 @@ def _heal_abuse_cases_fragment(ctx: RenderContext) -> str:
     return md.strip()
 
 
+def _abuse_cases_placeholder(ctx: RenderContext) -> str:
+    """Return the §9 body used when no abuse-case evaluation exists on disk.
+
+    Two states share that empty fragment and they mean opposite things. Stage 1d
+    ran and matched nothing — the "none identified" line is then correct. Or
+    Stage 1d never ran (`--no-abuse-cases`, or the quick-depth default in
+    `resolve_config.resolve_abuse_case_verification`) — claiming "none
+    identified" would then assert a coverage result the run never produced.
+    """
+    skipped = bool(ctx.eval_context.get("skip_abuse_case_verification")) or bool(
+        _read_skill_config(ctx.output_dir).get("skip_abuse_case_verification")
+    )
+    if not skipped:
+        return "_No abuse cases were identified or mandated for this assessment._"
+    label = str(_read_skill_config(ctx.output_dir).get("abuse_case_label") or "").strip()
+    reason = label.removeprefix("skipped").strip().strip("()").strip()[:60]
+    suffix = f" ({reason})" if reason else ""
+    return (
+        f"_Abuse-case verification did not run for this assessment{suffix}. "
+        "No abuse-case scenario was evaluated._"
+    )
+
+
 def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render §9 Abuse Cases.
 
@@ -17535,7 +17563,7 @@ def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: di
     if not md:
         md = _heal_abuse_cases_fragment(ctx)
     if not md:
-        return f"{heading}\n\n_No abuse cases were identified or mandated for this assessment._\n"
+        return f"{heading}\n\n{_abuse_cases_placeholder(ctx)}\n"
     first = next((ln.strip() for ln in md.splitlines() if ln.strip()), "")
     if first != heading:
         raise FragmentError(
@@ -18743,6 +18771,12 @@ def render(
             "has_authored_walkthroughs": _has_authored_walkthroughs,
             "skip_attack_paths_authoring": bool(_read_skill_config(output_dir).get("skip_attack_paths_authoring")),
             "skip_qa": bool(_read_skill_config(output_dir).get("skip_qa")),
+            # Stage 1d ran no matcher and no verifier (explicit --no-abuse-cases,
+            # or the quick-depth default). §9 must then say so instead of
+            # rendering its "none identified" placeholder over an unassessed area.
+            "skip_abuse_case_verification": bool(
+                _read_skill_config(output_dir).get("skip_abuse_case_verification")
+            ),
             # 13-section schema_v2 — the only supported §7 contract.
             "security_schema": _resolve_security_schema(output_dir),
         },

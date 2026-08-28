@@ -1514,6 +1514,8 @@ sections:
   # otherwise emits a single italic placeholder line, so the §8 → §10
   # numbering stays contiguous even when no abuse case applies (the
   # contract hard-numbers §10 Mitigation Register / §11 Out of Scope).
+  # The placeholder distinguishes "matched nothing" from "verification never
+  # ran" (`skip_abuse_case_verification`); see `_abuse_cases_placeholder`.
   abuse_cases:
     heading: "## 9. Abuse Cases"
     heading_numbered: true

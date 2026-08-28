@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The requirements harvester now takes the whole requirement section, recognises IDs written without brackets, and no longer duplicates entries.
+- Section 9 now says when abuse-case verification did not run instead of reporting that no abuse case was identified, and a quick run names the skipped verification in its scope banner.
+- A configured abuse-case release gate still ends the run, but now only after section 9 and the finding ranking are written, so the chain that failed the gate is on disk.
 
 ## 0.6.0-beta.1 (2026-08-23)
 

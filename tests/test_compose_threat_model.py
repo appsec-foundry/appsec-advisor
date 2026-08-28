@@ -5311,6 +5311,74 @@ def test_verdict_export_resolves_reader_facing_ids(tmp_path: Path) -> None:
     assert export["bullets"][1]["verified_attack_path"] is False
 
 
+def _abuse_placeholder_ctx(tmp_path: Path, cfg: dict | None, eval_context: dict) -> compose.RenderContext:
+    if cfg is not None:
+        (tmp_path / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    return compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+        eval_context=eval_context,
+    )
+
+
+def test_section9_placeholder_states_a_result_only_when_verification_ran(tmp_path: Path) -> None:
+    ctx = _abuse_placeholder_ctx(tmp_path, {"skip_abuse_case_verification": False}, {})
+    assert compose._abuse_cases_placeholder(ctx) == "_No abuse cases were identified or mandated for this assessment._"
+
+
+def test_section9_placeholder_says_verification_never_ran_when_skipped(tmp_path: Path) -> None:
+    # Quick depth skips Stage 1d by default; "none identified" would then assert
+    # a coverage result the run never produced.
+    ctx = _abuse_placeholder_ctx(
+        tmp_path,
+        {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (auto - quick depth)"},
+        {"skip_abuse_case_verification": True},
+    )
+    body = compose._abuse_cases_placeholder(ctx)
+    assert body.startswith("_Abuse-case verification did not run for this assessment (auto - quick depth).")
+    assert "identified" not in body
+
+
+def test_section9_handler_emits_the_skip_placeholder_under_the_heading(tmp_path: Path) -> None:
+    ctx = _abuse_placeholder_ctx(
+        tmp_path,
+        {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (--no-abuse-cases)"},
+        {},
+    )
+    out = compose._render_abuse_cases(ctx, compose._build_jinja_env(ctx), {"heading": "## 9. Abuse Cases"})
+    assert out.startswith("## 9. Abuse Cases\n\n_Abuse-case verification did not run")
+    assert "(--no-abuse-cases)" in out
+
+
+def test_quick_banner_names_skipped_abuse_case_verification(tmp_path: Path) -> None:
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [], "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"is_quick_depth": True, "skip_abuse_case_verification": True},
+    )
+    out = compose._render_quick_mode_notice(ctx, compose._build_jinja_env(ctx), {})
+    assert "No §9 abuse-case verification" in out
+
+
+def test_quick_banner_silent_when_abuse_case_verification_ran(tmp_path: Path) -> None:
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [], "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"is_quick_depth": True, "skip_abuse_case_verification": False},
+    )
+    out = compose._render_quick_mode_notice(ctx, compose._build_jinja_env(ctx), {})
+    assert "abuse-case verification" not in out
+
+
 def test_quick_banner_shows_n_of_m(tmp_path: Path) -> None:
     yaml_data = {"meta": {"component_selection": _cs_with_exclusions()}, "components": []}
     ctx = compose.RenderContext(
