@@ -20,7 +20,7 @@ FLAGS
   --json          Emit the result as machine-readable JSON
 
 WHAT THE NUMBER IS
-  An indication, not a full security analysis.
+  A limited quick check, not a full security analysis.
 
   One score per indicator — Output Handling, Frontend Security, Access
   Control, Hardening & Configuration and the rest — from the coverage
@@ -29,7 +29,8 @@ WHAT THE NUMBER IS
   applied to shows its findings but stays unscored.
 
   The headline is the mean of the weaker half: a repository is attacked
-  where it is weakest.
+  where it is weakest. Below the indicators the ten most severe checks
+  are named, grouped by check with one example location each.
 
 WHAT IT IS NOT
   No asset tier, no exposure, no abuse chain. Severities are catalog

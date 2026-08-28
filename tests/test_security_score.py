@@ -226,6 +226,84 @@ def test_score_never_falls_below_zero():
 
 
 # --------------------------------------------------------------------------
+# The finding list
+# --------------------------------------------------------------------------
+
+
+def _hit(severity: str, check_id: str, title: str, file: str, line: int = 1, scanner: str = "source-auth") -> dict:
+    return {
+        "severity": severity,
+        "check_id": check_id,
+        "title": title,
+        "file": file,
+        "line": line,
+        "_scanner": scanner,
+    }
+
+
+def test_the_list_groups_by_check_and_counts_the_instances():
+    findings = [
+        _hit("Critical", "AUTHZ-001", "Broken authorization — owner id", "a.ts", 1),
+        _hit("Critical", "AUTHZ-001", "Broken authorization — owner id", "b.ts", 2),
+        _hit("High", "SQLI-001", "SQL injection — concatenated query", "c.ts", 3),
+    ]
+
+    rows = ss.top_findings(findings)
+
+    assert [(row["title"], row["count"]) for row in rows] == [
+        ("Broken authorization", 2),
+        ("SQL injection", 1),
+    ]
+    assert rows[0]["location"] == "a.ts:1"
+
+
+def test_the_list_is_ordered_by_severity_then_frequency():
+    findings = [_hit("High", "H", "High thing", "a.ts") for _ in range(5)]
+    findings += [_hit("Critical", "C", "Critical thing", "b.ts")]
+    findings += [_hit("High", "H2", "Other high thing", "c.ts") for _ in range(2)]
+
+    assert [row["title"] for row in ss.top_findings(findings)] == [
+        "Critical thing",
+        "High thing",
+        "Other high thing",
+    ]
+
+
+def test_the_list_is_capped():
+    findings = [_hit("High", f"CHK-{i}", f"Thing {i}", "a.ts") for i in range(30)]
+
+    assert len(ss.top_findings(findings)) == ss.TOP_FINDINGS
+
+
+def test_a_config_check_is_named_by_its_open_action_not_its_target_state():
+    """The check name states the desired state and would read as a pass."""
+    finding = {
+        "severity": "Medium",
+        "title": "package-lock.json present and committed",
+        "recommended_mitigation_title": "Commit package-lock.json; use `npm ci` in CI",
+        "_scanner": "config-iac",
+    }
+
+    assert ss.finding_title(finding) == "Commit package-lock.json; use `npm ci` in CI"
+
+
+def test_a_source_finding_is_named_by_its_weakness_class():
+    assert ss.finding_title(_hit("High", "X", "SQL injection — request data in a query", "a.ts")) == "SQL injection"
+
+
+def test_the_rendered_list_names_the_findings():
+    result = ss.compute(_rules(*(["present"] * 5)), [])
+    result["warnings"] = []
+    result["top_findings"] = ss.top_findings([_hit("Critical", "A", "Broken authorization — x", "a.ts", 9)])
+
+    text = ss.render_text(result)
+
+    assert "most severe findings" in text
+    assert "Broken authorization" in text
+    assert "a.ts:9" in text
+
+
+# --------------------------------------------------------------------------
 # Prior assessments stored in the repository
 # --------------------------------------------------------------------------
 
@@ -271,9 +349,9 @@ def test_rendered_score_always_carries_its_qualifiers():
     text = ss.render_text(result)
 
     assert ss.CAVEAT in text.splitlines()[0]
-    assert "quick scan" in text
+    assert "limited quick check" in text
     assert "no exposure context" in text
-    assert "5 of 5 checks" in text
+    assert "5 of 5 checks applied" in text
 
 
 def test_every_scored_indicator_row_is_written_out_of_100():

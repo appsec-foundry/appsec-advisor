@@ -86,6 +86,9 @@ PENALTY_HALF_WEIGHT = 40.0
 # Below this many applicable rules the sample is too small to divide by.
 MIN_APPLICABLE_RULES = 5
 
+# How many distinct checks the finding list names.
+TOP_FINDINGS = 10
+
 # A rule's decision caps the control credit its status can earn: a hypothesis is
 # not a control, and a threat candidate is a control that failed.
 DECISION_CEILING = {
@@ -272,6 +275,59 @@ def _contaminated_rules(rules: list[dict], repo_root: Path) -> list[str]:
     return sorted(contaminated)
 
 
+def finding_title(finding: dict) -> str:
+    """The shortest phrasing of a finding that still reads correctly.
+
+    A config/IaC finding carries the check *name*, which states the desired
+    state ("package-lock.json present and committed") and would read as a pass.
+    Its recommended mitigation is the authored phrasing that reads as an open
+    item. A source finding states the weakness class before its first dash.
+    """
+    if finding.get("_scanner") == "config-iac":
+        title = str(finding.get("recommended_mitigation_title") or finding.get("title") or "")
+    else:
+        title = str(finding.get("title") or "").split(" — ")[0]
+    return title[:49] + "…" if len(title) > 50 else title
+
+
+def top_findings(findings: list[dict], limit: int = TOP_FINDINGS) -> list[dict]:
+    """The most severe distinct checks, each with one example location.
+
+    Grouped by check rather than listed per hit: seventeen instances of one
+    broken authorization check are one thing to fix, and listing them
+    individually would fill the whole list with a single check.
+    """
+    order = list(SEVERITY_WEIGHT)
+    groups: dict[str, dict[str, Any]] = {}
+    for finding in findings:
+        severity = str(finding.get("severity") or "").strip().lower()
+        if severity not in SEVERITY_WEIGHT:
+            continue
+        key = str(finding.get("check_id") or finding.get("title") or "?")
+        group = groups.setdefault(key, {"count": 0, "severity": severity, "finding": finding})
+        group["count"] += 1
+        if order.index(severity) < order.index(group["severity"]):
+            group["severity"], group["finding"] = severity, finding
+
+    rows = [
+        {
+            "severity": group["severity"],
+            "title": finding_title(group["finding"]),
+            "count": group["count"],
+            "location": _location(group["finding"]),
+        }
+        for group in groups.values()
+    ]
+    rows.sort(key=lambda row: (order.index(row["severity"]), -row["count"], row["title"]))
+    return rows[:limit]
+
+
+def _location(finding: dict) -> str:
+    file = str(finding.get("file") or "?")
+    line = finding.get("line")
+    return f"{file}:{line}" if line else file
+
+
 def rule_signal(rule: dict) -> str:
     """What one applicable rule actually saw, in the reader's words.
 
@@ -419,7 +475,7 @@ _PLURALS = {"hypothesis": "hypotheses", "anti-pattern": "anti-patterns"}
 
 
 # Rides in the headline itself, where it cannot be cropped away from the number.
-CAVEAT = "indication only, not a full security analysis"
+CAVEAT = "a limited quick check, not a full security analysis"
 
 
 def _found(row: dict[str, Any]) -> str:
@@ -446,7 +502,7 @@ def render_text(result: dict[str, Any]) -> str:
     the number must not travel without them, and prose would be skipped anyway.
     """
     counts = result["findings"]
-    scan = f"quick scan · {result['checks_applicable']} of {result['checks_total']} checks · no exposure context"
+    scan = f"{result['checks_applicable']} of {result['checks_total']} checks applied · no exposure context"
 
     if result["verdict"] == "undetermined":
         return f"Security Score  undetermined — {CAVEAT}\n{result['reason']}"
@@ -463,6 +519,14 @@ def render_text(result: dict[str, Any]) -> str:
         "",
         f"  {counts['critical']} critical · {counts['high']} high · {counts['medium']} medium · {counts['low']} low",
     ]
+
+    top = result.get("top_findings") or []
+    if top:
+        lines += ["", "  most severe findings"]
+        width = max(len(row["title"]) for row in top)
+        for row in top:
+            seen = f"{row['count']}×" if row["count"] > 1 else ""
+            lines.append(f"  {row['severity']:<8}  {row['title']:<{width}}  {seen:>4}  {row['location']}")
 
     for warning in result.get("warnings") or []:
         lines += ["", f"  {warning}"]
@@ -495,6 +559,7 @@ def main(argv: list[str] | None = None) -> int:
         warnings.append("judged on a previous assessment's evidence: " + ", ".join(contaminated))
 
     result = compute(rules, findings)
+    result["top_findings"] = top_findings(findings)
     result["repo"] = str(repo_root)
     result["warnings"] = warnings
 

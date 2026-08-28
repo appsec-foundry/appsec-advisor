@@ -64,7 +64,7 @@ checks:
     file_pattern: "Dockerfile"
     pattern: "^FROM\\s+\\S+@sha256:"
     expect: present
-    severity_if_violated: High
+    severity_if_violated: Medium
     cwe: CWE-1104
     finding_type: FT-140
     rationale: "Tag-only base images (FROM node:24) can be silently substituted by a malicious publisher. Digest-pinning (@sha256:…) ensures the exact image bytes are used on every build."
@@ -359,7 +359,7 @@ checks:
     file_pattern: "package-lock.json"
     pattern: ""
     expect: file_exists
-    severity_if_violated: High
+    severity_if_violated: Medium
     cwe: CWE-1104
     finding_type: FT-171
     rationale: "Without a lockfile, `npm install` installs different transitive versions on each run — supply-chain attacks become undetectable."

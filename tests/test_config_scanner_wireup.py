@@ -59,7 +59,7 @@ def valid_findings_doc():
                 "line": 1,
                 "evidence_snippet": "FROM node:24",
                 "title": "Dockerfile base image must be digest-pinned",
-                "severity": "High",
+                "severity": "Medium",
                 "cwe": ["CWE-1104"],
                 "finding_type_id": "FT-140",
                 "recommended_mitigation_title": "Pin base image to @sha256:<digest>",
