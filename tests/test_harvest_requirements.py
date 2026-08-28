@@ -633,7 +633,9 @@ def test_parse_antora_requirements_and_badge_only_summary():
           <div class="sectionbody">
             <p><span class="badge">SEC_AUTH-2</span></p>
             <p>Sessions must expire after inactivity.</p>
-            <details><p>Implementation detail should not be included.</p></details>
+            <details><summary class="title">Rationale</summary><p>Idle sessions enable hijacking.</p></details>
+            <p>Absolute lifetime MUST NOT exceed 8 hours.</p>
+            <table><tbody><tr><td>Web</td><td>15 min idle</td></tr></tbody></table>
           </div>
         </div>
         <div class="sect1">
@@ -654,7 +656,12 @@ def test_parse_antora_requirements_and_badge_only_summary():
 
     assert by_id["SEC-AUTH-2"]["priority"] == "MUST"
     assert by_id["SEC-AUTH-2"]["url"].endswith("#session-control")
-    assert "Implementation detail" not in by_id["SEC-AUTH-2"]["text"]
+    text = by_id["SEC-AUTH-2"]["text"]
+    # Collapsible rationale, prose after it and tabular limits all belong to the
+    # requirement — dropping them leaves a one-line stub the audit cannot grade.
+    assert "Idle sessions enable hijacking" in text
+    assert "Absolute lifetime MUST NOT exceed 8 hours" in text
+    assert "15 min idle" in text
     assert by_id["SEC-TOKEN"]["text"] == "Tokens must be stored in the approved vault"
 
 
@@ -1351,3 +1358,92 @@ def test_main_parses_cli_arguments_and_exits(monkeypatch, tmp_path):
     assert seen["args"].verbose is True
     assert seen["args"].req_only is True
     assert seen["args"].blueprint_only is True
+
+
+def test_blueprint_sections_capture_tables_and_definition_lists():
+    html = """
+    <main>
+      <h1>CSP Blueprint</h1>
+      <h2 id="dirs">Directives</h2>
+      <p>Use the baseline policy below.</p>
+      <table><tbody>
+        <tr><td>default-src</td><td>'self'</td></tr>
+        <tr><td>frame-ancestors</td><td>'none'</td></tr>
+      </tbody></table>
+      <dl><dt>report-uri</dt><dd>Point at the central collector.</dd></dl>
+    </main>
+    """
+
+    section = harvester.parse_blueprint_page(html, "https://example.test/csp", mode="full")["sections"][0]
+
+    assert "default-src 'self'" in section["content"]
+    assert "frame-ancestors 'none'" in section["content"]
+    assert "report-uri Point at the central collector" in section["content"]
+
+
+def test_requirement_text_keeps_word_boundaries_across_inline_tags():
+    html = """
+    <main>
+      <p>[SEC-LOG-1] MUST log auth failures.
+        <details><summary>Rationale</summary><p>Needed for detection.</p></details>
+      </p>
+    </main>
+    """
+
+    text = harvester.parse_requirements_from_page(html, "https://example.test/log")[0]["text"]
+
+    assert "Rationale Needed for detection" in text
+
+
+def test_nested_sub_requirement_text_stays_out_of_its_parent():
+    html = """
+    <html><body>
+      <h1>Auth</h1>
+      <div class="sect1">
+        <h2 id="a"><span class="must-label">MUST:</span> Parent</h2>
+        <div class="sectionbody">
+          <p><span class="badge">SEC-AUTH-1</span></p>
+          <p>Parent requirement text.</p>
+          <div class="sect2">
+            <h3 id="b">Child</h3>
+            <div class="sectionbody">
+              <p><span class="badge">SEC-AUTH-2</span></p>
+              <p>Child requirement text.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </body></html>
+    """
+
+    by_id = {r["id"]: r for r in harvester.parse_requirements_from_page(html, "https://example.test/auth")}
+
+    assert by_id["SEC-AUTH-1"]["text"] == "Parent requirement text"
+    assert by_id["SEC-AUTH-2"]["text"] == "Child requirement text"
+
+
+def test_list_and_table_items_stay_separable_in_requirement_text():
+    html = """
+    <html><body>
+      <h1>Sessions</h1>
+      <div class="sect1">
+        <h2 id="s"><span class="must-label">MUST:</span> Session limits</h2>
+        <div class="sectionbody">
+          <p><span class="badge">SEC-AUTH-9</span></p>
+          <p>Sessions must expire.</p>
+          <div class="ulist"><ul><li><p>Rotate the id on login</p></li><li><p>Invalidate on logout</p></li></ul></div>
+          <table><tbody>
+            <tr><td>Web</td><td>15 min idle</td></tr>
+            <tr><td>API token</td><td>60 min</td></tr>
+          </tbody></table>
+          <details><summary class="title">Verification</summary><p>Read the cookie Max-Age.</p></details>
+        </div>
+      </div>
+    </body></html>
+    """
+
+    text = harvester.parse_requirements_from_page(html, "https://example.test/s")[0]["text"]
+
+    assert "Rotate the id on login; Invalidate on logout" in text
+    assert "Web 15 min idle; API token 60 min" in text
+    assert "Verification: Read the cookie Max-Age" in text

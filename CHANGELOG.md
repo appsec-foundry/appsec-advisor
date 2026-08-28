@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deterministic source scans now detect direct unsafe LLM-output flows into structured data, browser rendering, interpreters, resources, and privileged actions, while LLM review covers indirect flows.
 - The requirements harvester now recognizes requirement IDs written without brackets (e.g. `REQ-001: text`), not just the bracketed convention.
 - The requirements harvester reports a clear message naming the missing sibling module when it is run outside a full checkout, instead of an import traceback.
+- Harvested requirements now carry the full text of their source section, including collapsible `<details>` blocks, tables, lists and any prose that follows them, with list and table items kept apart; blueprint sections now also index table rows and definition lists.
 - The requirements audit names the catalog and the requirement categories it is about to grade before it starts scanning, and reports progress while it works.
 - An organization can refresh the secure-coding baseline it vendors in its own profile from the source that profile declares, and be told when the two have drifted apart.
 - STRIDE analysis now receives the blueprint section that prescribes how to implement each requirement, so remediation steps follow the configured catalog instead of being written independently of it.

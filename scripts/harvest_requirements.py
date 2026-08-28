@@ -52,6 +52,7 @@ Authentication:
 """
 
 import argparse
+import copy
 import html as html_lib
 import json
 import os
@@ -314,6 +315,16 @@ def clean_text(text: str) -> str:
     return text
 
 
+def as_req_id(text: str) -> str:
+    """Normalize text the way a rendered ID reads, for ID comparisons only.
+
+    Antora badges use a non-breaking hyphen and some sources write the first
+    separator as an underscore, so the visible ID differs from the canonical one
+    character by character.
+    """
+    return text.upper().replace("\u2011", "-").replace("_", "-")
+
+
 def deduplicate_text(text: str) -> str:
     """
     Remove consecutive duplicate sentences/phrases that Antora/AsciiDoc HTML
@@ -344,7 +355,7 @@ def extract_id_from_element(tag) -> Optional[tuple[str, str]]:
     inside code samples or links is a reference/example, including when an
     outer element supplies the separator and description.
     """
-    raw = tag.get_text()
+    raw = element_text(tag)
     bracketed = REQ_ID_PATTERN.search(raw) is not None
     allow_unbracketed = tag.name not in UNBRACKETED_EXCLUDED_TAGS and tag.find_parent(UNBRACKETED_EXCLUDED_TAGS) is None
     extracted = extract_id_and_text(raw, allow_unbracketed=allow_unbracketed)
@@ -390,13 +401,18 @@ def parse_page_intro(html: str) -> str:
         # Skip elements that contain child block elements (likely containers)
         if el.find(["p", "ul", "ol", "table", "section"]):
             continue
-        text = re.sub(r"\s+", " ", el.get_text()).strip()
+        text = element_text(el)
         if len(text) > 40:  # ignore navigation snippets and short labels
             intro_parts.append(text)
         if len(intro_parts) >= 3:  # at most 3 intro paragraphs
             break
 
     return " ".join(intro_parts)
+
+
+# Direct children of an Antora <div class="sectionbody"> that carry requirement
+# text. Anything else there (anchors, scripts, navigation) is not content.
+SECTIONBODY_CONTENT_TAGS = ("div", "p", "details", "table", "dl", "ul", "ol", "pre", "blockquote")
 
 
 def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
@@ -444,32 +460,39 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
         if priority not in ("MUST", "SHOULD", "MAY"):
             priority = "MUST"
 
-        # Collect text paragraphs before <details>
+        # Collect every content block of the section body. Antora puts prose in
+        # <div>/<p>, tabular limits in a direct <table>, and rationale, examples
+        # or verification steps in a collapsible <details> — all of it belongs to
+        # the requirement.
         text_parts: list[str] = []
         for child in sectionbody.children:
-            if getattr(child, "name", None) == "details":
-                break
-            if getattr(child, "name", None) in ("div", "p"):
-                text = re.sub(r"\s+", " ", child.get_text()).strip()
-                if text and text.upper().replace("_", "-", 1) != req_id:
-                    text_parts.append(text)
+            if getattr(child, "name", None) not in SECTIONBODY_CONTENT_TAGS:
+                continue
+            if child.find("div", class_="sectionbody") is not None:
+                continue  # nested sub-section — parsed as its own requirement
+            text = block_text(child)
+            if text and as_req_id(text) != as_req_id(req_id):
+                if not text.endswith((".", ";", ":", "!", "?")):
+                    text += ";"  # keep an unpunctuated block apart from the next one
+                text_parts.append(text)
 
-        req_text = " ".join(text_parts).strip() or h2_title
+        req_text = deduplicate_text(" ".join(text_parts).strip())
         # Badge-only preamble (atomic-requirement pages): grab text from the following
-        # Summary sect1. Also trigger when req_text is just the requirement ID itself
-        # (h2_title was the badge).
-        req_text_normalized = req_text.upper().replace("\u2011", "-").replace("_", "-") if req_text else ""
-        if not req_text or req_text_normalized == req_id or req_text_normalized == req_id.replace("-", "\u2011"):
+        # Summary sect1 before falling back to a heading, which only names the
+        # requirement instead of stating it.
+        if not req_text or as_req_id(req_text) == as_req_id(req_id):
             preamble = sectionbody.parent
             for sibling in preamble.find_next_siblings("div", class_="sect1"):
                 sibling_h2 = sibling.find("h2")
                 if sibling_h2 and sibling_h2.get_text(strip=True).lower() in ("summary", "details"):
                     sibling_body = sibling.find("div", class_="sectionbody")
                     if sibling_body:
-                        req_text = re.sub(r"\s+", " ", sibling_body.get_text()).strip()
+                        req_text = element_text(sibling_body)
                     break
+        if not req_text:
+            req_text = h2_title
         # Last resort: if req_text is still empty or equals the ID, use the page <h1> title
-        if not req_text or req_text.upper().replace("\u2011", "-").replace("_", "-") == req_id:
+        if not req_text or as_req_id(req_text) == as_req_id(req_id):
             page_h1 = soup.find("h1")
             if page_h1:
                 req_text = PRIORITY_PATTERN.sub("", page_h1.get_text(strip=True), count=1).strip(" :")
@@ -488,10 +511,10 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
         if not ANCHOR_ID_PATTERN.match(tag_id):
             continue
         req_id = tag_id.upper()
-        text = clean_text(tag.get_text())
+        text = clean_text(element_text(tag))
         if not text:
             sib = tag.find_next_sibling(["p", "dd", "div", "span"])
-            text = clean_text(sib.get_text()) if sib else ""
+            text = clean_text(element_text(sib)) if sib else ""
         if text and req_id not in found:
             found[req_id] = {
                 "id": req_id,
@@ -503,14 +526,14 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
     # Strategy 2: definition list <dt>PREFIX-XX-N</dt><dd>text</dd>
     # (with or without brackets, and with or without a "PREFIX-XX-N: text" separator)
     for dt in soup.find_all("dt"):
-        extracted = extract_id_and_text(dt.get_text())
+        extracted = extract_id_and_text(element_text(dt))
         if not extracted:
             continue
         req_id, dt_remainder = extracted
         if req_id in found:
             continue
         dd = dt.find_next_sibling("dd")
-        text = clean_text(dd.get_text()) if dd else clean_text(dt_remainder)
+        text = clean_text(element_text(dd)) if dd else clean_text(dt_remainder)
         if text:
             anchor = req_id.lower()
             found[req_id] = {
@@ -553,13 +576,13 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
         cells = row.find_all(["td", "th"])
         if len(cells) < 2:
             continue
-        extracted = extract_id_and_text(cells[0].get_text())
+        extracted = extract_id_and_text(element_text(cells[0]))
         if not extracted:
             continue
         req_id, _ = extracted
         if req_id in found:
             continue
-        text = clean_text(cells[1].get_text())
+        text = clean_text(element_text(cells[1]))
         if text:
             anchor = req_id.lower()
             found[req_id] = {
@@ -660,14 +683,15 @@ def section_anchor(title: str) -> str:
     return re.sub(r"\s+", "-", slug.strip())
 
 
-# Tags whose text is collected as blueprint section content. A tag of one of
-# these types nested inside another (e.g. <p> inside <li>, <code> inside
+# Tags whose text is collected as blueprint section content: prose blocks, table
+# rows (taken whole so a row's cells stay together) and definition lists. A tag of
+# one of these types nested inside another (e.g. <p> inside <li>, <code> inside
 # <pre>) is visited twice by find_all() — skip the nested one so its text
 # isn't captured twice.
-BLUEPRINT_CONTENT_TAGS = ("p", "li", "pre", "code", "blockquote")
+BLUEPRINT_CONTENT_TAGS = ("p", "li", "pre", "code", "blockquote", "tr", "dt", "dd")
 
 
-def blueprint_element_text(el) -> str:
+def element_text(el) -> str:
     """Extract an element's text with a space inserted at tag boundaries.
 
     Plain ``get_text(strip=True)`` strips each text fragment individually
@@ -683,6 +707,27 @@ def blueprint_element_text(el) -> str:
     return text
 
 
+# Elements that end one item of an enumeration. Their boundary carries meaning:
+# without it a table or list collapses into a run-on string ("15 min idle 8 h
+# absolute API token 60 min") in which no value can be attributed to its subject.
+ITEM_TAGS = ("li", "tr", "dd")
+
+
+def block_text(el) -> str:
+    """Extract a content block's text, keeping list, table and collapsible boundaries."""
+    if not el.find(ITEM_TAGS) and not el.find("summary"):
+        return element_text(el)
+    marked = copy.copy(el)  # bs4 copies deeply; the parsed document stays untouched
+    for item in marked.find_all(ITEM_TAGS):
+        item.append(";")
+    for label in marked.find_all("summary"):
+        label.append(":")  # a collapsible's summary titles the block it opens
+    text = element_text(marked)
+    text = re.sub(r"(?:\s*;)+", ";", text)
+    text = re.sub(r";(?=\S)", "; ", text)
+    return text.strip(" ;")
+
+
 def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section_chars: int = 500) -> dict:
     """
     Index a blueprint page.
@@ -693,7 +738,7 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
     soup = BeautifulSoup(html, "html.parser")
 
     h1 = soup.find("h1")
-    title = blueprint_element_text(h1) if h1 else (soup.title.get_text(strip=True) if soup.title else bp_url)
+    title = element_text(h1) if h1 else (soup.title.get_text(strip=True) if soup.title else bp_url)
 
     meta = soup.find("meta", {"name": re.compile(r"description", re.I)})
     meta_summary = meta.get("content", "").strip() if meta else ""
@@ -716,11 +761,11 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
     preamble_parts: list[str] = []
 
     if main:
-        for el in main.find_all(["h1", "h2", "h3", "p", "li", "pre", "code", "blockquote"], recursive=True):
+        for el in main.find_all(["h1", "h2", "h3", *BLUEPRINT_CONTENT_TAGS], recursive=True):
             if el.name == "h1":
                 continue
             if el.name in ("h2", "h3"):
-                heading_title = blueprint_element_text(el)
+                heading_title = element_text(el)
                 # Prefer explicit id attribute; fall back to slug derived from title
                 heading_id = el.get("id") or section_anchor(heading_title)
                 heading_anchors.append(heading_id)
@@ -740,9 +785,11 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
                 continue
             if el.name in BLUEPRINT_CONTENT_TAGS and el.find_parent(BLUEPRINT_CONTENT_TAGS) is not None:
                 continue  # nested match (e.g. <p> inside <li>) — parent already captures this text
-            text = blueprint_element_text(el)
+            text = element_text(el)
             if not text:
                 continue
+            if el.name in ITEM_TAGS and not text.endswith((".", ";", ":", "!", "?")):
+                text += ";"  # keep one row or list item apart from the next
             if not current_title:
                 # Before first heading: collect preamble, first meaningful sentence → summary
                 if len(text) > 30 and not summary:
