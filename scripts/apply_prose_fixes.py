@@ -228,6 +228,38 @@ _BARE_FILENAME_ALLOWLIST: frozenset[str] = frozenset(
         "three.js",
     }
 )
+#   - Angle-bracket operand placeholders: `<non-root-uid>`, `<digest>`,
+#     `<token>`. These are NOT HTML, but Markdown emits them as raw HTML and
+#     the browser then drops the unknown element, so the reader sees the
+#     instruction with its operand missing — "Add USER " (juice-shop
+#     2026-08-27, M-049; 9 occurrences across 4 placeholders). Wrapping makes
+#     the literal text render. Real HTML the composer emits (tables, `<br>`,
+#     emphasis) is excluded BY NAME below rather than by shape, because a
+#     placeholder and an element are indistinguishable as tokens.
+_HTML_ELEMENTS: frozenset[str] = frozenset(
+    "a abbr b blockquote br code col colgroup dd details div dl dt em h1 h2 h3 "
+    "h4 h5 h6 hr i img li ol p pre q s small span strong sub summary sup table "
+    "tbody td tfoot th thead tr u ul".split()
+)
+_ANGLE_PLACEHOLDER_RE = re.compile(r"(?<![\w`<])(?P<ph><[a-z][a-z0-9_-]*>)(?![\w`])")
+#   - Extensionless well-known filenames: `Dockerfile`, `Makefile`. Both
+#     `_PATH_RE` and `_BARE_FILENAME_RE` require a dot-extension, so these are
+#     invisible to every existing pass. Wrap ONLY when a directory prefix or a
+#     `:line` suffix makes the token unambiguously a file reference: bare
+#     "Dockerfile" reads as a common noun in prose ("the Dockerfile does not
+#     set USER", 14 of 17 occurrences on juice-shop 2026-08-27) and wrapping
+#     that would be wrong.
+_EXTENSIONLESS_NAMES = (
+    "Dockerfile|Containerfile|Makefile|Jenkinsfile|Gemfile|Procfile|Rakefile|Vagrantfile|Brewfile"
+)
+_EXTENSIONLESS_FILE_RE = re.compile(
+    r"(?<![\w`/.-])"
+    r"(?P<xfile>"
+    r"(?:[\w.-]+/)+(?:" + _EXTENSIONLESS_NAMES + r")(?::\d+(?:-\d+)?)?"
+    r"|(?:" + _EXTENSIONLESS_NAMES + r"):\d+(?:-\d+)?"
+    r")"
+    r"(?![\w/`])"
+)
 #   - Function-call tokens: `eval()`, `bypassSecurityTrustHtml()`,
 #     `helmet.noSniff()`, `models.sequelize.query()`. Conservative:
 #     requires the parens AND a leading letter so generic prose ("the
@@ -655,7 +687,9 @@ def _wrap_line(line: str) -> tuple[str, int]:
         (_CALL_WITH_ARGS_RE, "call"),
         (_LIB_VERSION_RE, "libver"),
         (_URL_PATH_RE, "urlpath"),
+        (_EXTENSIONLESS_FILE_RE, "xfile"),
         (_BARE_FILENAME_RE, "file"),
+        (_ANGLE_PLACEHOLDER_RE, "ph"),
         (_FUNCTION_CALL_RE, "fn"),
         (_LITERAL_TOKEN_RE, "lit"),
         (_ALG_NAME_RE, "alg"),
@@ -784,6 +818,9 @@ def _wrap_line(line: str) -> tuple[str, int]:
             # bare-filename regex but are NOT files. Skip them so they
             # read as product names in prose.
             if group_or_special == "file" and tok in _BARE_FILENAME_ALLOWLIST:
+                continue
+            # A real HTML element the composer emitted — leave it as markup.
+            if group_or_special == "ph" and tok.strip("<>") in _HTML_ELEMENTS:
                 continue
             if overlaps_forbidden(s, e):
                 continue
