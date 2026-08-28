@@ -14,6 +14,7 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim and 
 
 USAGE
   /appsec-advisor:status [--repo <path>] [--output <path>] [--json] [--live]
+                         [--check-updates]
 
 FLAGS
   --repo <path>     Repository to inspect (default: current working dir)
@@ -22,6 +23,10 @@ FLAGS
   --live            Print only the in-flight run snapshot (active tool calls,
                     per-component progress, heartbeat freshness). Honours --json.
                     Intended for fast, cron-style polling in a second terminal.
+  --check-updates   Also report whether the configured secure-coding baseline
+                    and the packaged appsec-advisor core are still the current
+                    ones. Fetches the baseline document and the upstream
+                    manifest; without the flag the command stays offline.
 
 The command is safe to run at any time. It never writes files or dispatches
 any agent.
@@ -33,11 +38,11 @@ After printing, exit.
 
 Recognized flags:
 
-  `--repo <path>`  `--output <path>`  `--json`  `--live`  `--help` | `-h`
+  `--repo <path>`  `--output <path>`  `--json`  `--live`  `--check-updates`  `--help` | `-h`
 
-Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `JSON_MODE`, `LIVE_MODE`. Default
+Parse these and set `REPO_ROOT`, `OUTPUT_DIR`, `JSON_MODE`, `LIVE_MODE`, `CHECK_UPDATES`. Default
 `REPO_ROOT` to the current working directory; default `OUTPUT_DIR` to
-`$REPO_ROOT/docs/security`. `--live` is a boolean toggle that consumes no value.
+`$REPO_ROOT/docs/security`. `--live` and `--check-updates` are boolean toggles that consume no value.
 
 ### Reject unknown arguments (hard fail)
 
@@ -55,6 +60,7 @@ Error: unknown argument '<TOKEN>'
   --output <path>   Output directory to inspect (default: <repo>/docs/security)
   --json            Emit the status as machine-readable JSON
   --live            Print only the in-flight run snapshot (cron-style polling)
+  --check-updates   Check the baseline and core versions against their sources
   --help, -h        Show full help and exit
 
 Run `/appsec-advisor:status --help` for details.
@@ -73,6 +79,7 @@ Delegate to the Python helper that owns the formatting:
 ARGS="--repo-root $REPO_ROOT --output-dir $OUTPUT_DIR"
 [ "$JSON_MODE" = "true" ] && ARGS="$ARGS --json"
 [ "$LIVE_MODE" = "true" ] && ARGS="$ARGS --live"
+[ "$CHECK_UPDATES" = "true" ] && ARGS="$ARGS --check-updates"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" $ARGS
 ```
 

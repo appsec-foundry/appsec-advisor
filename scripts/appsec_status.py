@@ -4,6 +4,7 @@ appsec_status.py — Read-only status dump for the AppSec plugin.
 
 Prints:
   * plugin version + analysis_version
+  * package, core and baseline versions (with --check-updates: whether current)
   * available capsules (skills + hook)
   * last-run identity (if $OUTPUT_DIR has a baseline)
   * configuration source state (external context, requirements URL, steering)
@@ -39,6 +40,7 @@ try:
 except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
+import version_status  # noqa: E402
 from stride_outputs import stride_output_files  # noqa: E402
 
 
@@ -468,6 +470,10 @@ def render_text(data: dict) -> str:
         )
     )
 
+    versions = data.get("versions")
+    if versions:
+        buf.append(_emit_table("Versions", version_status.rows(versions)))
+
     capsules = data["capsules"]
     threat_assessment = capsules.get("threat_assessment", {}).get("command", "not packaged")
     requirements_audit = capsules.get("requirements_audit", {}).get("command", "not packaged")
@@ -840,6 +846,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output-dir", default=None, help="Override output directory (default: <repo>/docs/security).")
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
     p.add_argument(
+        "--check-updates",
+        action="store_true",
+        help="Also fetch the published baseline document and the upstream "
+        "manifest, and report whether the configured baseline and the "
+        "packaged core are still current. Off by default: without it, "
+        "status stays offline.",
+    )
+    p.add_argument(
         "--live",
         action="store_true",
         help="Print only the in-flight run snapshot (active tool "
@@ -893,6 +907,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "fast_path": _fast_path_preview(output_dir, repo_root),
         "org_profile": _org_profile_status(output_dir),
+        "versions": version_status.collect(repo=repo_root, check_updates=args.check_updates),
         "cutoff": _cutoff_verdict(output_dir, live_snapshot=live_snapshot),
     }
 
