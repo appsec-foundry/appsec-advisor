@@ -45,6 +45,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import collections
 import functools
 import json
 import shutil
@@ -271,6 +272,26 @@ def _contaminated_rules(rules: list[dict], repo_root: Path) -> list[str]:
     return sorted(contaminated)
 
 
+def rule_signal(rule: dict) -> str:
+    """What one applicable rule actually saw, in the reader's words.
+
+    The status alone does not distinguish "a control is in place" from "signals
+    are there and nothing proves a control", which is the difference the row
+    below the score has to carry.
+    """
+    decision = str(rule.get("decision") or "")
+    if rule["status"] == "anti_pattern" or "threat_candidate" in decision or "anti_pattern" in decision:
+        return "anti-pattern"
+    if "hypothesis" in decision:
+        return "hypothesis"
+    return {
+        "present": "control",
+        "partial": "partial control",
+        "weak": "weak control",
+        "missing": "no control",
+    }.get(rule["status"], rule["status"])
+
+
 def rule_points(rule: dict) -> float:
     """Control credit for one applicable rule.
 
@@ -339,14 +360,18 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
 
     order, _, _, _, _ = indicators()
     cwe_by_rule = rule_cwes()
-    buckets: dict[str, dict[str, Any]] = {indicator: {"points": [], "findings": []} for indicator, _ in order}
+    buckets: dict[str, dict[str, Any]] = {
+        indicator: {"points": [], "signals": [], "findings": []} for indicator, _ in order
+    }
 
     def bucket_for(key: str) -> dict[str, Any]:
-        return buckets.setdefault(key, {"points": [], "findings": []})
+        return buckets.setdefault(key, {"points": [], "signals": [], "findings": []})
 
     for rule in applicable:
         cwe = cwe_by_rule.get(str(rule.get("rule_id") or ""))
-        bucket_for(indicator_for([cwe] if cwe else []))["points"].append(rule_points(rule))
+        bucket = bucket_for(indicator_for([cwe] if cwe else []))
+        bucket["points"].append(rule_points(rule))
+        bucket["signals"].append(rule_signal(rule))
     for finding in findings:
         bucket_for(indicator_for(_cwe_list(finding), finding.get("_scanner")))["findings"].append(finding)
 
@@ -366,8 +391,10 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
                 "indicator": indicator,
                 "label": label,
                 "score": None if control is None else max(0, round(control - finding_penalty(raw))),
-                "rules": len(points),
+                "checks": len(points),
+                "signals": dict(collections.Counter(bucket["signals"])),
                 "findings": sum(found_counts.values()),
+                "severities": {k: v for k, v in found_counts.items() if v},
             }
         )
 
@@ -395,6 +422,36 @@ def _bar(points: int) -> str:
     return "█" * filled + "·" * (BAR_WIDTH - filled)
 
 
+# Plural forms for the rule signals; "hypothesis" is the one that needs it.
+_PLURALS = {"hypothesis": "hypotheses", "anti-pattern": "anti-patterns"}
+
+
+def _detail(row: dict[str, Any]) -> str:
+    """The line under a score: what its checks saw, and what was found.
+
+    Without it the row states a verdict and hides its two reasons — whether a
+    control was actually seen, and how bad the findings behind it are.
+    """
+    parts = []
+    signals = row.get("signals") or {}
+    if signals:
+        parts.append(
+            ", ".join(
+                f"{n} {_PLURALS.get(signal, signal) if n > 1 else signal}"
+                for signal, n in sorted(signals.items(), key=lambda kv: (-kv[1], kv[0]))
+            )
+        )
+    else:
+        parts.append("no check applied")
+
+    severities = row.get("severities") or {}
+    if severities:
+        parts.append(", ".join(f"{n} {severity}" for severity, n in severities.items()))
+    else:
+        parts.append("no findings")
+    return " · ".join(parts)
+
+
 def render_text(result: dict[str, Any]) -> str:
     """The human-readable report: a headline, the categories, then the caveats.
 
@@ -411,12 +468,10 @@ def render_text(result: dict[str, Any]) -> str:
 
     width = max((len(row["label"]) for row in result["categories"]), default=0)
     for row in result["categories"]:
-        score = "    no rule" if row["score"] is None else f"{row['score']:>3} / 100"
+        score = "  no check" if row["score"] is None else f"{row['score']:>3} / 100"
         bar = " " * BAR_WIDTH if row["score"] is None else _bar(row["score"])
-        lines.append(
-            f"  {row['label']:<{width}}  {score}  {bar}"
-            f"  {_count(row['rules'], 'rule')} · {_count(row['findings'], 'finding')}"
-        )
+        lines.append(f"  {row['label']:<{width}}  {score}  {bar}")
+        lines.append(f"      {_detail(row)}")
 
     lines += [
         "",

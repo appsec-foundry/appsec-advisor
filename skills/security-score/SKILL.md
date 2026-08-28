@@ -56,10 +56,18 @@ The script writes its scanner sidecars to a temporary directory and removes them
 
 ## Present the result
 
-Print the script's output and stop. It is already the finished report: headline, categories, tallies, and any note the run produced.
+Reprint the script's stdout **verbatim**, in a fenced code block, every line of it, and stop. The user does not see the tool output; what you print is the whole report they get. It is already finished: headline, one indicator per line with its detail line under it, the tally, and any note the run produced.
 
-Add nothing after it. No summary of the number, no repetition of a note the output already carries, no verdict such as "secure" or "at risk", no severities or mitigations of your own — none of that is in the data, and a paragraph restating the block undoes the layout it was given.
+Summarising it is the failure this rule exists for. All of the following are forbidden, even though each is true:
 
-If the verdict is `undetermined`, say that the rule catalog did not cover this repository and name the languages it does cover: JavaScript/TypeScript, Python, Java/Spring, and parts of .NET.
+```
+Security Score: 2 / 100 — dominated by Access Control (68 findings), Dependencies
+(22 findings), and Authentication (21 findings), all near zero.
 
-If the user asks what to do about a low score, or for the findings behind it, point them at `/appsec-advisor:create-threat-model`, which is where severity, exposure, and mitigations come from.
+For findings with severity, exposure, and mitigations, run
+/appsec-advisor:create-threat-model.
+```
+
+Nothing may be added after the block either: no summary of the number, no repetition of a note it already carries, no verdict such as "secure" or "at risk", no severities or mitigations of your own. None of that is in the data, and prose beside the block undoes the layout it was given.
+
+Two exceptions, both only when the user asks: name the covered languages — JavaScript/TypeScript, Python, Java/Spring, parts of .NET — when the verdict is `undetermined`, and point at `/appsec-advisor:create-threat-model` when they want the findings, severities, or mitigations behind a low score.

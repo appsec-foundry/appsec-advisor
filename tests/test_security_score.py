@@ -124,7 +124,7 @@ def test_rules_and_findings_meet_in_the_same_indicator():
 
     categories = {row["indicator"]: row for row in ss.compute(rules, findings)["categories"]}
 
-    assert categories["output-handling"]["rules"] == 1
+    assert categories["output-handling"]["checks"] == 1
     assert categories["output-handling"]["findings"] == 1
 
 
@@ -280,9 +280,9 @@ def test_every_scored_indicator_row_is_written_out_of_100():
     result = ss.compute(rules, [])
     result["warnings"] = []
 
-    rows = [line for line in ss.render_text(result).splitlines() if line.startswith("  ") and "findings" in line]
+    rows = [line for line in ss.render_text(result).splitlines() if "/ 100" in line or "no check" in line]
 
-    assert rows and all("/ 100" in row for row in rows if "no rule" not in row)
+    assert len(rows) == len(result["categories"]) + 1  # the indicators plus the headline
 
 
 def test_an_unscored_indicator_says_so_instead_of_showing_a_number():
@@ -291,7 +291,7 @@ def test_an_unscored_indicator_says_so_instead_of_showing_a_number():
 
     row = next(line for line in ss.render_text(result).splitlines() if "Output Handling" in line)
 
-    assert "no rule" in row
+    assert "no check" in row
     assert "/ 100" not in row
 
 
@@ -303,6 +303,34 @@ def test_undetermined_renders_the_reason_instead_of_a_number():
 
     assert "undetermined" in text
     assert "/ 100" not in text
+
+
+def test_the_detail_line_names_what_the_checks_saw_and_what_was_found():
+    rules = _rules(*(["present"] * 4)) + [_rule("ARCH-SQLI-001", "partial", decision="emit_hypothesis_only")]
+    result = ss.compute(rules, [_finding("Critical", cwe="CWE-89"), _finding("High", cwe="CWE-89")])
+    result["warnings"] = []
+
+    lines = ss.render_text(result).splitlines()
+    detail = lines[lines.index(next(x for x in lines if "Output Handling" in x)) + 1]
+
+    assert "1 hypothesis" in detail
+    assert "1 critical" in detail
+    assert "1 high" in detail
+
+
+def test_an_indicator_without_findings_says_so():
+    result = ss.compute(_rules(*(["present"] * 5)), [])
+    result["warnings"] = []
+
+    assert "no findings" in ss.render_text(result)
+
+
+def test_rule_signal_separates_a_control_from_a_hypothesis():
+    assert ss.rule_signal(_rule("R", "present")) == "control"
+    assert ss.rule_signal(_rule("R", "partial")) == "partial control"
+    assert ss.rule_signal(_rule("R", "partial", decision="emit_hypothesis_only")) == "hypothesis"
+    assert ss.rule_signal(_rule("R", "anti_pattern", decision="emit_control_and_threat_candidate")) == "anti-pattern"
+    assert ss.rule_signal(_rule("R", "missing")) == "no control"
 
 
 def test_warnings_are_rendered():
