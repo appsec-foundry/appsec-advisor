@@ -197,6 +197,43 @@ def test_a_build_without_provenance_says_so_rather_than_dropping_the_line(tmp_pa
     assert rendered["Core source"] == "not recorded in this build"
 
 
+@pytest.mark.parametrize(
+    ("manifest", "baseline_config"),
+    [
+        pytest.param(
+            {"name": "acme-appsec", "version": "1.2.0", "appsec_advisor_core_version": "0.6.0"},
+            {"enabled": True, "id": "test-1.0", "url": "https://baseline.test/doc.md"},
+            id="organization-build",
+        ),
+        pytest.param(
+            {"name": "appsec-advisor", "version": "0.6.0"},
+            {"enabled": True, "id": "test-1.0", "url": "https://baseline.test/doc.md"},
+            id="upstream-checkout",
+        ),
+        pytest.param(
+            {"version": "0.6.0"},
+            {"enabled": True, "id": "", "url": ""},
+            id="nothing-recorded",
+        ),
+        pytest.param({"name": "acme-appsec", "version": "1.2.0"}, {"enabled": False}, id="baseline-disabled"),
+    ],
+)
+def test_every_build_shape_emits_the_required_rows(tmp_path, monkeypatch, manifest, baseline_config) -> None:
+    """The guarantee the status skill rests on: no row disappears with its value."""
+    root = tmp_path / "plugin"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (root / "config.json").write_text(json.dumps({"baseline": baseline_config}), encoding="utf-8")
+    _served(monkeypatch, {})
+    monkeypatch.setattr(vs, "_git_source", lambda root: {"ref": "", "commit": "", "committed_at": "", "origin": ""})
+
+    rendered = vs.rows(vs.collect(repo=None, plugin_root=root))
+
+    labels = [label for label, _ in rendered]
+    assert set(vs.REQUIRED_ROWS) <= set(labels)
+    assert all(value.strip() for _, value in rendered), rendered
+
+
 def test_a_baseline_the_build_disabled_is_not_checked(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "plugin"
     (root / ".claude-plugin").mkdir(parents=True)

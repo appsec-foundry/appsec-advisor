@@ -316,6 +316,14 @@ def collect(
     }
 
 
+# The lines every build must produce, whatever it knows about itself. A reader
+# comparing two machines reads down this list; a row that vanishes when its
+# value is unknown reads as "nothing to report" and hides the build worth asking
+# about. ``rows()`` is pinned to this in tests, so dropping one is a test
+# failure rather than a quiet regression on someone else's installation.
+REQUIRED_ROWS = ("Package", "Core", "Core source", "Baseline")
+
+
 def rows(data: dict) -> list[tuple[str, str]]:
     """The ``(label, value)`` lines a status dump prints for ``collect()``.
 
