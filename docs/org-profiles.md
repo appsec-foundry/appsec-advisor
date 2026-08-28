@@ -359,6 +359,22 @@ bundled copy both carry the upstream id, which your own id check would refuse,
 so packaging clears them rather than leaving a source that can only fail.
 Ship a `file:` if your users need to install without reaching your server.
 
+### Keeping the vendored copy current
+
+`file:` is a copy, so it is exactly as current as the last time somebody updated it. Nothing notices when it falls behind the `url` or `git` source beside it: the id still matches, packaging still passes, and an offline install serves rules you no longer publish.
+
+Refresh it from the source the same profile declares:
+
+```bash
+python3 <plugin>/scripts/sync_baseline.py --profile org-profile/org-profile.yaml [--dry-run]
+```
+
+The refresh fetches, refuses anything without a `baseline-id:` marker, writes the copy, and reports what changed. It never falls back to the copy it is refreshing, so an unreachable source is an error rather than a silent success. Run it with `--dry-run` on a schedule to be told about drift before you cut a package; run it without to commit the new text.
+
+When the published document declares a *different* id, the refresh stops and writes nothing: a version change is a decision, not a copy. `--accept-id <id>` then moves the file and the `id:` in your profile together, or neither. Where two lines in the profile could be that id, it refuses and asks you to make the edit by hand.
+
+The command talks to the network, so keep it out of your packaging build: `package_internal_plugin.py` copies the profile into a temporary build directory, where a refresh would be discarded, and a build must not fail because a host is down.
+
 ### Making it a gate
 
 By default the check reports and nothing fails: which rules a machine loads is

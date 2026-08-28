@@ -416,6 +416,20 @@ requirements:
       - tests/test_resolve_actors.py::test_resolver_never_writes_actor_choices_back_to_repo
       - tests/test_build_threat_modeling_context.py::test_rejects_invalid_known_threats_before_context_publication
 
+  REQ-CFG-003:
+    applies_to:
+      - scripts/sync_baseline.py
+    decisions: []
+    documents:
+      - docs/org-profiles.md
+    coverage: direct
+    guards:
+      - tests/test_sync_baseline.py::test_same_id_rewrites_the_bundled_copy
+      - tests/test_sync_baseline.py::test_unreachable_source_does_not_touch_the_copy
+      - tests/test_sync_baseline.py::test_profile_same_id_rewrites_the_vendored_copy
+      - tests/test_sync_baseline.py::test_profile_accepted_id_moves_file_and_profile_together
+      - tests/test_sync_baseline.py::test_profile_new_id_stops_and_changes_nothing
+
   REQ-EVO-003:
     applies_to:
       - schemas/threat-model.output.schema.yaml

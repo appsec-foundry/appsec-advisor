@@ -156,6 +156,15 @@ Supported repository context is supplied through documented, schema-validated
 files. Repository configuration cannot suppress a finding supported by target
 evidence.
 
+### REQ-CFG-003 — A vendored baseline can be refreshed from the source that declares it
+
+Where a secure-coding baseline is configured with both a fetchable source and a
+vendored copy, the copy can be refreshed from that source, and a refresh reports
+whether the two had drifted. A published id that differs from the configured one
+stops the refresh until the new id is accepted explicitly, and accepting it
+updates the copy and every place declaring the id together. A refresh never
+falls back to the vendored copy and is never part of a release gate.
+
 ## Compatibility
 
 ### REQ-EVO-003 — Published contracts change through explicit compatibility handling

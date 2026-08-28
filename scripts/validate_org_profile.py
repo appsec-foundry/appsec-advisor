@@ -168,11 +168,15 @@ def _check_default_preset(profile: dict) -> list[str]:
     return []
 
 
-def _resolve_under(profile_dir: Path, rel_path: str) -> tuple[Path | None, str | None]:
+def resolve_under(profile_dir: Path, rel_path: str) -> tuple[Path | None, str | None]:
     """Resolve rel_path under profile_dir, returning (path, error_or_none).
 
     Rejects absolute paths, parent traversal, and symlinks that escape
     the profile directory.
+
+    Public because ``sync_baseline`` resolves a profile's vendored baseline the
+    same way. Two guards would be two chances to disagree about what "inside the
+    profile" means.
     """
     if not rel_path:
         return None, "path is empty"
@@ -203,7 +207,7 @@ def _check_llm_context_paths(profile: dict, profile_dir: Path) -> list[str]:
             errors.append(f"llm_context: duplicate document id '{doc_id}'")
         seen_ids.add(doc_id)
         rel = doc.get("path", "")
-        resolved, err = _resolve_under(profile_dir, rel)
+        resolved, err = resolve_under(profile_dir, rel)
         if err:
             errors.append(f"llm_context: document '{doc_id}': {err}")
             continue
@@ -295,7 +299,7 @@ def _check_baseline(profile: dict, profile_dir: Path) -> list[str]:
 
     rel = baseline.get("file")
     if isinstance(rel, str) and rel:
-        resolved, err = _resolve_under(profile_dir, rel)
+        resolved, err = resolve_under(profile_dir, rel)
         if err:
             errors.append(f"baseline.file: {err}")
         elif resolved is None or not resolved.is_file():
@@ -359,7 +363,7 @@ def _check_hooks(profile: dict, profile_dir: Path) -> list[str]:
             errors.append(f"hooks: '{hook_id}' command must reference a script under {_HOOK_PATH_MARKER}<script>")
             continue
         rel = tokens[0].split("org-profile/", 1)[1]
-        resolved, err = _resolve_under(profile_dir, rel)
+        resolved, err = resolve_under(profile_dir, rel)
         if err:
             errors.append(f"hooks: '{hook_id}' {err}")
         elif resolved is not None and not resolved.exists():

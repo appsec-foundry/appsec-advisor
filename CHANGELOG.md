@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The requirements harvester now recognizes requirement IDs written without brackets (e.g. `REQ-001: text`), not just the bracketed convention.
 - The requirements harvester reports a clear message naming the missing sibling module when it is run outside a full checkout, instead of an import traceback.
 - The requirements audit names the catalog and the requirement categories it is about to grade before it starts scanning, and reports progress while it works.
+- An organization can refresh the secure-coding baseline it vendors in its own profile from the source that profile declares, and be told when the two have drifted apart.
 
 ### Fixed
 
