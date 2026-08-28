@@ -173,6 +173,14 @@ With a `requirements.component_context` slice, list in
 `violated_requirements` only its `id`s your cited evidence proves broken;
 without one, omit the field. Never write an ID from memory.
 
+When a requirement you cite carries `blueprint_guidance`, that is the
+implementation the organisation prescribes. Write `remediation.steps` to
+implement it against this component's code rather than your own preferred fix,
+and set `remediation.blueprint` to `{"id": "<blueprint>", "section":
+"<section>"}`. Where the prescribed approach cannot apply here, follow it as
+closely as the code allows and say in the step which part does not fit and why.
+A requirement without `blueprint_guidance` leaves the steps to your judgement.
+
 ## Finding admission
 
 Emit only a concrete component-local mechanism supported by a file and the

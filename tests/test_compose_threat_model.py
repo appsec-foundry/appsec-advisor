@@ -4833,7 +4833,7 @@ def test_requirements_assessment_table_is_sorted_by_status():
 def test_requirements_sort_leaves_the_traceability_table_alone():
     """The appended traceability table is ordered by severity, not by status."""
     md = (
-        "| Requirement | Status | Risk | Findings | Maßnahmen | Guidance |\n"
+        "| Requirement | Status | Risk | Findings | Mitigations | Guidance |\n"
         "|---|---|---|---|---|---|\n"
         "| `AC-002` | ⚠️ PARTIAL | 🔴 Critical | [F-010](#f-010) | — | — |\n"
         "| `AC-003` | ❌ FAIL | 🟡 Medium | [F-011](#f-011) | — | — |\n"

@@ -226,6 +226,16 @@ $defs:
                   # still be merged and enriched before that final gate.
                   type: [string, "null"]
                 reference:    { type: string }
+                blueprint:
+                  # Set when the analyzer based `steps` on a `blueprint_guidance`
+                  # entry from the requirements slice. The renderer prefers its
+                  # own deterministic catalog selection; this records which
+                  # prescription the steps were actually written from.
+                  type: [object, "null"]
+                  additionalProperties: true
+                  properties:
+                    id: { type: string }
+                    section: { type: string }
             evidence:
               type: [object, "null"]
               properties:

@@ -62,6 +62,7 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
 import load_business_context  # noqa: E402
+import requirements_trace  # noqa: E402
 import secret_scan  # noqa: E402
 from _atomic_io import atomic_write_text  # noqa: E402
 from _boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
@@ -1514,22 +1515,86 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
     for m in by_mid.values():
         m["priority"] = sev_to_pri.get(m["severity"], "P3")
 
-    # A mitigation satisfies whatever its addressed threats break, so the
-    # reverse link is derivable and needs no second author. Writing it into the
-    # YAML keeps it available to consumers that never read the Markdown
-    # (exports, query/review tooling), not just the mitigation register.
-    violated_by_threat = {t.get("id"): (t.get("violated_requirements") or []) for t in threats}
-    for m in by_mid.values():
-        fulfills: list[str] = []
+    return sorted(by_mid.values(), key=lambda m: m["id"])
+
+
+def annotate_requirements_and_blueprints(
+    threats: list[dict], mitigations: list[dict], output_dir: Path
+) -> tuple[int, int]:
+    """Write ``fulfills_requirements`` and ``blueprint`` onto each mitigation.
+
+    A mitigation satisfies whatever its addressed threats break, so the reverse
+    link is derivable and needs no second author (decision RQ-5). Both fields
+    are derived here, from the shared rules in ``requirements_trace``:
+
+    * ``fulfills_requirements`` uses the same three threat-side sources the
+      report renders from. Deriving it from ``violated_requirements`` alone
+      left the structured model and the rendered §10 block naming disjoint
+      requirement sets for the same mitigation, because analyzers routinely
+      park a matched requirement in ``remediation.reference`` instead.
+    * ``blueprint`` records which catalog blueprint prescribes the fix. Without
+      it the blueprint integration existed only in the Markdown, invisible to
+      the SARIF export, the review and query skills, and to any later run
+      checking whether the prescribed design was adopted.
+
+    Runs after mitigation overrides and control dedup so it sees the final
+    mitigation set. Sidecar-authored ``fulfills_requirements`` values are kept
+    and extended, never replaced. A run without a requirements catalog gets
+    neither field, exactly as before.
+
+    Returns ``(mitigations_with_requirements, mitigations_with_blueprint)``.
+    """
+    catalog = requirements_trace.load_catalog(output_dir)
+    known_ids = requirements_trace.catalog_requirement_ids(catalog)
+    by_requirement = requirements_trace.sections_by_requirement(catalog)
+    threats_by_id = {str(t.get("id") or "").strip(): t for t in threats}
+
+    with_reqs = with_bp = 0
+    for m in mitigations:
+        fulfills = [str(r or "").strip() for r in (m.get("fulfills_requirements") or []) if str(r or "").strip()]
+        addressed = []
         for tid in m.get("threat_ids") or []:
-            for rid in violated_by_threat.get(tid) or []:
-                rid = str(rid or "").strip()
-                if rid and rid not in fulfills:
+            t = threats_by_id.get(str(tid or "").strip())
+            if not t:
+                continue
+            addressed.append(t)
+            for rid in requirements_trace.requirement_ids_for_threat(t, known_ids):
+                if rid not in fulfills:
                     fulfills.append(rid)
         if fulfills:
             m["fulfills_requirements"] = fulfills
+            with_reqs += 1
 
-    return sorted(by_mid.values(), key=lambda m: m["id"])
+        if not by_requirement:
+            continue
+        selected = requirements_trace.select_blueprint(
+            by_requirement,
+            fulfills,
+            requirements_trace.RankContext(
+                primary=str(m.get("title") or ""),
+                secondary=" ".join(f"{t.get('title') or ''} {t.get('scenario') or ''}" for t in addressed),
+            ),
+        )
+        if selected is None:
+            continue
+        top = selected.sections[0] if selected.sections else None
+        m["blueprint"] = {
+            "id": selected.blueprint_id,
+            "title": selected.blueprint_title,
+            "url": selected.blueprint_url,
+            "section": top.title if top else "",
+            # The section's own page, not the blueprint's: one blueprint cites
+            # several sources, so these differ for most sections.
+            "section_url": top.url if top else "",
+            "guidance": top.content if top else "",
+            "prescribed_by": list(selected.requirement_ids),
+            # False when no candidate section shares a content word with the
+            # mitigation: the pick is then catalog order, and a consumer must
+            # not present it as governing guidance.
+            "grounded": selected.is_grounded,
+        }
+        with_bp += 1
+    return with_reqs, with_bp
 
 
 def prune_dangling_mitigation_threat_ids(threats: list[dict], mitigations: list[dict]) -> tuple[list[dict], list[str]]:
@@ -1874,11 +1939,7 @@ def apply_mitigation_overrides(baseline: list[dict], sidecar: dict | None) -> tu
             **({"description": add["description"]} if add.get("description") else {}),
             **({"reference": add["reference"]} if add.get("reference") else {}),
             **({"remediation": add["remediation"]} if "remediation" in add else {}),
-            **(
-                {"fulfills_requirements": add["fulfills_requirements"]}
-                if add.get("fulfills_requirements")
-                else {}
-            ),
+            **({"fulfills_requirements": add["fulfills_requirements"]} if add.get("fulfills_requirements") else {}),
         }
         added += 1
 
@@ -2678,6 +2739,12 @@ def main() -> int:
     # set (incl. override splits/additions) and converges the threat links
     # before threat_ids/changelog derivation below.
     threats, mitigations = dedupe_mitigation_controls(threats, mitigations)
+    # Requirement and blueprint annotation runs on the final mitigation set, so
+    # an override split or a control dedup cannot leave a survivor carrying a
+    # merged partner's traceability.
+    _req_n, _bp_n = annotate_requirements_and_blueprints(threats, mitigations, od)
+    if _req_n or _bp_n:
+        sys.stderr.write(f"  requirements: {_req_n} mitigation(s) fulfil requirements, {_bp_n} carry a blueprint\n")
     for w in mit_warnings:
         sys.stderr.write(f"  {w}\n")
 

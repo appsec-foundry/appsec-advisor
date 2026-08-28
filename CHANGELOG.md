@@ -18,9 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The requirements harvester reports a clear message naming the missing sibling module when it is run outside a full checkout, instead of an import traceback.
 - The requirements audit names the catalog and the requirement categories it is about to grade before it starts scanning, and reports progress while it works.
 - An organization can refresh the secure-coding baseline it vendors in its own profile from the source that profile declares, and be told when the two have drifted apart.
+- STRIDE analysis now receives the blueprint section that prescribes how to implement each requirement, so remediation steps follow the configured catalog instead of being written independently of it.
+- `threat-model.yaml` records which blueprint prescribes each mitigation, so the exports and the review and query skills see the guidance the report shows.
 
 ### Fixed
 
+- A mitigation's blueprint is now the one that fits the fix rather than the one belonging to whichever requirement happened to be listed first, each quoted section links the page it lives on, and a blueprint with no connection to the fix is no longer presented as governing it.
+- `threat-model.yaml` and the mitigation register no longer name different requirement sets for the same mitigation; the report shows a filtered view of the model, never a requirement the model lacks.
+- The Section 7b Guidance column no longer breaks blueprint section titles mid-phrase, and its mitigation column header is no longer German in an English report.
 - A missing lockfile, an undigested container base image, an absent workflow `permissions:` block and an unpinned third-party action are now Medium rather than High, matching the severity the tier policy already assigns to the same supply-chain practice.
 - Threat-model Management Summaries now derive compliance status, counts, and a table of the failed requirements — each named in words with the findings the assessment cited — from the complete Section 7b assessment, which itself lists failures first.
 - The bundled requirements demo now uses current OWASP 2025 references, scoped verifiable controls, and consistent source metadata.

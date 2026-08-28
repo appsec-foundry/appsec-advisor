@@ -67,6 +67,7 @@ import _ms_component_refs
 import _safe_cond
 import _severity_rollup
 import jinja2
+import requirements_trace
 import yaml
 from _atomic_io import atomic_write_text
 from _boundary_criticality import exposure_of, rating_of, tier_of
@@ -8623,102 +8624,19 @@ def _format_requirement_link(rid: str, known_ids: dict[str, str]) -> str:
 _REQ_ROW_PREFIX_RE = re.compile(r"^\|\s*(?:\[`|`)[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+`")
 
 
-_BLUEPRINT_CONTENT_MAX = 220
-_BLUEPRINT_MAX_SECTIONS = 3
-# One blueprint per mitigation. Several can legitimately prescribe the same
-# requirement (an end-user and a service-to-service blueprint both cover JWT
-# validation) with near-identical wording, so rendering them all doubles the
-# block for no added instruction. The rest are named, not expanded.
-_BLUEPRINT_MAX_PER_MITIGATION = 1
+_BLUEPRINT_MAX_SECTIONS = requirements_trace.MAX_SECTIONS_RENDERED
+_BLUEPRINT_MAX_PER_MITIGATION = requirements_trace.MAX_BLUEPRINTS_RENDERED
 
 
-_BLUEPRINT_RANK_STOPWORDS = frozenset(
-    "the that this these those and any all each other with from into within must should "
-    "your their there when where which what while have been will need must also only "
-    "use used using ensure apply applies against before after every both such than then".split()
-)
-
-
-def _significant_terms(text: str) -> set[str]:
-    """Lower-cased content words of four or more characters, stopwords removed."""
-    return {w for w in re.findall(r"[a-z][a-z0-9-]{3,}", (text or "").lower()) if w not in _BLUEPRINT_RANK_STOPWORDS}
-
-
-def _rank_blueprint_sections(sections: list[dict[str, str]], context: str) -> list[dict[str, str]]:
-    """Order a requirement's blueprint sections by fit to the mitigation.
-
-    A requirement is often prescribed by several sections of one blueprint —
-    `AC-002` covers both method-level and resource-level authorization — and
-    catalog order alone surfaces whichever comes first, which under an
-    ownership fix is the wrong one. Rank by content-word overlap with the
-    mitigation and the findings it addresses; ties keep catalog order.
-    """
-    ctx_terms = _significant_terms(context)
-    if not ctx_terms:
-        return sections
-    return sorted(
-        sections,
-        key=lambda s: -len(ctx_terms & _significant_terms(f"{s['section_title']} {s['content']}")),
-    )
-
-
-def _blueprint_section_content(raw: Any) -> str:
-    """One-line, length-bounded prescription text from a blueprint section.
-
-    Catalog sections are multi-line prose; a mitigation block needs one bullet.
-    Cuts at a sentence end when one falls in the back half, else at a word
-    boundary, so the prescription never ends mid-word.
-    """
-    text = re.sub(r"\s+", " ", str(raw or "")).strip()
-    if len(text) <= _BLUEPRINT_CONTENT_MAX:
-        return text
-    cut = text[:_BLUEPRINT_CONTENT_MAX]
-    dot = cut.rfind(". ")
-    if dot >= _BLUEPRINT_CONTENT_MAX // 2:
-        return cut[: dot + 1]
-    return (cut.rsplit(" ", 1)[0].rstrip(",;:") or cut) + "…"
-
-
-def _requirement_blueprint_sections(ctx: RenderContext) -> dict[str, list[dict[str, str]]]:
+def _requirement_blueprint_sections(ctx: RenderContext) -> dict[str, list[requirements_trace.BlueprintSection]]:
     """Requirement ID → the blueprint sections that prescribe how to satisfy it.
 
-    Reads the same ``blueprints[].sections[].references[]`` cross-reference as
-    `_requirement_blueprints`, but keeps every matching section together with
-    its prescriptive ``content`` instead of collapsing to the first section's
-    bare link. That is what lets a mitigation state what the organisation
-    actually prescribes — "configure the resource server with the issuer-uri of
-    your identity provider" — rather than only pointing at where it is written.
-    A ``references[]`` entry may be a bare ID string or a mapping.
+    Delegates to `requirements_trace`, which owns the catalog shape and the
+    excerpt rule so the §10 block, the structured model, and the analyst slice
+    quote the same text. Returns ``{}`` when the catalog is absent or carries
+    no blueprints.
     """
-    path = ctx.output_dir / ".requirements.yaml"
-    if not path.is_file():
-        return {}
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
-    out: dict[str, list[dict[str, str]]] = {}
-    for bp in data.get("blueprints", []) or []:
-        if not isinstance(bp, dict):
-            continue
-        bid = (bp.get("id") or "").strip()
-        if not bid:
-            continue
-        for sec in bp.get("sections", []) or []:
-            if not isinstance(sec, dict):
-                continue
-            entry = {
-                "bp_id": bid,
-                "bp_title": (bp.get("title") or "").strip(),
-                "bp_url": (bp.get("url") or "").strip(),
-                "section_title": (sec.get("title") or "").strip(),
-                "content": _blueprint_section_content(sec.get("content")),
-            }
-            for ref in sec.get("references", []) or []:
-                rid = str((ref.get("id") if isinstance(ref, dict) else ref) or "").strip()
-                if rid:
-                    out.setdefault(rid, []).append(entry)
-    return out
+    return requirements_trace.sections_by_requirement(requirements_trace.load_catalog(ctx.output_dir))
 
 
 def _requirement_blueprints(ctx: RenderContext) -> dict[str, str]:
@@ -8734,80 +8652,66 @@ def _requirement_blueprints(ctx: RenderContext) -> dict[str, str]:
     ``[{bp.id}]({section.url}) — {section.title}`` so §8 ``Violated:`` and the
     §7b/§MS table render identically whether the link came from the LLM or here.
     Returns ``{}`` when the file is absent/unparseable or carries no blueprints.
+
+    This is a *per-requirement* view and deliberately keeps catalog order: the
+    §7b row answers "what does the catalog prescribe for this requirement",
+    with no mitigation to rank against. The §10 block answers "what does the
+    catalog prescribe for this fix" and therefore ranks
+    (`requirements_trace.select_blueprint`). The two can name different
+    sections of the same blueprint; that is the difference in question, not
+    drift.
     """
-    path = ctx.output_dir / ".requirements.yaml"
-    if not path.is_file():
-        return {}
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
     out: dict[str, str] = {}
-    for bp in data.get("blueprints", []) or []:
-        if not isinstance(bp, dict):
+    for rid, sections in _requirement_blueprint_sections(ctx).items():
+        if not sections:
             continue
-        bid = (bp.get("id") or "").strip()
-        if not bid:
-            continue
-        for sec in bp.get("sections", []) or []:
-            if not isinstance(sec, dict):
-                continue
-            url = (sec.get("url") or bp.get("url") or "").strip()
-            title = (sec.get("title") or "").strip()
-            for ref in sec.get("references", []) or []:
-                rid = (ref.get("id") or "").strip() if isinstance(ref, dict) else ""
-                if rid and rid not in out:
-                    out[rid] = f"[{bid}]({url})" + (f" — {title}" if title else "")
+        sec = sections[0]
+        out[rid] = f"[{sec.blueprint_id}]({sec.url})" + (f" — {sec.title}" if sec.title else "")
     return out
 
 
 def _requirement_ids_for_threat(t: dict[str, Any], known_ids: dict[str, str] | set[str]) -> list[str]:
-    """Requirement IDs a threat evidences — order-preserving, de-duplicated.
+    """Requirement IDs a threat evidences — see `requirements_trace`.
 
-    Sources, in order: the canonical ``violated_requirements[]`` array, the
-    legacy singular ``requirement_id``, and — when ``known_ids`` is non-empty —
-    any declared requirement ID found in ``remediation.reference``, whether the
-    analyzer wrote it bracketed (``[ID]`` / ``[ID](url)``) or bare (``IF-002``).
-    This closes the field-name split: STRIDE analyzers write a matched
-    requirement into ``remediation.reference`` instead of the array, so the
-    finding shows in §8 (``Violated:``) but was invisible to the §7b/§MS table.
-    Matching against the declared-ID set keeps this prefix-agnostic and ignores
-    OWASP/CWE references (they are not declared requirement IDs).
+    Thin delegation: `build_threat_model_yaml.py` derives
+    ``mitigations[].fulfills_requirements`` from the same rule, and the two
+    surfaces disagreed for a quarter of a run's mitigations while each had its
+    own copy.
     """
-    out: list[str] = []
+    return requirements_trace.requirement_ids_for_threat(t, known_ids)
 
-    def _add(rid: Any) -> None:
-        s = (rid or "").strip()
-        if s and s not in out:
-            out.append(s)
 
-    # An analyzer-declared ID is still only a claim; the catalog decides what
-    # the organisation actually requires. Unknown IDs are dropped whenever a
-    # catalog was loaded, so an invented or stale requirement cannot be
-    # presented as a broken commitment.
-    def _declared(rid: Any) -> bool:
-        return not known_ids or str(rid or "").strip() in known_ids
+def mitigation_requirement_ids(
+    mitigation: dict[str, Any],
+    threats_by_id: dict[str, dict[str, Any]],
+    known_req_ids: dict[str, str],
+    evidence_reqs: dict[str, list[str]],
+) -> list[str]:
+    """Every requirement ID a mitigation fulfils — membership, not the view.
 
-    for rid in t.get("violated_requirements") or []:
-        if _declared(rid):
-            _add(rid)
-    if t.get("requirement_id") and _declared(t["requirement_id"]):
-        _add(t["requirement_id"])
-    if known_ids:
-        rem = t.get("remediation") if isinstance(t.get("remediation"), dict) else {}
-        ref = rem.get("reference") if isinstance(rem, dict) else None
-        if isinstance(ref, str) and ref:
-            # Bracketed tokens first (preserves reference order for `[ID](url)`).
-            for tok in re.findall(r"\[([^\]]+)\]", ref):
-                if tok.strip() in known_ids:
-                    _add(tok)
-            # Bare IDs: analyzers sometimes write `IF-002` without the brackets
-            # the matcher above keys on. Recover any declared ID that appears as
-            # a standalone token. Only IDs in known_ids match, so CWE/OWASP refs
-            # never do; the word-boundary guard avoids partial hits (IF-0021).
-            for kid in known_ids:
-                if kid not in out and re.search(r"(?<![\w-])" + re.escape(kid) + r"(?![\w-])", ref):
-                    _add(kid)
+    Four sources, unioned in order: the structured model's own
+    ``fulfills_requirements`` (written at Stage 1 by
+    ``build_threat_model_yaml.annotate_requirements_and_blueprints``), the
+    addressed threats' declared IDs, and the §7b assessment's evidence
+    citations. That last source only exists once Stage 2 has authored the
+    fragment, which is why ``emit_requirement_trace_to_model.py`` carries the
+    result back into the YAML after compose — otherwise the report names
+    requirements the structured model has never heard of.
+
+    The §10 block renders a filtered VIEW of this list: only requirements the
+    §7b table marked FAIL / PARTIAL / ANTI-PATTERN
+    (`_requirement_is_traceable_violation`). The filter is applied by the
+    caller, never here, so the two consumers cannot disagree on membership.
+    """
+    out = [str(r or "").strip() for r in (mitigation.get("fulfills_requirements") or []) if str(r or "").strip()]
+    for tid in mitigation.get("addresses") or mitigation.get("threat_ids") or []:
+        threat = threats_by_id.get((tid or "").strip().upper()) or {}
+        for rid in _requirement_ids_for_threat(threat, known_req_ids):
+            if rid not in out:
+                out.append(rid)
+        for rid in evidence_reqs.get(_visible_finding_id(tid), []):
+            if rid not in out:
+                out.append(rid)
     return out
 
 
@@ -9006,7 +8910,7 @@ def _render_requirements_mapping_table(
 ) -> str:
     """Render the requirement→finding→mitigation rows as a Markdown table.
 
-    Columns: Requirement · Status · Risk · Findings · Maßnahmen · Guidance. Finding
+    Columns: Requirement · Status · Risk · Findings · Mitigations · Guidance. Finding
     cells link to §8 (`#f-nnn`); mitigation cells link to §9 (`#m-nnn`). The
     requirement ID links to its source URL from `.requirements.yaml` when known.
     Returns "" for an empty row set.
@@ -9016,8 +8920,8 @@ def _render_requirements_mapping_table(
     shown = rows[:limit] if limit else rows
     known_ids = _known_requirement_ids(ctx)
     lines = [
-        "| Requirement | Status | Risk | Findings | Maßnahmen | Guidance |",
-        "|-------------|--------|------|----------|-----------|----------|",
+        "| Requirement | Status | Risk | Findings | Mitigations | Guidance |",
+        "|-------------|--------|------|----------|-------------|----------|",
     ]
     for r in shown:
         risk_word = (r.get("risk_word") or "").strip()
@@ -11385,7 +11289,11 @@ def _table_col_role(header: str) -> str:
         )
     ):
         return "desc"
-    if any(tok in h for tok in ("finding", "threat", "addresses", "mitigat", "covers", "linked")):
+    # "guidance" is the §7b blueprint column: a link plus a short section title,
+    # not prose. Classed as prose it fell to the 44-char soft-wrap, which broke
+    # section titles mid-phrase ("3.3. Step 3:<br/>Method-Level Authorization")
+    # so one entry read as two.
+    if any(tok in h for tok in ("finding", "threat", "addresses", "mitigat", "covers", "linked", "guidance")):
         return "links"
     return "default"
 
@@ -12049,7 +11957,7 @@ def _normalize_reference(ref: str) -> str:
     link = _REF_LINK_RE.search(ref)
     if link:
         url = link.group(2)
-        tail = ref[link.end():]
+        tail = ref[link.end() :]
         head = ref[: link.start()].strip()
         echoed = _REF_ECHOED_URL_RE.match(tail)
         # Only collapse when the tail repeats THIS link's target; a different
@@ -17845,24 +17753,15 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 _addr = m.get("addresses") or m.get("threat_ids") or []
                 _fulfilled: list[str] = []
                 _bp_cell = ""
+                _rids = mitigation_requirement_ids(m, _threats_by_id, _known_req_ids, _ev_reqs)
                 for _tid in _addr:
                     _tt = _threats_by_id.get((_tid or "").strip().upper()) or {}
-                    _rids = list(_requirement_ids_for_threat(_tt, _known_req_ids))
-                    # Fourth source: the §7b assessment's own evidence citations.
-                    # The analyzers do not yet write violated_requirements, so
-                    # without this the three structured sources are all empty and
-                    # the block below renders nothing at all.
-                    for _rid in _ev_reqs.get(_visible_finding_id(_tid), []):
-                        if _rid not in _rids:
-                            _rids.append(_rid)
-                    for _rid in _rids:
-                        if not _requirement_is_traceable_violation(_rid, _req_status_map):
-                            continue
-                        if _rid not in _fulfilled:
-                            _fulfilled.append(_rid)
                     if not _bp_cell:
                         _rem = _tt.get("remediation") if isinstance(_tt.get("remediation"), dict) else {}
                         _bp_cell = _format_blueprint_cell(_rem.get("blueprint")) if _rem else ""
+                for _rid in _rids:
+                    if _requirement_is_traceable_violation(_rid, _req_status_map) and _rid not in _fulfilled:
+                        _fulfilled.append(_rid)
                 if not _bp_cell:
                     for _rid in _fulfilled:
                         if _req_blueprints.get(_rid):
@@ -17881,60 +17780,61 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     lines.append("")
 
                 # What the organisation prescribes for those requirements — not
-                # just a pointer to where it is written. Grouped per blueprint so
-                # the prescribing requirement stays attached to its guidance;
-                # the old single-link form dropped every section after the first.
-                _bp_groups: dict[str, dict[str, Any]] = {}
-                for _rid in _fulfilled:
-                    for _sec in _req_bp_sections.get(_rid, []):
-                        _grp = _bp_groups.setdefault(_sec["bp_id"], {"meta": _sec, "reqs": [], "sections": []})
-                        if _rid not in _grp["reqs"]:
-                            _grp["reqs"].append(_rid)
-                        if not any(_s["section_title"] == _sec["section_title"] for _s in _grp["sections"]):
-                            _grp["sections"].append(_sec)
-                if _bp_groups:
-                    # Rank sections against what this mitigation actually fixes,
-                    # so a resource-ownership fix does not surface the
-                    # method-level section merely because it comes first.
-                    _rank_ctx_parts = [str(m.get("title") or "")]
-                    for _a in _addr:
-                        _at = _threats_by_id.get((_a or "").strip().upper()) or {}
-                        # The scenario carries the concrete wording the title
-                        # abbreviates ("resource", "ownership"), which is what
-                        # separates a resource-level from a method-level section.
-                        _rank_ctx_parts += [str(_at.get("title") or ""), str(_at.get("scenario") or "")]
-                    _rank_ctx = " ".join(_rank_ctx_parts)
-                    for _grp in _bp_groups.values():
-                        _grp["sections"] = _rank_blueprint_sections(_grp["sections"], _rank_ctx)
-                    for _grp in list(_bp_groups.values())[:_BLUEPRINT_MAX_PER_MITIGATION]:
-                        _bmeta = _grp["meta"]
-                        _head = (
-                            f"[{_bmeta['bp_id']}]({_bmeta['bp_url']})" if _bmeta["bp_url"] else f"`{_bmeta['bp_id']}`"
+                # just a pointer to where it is written. The blueprint is picked
+                # by fit to this mitigation, not by which fulfilled requirement
+                # the list happens to start with: an allowlist-the-request-body
+                # fix must surface the catalog's unexpected-field section, not
+                # an authorization one that shares a requirement with it.
+                _rank_ctx = requirements_trace.RankContext(
+                    primary=str(m.get("title") or ""),
+                    # The scenario carries the concrete wording the title
+                    # abbreviates ("resource", "ownership"), which is what
+                    # separates a resource-level from a method-level section.
+                    secondary=" ".join(
+                        f"{_at.get('title') or ''} {_at.get('scenario') or ''}"
+                        for _at in (_threats_by_id.get((_a or "").strip().upper()) or {} for _a in _addr)
+                    ),
+                )
+                _bp = requirements_trace.select_blueprint(_req_bp_sections, _fulfilled, _rank_ctx)
+                if _bp is not None:
+                    _head = (
+                        f"[{_bp.blueprint_id}]({_bp.blueprint_url})" if _bp.blueprint_url else f"`{_bp.blueprint_id}`"
+                    )
+                    if _bp.blueprint_title:
+                        _head += f" — {_bp.blueprint_title}"
+                    lines.append(f"**Blueprint:** {_head}")
+                    lines.append("")
+                    for _sec in _bp.sections[:_BLUEPRINT_MAX_SECTIONS]:
+                        # Each section links to the page it lives on. A blueprint
+                        # routinely cites several sources, so the blueprint's own
+                        # URL is not where the quoted text is found.
+                        _stitle = _sec.title or "Guidance"
+                        _slink = f"[{_stitle}]({_sec.url})" if _sec.url else f"**{_stitle}**"
+                        lines.append(f"- {_slink} — {_sec.content}" if _sec.content else f"- {_slink}")
+                    _rest = len(_bp.sections) - _BLUEPRINT_MAX_SECTIONS
+                    if _rest > 0:
+                        lines.append(f"- _{_rest} further section(s) in this blueprint._")
+                    lines.append("")
+                    # Provenance, precedence and the runners-up in one line
+                    # instead of three stacked notes. The precedence claim is
+                    # made only when the selection rests on shared wording: a
+                    # zero-score pick is whichever blueprint the catalog listed
+                    # first, and calling that governing would be a claim the
+                    # evidence does not carry.
+                    _by = ", ".join(_format_requirement_link(_r, _known_req_ids) for _r in _bp.requirement_ids)
+                    if _bp.is_grounded:
+                        _note = (
+                            f"Prescribed by {_by}; where the implementation steps below differ, this blueprint governs."
                         )
-                        if _bmeta["bp_title"]:
-                            _head += f" — {_bmeta['bp_title']}"
-                        _by = ", ".join(_format_requirement_link(_r, _known_req_ids) for _r in _grp["reqs"])
-                        lines.append(f"**Blueprint:** {_head} — prescribed by {_by}")
-                        lines.append("")
-                        for _sec in _grp["sections"][:_BLUEPRINT_MAX_SECTIONS]:
-                            _stitle = _sec["section_title"] or "Guidance"
-                            lines.append(f"- **{_stitle}** — {_sec['content']}" if _sec["content"] else f"- **{_stitle}**")
-                        _rest = len(_grp["sections"]) - _BLUEPRINT_MAX_SECTIONS
-                        if _rest > 0:
-                            lines.append(f"- _{_rest} further section(s) in this blueprint._")
-                        lines.append("")
-                        # The configured catalog outranks the generic steps this
-                        # report derives. Stated once, so a reader who follows
-                        # only the implementation steps cannot mistake a local
-                        # code fix for compliance with the prescribed design.
-                        lines.append("_Where the implementation steps below differ, this blueprint governs._")
-                        lines.append("")
-                    _others = [
-                        _g["meta"]["bp_id"] for _g in list(_bp_groups.values())[_BLUEPRINT_MAX_PER_MITIGATION :]
-                    ]
-                    if _others:
-                        lines.append(f"_Also prescribed in {', '.join(f'`{_o}`' for _o in _others)}._")
-                        lines.append("")
+                    else:
+                        _note = (
+                            f"Related catalog guidance for {_by}; no section matches this fix closely, "
+                            "so the implementation steps below remain authoritative."
+                        )
+                    if _bp.other_blueprint_ids:
+                        _note += " Also prescribed in " + ", ".join(f"`{_o}`" for _o in _bp.other_blueprint_ids) + "."
+                    lines.append(f"_{_note}_")
+                    lines.append("")
                 elif _bp_cell:
                     lines.append(f"**Blueprint guidance:** {_bp_cell}")
                     lines.append("")

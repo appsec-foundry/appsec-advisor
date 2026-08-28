@@ -18,6 +18,13 @@ analyzer under the projection's 32-row cap instead of being truncated to the
 first 32 requirements — and no applicability heuristic has to guess which
 categories matter for a component. The analyzer judges applicability from each
 category's own `applies_when` text.
+
+A requirement also carries the blueprint section that prescribes how to
+implement it, when the catalog declares one. Without it the blueprints reached
+only the renderer, which appended them beside remediation steps written in
+ignorance of them — the report then had to state that the two might differ and
+that the blueprint won. The analyst that writes the steps is the place the
+prescribed implementation has to arrive.
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import requirements_trace
 import yaml
 
 # Mirrors MAX_VALUE_CHARS in build_stride_evidence_bundles.py. A row above it is
@@ -35,22 +43,41 @@ import yaml
 # oversized categories are split into several rows instead.
 MAX_ROW_CHARS = 4096
 
+# One prescribing section per requirement. The analyst needs the prescribed
+# approach, not the whole blueprint, and this slice is charged per component.
+MAX_GUIDANCE_PER_REQUIREMENT = 1
+
 
 def _row_chars(row: dict[str, Any]) -> int:
     return len(json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
 
 
-def _category_rows(category: dict[str, Any]) -> list[dict[str, Any]]:
+def _category_rows(
+    category: dict[str, Any],
+    guidance: dict[str, list[requirements_trace.BlueprintSection]] | None = None,
+) -> list[dict[str, Any]]:
     """One row per category, split into parts when it would exceed the row cap."""
-    requirements = [
-        {
-            "id": str(r.get("id") or "").strip(),
+    guidance = guidance or {}
+    requirements = []
+    for r in category.get("requirements") or []:
+        if not isinstance(r, dict):
+            continue
+        rid = str(r.get("id") or "").strip()
+        if not rid:
+            continue
+        item: dict[str, Any] = {
+            "id": rid,
             "priority": str(r.get("priority") or "").strip().upper(),
             "text": str(r.get("text") or "").strip(),
         }
-        for r in category.get("requirements") or []
-        if isinstance(r, dict) and str(r.get("id") or "").strip()
-    ]
+        prescribed = [
+            {"blueprint": s.blueprint_id, "section": s.title, "guidance": s.content}
+            for s in guidance.get(rid, [])[:MAX_GUIDANCE_PER_REQUIREMENT]
+            if s.content
+        ]
+        if prescribed:
+            item["blueprint_guidance"] = prescribed
+        requirements.append(item)
     if not requirements:
         return []
 
@@ -82,10 +109,11 @@ def _category_rows(category: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def build_rows(catalog: dict[str, Any]) -> list[dict[str, Any]]:
+    guidance = requirements_trace.sections_by_requirement(catalog, limit=requirements_trace.MAX_ANALYST_SECTION_CHARS)
     rows: list[dict[str, Any]] = []
     for category in catalog.get("categories") or []:
         if isinstance(category, dict):
-            rows.extend(_category_rows(category))
+            rows.extend(_category_rows(category, guidance))
     return rows
 
 
@@ -136,7 +164,10 @@ def main(argv: list[str]) -> int:
             "description": (
                 "Requirements the configured catalog holds this component to. "
                 "Cite an id in violated_requirements only when the component's own "
-                "evidence shows the requirement is broken."
+                "evidence shows the requirement is broken. Where a requirement "
+                "carries blueprint_guidance, that is the implementation the "
+                "organisation prescribes: base remediation.steps on it and name "
+                "the blueprint in remediation.blueprint."
             ),
             "items": rows,
         }
@@ -145,7 +176,11 @@ def main(argv: list[str]) -> int:
         )
         written += 1
 
-    print(f"requirements-contexts: {total} requirement(s) in {len(rows)} category row(s) → {written} component(s)")
+    guided = sum(1 for row in rows for r in row["requirements"] if r.get("blueprint_guidance"))
+    print(
+        f"requirements-contexts: {total} requirement(s) in {len(rows)} category row(s) "
+        f"({guided} with blueprint guidance) → {written} component(s)"
+    )
     return 0
 
 

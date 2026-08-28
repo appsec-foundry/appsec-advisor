@@ -203,6 +203,9 @@ Removing an entry means listing it here in the same change.
 | RQ-3 | A threat not linked to a requirement is excluded from the mapping, never guessed into it | `test_legacy_requirement_id_is_honoured_and_unlinked_threats_excluded` | `docs/internal/contracts/schema-invariants.md` |
 | RQ-4 | Without a requirements source, no remediation reference is invented | `test_remediation_reference_ignored_without_requirements_yaml` | `docs/internal/contracts/schema-invariants.md` |
 | RQ-5 | The trace runs both ways — mitigations declare what they fulfil | `test_reverse_fulfills_requirements_adds_measure` | `docs/internal/contracts/schema-invariants.md` |
+| RQ-6 | The report's requirement list is a filtered view of the model's, never a different set — one derivation in `requirements_trace`, the §7b status filter applied only at render | `test_the_yaml_derivation_covers_every_threat_side_source`, `test_sidecar_authored_requirements_are_extended_not_replaced` | `scripts/requirements_trace.py`; `scripts/emit_requirement_trace_to_model.py` |
+| RQ-7 | A blueprint is selected by fit to the mitigation, and a selection with no shared wording is marked ungrounded rather than presented as governing | `test_the_chosen_blueprint_scores_at_least_as_high_as_every_alternative`, `test_a_selection_with_no_shared_wording_reports_itself_ungrounded` | `scripts/requirements_trace.py::select_blueprint` |
+| RQ-8 | Blueprint guidance reaches the STRIDE analyst that writes the remediation steps, not only the renderer that prints them | `test_each_requirement_carries_the_section_that_prescribes_it` | `scripts/build_requirements_contexts.py`; `agents/appsec-stride-analyzer-v2.md` |
 
 ## Incremental runs
 

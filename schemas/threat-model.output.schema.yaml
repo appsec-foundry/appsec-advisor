@@ -1035,8 +1035,39 @@ properties:
         reference:
           type: [string, "null"]
         fulfills_requirements:
+          # Requirement IDs this mitigation satisfies, derived by
+          # `scripts/requirements_trace.requirement_ids_for_threat` from the
+          # addressed threats. The rendered §10 block shows a filtered VIEW of
+          # this list — only requirements the §7b table marked FAIL / PARTIAL /
+          # ANTI-PATTERN — so the report may show fewer, never others.
           type: array
           items: { type: string }
+        blueprint:
+          # The catalog blueprint that prescribes how to implement this fix,
+          # selected by `scripts/requirements_trace.select_blueprint` from the
+          # requirements<->blueprint cross-reference in `.requirements.yaml`.
+          # Absent when no catalog is configured or when none of the fulfilled
+          # requirements is prescribed by a blueprint.
+          type: [object, "null"]
+          additionalProperties: true
+          properties:
+            id: { type: string }
+            title: { type: string }
+            url: { type: string }
+            section: { type: string }
+            section_url:
+              # The page the quoted section lives on. Differs from `url`
+              # whenever a blueprint cites several sources, which is the norm.
+              type: string
+            guidance: { type: string }
+            prescribed_by:
+              type: array
+              items: { type: string }
+            grounded:
+              # False when the selection rests on no shared wording with the
+              # mitigation — catalog order decided it. Consumers must not
+              # present such a blueprint as governing guidance.
+              type: boolean
 
   critical_findings:
     type: array

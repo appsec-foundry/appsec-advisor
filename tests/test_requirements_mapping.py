@@ -215,7 +215,7 @@ def test_table_has_six_columns_and_links_requirements_findings_and_mitigations()
     table = compose._render_requirements_mapping_table(ctx, compose._build_requirements_mapping_rows(ctx))
     header = table.splitlines()[0]
     assert header.count("|") == 7  # 6 columns -> 7 pipes
-    assert "Requirement" in header and "Status" in header and "Maßnahmen" in header and "Guidance" in header
+    assert "Requirement" in header and "Status" in header and "Mitigations" in header and "Guidance" in header
     assert "| `SEC-AUTH-1` |" in table
     assert "[F-001](#f-001)" in table
     assert "[M-002](#m-002)" in table
@@ -376,7 +376,7 @@ def test_7b_hybrid_inlines_fragment_and_appends_traceability(tmp_path: Path) -> 
     assert "OWASP ASVS" in body  # LLM narrative preserved
     assert "### Requirement Scope" in body  # deterministic scope guardrail
     assert "### Requirements Traceability" in body  # deterministic table appended
-    assert "| Requirement | Status | Risk | Findings | Maßnahmen | Guidance |" in body
+    assert "| Requirement | Status | Risk | Findings | Mitigations | Guidance |" in body
     assert "[F-001](#f-001)" in body and "[M-001](#m-001)" in body
     assert "[BP-API](https://x/bp) · API Auth" in body
     assert "SEC-LOG-1: Audit logging" in body  # full assessment remains in §7b
@@ -662,7 +662,7 @@ def test_full_render_emits_traceability_in_7b_and_ms(tmp_path: Path) -> None:
     # §7b: LLM narrative + deterministic table, end-to-end through the dispatcher.
     assert "## 7b. Requirements Compliance" in rendered
     assert "### Requirements Traceability" in rendered
-    assert "| Requirement | Status | Risk | Findings | Maßnahmen | Guidance |" in rendered
+    assert "| Requirement | Status | Risk | Findings | Mitigations | Guidance |" in rendered
     assert "[F-001](#f-001)" in rendered
     # MS subsection rendered via the document.order conditional.
     assert "### Requirements Compliance" in rendered

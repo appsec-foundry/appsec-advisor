@@ -5863,6 +5863,11 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     # Carry the rendered verdict into the semantic model before cleanup reaps
     # `.fragments/`, so every consumer can state the assessment's conclusion.
     _run(str(SCRIPT_DIR / "emit_verdict_to_model.py"), str(output_dir))
+    # Same reason, same window: the §7b compliance assessment is the only
+    # source for some requirement→mitigation edges, and it exists only as a
+    # fragment. Carry those edges into the model before cleanup reaps them, so
+    # the YAML is never missing a requirement the report shows.
+    _run(str(SCRIPT_DIR / "emit_requirement_trace_to_model.py"), str(output_dir))
     _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
     try:
