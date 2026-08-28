@@ -523,6 +523,24 @@ _PLURALS = {"hypothesis": "hypotheses", "anti-pattern": "anti-patterns"}
 # Rides in the headline itself, where it cannot be cropped away from the number.
 CAVEAT = "a limited quick check, not a full security analysis"
 
+# One glyph vocabulary for both the scores and the severities, rather than ANSI
+# colour: the skill reprints this block into Markdown, where escape sequences are
+# either invisible or visible noise. The severity mapping is the one
+# skills/authnz-review already prints.
+_BANDS = ((25, "🔴"), (50, "🟠"), (75, "🟡"))
+_UNSCORED_DOT = "⚪"
+_SEVERITY_DOT = {"critical": "🔴", "high": "🟠", "medium": "🟡"}
+
+
+def _dot(score: int | None) -> str:
+    """Band glyph for a score. An unscored indicator gets the neutral one."""
+    if score is None:
+        return _UNSCORED_DOT
+    for ceiling, glyph in _BANDS:
+        if score < ceiling:
+            return glyph
+    return "🟢"
+
 
 def _found(row: dict[str, Any]) -> str:
     """The findings half of an indicator line."""
@@ -551,15 +569,18 @@ def render_text(result: dict[str, Any]) -> str:
     scan = f"{result['checks_applicable']} of {result['checks_total']} checks applied · no exposure context"
 
     if result["verdict"] == "undetermined":
-        return f"Security Score  undetermined — {CAVEAT}\n{result['reason']}"
+        return f"{_UNSCORED_DOT} Security Score  undetermined — {CAVEAT}\n{result['reason']}"
 
-    lines = [f"Security Score  {result['score']} / 100 — {CAVEAT}", scan, ""]
+    lines = [f"{_dot(result['score'])} Security Score  {result['score']} / 100 — {CAVEAT}", scan, ""]
 
     width = max((len(row["label"]) for row in result["categories"]), default=0)
     found_width = max((len(_found(row)) for row in result["categories"]), default=0)
     for row in result["categories"]:
         score = "no check" if row["score"] is None else f"{row['score']:>3}/100"
-        lines.append(f"  {score:>8}  {row['label']:<{width}}  {_found(row):>{found_width}} · {_signals(row)}")
+        lines.append(
+            f"  {_dot(row['score'])} {score:>8}  {row['label']:<{width}}"
+            f"  {_found(row):>{found_width}} · {_signals(row)}"
+        )
 
     lines += [
         "",
@@ -572,7 +593,8 @@ def render_text(result: dict[str, Any]) -> str:
         width = max(len(row["title"]) for row in top)
         for row in top:
             seen = f"{row['count']}×" if row["count"] > 1 else ""
-            lines.append(f"  {row['severity']:<8}  {row['title']:<{width}}  {seen:>4}  {row['location']}")
+            dot = _SEVERITY_DOT.get(row["severity"], _UNSCORED_DOT)
+            lines.append(f"  {dot} {row['title']:<{width}}  {seen:>4}  {row['location']}")
 
     for warning in result.get("warnings") or []:
         lines += ["", f"  {warning}"]

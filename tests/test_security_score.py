@@ -467,6 +467,42 @@ def test_rule_signal_separates_a_control_from_a_hypothesis():
     assert ss.rule_signal(_rule("R", "missing")) == "no control"
 
 
+def test_the_score_and_every_indicator_carry_a_band_glyph():
+    result = ss.compute(_rules("present", "present", "present", "missing", "missing"), [])
+    result["warnings"] = []
+
+    lines = ss.render_text(result).splitlines()
+
+    assert lines[0].startswith(ss._dot(result["score"]))
+    assert all(
+        any(line.lstrip().startswith(glyph) for _, glyph in ss._BANDS) or "🟢" in line
+        for line in lines
+        if "/100" in line
+    )
+
+
+def test_the_band_glyph_follows_the_score():
+    assert ss._dot(0) == "🔴"
+    assert ss._dot(24) == "🔴"
+    assert ss._dot(25) == "🟠"
+    assert ss._dot(60) == "🟡"
+    assert ss._dot(75) == "🟢"
+    assert ss._dot(None) == ss._UNSCORED_DOT
+
+
+def test_a_finding_carries_the_glyph_of_its_severity():
+    result = ss.compute(_rules(*(["present"] * 5)), [])
+    result["warnings"] = []
+    result["top_findings"] = ss.top_findings(
+        [_hit("Critical", "A", "Broken authorization", "a.ts"), _hit("Medium", "B", "Weak thing", "b.ts")]
+    )
+
+    text = ss.render_text(result)
+
+    assert "🔴 Broken authorization" in text
+    assert "🟡 Weak thing" in text
+
+
 def test_warnings_are_rendered():
     result = ss.compute(_rules(*(["present"] * 5)), [])
     result["warnings"] = ["source-auth: timed out"]
