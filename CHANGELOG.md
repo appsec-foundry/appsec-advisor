@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A missing lockfile and a container base image without a digest are now Medium rather than High, matching the severity the tier policy already assigns to the same supply-chain practice.
+- A missing lockfile, an undigested container base image, an absent workflow `permissions:` block and an unpinned third-party action are now Medium rather than High, matching the severity the tier policy already assigns to the same supply-chain practice.
 - Threat-model Management Summaries now derive compliance status, counts, and a table of the failed requirements — each named in words with the findings the assessment cited — from the complete Section 7b assessment, which itself lists failures first.
 - The bundled requirements demo now uses current OWASP 2025 references, scoped verifiable controls, and consistent source metadata.
 - The requirements harvester no longer duplicates blueprint index pages or requirement IDs re-listed under multiple categories, double-counts list/code blocks, joins words across inline tags, or drops headings without direct text.

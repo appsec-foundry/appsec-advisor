@@ -32,6 +32,9 @@ WHAT THE NUMBER IS
   where it is weakest. Below the indicators the ten most severe checks
   are named, grouped by check with one example location each.
 
+  Low-severity checks never count: each of them states a build practice
+  (SBOM generation, a Renovate config, a HEALTHCHECK) and not a weakness.
+
 WHAT IT IS NOT
   No asset tier, no exposure, no abuse chain. Severities are catalog
   defaults without the caps and elevations the report applies. Comparable

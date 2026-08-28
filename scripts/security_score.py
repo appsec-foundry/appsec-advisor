@@ -18,7 +18,10 @@ indicator's own signals:
     applies at all (REQ-ARC-001: an absent surface is not applicable), which
     gives each indicator an honest denominator.
   * that indicator's own findings from the config/IaC and source-auth scanners,
-    as a saturating deduction weighted by catalog severity.
+    as a saturating deduction weighted by catalog severity. Low never counts —
+    every Low check states a build practice rather than a weakness — and
+    repeated hits of one config check are damped, because a policy evaluated
+    once per workflow file is still one policy.
 
 The headline is the mean of the weaker half of the scored indicators. A
 repository is attacked where it is weakest, and averaging everything lets a
@@ -48,6 +51,7 @@ import argparse
 import collections
 import functools
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -71,8 +75,19 @@ STATUS_POINTS = {
     "anti_pattern": 0.0,
 }
 
-# Catalog severity → penalty points, summed into a raw weight.
-SEVERITY_WEIGHT = {"critical": 8.0, "high": 4.0, "medium": 1.5, "low": 0.5}
+# Catalog severity → penalty points, summed into a raw weight. Low is absent on
+# purpose: every Low check in the config catalog states a build practice (SBOM
+# generation, a Renovate config, a Dockerfile HEALTHCHECK) rather than a
+# weakness, and a security indication should not move on those.
+SEVERITY_WEIGHT = {"critical": 8.0, "high": 4.0, "medium": 1.5}
+
+# Repeated hits of one CONFIG check are damped to `weight * (1 + ln(n))`. A
+# repository property evaluated per file — a missing workflow `permissions:`
+# block, an unsigned image — fires once per workflow, and counted per hit five
+# such checks made up 78% of the raw weight on a measured repository. One policy
+# gap is one thing to fix. Source findings are not damped: a weakness at
+# seventeen call sites is seventeen places to change.
+DAMPED_SCANNERS = frozenset({"config-iac"})
 
 # Per indicator, the raw weight is mapped through `CAP * raw / (raw + HALF)`
 # rather than being clipped. A hard cap saturates: measured on two repositories,
@@ -119,25 +134,27 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 @functools.lru_cache(maxsize=1)
-def indicators() -> tuple[list[tuple[str, str]], dict[str, str], dict[str, str], dict[str, str], str]:
-    """The indicator vocabulary: (order, by_cwe, by_class, by_scanner, default)."""
+def indicators() -> tuple[list[tuple[str, str]], dict[str, dict[str, str]], str]:
+    """The indicator vocabulary: (order, routing tables, default).
+
+    Routing tables are keyed by field name and consumed in the order
+    :func:`indicator_for` applies them.
+    """
     doc = _load_yaml(_INDICATORS_YAML)
     order: list[tuple[str, str]] = []
-    by_cwe: dict[str, str] = {}
-    by_class: dict[str, str] = {}
-    by_scanner: dict[str, str] = {}
+    tables: dict[str, dict[str, str]] = {
+        field: {} for field in ("config_checks", "iac_types", "cwes", "weakness_classes", "scanners")
+    }
     for entry in doc.get("indicators") or []:
         if not isinstance(entry, dict) or not entry.get("id"):
             continue
         indicator = str(entry["id"])
         order.append((indicator, str(entry.get("label") or indicator)))
-        for cwe in entry.get("cwes") or []:
-            by_cwe.setdefault(str(cwe).strip().upper(), indicator)
-        for weakness_class in entry.get("weakness_classes") or []:
-            by_class.setdefault(str(weakness_class), indicator)
-        for scanner in entry.get("scanners") or []:
-            by_scanner.setdefault(str(scanner), indicator)
-    return order, by_cwe, by_class, by_scanner, str(doc.get("default") or "other")
+        for field, table in tables.items():
+            for value in entry.get(field) or []:
+                key = str(value).strip()
+                table.setdefault(key.upper() if field == "cwes" else key, indicator)
+    return order, tables, str(doc.get("default") or "other")
 
 
 @functools.lru_cache(maxsize=1)
@@ -152,18 +169,32 @@ def rule_cwes() -> dict[str, str]:
     return mapping
 
 
-def indicator_for(cwes: list[str], scanner: str | None = None) -> str:
-    """Route one CWE list to its indicator; see the catalog for the order."""
-    _, by_cwe, by_class, by_scanner, default = indicators()
+def indicator_for(
+    cwes: list[str],
+    scanner: str | None = None,
+    check_id: str | None = None,
+    iac_type: str | None = None,
+) -> str:
+    """Route one item to its indicator; see the catalog for the order.
+
+    A config/IaC check is placed by its identity and family before its CWE is
+    consulted, because that CWE describes the weakness in the pipeline, not the
+    aspect of the application a reader is looking at.
+    """
+    _, tables, default = indicators()
+    if check_id and check_id in tables["config_checks"]:
+        return tables["config_checks"][check_id]
+    if iac_type and iac_type in tables["iac_types"]:
+        return tables["iac_types"][iac_type]
     normalized = [str(cwe or "").strip().upper() for cwe in cwes if cwe]
     for cwe in normalized:
-        if cwe in by_cwe:
-            return by_cwe[cwe]
+        if cwe in tables["cwes"]:
+            return tables["cwes"][cwe]
     for cwe in normalized:
         weakness_class = classify_cwe(cwe, warn=False)
-        if weakness_class in by_class:
-            return by_class[weakness_class]
-    return by_scanner.get(scanner or "", default)
+        if weakness_class in tables["weakness_classes"]:
+            return tables["weakness_classes"][weakness_class]
+    return tables["scanners"].get(scanner or "", default)
 
 
 def _run(argv: list[str], warnings: list[str], label: str) -> bool:
@@ -368,16 +399,31 @@ def _cwe_list(item: dict) -> list[str]:
     return [str(c) for c in raw] if isinstance(raw, list) else [str(raw)] if raw else []
 
 
+def finding_indicator(finding: dict) -> str:
+    """Route one scanner finding to its indicator."""
+    return indicator_for(
+        _cwe_list(finding),
+        scanner=finding.get("_scanner"),
+        check_id=str(finding.get("check_id") or "") or None,
+        iac_type=str(finding.get("iac_type") or "") or None,
+    )
+
+
 def _tally(findings: list[dict]) -> tuple[dict[str, int], float]:
-    """Per-severity counts and the raw severity weight of a finding set."""
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    """Per-severity counts and the damped raw severity weight of a finding set."""
+    counts = {severity: 0 for severity in SEVERITY_WEIGHT}
+    per_check: dict[tuple[str, str], int] = collections.Counter()
     raw = 0.0
     for finding in findings:
         severity = str(finding.get("severity") or "").strip().lower()
         if severity not in SEVERITY_WEIGHT:
             continue
         counts[severity] += 1
-        raw += SEVERITY_WEIGHT[severity]
+        if finding.get("_scanner") in DAMPED_SCANNERS:
+            per_check[(str(finding.get("check_id") or finding.get("title") or "?"), severity)] += 1
+        else:
+            raw += SEVERITY_WEIGHT[severity]
+    raw += sum(SEVERITY_WEIGHT[severity] * (1 + math.log(n)) for (_, severity), n in per_check.items())
     return counts, raw
 
 
@@ -414,7 +460,7 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
         )
         return result
 
-    order, _, _, _, _ = indicators()
+    order, _, _ = indicators()
     cwe_by_rule = rule_cwes()
     buckets: dict[str, dict[str, Any]] = {
         indicator: {"points": [], "signals": [], "findings": []} for indicator, _ in order
@@ -429,7 +475,7 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
         bucket["points"].append(rule_points(rule))
         bucket["signals"].append(rule_signal(rule))
     for finding in findings:
-        bucket_for(indicator_for(_cwe_list(finding), finding.get("_scanner")))["findings"].append(finding)
+        bucket_for(finding_indicator(finding))["findings"].append(finding)
 
     known = {indicator for indicator, _ in order}
     categories = []
@@ -517,7 +563,7 @@ def render_text(result: dict[str, Any]) -> str:
 
     lines += [
         "",
-        f"  {counts['critical']} critical · {counts['high']} high · {counts['medium']} medium · {counts['low']} low",
+        f"  {counts['critical']} critical · {counts['high']} high · {counts['medium']} medium",
     ]
 
     top = result.get("top_findings") or []

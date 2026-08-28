@@ -115,7 +115,63 @@ def test_an_unroutable_config_finding_is_hardening():
 
 
 def test_an_unroutable_source_finding_falls_through_to_the_default():
-    assert ss.indicator_for([], scanner="source-auth") == ss.indicators()[4]
+    assert ss.indicator_for([], scanner="source-auth") == ss.indicators()[2]
+
+
+def test_a_config_check_is_routed_by_its_family_not_its_cwe():
+    """A missing workflow `permissions:` block carries CWE-862, which would put
+    a CI setting next to broken object authorization in the application."""
+    workflow = {
+        "severity": "High",
+        "cwe": ["CWE-862"],
+        "check_id": "IAC-010",
+        "iac_type": "github_workflow",
+        "_scanner": "config-iac",
+    }
+
+    assert ss.finding_indicator(workflow) == "hardening"
+
+
+def test_a_named_config_check_overrides_its_family():
+    """Pinning and SBOM checks live in families that are otherwise hardening."""
+    pinning = {"severity": "Medium", "check_id": "IAC-011", "iac_type": "github_workflow", "_scanner": "config-iac"}
+
+    assert ss.finding_indicator(pinning) == "supply-chain"
+
+
+def test_a_source_finding_is_still_routed_by_cwe():
+    finding = {"severity": "High", "cwe": ["CWE-862"], "_scanner": "source-auth"}
+
+    assert ss.finding_indicator(finding) == "access-control"
+
+
+def test_low_severity_never_reaches_the_score():
+    """Every Low check in the catalog states a build practice, not a weakness."""
+    counts, raw = ss._tally([_finding("Low"), _finding("Low")])
+
+    assert raw == 0.0
+    assert "low" not in counts
+
+
+def test_repeated_hits_of_one_config_check_are_damped():
+    repeated = [
+        {"severity": "High", "check_id": "IAC-010", "iac_type": "github_workflow", "_scanner": "config-iac"}
+        for _ in range(14)
+    ]
+    single = repeated[:1]
+
+    _, raw_many = ss._tally(repeated)
+    _, raw_one = ss._tally(single)
+
+    assert raw_one < raw_many < 4 * raw_one
+
+
+def test_repeated_source_findings_are_not_damped():
+    findings = [_hit("High", "AUTHZ-001", "Broken authorization", f"r{i}.ts") for i in range(10)]
+
+    _, raw = ss._tally(findings)
+
+    assert raw == 10 * ss.SEVERITY_WEIGHT["high"]
 
 
 def test_rules_and_findings_meet_in_the_same_indicator():
