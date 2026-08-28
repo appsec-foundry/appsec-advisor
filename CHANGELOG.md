@@ -11,28 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `/appsec-advisor:status` now always names the package, core and secure-coding baseline versions it is running, with the upstream branch, commit and date behind them and the source URLs they came from; `--check-updates` says whether the configured baseline and the packaged core are still the published ones. Packaged organization builds record that upstream revision at build time, so an installed package reports it too, and the line naming when a build was packaged is printed even when it was not.
-- `/appsec-advisor:status` lists every skill the build ships with the state the skill policy enforces, including the skills an organization disabled with its reason and the ones its package policy removed, and it always reports the organization profile, its context documents and which config file is in effect. A packaged build is titled with the organization's own headline or package name, and the profile line names the organization, not just its id.
-- `/appsec-advisor:security-score` reports a deterministic 0-100 score for a repository from the scanner layer alone, without running a threat model: one score per security indicator, the ten most severe checks by name, and no value at all when the rule catalog does not cover the repository.
-- Headless runs can launch Claude Code through an environment-provided wrapper executable.
-- Deterministic source scans now detect direct unsafe LLM-output flows into structured data, browser rendering, interpreters, resources, and privileged actions, while LLM review covers indirect flows.
-- The requirements harvester now recognizes requirement IDs written without brackets (e.g. `REQ-001: text`), not just the bracketed convention.
-- The requirements harvester reports a clear message naming the missing sibling module when it is run outside a full checkout, instead of an import traceback.
-- Harvested requirements now carry the full text of their source section, including collapsible `<details>` blocks, tables, lists and any prose that follows them, with list and table items kept apart; blueprint sections now also index table rows and definition lists.
-- The requirements audit names the catalog and the requirement categories it is about to grade before it starts scanning, and reports progress while it works.
-- An organization can refresh the secure-coding baseline it vendors in its own profile from the source that profile declares, and be told when the two have drifted apart.
-- STRIDE analysis now receives the blueprint section that prescribes how to implement each requirement, so remediation steps follow the configured catalog instead of being written independently of it.
-- `threat-model.yaml` records which blueprint prescribes each mitigation, so the exports and the review and query skills see the guidance the report shows.
+- Findings now name the requirements they break, and mitigations quote the blueprint section that prescribes the fix. STRIDE analysis gets that blueprint while it works, so remediation follows the catalog.
+- `threat-model.yaml` carries the same requirement and blueprint links, so the exports and the review and query skills see them too.
+- The Management Summary states compliance and lists the requirements that failed.
+- The requirements audit says which catalog it uses and how old it is, then reports progress while it grades.
+- An organization package records which appsec-advisor revision it was built from.
+- `/appsec-advisor:status` shows the package, core and baseline versions with their origin, and `--check-updates` says whether baseline and core are still current.
+- `/appsec-advisor:status` also lists the shipped skills with their policy state, the organization profile and the config file in effect.
+- `/appsec-advisor:security-score` scores a repository from 0 to 100 using the scanners alone, without running a threat model.
+- Source scans now flag LLM output that reaches rendering, interpreters or privileged actions unchecked.
+- An organization profile can refresh the secure-coding baseline it vendors from its own source.
+- Headless runs can start Claude Code through a wrapper given by the environment.
+
+### Changed
+
+- A missing lockfile, an undigested base image, a missing workflow `permissions:` block and an unpinned action are now Medium instead of High.
 
 ### Fixed
 
-- A mitigation's blueprint is now the one that fits the fix rather than the one belonging to whichever requirement happened to be listed first, each quoted section links the page it lives on, and a blueprint with no connection to the fix is no longer presented as governing it.
-- `threat-model.yaml` and the mitigation register no longer name different requirement sets for the same mitigation; the report shows a filtered view of the model, never a requirement the model lacks.
-- The Section 7b Guidance column no longer breaks blueprint section titles mid-phrase, and its mitigation column header is no longer German in an English report.
-- A missing lockfile, an undigested container base image, an absent workflow `permissions:` block and an unpinned third-party action are now Medium rather than High, matching the severity the tier policy already assigns to the same supply-chain practice.
-- Threat-model Management Summaries now derive compliance status, counts, and a table of the failed requirements — each named in words with the findings the assessment cited — from the complete Section 7b assessment, which itself lists failures first.
-- The bundled requirements demo now uses current OWASP 2025 references, scoped verifiable controls, and consistent source metadata.
-- The requirements harvester no longer duplicates blueprint index pages or requirement IDs re-listed under multiple categories, double-counts list/code blocks, joins words across inline tags, or drops headings without direct text.
+- The requirements harvester now takes the whole requirement section, recognises IDs written without brackets, and no longer duplicates entries.
 
 ## 0.6.0-beta.1 (2026-08-23)
 
