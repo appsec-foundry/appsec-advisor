@@ -100,14 +100,23 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
+## What's new in 0.6.0-beta.2
+
+- Findings name the requirements they break, and mitigations quote the blueprint section that prescribes the fix.
+- The Management Summary states compliance and lists the failed requirements.
+- `/appsec-advisor:security-score` scores a repository from 0 to 100 using the scanners alone.
+- `/appsec-advisor:status` reports the versions, skills, profile, and config in effect; `--check-updates` checks whether they are current.
+- Source scans flag LLM output that reaches rendering, interpreters, or privileged actions unchecked.
+- An organization profile can refresh the secure-coding baseline it vendors from its own source.
+
 ## What's new in 0.6.0-beta.1
 
-- Runs support only full, rebuild, and rerender. Incremental scans, resume, PR mode, `--max-cost`, and `--max-wall-time` are rejected before a run starts; reassess a changed repository with `--full`.
+- Runs support only full, rebuild, and rerender; reassess a changed repository with `--full`.
 - Threat analysis costs 39.8% less at quick depth and 26.8% less at thorough depth in reference runs.
 - Trust boundaries are assessed, drawn in the architecture diagram, and linked to findings that cross them.
 - `install-baseline` and `verify-baseline` put the bundled [AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline) into Claude Code's instruction files and let CI verify it.
-- New and rebuilt scans can take business context interactively or through `--context`, giving named sensitive-asset components full-depth analysis.
-- `--formats threatdragon` exports Threat Dragon v2 JSON for Threat Dragon and OWASP ThreatAtlas. The export remains alpha and opt-in.
+- Scans can take business context interactively or through `--context`, giving named sensitive-asset components full-depth analysis.
+- `--formats threatdragon` exports alpha Threat Dragon v2 JSON for Threat Dragon and OWASP ThreatAtlas.
 - Organization profiles can include custom skills and baselines, configure the session banner, and disable individual skills.
 
 See the [full changelog](CHANGELOG.md) for all changes.
