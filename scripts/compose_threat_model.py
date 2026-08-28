@@ -17749,6 +17749,8 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # the lines the QA reviewer demands but the renderer previously
             # dropped, and surfaces blueprint guidance that was otherwise
             # confined to the §7b traceability cell.
+            # Set when a blueprint applies; emitted with the references below.
+            _blueprint_ref = ""
             if _req_enabled:
                 _addr = m.get("addresses") or m.get("threat_ids") or []
                 _fulfilled: list[str] = []
@@ -17768,7 +17770,19 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                             _bp_cell = _req_blueprints[_rid]
                             break
                 if _fulfilled:
-                    lines.append("**Fulfills Requirements:**")
+                    # NOT "Fulfills Requirements". The set is inherited whole
+                    # from the addressed threats' `violated_requirements`
+                    # (build_threat_model_yaml.annotate_requirements_and_blueprints),
+                    # and nothing checks that THIS mitigation closes each entry.
+                    # Sound as the requirements the finding puts at stake;
+                    # unsound as a fulfilment claim. With one requirement the
+                    # two readings coincide, but where a threat breaks several,
+                    # a single fix rarely closes them all — juice-shop
+                    # 2026-08-28 asserted that moving a key into a secret store
+                    # fulfilled a resource-server token-validation requirement.
+                    # Narrowing per mitigation needs a judgement no code here
+                    # makes, so state what the data supports.
+                    lines.append("**Requirements at stake:**")
                     lines.append("")
                     for _rid in _fulfilled:
                         _rmeta = _req_catalog.get(_rid) or {}
@@ -17795,6 +17809,25 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                         for _at in (_threats_by_id.get((_a or "").strip().upper()) or {} for _a in _addr)
                     ),
                 )
+                # The blueprint belongs with the references, not above the fix.
+                # It used to render as its own block of catalog excerpts topped
+                # by "where the implementation steps below differ, this
+                # blueprint governs" — a precedence claim the selection cannot
+                # support. `select_blueprint` ranks by content-word overlap
+                # against the mitigation title, and `is_grounded` is satisfied
+                # by ONE shared word, so the claim was made on 34 of 37
+                # mitigations in the juice-shop 2026-08-28 run while only 7
+                # carried a blueprint the analyst had actually chosen. The other
+                # 30 were compose-time guesses: a CI action-pinning fix was told
+                # that a browser Subresource-Integrity section governed it.
+                #
+                # The analyst already receives `blueprint_guidance` in its
+                # requirement context and is instructed to write the steps
+                # against it (agents/appsec-stride-analyzer-v2.md), so the
+                # prescription reaches the reader through `**How:**`, expressed
+                # against this codebase. What is left for the report is the
+                # pointer — placed before the general reference so the
+                # organisation's own guidance is the first link offered.
                 _bp = requirements_trace.select_blueprint(_req_bp_sections, _fulfilled, _rank_ctx)
                 if _bp is not None:
                     _head = (
@@ -17802,42 +17835,10 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     )
                     if _bp.blueprint_title:
                         _head += f" — {_bp.blueprint_title}"
-                    lines.append(f"**Blueprint:** {_head}")
-                    lines.append("")
-                    for _sec in _bp.sections[:_BLUEPRINT_MAX_SECTIONS]:
-                        # Each section links to the page it lives on. A blueprint
-                        # routinely cites several sources, so the blueprint's own
-                        # URL is not where the quoted text is found.
-                        _stitle = _sec.title or "Guidance"
-                        _slink = f"[{_stitle}]({_sec.url})" if _sec.url else f"**{_stitle}**"
-                        lines.append(f"- {_slink} — {_sec.content}" if _sec.content else f"- {_slink}")
-                    _rest = len(_bp.sections) - _BLUEPRINT_MAX_SECTIONS
-                    if _rest > 0:
-                        lines.append(f"- _{_rest} further section(s) in this blueprint._")
-                    lines.append("")
-                    # Provenance, precedence and the runners-up in one line
-                    # instead of three stacked notes. The precedence claim is
-                    # made only when the selection rests on shared wording: a
-                    # zero-score pick is whichever blueprint the catalog listed
-                    # first, and calling that governing would be a claim the
-                    # evidence does not carry.
                     _by = ", ".join(_format_requirement_link(_r, _known_req_ids) for _r in _bp.requirement_ids)
-                    if _bp.is_grounded:
-                        _note = (
-                            f"Prescribed by {_by}; where the implementation steps below differ, this blueprint governs."
-                        )
-                    else:
-                        _note = (
-                            f"Related catalog guidance for {_by}; no section matches this fix closely, "
-                            "so the implementation steps below remain authoritative."
-                        )
-                    if _bp.other_blueprint_ids:
-                        _note += " Also prescribed in " + ", ".join(f"`{_o}`" for _o in _bp.other_blueprint_ids) + "."
-                    lines.append(f"_{_note}_")
-                    lines.append("")
+                    _blueprint_ref = f"{_head} (for {_by})" if _by else _head
                 elif _bp_cell:
-                    lines.append(f"**Blueprint guidance:** {_bp_cell}")
-                    lines.append("")
+                    _blueprint_ref = _bp_cell
 
             # M3.13 — consolidate Priority + Effort + File on ONE line.
             # The standalone Severity row is REMOVED (severity is now shown
@@ -18157,6 +18158,11 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # Use the harvested fallback reference when the mitigation
             # entry itself has none (mitigation_reference was set by the
             # threats[].remediation fallback above).
+            # The organisation's own guidance ranks above the general cheat
+            # sheet, so it is offered first.
+            if _blueprint_ref:
+                lines.append(f"**Blueprint:** {_blueprint_ref}")
+                lines.append("")
             ref = _normalize_reference(m.get("reference") or mitigation_reference or "")
             if ref:
                 lines.append(f"**Reference:** {ref}")
