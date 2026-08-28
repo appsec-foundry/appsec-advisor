@@ -193,6 +193,7 @@ def test_a_build_without_provenance_says_so_rather_than_dropping_the_line(tmp_pa
     rendered = dict(vs.rows(vs.collect(repo=None, plugin_root=root)))
 
     assert rendered["Package"] == "acme-appsec 1.2.0  (upstream build)"
+    assert rendered["Packaged"] == "not recorded — this build did not come from packaging"
     assert "revision not recorded in this build" in rendered["Core"]
     assert rendered["Core source"] == "not recorded in this build"
 

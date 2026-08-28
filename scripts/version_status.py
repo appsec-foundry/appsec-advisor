@@ -321,7 +321,7 @@ def collect(
 # value is unknown reads as "nothing to report" and hides the build worth asking
 # about. ``rows()`` is pinned to this in tests, so dropping one is a test
 # failure rather than a quiet regression on someone else's installation.
-REQUIRED_ROWS = ("Package", "Core", "Core source", "Baseline")
+REQUIRED_ROWS = ("Package", "Packaged", "Core", "Core source", "Baseline")
 
 
 def rows(data: dict) -> list[tuple[str, str]]:
@@ -338,8 +338,7 @@ def rows(data: dict) -> list[tuple[str, str]]:
 
     kind = "organization build" if package["organization_build"] else "upstream build"
     out.append(("Package", f"{package['name'] or '?'} {package['version'] or '?'}  ({kind})"))
-    if package["packaged_at"]:
-        out.append(("Packaged", package["packaged_at"]))
+    out.append(("Packaged", package["packaged_at"] or "not recorded — this build did not come from packaging"))
 
     core_parts = [core["version"] or "?"]
     revision = " @ ".join(part for part in (core["ref"], core["commit"][:12]) if part)

@@ -389,6 +389,131 @@ class TestConfigSummary:
 
 
 # ---------------------------------------------------------------------------
+# _skills_status
+# ---------------------------------------------------------------------------
+
+
+def _build_plugin_root(root: Path, skills: list[str], *, config: dict | None = None, surface: dict | None = None):
+    """A minimal plugin tree: skill directories, config.json, package surface."""
+    for name in skills:
+        skill_dir = root / "skills" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(f"---\nname: {name}\ndescription: x\n---\n", encoding="utf-8")
+    (root / "config.json").write_text(json.dumps(config or {}), encoding="utf-8")
+    if surface is not None:
+        (root / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+        (root / ".claude-plugin" / "package-surface.json").write_text(json.dumps(surface), encoding="utf-8")
+
+
+class TestSkillsStatus:
+    @pytest.fixture
+    def plugin_root(self, appsec_status, tmp_path, monkeypatch):
+        root = tmp_path / "plugin"
+        root.mkdir()
+        monkeypatch.setattr(appsec_status, "PLUGIN_ROOT", root)
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
+        return root
+
+    def test_lists_every_installed_skill_without_a_policy(self, appsec_status, plugin_root, tmp_path):
+        _build_plugin_root(plugin_root, ["create-threat-model", "status"])
+        res = appsec_status._skills_status(tmp_path / "out")
+        assert [e["name"] for e in res["entries"]] == ["create-threat-model", "status"]
+        assert all(e["state"] == "enabled" for e in res["entries"])
+        assert res["policy_source"] is None
+        assert res["installed_count"] == 2
+        assert res["removed_count"] == 0
+
+    def test_packaged_toggle_disables_with_its_reason(self, appsec_status, plugin_root, tmp_path):
+        _build_plugin_root(
+            plugin_root,
+            ["create-threat-model", "export-threat-model"],
+            config={"skill_toggles": {"export-threat-model": {"enabled": False, "reason": "Release job only."}}},
+        )
+        entries = {e["name"]: e for e in appsec_status._skills_status(tmp_path / "out")["entries"]}
+        assert entries["export-threat-model"]["state"] == "disabled"
+        assert entries["export-threat-model"]["reason"] == "Release job only."
+        assert entries["export-threat-model"]["enabled"] is False
+        assert entries["create-threat-model"]["enabled"] is True
+
+    def test_operational_skill_is_reported_as_warn_only(self, appsec_status, plugin_root, tmp_path):
+        # The gate never hard-blocks an operational skill; status must not claim
+        # it does, or a reader would stop reaching for their repair command.
+        _build_plugin_root(
+            plugin_root,
+            ["status"],
+            config={"skill_toggles": {"status": {"enabled": False, "reason": "Central policy."}}},
+        )
+        entry = appsec_status._skills_status(tmp_path / "out")["entries"][0]
+        assert entry["state"] == "disabled (warns only — operational skill)"
+        assert entry["enabled"] is False
+
+    def test_effective_profile_wins_over_the_packaged_config(self, appsec_status, plugin_root, tmp_path):
+        _build_plugin_root(
+            plugin_root,
+            ["export-threat-model"],
+            config={"skill_toggles": {"export-threat-model": {"enabled": False, "reason": "packaged"}}},
+        )
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / ".org-profile-effective.json").write_text(
+            json.dumps({"org_profile": {"active": True}, "skill_toggles": {}}), encoding="utf-8"
+        )
+        res = appsec_status._skills_status(out)
+        assert res["entries"][0]["enabled"] is True
+
+    def test_skill_removed_by_package_policy_is_still_listed(self, appsec_status, plugin_root, tmp_path):
+        _build_plugin_root(
+            plugin_root,
+            ["create-threat-model"],
+            config={"skill_toggles": {"publish-threat-model": {"enabled": False, "reason": "Not in this build."}}},
+            surface={"skills": {"included": ["create-threat-model"], "removed": ["publish-threat-model"]}},
+        )
+        res = appsec_status._skills_status(tmp_path / "out")
+        removed = [e for e in res["entries"] if e["name"] == "publish-threat-model"]
+        assert removed and removed[0]["state"] == "removed by package policy"
+        assert removed[0]["reason"] == "Not in this build."
+        assert res["installed_count"] == 1
+        assert res["removed_count"] == 1
+
+    def test_origin_marks_org_added_and_internal_skills(self, appsec_status, plugin_root, tmp_path):
+        _build_plugin_root(
+            plugin_root,
+            ["acme-release-check", "create-threat-model", "internal-threat-analysis-kernel"],
+            surface={"skills": {"included": [], "org_added": ["acme-release-check"]}},
+        )
+        origins = {e["name"]: e["origin"] for e in appsec_status._skills_status(tmp_path / "out")["entries"]}
+        assert origins == {
+            "acme-release-check": "organization",
+            "create-threat-model": "plugin",
+            "internal-threat-analysis-kernel": "internal",
+        }
+
+    def test_malformed_surface_manifest_does_not_break_the_listing(self, appsec_status, plugin_root, tmp_path):
+        _build_plugin_root(plugin_root, ["status"], surface={"skills": "not-an-object"})
+        res = appsec_status._skills_status(tmp_path / "out")
+        assert [e["name"] for e in res["entries"]] == ["status"]
+        assert res["removed_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _effective_config_path
+# ---------------------------------------------------------------------------
+
+
+class TestEffectiveConfigPath:
+    def test_prefers_the_local_override(self, appsec_status, tmp_path, monkeypatch):
+        monkeypatch.setattr(appsec_status, "PLUGIN_ROOT", tmp_path)
+        (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "config.local.json").write_text("{}", encoding="utf-8")
+        assert appsec_status._effective_config_path().name == "config.local.json"
+
+    def test_falls_back_to_the_shipped_config(self, appsec_status, tmp_path, monkeypatch):
+        monkeypatch.setattr(appsec_status, "PLUGIN_ROOT", tmp_path)
+        (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+        assert appsec_status._effective_config_path().name == "config.json"
+
+
+# ---------------------------------------------------------------------------
 # _last_run_info (lines 295-307)
 # ---------------------------------------------------------------------------
 
@@ -544,6 +669,67 @@ class TestRenderText:
         assert "acme" in out
         assert "doc1, doc2" in out
         assert "export-threat-model" in out
+
+    def test_org_profile_states_absence_of_context_and_toggles(self, appsec_status):
+        data = _base_data()
+        data["org_profile"] = {"active": True, "id": "acme", "version": "1.0", "path": "/p"}
+        out = appsec_status.render_text(data)
+        assert "no documents loaded" in out
+        assert "Disabled skills  none" in out
+
+    def test_org_profile_absent_is_still_a_section(self, appsec_status):
+        out = appsec_status.render_text(_base_data())
+        assert "Org Profile" in out
+        assert "none configured — plugin defaults are in effect" in out
+
+    def test_skills_table_lists_states_and_counts(self, appsec_status):
+        data = _base_data()
+        data["skills"] = {
+            "policy_source": "org profile",
+            "installed_count": 2,
+            "removed_count": 1,
+            "entries": [
+                {
+                    "name": "create-threat-model",
+                    "state": "enabled",
+                    "enabled": True,
+                    "reason": None,
+                    "origin": "plugin",
+                },
+                {
+                    "name": "export-threat-model",
+                    "state": "disabled",
+                    "enabled": False,
+                    "reason": "Release job only.",
+                    "origin": "plugin",
+                },
+                {
+                    "name": "publish-threat-model",
+                    "state": "removed by package policy",
+                    "enabled": False,
+                    "reason": None,
+                    "origin": "plugin",
+                },
+            ],
+        }
+        out = appsec_status.render_text(data)
+        assert "Skills (2 installed · 1 disabled by org profile · 1 removed by package policy)" in out
+        assert "export-threat-model   disabled — Release job only." in out
+        assert "publish-threat-model  removed by package policy" in out
+
+    def test_skills_table_marks_a_non_plugin_origin(self, appsec_status):
+        data = _base_data()
+        data["skills"] = {
+            "policy_source": None,
+            "installed_count": 1,
+            "removed_count": 0,
+            "entries": [
+                {"name": "acme-check", "state": "enabled", "enabled": True, "reason": None, "origin": "organization"}
+            ],
+        }
+        out = appsec_status.render_text(data)
+        assert "Skills (1 installed)" in out
+        assert "[organization]" in out
 
     def test_org_profile_configured(self, appsec_status):
         data = _base_data()

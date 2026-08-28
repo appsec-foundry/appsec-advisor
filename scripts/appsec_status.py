@@ -6,8 +6,10 @@ Prints:
   * plugin version + analysis_version
   * package, core and baseline versions (with --check-updates: whether current)
   * available capsules (skills + hook)
+  * every skill this build ships, and what the skill policy says about it
   * last-run identity (if $OUTPUT_DIR has a baseline)
-  * configuration source state (external context, requirements URL, steering)
+  * organization profile and configuration source state (external context,
+    org context documents, requirements URL, steering)
   * fast-path preview (would the next run short-circuit?)
 
 Invoked by the `/appsec-advisor:status` skill. No analysis is performed and
@@ -40,8 +42,20 @@ try:
 except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
 
+import check_skill_enabled  # noqa: E402
 import version_status  # noqa: E402
 from stride_outputs import stride_output_files  # noqa: E402
+
+# Skills a person never invokes: they exist because an agent loads them.
+INTERNAL_SKILLS = {"internal-threat-analysis-kernel"}
+
+# What ``check_skill_enabled.check`` answers, as a word for the status table.
+SKILL_STATE_BY_EXIT = {
+    check_skill_enabled.EXIT_ENABLED: "enabled",
+    check_skill_enabled.EXIT_DISABLED_HELP_OK: "disabled — --help still renders",
+    check_skill_enabled.EXIT_DISABLED_SOFT: "disabled (warns only — operational skill)",
+    check_skill_enabled.EXIT_DISABLED_HARD: "disabled",
+}
 
 
 def _emit_table(title: str, rows: list[tuple[str, str]]) -> str:
@@ -83,8 +97,86 @@ def _load_json(path: Path) -> dict | None:
         return None
 
 
+def _effective_config_path() -> Path:
+    """The config file that is actually in effect.
+
+    ``config.local.json`` wins over ``config.json`` for every other consumer in
+    the plugin. Status reporting the file that is *not* read would show an
+    organization the banner, baseline and profile of a build they overrode.
+    """
+    local = PLUGIN_ROOT / "config.local.json"
+    return local if local.is_file() else PLUGIN_ROOT / "config.json"
+
+
 def _skill_exists(skill: str) -> bool:
     return (PLUGIN_ROOT / "skills" / skill / "SKILL.md").is_file()
+
+
+def _installed_skills() -> list[str]:
+    """Every skill directory this build ships, by the convention Claude Code uses."""
+    skills_dir = PLUGIN_ROOT / "skills"
+    if not skills_dir.is_dir():
+        return []
+    return sorted(path.parent.name for path in skills_dir.glob("*/SKILL.md") if path.is_file())
+
+
+def _skills_status(output_dir: Path) -> dict:
+    """Every skill this build ships, plus what the skill policy says about it.
+
+    The verdict per skill comes from ``check_skill_enabled.check`` — the same
+    call the ``skill-policy-gate`` hook makes — rather than from a second
+    reading of the toggles here. A status view that re-derived the policy could
+    report a skill as usable that the gate refuses.
+
+    A skill the package policy removed is not on disk, so it can only be named
+    from ``package-surface.json``. It is listed anyway: "the command is gone"
+    and "this build never had it" are different answers to the same question.
+    """
+    toggles, source = check_skill_enabled.resolve_toggles(output_dir)
+    surface = _load_json(PLUGIN_ROOT / ".claude-plugin" / "package-surface.json") or {}
+    surface_skills = surface.get("skills")
+    if not isinstance(surface_skills, dict):
+        surface_skills = {}
+    org_added = {name for name in (surface_skills.get("org_added") or []) if isinstance(name, str)}
+    removed = sorted({name for name in (surface_skills.get("removed") or []) if isinstance(name, str)})
+
+    def _reason(name: str) -> str | None:
+        cfg = toggles.get(name)
+        return cfg.get("reason") if isinstance(cfg, dict) else None
+
+    def _origin(name: str) -> str:
+        if name in org_added:
+            return "organization"
+        return "internal" if name in INTERNAL_SKILLS else "plugin"
+
+    entries: list[dict] = []
+    for name in _installed_skills():
+        code, _ = check_skill_enabled.check(name, output_dir, help_only=False)
+        entries.append(
+            {
+                "name": name,
+                "state": SKILL_STATE_BY_EXIT.get(code, "unknown"),
+                "enabled": code == check_skill_enabled.EXIT_ENABLED,
+                "reason": _reason(name),
+                "origin": _origin(name),
+            }
+        )
+    for name in removed:
+        entries.append(
+            {
+                "name": name,
+                "state": "removed by package policy",
+                "enabled": False,
+                "reason": _reason(name),
+                "origin": _origin(name),
+            }
+        )
+    return {
+        "policy_source": source if toggles else None,
+        "installed_count": len(entries) - len(removed),
+        "removed_count": len(removed),
+        "entries": entries,
+    }
 
 
 def _hook_id(command: str) -> str | None:
@@ -143,9 +235,8 @@ def _org_profile_status(output_dir: Path) -> dict:
 
     # Fall back to the static config.json pointer so users see that a
     # profile is *configured* even before the first resolver run.
-    try:
-        cfg = json.loads((PLUGIN_ROOT / "config.json").read_text())
-    except (OSError, json.JSONDecodeError):
+    cfg = _load_json(_effective_config_path())
+    if cfg is None:
         return {"active": False, "configured": False}
     block = cfg.get("organization_profile") or {}
     if block.get("enabled") and block.get("path"):
@@ -179,8 +270,16 @@ def _coach_status() -> tuple[str, str]:
 
 def _config_summary(req_cfg_path: Path, plugin_cfg_path: Path) -> list[tuple[str, str]]:
     rows: list[tuple[str, str]] = []
-    # External context endpoint
     plug_cfg = _load_json(plugin_cfg_path) or {}
+
+    # Which file the values below came from. A local override changes every
+    # answer in this table, and it is git-ignored — invisible in a diff.
+    if plugin_cfg_path.name == "config.local.json":
+        rows.append(("Config file", "config.local.json (local override of config.json)"))
+    else:
+        rows.append(("Config file", "config.json (no local override)"))
+
+    # External context endpoint
     ctx = plug_cfg.get("external_context") or {}
     if ctx.get("enabled") and ctx.get("rest_url"):
         rows.append(("External context", f"REST endpoint -> {ctx['rest_url']}"))
@@ -441,6 +540,32 @@ def _last_run_info(output_dir: Path) -> dict:
         return {"has_baseline": False}
 
 
+def _skills_title(skills: dict) -> str:
+    """Header line for the skills table — the counts a reader checks first."""
+    parts = [f"{skills['installed_count']} installed"]
+    disabled = sum(
+        1 for entry in skills["entries"] if not entry["enabled"] and entry["state"] != "removed by package policy"
+    )
+    if disabled:
+        parts.append(f"{disabled} disabled by {skills['policy_source'] or 'skill policy'}")
+    if skills["removed_count"]:
+        parts.append(f"{skills['removed_count']} removed by package policy")
+    return f"Skills ({' · '.join(parts)})"
+
+
+def _skills_rows(skills: dict) -> list[tuple[str, str]]:
+    """One line per skill: its state, why, and whose skill it is."""
+    rows: list[tuple[str, str]] = []
+    for entry in skills["entries"]:
+        value = entry["state"]
+        if entry["reason"]:
+            value += f" — {entry['reason']}"
+        if entry["origin"] != "plugin":
+            value += f"  [{entry['origin']}]"
+        rows.append((entry["name"], value))
+    return rows
+
+
 def render_text(data: dict) -> str:
     meta = data["plugin"]
     buf: list[str] = []
@@ -495,6 +620,10 @@ def render_text(data: dict) -> str:
         )
     )
 
+    skills = data.get("skills")
+    if skills:
+        buf.append(_emit_table(_skills_title(skills), _skills_rows(skills)))
+
     lr = data["last_run"]
     if lr.get("has_baseline"):
         buf.append(
@@ -523,12 +652,27 @@ def render_text(data: dict) -> str:
                 f"{org.get('preset') or '?'} (base: {org.get('base_mode') or '?'})",
             ),
         ]
-        if org.get("requirements_label") or org.get("requirements_url"):
-            rows.append(("Requirements", str(org.get("requirements_label") or org.get("requirements_url"))))
-        if org.get("context_documents"):
-            rows.append(("LLM context", ", ".join(org["context_documents"])))
-        if org.get("disabled_skills"):
-            rows.append(("Disabled skills", ", ".join(org["disabled_skills"])))
+        # Unconditional from here down: "no organization context is loaded" is
+        # the answer someone is looking for as often as the list of documents,
+        # and a row that vanishes reads as "nothing to report".
+        rows.append(
+            (
+                "Requirements",
+                str(org.get("requirements_label") or org.get("requirements_url") or "none from this profile"),
+            )
+        )
+        rows.append(
+            (
+                "Org context",
+                ", ".join(org["context_documents"]) if org.get("context_documents") else "no documents loaded",
+            )
+        )
+        rows.append(
+            (
+                "Disabled skills",
+                ", ".join(org["disabled_skills"]) if org.get("disabled_skills") else "none",
+            )
+        )
         buf.append(_emit_table("Org Profile", rows))
     elif org.get("configured"):
         buf.append(
@@ -540,6 +684,13 @@ def render_text(data: dict) -> str:
                     ("Default preset", str(org.get("default_preset") or "(from profile)")),
                     ("Note", str(org.get("note") or "")),
                 ],
+            )
+        )
+    else:
+        buf.append(
+            _emit_table(
+                "Org Profile",
+                [("Status", "none configured — plugin defaults are in effect")],
             )
         )
 
@@ -970,10 +1121,11 @@ def main(argv: list[str] | None = None) -> int:
             "output_dir": str(output_dir),
         },
         "capsules": capsules,
+        "skills": _skills_status(output_dir),
         "last_run": _last_run_info(output_dir),
         "config": _config_summary(
             PLUGIN_ROOT / "skills" / "audit-security-requirements" / "config.json",
-            PLUGIN_ROOT / "config.json",
+            _effective_config_path(),
         ),
         "fast_path": _fast_path_preview(output_dir, repo_root),
         "org_profile": _org_profile_status(output_dir),

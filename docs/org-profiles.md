@@ -618,22 +618,35 @@ it never overrides tool behaviour, gates, or severity.
 
 ## Status output
 
-`/appsec-advisor:status` adds an *Org Profile* section when a profile is active or merely configured:
+`/appsec-advisor:status` always prints an *Org Profile* section, so the absence of a profile is an answer too:
 
 ```
 Org Profile
 -----------
-  Status         active
-  Organization   acme
-  Version        2026.05.1
-  Path           /workspace/internal-appsec-advisor/org-profile/org-profile.yaml
-  Preset         ci-standard (base: standard)
-  Requirements   Acme AppSec Requirements
-  LLM context    organization, sso, platform
-  Disabled skills publish-threat-model
+  Status           active
+  Organization     acme
+  Version          2026.05.1
+  Path             /workspace/internal-appsec-advisor/org-profile/org-profile.yaml
+  Preset           ci-standard (base: standard)
+  Requirements     Acme AppSec Requirements
+  Org context      organization, sso, platform
+  Disabled skills  publish-threat-model
 ```
 
-Before the first run resolves the profile, the status is `configured (not yet resolved)`.
+Before the first run resolves the profile, the status is `configured (not yet resolved)`; without a
+profile it is `none configured`.
+
+The same command lists every skill the build ships with the state the gate enforces, so a disabled
+skill and one the package policy removed are both visible with the reason your profile gave:
+
+```
+Skills (24 installed · 1 disabled by org profile · 1 removed by package policy)
+------------------------------------------------------------------------------
+  create-threat-model   enabled
+  export-threat-model   disabled — Release job only.
+  acme-release-check    enabled  [organization]
+  publish-threat-model  removed by package policy
+```
 
 ## Examples
 
