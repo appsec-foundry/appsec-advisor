@@ -523,13 +523,13 @@ _PLURALS = {"hypothesis": "hypotheses", "anti-pattern": "anti-patterns"}
 # Rides in the headline itself, where it cannot be cropped away from the number.
 CAVEAT = "a limited quick check, not a full security analysis"
 
-# One glyph vocabulary for both the scores and the severities, rather than ANSI
-# colour: the skill reprints this block into Markdown, where escape sequences are
-# either invisible or visible noise. The severity mapping is the one
-# skills/authnz-review already prints.
+# One glyph, on the headline only. It is the summary signal, and there it saves
+# the reader a comparison; repeated down every row it would only be decoration
+# beside numbers that already sort worst-first. Not ANSI colour: the skill
+# reprints this block into Markdown, where escape sequences are either invisible
+# or visible noise.
 _BANDS = ((25, "🔴"), (50, "🟠"), (75, "🟡"))
 _UNSCORED_DOT = "⚪"
-_SEVERITY_DOT = {"critical": "🔴", "high": "🟠", "medium": "🟡"}
 
 
 def _dot(score: int | None) -> str:
@@ -577,10 +577,7 @@ def render_text(result: dict[str, Any]) -> str:
     found_width = max((len(_found(row)) for row in result["categories"]), default=0)
     for row in result["categories"]:
         score = "no check" if row["score"] is None else f"{row['score']:>3}/100"
-        lines.append(
-            f"  {_dot(row['score'])} {score:>8}  {row['label']:<{width}}"
-            f"  {_found(row):>{found_width}} · {_signals(row)}"
-        )
+        lines.append(f"  {score:>8}  {row['label']:<{width}}  {_found(row):>{found_width}} · {_signals(row)}")
 
     lines += [
         "",
@@ -593,8 +590,7 @@ def render_text(result: dict[str, Any]) -> str:
         width = max(len(row["title"]) for row in top)
         for row in top:
             seen = f"{row['count']}×" if row["count"] > 1 else ""
-            dot = _SEVERITY_DOT.get(row["severity"], _UNSCORED_DOT)
-            lines.append(f"  {dot} {row['title']:<{width}}  {seen:>4}  {row['location']}")
+            lines.append(f"  {row['severity']:<8}  {row['title']:<{width}}  {seen:>4}  {row['location']}")
 
     for warning in result.get("warnings") or []:
         lines += ["", f"  {warning}"]
