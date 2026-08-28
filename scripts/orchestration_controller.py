@@ -5414,6 +5414,9 @@ def _abuse_candidate_titles(output_dir: Path, candidates: list[str]) -> dict[str
 
 
 _YAML_SCHEMA_EXIT = 5
+# abuse_case_gate.py returns this when a case's own `release_gate.fail_on` names
+# the final chain verdict. Fatal by contract (SKILL-thin-stage1d step 4).
+_ABUSE_GATE_EXIT = 2
 
 
 def _schema_failure_detail(message: str, limit: int = 700) -> str:
@@ -5538,7 +5541,6 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
                 + _schema_failure_detail(str(exc)),
                 exc.exit_code,
             ) from exc
-    _run_script("abuse_case_gate.py", ["--output-dir", str(output_dir)])
     if verdicts.is_file():
         _best_effort_script(
             output_dir,
@@ -5555,6 +5557,19 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
     if org_profile := str(cfg.get("org_profile_path") or ""):
         render_args += ["--org-profile", org_profile]
     _best_effort_script(output_dir, "render_abuse_cases.py", render_args, receipts)
+    # The configured release gate stays fatal, but it runs LAST: firing it before
+    # ranking and §9 rendering aborted the run while the chain that justifies the
+    # failure existed only as a raw verdict sidecar, and left threat-model.yaml
+    # carrying promoted findings at un-elevated severities. Rendering first costs
+    # nothing on the failing path and leaves the operator the evidence.
+    gate = _run_script("abuse_case_gate.py", ["--output-dir", str(output_dir)], acceptable=(0, _ABUSE_GATE_EXIT))
+    if gate.returncode == _ABUSE_GATE_EXIT:
+        detail = (gate.stderr or gate.stdout).strip()
+        _append_event(output_dir, "ABUSE_GATE_VIOLATION", detail.replace("\n", "; "), level="ERROR")
+        raise ControllerError(
+            f"abuse_case_gate.py failed with exit {_ABUSE_GATE_EXIT}: {detail}",
+            _ABUSE_GATE_EXIT,
+        )
     _append_event(output_dir, "ABUSE_FINALIZE_COMPLETE", "thin abuse-case finalization complete")
     return {
         "schema_version": 1,

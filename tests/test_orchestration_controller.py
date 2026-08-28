@@ -1153,6 +1153,46 @@ def test_finalize_abuse_tolerates_a_soft_yaml_rebuild_failure(tmp_path, monkeypa
     controller._validate_action(action)
 
 
+def test_finalize_abuse_renders_section9_before_the_release_gate_can_abort(tmp_path, monkeypatch):
+    # The gate stays fatal, but it used to run BEFORE ranking and §9 rendering:
+    # a fired gate killed the run while the chain that justified the failure
+    # existed only as a raw verdict sidecar, and threat-model.yaml kept the
+    # promoted findings at un-elevated severities.
+    output = _abuse_output(tmp_path)
+    (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
+    order: list[str] = []
+
+    def fake_script(name, args, **kwargs):
+        order.append(name)
+        if name == "abuse_case_gate.py":
+            return subprocess.CompletedProcess(
+                ["test"], 2, stdout="", stderr="ABUSE_CASE_GATE: violation AC-T-001 (fully_viable) — X"
+            )
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_best_effort_script", lambda od, name, args, receipts, **kw: order.append(name))
+    with pytest.raises(controller.ControllerError) as exc:
+        controller.finalize_abuse(output)
+    assert exc.value.exit_code == 2
+    assert "violation AC-T-001" in str(exc.value)
+    assert order.index("render_abuse_cases.py") < order.index("abuse_case_gate.py")
+    assert order.index("triage_compute_ranking.py") < order.index("abuse_case_gate.py")
+    assert "ABUSE_GATE_VIOLATION" in (output / ".agent-run.log").read_text(encoding="utf-8")
+
+
+def test_finalize_abuse_completes_when_no_release_gate_fires(tmp_path, monkeypatch):
+    output = _abuse_output(tmp_path)
+    (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+    monkeypatch.setattr(controller, "_best_effort_script", lambda *a, **k: None)
+    action = controller.finalize_abuse(output)
+    assert action["action"] == "run_gate"
+    log = (output / ".agent-run.log").read_text(encoding="utf-8")
+    assert "ABUSE_FINALIZE_COMPLETE" in log
+    assert "ABUSE_GATE_VIOLATION" not in log
+
+
 def test_prepare_stage2_selects_compact_parallel_runtime(tmp_path, monkeypatch):
     output = tmp_path / "out"
     output.mkdir()
