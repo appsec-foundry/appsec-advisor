@@ -8624,7 +8624,6 @@ def _format_requirement_link(rid: str, known_ids: dict[str, str]) -> str:
 _REQ_ROW_PREFIX_RE = re.compile(r"^\|\s*(?:\[`|`)[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+`")
 
 
-_BLUEPRINT_MAX_SECTIONS = requirements_trace.MAX_SECTIONS_RENDERED
 _BLUEPRINT_MAX_PER_MITIGATION = requirements_trace.MAX_BLUEPRINTS_RENDERED
 
 
@@ -17742,13 +17741,11 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     lines.append(f"- [{key}](https://cwe.mitre.org/data/definitions/{num}.html){suffix}")
                 lines.append("")
 
-            # Fulfills Requirements + Blueprint guidance — only when
-            # requirements are loaded. The §10 block template places both after
-            # Prevents CWEs and before Priority. mitigations[] carries neither
-            # field, so derive from the addressed threats here: this produces
-            # the lines the QA reviewer demands but the renderer previously
-            # dropped, and surfaces blueprint guidance that was otherwise
-            # confined to the §7b traceability cell.
+            # Requirements at stake + the blueprint pointer — only when
+            # requirements are loaded. mitigations[] carries neither field, so
+            # both are derived from the addressed threats here. The
+            # requirements list sits after Prevents CWEs; the blueprint is
+            # emitted further down, with the references.
             # Set when a blueprint applies; emitted with the references below.
             _blueprint_ref = ""
             if _req_enabled:

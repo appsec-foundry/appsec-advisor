@@ -110,9 +110,14 @@ def test_word_shaped_value_does_not_corrupt_unrelated_prose(tmp_path: Path) -> N
     The module's premise is that the scanner never yields a false positive, so
     a context-free ``str.replace`` over the whole report is safe. When that
     premise fails, an ordinary English word is destroyed everywhere it occurs.
-    A word-shaped value must therefore be replaced only where the artifact
-    itself shows credential context — the realistic prose-leak shape — and
-    left alone in unrelated sentences.
+    A word-shaped value is therefore replaced only where it stands as an
+    ASSIGNED credential, never in running prose — in prose it is simply the
+    word, and nothing separates it from a leak.
+
+    Nearness to a credential keyword does not qualify. A threat model discusses
+    authentication on every page, and the first sentence below (verbatim from
+    threat-model.md:856 of the juice-shop 2026-08-28 run) carries
+    "authentication" one clause ahead of the word.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -123,8 +128,10 @@ def test_word_shaped_value_does_not_corrupt_unrelated_prose(tmp_path: Path) -> N
     out = tmp_path / "out"
     out.mkdir()
     (out / "threat-model.md").write_text(
+        "Network-reachable entry points classified by authentication requirement. "
         "Each row links to the threat(s) referenced in its Notes column.\n"
-        "The signing secret is the literal referenced in server.js.\n",
+        "Most third-party actions are referenced at mutable version tags.\n"
+        "The evidence line reads api_key: referenced in the manifest.\n",
         encoding="utf-8",
     )
 
@@ -132,8 +139,9 @@ def test_word_shaped_value_does_not_corrupt_unrelated_prose(tmp_path: Path) -> N
     assert rc == 0
     text = (out / "threat-model.md").read_text(encoding="utf-8")
 
-    assert "threat(s) referenced in its Notes column" in text, "unrelated prose was corrupted"
-    assert "The signing secret is the literal referenced in" not in text, "credential-context leak survived"
+    assert "threat(s) referenced in its Notes column" in text, "prose near a credential keyword was corrupted"
+    assert "actions are referenced at mutable version tags" in text, "unrelated prose was corrupted"
+    assert "api_key: referenced" not in text, "an assigned credential was left unmasked"
 
 
 def test_high_entropy_value_still_replaced_in_bare_prose(tmp_path: Path) -> None:

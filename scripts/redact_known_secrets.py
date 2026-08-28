@@ -75,12 +75,14 @@ _ARTIFACT_GLOBS = (
 
 _MIN_VALUE_LEN = 8
 
-# How far before an occurrence a credential keyword still makes it read as a
-# credential. One clause — "the JWT signing secret is the literal <value>" is
-# 38 characters — not a whole paragraph, which would re-admit any prose that
-# merely discusses authentication.
-_CREDENTIAL_CONTEXT_CHARS = 60
-_CREDENTIAL_CONTEXT_RE = re.compile(rf"(?i)(?:{CREDENTIAL_KEYWORDS})")
+# A word-shaped value is only recognisable as a credential where it stands in
+# an ASSIGNMENT — a credential keyword, an operator, then the value. Proximity
+# to a credential keyword is not usable here: a threat model discusses
+# authentication on every page, so "…classified by authentication requirement.
+# Each row links to the threat(s) referenced…" puts a keyword within a clause
+# of ordinary prose. An assignment position cannot occur mid-sentence, so this
+# test cannot fire on prose at all.
+_CREDENTIAL_ASSIGNMENT_RE = re.compile(rf"(?i)(?:\b|_)(?:{CREDENTIAL_KEYWORDS})[\"']?\s*[=:]\s*[\"']?$")
 
 
 def _is_word_shaped(value: str) -> bool:
@@ -95,11 +97,13 @@ def _is_word_shaped(value: str) -> bool:
 
 
 def _replace_in_credential_context(text: str, value: str, mask: str) -> tuple[str, int]:
-    """Replace ``value`` only where a credential keyword precedes it.
+    """Replace ``value`` only where it stands as an assigned credential.
 
-    Keeps the prose-leak shape this pass exists for ("the signing secret is the
-    literal <value>") while leaving unrelated sentences that merely reuse the
-    word untouched.
+    A word-shaped value in running prose is just the word; there is no
+    discriminator that separates it from a leak, so this pass does not try and
+    covers the one position where the value IS identifiable instead. Bare-prose
+    occurrences of such a value are therefore left to the pattern masker, which
+    matches the same assignment form.
     """
     out: list[str] = []
     count = 0
@@ -108,9 +112,10 @@ def _replace_in_credential_context(text: str, value: str, mask: str) -> tuple[st
         idx = text.find(value, pos)
         if idx == -1:
             break
-        window = text[max(0, idx - _CREDENTIAL_CONTEXT_CHARS) : idx]
+        # Bounded lookbehind: the operator and keyword sit immediately before
+        # the value, so a fixed slice is enough and keeps this linear.
         out.append(text[pos:idx])
-        if _CREDENTIAL_CONTEXT_RE.search(window):
+        if _CREDENTIAL_ASSIGNMENT_RE.search(text[max(0, idx - 40) : idx]):
             out.append(mask)
             count += 1
         else:
