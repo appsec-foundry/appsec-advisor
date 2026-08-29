@@ -1606,3 +1606,138 @@ def test_skipped_business_context_produces_no_issue(tmp_path):
     out = _context_run(tmp_path, {"api": {}}, skip=True)
 
     assert agg._extract_business_context_reach(out) == []
+
+
+class TestRoutingEffectiveness:
+    def _component(self, tmp_path, name, delivered, cited):
+        d = tmp_path / ".dispatch-context" / name
+        d.mkdir(parents=True)
+        (d / "evidence-bundle.json").write_text(
+            _json.dumps(
+                {"source_slices": [{"repository_id": "primary", "path": p} for p in delivered]},
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / f".stride-{name}.json").write_text(
+            _json.dumps(
+                {
+                    "component_id": name,
+                    "threats": [
+                        {"local_id": f"{name}-{i:03d}", "evidence": {"file": f, "line": 1}}
+                        for i, f in enumerate(cited, 1)
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_component_whose_findings_all_came_from_outside_the_bundle_is_reported(self, tmp_path):
+        # Run a2a0e355: database was routed data/datacreator.ts and cited
+        # nothing from it, every threat resting on files it found itself.
+        self._component(
+            tmp_path,
+            "database",
+            delivered=["data/datacreator.ts"],
+            cited=["lib/insecurity.ts", "models/user.ts", "models/index.ts"],
+        )
+        issues = agg._extract_routing_effectiveness(tmp_path)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "routing_effectiveness"
+        assert issues[0]["evidence"]["component_id"] == "database"
+        assert issues[0]["evidence"]["delivered_files"] == ["data/datacreator.ts"]
+
+    def test_one_citation_from_the_bundle_is_enough_to_stay_silent(self, tmp_path):
+        self._component(
+            tmp_path,
+            "web3-nft",
+            delivered=["routes/nft.ts"],
+            cited=["routes/nft.ts", "routes/wallet.ts", "lib/web3.ts"],
+        )
+        assert agg._extract_routing_effectiveness(tmp_path) == []
+
+    def test_component_without_threats_or_bundle_is_not_an_issue(self, tmp_path):
+        self._component(tmp_path, "empty", delivered=["a.ts"], cited=[])
+        assert agg._extract_routing_effectiveness(tmp_path) == []
+        assert agg._extract_routing_effectiveness(tmp_path / "nowhere") == []
+
+
+class TestDispatchCountConsistency:
+    def _write(self, tmp_path, rows, spawns):
+        (tmp_path / ".stage-stats.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        return [
+            (i, f"2026-08-28T21:19:{i:02d}Z  [s]  INFO   AGENT_SPAWN  {agent}  model=sonnet")
+            for i, agent in enumerate(spawns, 1)
+        ]
+
+    def test_row_claiming_more_dispatches_than_spawns_is_reported(self, tmp_path):
+        agent = "appsec-advisor:appsec-stride-analyzer-v2"
+        hook = self._write(
+            tmp_path,
+            [{"stage": 1, "variant": "stride_analyzer", "agent": agent, "dispatch_count": 37}],
+            [agent] * 8,
+        )
+        issues = agg._extract_dispatch_count_consistency(tmp_path, hook)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "dispatch_count_inconsistent"
+        assert issues[0]["evidence"]["dispatch_count"] == 37
+        assert issues[0]["evidence"]["observed_spawns"] == 8
+
+    def test_a_matching_row_is_silent(self, tmp_path):
+        agent = "appsec-advisor:appsec-abuse-case-verifier"
+        hook = self._write(
+            tmp_path,
+            [{"stage": 1, "variant": "abuse-verification", "agent": agent, "dispatch_count": 7}],
+            [agent] * 7,
+        )
+        assert agg._extract_dispatch_count_consistency(tmp_path, hook) == []
+
+    def test_agent_with_no_spawn_events_is_not_judged(self, tmp_path):
+        hook = self._write(
+            tmp_path,
+            [
+                {
+                    "stage": 2,
+                    "variant": "renderer",
+                    "agent": "appsec-advisor:appsec-threat-renderer",
+                    "dispatch_count": 3,
+                }
+            ],
+            ["appsec-advisor:appsec-recon-scanner"],
+        )
+        assert agg._extract_dispatch_count_consistency(tmp_path, hook) == []
+
+
+class TestRequirementsExportConsistency:
+    def _resolution(self, tmp_path, count):
+        (tmp_path / ".requirements-resolution.json").write_text(
+            _json.dumps({"source_kind": "cli", "disposition": "fetched", "count": count}), encoding="utf-8"
+        )
+
+    def test_export_without_the_assessment_is_reported(self, tmp_path):
+        # Run a2a0e355: 73 requirements assessed in the report, no
+        # requirements_compliance key in the export.
+        self._resolution(tmp_path, 73)
+        (tmp_path / "threat-model.yaml").write_text("meta:\n  schema_version: 1\nthreats: []\n", encoding="utf-8")
+        issues = agg._extract_requirements_export_consistency(tmp_path)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "requirements_export_inconsistent"
+        assert issues[0]["evidence"] == {
+            "log_file": "threat-model.yaml",
+            "log_line": 1,
+            "raw_event": issues[0]["evidence"]["raw_event"],
+            "declared": 73,
+            "exported": 0,
+        }
+
+    def test_a_complete_export_is_silent(self, tmp_path):
+        self._resolution(tmp_path, 73)
+        (tmp_path / "threat-model.yaml").write_text(
+            "requirements_compliance:\n  total: 73\n  fail: 31\n", encoding="utf-8"
+        )
+        assert agg._extract_requirements_export_consistency(tmp_path) == []
+
+    def test_a_run_without_requirements_is_not_judged(self, tmp_path):
+        assert agg._extract_requirements_export_consistency(tmp_path) == []
+        self._resolution(tmp_path, 0)
+        (tmp_path / "threat-model.yaml").write_text("threats: []\n", encoding="utf-8")
+        assert agg._extract_requirements_export_consistency(tmp_path) == []

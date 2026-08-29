@@ -50,6 +50,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import stride_outputs  # noqa: E402
 from _path_guard import run_path_arg  # noqa: E402
 
 # Phase budgets — single source of truth in data/phase-budgets.yaml. Loaded
@@ -1032,6 +1033,193 @@ def _extract_component_evidence_coverage(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _extract_routing_effectiveness(output_dir: Path) -> list[dict]:
+    """Report components whose findings did not come from the routed evidence.
+
+    ``component_evidence_coverage`` measures what routing *delivered*. This
+    measures what the analyzer actually *used*: each threat in
+    ``.stride-<component>.json`` names the file its evidence came from, and
+    that file either was in the component's delivered bundle or was not.
+
+    On run a2a0e355, 13 of the 31 distinct cited files across eight components
+    had never been delivered, and for ``database`` the figure was 3 of 3 — its
+    one delivered file is cited by nothing. A bundle nothing cites is routing
+    that did no work, and the run reported none of it.
+
+    A file can inform an analyzer without being cited, so this is a warning
+    about the routing, never about the findings. It fires only when a component
+    produced threats and none of their evidence came from its bundle, which is
+    the unambiguous case.
+    """
+    issues: list[dict] = []
+    root = output_dir / ".dispatch-context"
+    if not root.is_dir():
+        return issues
+    for stride_path in stride_outputs.stride_output_files(output_dir):
+        component_id = stride_outputs.component_id(stride_path)
+        bundle_path = root / component_id / "evidence-bundle.json"
+        if not bundle_path.is_file():
+            continue
+        try:
+            threats = json.loads(stride_path.read_text(encoding="utf-8")).get("threats")
+            bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(threats, list) or not threats:
+            continue
+        delivered = {
+            str(row.get("path")).lstrip("./")
+            for row in bundle.get("source_slices") or []
+            if isinstance(row, dict) and row.get("repository_id") == "primary" and row.get("path")
+        }
+        if not delivered:
+            continue
+        cited = {
+            str((threat.get("evidence") or {}).get("file")).split(":")[0].lstrip("./")
+            for threat in threats
+            if isinstance(threat, dict) and isinstance(threat.get("evidence"), dict)
+        }
+        cited.discard("None")
+        cited.discard("")
+        if not cited or cited & delivered:
+            continue
+        detail = (
+            f"{component_id}: none of the {len(cited)} file(s) its {len(threats)} threat(s) cite "
+            f"came from the {len(delivered)} file(s) routing delivered"
+        )
+        issues.append(
+            {
+                "category": "routing_effectiveness",
+                "severity": "warning",
+                "title": detail,
+                "evidence": {
+                    "log_file": f".dispatch-context/{component_id}/evidence-bundle.json",
+                    "log_line": 1,
+                    "raw_event": detail,
+                    "component_id": component_id,
+                    "delivered_files": sorted(delivered)[:20],
+                    "cited_files": sorted(cited)[:20],
+                },
+            }
+        )
+    return issues
+
+
+def _extract_dispatch_count_consistency(output_dir: Path, hook_log: list[tuple[int, str]]) -> list[dict]:
+    """Report a stage row claiming more dispatches than the run ever spawned.
+
+    ``dispatch_count`` is derived from ``AGENT_SPAWN`` and summed across
+    accumulate calls, so a value above the number of spawn events for that
+    agent in the whole hook log cannot describe anything that happened. On run
+    a2a0e355 the STRIDE row claimed 37 against 8, because every accumulate call
+    fell back to deriving from the whole log and the fallback was summed.
+
+    ``record_stage_stats`` no longer sums a whole-log derivation, so this is
+    the reconciliation that says whether that holds — an exact comparison
+    between two artefacts the run already writes, with no threshold to tune.
+    """
+    issues: list[dict] = []
+    stats_path = output_dir / ".stage-stats.jsonl"
+    if not stats_path.is_file():
+        return issues
+    spawns: dict[str, int] = {}
+    for _, line in hook_log:
+        if "AGENT_SPAWN" not in line:
+            continue
+        match = re.search(r"(appsec-advisor:[A-Za-z0-9_-]+)", line)
+        if match:
+            spawns[match.group(1)] = spawns.get(match.group(1), 0) + 1
+    if not spawns:
+        return issues
+    try:
+        rows = [json.loads(line) for line in stats_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return issues
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        agent = str(row.get("agent") or "")
+        claimed = row.get("dispatch_count")
+        observed = spawns.get(agent)
+        if observed is None or not isinstance(claimed, int) or claimed <= observed:
+            continue
+        detail = (
+            f"stage {row.get('stage')} {row.get('variant') or row.get('name')}: dispatch_count "
+            f"{claimed} exceeds the {observed} AGENT_SPAWN event(s) recorded for {agent}"
+        )
+        issues.append(
+            {
+                "category": "dispatch_count_inconsistent",
+                "severity": "warning",
+                "title": detail,
+                "evidence": {
+                    "log_file": ".stage-stats.jsonl",
+                    "log_line": 1,
+                    "raw_event": detail,
+                    "agent": agent,
+                    "dispatch_count": claimed,
+                    "observed_spawns": observed,
+                },
+            }
+        )
+    return issues
+
+
+def _extract_requirements_export_consistency(output_dir: Path) -> list[dict]:
+    """Report a requirements assessment the structured export does not carry.
+
+    The catalog resolution records how many requirements the run was given;
+    ``threat-model.yaml`` records how many the export says were assessed. On
+    run a2a0e355 the report carried all 73 and the export carried no
+    ``requirements_compliance`` key at all, so the completion summary said
+    ``0 checked`` and any consumer reading the export saw a run with no
+    requirements dimension. Nothing compared the two.
+
+    Both numbers are structured and already on disk, so this is an exact
+    comparison rather than a reading of the rendered table.
+    """
+    resolution_path = output_dir / ".requirements-resolution.json"
+    if not resolution_path.is_file():
+        return []
+    try:
+        resolution = json.loads(resolution_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    declared = resolution.get("count")
+    if not isinstance(declared, int) or declared <= 0:
+        return []
+    export_path = output_dir / "threat-model.yaml"
+    if not export_path.is_file():
+        return []
+    try:
+        import yaml  # noqa: PLC0415 - deferred so the aggregator stays importable without it
+
+        export = yaml.safe_load(export_path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 - a malformed export is not this check's finding
+        return []
+    exported = ((export.get("requirements_compliance") or {}) if isinstance(export, dict) else {}).get("total") or 0
+    if exported == declared:
+        return []
+    detail = (
+        f"requirements: the catalog declared {declared} but threat-model.yaml exports "
+        f"{exported} assessed — the report and the export disagree"
+    )
+    return [
+        {
+            "category": "requirements_export_inconsistent",
+            "severity": "warning",
+            "title": detail,
+            "evidence": {
+                "log_file": "threat-model.yaml",
+                "log_line": 1,
+                "raw_event": detail,
+                "declared": declared,
+                "exported": exported,
+            },
+        }
+    ]
+
+
 def _extract_perf_anomalies(
     phase_durs: list[dict],
     depth: str,
@@ -1943,6 +2131,9 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_trust_boundary_diagnostics(output_dir))
     issues.extend(_extract_trust_boundary_coverage(output_dir))
     issues.extend(_extract_component_evidence_coverage(output_dir))
+    issues.extend(_extract_routing_effectiveness(output_dir))
+    issues.extend(_extract_dispatch_count_consistency(output_dir, hook_log))
+    issues.extend(_extract_requirements_export_consistency(output_dir))
     issues.extend(_extract_budget_events(agent_log))
     issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))
