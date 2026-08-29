@@ -273,11 +273,27 @@ def _merge_accumulate(existing: dict, incoming: dict) -> dict:
     accumulate call describes a non-overlapping dispatch group; wall time is
     merged by max() so the widest observed window wins. Callers can provide an
     accumulation id to make replay of the same group idempotent.
+
+    A dispatch count derived from the whole log is the exception. That value
+    counts every dispatch of the agent in the run rather than the group this
+    call describes, so adding it once per accumulate call multiplies it: on run
+    a2a0e355 the STRIDE row claimed 37 dispatches against 8 real AGENT_SPAWN
+    events. Such a count is taken, never added, and it caps the row from then
+    on — the population cannot be smaller than any group inside it.
     """
     for f in ("duration_ms", "tool_uses", "tokens"):
         existing[f] = int(existing.get(f) or 0) + int(incoming.get(f) or 0)
     if incoming.get("dispatch_count") is not None:
-        existing["dispatch_count"] = int(existing.get("dispatch_count") or 0) + int(incoming.get("dispatch_count") or 0)
+        incoming_count = int(incoming.get("dispatch_count") or 0)
+        if incoming.get("dispatch_count_scope") == "full_log":
+            existing["dispatch_count_scope"] = "full_log"
+            existing["dispatch_count_ceiling"] = incoming_count
+            existing["dispatch_count"] = max(int(existing.get("dispatch_count") or 0), incoming_count)
+        else:
+            existing["dispatch_count"] = int(existing.get("dispatch_count") or 0) + incoming_count
+        ceiling = existing.get("dispatch_count_ceiling")
+        if ceiling is not None:
+            existing["dispatch_count"] = min(int(existing["dispatch_count"]), int(ceiling))
     if incoming.get("wall_secs_observed") is not None:
         existing["wall_secs_observed"] = max(
             int(existing.get("wall_secs_observed") or 0),
@@ -477,6 +493,10 @@ def main(argv: list[str]) -> int:
             # right after its own dispatches returned.
             derived = _derive_dispatch_stats(hook_log, args.subagent_type, "")
             if derived is not None:
+                # Mark the scope so an accumulating merge takes this count
+                # instead of adding it — see _merge_accumulate.
+                derived["dispatch_count_scope"] = "full_log"
+                derived["dispatch_count_ceiling"] = derived["dispatch_count"]
                 sys.stderr.write(
                     f"warn: --since-iso {args.since_iso} matched no dispatch of "
                     f"{args.subagent_type}; derived from the full log instead "
