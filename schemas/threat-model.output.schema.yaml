@@ -320,6 +320,37 @@ properties:
               file: {type: string, minLength: 1}
               line: {type: integer, minimum: 1}
 
+  requirements_compliance:
+    # The §7b assessment, exported so a consumer of the YAML sees the same
+    # requirements dimension the Markdown report shows. Present only when the
+    # run had a `.requirements.yaml` catalog and assessed at least one row;
+    # absent otherwise, so an empty object never reads as "assessed nothing".
+    # `render_completion_summary.py` takes its console counts from here.
+    # The status buckets sum to `total` — the reconciliation rule the control
+    # effectiveness line learned the hard way.
+    type: object
+    required: [total, pass, fail, partial]
+    properties:
+      total: {type: integer, minimum: 0}
+      pass: {type: integer, minimum: 0}
+      fail: {type: integer, minimum: 0}
+      partial: {type: integer, minimum: 0}
+      unverifiable: {type: integer, minimum: 0}
+      not_applicable: {type: integer, minimum: 0}
+      requirements:
+        type: array
+        items:
+          type: object
+          required: [id, status]
+          properties:
+            id: {type: string, minLength: 1}
+            status: {type: string, minLength: 1}
+            priority: {type: [string, "null"]}
+            title: {type: [string, "null"]}
+            finding_ids:
+              type: array
+              items: {type: string}
+
   tier_root_causes:
     # Per-tier architectural root causes (terse bullet items) consumed by the
     # `Security Posture at a Glance` Tier Drill-Down table. Optional — when

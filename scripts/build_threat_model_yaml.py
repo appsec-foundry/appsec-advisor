@@ -133,6 +133,63 @@ def _validate_and_publish_yaml(
     return result
 
 
+def build_requirements_compliance(output_dir: Path) -> dict | None:
+    """Export the §7b compliance assessment into the machine-readable YAML.
+
+    The Markdown report carried the full requirement table while the YAML
+    carried nothing, so every consumer reading the export — a CI gate, a
+    dashboard — saw a run with no requirements dimension at all, and
+    ``render_completion_summary.py``, which takes its counts from this key,
+    reported ``0 checked`` on a run that had assessed 73 of them.
+
+    Rows come from ``compose_threat_model``'s parser rather than a second one
+    written here: that parser is catalog-authoritative and drops IDs the
+    configured catalog never declared, and two parsers over one LLM-authored
+    table would drift into disagreeing about the same report. The import is
+    deferred so the export gains no heavyweight dependency for a key that is
+    absent whenever no catalog was configured.
+
+    Returns ``None`` when the run had no catalog or no assessed rows, so the
+    key stays absent rather than claiming an empty assessment.
+    """
+    if not (output_dir / ".requirements.yaml").is_file():
+        return None
+    try:
+        import types  # noqa: PLC0415
+
+        import compose_threat_model  # noqa: PLC0415
+
+        rows = compose_threat_model._requirements_compliance_rows(types.SimpleNamespace(output_dir=output_dir))
+    except Exception as exc:  # pragma: no cover - defensive
+        sys.stderr.write(f"  requirements compliance export skipped: {exc}\n")
+        return None
+    if not rows:
+        return None
+    counts: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("status") or "").strip().lower().replace("/", "_").replace(" ", "_")
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    return {
+        "total": len(rows),
+        "pass": counts.get("pass", 0),
+        "fail": counts.get("fail", 0),
+        "partial": counts.get("partial", 0),
+        "unverifiable": counts.get("unverifiable", 0),
+        "not_applicable": counts.get("n_a", 0),
+        "requirements": [
+            {
+                "id": row.get("req_id"),
+                "status": row.get("status"),
+                "priority": row.get("priority") or None,
+                "title": row.get("title") or None,
+                "finding_ids": row.get("finding_ids") or [],
+            }
+            for row in rows
+        ],
+    }
+
+
 def _read_recon_project(recon_path: Path) -> str | None:
     """Extract project name from .recon-summary.md Section 1 (best-effort)."""
     if not recon_path.exists():
@@ -2923,6 +2980,9 @@ def main() -> int:
     }
     if tier_rcs:
         doc["tier_root_causes"] = tier_rcs
+    requirements_compliance = build_requirements_compliance(od)
+    if requirements_compliance:
+        doc["requirements_compliance"] = requirements_compliance
     if cross_repo:
         doc["cross_repo_dependencies"] = (
             cross_repo if isinstance(cross_repo, list) else cross_repo.get("dependencies", [])

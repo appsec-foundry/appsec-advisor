@@ -3160,3 +3160,88 @@ def test_meta_reports_no_business_context_when_the_run_skipped_it(tmp_path):
 
     assert b._business_context_digest(cfg, repo) is None
     assert b._business_context_source(cfg, repo) is None
+
+
+# ---------------------------------------------------------------------------
+# requirements_compliance export
+#
+# The Markdown report carried the full §7b table while the YAML carried
+# nothing, so a consumer of the export saw no requirements dimension at all and
+# render_completion_summary.py reported "0 checked" for a run that had assessed
+# 73 of them (run a2a0e355).
+# ---------------------------------------------------------------------------
+
+_CATALOG = """\
+categories:
+- id: CAT-WEB
+  requirements:
+  - {id: WEB-001, priority: MUST, text: CSRF prevention}
+  - {id: WEB-002, priority: MUST, text: No tokens in JS-accessible storage}
+  - {id: AC-002, priority: SHOULD, text: Server-side authorization}
+  - {id: IV-004, priority: MUST, text: Parameterized queries}
+  - {id: DP-005, priority: MUST, text: Secret management}
+"""
+
+_FRAGMENT = """\
+| Requirement | Status | Priority | Evidence |
+| --- | --- | --- | --- |
+| `WEB-001`: CSRF prevention | ❌ FAIL | MUST | F-018 shows a GET password change |
+| `WEB-002`: No tokens in JS storage | ⚠️ PARTIAL | MUST | F-029 localStorage token |
+| `AC-002`: Server-side authorization | ✅ PASS | SHOULD | guard enforced server-side |
+| `IV-004`: Parameterized queries | ❓ UNVERIFIABLE | MUST | no query layer observed |
+| `DP-005`: Secret management | ➖ N/A | MUST | no secrets in scope |
+"""
+
+
+def _requirements_run(tmp_path: Path, *, catalog=_CATALOG, fragment=_FRAGMENT) -> Path:
+    if catalog is not None:
+        (tmp_path / ".requirements.yaml").write_text(catalog, encoding="utf-8")
+    if fragment is not None:
+        (tmp_path / ".fragments").mkdir(exist_ok=True)
+        (tmp_path / ".fragments" / "requirements-compliance.md").write_text(fragment, encoding="utf-8")
+    return tmp_path
+
+
+def test_requirements_compliance_counts_every_status(tmp_path):
+    out = b.build_requirements_compliance(_requirements_run(tmp_path))
+    assert out["total"] == 5
+    assert out["fail"] == 1
+    assert out["partial"] == 1
+    assert out["pass"] == 1
+    assert out["unverifiable"] == 1
+    assert out["not_applicable"] == 1
+
+
+def test_the_status_buckets_reconcile_with_the_total(tmp_path):
+    # The rule the control-effectiveness line learned the hard way: a breakdown
+    # that does not add up to its own total is worse than no breakdown.
+    out = b.build_requirements_compliance(_requirements_run(tmp_path))
+    buckets = out["pass"] + out["fail"] + out["partial"] + out["unverifiable"] + out["not_applicable"]
+    assert buckets == out["total"]
+
+
+def test_each_requirement_is_exported_with_its_findings(tmp_path):
+    out = b.build_requirements_compliance(_requirements_run(tmp_path))
+    rows = {r["id"]: r for r in out["requirements"]}
+    assert len(rows) == 5
+    assert rows["WEB-001"]["status"] == "FAIL"
+    assert rows["WEB-001"]["priority"] == "MUST"
+    assert rows["WEB-001"]["finding_ids"] == ["F-018"]
+    assert rows["DP-005"]["status"] == "N/A"
+
+
+def test_a_run_without_a_catalog_omits_the_key(tmp_path):
+    # Absent, not empty: an empty object would read as "assessed nothing".
+    assert b.build_requirements_compliance(_requirements_run(tmp_path, catalog=None)) is None
+
+
+def test_a_catalog_without_an_assessment_omits_the_key(tmp_path):
+    assert b.build_requirements_compliance(_requirements_run(tmp_path, fragment=None)) is None
+
+
+def test_an_id_outside_the_catalog_is_not_exported(tmp_path):
+    # The configured catalog is authoritative; the table is LLM-authored.
+    fragment = _FRAGMENT + "| `ZZZ-999`: invented | ❌ FAIL | MUST | made up |\n"
+    out = b.build_requirements_compliance(_requirements_run(tmp_path, fragment=fragment))
+    assert "ZZZ-999" not in {r["id"] for r in out["requirements"]}
+    assert out["total"] == 5
