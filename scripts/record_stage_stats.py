@@ -60,6 +60,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -249,6 +250,20 @@ def _read_all_records(path: Path) -> list[dict]:
     return out
 
 
+def _compute_digest(record: dict) -> str:
+    """Fingerprint the compute a record reports.
+
+    An accumulation id names a dispatch *group*, so two different groups can
+    share one when the caller derives it from coarse parts (role, agent, model,
+    wave start). Comparing the measurement as well as the id separates the case
+    the idempotency guard exists for — the identical call, replayed — from a
+    genuinely different measurement that merely collides. Only the first may be
+    dropped.
+    """
+    parts = "|".join(str(int(record.get(field) or 0)) for field in ("duration_ms", "tool_uses", "tokens"))
+    return hashlib.sha256(parts.encode("utf-8")).hexdigest()[:16]
+
+
 def _merge_accumulate(existing: dict, incoming: dict) -> dict:
     """Sum compute fields from ``incoming`` into ``existing`` (in place).
 
@@ -273,6 +288,11 @@ def _merge_accumulate(existing: dict, incoming: dict) -> dict:
             *existing.get("accumulation_ids", []),
             *[value for value in incoming["accumulation_ids"] if value not in existing.get("accumulation_ids", [])],
         ]
+    if incoming.get("accumulation_digests"):
+        existing["accumulation_digests"] = {
+            **(existing.get("accumulation_digests") or {}),
+            **incoming["accumulation_digests"],
+        }
     existing["recorded_dispatch_count"] = int(existing.get("recorded_dispatch_count") or 1) + 1
     existing["recorded_at"] = incoming.get("recorded_at") or existing.get("recorded_at")
     # Carry forward a name/model only if the existing row lacks one.
@@ -431,6 +451,7 @@ def main(argv: list[str]) -> int:
         record["variant"] = args.variant
     if args.accumulation_id:
         record["accumulation_ids"] = [args.accumulation_id]
+        record["accumulation_digests"] = {args.accumulation_id: _compute_digest(record)}
     if inconsistency:
         record["_inconsistency"] = inconsistency
 
@@ -475,8 +496,22 @@ def main(argv: list[str]) -> int:
         for rec in all_records:
             if (rec.get("stage"), rec.get("variant") or "") == variant_key:
                 if args.accumulation_id and args.accumulation_id in (rec.get("accumulation_ids") or []):
-                    print(f"stage {args.stage} accumulation {args.accumulation_id!r} already recorded — skipping")
-                    return 0
+                    # Drop only a true replay. A caller that derives the id from
+                    # role/agent/model/wave-start gives every dispatch in a wave
+                    # the same one, so treating any collision as a duplicate
+                    # silently discarded 3 of 8 STRIDE dispatches on run
+                    # a2a0e355 — 37% of that stage's compute, reported as a
+                    # routine skip with exit 0. A differing measurement is data,
+                    # not a repeat, and is accumulated.
+                    seen = (rec.get("accumulation_digests") or {}).get(args.accumulation_id)
+                    incoming_digest = _compute_digest(record)
+                    if seen is None or seen == incoming_digest:
+                        print(f"stage {args.stage} accumulation {args.accumulation_id!r} already recorded — skipping")
+                        return 0
+                    print(
+                        f"stage {args.stage} accumulation id {args.accumulation_id!r} reused for a different "
+                        "measurement — accumulating both (derive one id per dispatch group, not per dispatch)"
+                    )
                 _merge_accumulate(rec, record)
                 merged = True
                 break

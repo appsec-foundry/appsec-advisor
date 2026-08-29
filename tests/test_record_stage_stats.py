@@ -773,3 +773,83 @@ def test_script_main_entrypoint(tmp_path):
     )
     assert out.returncode == 0
     assert (tmp_path / ".stage-stats.jsonl").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Accumulation-id collisions must not discard a measurement
+#
+# The id names a dispatch *group*. A caller deriving it from role, agent, model
+# and wave start hands every dispatch in a wave the same one, so treating any
+# collision as a duplicate silently dropped 3 of 8 STRIDE dispatches on run
+# a2a0e355 — 37% of that stage's compute, reported as a routine skip with
+# exit 0.
+# ---------------------------------------------------------------------------
+
+_WAVE_ID = "stride_analyzer:appsec-advisor:appsec-stride-analyzer-v2:sonnet:2026-08-28T21:19:09Z"
+
+
+def _accumulate(tmp_path, duration_ms, tokens=50000, tool_uses=20, acc_id=_WAVE_ID):
+    return rec.main(
+        _argv(
+            tmp_path,
+            **{
+                "--variant": "stride_analyzer",
+                "--duration-ms": str(duration_ms),
+                "--tool-uses": str(tool_uses),
+                "--tokens": str(tokens),
+                "--accumulation-id": acc_id,
+            },
+        )
+        + ["--accumulate"]
+    )
+
+
+def _row(tmp_path):
+    lines = (tmp_path / ".stage-stats.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    return json.loads(lines[0])
+
+
+def test_a_reused_accumulation_id_keeps_every_distinct_measurement(tmp_path):
+    for ms in (775000, 1129000, 847000):
+        assert _accumulate(tmp_path, ms) == 0
+    row = _row(tmp_path)
+    assert row["duration_ms"] == 775000 + 1129000 + 847000
+    assert row["tool_uses"] == 60
+    assert row["recorded_dispatch_count"] == 3
+
+
+def test_an_identical_replay_is_still_dropped(tmp_path):
+    assert _accumulate(tmp_path, 847000) == 0
+    assert _accumulate(tmp_path, 847000) == 0
+    row = _row(tmp_path)
+    assert row["duration_ms"] == 847000, "a true replay must stay idempotent"
+    assert row["recorded_dispatch_count"] == 1
+
+
+def test_the_collision_is_reported_to_the_caller(tmp_path, capsys):
+    _accumulate(tmp_path, 775000)
+    capsys.readouterr()
+    _accumulate(tmp_path, 1129000)
+    out = capsys.readouterr().out
+    assert "reused for a different measurement" in out
+    assert "one id per dispatch group" in out
+
+
+def test_a_legacy_row_without_digests_stays_idempotent(tmp_path):
+    # Rows written before digests existed cannot distinguish replay from
+    # collision; keeping the old behaviour is the conservative branch.
+    _accumulate(tmp_path, 775000)
+    jsonl = tmp_path / ".stage-stats.jsonl"
+    row = json.loads(jsonl.read_text().strip())
+    row.pop("accumulation_digests", None)
+    jsonl.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    assert _accumulate(tmp_path, 1129000) == 0
+    assert _row(tmp_path)["duration_ms"] == 775000
+
+
+def test_distinct_ids_accumulate_as_before(tmp_path):
+    assert _accumulate(tmp_path, 100, acc_id="wave-1") == 0
+    assert _accumulate(tmp_path, 200, acc_id="wave-2") == 0
+    row = _row(tmp_path)
+    assert row["duration_ms"] == 300
+    assert sorted(row["accumulation_ids"]) == ["wave-1", "wave-2"]
