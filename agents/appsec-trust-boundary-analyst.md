@@ -245,8 +245,18 @@ Before finishing, run only:
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
   trust-boundary-candidates \
-  "$OUTPUT_DIR/.trust-boundary-candidates.json"
+  "$OUTPUT_DIR/.trust-boundary-candidates.json" \
+  --context "$OUTPUT_DIR/.trust-boundary-assessment-input.json"
 ```
+
+This checks the same relational rules the deterministic gate checks — they run
+from one shared implementation, so nothing the gate rejects can pass here. It
+reports every violation at once; `--context` adds the rules that compare your
+file against the assessment input. Fix what it names and rerun it. A rule worth
+knowing before you write, because it is the one runs die on: whenever a
+disposition lists a candidate, that candidate must itself name the signal in its
+`covered_signal_ids`. Model a crossing that traverses several hops by giving the
+signal to the candidate that actually enforces it, not by listing every hop.
 
 Do not write `.trust-boundaries.json`, `.trust-boundary-coverage.json`,
 diagnostics, reports, findings, checkpoints, or any other semantic artifact.

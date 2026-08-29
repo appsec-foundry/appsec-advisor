@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "component_inventory_fingerprint": "sha256:a74124ea2b30f30fa574c65b20b86400102b44c1ad484b9ffc053ca3269425be",
+  "assessment_input_fingerprint": "sha256:6a1c536b01a2da661efb4e6edda1cf365717db3176fe844d6a0a872f3608d1bd",
+  "assessment_depth": "standard",
+  "components": [
+    {
+      "id": "express-backend",
+      "name": "Express.js REST API and WebSocket Server",
+      "tier": "application",
+      "deployment_zones": [
+        "internet",
+        "dmz"
+      ],
+      "handles_sensitive_data": true,
+      "paths": [
+        "server.ts",
+        "routes/**/*.ts",
+        "lib/**/*.ts",
+        "lib/startup/**/*.ts",
+        "Gruntfile.js"
+      ]
+    },
+    {
+      "id": "auth-session",
+      "name": "JWT Auth and Session Middleware",
+      "tier": "application",
+      "deployment_zones": [
+        "internet",
+        "dmz"
+      ],
+      "handles_sensitive_data": true,
+      "paths": [
+        "lib/insecurity.ts",
+        "routes/2fa.ts",
+        "routes/changePassword.ts",
+        "routes/currentUser.ts",
+        "routes/authenticatedUsers.ts"
+      ]
+    }
+  ],
+  "data_flows": [],
+  "signals": [
+    {
+      "id": "signal-external-ingress-external-to-auth-session",
+      "class": "external-ingress",
+      "from": "external",
+      "to": "auth-session",
+      "mandatory": true,
+      "trigger": "application component is explicitly placed on the internet",
+      "false_positive_exclusions": [
+        "development-only listener",
+        "documentation-only placement"
+      ],
+      "evidence": [],
+      "provenance": [
+        "component-inventory"
+      ],
+      "flow_ids": []
+    },
+    {
+      "id": "signal-external-ingress-external-to-express-backend",
+      "class": "external-ingress",
+      "from": "external",
+      "to": "express-backend",
+      "mandatory": true,
+      "trigger": "runtime flow enters a registered component from external",
+      "false_positive_exclusions": [
+        "test/documentation-only route",
+        "development-only listener"
+      ],
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 26
+        },
+        {
+          "file": "server.ts",
+          "line": 309
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 1
+        }
+      ],
+      "provenance": [
+        "architecture",
+        "route-extraction"
+      ],
+      "flow_ids": []
+    }
+  ],
+  "prior_boundary_identity_hints": [],
+  "source_context": {
+    "route_inventory": {
+      "status": "present",
+      "routes": []
+    },
+    "attack_surface_additions": [],
+    "cross_repository": {
+      "status": "present",
+      "entries": []
+    },
+    "recon_signals": {
+      "values": {
+        "has_public_routes": false,
+        "has_auth_surface": false,
+        "has_role_concept": false,
+        "has_ci_pipeline": false,
+        "has_external_apis": false,
+        "has_client_storage": false,
+        "has_multi_tenancy_signal": false
+      },
+      "evidence": []
+    },
+    "boundary_declarations": {
+      "status": "present",
+      "fingerprint": null,
+      "keys": []
+    },
+    "incremental": false
+  }
+}

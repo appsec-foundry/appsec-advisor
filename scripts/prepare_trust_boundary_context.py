@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import jsonschema
+from validate_fragment import fragment_invariant_errors
 import yaml
 from _atomic_io import atomic_write_json
 from reclassify_components import (  # shared path-ownership resolver — see _evidence_owners
@@ -2253,54 +2254,24 @@ def promote_candidates(
             raise ValueError(f"candidate {field} does not match immutable assessment input")
 
     component_ids = {row["id"] for row in assessment["components"]}
-    flow_ids = {row["id"] for row in assessment["data_flows"]}
     signal_by_id = {row["id"]: row for row in assessment["signals"]}
     if len(signal_by_id) != len(assessment["signals"]):
         raise ValueError("assessment input contains duplicate signal IDs")
     candidates = candidate_doc["candidates"]
     candidate_by_key = {row["candidate_key"]: row for row in candidates}
-    if len(candidate_by_key) != len(candidates):
-        raise ValueError("candidate keys must be unique")
     dispositions = candidate_doc["dispositions"]
     disposition_by_signal = {row["signal_id"]: row for row in dispositions}
-    if len(disposition_by_signal) != len(dispositions):
-        raise ValueError("every signal must have exactly one disposition")
     mandatory = {sid for sid, row in signal_by_id.items() if row.get("mandatory")}
-    if set(disposition_by_signal) != mandatory:
-        missing = sorted(mandatory - set(disposition_by_signal))
-        extra = sorted(set(disposition_by_signal) - mandatory)
-        raise ValueError(f"signal disposition mismatch (missing={missing}, extra={extra})")
 
-    allowed_endpoints = component_ids | {"external"}
-    referenced_candidates: set[str] = set()
-    for candidate in candidates:
-        key = candidate["candidate_key"]
-        if candidate["from"] not in allowed_endpoints or candidate["to"] not in allowed_endpoints:
-            raise ValueError(f"{key} references an unknown component endpoint")
-        covered_signals = set(candidate["covered_signal_ids"])
-        covered_flows = set(candidate["covered_flow_ids"])
-        if not covered_signals and not covered_flows:
-            raise ValueError(f"{key} covers no deterministic signal or data flow")
-        if not covered_signals <= set(signal_by_id):
-            raise ValueError(f"{key} references an unknown signal")
-        if not covered_flows <= flow_ids:
-            raise ValueError(f"{key} references an unknown data flow")
-    for signal_id, disposition in disposition_by_signal.items():
-        keys = disposition["candidate_keys"]
-        if disposition["disposition"] == "boundary" and not keys:
-            raise ValueError(f"{signal_id} boundary disposition has no candidate")
-        if disposition["disposition"] != "boundary" and keys:
-            raise ValueError(f"{signal_id} non-boundary disposition references candidates")
-        for key in keys:
-            candidate = candidate_by_key.get(key)
-            if candidate is None:
-                raise ValueError(f"{signal_id} references unknown candidate {key}")
-            if signal_id not in candidate["covered_signal_ids"]:
-                raise ValueError(f"{key} does not declare coverage of {signal_id}")
-            referenced_candidates.add(key)
-    unreferenced = set(candidate_by_key) - referenced_candidates
-    if unreferenced:
-        raise ValueError(f"candidates are not referenced by a boundary disposition: {sorted(unreferenced)}")
+    # The relational rules live in validate_fragment, so the authoring agent's
+    # mandated self-check enforces exactly what this gate enforces — see the
+    # docstring there for why they may not live here. Raising the first error
+    # preserves the wording callers and tests match on.
+    invariant_errors = fragment_invariant_errors(
+        "trust-boundary-candidates", candidate_doc, context=assessment
+    )
+    if invariant_errors:
+        raise ValueError(invariant_errors[0])
 
     dropped_candidates: dict[str, str] = {}
     candidates, candidate_alias, consolidation_notes = _consolidate_candidates(
