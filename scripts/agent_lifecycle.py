@@ -101,6 +101,7 @@ def validate_state(state: object) -> dict[str, Any]:
             "analysis_depth",
             "max_turns",
             "launch_acknowledged_at",
+            "background_promoted",
             "finished_at",
             "failure_reason",
             "usage_recorded_at",
@@ -378,12 +379,25 @@ def acknowledge_background_call(output_dir: str | Path, call_id: str) -> list[Li
             return [LifecycleEvent("AGENT_LIFECYCLE_REJECTED", tombstone, "post_before_spawn")]
         if call.get("state") in _TERMINAL:
             return []
-        if not call.get("background"):
-            raise LifecycleError("foreground call cannot be acknowledged as background")
-        if call.get("launch_acknowledged_at"):
-            return []
-        call["launch_acknowledged_at"] = _now()
-        _write_state_unlocked(output_dir, state)
+        # The host decides asynchrony, not the dispatch flag. Claude Code >=2.x
+        # answers every Agent call with a launch-shaped result while the compact
+        # runtimes forbid `run_in_background`, so a call the caller hands us as
+        # a launch acknowledgement is still recorded `background: false`.
+        # Refusing it left the call `running` forever: on the 2026-08-29
+        # juice-shop run all 18 dispatches logged AGENT_LIFECYCLE_REJECTED, the
+        # budget watchdog then charged later agents' tool uses to the first
+        # leaked call until it reached BUDGET_CRITICAL, and that stale claim
+        # silently skipped abuse-case verification. Promote instead, which
+        # leaves SubagentStop as the single terminal boundary for an async call.
+        promoted = not call.get("background")
+        if promoted:
+            call["background"] = True
+            call["background_promoted"] = True
+        acknowledged = bool(call.get("launch_acknowledged_at"))
+        if not acknowledged:
+            call["launch_acknowledged_at"] = _now()
+        if promoted or not acknowledged:
+            _write_state_unlocked(output_dir, state)
     return []
 
 

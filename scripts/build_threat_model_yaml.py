@@ -245,6 +245,39 @@ def build_requirements_compliance(output_dir: Path, *, strict: bool = False) -> 
     }
 
 
+def build_requirements_provenance(output_dir: Path, compliance: dict[str, Any]) -> dict[str, Any]:
+    """Build safe provenance for the exact catalog represented by compliance."""
+    catalog_path = output_dir / ".requirements.yaml"
+    body = catalog_path.read_bytes()
+    resolution = _load_json(output_dir / ".requirements-resolution.json")
+    if not isinstance(resolution, dict):
+        resolution = {}
+    freshness = resolution.get("freshness") if isinstance(resolution.get("freshness"), dict) else {}
+    age = freshness.get("age_days")
+    if not isinstance(age, int) or isinstance(age, bool) or age < 0:
+        age = None
+
+    def _bounded(value: Any, limit: int) -> str | None:
+        text = str(value or "").strip()
+        return text[:limit] if text else None
+
+    label = resolution.get("label") or resolution.get("description")
+    return {
+        "source_kind": _bounded(resolution.get("source_kind"), 64),
+        "source_label": _bounded(label, 256),
+        "disposition": _bounded(resolution.get("disposition"), 64),
+        "catalog_sha256": hashlib.sha256(body).hexdigest(),
+        "fetched_at": _bounded(resolution.get("fetched_at"), 64),
+        "generated": _bounded(resolution.get("generated"), 64),
+        "freshness": {
+            "known": bool(freshness.get("known")),
+            "stale": bool(freshness.get("stale", not freshness.get("known"))),
+            "age_days": age,
+        },
+        "count": int(compliance["total"]),
+    }
+
+
 def _read_recon_project(recon_path: Path) -> str | None:
     """Extract project name from .recon-summary.md Section 1 (best-effort)."""
     if not recon_path.exists():
@@ -969,6 +1002,87 @@ def _business_context_source(skill_cfg: dict, repo_root: Path) -> str | None:
     if path.name == load_business_context.RUN_ONLY_NAME:
         return load_business_context.RUN_ONLY_NAME
     return load_business_context.REPO_RELATIVE
+
+
+_BUSINESS_CONTEXT_TRACE_FIELDS = (
+    "business_purpose",
+    "impact_if_compromised",
+    "sensitive_assets",
+    "security_obligations",
+    "security_assumptions",
+)
+
+
+def _business_context_component_coverage(output_dir: Path) -> list[dict[str, Any]]:
+    """Return bounded field-level coverage without copying context values."""
+    raw = _load_json(output_dir / ".stride-analyst-context.json")
+    if not isinstance(raw, dict):
+        return []
+    rows: list[dict[str, Any]] = []
+    for component_id in sorted(raw):
+        entry = raw.get(component_id)
+        business = entry.get("business_context") if isinstance(entry, dict) else None
+        if not isinstance(component_id, str) or not isinstance(business, dict):
+            continue
+        fields: list[str] = []
+        for field in _BUSINESS_CONTEXT_TRACE_FIELDS:
+            value = business.get(field)
+            if isinstance(value, str) and value.strip():
+                fields.append(field)
+            elif isinstance(value, list) and any(isinstance(item, str) and item.strip() for item in value):
+                fields.append(field)
+        if fields:
+            rows.append({"component_id": component_id, "fields": fields})
+    return rows
+
+
+def build_business_context_trace(skill_cfg: dict, repo_root: Path, applied_finding_count: int) -> dict[str, Any]:
+    """Build the durable, non-prose trace of business-context use."""
+    if skill_cfg.get("skip_business_context"):
+        return {
+            "status": "skipped",
+            "source_kind": None,
+            "source": None,
+            "sha256": None,
+            "fields_present": [],
+            "component_coverage": [],
+            "applied_finding_count": 0,
+        }
+    source = _business_context_source(skill_cfg, repo_root)
+    digest = _business_context_digest(skill_cfg, repo_root)
+    if source is None:
+        return {
+            "status": "not_configured",
+            "source_kind": None,
+            "source": None,
+            "sha256": None,
+            "fields_present": [],
+            "component_coverage": [],
+            "applied_finding_count": 0,
+        }
+    output_dir = Path(skill_cfg["output_dir"])
+    coverage = _business_context_component_coverage(output_dir)
+    present = [field for field in _BUSINESS_CONTEXT_TRACE_FIELDS if any(field in row["fields"] for row in coverage)]
+    return {
+        "status": "applied",
+        "source_kind": "run_only" if source == load_business_context.RUN_ONLY_NAME else "repository",
+        "source": source,
+        "sha256": digest,
+        "fields_present": present,
+        "component_coverage": coverage,
+        "applied_finding_count": applied_finding_count,
+    }
+
+
+def build_initial_abuse_case_analysis(skill_cfg: dict) -> dict[str, Any]:
+    """Record an honest pre-Stage-1d state for every run, including skips."""
+    if skill_cfg.get("skip_abuse_case_verification"):
+        reason = str(skill_cfg.get("abuse_case_label") or "verification disabled for this run").strip()[:256]
+        status = "skipped"
+    else:
+        reason = "abuse-case verification has not completed"
+        status = "not_run"
+    return {"status": status, "reason": reason, "cases": [], "catalog_evaluated": []}
 
 
 def build_meta(
@@ -3023,6 +3137,8 @@ def main() -> int:
     doc: dict[str, Any] = {
         "meta": meta,
         "changelog": changelog,
+        "business_context_trace": build_business_context_trace(skill_cfg, repo_root, marked),
+        "abuse_case_analysis": build_initial_abuse_case_analysis(skill_cfg),
         "components": components,
         "data_flows": data_flows,
         "assets": assets,
@@ -3038,6 +3154,7 @@ def main() -> int:
     requirements_compliance = build_requirements_compliance(od)
     if requirements_compliance:
         doc["requirements_compliance"] = requirements_compliance
+        doc["requirements_provenance"] = build_requirements_provenance(od, requirements_compliance)
     if cross_repo:
         doc["cross_repo_dependencies"] = (
             cross_repo if isinstance(cross_repo, list) else cross_repo.get("dependencies", [])

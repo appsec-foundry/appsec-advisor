@@ -129,6 +129,10 @@ A finding identifies where the problem is, why an attack works, and what must ch
 Every finding has a prioritized mitigation. Urgent work states concrete steps
 and a way to verify the result without inventing source examples.
 
+### REQ-RPT-006 — Machine-readable exports preserve security traceability
+
+The canonical YAML records abuse-case outcomes, the use and provenance of business context without copying its prose, and the complete configured requirements assessment. Narrower exports retain applicable requirement, abuse-case, and business-context traces as native fields or bounded text and identify semantics they cannot represent.
+
 ## After the run
 
 ### REQ-USE-001 — Findings remain usable after publication

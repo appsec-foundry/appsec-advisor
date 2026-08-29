@@ -25,7 +25,7 @@ An assessment generates an architecture and security report from repository evid
 **Default outputs**
 
 - `threat-model.md` — report for engineers, architects, and security reviewers.
-- `threat-model.yaml` — structured model used by automation and the exports.
+- `threat-model.yaml` — canonical structured model used by automation and exports, including requirements assessment and provenance, verified abuse-case outcomes, and bounded business-context provenance without the source prose.
 
 **Optional outputs**
 

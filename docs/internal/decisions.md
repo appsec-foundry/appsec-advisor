@@ -224,6 +224,7 @@ Removing an entry means listing it here in the same change.
 | EXP-2 | Emitted values stay inside Threat Dragon's own vocabulary; the envelope is v2 | `test_envelope_is_threat_dragon_v2` | `docs/threat-dragon-export.md`; see `docs/internal/analysis/analysis-threatatlas-export-format-2026-07-30.md` |
 | EXP-3 | Component tiers map to fixed DFD shapes rather than to whatever the renderer prefers | `test_tier_maps_to_dfd_shape` | `docs/threat-dragon-export.md` |
 | EXP-4 | `threat-model.md` stays authoritative and SARIF stays the scanner export; a deliberately lossy export never becomes the source of truth | — *(no guard written)* | `docs/threat-dragon-export.md` |
+| EXP-5 | Canonical YAML retains abuse-case, business-context, and requirements traceability; narrower exports use their native fields or bounded text instead of inventing duplicate findings | `test_main_persists_canonical_analysis_to_yaml`, `test_traceability_is_folded_into_bounded_text` | `docs/threat-dragon-export.md`; `docs/internal/contracts/schema-invariants.md` |
 
 ## Repository trust
 

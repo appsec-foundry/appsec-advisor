@@ -53,7 +53,11 @@ geometry and drop every finding.
 | `threats[].risk` | severity; ThreatAtlas turns Critical/High/Medium/Low into likelihood and impact 5/4/3/2, and an unrated threat exports as Threat Dragon's `TBD` |
 | `threats[].cvss_v4.base_score` | the threat's `score` field; the vector goes into the description |
 | `threats[].boundary_refs[]` | the crossing and its exposure, in the threat description; a flow across a confirmed internet crossing is also marked `isPublicNetwork` |
+| `requirements_compliance`, `threats[].violated_requirements` | bounded requirement status and title lines in the linked threat descriptions, plus document-level counts |
+| `abuse_case_analysis` | bounded case verdict, verification state, and matching-step lines in each participating threat description, plus document-level counts |
+| `business_context_trace`, `threats[].business_context_basis` | bounded provenance and applied field names in each affected threat description; source prose is never copied |
 | `mitigations[]` | the threat's mitigation text, linked from either side |
+| `mitigations[].fulfills_requirements`, `mitigations[].blueprint` | bounded requirement and implementation-blueprint text in the mitigation field |
 | `mitigations[].kind: accept_risk` | threat status `Accepted`, when no other mitigation is linked |
 
 Every threat title keeps its report anchor — `[F-012] Missing authorization on …`
@@ -61,13 +65,9 @@ Every threat title keeps its report anchor — `[F-012] Missing authorization on
 
 ## What is lost
 
-Threat Dragon's schema is much narrower than ours. These have no field to land
-in and are folded into the threat description as text: the **CVSS v4 vector**,
-**CWE**, **evidence summary, file and line**, **evidence tier**, **finding
-source**. These are dropped entirely: **mitigation priority and effort** (kept
-only as a text qualifier), **requirements traceability**, **abuse cases**,
-**actors**, **attack surface**, **assets**, **walkthroughs**, and the
-**weakness register**.
+Threat Dragon's schema is much narrower than ours. The **CVSS v4 vector**, **CWE**, **evidence summary, file and line**, **evidence tier**, **finding source**, **mitigation priority and effort**, **requirements traceability**, **abuse-case links**, and **business-context use** have no native field and are folded into bounded text. Requirement and abuse-case rows beyond the stated limits remain only in `threat-model.yaml` and `threat-model.md`. **Actors**, **attack surface**, **assets**, **walkthroughs**, and the **weakness register** are dropped entirely.
+
+The exporter reports counted warnings for requirements, abuse cases, and business context whose semantics had to be folded into text. It never represents those records as synthetic threats, so finding counts remain stable.
 
 **Trust boundaries are not drawn.** Ours are a `from`/`to` pair with a kind and
 an assumption; Threat Dragon wants a geometric box or curve, and ThreatAtlas

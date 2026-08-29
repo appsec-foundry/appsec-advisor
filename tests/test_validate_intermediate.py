@@ -1094,6 +1094,96 @@ def test_requirements_compliance_schema_rejects_missing_buckets_and_unknown_stat
     assert any("MAYBE" in error and "not one of" in error for error in errors)
 
 
+def test_export_trace_cross_references_fail_closed():
+    data = {
+        "components": [{"id": "api"}],
+        "threats": [
+            {
+                "id": "T-001",
+                "violated_requirements": ["REQ-MISSING"],
+                "business_context_basis": ["sensitive_assets"],
+            }
+        ],
+        "mitigations": [{"id": "M-001", "fulfills_requirements": ["REQ-MISSING"]}],
+        "requirements_compliance": {
+            "total": 1,
+            "requirements": [{"id": "REQ-001", "finding_ids": ["F-999"]}],
+        },
+        "requirements_provenance": {"count": 2},
+        "business_context_trace": {
+            "status": "applied",
+            "source": None,
+            "sha256": None,
+            "fields_present": ["security_obligations"],
+            "component_coverage": [{"component_id": "missing", "fields": ["sensitive_assets"]}],
+            "applied_finding_count": 0,
+        },
+        "abuse_case_analysis": {
+            "status": "completed",
+            "cases": [
+                {
+                    "id": "AC-001",
+                    "matched_finding_ids": ["F-999"],
+                    "blocking_mitigation_ids": ["M-999"],
+                    "verification_complete": True,
+                    "unverified_steps": [],
+                    "steps": [
+                        {
+                            "step": 2,
+                            "finding_id": "F-001",
+                            "unverified": True,
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    errors = vi._check_export_trace_invariants(data)
+
+    assert any("finding_id 'F-999' does not resolve" in error for error in errors)
+    assert any("violated requirement 'REQ-MISSING' does not resolve" in error for error in errors)
+    assert any("fulfilled requirement 'REQ-MISSING' does not resolve" in error for error in errors)
+    assert any("fields_present must equal" in error for error in errors)
+    assert any("component_id 'missing' does not resolve" in error for error in errors)
+    assert any("verification_complete does not match" in error for error in errors)
+
+
+def test_export_trace_invariants_tolerate_schema_invalid_collection_items():
+    data = {
+        "threats": [{"id": "T-001", "violated_requirements": [{"bad": "id"}]}],
+        "mitigations": [{"id": "M-001", "fulfills_requirements": [{"bad": "id"}]}],
+        "requirements_compliance": {
+            "total": 1,
+            "requirements": [{"id": "REQ-001", "finding_ids": [{"bad": "id"}]}],
+        },
+        "business_context_trace": {
+            "status": "not_configured",
+            "fields_present": [{"bad": "field"}],
+            "component_coverage": [],
+            "applied_finding_count": 0,
+        },
+        "abuse_case_analysis": {
+            "status": "completed",
+            "cases": [
+                {
+                    "id": "AC-001",
+                    "matched_finding_ids": [{"bad": "id"}],
+                    "blocking_mitigation_ids": [{"bad": "id"}],
+                    "verification_complete": True,
+                    "unverified_steps": [{"bad": "step"}],
+                    "steps": [{"step": {"bad": "step"}, "finding_id": {"bad": "id"}, "unverified": True}],
+                }
+            ],
+        },
+    }
+
+    errors = vi._check_export_trace_invariants(data)
+
+    assert isinstance(errors, list)
+    assert any("step numbers must be contiguous" in error for error in errors)
+
+
 # --- _check_finding_id_contiguity ------------------------------------------
 
 

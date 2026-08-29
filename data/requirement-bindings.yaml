@@ -377,6 +377,32 @@ requirements:
       - tests/test_validate_mitigation_quality.py::test_urgent_code_example_needs_a_source_location
       - tests/test_emit_finding_fix_mitigations.py::test_remediation_string_fallback_and_priority_rules
 
+  REQ-RPT-006:
+    applies_to:
+      - schemas/threat-model.output.schema.yaml
+      - scripts/build_threat_model_yaml.py
+      - scripts/render_abuse_cases.py
+      - scripts/emit_requirement_trace_to_model.py
+      - scripts/compose_threat_model.py
+      - scripts/export_threat_dragon.py
+      - scripts/validate_intermediate.py
+      - docs/threat-dragon-export.md
+    decisions:
+      - EXP-4
+      - EXP-5
+    documents:
+      - docs/threat-dragon-export.md
+      - docs/threat-modeler.md
+      - docs/internal/contracts/schema-invariants.md
+    coverage: direct
+    guards:
+      - tests/test_render_abuse_cases.py::test_main_persists_canonical_analysis_to_yaml
+      - tests/test_build_threat_model_yaml.py::test_initial_abuse_analysis_distinguishes_pending_and_skipped_runs
+      - tests/test_build_threat_model_yaml.py::test_business_context_trace_records_safe_provenance_without_prose
+      - tests/test_requirements_trace.py::TestPostComposeRequirementsExport::test_complete_stage2_assessment_persists_provenance
+      - tests/test_export_threat_dragon.py::test_traceability_is_folded_into_bounded_text
+      - tests/test_validate_intermediate.py::test_export_trace_cross_references_fail_closed
+
   REQ-USE-001:
     applies_to:
       - skills/ask-threat-model/**

@@ -3142,6 +3142,73 @@ def test_business_context_basis_never_carries_the_business_prose(tmp_path):
     assert secret_prose not in json.dumps(threats)
 
 
+def test_business_context_trace_records_safe_provenance_without_prose(tmp_path):
+    repo, output = _business_meta(tmp_path)
+    secret_prose = "Settles confidential merchant balances under contract 4711."
+    (output / ".business-context-input.md").write_text(secret_prose, encoding="utf-8")
+    _analyst_context(
+        output,
+        {
+            "payments-svc": {
+                "business_context": {
+                    "business_purpose": "Pays merchants.",
+                    "impact_if_compromised": secret_prose,
+                    "sensitive_assets": ["settlement balances"],
+                }
+            }
+        },
+    )
+
+    trace = b.build_business_context_trace({"output_dir": str(output)}, repo, 3)
+
+    assert trace == {
+        "status": "applied",
+        "source_kind": "run_only",
+        "source": ".business-context-input.md",
+        "sha256": trace["sha256"],
+        "fields_present": ["business_purpose", "impact_if_compromised", "sensitive_assets"],
+        "component_coverage": [
+            {
+                "component_id": "payments-svc",
+                "fields": ["business_purpose", "impact_if_compromised", "sensitive_assets"],
+            }
+        ],
+        "applied_finding_count": 3,
+    }
+    assert len(trace["sha256"]) == 64
+    assert secret_prose not in json.dumps(trace)
+
+
+def test_business_context_trace_distinguishes_skipped_and_absent(tmp_path):
+    repo, output = _business_meta(tmp_path)
+    skipped = b.build_business_context_trace({"output_dir": str(output), "skip_business_context": True}, repo, 7)
+    absent = b.build_business_context_trace({"output_dir": str(output)}, repo, 0)
+
+    assert skipped["status"] == "skipped"
+    assert skipped["applied_finding_count"] == 0
+    assert absent["status"] == "not_configured"
+
+
+def test_initial_abuse_analysis_distinguishes_pending_and_skipped_runs():
+    pending = b.build_initial_abuse_case_analysis({"skip_abuse_case_verification": False})
+    skipped = b.build_initial_abuse_case_analysis(
+        {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (--no-abuse-cases)"}
+    )
+
+    assert pending == {
+        "status": "not_run",
+        "reason": "abuse-case verification has not completed",
+        "cases": [],
+        "catalog_evaluated": [],
+    }
+    assert skipped == {
+        "status": "skipped",
+        "reason": "skipped (--no-abuse-cases)",
+        "cases": [],
+        "catalog_evaluated": [],
+    }
+
+
 def test_skip_context_leaves_every_finding_unmarked(tmp_path):
     _analyst_context(tmp_path, {"payments-svc": {"business_context": {"sensitive_assets": ["funds"]}}})
     threats = [{"id": "T-001", "component": "payments-svc"}]

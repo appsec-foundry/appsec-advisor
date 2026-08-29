@@ -1708,15 +1708,27 @@ class TestDispatchCountConsistency:
 
 
 class TestRequirementsExportConsistency:
-    def _resolution(self, tmp_path, count):
+    def _catalog(self, tmp_path, declared=True):
+        """A run that really has requirements carries BOTH artifacts: the
+        resolution AND a catalog that declares them.
+        """
+        body = (
+            "source: https://example.test/asr\ncategories:\n  - name: AuthN\n    requirements:\n      - id: R-1\n"
+            if declared
+            else "source: skipped\ncategories: []\nblueprints: []\n"
+        )
+        (tmp_path / ".requirements.yaml").write_text(body, encoding="utf-8")
+
+    def _resolution(self, tmp_path, count, *, source_kind="cli", disposition="fetched"):
         (tmp_path / ".requirements-resolution.json").write_text(
-            _json.dumps({"source_kind": "cli", "disposition": "fetched", "count": count}), encoding="utf-8"
+            _json.dumps({"source_kind": source_kind, "disposition": disposition, "count": count}), encoding="utf-8"
         )
 
     def test_export_without_the_assessment_is_reported(self, tmp_path):
         # Run a2a0e355: 73 requirements assessed in the report, no
         # requirements_compliance key in the export.
         self._resolution(tmp_path, 73)
+        self._catalog(tmp_path)
         (tmp_path / "threat-model.yaml").write_text("meta:\n  schema_version: 1\nthreats: []\n", encoding="utf-8")
         issues = agg._extract_requirements_export_consistency(tmp_path)
         assert len(issues) == 1
@@ -1731,9 +1743,28 @@ class TestRequirementsExportConsistency:
 
     def test_a_complete_export_is_silent(self, tmp_path):
         self._resolution(tmp_path, 73)
+        self._catalog(tmp_path)
         (tmp_path / "threat-model.yaml").write_text(
             "requirements_compliance:\n  total: 73\n  fail: 31\n", encoding="utf-8"
         )
+        assert agg._extract_requirements_export_consistency(tmp_path) == []
+
+    def test_a_disabled_run_is_not_judged_on_a_stale_cached_count(self, tmp_path):
+        """The 2026-08-29 juice-shop shape: the check was OFF, but resolution
+        still carried `count: 63` from a catalog fetched months earlier. The
+        export correctly assessed nothing, and comparing the two invented a
+        disagreement on every requirements-free run that had ever fetched one.
+        """
+        self._resolution(tmp_path, 63, source_kind="disabled", disposition="skipped")
+        self._catalog(tmp_path, declared=False)
+        (tmp_path / "threat-model.yaml").write_text("meta:\n  schema_version: 1\nthreats: []\n", encoding="utf-8")
+
+        assert agg._extract_requirements_export_consistency(tmp_path) == []
+
+    def test_a_missing_catalog_is_not_judged_on_a_stale_count(self, tmp_path):
+        self._resolution(tmp_path, 63, source_kind="disabled", disposition="skipped")
+        (tmp_path / "threat-model.yaml").write_text("threats: []\n", encoding="utf-8")
+
         assert agg._extract_requirements_export_consistency(tmp_path) == []
 
     def test_a_run_without_requirements_is_not_judged(self, tmp_path):

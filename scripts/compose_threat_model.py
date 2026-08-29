@@ -6822,24 +6822,39 @@ def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonom
     return "\n".join(out) + "\n"
 
 
+def _abuse_case_document(ctx: RenderContext) -> dict:
+    """Read canonical abuse analysis, with the transient sidecar as a legacy fallback."""
+    analysis = ctx.yaml_data.get("abuse_case_analysis")
+    if isinstance(analysis, dict):
+        cases = analysis.get("cases")
+        if isinstance(cases, list):
+            return {
+                "abuse_cases": cases,
+                "catalog_evaluated": analysis.get("catalog_evaluated") or [],
+            }
+    path = ctx.fragments_dir / "abuse-cases.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
 def _build_ms_abuse_chain_line(ctx: RenderContext) -> str:
     """One deterministic line for the MS `Security Posture & Top Threats`
     section that surfaces the verified abuse-case chains and links §9.
 
-    Read from the `.fragments/abuse-cases.json` sidecar produced by
-    `render_abuse_cases.py` (chain verdicts are computed deterministically from
-    per-step verification — never rated here). Only the ACTIONABLE verdicts
+    Read from canonical YAML, falling back to the transient
+    `.fragments/abuse-cases.json` sidecar for an in-flight or legacy run (chain
+    verdicts are computed deterministically from per-step verification — never
+    rated here). Only the ACTIONABLE verdicts
     (fully viable / partially blocked) are surfaced so the exec summary points
     at the chains that actually compose findings into an end-to-end exploit.
     Returns '' when no such chain exists (line omitted). The verdict block
     above must stay brief and ID-free (feedback_threat_model_verdict_brevity),
     so the abuse linkage lives here, alongside the other §-cross-references.
     """
-    path = ctx.fragments_dir / "abuse-cases.json"
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
+    doc = _abuse_case_document(ctx)
     cases = doc.get("abuse_cases") or []
     viable = [c for c in cases if c.get("chain_verdict") == "fully_viable"]
     partial = [c for c in cases if c.get("chain_verdict") == "partially_blocked"]
@@ -6864,7 +6879,8 @@ def _build_ms_abuse_chain_line(ctx: RenderContext) -> str:
 
 def _verified_chain_map(ctx: RenderContext) -> dict[str, list[str]]:
     """Map each finding id (canonical F-NNN) → the fully-viable abuse-case
-    chain(s) it participates in, read from `.fragments/abuse-cases.json`.
+    chain(s) it participates in, preferring canonical YAML over the transient
+    `.fragments/abuse-cases.json` compatibility sidecar.
 
     Only ``fully_viable`` chains qualify — the code-verified, end-to-end
     exploitable paths (``partially_blocked`` / ``inconclusive`` are excluded,
@@ -6873,11 +6889,7 @@ def _verified_chain_map(ctx: RenderContext) -> dict[str, list[str]]:
     that proves the path end-to-end. Returns {} when the sidecar is missing
     (quick depth / ``--no-abuse-cases``) or holds no viable chain.
     """
-    path = ctx.fragments_dir / "abuse-cases.json"
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    doc = _abuse_case_document(ctx)
     fmap: dict[str, list[str]] = {}
     for c in doc.get("abuse_cases") or []:
         if c.get("chain_verdict") != "fully_viable":

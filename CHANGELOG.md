@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Findings now name the requirements they break, and mitigations quote the blueprint section that prescribes the fix. STRIDE analysis gets that blueprint while it works, so remediation follows the catalog.
-- `threat-model.yaml` carries the same requirement and blueprint links, so the exports and the review and query skills see them too.
+- `threat-model.yaml` now preserves requirements provenance, verified abuse-case outcomes, and bounded business-context use, while Threat Dragon retains applicable traces as bounded text instead of dropping them.
 - The Management Summary states compliance and lists the requirements that failed.
 - The requirements audit says which catalog it uses and how old it is, then reports progress while it grades.
 - An organization package records which appsec-advisor revision it was built from.
@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An agent call the host answers asynchronously is recorded as launched instead of rejected, so a finished agent no longer holds turns and budget claims that skipped abuse-case verification.
+- A subagent that ends its last turn on a tool call is no longer recorded as failed.
+- Stage 2 budgets its attempts per blocking cause, and the abort names the step that actually blocked.
+- Abuse-case verification suppressed by a budget claim now says so in its receipts.
+- A run with the requirements check switched off no longer fails its finished report on an empty catalog, nor reports a requirements disagreement from a stale cached count.
+- The abort latch no longer blocks the run diagnostician or unrelated agents.
 - Code references now use one balanced formatter across report sections and dependency ecosystems, so packages and complete snippets stay intact while surrounding prose remains outside code spans.
 - `--skip-context` now runs without business context, instead of only skipping the question while still reading `docs/business-context.md`.
 - A stored `docs/business-context.md` carrying a credential is now withheld from the analysis, the same way a supplied source is refused.

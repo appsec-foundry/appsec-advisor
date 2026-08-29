@@ -46,10 +46,11 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    The waiter's exit status is informational; step 4 owns the retry, so do not
    branch on it or repeat steps 2-3 yourself. Aggregate usage.
    Require concise status without reproducing evidence or artifact content.
-   `run_gate` needs no verifier. Abort or overflow is fatal and
-   must not silently drop candidates. The legacy shape lacks
-   `dispatch_jobs[]`; retain its foreground `candidates[]` fan-out and
-   `MATCH_RESULT_PATH=<OUTPUT_DIR>/.abuse-case-matches.json` alias.
+   Abort or overflow is fatal and must not silently drop candidates.
+   `dispatch_jobs[]` is the only dispatch authority: `run_gate` needs no
+   verifier — go to step 4 — even carrying `candidates[]`, which then stay
+   unverified for the reason in its receipts. Never rebuild a fan-out from
+   them; the guard rejects a verifier without `ACTION_ID`/`JOB_ID`.
 4. Run:
 
    ```bash

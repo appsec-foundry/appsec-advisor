@@ -149,6 +149,29 @@ class TestBuildMsAbuseChainLine:
         assert "[AC-1](#ac-1)" in out
         assert "§9 Abuse Cases" in out
 
+    def test_canonical_yaml_is_used_without_transient_sidecar(self, tmp_path):
+        ctx = _mk_ctx(
+            tmp_path,
+            yaml_data={
+                "abuse_case_analysis": {
+                    "status": "completed",
+                    "cases": [
+                        {
+                            "id": "AC-001",
+                            "chain_verdict": "fully_viable",
+                            "matched_finding_ids": ["F-001"],
+                        }
+                    ],
+                    "catalog_evaluated": [],
+                }
+            },
+        )
+
+        out = compose._build_ms_abuse_chain_line(ctx)
+
+        assert "[AC-001](#ac-001)" in out
+        assert compose._verified_chain_map(ctx) == {"F-001": ["AC-001"]}
+
 
 # ---------------------------------------------------------------------------
 # _render_title — fallback to meta plugin_version when live meta unreadable

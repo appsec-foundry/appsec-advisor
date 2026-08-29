@@ -24,10 +24,12 @@ import argparse
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 import yaml
+from _atomic_io import atomic_write_text
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 HEADING = "## 9. Abuse Cases"
@@ -313,6 +315,16 @@ def render_case(
         loc = ""
         if ev.get("file"):
             loc = f"{ev['file']}:{ev['line']}" if ev.get("line") else str(ev["file"])
+        semantic_verdict = str(sv.get("verdict") or "inconclusive")
+        if semantic_verdict not in {"confirmed", "blocked", "inconclusive"}:
+            semantic_verdict = "inconclusive"
+        evidence_ref = None
+        if ev.get("file"):
+            line = ev.get("line")
+            evidence_ref = {
+                "file": str(ev["file"]),
+                "line": line if isinstance(line, int) and not isinstance(line, bool) and line > 0 else None,
+            }
         rows.append(
             {
                 "step": n,
@@ -323,6 +335,12 @@ def render_case(
                 "evidence": loc,
                 "outcome": step.get("description") or step.get("grants") or "",
                 "status_icon": _step_status_icon(sv.get("verdict", ""), sv.get("controls_found") or []),
+                "verdict": semantic_verdict,
+                "evidence_ref": evidence_ref,
+                "controls_found": [
+                    str(control).strip() for control in (sv.get("controls_found") or []) if str(control).strip()
+                ],
+                "unverified": _step_unverified(sv),
             }
         )
 
@@ -345,6 +363,108 @@ def render_case(
         "combined_risk_rationale": case.get("combined_risk_rationale", ""),
         "blocking_mitigations": blocking,
     }
+
+
+def build_canonical_analysis(
+    output_dir: Path,
+    models: list[dict],
+    catalog_rows: list[dict],
+) -> dict:
+    """Project render models into the stable, non-rendering YAML contract."""
+    sidecars_exist = any(
+        (output_dir / name).is_file() for name in (".abuse-case-verdicts.json", ".abuse-case-matches.json")
+    )
+    config = {}
+    try:
+        config = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    if sidecars_exist:
+        status, reason = "completed", None
+    elif config.get("skip_abuse_case_verification"):
+        status = "skipped"
+        reason = str(config.get("abuse_case_label") or "verification disabled for this run").strip()[:256]
+    else:
+        status, reason = "not_run", "abuse-case verification did not run"
+
+    cases: list[dict] = []
+    for model in models:
+        steps = [
+            {
+                "step": row["step"],
+                "outcome": str(row.get("outcome") or ""),
+                "verdict": row.get("verdict") or "inconclusive",
+                "finding_id": row.get("fid") or None,
+                "evidence": row.get("evidence_ref"),
+                "controls_found": list(row.get("controls_found") or []),
+                "unverified": bool(row.get("unverified")),
+            }
+            for row in (model.get("rows") or [])
+        ]
+        cases.append(
+            {
+                "id": model["id"],
+                "title": str(model.get("title") or model["id"]),
+                "source": str(model.get("source") or "discovered"),
+                "actor": str(model.get("actor_label") or "attacker"),
+                "goal": str(model.get("goal") or ""),
+                "prerequisite": str(model.get("prerequisite") or ""),
+                "combined_risk": model.get("combined_risk") or "Informational",
+                "chain_verdict": model.get("chain_verdict") or "inconclusive",
+                "verification_complete": not any(step["unverified"] for step in steps),
+                "unverified_steps": sorted({step["step"] for step in steps if step["unverified"]}),
+                "matched_finding_ids": list(dict.fromkeys(model.get("matched_finding_ids") or [])),
+                "blocking_mitigation_ids": list(
+                    dict.fromkeys(
+                        item.get("id") for item in (model.get("blocking_mitigations") or []) if item.get("id")
+                    )
+                ),
+                "steps": steps,
+            }
+        )
+    evaluated = [
+        {
+            "id": row["id"],
+            "title": str(row.get("title") or row["id"]),
+            "source": row.get("source"),
+            "reason": str(row.get("reason") or "scope preconditions not met for this codebase"),
+        }
+        for row in catalog_rows
+        if row.get("id")
+    ]
+    return {"status": status, "reason": reason, "cases": cases, "catalog_evaluated": evaluated}
+
+
+def persist_canonical_analysis(output_dir: Path, analysis: dict) -> bool:
+    """Validate and atomically add the canonical analysis to threat-model.yaml."""
+    tm_path = output_dir / "threat-model.yaml"
+    if not tm_path.is_file():
+        return False
+    try:
+        tm = yaml.safe_load(tm_path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"cannot read threat-model.yaml: {exc}") from exc
+    if not isinstance(tm, dict):
+        raise ValueError("threat-model.yaml must contain a mapping")
+    tm["abuse_case_analysis"] = analysis
+    pending = tm_path.with_name(".threat-model.yaml.abuse.pending")
+    atomic_write_text(
+        pending,
+        yaml.safe_dump(tm, sort_keys=False, allow_unicode=True, default_flow_style=False, width=120),
+    )
+    validator = PLUGIN_ROOT / "scripts" / "validate_intermediate.py"
+    result = subprocess.run(
+        [sys.executable, str(validator), "threat_model_output", str(pending)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pending.unlink(missing_ok=True)
+        detail = (result.stderr or result.stdout).strip()
+        raise ValueError(f"canonical abuse-case analysis is invalid: {detail}")
+    pending.replace(tm_path)
+    return True
 
 
 def _case_markdown(m: dict) -> str:
@@ -723,6 +843,7 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = Path(args.output_dir)
     models = build_models(output_dir, args.org_profile, args.repo_root)
     catalog_rows = build_catalog_evaluation(output_dir)
+    analysis = build_canonical_analysis(output_dir, models, catalog_rows)
 
     frag_dir = output_dir / args.fragments_subdir
     frag_dir.mkdir(parents=True, exist_ok=True)
@@ -741,6 +862,11 @@ def main(argv: list[str] | None = None) -> int:
         verdicts_on_disk = (output_dir / ".abuse-case-verdicts.json").exists()
         matches_on_disk = (output_dir / ".abuse-case-matches.json").exists()
         if verdicts_on_disk or matches_on_disk:
+            try:
+                persist_canonical_analysis(output_dir, analysis)
+            except (OSError, ValueError) as exc:
+                sys.stderr.write(f"RENDER_ABUSE_CASES: ERROR: {exc}\n")
+                return 1
             sys.stderr.write(
                 "RENDER_ABUSE_CASES: no renderable models but evaluation sidecars present"
                 " — keeping existing fragment (if any)\n"
@@ -749,6 +875,11 @@ def main(argv: list[str] | None = None) -> int:
         for p in (md_path, json_path):
             if p.exists():
                 p.unlink()
+        try:
+            persist_canonical_analysis(output_dir, analysis)
+        except (OSError, ValueError) as exc:
+            sys.stderr.write(f"RENDER_ABUSE_CASES: ERROR: {exc}\n")
+            return 1
         sys.stderr.write("RENDER_ABUSE_CASES: no abuse-case evaluation on disk — placeholder will render\n")
         return 0
 
@@ -765,6 +896,11 @@ def main(argv: list[str] | None = None) -> int:
         f"RENDER_ABUSE_CASES: wrote {len(models)} viable + {len(catalog_rows)} not-applicable case(s) to {md_path}\n"
     )
     enrich_changelog_with_abuse_cases(output_dir, models)
+    try:
+        persist_canonical_analysis(output_dir, analysis)
+    except (OSError, ValueError) as exc:
+        sys.stderr.write(f"RENDER_ABUSE_CASES: ERROR: {exc}\n")
+        return 1
     return 0
 
 

@@ -5725,6 +5725,20 @@ def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dic
         candidates = [item for item in candidates if item in allowed]
         receipts.append("retry restricted to: " + (", ".join(candidates) if candidates else "(none)"))
     if not candidates or budget_watchdog.has_active_critical_claim(output_dir):
+        # Say WHICH of the two reasons closed the gate. Both shapes look alike
+        # from outside — `run_gate` with a populated `candidates[]` and no
+        # `dispatch_jobs[]` — and an orchestrator that cannot tell "nothing to
+        # verify" from "verification suppressed by a budget claim" reads the
+        # second as a dispatchable legacy shape. On the 2026-08-29 juice-shop
+        # run that cost two hook-denied dispatches and left six candidates
+        # unverified with nothing in the receipts to explain why.
+        if candidates:
+            receipts.append(
+                f"verification suppressed by an active budget-critical claim; "
+                f"{len(candidates)} candidate(s) stay unverified — do NOT dispatch verifiers"
+            )
+        else:
+            receipts.append("no candidates to verify")
         return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
     projection_args = ["--output-dir", str(output_dir), "--repo-root", repo_root]
     for candidate in candidates:
@@ -5933,7 +5947,14 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
     ]
     if org_profile := str(cfg.get("org_profile_path") or ""):
         render_args += ["--org-profile", org_profile]
-    _best_effort_script(output_dir, "render_abuse_cases.py", render_args, receipts)
+    try:
+        _run_script("render_abuse_cases.py", render_args)
+    except ControllerError as exc:
+        raise ControllerError(
+            "abuse-case rendering could not persist a valid canonical analysis: " + str(exc),
+            exc.exit_code,
+        ) from exc
+    receipts.append("Canonical abuse-case analysis persisted")
     # The configured release gate stays fatal, but it runs LAST: firing it before
     # ranking and §9 rendering aborted the run while the chain that justifies the
     # failure existed only as a raw verdict sidecar, and left threat-model.yaml
@@ -6111,6 +6132,39 @@ def _fragment_repair_is_actionable(output_dir: Path) -> bool:
     except (OSError, ValueError):
         return False
     return isinstance(plan, dict) and bool(plan.get("actionable")) and bool(plan.get("actions"))
+
+
+# Stage-2 attempts are budgeted per blocking cause, not per transition. One
+# shared counter let unrelated causes spend each other's budget: on the
+# 2026-08-29 juice-shop run the first (normal) dispatch took slot 1, the
+# by-design fragment-repair pass took slot 2, and a failing post-compose
+# emitter then aborted with no budget left — reporting "render fragments
+# incomplete" while the fragments were complete and the report was on disk.
+_STAGE2_ATTEMPTS_PER_CAUSE = 2
+# Still bounded overall, so alternating causes cannot loop forever.
+_STAGE2_ATTEMPTS_TOTAL = 6
+
+
+def _stage2_attempt_counts(path: Path) -> dict[str, int]:
+    """Read the per-cause Stage-2 attempt ledger, tolerating the legacy scalar."""
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}
+    if isinstance(parsed, int) and not isinstance(parsed, bool):
+        # A run that started before the ledger wrote a bare integer total, which
+        # is itself valid JSON. Carry it as one unattributed cause so upgrading
+        # mid-flight cannot hand the run a fresh budget.
+        return {"unknown": parsed} if parsed > 0 else {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): int(value) for key, value in parsed.items() if isinstance(value, int) and value > 0}
 
 
 def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
@@ -6461,32 +6515,40 @@ def next_action(output_dir: Path) -> dict[str, Any]:
         # Stage-2 agent when the fragments are genuinely missing.
         if not _compose_if_ready(output_dir, str(cfg.get("repo_root") or "")):
             retry_path = output_dir / ".inline-shortcut-retry-count"
-            try:
-                retry_count = int(retry_path.read_text(encoding="utf-8").strip())
-            except (OSError, ValueError):
-                retry_count = 0
-            if retry_count >= 2:
-                raise ControllerError(
-                    "Stage 2 could not produce the required render fragments after two retries; "
-                    f"inspect {output_dir / '.fragments'} and {output_dir / '.agent-run.log'}"
-                )
-            retry_count += 1
-            try:
-                retry_path.write_text(f"{retry_count}\n", encoding="utf-8")
-            except OSError as exc:
-                raise ControllerError(f"cannot persist Stage-2 retry counter: {exc}") from exc
-            # Name the step that actually blocked. "fragments incomplete" is
-            # reserved for the required-fragment existence check; any other
-            # blocker (a mitigation gate, a strict-compose failure) reports
-            # itself, so the operator is not sent to inspect a fragment set
-            # that was complete all along.
+            # Read the blocker BEFORE spending budget: the step that blocked
+            # decides which counter moves, so an unrelated later cause cannot
+            # inherit an exhausted one. "fragments incomplete" stays reserved
+            # for the required-fragment existence check; any other blocker
+            # reports itself, so the operator is never sent to inspect a
+            # fragment set that was complete all along.
             try:
                 blocked = json.loads((output_dir / ".compose-blocked.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 blocked = {}
-            step = str(blocked.get("step") or "") if isinstance(blocked, dict) else ""
+            if not isinstance(blocked, dict):
+                blocked = {}
+            step = str(blocked.get("step") or "")
+            cause = step or "unknown"
+            counts = _stage2_attempt_counts(retry_path)
+            attempt = counts.get(cause, 0) + 1
+            counts[cause] = attempt
+            total = sum(counts.values())
+            if attempt > _STAGE2_ATTEMPTS_PER_CAUSE or total > _STAGE2_ATTEMPTS_TOTAL:
+                detail = " ".join(str(blocked.get("detail") or "").split())[:400]
+                where = f" at {step}" if step else ""
+                raise ControllerError(
+                    f"Stage 2 could not complete{where} after {attempt} attempt(s) for this cause "
+                    f"({total} overall)"
+                    + (f": {detail}" if detail else "")
+                    + f"; inspect {output_dir / '.compose-blocked.json'} and {output_dir / '.agent-run.log'}"
+                )
+            try:
+                retry_path.write_text(json.dumps(counts, sort_keys=True) + "\n", encoding="utf-8")
+            except OSError as exc:
+                raise ControllerError(f"cannot persist Stage-2 attempt ledger: {exc}") from exc
+            budget = f"attempt {attempt}/{_STAGE2_ATTEMPTS_PER_CAUSE}"
             if step == "required-fragments":
-                receipt = f"Stage-2 render fragments incomplete; retry {retry_count}/2"
+                receipt = f"Stage-2 render fragments incomplete; {budget}"
             elif step == "validate_fragment.py" and _fragment_repair_is_actionable(output_dir):
                 # A schema violation in an authored fragment is a targeted edit,
                 # not a re-render: send the cheap fixer at the named fragment
@@ -6495,12 +6557,12 @@ def next_action(output_dir: Path) -> dict[str, Any]:
                     "Stage-2 fragment schema gate failed; dispatch "
                     "appsec-advisor:appsec-fragment-fixer with REPAIR_MODE=true and "
                     "REPAIR_PLAN_PATH=.pre-render-repair-plan.json, then re-run this transition; "
-                    f"retry {retry_count}/2 (see .compose-blocked.json)"
+                    f"{budget} (see .compose-blocked.json)"
                 )
             elif step:
-                receipt = f"Stage-2 compose blocked at {step}; retry {retry_count}/2 (see .compose-blocked.json)"
+                receipt = f"Stage-2 compose blocked at {step}; {budget} (see .compose-blocked.json)"
             else:
-                receipt = f"Stage-2 compose did not complete; retry {retry_count}/2"
+                receipt = f"Stage-2 compose did not complete; {budget}"
             return {
                 **common,
                 "action": "dispatch_agent",

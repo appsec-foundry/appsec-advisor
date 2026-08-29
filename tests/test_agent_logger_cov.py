@@ -706,6 +706,55 @@ class TestHandleStop:
         al.handle_stop({"stop_reason": "end_turn"}, "sidsub12", "SubagentStop")
         assert "SESSION_STOP" not in self._agent_run(tmp_path)
 
+    def _register_bound_call(self, tmp_path, call_id="toolu_stopcase", agent_id="agentabc123"):
+        sys.path.insert(0, str(SCRIPT_PATH.parent))
+        import agent_lifecycle
+
+        agent_lifecycle.register_call(
+            tmp_path,
+            {
+                "agent_call_id": call_id,
+                "session_id": "sidstop1",
+                "agent": "threat-renderer",
+                "agent_type": "appsec-advisor:appsec-threat-renderer",
+                "model": "sonnet",
+                "description": "Render",
+                "background": False,
+            },
+        )
+        agent_lifecycle.bind_runtime_agent_id(tmp_path, call_id, agent_id)
+        return agent_lifecycle
+
+    def test_subagent_stopping_on_tool_use_completes_the_call(self, al, tmp_path):
+        """A child that stops on `tool_use` merely ended its last turn on a tool
+        call — the normal shape for every write-first agent contract here. The
+        session-abort vocabulary marked those completed children failed: 8 of 18
+        agents on the 2026-08-29 juice-shop run, including a renderer that had
+        authored every fragment.
+        """
+        lifecycle = self._register_bound_call(tmp_path)
+
+        al.handle_stop({"stop_reason": "tool_use", "agent_id": "agentabc123"}, "sidstop1", "SubagentStop")
+
+        assert not lifecycle.running_calls(tmp_path), "the child must reach a terminal state"
+        log = self._read_log(tmp_path)
+        assert "AGENT_DONE" in log
+        assert "subagent_stop:tool_use" not in log
+
+    def test_subagent_stopping_on_max_turns_still_fails_the_call(self, al, tmp_path):
+        """A genuine cut-off must stay a failure."""
+        lifecycle = self._register_bound_call(tmp_path, call_id="toolu_cutoff", agent_id="agentcut456")
+
+        al.handle_stop({"stop_reason": "max_turns", "agent_id": "agentcut456"}, "sidstop1", "SubagentStop")
+
+        assert not lifecycle.running_calls(tmp_path)
+        assert "subagent_stop:max_turns" in self._read_log(tmp_path)
+
+    def test_session_abort_vocabulary_is_unchanged_by_the_subagent_relaxation(self, al):
+        """`tool_use` at the OUTER session boundary is still a dirty stop."""
+        assert "tool_use" in al._CLEAN_SUBAGENT_STOP_REASONS
+        assert "tool_use" not in al._CLEAN_STOP_REASONS
+
     def test_max_turns_mirrored_to_agent_run(self, al, tmp_path):
         al._save_session_agent("sidmt123", "stride-analyzer")
         (tmp_path / ".agent-run.log").write_text("seed\n")

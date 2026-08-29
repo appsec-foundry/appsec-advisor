@@ -1177,6 +1177,14 @@ def _extract_requirements_export_consistency(output_dir: Path) -> list[dict]:
 
     Both numbers are structured and already on disk, so this is an exact
     comparison rather than a reading of the rendered table.
+
+    ``count`` alone is not the declared figure. A run that switched the check
+    OFF still resolves against the cached catalog and keeps its stale count —
+    ``source_kind: disabled``, ``disposition: skipped``, ``count: 63`` on the
+    2026-08-29 juice-shop run, fetched months earlier. Comparing that to an
+    export which correctly carries nothing reported a disagreement on every
+    requirements-free run that had ever fetched a catalog. What the catalog on
+    disk declares decides whether there is anything to compare at all.
     """
     resolution_path = output_dir / ".requirements-resolution.json"
     if not resolution_path.is_file():
@@ -1187,6 +1195,12 @@ def _extract_requirements_export_consistency(output_dir: Path) -> list[dict]:
         return []
     declared = resolution.get("count")
     if not isinstance(declared, int) or declared <= 0:
+        return []
+    # Deferred like the yaml import below, so the aggregator stays importable
+    # in an environment without the parser.
+    import _requirements_gate  # noqa: PLC0415
+
+    if not _requirements_gate.catalog_declares_requirements(output_dir):
         return []
     export_path = output_dir / "threat-model.yaml"
     if not export_path.is_file():

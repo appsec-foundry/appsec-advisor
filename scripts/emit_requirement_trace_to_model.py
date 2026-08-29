@@ -42,12 +42,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import _requirements_gate
 import requirements_trace
 import yaml
 from _atomic_io import atomic_write_text
 from build_threat_model_yaml import (
     RequirementsComplianceError,
     build_requirements_compliance,
+    build_requirements_provenance,
 )
 from validate_intermediate import validate_threat_model_output
 
@@ -127,14 +129,19 @@ def emit(output_dir: Path) -> str:
     if not isinstance(doc, dict):
         raise RequirementsComplianceError("threat-model.yaml is not a mapping")
 
-    catalog_path = Path(output_dir) / ".requirements.yaml"
-    if not catalog_path.is_file():
+    # File presence is not configuration: a run with the check off still writes
+    # a `source: skipped` stub, and `build_requirements_compliance(strict=True)`
+    # refuses an empty catalog. Gating on `is_file()` therefore failed the run
+    # after the report was already on disk. The shared predicate owns the
+    # catalog shape so this and the read-only consumers cannot drift.
+    if not _requirements_gate.catalog_declares_requirements(Path(output_dir)):
         return "no requirements catalog — nothing to do"
 
     trace = build_trace(Path(output_dir), doc)
     compliance = build_requirements_compliance(Path(output_dir), strict=True)
     if compliance is None:  # strict mode guarantees a value or raises
         raise RequirementsComplianceError("configured requirements compliance was not produced")
+    provenance = build_requirements_provenance(Path(output_dir), compliance)
 
     changed = 0
     for m in doc.get("mitigations") or []:
@@ -147,6 +154,9 @@ def emit(output_dir: Path) -> str:
                 changed += 1
     if doc.get("requirements_compliance") != compliance:
         doc["requirements_compliance"] = compliance
+        changed += 1
+    if doc.get("requirements_provenance") != provenance:
+        doc["requirements_provenance"] = provenance
         changed += 1
     if not changed:
         return "unchanged"

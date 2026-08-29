@@ -349,6 +349,40 @@ class TestPostComposeRequirementsExport:
         assert compliance["total"] == 3
         assert compliance["requirements"][1]["finding_ids"] == ["F-001"]
 
+    def test_complete_stage2_assessment_persists_provenance(self, tmp_path, monkeypatch):
+        fragment = """\
+| Requirement | Status | Priority | Evidence |
+| --- | --- | --- | --- |
+| `AC-002`: Authorization | ✅ PASS | MUST | server guard |
+| `IV-001`: Validation | ❌ FAIL | MUST | F-001 |
+| `LM-001`: Logging | ❓ UNVERIFIABLE | SHOULD | not observed |
+"""
+        emitter, yaml_path = self._run(tmp_path, monkeypatch, fragment=fragment)
+        (tmp_path / ".requirements-resolution.json").write_text(
+            json.dumps(
+                {
+                    "source_kind": "org-profile",
+                    "label": "Corporate baseline",
+                    "url": "https://internal.example/secret-path/catalog.yaml",
+                    "cache_path": "/private/cache/catalog.yaml",
+                    "disposition": "fetched",
+                    "fetched_at": "2026-08-28T00:00:00Z",
+                    "generated": "2026-08-20T00:00:00Z",
+                    "freshness": {"known": True, "stale": False, "age_days": 9},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        emitter.emit(tmp_path)
+
+        provenance = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))["requirements_provenance"]
+        assert provenance["source_kind"] == "org-profile"
+        assert provenance["source_label"] == "Corporate baseline"
+        assert provenance["count"] == 3
+        assert len(provenance["catalog_sha256"]) == 64
+        assert "url" not in provenance and "cache_path" not in provenance
+
     def test_missing_stage2_assessment_fails_without_rewriting_yaml(self, tmp_path, monkeypatch):
         emitter, yaml_path = self._run(tmp_path, monkeypatch, fragment=None)
         before = yaml_path.read_bytes()

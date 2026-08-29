@@ -1183,6 +1183,21 @@ def test_finalize_abuse_renders_section9_before_the_release_gate_can_abort(tmp_p
     assert "ABUSE_GATE_VIOLATION" in (output / ".agent-run.log").read_text(encoding="utf-8")
 
 
+def test_finalize_abuse_blocks_when_canonical_analysis_cannot_be_persisted(tmp_path, monkeypatch):
+    output = _abuse_output(tmp_path)
+    (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
+
+    def fake_script(name, args, **kwargs):
+        if name == "render_abuse_cases.py":
+            raise controller.ControllerError("render_abuse_cases.py failed with exit 1: invalid canonical trace", 1)
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+
+    with pytest.raises(controller.ControllerError, match="canonical analysis"):
+        controller.finalize_abuse(output)
+
+
 def test_finalize_abuse_completes_when_no_release_gate_fires(tmp_path, monkeypatch):
     output = _abuse_output(tmp_path)
     (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
@@ -1479,9 +1494,11 @@ def test_next_action_caps_stage2_fragment_retries(tmp_path):
 
     first = controller.next_action(output)
     second = controller.next_action(output)
-    assert first["receipts"] == ["Stage-2 render fragments incomplete; retry 1/2"]
-    assert second["receipts"] == ["Stage-2 render fragments incomplete; retry 2/2"]
-    with pytest.raises(controller.ControllerError, match="after two retries"):
+    # The budget is per blocking cause and counts attempts, not retries: the
+    # first Stage-2 entry is the normal dispatch, not a repeat of one.
+    assert first["receipts"] == ["Stage-2 render fragments incomplete; attempt 1/2"]
+    assert second["receipts"] == ["Stage-2 render fragments incomplete; attempt 2/2"]
+    with pytest.raises(controller.ControllerError, match="required-fragments"):
         controller.next_action(output)
 
 
@@ -6313,3 +6330,137 @@ def test_the_boundary_gate_is_reachable_from_the_command_line(tmp_path, monkeypa
     monkeypatch.setattr(sys, "argv", ["c", "context-v2-post-recon", "--output-dir", str(output)])
     controller.main()
     assert "was not verified" not in capsys.readouterr().out
+
+
+def _stage2_blocked(output: Path, step: str) -> None:
+    (output / ".compose-blocked.json").write_text(json.dumps({"step": step, "detail": f"{step} exit 1"}))
+
+
+def test_stage2_attempt_budget_is_per_cause_not_per_transition(tmp_path, monkeypatch):
+    """One shared counter let unrelated causes spend each other's budget. On the
+    2026-08-29 juice-shop run the first (normal) dispatch took slot 1, the
+    by-design fragment-repair pass took slot 2, and a failing post-compose
+    emitter then aborted with none left — naming a cause that was long fixed.
+    """
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n")
+    monkeypatch.setattr(controller, "_compose_if_ready", lambda *_args, **_kwargs: False)
+
+    _stage2_blocked(output, "required-fragments")
+    assert controller.next_action(output)["receipts"] == ["Stage-2 render fragments incomplete; attempt 1/2"]
+    assert controller.next_action(output)["receipts"] == ["Stage-2 render fragments incomplete; attempt 2/2"]
+
+    # A different cause starts with its own full budget instead of inheriting
+    # the exhausted one.
+    _stage2_blocked(output, "emit_requirement_trace_to_model.py")
+    receipt = controller.next_action(output)["receipts"][0]
+    assert "emit_requirement_trace_to_model.py" in receipt
+    assert "attempt 1/2" in receipt
+
+    ledger = json.loads((output / ".inline-shortcut-retry-count").read_text(encoding="utf-8"))
+    assert ledger == {"required-fragments": 2, "emit_requirement_trace_to_model.py": 1}
+
+
+def test_stage2_abort_names_the_step_that_actually_blocked(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n")
+    monkeypatch.setattr(controller, "_compose_if_ready", lambda *_args, **_kwargs: False)
+
+    _stage2_blocked(output, "emit_requirement_trace_to_model.py")
+    controller.next_action(output)
+    controller.next_action(output)
+
+    with pytest.raises(controller.ControllerError) as excinfo:
+        controller.next_action(output)
+
+    message = str(excinfo.value)
+    assert "emit_requirement_trace_to_model.py" in message
+    assert "render fragments" not in message, "the abort must not blame a cause it never observed"
+
+
+def test_stage2_attempt_ledger_reads_a_legacy_scalar(tmp_path, monkeypatch):
+    """A run upgraded mid-flight must not silently regain a full budget."""
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n")
+    (output / ".inline-shortcut-retry-count").write_text("2\n", encoding="utf-8")
+    monkeypatch.setattr(controller, "_compose_if_ready", lambda *_args, **_kwargs: False)
+
+    assert controller._stage2_attempt_counts(output / ".inline-shortcut-retry-count") == {"unknown": 2}
+
+    _stage2_blocked(output, "")
+    with pytest.raises(controller.ControllerError):
+        controller.next_action(output)
+
+
+def test_stage2_attempts_stay_bounded_across_alternating_causes(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".skill-config.json").write_text(json.dumps(_cfg(tmp_path)), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n")
+    monkeypatch.setattr(controller, "_compose_if_ready", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(controller.ControllerError):
+        for index in range(controller._STAGE2_ATTEMPTS_TOTAL + 2):
+            _stage2_blocked(output, f"step-{index // 2}")
+            controller.next_action(output)
+
+
+def test_prepare_abuse_says_why_a_budget_claim_suppressed_verification(tmp_path, monkeypatch):
+    """`run_gate` with a populated `candidates[]` and no `dispatch_jobs[]` is
+    indistinguishable from the retired legacy shape unless the receipts say so.
+    On the 2026-08-29 juice-shop run an orchestrator read it as dispatchable,
+    burned two hook-denied verifier dispatches, and left six candidates
+    unverified with nothing explaining why.
+    """
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["skip_abuse_case_verification"] = False
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    candidates = ["AC-T-001", "AC-T-002"]
+    _write_abuse_matches(output, candidates)
+
+    monkeypatch.setattr(
+        controller,
+        "_run_script",
+        lambda name, args, **kwargs: _completed("AC-T-001\nAC-T-002\n") if "list-candidates" in args else _completed(),
+    )
+    monkeypatch.setattr(controller.budget_watchdog, "has_active_critical_claim", lambda _output: True)
+
+    action = controller.prepare_abuse(output)
+
+    assert action["action"] == "run_gate"
+    assert "dispatch_jobs" not in action
+    assert action["candidates"] == candidates
+    receipts = " ".join(action["receipts"])
+    assert "budget-critical" in receipts
+    assert "do NOT dispatch verifiers" in receipts
+
+
+def test_prepare_abuse_distinguishes_an_empty_candidate_set(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["skip_abuse_case_verification"] = False
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    _write_abuse_matches(output, [])
+
+    monkeypatch.setattr(
+        controller,
+        "_run_script",
+        lambda name, args, **kwargs: _completed("") if "list-candidates" in args else _completed(),
+    )
+
+    action = controller.prepare_abuse(output)
+
+    assert action["action"] == "run_gate"
+    assert action["candidates"] == []
+    receipts = " ".join(action["receipts"])
+    assert "no candidates to verify" in receipts
+    assert "budget-critical" not in receipts

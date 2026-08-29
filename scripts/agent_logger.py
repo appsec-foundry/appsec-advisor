@@ -216,6 +216,18 @@ def _trace_path() -> str:
 # abort so the next pre-flight treats it as cleanable without a 1-hour wait.
 _CLEAN_STOP_REASONS = {"end_turn", "stop_sequence"}
 
+# The subagent boundary needs its own vocabulary. `_CLEAN_STOP_REASONS` decides
+# whether the OUTER session ended cleanly, where a dangling `tool_use` really is
+# an interrupted run. A child that stops on `tool_use` merely ended its last
+# turn on a tool call, which is the normal shape for every write-first agent
+# contract in this plugin: the agent's final act is the Write or Bash call that
+# persists its artifact. Reusing the session set here marked completed children
+# failed — on the 2026-08-29 juice-shop run 8 of 18 agents, including a renderer
+# that had authored every fragment and a fixer whose own log recorded
+# `gate_exit 0`. Cut-offs are caught where the evidence actually lives: the
+# completion checkpoints and `assert_completeness.py`, not a stop reason.
+_CLEAN_SUBAGENT_STOP_REASONS = _CLEAN_STOP_REASONS | {"tool_use"}
+
 
 def mark_checkpoint_aborted_if_dirty(stop_reason: str, output_dir: str | Path | None = None) -> str | None:
     """Rewrite `.appsec-checkpoint` to status=aborted on unclean stop.
@@ -2202,6 +2214,28 @@ def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | No
     return None
 
 
+# Agents that cannot advance the pipeline: they only read a finished run and
+# write their own sidecar. The abort latch must let these through, or its own
+# advice — preserve the artifacts and diagnose — is impossible to follow, which
+# is what happened on 2026-08-29 when `/appsec-advisor:diagnose-run` and every
+# ad-hoc read-only agent were denied after the abort.
+_ABORT_LATCH_EXEMPT_AGENTS = frozenset({"appsec-advisor:appsec-run-diagnostician"})
+
+
+def _abort_latch_applies(event: hook_payload.HookEvent) -> bool:
+    """Whether the abort latch should deny this particular Agent dispatch.
+
+    Scoped to this plugin's own producer agents. A non-plugin agent belongs to
+    whatever else the operator is doing in the session and never continues a
+    context-v2 run, so denying it only removes the reader's tools without
+    protecting the aborted pipeline.
+    """
+    subtype = str(event.tool_input.get("subagent_type") or "")
+    if not subtype.startswith("appsec-advisor:"):
+        return False
+    return subtype not in _ABORT_LATCH_EXEMPT_AGENTS
+
+
 def _context_v2_terminal_abort_reason() -> str | None:
     """Reject a producer dispatch after a current-run context-v2 abort.
 
@@ -2212,6 +2246,10 @@ def _context_v2_terminal_abort_reason() -> str | None:
     diagnosing and the recovery skills, none of which advance the run. Denying
     those too is what made the abort message's own advice, to start a fresh
     rebuild, impossible to follow without deleting files by hand.
+
+    Which dispatches that intent covers is decided by
+    :func:`_abort_latch_applies`; this function only answers whether the run is
+    latched at all.
     """
     output_dir = Path(_output_dir())
     config_path = output_dir / ".skill-config.json"
@@ -2319,7 +2357,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     event = _hook_event(data, "PreToolUse", sid)
     tool = event.tool_name
 
-    if event.is_agent_call:
+    if event.is_agent_call and _abort_latch_applies(event):
         abort_reason = _context_v2_terminal_abort_reason()
         if abort_reason is not None:
             _emit_pretool_denial(abort_reason)
@@ -2812,7 +2850,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     if runtime_call is not None:
         try:
             if reason_known:
-                clean = reason in _CLEAN_STOP_REASONS
+                clean = reason in _CLEAN_SUBAGENT_STOP_REASONS
                 events = (
                     agent_lifecycle.finish_call(_output_dir(), runtime_call["agent_call_id"])
                     if clean
@@ -3076,6 +3114,11 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         params = _agent_params(inp.get("prompt", "") or "")
         pairs = "  ".join(f"{k}={v}" for k, v in params.items())
 
+        # One decision, reused by every branch below: did this return merely
+        # acknowledge a launch, or did the child actually finish? The dispatch
+        # flag alone cannot answer that — see _is_async_launch.
+        launch_only = bool(bg) or _is_async_launch(resp)
+
         call_id = event.tool_use_id
         if not _call_has_usage(call_id):
             # The transcript answered nothing for this call, so the Agent return
@@ -3100,7 +3143,7 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
                 agent_lifecycle.bind_runtime_agent_id(_output_dir(), call_id, runtime_agent_id)
             if is_err:
                 events = agent_lifecycle.fail_call(_output_dir(), call_id, "agent_tool_error")
-            elif bg or _is_async_launch(resp):
+            elif launch_only:
                 # A launch acknowledgement is not a completion — the call stays
                 # running and terminates on SubagentStop. See _is_async_launch.
                 events = agent_lifecycle.acknowledge_background_call(_output_dir(), call_id)
@@ -3109,7 +3152,11 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
             agent_lifecycle.append_events(_output_dir(), events)
         except agent_lifecycle.LifecycleError as exc:
             _write("WARN ", "AGENT_LIFECYCLE_REJECTED", f"agent_call_id={call_id or '?'}  reason={exc}", sid)
-        if is_err or not bg:
+        # Retiring the budget here is only correct once the child has actually
+        # returned. For a launch acknowledgement it has not, so keying this on
+        # the input flag alone released ownership at dispatch and let the
+        # watchdog charge the parent's later tools to a child still running.
+        if is_err or not launch_only:
             try:
                 from budget_watchdog import close_call
 
