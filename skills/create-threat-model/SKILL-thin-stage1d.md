@@ -15,8 +15,8 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
      prepare-abuse --output-dir "$OUTPUT_DIR"
    ```
 
-3. For `dispatch_jobs[]`, call `verify-receipts` with all receipt paths and
-   SHA-256 pairs as the final filesystem action. Then launch every job as an
+3. Call `verify-receipts --action-id <context_plan.action_id>` as the final
+   filesystem action. Then launch every job as an
    `appsec-advisor:appsec-abuse-case-verifier` call, launching the wave
    in ONE message. Pass no `run_in_background`. Description:
    `Abuse case: <candidate_id> — <title>`; use the ID if its title is missing.

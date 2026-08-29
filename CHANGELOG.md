@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Source scans now flag LLM output that reaches rendering, interpreters or privileged actions unchecked.
 - An organization profile can refresh the secure-coding baseline it vendors from its own source.
 - Headless runs can start Claude Code through a wrapper given by the environment.
+- Run Issues now reports a stage claiming more agent dispatches than the run spawned, a component whose findings all came from files the context routing never delivered, and a requirements assessment the YAML export does not carry.
 
 ### Changed
 
@@ -36,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A stored `docs/business-context.md` carrying a credential is now withheld from the analysis, the same way a supplied source is refused.
 - The help no longer documents `--incremental`, `--pr-mode`, `--resume`, `--dry-run`, `--max-wall-time` and `--max-cost`, which the runtime rejects before a run starts.
 - Business context supplied for one run no longer leaks into the next run in the same output directory.
+- Artifact receipts are verified before every dispatch instead of only when the orchestrator remembered to: the check is recorded and the next boundary refuses to advance without it, and it can now name the dispatch instead of echoing every path and hash back.
+- Run statistics no longer multiply a stage's dispatch count when the measurement window opens after the agents have already started.
 - A declared business context that maps to no component is now reported as a run issue instead of passing unnoticed.
 - A finished run now clears its transient files from the output directory again; a run that ended with QA unclean still keeps them for diagnosis.
 

@@ -40,6 +40,14 @@ class ContextRoutingError(RuntimeError):
     """Raised when catalog semantics or a resolved delivery are unsafe."""
 
 
+class UnknownActionError(ContextRoutingError):
+    """The plan is sound; the caller named an action that is not in it.
+
+    Kept apart from its base so the controller can answer a mistyped action id
+    by rejecting the call rather than ending an otherwise intact run.
+    """
+
+
 def _canonical_json_bytes(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
@@ -724,6 +732,41 @@ def action_already_issued(action: dict[str, Any], output_root: Path) -> bool:
         + ", ".join(job_ids)
         + "; invoke the successor boundary instead of replaying it"
     )
+
+
+def receipts_for_action(output_root: Path, action_id: str) -> list[tuple[str, str]]:
+    """Return one action's admitted artefacts and fingerprints from the plan.
+
+    The controller wrote every one of these when it validated and hashed the
+    artefact, so an orchestrator asking for the same action verified does not
+    have to echo them back for the controller to know what to re-hash. On run
+    a2a0e355 the echo carried 92 distinct paths and 91 of them were already
+    here; the one that was not is the plan itself, whose bytes this function
+    checks against its own exact-byte receipt before reading anything.
+
+    Raises when the id names no action or the action admitted no artefact:
+    verifying an empty set would report success for a dispatch nothing guards.
+    """
+    plan_path, receipt_path = _plan_paths(output_root.resolve())
+    if not plan_path.is_file() or not receipt_path.is_file():
+        raise ContextRoutingError("effective context plan and its receipt must exist together")
+    plan = _validate_plan_receipt(plan_path, receipt_path)
+    if not any(row.get("action_id") == action_id for row in plan.get("actions", [])):
+        raise UnknownActionError(f"effective context plan holds no action {action_id!r}")
+    pairs: dict[str, str] = {}
+    for delivery in plan.get("deliveries", []):
+        if delivery.get("action_id") != action_id:
+            continue
+        receipt = delivery.get("source_receipt") or {}
+        artifact_path = receipt.get("artifact_path")
+        sha256 = receipt.get("sha256")
+        if not artifact_path or not sha256:
+            continue
+        if pairs.setdefault(artifact_path, sha256) != sha256:
+            raise ContextRoutingError(f"effective context plan holds two fingerprints for {artifact_path}")
+    if not pairs:
+        raise ContextRoutingError(f"action {action_id!r} admitted no artifact to verify")
+    return sorted(pairs.items())
 
 
 def _write_plan(output_root: Path, plan: dict[str, Any]) -> None:

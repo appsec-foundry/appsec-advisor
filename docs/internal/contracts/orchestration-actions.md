@@ -360,11 +360,17 @@ error.
   run, and is never repeated.
 - Receipt creation validates and hashes one exact byte snapshot. Immediately
   before Agent dispatch, the thin runtime calls `verify-receipts` once for the
-  complete action and its STRIDE taxonomy slices; the effective-plan receipt is
-  one of the action's receipts, and naming it a second time with the same
+  complete action and its STRIDE taxonomy slices. `--action-id` names the
+  action and the controller resolves what to re-hash from the effective plan it
+  wrote itself; `--receipt PATH SHA256` echoes the pairs instead and stays
+  accepted. Exactly one of the two forms. Naming one path twice with the same
   fingerprint verifies it once rather than failing. A missing validator,
   unreadable artifact, byte change, or one path carrying two fingerprints fails
   closed.
+- The verification is recorded, and a boundary command that follows an
+  unverified plan-bound dispatch answers `reject`. The orchestrator verifies
+  and repeats the same boundary; the run is untouched, which is why a skipped
+  verification rejects the call rather than aborting the run.
 - Before returning a semantic dispatch, the controller removes prior bytes for
   every output not also used as an in-place repair input. Fresh context-v2 entry
   also removes optional evidence and synthesis outputs that may have no producer

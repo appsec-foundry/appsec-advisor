@@ -18,6 +18,7 @@ Commands:
     orchestration_controller.py context-v2-post-evidence --output-dir <path>
     orchestration_controller.py context-v2-post-triage --output-dir <path>
     orchestration_controller.py context-v2-finalize --output-dir <path>
+    orchestration_controller.py verify-receipts --output-dir <path> --action-id <id>
     orchestration_controller.py verify-receipts --output-dir <path> --receipt <path> <sha256> [...]
     orchestration_controller.py next --output-dir <path>
 """
@@ -78,6 +79,12 @@ THIN_STAGE3_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-th
 THIN_STAGE4_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage4.md"
 THIN_COMPLETION_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
 CONTEXT_V2_GENERATION = "context-v2"
+
+# The plan-bound dispatch awaiting receipt verification, and the record of the
+# verifications that happened. Together they make verify-receipts mandatory:
+# without them a skipped call left no trace and blocked nothing.
+PENDING_DISPATCH_NAME = ".pending-dispatch.json"
+RECEIPT_VERIFICATION_NAME = ".receipt-verification.json"
 
 MAX_ACTION_BYTES = 65_536
 MAX_STRIDE_ANALYST_CONTEXT_BYTES = 1_048_576
@@ -918,10 +925,33 @@ def consume_artifact_receipt(output_root: Path, receipt: dict[str, Any]) -> byte
     return payload
 
 
-def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]]) -> dict[str, Any]:
-    """Re-hash one action's admitted inputs immediately before Agent dispatch."""
-    if not receipt_pairs:
-        raise CallError("receipt verification requires at least one artifact")
+def verify_receipt_hashes(
+    output_root: Path,
+    receipt_pairs: list[tuple[str, str]],
+    *,
+    action_id: str | None = None,
+) -> dict[str, Any]:
+    """Re-hash one action's admitted inputs immediately before Agent dispatch.
+
+    Two ways to name the inputs. ``action_id`` resolves them from the effective
+    plan, which recorded every one of them when it admitted them; the echoed
+    ``receipt_pairs`` form is what the thin runtimes used before that and stays
+    accepted. Either way the verification is recorded, and the next boundary
+    command refuses to advance a dispatch that carries no record — see
+    ``_require_receipt_verification``. Without that record the check was
+    optional in practice: skipping it left no trace anywhere in the run.
+    """
+    if bool(receipt_pairs) == bool(action_id):
+        raise CallError("receipt verification takes either --action-id or --receipt, not both or neither")
+    if action_id is not None:
+        try:
+            receipt_pairs = context_routing.receipts_for_action(output_root, action_id)
+        except context_routing.UnknownActionError as exc:
+            # The plan is intact and the caller named the wrong action, so a
+            # corrected second call is all this needs.
+            raise CallError(str(exc)) from exc
+        except context_routing.ContextRoutingError as exc:
+            raise ControllerError(f"cannot resolve receipts for {action_id!r}: {exc}") from exc
     # A bound action names the effective context plan twice — once among its
     # artifact receipts, once as its plan reference — so a caller that passes
     # both is repeating one claim, not making a second one. Equal pairs fold
@@ -943,13 +973,125 @@ def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]
             raise ControllerError(f"cannot consume artifact {artifact_path!r}: {exc}") from exc
         if hashlib.sha256(payload).hexdigest() != expected_sha256:
             raise ControllerError(f"artifact changed after validation: {artifact_path}")
+    recorded = _record_receipt_verification(output_root, action_id, set(expected))
+    receipts = [f"Verified {len(expected)} artifact receipt(s) immediately before dispatch"]
+    if recorded:
+        receipts.append(f"Recorded the verification of {recorded}")
     return _validate_action(
         {
             "schema_version": 1,
             "action": "run_gate",
             "dispatch_values": {"output_dir": str(output_root.resolve())},
-            "receipts": [f"Verified {len(expected)} artifact receipt(s) immediately before dispatch"],
+            "receipts": receipts,
         }
+    )
+
+
+def _open_receipt_verification(output_root: Path, action: dict[str, Any]) -> None:
+    """Name the dispatch that must be verified before the next boundary.
+
+    The effective plan sorts its actions by id, so it cannot say which one was
+    emitted last. This file can, and it is the only thing the gate needs: the
+    dispatch just handed to the orchestrator, waiting for its receipts to be
+    re-hashed. Best effort — a dispatch the controller could not record is not
+    one it may then refuse to advance.
+    """
+    action_id = (action.get("context_plan") or {}).get("action_id")
+    if not action_id:
+        return
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+
+    try:
+        atomic_write_json(
+            output_root / PENDING_DISPATCH_NAME,
+            {
+                "schema_version": 1,
+                "action_id": str(action_id),
+                "action": action.get("action"),
+                "emitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+            sort_keys=True,
+        )
+    except OSError:
+        return
+
+
+def _pending_dispatch(output_root: Path) -> dict[str, Any] | None:
+    """Return the plan-bound dispatch the controller emitted most recently."""
+    try:
+        data = json.loads((output_root / PENDING_DISPATCH_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and data.get("action_id") else None
+
+
+def _record_receipt_verification(output_root: Path, action_id: str | None, verified: set[str]) -> str | None:
+    """Record which dispatch this verification covers; return that action id.
+
+    The echoed form names no action, so it is matched against the pending
+    dispatch's own ledger: a call that verified everything the plan admitted
+    for that action satisfies it, whichever way it named the artefacts. A call
+    that verified something else records nothing and leaves the gate closed.
+    """
+    pending = _pending_dispatch(output_root)
+    if pending is None:
+        return None
+    pending_id = str(pending["action_id"])
+    if action_id is None:
+        try:
+            admitted = {path for path, _ in context_routing.receipts_for_action(output_root, pending_id)}
+        except context_routing.ContextRoutingError:
+            return None
+        if not admitted.issubset(verified):
+            return None
+    elif action_id != pending_id:
+        return None
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+
+    marker = output_root / RECEIPT_VERIFICATION_NAME
+    try:
+        state = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if not isinstance(state, dict) or not isinstance(state.get("verified"), dict):
+        state = {"schema_version": 1, "verified": {}}
+    state["verified"][pending_id] = {
+        "verified_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "artifact_count": len(verified),
+    }
+    atomic_write_json(marker, state, sort_keys=True)
+    _append_event(output_root, "RECEIPTS_VERIFIED", f"action={pending_id} artifacts={len(verified)}")
+    return pending_id
+
+
+def _require_receipt_verification(output_root: Path) -> None:
+    """Refuse a boundary that follows an unverified dispatch.
+
+    ``verify-receipts`` is the TOCTOU guard between the moment the controller
+    hashed an artefact and the moment an agent reads it. It was instructed in
+    prose to an LLM orchestrator, wrote no state and gated nothing, so a run
+    that skipped it looked exactly like a run that did not — on run a2a0e355
+    neither the artefacts nor ``.agent-run.log`` recorded a single one of the
+    16 calls it happened to make.
+
+    A missing record is a statement about the call, not about the run: the
+    orchestrator verifies and repeats the same boundary, so this rejects (exit
+    3) rather than ending a run that is otherwise intact.
+    """
+    pending = _pending_dispatch(output_root)
+    if pending is None:
+        return
+    action_id = str(pending["action_id"])
+    try:
+        state = json.loads((output_root / RECEIPT_VERIFICATION_NAME).read_text(encoding="utf-8"))
+        verified = state.get("verified") if isinstance(state, dict) else None
+    except (OSError, ValueError):
+        verified = None
+    if isinstance(verified, dict) and action_id in verified:
+        return
+    raise CallError(
+        f"dispatch {action_id} was not verified: call verify-receipts --output-dir "
+        f'"$OUTPUT_DIR" --action-id {action_id} before this boundary, then repeat it'
     )
 
 
@@ -990,6 +1132,7 @@ def _emit(action: dict[str, Any]) -> int:
                 event,
                 f"revision={plan['revision']} actions={len(plan['actions'])} deliveries={len(plan['deliveries'])}",
             )
+            _open_receipt_verification(Path(action["dispatch_values"]["output_dir"]), action)
     except ControllerError as exc:
         action = _failure_action(exc)
     print(json.dumps(action, indent=2, sort_keys=True))
@@ -3578,6 +3721,15 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
         context_routing.reset_plan(output_dir)
     except context_routing.ContextRoutingError as exc:
         raise ControllerError(f"cannot reset context routing effective plan: {exc}") from exc
+    # An action id is derived from its job ids, which repeat across runs, so a
+    # marker left in a reused output directory would satisfy this run's gate
+    # with a verification that happened before it. The plan resets here; its
+    # verification record has to reset with it.
+    for stale in (output_dir / PENDING_DISPATCH_NAME, output_dir / RECEIPT_VERIFICATION_NAME):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError as exc:
+            raise ControllerError(f"cannot reset receipt verification state: {exc}") from exc
     repo_root = Path(str(cfg.get("repo_root") or output_dir))
     receipts: list[str] = []
     structured: list[dict[str, Any]] = []
@@ -6494,9 +6646,8 @@ def main(argv: list[str] | None = None) -> int:
     context_v2_finalize_parser.add_argument("--output-dir", required=True)
     verify_receipts_parser = sub.add_parser("verify-receipts")
     verify_receipts_parser.add_argument("--output-dir", required=True)
-    verify_receipts_parser.add_argument(
-        "--receipt", nargs=2, action="append", required=True, metavar=("PATH", "SHA256")
-    )
+    verify_receipts_parser.add_argument("--action-id")
+    verify_receipts_parser.add_argument("--receipt", nargs=2, action="append", metavar=("PATH", "SHA256"))
     clear_abort_parser = sub.add_parser("clear-abort")
     clear_abort_parser.add_argument("--output-dir", required=True)
     clear_abort_parser.add_argument("--reason", required=True)
@@ -6507,6 +6658,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command in _SEMANTIC_RETURN_COMMANDS:
             _check_returned_call_telemetry(Path(args.output_dir))
+            _require_receipt_verification(Path(args.output_dir))
         if args.command == "route":
             action = route(_split_remainder(args.arguments))
         elif args.command == "prepare":
@@ -6545,7 +6697,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "clear-abort":
             action = clear_abort(Path(args.output_dir), args.reason)
         elif args.command == "verify-receipts":
-            action = verify_receipt_hashes(Path(args.output_dir), [tuple(pair) for pair in args.receipt])
+            action = verify_receipt_hashes(
+                Path(args.output_dir),
+                [tuple(pair) for pair in args.receipt or []],
+                action_id=args.action_id,
+            )
         else:
             action = next_action(Path(args.output_dir))
     except (ControllerError, SystemExit, OSError) as exc:

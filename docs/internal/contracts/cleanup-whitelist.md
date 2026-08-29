@@ -46,11 +46,18 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .appsec-progress.json
 .skill-watchdog.tick
 .business-context-input.md
+.pending-dispatch.json
+.receipt-verification.json
 ```
 
 `.business-context-input.md` is business context the user supplied for one run
 without persisting it to `docs/business-context.md`. It is cleaned like any other
 run input so it cannot shape a later scan unnoticed.
+
+`.pending-dispatch.json` and `.receipt-verification.json` record which dispatch
+is waiting for its receipts to be re-hashed and which ones were. Both belong to
+one run's dispatch chain; carrying them forward would let a boundary pass on an
+earlier run's verification.
 
 ## Opt-outs
 

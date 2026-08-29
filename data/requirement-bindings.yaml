@@ -194,6 +194,9 @@ requirements:
       - tests/test_orchestration_controller.py::test_next_action_routes_to_stage1d_when_abuse_verification_never_ran
       - tests/test_compose_threat_model.py::test_schema_violation_raises
       - tests/test_compose_threat_model.py::test_cli_exit_1_on_missing_fragment
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_boundary_after_an_unverified_dispatch_rejects
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_changed_artifact_still_aborts_the_run
+      - tests/test_orchestration_controller.py::test_the_boundary_gate_is_reachable_from_the_command_line
 
   REQ-REQ-001:
     applies_to:

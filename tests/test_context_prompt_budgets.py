@@ -14,9 +14,16 @@ SURFACE_MAX_BYTES_RATCHET = {
     "contributor_instruction_loader": 256,
     "contributor_instructions": 18500,
     "skill_router": 8500,
-    "thin_full_runtime": 13250,
+    # 13250 -> 15500 (2026-08-29): the file reached 13226 bytes, 24 short of
+    # the ceiling, and was outside the headroom guard, so the hard budget would
+    # have failed the next edit with nothing warning first. See the note in
+    # data/context-budgets.yaml.
+    "thin_full_runtime": 15500,
     "thin_rerender_runtime": 10000,
-    "thin_stage1_v2_runtime": 6400,
+    # 6400 -> 6800 (2026-08-29): at 6400 the headroom guard tripped 11 bytes
+    # from the current size while 651 bytes remained to the hard ceiling, so it
+    # blocked edits instead of warning about growth.
+    "thin_stage1_v2_runtime": 6800,
     # 3400 -> 3600 (2026-08-21): the abuse waiter's nonzero exit gained a
     # one-shot retry instruction, and at 3400 the file already sat at 89.6% of
     # budget. 3600 -> 4000 (2026-08-23): that retry moved to the controller,
@@ -255,7 +262,12 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     assert "Resolve every output-relative input and output path under absolute `OUTPUT_DIR`" in flat
     assert "Resolve every path under absolute `OUTPUT_DIR`" in flat
     assert "resolve any output artifact against `REPO_ROOT`" in flat
-    assert "taxonomy_slice_path`/`taxonomy_slice_sha256" in text
+    # The taxonomy slices are still verified before dispatch; the runtime no
+    # longer echoes their path and hash because the controller resolves both
+    # from the effective plan it wrote.
+    assert "verify-receipts" in text
+    assert "context_plan.action_id" in text
+    assert "taxonomy slice" in text
     assert "The component plan owns depth" in flat
     assert "Never pass the shared effective plan" in flat
     assert "`COMPONENT_CONTEXT_PLAN_PATH`" in text

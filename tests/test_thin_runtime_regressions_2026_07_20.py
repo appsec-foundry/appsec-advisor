@@ -232,13 +232,19 @@ def test_thin_runtimes_have_headroom_for_operational_detail() -> None:
 
     Every thin surface sat at 93-96% of its ceiling on 2026-07-20, which is what
     forced exact command lines out in favour of prose.
+
+    Scoped to `thin_stage*` until 2026-08-29, which left the tightest surface in
+    the set outside it: `thin_full_runtime` reached 13226 of 13250 bytes, so the
+    hard ceiling would have failed the next edit with no warning first. The
+    warning is the whole point of this test, so it now covers every thin
+    runtime.
     """
     import yaml  # noqa: PLC0415
 
     budgets = yaml.safe_load((REPO_ROOT / "data" / "context-budgets.yaml").read_text())
     tight = []
     for name, spec in budgets.get("surfaces", {}).items():
-        if "thin_stage" not in name:
+        if not name.startswith("thin_"):
             continue
         path = REPO_ROOT / spec["path"]
         if not path.is_file() or "max_bytes" not in spec:

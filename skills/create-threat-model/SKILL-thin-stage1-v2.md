@@ -36,14 +36,13 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
 ```
 
 Send foreground `dispatch_jobs[]` together. Immediately before dispatch call
-`verify-receipts` with every artifact receipt and STRIDE
-`taxonomy_slice_path`/`taxonomy_slice_sha256`. This is the last filesystem
-operation. `run_gate` completes; fix and repeat `reject`; else terminal.
+`verify-receipts` with `context_plan.action_id`; it re-hashes that action's
+artifacts and taxonomy slices. This is the last filesystem operation.
+`run_gate` completes; fix and repeat `reject`; else terminal.
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
-  verify-receipts --output-dir "$OUTPUT_DIR" \
-  --receipt "<artifact_path>" "<sha256>" [...]
+  verify-receipts --output-dir "$OUTPUT_DIR" --action-id <context_plan.action_id>
 ```
 
 After launching STRIDE, join only the current action's components:

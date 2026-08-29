@@ -191,6 +191,12 @@ ALWAYS_FILES = [
     # Business context the user supplied for this run without persisting it.
     # Keeping it would silently shape the next scan (see load_business_context.py).
     ".business-context-input.md",
+    # Receipt-verification bookkeeping: which dispatch is waiting to be
+    # verified, and which ones were. Both are scoped to the dispatch chain of
+    # one run — carrying them forward would let a later run's boundary pass on
+    # an earlier run's verification.
+    ".pending-dispatch.json",
+    ".receipt-verification.json",
 ]
 ALWAYS_DIRS = [
     ".progress",

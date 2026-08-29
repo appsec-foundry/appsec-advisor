@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import copy
 import hashlib
 import json
 import os
@@ -5992,3 +5994,237 @@ def test_full_preflight_cleanup_drops_a_stale_run_only_context(tmp_path):
 
     assert ".business-context-input.md" in removed
     assert not stale.exists()
+
+
+def _bound_stage1_dispatch(tmp_path):
+    """Emit one plan-bound dispatch and return (output_dir, bound_action)."""
+    output = _write_context_v2_config(tmp_path)
+    cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+    action = controller._context_v2_dispatch(
+        output,
+        cfg,
+        role="context_resolver",
+        job_id="phase1-context",
+        next_boundary="context-v2-post-recon",
+        input_artifacts=[".skill-config.json"],
+        output_artifacts=[".threat-modeling-context.md"],
+        decision_keys=[],
+        receipts=[],
+    )
+    plan = controller.context_routing.resolve_action(
+        action,
+        output,
+        semantic_roles=controller.SEMANTIC_ROLE_REGISTRY,
+        model_keys=controller.SEMANTIC_ROLE_MODEL_KEYS,
+    )
+    bound = controller.context_routing.bind_action_to_plan(action, plan, output)
+    controller._open_receipt_verification(output, bound)
+    return output, bound
+
+
+class TestReceiptVerificationIsEnforced:
+    def test_a_boundary_after_an_unverified_dispatch_rejects(self, tmp_path):
+        # Run a2a0e355: verify-receipts wrote no state and gated nothing, so a
+        # skipped call was indistinguishable from a made one.
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        with pytest.raises(controller.CallError) as excinfo:
+            controller._require_receipt_verification(output)
+        assert excinfo.value.exit_code == 3
+        assert bound["context_plan"]["action_id"] in str(excinfo.value)
+
+    def test_verifying_by_action_id_opens_the_boundary(self, tmp_path):
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        action_id = bound["context_plan"]["action_id"]
+
+        gate = controller.verify_receipt_hashes(output, [], action_id=action_id)
+
+        assert gate["action"] == "run_gate"
+        assert controller._require_receipt_verification(output) is None
+        state = json.loads((output / controller.RECEIPT_VERIFICATION_NAME).read_text(encoding="utf-8"))
+        assert action_id in state["verified"]
+        assert "RECEIPTS_VERIFIED" in (output / ".agent-run.log").read_text(encoding="utf-8")
+
+    def test_the_echoed_form_still_opens_the_boundary(self, tmp_path):
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        pairs = controller.context_routing.receipts_for_action(output, bound["context_plan"]["action_id"])
+
+        controller.verify_receipt_hashes(output, pairs)
+
+        assert controller._require_receipt_verification(output) is None
+
+    def test_verifying_less_than_the_action_admitted_leaves_the_gate_closed(self, tmp_path):
+        # The echoed form names no action, so it counts only when it covered
+        # everything the plan admitted for the dispatch that is waiting.
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        pairs = controller.context_routing.receipts_for_action(output, bound["context_plan"]["action_id"])
+        partial = {path for path, _ in pairs[:-1]}
+
+        assert controller._record_receipt_verification(output, None, partial) is None
+
+        with pytest.raises(controller.CallError):
+            controller._require_receipt_verification(output)
+
+    def test_a_changed_artifact_still_aborts_the_run(self, tmp_path):
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        action_id = bound["context_plan"]["action_id"]
+        path, _ = controller.context_routing.receipts_for_action(output, action_id)[0]
+        target = output / path
+        target.write_bytes(target.read_bytes() + b"\n")
+
+        with pytest.raises(controller.ControllerError) as excinfo:
+            controller.verify_receipt_hashes(output, [], action_id=action_id)
+        assert not isinstance(excinfo.value, controller.CallError)
+        assert excinfo.value.exit_code == 2
+
+    def test_a_mistyped_action_id_rejects_instead_of_ending_the_run(self, tmp_path):
+        output, _ = _bound_stage1_dispatch(tmp_path)
+        with pytest.raises(controller.CallError) as excinfo:
+            controller.verify_receipt_hashes(output, [], action_id="stage1c:0000000000000000")
+        assert excinfo.value.exit_code == 3
+
+    def test_naming_both_forms_or_neither_is_refused(self, tmp_path):
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        pairs = controller.context_routing.receipts_for_action(output, bound["context_plan"]["action_id"])
+        for args, kwargs in (([], {}), (pairs, {"action_id": bound["context_plan"]["action_id"]})):
+            with pytest.raises(controller.CallError):
+                controller.verify_receipt_hashes(output, args, **kwargs)
+
+    def test_a_run_with_no_plan_bound_dispatch_is_not_gated(self, tmp_path):
+        assert controller._require_receipt_verification(tmp_path) is None
+
+    def test_a_marker_from_an_earlier_run_does_not_satisfy_this_one(self, tmp_path):
+        # Action ids come from job ids, which repeat across runs, so a reused
+        # output directory would otherwise pass on a stale verification.
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        controller.verify_receipt_hashes(output, [], action_id=bound["context_plan"]["action_id"])
+        assert (output / controller.RECEIPT_VERIFICATION_NAME).is_file()
+
+        # The pre-passes need a real repository; the reset is the entry step
+        # and has already run by the time they fail here.
+        with contextlib.suppress(controller.ControllerError):
+            controller.context_v2_begin(output)
+
+        assert not (output / controller.RECEIPT_VERIFICATION_NAME).exists()
+        assert not (output / controller.PENDING_DISPATCH_NAME).exists()
+
+
+def _first_admitted(plan):
+    """The first delivery that names an artifact on disk; not every one does."""
+    return next(d for d in plan["deliveries"] if (d.get("source_receipt") or {}).get("artifact_path"))
+
+
+def _rewrite_plan(output, mutate):
+    """Apply ``mutate`` to the effective plan and refresh its exact-byte receipt."""
+    plan_path = output / controller.context_routing.PLAN_NAME
+    receipt_path = output / controller.context_routing.PLAN_RECEIPT_NAME
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    mutate(plan)
+    plan_path.write_text(json.dumps(plan, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    receipt["record_count"] = len(plan["deliveries"])
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8")
+    return plan
+
+
+class TestReceiptsForAction:
+    """The plan is the ledger the controller wrote, so it can answer for itself.
+
+    Run a2a0e355 echoed 92 distinct artifact paths back and 91 were already in
+    ``deliveries[].source_receipt``. The one that was not is the plan itself,
+    whose bytes this lookup checks against its own receipt before reading a
+    single delivery.
+    """
+
+    def test_deliveries_of_other_actions_are_not_returned(self, tmp_path):
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        action_id = bound["context_plan"]["action_id"]
+        mine = controller.context_routing.receipts_for_action(output, action_id)
+
+        def add_foreign(plan):
+            plan["actions"].append(
+                {
+                    "action_id": "stage1c:ffffffffffffffff",
+                    "action_sha256": "0" * 64,
+                    "action_type": "dispatch_agent",
+                    "job_ids": ["other"],
+                    "stage": "stage1c",
+                }
+            )
+            foreign = copy.deepcopy(_first_admitted(plan))
+            foreign["action_id"] = "stage1c:ffffffffffffffff"
+            foreign["delivery_id"] = "other:ffffffffffff"
+            foreign["source_receipt"] = {**foreign["source_receipt"], "artifact_path": "elsewhere.json"}
+            plan["deliveries"].append(foreign)
+
+        _rewrite_plan(output, add_foreign)
+
+        assert controller.context_routing.receipts_for_action(output, action_id) == mine
+        assert "elsewhere.json" not in {path for path, _ in mine}
+
+    def test_two_fingerprints_for_one_path_are_a_contradiction(self, tmp_path):
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        action_id = bound["context_plan"]["action_id"]
+
+        def duplicate_with_other_hash(plan):
+            twin = copy.deepcopy(_first_admitted(plan))
+            twin["delivery_id"] = twin["delivery_id"] + ":twin"
+            twin["source_receipt"] = {**twin["source_receipt"], "sha256": "b" * 64}
+            plan["deliveries"].append(twin)
+
+        _rewrite_plan(output, duplicate_with_other_hash)
+
+        with pytest.raises(controller.context_routing.ContextRoutingError):
+            controller.context_routing.receipts_for_action(output, action_id)
+
+    def test_an_action_admitting_nothing_is_refused(self, tmp_path):
+        # Reporting success for a dispatch nothing guards is worse than failing.
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        action_id = bound["context_plan"]["action_id"]
+        _rewrite_plan(output, lambda plan: [d.pop("source_receipt", None) for d in plan["deliveries"]])
+
+        with pytest.raises(controller.context_routing.ContextRoutingError) as excinfo:
+            controller.context_routing.receipts_for_action(output, action_id)
+        assert not isinstance(excinfo.value, controller.context_routing.UnknownActionError)
+
+    def test_a_plan_changed_after_its_receipt_is_not_read(self, tmp_path):
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        plan_path = output / controller.context_routing.PLAN_NAME
+        plan_path.write_bytes(plan_path.read_bytes() + b"\n")
+
+        with pytest.raises(controller.context_routing.ContextRoutingError) as excinfo:
+            controller.context_routing.receipts_for_action(output, bound["context_plan"]["action_id"])
+        assert "exact-byte receipt" in str(excinfo.value)
+
+    def test_a_missing_plan_is_refused(self, tmp_path):
+        with pytest.raises(controller.context_routing.ContextRoutingError):
+            controller.context_routing.receipts_for_action(tmp_path, "stage1c:aaaaaaaaaaaaaaaa")
+
+
+def test_the_boundary_gate_is_reachable_from_the_command_line(tmp_path, monkeypatch, capsys):
+    """The gate has one wiring point in main(); nothing else proves it runs.
+
+    Every other test in TestReceiptVerificationIsEnforced calls the helper
+    directly, so deleting the call in the CLI dispatch would leave the control
+    unreachable with a green suite — the exact shape of defect this guard was
+    added for.
+    """
+    output, bound = _bound_stage1_dispatch(tmp_path)
+    action_id = bound["context_plan"]["action_id"]
+
+    monkeypatch.setattr(sys, "argv", ["c", "context-v2-post-recon", "--output-dir", str(output)])
+    assert controller.main() == 3
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["action"] == "reject"
+    assert action_id in emitted["reason"]
+    assert "verify-receipts" in emitted["reason"]
+
+    monkeypatch.setattr(sys, "argv", ["c", "verify-receipts", "--output-dir", str(output), "--action-id", action_id])
+    assert controller.main() == 0
+    assert json.loads(capsys.readouterr().out)["action"] == "run_gate"
+
+    # The same boundary now gets past the gate; whatever it answers next is no
+    # longer a rejection about an unverified dispatch.
+    monkeypatch.setattr(sys, "argv", ["c", "context-v2-post-recon", "--output-dir", str(output)])
+    controller.main()
+    assert "was not verified" not in capsys.readouterr().out
