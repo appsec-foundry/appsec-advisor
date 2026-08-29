@@ -8,7 +8,9 @@ To update bounds intentionally:
 
     1. Edit a prompt file.
     2. Run this test once with ``-vv`` to read the new size.
-    3. Bump the matching ``(low, high)`` tuple in ``_BOUNDS`` below.
+    3. Bump the ceiling in ``data/context-budgets.yaml`` when the surface is
+       budgeted there — this guard then checks only ``low``. Otherwise bump the
+       ``high`` in ``_BOUNDS`` below.
     4. Mention the bump in the PR description so it doesn't slip past review.
 
 Tolerance: 20% above the recorded bound (matches refactoring-plan §C1).
@@ -19,9 +21,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
 TOLERANCE = 0.20
+BUDGETS = REPO_ROOT / "data" / "context-budgets.yaml"
 
 # (low, high) approximate token bounds (chars/4) measured at 2026-05-16 HEAD.
 # `low` flags suspicious shrinkage (someone deleted a section); `high` flags
@@ -35,35 +39,8 @@ _BOUNDS: dict[str, tuple[int, int]] = {
     "agents/appsec-control-analyst.md": (500, 3_000),
     "agents/appsec-post-stride-synthesizer.md": (500, 3_000),
     "skills/internal-threat-analysis-kernel/SKILL.md": (700, 4_000),
-    # Lowered 2026-05-23 after shared-file extraction (finding-title-contract,
-    # supply-chain-patterns, spa-threats, cvss-metrics) and dedup of the
-    # ops/progress sections. Measured 8_040.
-    # Raised 2026-06-05: STRIDE parallel-dispatch + abuse-case guidance added.
-    # Measured 10_694; high = ~20% buffer above the new size.
-    # Raised 2026-06-24: OAuth/OIDC FT-091/092/093 finding-type rows + the
-    # evidence_summary "short inline identifiers only" code-formatting rule.
-    # Measured 13_011; high = ~14% buffer above the new size.
-    # 2026-07-19: + the "Authoring attack_steps" contract, so §3 walkthroughs
-    # are authored attacker-first instead of being sentence-split out of
-    # `scenario`. Measured 15_130; high = ~3% buffer above the new size.
-    # Raised 2026-07-25: four commits grew the prompt past that ~3% buffer
-    # without bumping the bound — 75e4167 (AI-agent threat hardening),
-    # c231749 (evidence preservation in the merger contract), c3c1e81
-    # (anti-serial dispatch rules) and 230e4fa (cheap-stride pacing signal).
-    # Measured 15_574, i.e. 26 tokens below the old ceiling, so the next
-    # single added line would have failed the gate. high = ~5% buffer.
-    # 2026-08-01: +77 measured (16_477) for the optional `leg` on boundary_refs —
-    # one schema line plus the rule for when to omit it. Ceiling raised to 16_550
-    # to restore a small buffer. See docs/internal/analysis/
-    # fixplan-trust-boundary-assumption-legs-2026-08-01.md.
-    # 2026-08-02: +457 measured (16_976) for the Step-2 read budget — the batch
-    # rule, the read_allowance hard stop and the sampling regime. Without it the
-    # analyzer read one file per turn until the harness killed it having written
-    # nothing (insecure-spring-app spring-web-app: 47 files, dead at exactly 56
-    # turns on both attempts). This guard is what keeps Step 3 reachable at any
-    # repo size, so it earns the prompt budget. Ceiling 16_550 → 17_400 (~2.5%
-    # buffer); HEAD had sat 31 tokens under the old bound, leaving no room for
-    # any addition at all. See tests/test_stage1_coverage_recovery_2026_08_02.py.
+    # Ceiling lives in data/context-budgets.yaml; the `high` here is ignored for
+    # any surface budgeted there (see _resolved_bounds). Only `low` applies.
     "agents/appsec-stride-analyzer-v2.md": (2_500, 3_000),
     # Parallel Stage-2 specialists intentionally keep only role-local
     # instructions. They load their relevant legacy contract slice on demand.
@@ -76,17 +53,56 @@ def _approx_tokens(text: str) -> int:
     return len(text) // 4
 
 
+def _byte_budgets() -> dict[str, int]:
+    """Prompt surfaces that `data/context-budgets.yaml` already caps, in bytes."""
+    doc = yaml.safe_load(BUDGETS.read_text(encoding="utf-8")) or {}
+    return {
+        spec["path"]: spec["max_bytes"]
+        for spec in (doc.get("surfaces") or {}).values()
+        if isinstance(spec, dict) and "path" in spec and "max_bytes" in spec
+    }
+
+
+def _resolved_bounds() -> dict[str, tuple[int, int | None]]:
+    """Drop the ceiling for surfaces `data/context-budgets.yaml` already caps.
+
+    Both guards measure the same file, and `_approx_tokens` is `len // 4`, so a
+    byte budget of N is the same ceiling as a token high of N // 4 — today all
+    five shared surfaces carry exactly that pair. Asserting it twice makes one
+    oversized prompt fail two tests and lets a later bump move one copy and
+    leave the other behind. The byte budget owns the ceiling; this guard keeps
+    `low`, which nothing else checks and which is what catches a gutted prompt.
+    """
+    budgeted = _byte_budgets()
+    return {
+        relpath: (low, None if relpath in budgeted else high) for relpath, (low, high) in _BOUNDS.items()
+    }
+
+
+def test_ceiling_is_not_recorded_in_both_places():
+    """No surface may carry a token ceiling next to its byte budget."""
+    shared = sorted(set(_BOUNDS) & set(_byte_budgets()))
+    assert shared, "expected some surface to be budgeted in both places"
+    for relpath in shared:
+        assert _resolved_bounds()[relpath][1] is None
+
+
 @pytest.mark.parametrize("relpath", sorted(_BOUNDS))
 def test_prompt_token_bounds(relpath):
-    low, high = _BOUNDS[relpath]
+    low, high = _resolved_bounds()[relpath]
     path = REPO_ROOT / relpath
     assert path.is_file(), f"{relpath} no longer exists — drop or rename the bound entry"
     text = path.read_text(encoding="utf-8")
     tokens = _approx_tokens(text)
-    assert low <= tokens <= high, (
-        f"{relpath} token count {tokens} outside expected band [{low}, {high}] "
-        f"(20% tolerance). Either revert the change or update the bound in this test."
+    assert low <= tokens, (
+        f"{relpath} shrank to {tokens} tokens, below the recorded floor {low} — "
+        "a section was probably deleted. Revert, or lower `low` in _BOUNDS."
     )
+    if high is not None:
+        assert tokens <= high, (
+            f"{relpath} token count {tokens} above the ceiling {high} (20% tolerance). "
+            "Either revert the change or raise `high` in _BOUNDS."
+        )
 
 
 def test_bounds_table_consistent_with_repo():

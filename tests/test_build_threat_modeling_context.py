@@ -262,3 +262,68 @@ def test_skip_context_excludes_the_repository_business_context(tmp_path):
 
     assert "SENTINEL" in included
     assert "| Business Context File | found (docs/business-context.md) |" in included
+
+
+# ---------------------------------------------------------------------------
+# A hand-written business-context file never passed through the capture guard
+# ---------------------------------------------------------------------------
+
+
+def test_business_context_carrying_a_credential_is_withheld(tmp_path):
+    """`.threat-modeling-context.md` is on the cleanup NEVER list and travels
+    with `--output`, so a secret must not be copied into it."""
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "business-context.md").write_text(
+        "SENTINEL settles payouts.\nAWS_SECRET_ACCESS_KEY = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+
+    builder.build(repo, out, Path(__file__).resolve().parent.parent)
+    artifact = (out / ".threat-modeling-context.md").read_text(encoding="utf-8")
+
+    assert "wJalrXUtnFEMI" not in artifact
+    assert "SENTINEL" not in artifact
+    assert "withheld (docs/business-context.md) — credential found" in artifact
+
+
+def test_clean_business_context_is_still_admitted(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "business-context.md").write_text("SENTINEL settles payouts.\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    builder.build(repo, out, Path(__file__).resolve().parent.parent)
+    artifact = (out / ".threat-modeling-context.md").read_text(encoding="utf-8")
+
+    assert "SENTINEL" in artifact
+    assert "| Business Context File | found (docs/business-context.md) |" in artifact
+
+
+def test_bounded_lines_reads_only_what_it_renders(tmp_path):
+    """The limit must bound the read, not just the output: these files are
+    arbitrary repository input with no capture-time size cap."""
+    big = tmp_path / "big.md"
+    big.write_text("".join(f"line {i}\n" for i in range(5_000)), encoding="utf-8")
+
+    head = builder._bounded_lines(big, 10)
+    tail = builder._bounded_lines(big, 10, tail=True)
+
+    assert head.startswith("line 0\n")
+    assert "line 9" in head and "line 10\n" not in head
+    assert "_(truncated)_" in head
+    # tail keeps the END of the file, not the first lines of it
+    assert "line 4999" in tail
+    assert "line 0\n" not in tail
+    assert "_(truncated)_" in tail
+
+
+def test_bounded_lines_does_not_claim_truncation_for_an_exact_fit(tmp_path):
+    exact = tmp_path / "exact.md"
+    exact.write_text("a\nb\nc\n", encoding="utf-8")
+
+    assert "_(truncated)_" not in builder._bounded_lines(exact, 3)
+    assert "_(truncated)_" not in builder._bounded_lines(exact, 3, tail=True)

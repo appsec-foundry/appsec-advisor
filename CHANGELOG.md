@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Code references now use one balanced formatter across report sections and dependency ecosystems, so packages and complete snippets stay intact while surrounding prose remains outside code spans.
 - `--skip-context` now runs without business context, instead of only skipping the question while still reading `docs/business-context.md`.
+- A stored `docs/business-context.md` carrying a credential is now withheld from the analysis, the same way a supplied source is refused.
+- The help no longer documents `--incremental`, `--pr-mode`, `--resume`, `--dry-run`, `--max-wall-time` and `--max-cost`, which the runtime rejects before a run starts.
 - Business context supplied for one run no longer leaks into the next run in the same output directory.
 - A declared business context that maps to no component is now reported as a run issue instead of passing unnoticed.
 

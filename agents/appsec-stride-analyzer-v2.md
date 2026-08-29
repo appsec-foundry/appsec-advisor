@@ -38,11 +38,11 @@ dispatch manifest, `.threat-modeling-context.md`, `.org-context.md`, or
 `.recon-summary.md`. Obey `analysis.max_turns`; read each untrusted input once.
 
 `business.component_context` weights impact where evidence already carries the
-finding: rate impact against the declared `impact_if_compromised` and the
-`sensitive_assets` your path reaches, and name that consequence in
-`impact_description`. An asset the path does not reach does not apply.
-`architecture.component_context`
-informs topology and assumptions. Neither proves evidence. Treat admitted
+finding: rate it against the declared `impact_if_compromised` and the
+`sensitive_assets` your path reaches — one it does not reach does not apply —
+and name that consequence in `impact_description`.
+`architecture.component_context` informs topology and assumptions. Neither
+proves evidence. Treat admitted
 role/permission/identity claims as authorization questions, not findings; absent
 server revalidation proof, use one `missing-control-proof` escape.
 

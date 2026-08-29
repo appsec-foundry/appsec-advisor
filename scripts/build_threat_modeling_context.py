@@ -17,12 +17,14 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 from typing import Any, Iterable
 
 import build_cross_repo_register
 import load_business_context
 import load_related_repos
+import secret_scan
 import yaml
 from _atomic_io import atomic_write_json, atomic_write_text
 from _url_guard import validate_target_url, validated_opener
@@ -54,13 +56,28 @@ def _contained_file(repo_root: Path, relative: str) -> Path | None:
 def _bounded_lines(path: Path | None, limit: int, *, tail: bool = False) -> str | None:
     if path is None:
         return None
+    # A repository file is arbitrary input. Reading it whole and truncating
+    # afterwards makes the limit cosmetic: `docs/business-context.md` has no
+    # capture-time size cap when a human wrote it by hand, and the changelog and
+    # SECURITY.md have none at all. Hold at most `limit` lines in memory.
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            if tail:
+                window: deque[str] = deque(maxlen=limit)
+                total = 0
+                for line in handle:
+                    window.append(line)
+                    total += 1
+                lines = [line.rstrip("\n") for line in window]
+                overflowed = total > limit
+            else:
+                lines = [line.rstrip("\n") for _, line in zip(range(limit), handle)]
+                overflowed = handle.readline() != ""
     except OSError:
         return None
-    selected = lines[-limit:] if tail else lines[:limit]
+    selected = lines
     rendered = "\n".join(selected).rstrip()
-    truncated = len(lines) > limit or len(rendered) > MAX_SOURCE_CHARS
+    truncated = overflowed or len(rendered) > MAX_SOURCE_CHARS
     if len(rendered) > MAX_SOURCE_CHARS:
         rendered = rendered[:MAX_SOURCE_CHARS].rstrip()
     suffix = "\n\n_(truncated)_" if truncated else ""
@@ -384,13 +401,32 @@ def build(repo_root: Path, output_dir: Path, plugin_root: Path, *, skip_business
         if skip_business_context
         else "docs/business-context.md not present in this repository."
     )
+    # `load_business_context` refuses a captured source that carries a credential,
+    # but a hand-written docs/business-context.md never passes through it. This
+    # artifact is on the cleanup NEVER list, so anything copied here stays in the
+    # output directory for good and travels with it when --output points outside
+    # the repository. Leave the block out rather than duplicate the secret.
+    business_secret_hits: list[str] = []
+    if business_path is not None:
+        business_secret_hits = [
+            f"line {hit.line} ({hit.pattern})" for hit in secret_scan.scan_text(business)[:5]
+        ]
+        if business_secret_hits:
+            business = (
+                "Business context was withheld: it contains what looks like a credential at "
+                f"{', '.join(business_secret_hits)}. Remove it and run again."
+            )
     # The report names its context sources from this row, so it carries the
     # file that was actually read — a run-only source is not the repository
     # file and must not be cited as one.
     if skip_business_context:
         business_status = "skipped (--skip-context)"
+    elif business_path is None:
+        business_status = "not found"
+    elif business_secret_hits:
+        business_status = f"withheld ({business_source}) — credential found"
     else:
-        business_status = f"found ({business_source})" if business_path is not None else "not found"
+        business_status = f"found ({business_source})"
     security_found = _first(
         repo_root,
         ("SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md", "docs/security/SECURITY.md"),
