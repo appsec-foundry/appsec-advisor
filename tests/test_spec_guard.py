@@ -184,18 +184,16 @@ def test_spec_guard_registration_and_decisions():
     assert settings["permissions"] == {
         "ask": [
             "Edit(specs/requirements.md)",
-            "Write(specs/requirements.md)",
         ],
         # The guard cannot hold a rule an agent may rewrite. These files carry
-        # the rule itself, so they are denied rather than merely asked about;
-        # an Edit(...) deny also reaches shell writes through the sandbox.
+        # the rule itself, so they are denied rather than merely asked about.
+        # Only Edit(...) rules take part in file permission checks; they cover
+        # every file-editing tool and also reach shell writes through the
+        # sandbox, so a Write(...) twin would be inert.
         "deny": [
             "Edit(.claude/settings.json)",
-            "Write(.claude/settings.json)",
             "Edit(scripts/spec_guard.py)",
-            "Write(scripts/spec_guard.py)",
             "Edit(scripts/requirements_hook.py)",
-            "Write(scripts/requirements_hook.py)",
         ],
     }
     groups = settings["hooks"]["PreToolUse"]
