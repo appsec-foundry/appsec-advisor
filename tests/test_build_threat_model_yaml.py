@@ -3239,6 +3239,22 @@ def test_a_catalog_without_an_assessment_omits_the_key(tmp_path):
     assert b.build_requirements_compliance(_requirements_run(tmp_path, fragment=None)) is None
 
 
+def test_strict_export_rejects_a_catalog_without_an_assessment(tmp_path):
+    with pytest.raises(b.RequirementsComplianceError, match="no Stage-2 compliance assessment"):
+        b.build_requirements_compliance(_requirements_run(tmp_path, fragment=None), strict=True)
+
+
+def test_strict_export_rejects_an_incomplete_assessment(tmp_path):
+    fragment = _FRAGMENT.replace("| `DP-005`: Secret management | ➖ N/A | MUST | no secrets in scope |\n", "")
+    with pytest.raises(b.RequirementsComplianceError, match="missing DP-005"):
+        b.build_requirements_compliance(_requirements_run(tmp_path, fragment=fragment), strict=True)
+
+
+def test_strict_export_rejects_a_malformed_catalog(tmp_path):
+    with pytest.raises(b.RequirementsComplianceError, match="catalog is invalid"):
+        b.build_requirements_compliance(_requirements_run(tmp_path, catalog="categories: nope"), strict=True)
+
+
 def test_an_id_outside_the_catalog_is_not_exported(tmp_path):
     # The configured catalog is authoritative; the table is LLM-authored.
     fragment = _FRAGMENT + "| `ZZZ-999`: invented | ❌ FAIL | MUST | made up |\n"

@@ -124,8 +124,11 @@ def _derive_dispatch_stats(
 ) -> dict | None:
     """Parse ``.hook-events.log`` and derive multi-dispatch wall stats.
 
-    Returns ``{"dispatch_count": int, "wall_secs_observed": int}`` or
-    ``None`` when the log is missing or no matching events were found.
+    Returns ``dispatch_count``, ``wall_secs_observed``, and stable
+    ``dispatch_event_ids`` or ``None`` when the log is missing or no matching
+    events were found. Event identities let accumulating calls union
+    overlapping or growing log windows instead of guessing with a permanent
+    count ceiling.
 
     Events earlier than ``since_iso`` are skipped (string compare on the
     ISO timestamps is correct because the format is fixed-width and
@@ -141,6 +144,7 @@ def _derive_dispatch_stats(
     if not log_path.is_file():
         return None
     spawn_times: dict[str, str] = {}
+    spawn_event_ids: set[str] = set()
     terminal_times: dict[str, str] = {}
     legacy_spawn_times: list[str] = []
     legacy_terminal_times: list[str] = []
@@ -150,7 +154,7 @@ def _derive_dispatch_stats(
 
     try:
         with log_path.open(encoding="utf-8", errors="replace") as fh:
-            for raw in fh:
+            for line_number, raw in enumerate(fh, start=1):
                 parsed = parse_line(raw)
                 legacy_match = _match_hook_event(raw) if parsed is None else None
                 if parsed is None and legacy_match is None:
@@ -166,6 +170,7 @@ def _derive_dispatch_stats(
                     call_id = call_id_match.group(1)
                     if event == "AGENT_SPAWN":
                         spawn_times.setdefault(call_id, ts)
+                        spawn_event_ids.add(f"call:{call_id}")
                     elif event in {"AGENT_DONE", "AGENT_FAILED"} and call_id in spawn_times:
                         terminal_times[call_id] = ts
                     continue
@@ -174,6 +179,8 @@ def _derive_dispatch_stats(
                     continue
                 if event == "AGENT_SPAWN":
                     legacy_spawn_times.append(ts)
+                    digest = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
+                    spawn_event_ids.add(f"line:{line_number}:{digest}")
                 elif event in {"AGENT_INVOKE", "SCAN_COMPLETE"}:
                     legacy_terminal_times.append(ts)
     except OSError:
@@ -190,7 +197,11 @@ def _derive_dispatch_stats(
     except ValueError:
         return None
     wall_secs = max(0, int((t1 - t0).total_seconds()))
-    return {"dispatch_count": len(all_spawns), "wall_secs_observed": wall_secs}
+    return {
+        "dispatch_count": len(spawn_event_ids),
+        "dispatch_event_ids": sorted(spawn_event_ids),
+        "wall_secs_observed": wall_secs,
+    }
 
 
 def _existing_stage_keys(path: Path) -> set[tuple[int, str]]:
@@ -269,31 +280,34 @@ def _merge_accumulate(existing: dict, incoming: dict) -> dict:
 
     Additive: duration_ms / tool_uses / tokens are summed (correct semantics
     for "net agent compute" — concurrent sub-agents bill additively even
-    though their wall-time overlaps). dispatch_count is summed because each
-    accumulate call describes a non-overlapping dispatch group; wall time is
-    merged by max() so the widest observed window wins. Callers can provide an
+    though their wall-time overlaps). Dispatch event identities are unioned,
+    so overlapping windows do not double count and a later window can still
+    add events after an earlier whole-log fallback. Wall time is merged by
+    max() so the widest observed window wins. Callers can provide an
     accumulation id to make replay of the same group idempotent.
-
-    A dispatch count derived from the whole log is the exception. That value
-    counts every dispatch of the agent in the run rather than the group this
-    call describes, so adding it once per accumulate call multiplies it: on run
-    a2a0e355 the STRIDE row claimed 37 dispatches against 8 real AGENT_SPAWN
-    events. Such a count is taken, never added, and it caps the row from then
-    on — the population cannot be smaller than any group inside it.
     """
     for f in ("duration_ms", "tool_uses", "tokens"):
         existing[f] = int(existing.get(f) or 0) + int(incoming.get(f) or 0)
     if incoming.get("dispatch_count") is not None:
         incoming_count = int(incoming.get("dispatch_count") or 0)
-        if incoming.get("dispatch_count_scope") == "full_log":
-            existing["dispatch_count_scope"] = "full_log"
-            existing["dispatch_count_ceiling"] = incoming_count
+        incoming_ids = set(incoming.get("dispatch_event_ids") or [])
+        existing_ids = set(existing.get("dispatch_event_ids") or [])
+        if incoming_ids and existing_ids:
+            combined_ids = existing_ids | incoming_ids
+            existing["dispatch_event_ids"] = sorted(combined_ids)
+            existing["dispatch_count"] = len(combined_ids)
+        elif incoming_ids:
+            prior_count = int(existing.get("dispatch_count") or 0)
+            existing["dispatch_event_ids"] = sorted(incoming_ids)
+            if incoming.get("dispatch_count_scope") == "full_log":
+                existing["dispatch_count"] = max(prior_count, len(incoming_ids))
+            else:
+                existing["dispatch_count"] = prior_count + len(incoming_ids)
+        elif incoming.get("dispatch_count_scope") == "full_log":
             existing["dispatch_count"] = max(int(existing.get("dispatch_count") or 0), incoming_count)
         else:
             existing["dispatch_count"] = int(existing.get("dispatch_count") or 0) + incoming_count
-        ceiling = existing.get("dispatch_count_ceiling")
-        if ceiling is not None:
-            existing["dispatch_count"] = min(int(existing["dispatch_count"]), int(ceiling))
+        existing.pop("dispatch_count_ceiling", None)
     if incoming.get("wall_secs_observed") is not None:
         existing["wall_secs_observed"] = max(
             int(existing.get("wall_secs_observed") or 0),
@@ -496,7 +510,6 @@ def main(argv: list[str]) -> int:
                 # Mark the scope so an accumulating merge takes this count
                 # instead of adding it — see _merge_accumulate.
                 derived["dispatch_count_scope"] = "full_log"
-                derived["dispatch_count_ceiling"] = derived["dispatch_count"]
                 sys.stderr.write(
                     f"warn: --since-iso {args.since_iso} matched no dispatch of "
                     f"{args.subagent_type}; derived from the full log instead "

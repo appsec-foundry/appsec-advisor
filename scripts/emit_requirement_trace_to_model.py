@@ -25,9 +25,12 @@ never rewrites the model), and the §7b fragment is only guaranteed present and
 schema-valid once compose has accepted it. Must run BEFORE cleanup reaps
 ``.fragments/``.
 
+The same post-compose pass also persists the complete §7b assessment as
+``requirements_compliance``. A configured catalog therefore fails closed when
+the fragment is missing, malformed, or incomplete; otherwise the Markdown and
+machine-readable contracts could disagree after a successful run.
+
 Idempotent — a second run against unchanged inputs rewrites nothing.
-Best-effort: a failure here leaves a complete, correct report in place, so it
-warns and exits 0 rather than failing a run after Stage 2.
 
 Usage:
     python3 emit_requirement_trace_to_model.py <output_dir>
@@ -42,6 +45,11 @@ from typing import Any
 import requirements_trace
 import yaml
 from _atomic_io import atomic_write_text
+from build_threat_model_yaml import (
+    RequirementsComplianceError,
+    build_requirements_compliance,
+)
+from validate_intermediate import validate_threat_model_output
 
 
 def build_trace(output_dir: Path, doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -115,16 +123,18 @@ def emit(output_dir: Path) -> str:
     try:
         doc = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
-        return f"skipped — {type(exc).__name__}: {exc}"
+        raise RequirementsComplianceError(f"cannot read threat-model.yaml: {exc}") from exc
     if not isinstance(doc, dict):
-        return "skipped — threat-model.yaml is not a mapping"
+        raise RequirementsComplianceError("threat-model.yaml is not a mapping")
 
-    try:
-        trace = build_trace(Path(output_dir), doc)
-    except Exception as exc:  # best-effort: never fail a finished run
-        return f"skipped — {type(exc).__name__}: {exc}"
-    if not trace:
+    catalog_path = Path(output_dir) / ".requirements.yaml"
+    if not catalog_path.is_file():
         return "no requirements catalog — nothing to do"
+
+    trace = build_trace(Path(output_dir), doc)
+    compliance = build_requirements_compliance(Path(output_dir), strict=True)
+    if compliance is None:  # strict mode guarantees a value or raises
+        raise RequirementsComplianceError("configured requirements compliance was not produced")
 
     changed = 0
     for m in doc.get("mitigations") or []:
@@ -135,17 +145,20 @@ def emit(output_dir: Path) -> str:
             if m.get(key) != value:
                 m[key] = value
                 changed += 1
+    if doc.get("requirements_compliance") != compliance:
+        doc["requirements_compliance"] = compliance
+        changed += 1
     if not changed:
         return "unchanged"
-    try:
-        atomic_write_text(
-            yaml_path,
-            # Same dump options as build_threat_model_yaml.py so re-serialising
-            # here does not reformat the whole file.
-            yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False, width=120),
-        )
-    except (OSError, yaml.YAMLError) as exc:
-        return f"skipped — {type(exc).__name__}: {exc}"
+    ok, errors = validate_threat_model_output(doc)
+    if not ok:
+        raise RequirementsComplianceError("updated threat-model.yaml is invalid: " + "; ".join(errors[:5]))
+    atomic_write_text(
+        yaml_path,
+        # Same dump options as build_threat_model_yaml.py so re-serialising
+        # here does not reformat the whole file.
+        yaml.safe_dump(doc, sort_keys=False, allow_unicode=True, default_flow_style=False, width=120),
+    )
     return f"written ({changed} field(s) across {len(trace)} mitigation(s))"
 
 
@@ -153,7 +166,12 @@ def main(argv: list[str]) -> int:
     if len(argv) != 1:
         print("Usage: emit_requirement_trace_to_model.py <output_dir>", file=sys.stderr)
         return 2
-    print(f"emit_requirement_trace_to_model: {emit(Path(argv[0]))}")
+    try:
+        status = emit(Path(argv[0]))
+    except (OSError, yaml.YAMLError, RequirementsComplianceError) as exc:
+        print(f"emit_requirement_trace_to_model: failed — {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    print(f"emit_requirement_trace_to_model: {status}")
     return 0
 
 

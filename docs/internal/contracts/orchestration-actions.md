@@ -358,19 +358,8 @@ error.
   call and repeats it. Everything a command learns from disk — a changed
   artifact, an invalid contract, a stale receipt — answers `abort`, ends the
   run, and is never repeated.
-- Receipt creation validates and hashes one exact byte snapshot. Immediately
-  before Agent dispatch, the thin runtime calls `verify-receipts` once for the
-  complete action and its STRIDE taxonomy slices. `--action-id` names the
-  action and the controller resolves what to re-hash from the effective plan it
-  wrote itself; `--receipt PATH SHA256` echoes the pairs instead and stays
-  accepted. Exactly one of the two forms. Naming one path twice with the same
-  fingerprint verifies it once rather than failing. A missing validator,
-  unreadable artifact, byte change, or one path carrying two fingerprints fails
-  closed.
-- The verification is recorded, and a boundary command that follows an
-  unverified plan-bound dispatch answers `reject`. The orchestrator verifies
-  and repeats the same boundary; the run is untouched, which is why a skipped
-  verification rejects the call rather than aborting the run.
+- Receipt creation validates and hashes one exact byte snapshot. Before returning a dispatch, the controller freezes the emitted action hash, plan hash, plan-receipt hash, and complete receipt set in `.pending-dispatch.json`, validated by `schemas/pending-dispatch.schema.json`; failure to persist that state aborts the emission. Immediately before Agent dispatch, the thin runtime calls `verify-receipts` once. `--action-id` resolves the frozen emitted expectation rather than the mutable effective plan; `--receipt PATH SHA256` echoes the same complete set and stays accepted. Exactly one of the two forms is allowed. Naming one path twice with the same fingerprint verifies it once rather than failing. A missing validator, unreadable artifact, byte change, or one path carrying two fingerprints fails closed.
+- The completed verification is recorded in `.receipt-verification.json`, validated by `schemas/receipt-verification.schema.json`, and binds the same action, plan, plan receipt, and receipt-set fingerprints. A boundary after an unverified plan-bound dispatch answers `reject`, while missing, malformed, or stale controller state aborts as invalid disk state. The orchestrator verifies and repeats only the ordinary unverified boundary; it never reconstructs or repairs verification state.
 - Before returning a semantic dispatch, the controller removes prior bytes for
   every output not also used as an in-place repair input. Fresh context-v2 entry
   also removes optional evidence and synthesis outputs that may have no producer

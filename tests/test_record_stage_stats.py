@@ -894,7 +894,7 @@ def test_full_log_dispatch_count_is_taken_not_added(tmp_path):
 
 
 def test_windowed_dispatch_counts_still_sum(tmp_path):
-    """Groups derived from their own window keep the additive semantics."""
+    """Overlapping windows union the matching dispatch events exactly."""
     log = tmp_path / ".hook-events.log"
     log.write_text(
         "2026-08-28T21:19:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n"
@@ -912,6 +912,40 @@ def test_windowed_dispatch_counts_still_sum(tmp_path):
     records = [json.loads(line) for line in (tmp_path / ".stage-stats.jsonl").read_text().splitlines() if line.strip()]
     assert len(records) == 1
     # Wave 1's window opens before every spawn, so it sees all three; wave 2
-    # sees only the late one. Neither used the fallback, so both are summed.
-    assert records[0]["dispatch_count"] == 4
+    # sees the late one again. The shared event must not be counted twice.
+    assert records[0]["dispatch_count"] == 3
     assert "dispatch_count_ceiling" not in records[0]
+
+
+def test_a_whole_log_fallback_does_not_cap_future_dispatches(tmp_path):
+    """A later wave can grow the population after an early full-log fallback."""
+    log = tmp_path / ".hook-events.log"
+    log.write_text(
+        "2026-08-28T21:19:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n",
+        encoding="utf-8",
+    )
+    common = {
+        "--variant": "stride_analyzer",
+        "--duration-ms": "1000",
+        "--subagent-type": "appsec-advisor:appsec-stride-analyzer-v2",
+    }
+    rec.main(
+        _acc(
+            tmp_path,
+            **{**common, "--since-iso": "2026-08-28T21:30:00Z", "--accumulation-id": "wave-1"},
+        )
+    )
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write(
+            "2026-08-28T21:40:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n"
+        )
+    rec.main(
+        _acc(
+            tmp_path,
+            **{**common, "--since-iso": "2026-08-28T21:40:00Z", "--accumulation-id": "wave-2"},
+        )
+    )
+    row = json.loads((tmp_path / ".stage-stats.jsonl").read_text(encoding="utf-8"))
+    assert row["dispatch_count"] == 2
+    assert len(row["dispatch_event_ids"]) == 2
+    assert "dispatch_count_ceiling" not in row

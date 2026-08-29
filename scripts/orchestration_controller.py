@@ -85,6 +85,8 @@ CONTEXT_V2_GENERATION = "context-v2"
 # without them a skipped call left no trace and blocked nothing.
 PENDING_DISPATCH_NAME = ".pending-dispatch.json"
 RECEIPT_VERIFICATION_NAME = ".receipt-verification.json"
+PENDING_DISPATCH_SCHEMA = PLUGIN_ROOT / "schemas" / "pending-dispatch.schema.json"
+RECEIPT_VERIFICATION_SCHEMA = PLUGIN_ROOT / "schemas" / "receipt-verification.schema.json"
 
 MAX_ACTION_BYTES = 65_536
 MAX_STRIDE_ANALYST_CONTEXT_BYTES = 1_048_576
@@ -943,15 +945,13 @@ def verify_receipt_hashes(
     """
     if bool(receipt_pairs) == bool(action_id):
         raise CallError("receipt verification takes either --action-id or --receipt, not both or neither")
+    pending = _pending_dispatch(output_root)
     if action_id is not None:
-        try:
-            receipt_pairs = context_routing.receipts_for_action(output_root, action_id)
-        except context_routing.UnknownActionError as exc:
-            # The plan is intact and the caller named the wrong action, so a
-            # corrected second call is all this needs.
-            raise CallError(str(exc)) from exc
-        except context_routing.ContextRoutingError as exc:
-            raise ControllerError(f"cannot resolve receipts for {action_id!r}: {exc}") from exc
+        if pending is None:
+            raise CallError(f"no emitted dispatch is waiting for receipt verification: {action_id}")
+        if action_id != pending["action_id"]:
+            raise CallError(f"pending dispatch is {pending['action_id']!r}, not {action_id!r}")
+        receipt_pairs = [(row["artifact_path"], row["sha256"]) for row in pending["receipts"]]
     # A bound action names the effective context plan twice — once among its
     # artifact receipts, once as its plan reference — so a caller that passes
     # both is repeating one claim, not making a second one. Equal pairs fold
@@ -973,7 +973,7 @@ def verify_receipt_hashes(
             raise ControllerError(f"cannot consume artifact {artifact_path!r}: {exc}") from exc
         if hashlib.sha256(payload).hexdigest() != expected_sha256:
             raise ControllerError(f"artifact changed after validation: {artifact_path}")
-    recorded = _record_receipt_verification(output_root, action_id, set(expected))
+    recorded = _record_receipt_verification(output_root, action_id, expected)
     receipts = [f"Verified {len(expected)} artifact receipt(s) immediately before dispatch"]
     if recorded:
         receipts.append(f"Recorded the verification of {recorded}")
@@ -987,45 +987,89 @@ def verify_receipt_hashes(
     )
 
 
-def _open_receipt_verification(output_root: Path, action: dict[str, Any]) -> None:
-    """Name the dispatch that must be verified before the next boundary.
+def _validate_receipt_state(value: Any, schema_path: Path, label: str) -> dict[str, Any]:
+    """Validate one controller-owned receipt state document."""
+    if not isinstance(value, dict):
+        raise ControllerError(f"{label} must contain an object")
+    if Draft202012Validator is None:
+        raise ControllerError(f"cannot validate {label}: jsonschema dependency is unavailable")
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda item: list(item.path))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControllerError(f"cannot load {label} schema: {exc}") from exc
+    if errors:
+        detail = "; ".join(error.message for error in errors[:5])
+        raise ControllerError(f"{label} schema validation failed: {detail}")
+    return value
 
-    The effective plan sorts its actions by id, so it cannot say which one was
-    emitted last. This file can, and it is the only thing the gate needs: the
-    dispatch just handed to the orchestrator, waiting for its receipts to be
-    re-hashed. Best effort — a dispatch the controller could not record is not
-    one it may then refuse to advance.
-    """
+
+def _receipt_rows_sha256(rows: list[dict[str, str]]) -> str:
+    return hashlib.sha256(_canonical_json_bytes(rows)).hexdigest()
+
+
+def _open_receipt_verification(output_root: Path, action: dict[str, Any]) -> None:
+    """Persist the exact emitted action and receipt expectation fail-closed."""
     action_id = (action.get("context_plan") or {}).get("action_id")
     if not action_id:
         return
     from _atomic_io import atomic_write_json  # noqa: PLC0415
 
     try:
-        atomic_write_json(
-            output_root / PENDING_DISPATCH_NAME,
-            {
-                "schema_version": 1,
-                "action_id": str(action_id),
-                "action": action.get("action"),
-                "emitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            },
-            sort_keys=True,
-        )
-    except OSError:
-        return
+        context_routing.validate_action_plan_reference(action, output_root)
+        receipt_pairs = context_routing.receipts_for_action(output_root, str(action_id))
+    except context_routing.ContextRoutingError as exc:
+        raise ControllerError(f"cannot bind pending receipt verification: {exc}") from exc
+    expected = {path: sha256 for path, sha256 in receipt_pairs}
+    for receipt in action.get("artifact_receipts", []):
+        path = receipt.get("artifact_path")
+        sha256 = receipt.get("sha256")
+        if path and sha256 and expected.setdefault(path, sha256) != sha256:
+            raise ControllerError(f"emitted action holds conflicting receipt fingerprints for {path}")
+    reference = action["context_plan"]
+    receipt_path = str(reference["receipt_path"])
+    receipt_sha256 = str(reference["receipt_sha256"])
+    if expected.setdefault(receipt_path, receipt_sha256) != receipt_sha256:
+        raise ControllerError(f"emitted action holds conflicting receipt fingerprints for {receipt_path}")
+    rows = [{"artifact_path": path, "sha256": expected[path]} for path in sorted(expected)]
+    pending = _validate_receipt_state(
+        {
+            "schema_version": 1,
+            "action_id": str(action_id),
+            "action": action.get("action"),
+            "action_sha256": hashlib.sha256(_canonical_json_bytes(action)).hexdigest(),
+            "plan_sha256": str(reference["sha256"]),
+            "plan_receipt_sha256": receipt_sha256,
+            "emitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "receipts": rows,
+        },
+        PENDING_DISPATCH_SCHEMA,
+        "pending dispatch",
+    )
+    try:
+        atomic_write_json(output_root / PENDING_DISPATCH_NAME, pending, sort_keys=True)
+        (output_root / RECEIPT_VERIFICATION_NAME).unlink(missing_ok=True)
+    except OSError as exc:
+        raise ControllerError(f"cannot persist pending receipt verification: {exc}") from exc
 
 
 def _pending_dispatch(output_root: Path) -> dict[str, Any] | None:
     """Return the plan-bound dispatch the controller emitted most recently."""
-    try:
-        data = json.loads((output_root / PENDING_DISPATCH_NAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    path = output_root / PENDING_DISPATCH_NAME
+    if not path.exists():
         return None
-    return data if isinstance(data, dict) and data.get("action_id") else None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ControllerError(f"cannot read pending dispatch state: {exc}") from exc
+    return _validate_receipt_state(data, PENDING_DISPATCH_SCHEMA, "pending dispatch")
 
 
-def _record_receipt_verification(output_root: Path, action_id: str | None, verified: set[str]) -> str | None:
+def _record_receipt_verification(
+    output_root: Path,
+    action_id: str | None,
+    verified: dict[str, str],
+) -> str | None:
     """Record which dispatch this verification covers; return that action id.
 
     The echoed form names no action, so it is matched against the pending
@@ -1037,30 +1081,34 @@ def _record_receipt_verification(output_root: Path, action_id: str | None, verif
     if pending is None:
         return None
     pending_id = str(pending["action_id"])
-    if action_id is None:
-        try:
-            admitted = {path for path, _ in context_routing.receipts_for_action(output_root, pending_id)}
-        except context_routing.ContextRoutingError:
-            return None
-        if not admitted.issubset(verified):
-            return None
-    elif action_id != pending_id:
+    admitted = {row["artifact_path"]: row["sha256"] for row in pending["receipts"]}
+    if action_id is not None and action_id != pending_id:
+        return None
+    if admitted != verified:
         return None
     from _atomic_io import atomic_write_json  # noqa: PLC0415
 
     marker = output_root / RECEIPT_VERIFICATION_NAME
+    rows = pending["receipts"]
+    state = _validate_receipt_state(
+        {
+            "schema_version": 1,
+            "action_id": pending_id,
+            "action_sha256": pending["action_sha256"],
+            "plan_sha256": pending["plan_sha256"],
+            "plan_receipt_sha256": pending["plan_receipt_sha256"],
+            "receipts_sha256": _receipt_rows_sha256(rows),
+            "artifact_count": len(rows),
+            "verified_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+        RECEIPT_VERIFICATION_SCHEMA,
+        "receipt verification",
+    )
     try:
-        state = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        state = {}
-    if not isinstance(state, dict) or not isinstance(state.get("verified"), dict):
-        state = {"schema_version": 1, "verified": {}}
-    state["verified"][pending_id] = {
-        "verified_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "artifact_count": len(verified),
-    }
-    atomic_write_json(marker, state, sort_keys=True)
-    _append_event(output_root, "RECEIPTS_VERIFIED", f"action={pending_id} artifacts={len(verified)}")
+        atomic_write_json(marker, state, sort_keys=True)
+    except OSError as exc:
+        raise ControllerError(f"cannot persist receipt verification: {exc}") from exc
+    _append_event(output_root, "RECEIPTS_VERIFIED", f"action={pending_id} artifacts={len(rows)}")
     return pending_id
 
 
@@ -1080,19 +1128,36 @@ def _require_receipt_verification(output_root: Path) -> None:
     """
     pending = _pending_dispatch(output_root)
     if pending is None:
+        plan_files = (
+            output_root / context_routing.PLAN_NAME,
+            output_root / context_routing.PLAN_RECEIPT_NAME,
+        )
+        if any(path.exists() for path in plan_files):
+            raise ControllerError("effective context plan exists without pending dispatch verification state")
         return
     action_id = str(pending["action_id"])
+    marker = output_root / RECEIPT_VERIFICATION_NAME
+    if not marker.exists():
+        raise CallError(
+            f"dispatch {action_id} was not verified: call verify-receipts --output-dir "
+            f'"$OUTPUT_DIR" --action-id {action_id} before this boundary, then repeat it'
+        )
     try:
-        state = json.loads((output_root / RECEIPT_VERIFICATION_NAME).read_text(encoding="utf-8"))
-        verified = state.get("verified") if isinstance(state, dict) else None
-    except (OSError, ValueError):
-        verified = None
-    if isinstance(verified, dict) and action_id in verified:
+        state = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ControllerError(f"cannot read receipt verification state: {exc}") from exc
+    state = _validate_receipt_state(state, RECEIPT_VERIFICATION_SCHEMA, "receipt verification")
+    expected = {
+        "action_id": action_id,
+        "action_sha256": pending["action_sha256"],
+        "plan_sha256": pending["plan_sha256"],
+        "plan_receipt_sha256": pending["plan_receipt_sha256"],
+        "receipts_sha256": _receipt_rows_sha256(pending["receipts"]),
+        "artifact_count": len(pending["receipts"]),
+    }
+    if all(state.get(key) == value for key, value in expected.items()):
         return
-    raise CallError(
-        f"dispatch {action_id} was not verified: call verify-receipts --output-dir "
-        f'"$OUTPUT_DIR" --action-id {action_id} before this boundary, then repeat it'
-    )
+    raise ControllerError(f"receipt verification state is stale for dispatch {action_id}")
 
 
 def _emit(action: dict[str, Any]) -> int:
@@ -6192,9 +6257,11 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     _run(str(SCRIPT_DIR / "emit_verdict_to_model.py"), str(output_dir))
     # Same reason, same window: the §7b compliance assessment is the only
     # source for some requirement→mitigation edges, and it exists only as a
-    # fragment. Carry those edges into the model before cleanup reaps them, so
-    # the YAML is never missing a requirement the report shows.
-    _run(str(SCRIPT_DIR / "emit_requirement_trace_to_model.py"), str(output_dir))
+    # fragment. This is mandatory when a catalog is configured: publishing a
+    # report while silently leaving the machine-readable assessment incomplete
+    # is contract drift, not a best-effort enrichment failure.
+    if not _step("emit_requirement_trace_to_model.py", str(output_dir)):
+        return False
     _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
     try:

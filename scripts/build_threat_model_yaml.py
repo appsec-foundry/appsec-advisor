@@ -133,7 +133,11 @@ def _validate_and_publish_yaml(
     return result
 
 
-def build_requirements_compliance(output_dir: Path) -> dict | None:
+class RequirementsComplianceError(RuntimeError):
+    """The configured requirements assessment cannot be exported safely."""
+
+
+def build_requirements_compliance(output_dir: Path, *, strict: bool = False) -> dict | None:
     """Export the §7b compliance assessment into the machine-readable YAML.
 
     The Markdown report carried the full requirement table while the YAML
@@ -149,44 +153,95 @@ def build_requirements_compliance(output_dir: Path) -> dict | None:
     deferred so the export gains no heavyweight dependency for a key that is
     absent whenever no catalog was configured.
 
-    Returns ``None`` when the run had no catalog or no assessed rows, so the
-    key stays absent rather than claiming an empty assessment.
+    Returns ``None`` when the run had no catalog. Before Stage 2, the default
+    non-strict mode also returns ``None`` when the assessment does not exist
+    yet. The post-compose emitter uses ``strict=True`` and refuses a missing,
+    malformed, or incomplete assessment instead of publishing a partial
+    machine-readable contract.
     """
-    if not (output_dir / ".requirements.yaml").is_file():
+    catalog_path = output_dir / ".requirements.yaml"
+    if not catalog_path.is_file():
         return None
+    if strict:
+        import requirements_state  # noqa: PLC0415
+
+        try:
+            catalog_errors, _ = requirements_state.validate_catalog(catalog_path.read_bytes())
+        except OSError as exc:
+            raise RequirementsComplianceError(f"cannot read configured requirements catalog: {exc}") from exc
+        if catalog_errors:
+            raise RequirementsComplianceError(
+                "configured requirements catalog is invalid: " + "; ".join(catalog_errors[:5])
+            )
     try:
         import types  # noqa: PLC0415
 
         import compose_threat_model  # noqa: PLC0415
 
-        rows = compose_threat_model._requirements_compliance_rows(types.SimpleNamespace(output_dir=output_dir))
-    except Exception as exc:  # pragma: no cover - defensive
+        ctx = types.SimpleNamespace(output_dir=output_dir)
+        catalog = compose_threat_model._requirement_catalog_entries(ctx)
+        rows = compose_threat_model._requirements_compliance_rows(ctx)
+    except Exception as exc:
+        if strict:
+            raise RequirementsComplianceError(f"cannot parse requirements compliance: {exc}") from exc
         sys.stderr.write(f"  requirements compliance export skipped: {exc}\n")
         return None
-    if not rows:
+    if not catalog:
+        if strict:
+            raise RequirementsComplianceError("configured requirements catalog contains no valid requirements")
         return None
-    counts: dict[str, int] = {}
+    if not rows:
+        if strict:
+            raise RequirementsComplianceError("configured requirements catalog has no Stage-2 compliance assessment")
+        return None
+    catalog_ids = set(catalog)
+    row_ids = {str(row.get("req_id") or "") for row in rows}
+    if strict and row_ids != catalog_ids:
+        missing = sorted(catalog_ids - row_ids)
+        extra = sorted(row_ids - catalog_ids)
+        details = []
+        if missing:
+            details.append("missing " + ", ".join(missing))
+        if extra:
+            details.append("undeclared " + ", ".join(extra))
+        raise RequirementsComplianceError(
+            "requirements compliance does not cover the configured catalog: " + "; ".join(details)
+        )
+
+    status_map = {
+        "ANTI-PATTERN": "FAIL",
+        "NOT OBSERVABLE": "UNVERIFIABLE",
+        "NA": "N/A",
+        "NOT APPLICABLE": "N/A",
+    }
+    normalized_rows = []
     for row in rows:
-        key = str(row.get("status") or "").strip().lower().replace("/", "_").replace(" ", "_")
+        rid = str(row.get("req_id") or "")
+        status = status_map.get(
+            str(row.get("status") or "").strip().upper(), str(row.get("status") or "").strip().upper()
+        )
+        normalized_rows.append(
+            {
+                "id": rid,
+                "status": status,
+                "priority": catalog.get(rid, {}).get("priority") or None,
+                "title": row.get("title") or catalog.get(rid, {}).get("text") or None,
+                "finding_ids": row.get("finding_ids") or [],
+            }
+        )
+    counts: dict[str, int] = {}
+    for row in normalized_rows:
+        key = str(row["status"]).strip().lower().replace("/", "_").replace(" ", "_")
         if key:
             counts[key] = counts.get(key, 0) + 1
     return {
-        "total": len(rows),
+        "total": len(normalized_rows),
         "pass": counts.get("pass", 0),
         "fail": counts.get("fail", 0),
         "partial": counts.get("partial", 0),
         "unverifiable": counts.get("unverifiable", 0),
         "not_applicable": counts.get("n_a", 0),
-        "requirements": [
-            {
-                "id": row.get("req_id"),
-                "status": row.get("status"),
-                "priority": row.get("priority") or None,
-                "title": row.get("title") or None,
-                "finding_ids": row.get("finding_ids") or [],
-            }
-            for row in rows
-        ],
+        "requirements": normalized_rows,
     }
 
 

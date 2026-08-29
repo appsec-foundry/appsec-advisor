@@ -1053,6 +1053,47 @@ def test_validate_threat_model_output_non_dict():
     assert not ok and errs == ["root must be a mapping"]
 
 
+def test_requirements_compliance_rejects_unreconciled_buckets_and_rows():
+    data = {
+        "requirements_compliance": {
+            "total": 2,
+            "pass": 2,
+            "fail": 1,
+            "partial": 0,
+            "unverifiable": 0,
+            "not_applicable": 0,
+            "requirements": [{"id": "AC-001"}, {"id": "AC-001"}, {"id": "AC-002"}],
+        }
+    }
+    errors = vi._check_requirements_compliance_invariants(data)
+    assert "requirements_compliance: status buckets must sum to total" in errors
+    assert "requirements_compliance: requirements row count must equal total" in errors
+    assert "requirements_compliance: requirement IDs must be unique" in errors
+
+
+def test_requirements_compliance_schema_rejects_missing_buckets_and_unknown_status():
+    data = {
+        "requirements_compliance": {
+            "total": 1,
+            "pass": 1,
+            "fail": 0,
+            "partial": 0,
+            "requirements": [
+                {
+                    "id": "AC-001",
+                    "status": "MAYBE",
+                    "priority": "MUST",
+                    "title": "Authorize access",
+                    "finding_ids": [],
+                }
+            ],
+        }
+    }
+    errors = vi._schema_errors("threat_model_output", data)
+    assert any("unverifiable" in error and "required" in error for error in errors)
+    assert any("MAYBE" in error and "not one of" in error for error in errors)
+
+
 # --- _check_finding_id_contiguity ------------------------------------------
 
 

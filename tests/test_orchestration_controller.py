@@ -1409,12 +1409,36 @@ def test_next_action_composes_report_when_fragments_ready(tmp_path, monkeypatch)
     ordered_tail = [
         next(i for i, item in enumerate(commands) if any("validate_fragment.py" in str(part) for part in item)),
         next(i for i, item in enumerate(commands) if any("compose_threat_model.py" in str(part) for part in item)),
+        next(
+            i
+            for i, item in enumerate(commands)
+            if any("emit_requirement_trace_to_model.py" in str(part) for part in item)
+        ),
         next(i for i, item in enumerate(commands) if any("apply_prose_fixes.py" in str(part) for part in item)),
         next(i for i, item in enumerate(commands) if any("qa_checks.py" in str(part) for part in item)),
     ]
     assert ordered_tail == sorted(ordered_tail)
     checkpoint = (output / ".appsec-checkpoint").read_text(encoding="utf-8")
     assert "phase=11 status=completed" in checkpoint
+
+
+def test_compose_if_ready_blocks_when_requirements_export_fails(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    fragments = output / ".fragments"
+    fragments.mkdir(parents=True)
+    (fragments / "ms-verdict.json").write_text("{}", encoding="utf-8")
+    (fragments / "security-architecture.md").write_text("## 6. Security Architecture\n", encoding="utf-8")
+
+    def fake_run(cmd, **_kwargs):
+        if any("compose_threat_model.py" in str(part) for part in cmd):
+            (output / "threat-model.md").write_text("# Threat Model\n", encoding="utf-8")
+        returncode = 1 if any("emit_requirement_trace_to_model.py" in str(part) for part in cmd) else 0
+        return subprocess.CompletedProcess(cmd, returncode, "", "incomplete requirements assessment")
+
+    monkeypatch.setattr(controller.subprocess, "run", fake_run)
+    assert controller._compose_if_ready(output, "") is False
+    blocked = json.loads((output / ".compose-blocked.json").read_text(encoding="utf-8"))
+    assert blocked["step"] == "emit_requirement_trace_to_model.py"
 
 
 def test_next_action_recomposes_stale_report_when_checkpoint_needs_render(tmp_path, monkeypatch):
@@ -6041,12 +6065,14 @@ class TestReceiptVerificationIsEnforced:
         assert gate["action"] == "run_gate"
         assert controller._require_receipt_verification(output) is None
         state = json.loads((output / controller.RECEIPT_VERIFICATION_NAME).read_text(encoding="utf-8"))
-        assert action_id in state["verified"]
+        assert state["action_id"] == action_id
+        assert state["plan_sha256"] == bound["context_plan"]["sha256"]
         assert "RECEIPTS_VERIFIED" in (output / ".agent-run.log").read_text(encoding="utf-8")
 
     def test_the_echoed_form_still_opens_the_boundary(self, tmp_path):
-        output, bound = _bound_stage1_dispatch(tmp_path)
-        pairs = controller.context_routing.receipts_for_action(output, bound["context_plan"]["action_id"])
+        output, _ = _bound_stage1_dispatch(tmp_path)
+        pending = controller._pending_dispatch(output)
+        pairs = [(row["artifact_path"], row["sha256"]) for row in pending["receipts"]]
 
         controller.verify_receipt_hashes(output, pairs)
 
@@ -6055,9 +6081,9 @@ class TestReceiptVerificationIsEnforced:
     def test_verifying_less_than_the_action_admitted_leaves_the_gate_closed(self, tmp_path):
         # The echoed form names no action, so it counts only when it covered
         # everything the plan admitted for the dispatch that is waiting.
-        output, bound = _bound_stage1_dispatch(tmp_path)
-        pairs = controller.context_routing.receipts_for_action(output, bound["context_plan"]["action_id"])
-        partial = {path for path, _ in pairs[:-1]}
+        output, _ = _bound_stage1_dispatch(tmp_path)
+        pending = controller._pending_dispatch(output)
+        partial = {row["artifact_path"]: row["sha256"] for row in pending["receipts"][:-1]}
 
         assert controller._record_receipt_verification(output, None, partial) is None
 
@@ -6091,6 +6117,65 @@ class TestReceiptVerificationIsEnforced:
 
     def test_a_run_with_no_plan_bound_dispatch_is_not_gated(self, tmp_path):
         assert controller._require_receipt_verification(tmp_path) is None
+
+    def test_a_missing_pending_marker_with_a_plan_aborts(self, tmp_path):
+        output, _ = _bound_stage1_dispatch(tmp_path)
+        (output / controller.PENDING_DISPATCH_NAME).unlink()
+        with pytest.raises(controller.ControllerError, match="without pending dispatch"):
+            controller._require_receipt_verification(output)
+
+    def test_a_malformed_verification_marker_aborts(self, tmp_path):
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        controller.verify_receipt_hashes(output, [], action_id=bound["context_plan"]["action_id"])
+        (output / controller.RECEIPT_VERIFICATION_NAME).write_text('{"schema_version": 1}\n', encoding="utf-8")
+        with pytest.raises(controller.ControllerError, match="schema validation failed"):
+            controller._require_receipt_verification(output)
+
+    def test_a_jointly_rewritten_plan_and_receipt_do_not_replace_the_emitted_expectation(self, tmp_path):
+        output, bound = _bound_stage1_dispatch(tmp_path)
+        config_path = output / ".skill-config.json"
+        config_path.write_bytes(config_path.read_bytes() + b" ")
+
+        def mutate(plan):
+            for delivery in plan["deliveries"]:
+                receipt = delivery.get("source_receipt") or {}
+                if receipt.get("artifact_path") == ".skill-config.json":
+                    receipt["sha256"] = hashlib.sha256(config_path.read_bytes()).hexdigest()
+
+        _rewrite_plan(output, mutate)
+        with pytest.raises(controller.ControllerError, match="changed after validation"):
+            controller.verify_receipt_hashes(output, [], action_id=bound["context_plan"]["action_id"])
+
+    def test_pending_marker_write_failure_aborts_the_emission(self, tmp_path, monkeypatch):
+        import _atomic_io
+
+        output = _write_context_v2_config(tmp_path)
+        cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+        action = controller._context_v2_dispatch(
+            output,
+            cfg,
+            role="context_resolver",
+            job_id="phase1-context",
+            next_boundary="context-v2-post-recon",
+            input_artifacts=[".skill-config.json"],
+            output_artifacts=[".threat-modeling-context.md"],
+            decision_keys=[],
+            receipts=[],
+        )
+        plan = controller.context_routing.resolve_action(
+            action,
+            output,
+            semantic_roles=controller.SEMANTIC_ROLE_REGISTRY,
+            model_keys=controller.SEMANTIC_ROLE_MODEL_KEYS,
+        )
+        bound = controller.context_routing.bind_action_to_plan(action, plan, output)
+
+        def fail_write(*_args, **_kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(_atomic_io, "atomic_write_json", fail_write)
+        with pytest.raises(controller.ControllerError, match="cannot persist pending"):
+            controller._open_receipt_verification(output, bound)
 
     def test_a_marker_from_an_earlier_run_does_not_satisfy_this_one(self, tmp_path):
         # Action ids come from job ids, which repeat across runs, so a reused

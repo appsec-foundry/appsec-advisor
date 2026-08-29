@@ -1066,6 +1066,28 @@ def _check_triage_flags_version(data: dict) -> list[str]:
     return []
 
 
+def _check_requirements_compliance_invariants(data: dict) -> list[str]:
+    """Reconcile §7b counters and rows beyond what JSON Schema can express."""
+    compliance = data.get("requirements_compliance")
+    if not isinstance(compliance, dict):
+        return []
+    total = compliance.get("total")
+    rows = compliance.get("requirements")
+    bucket_names = ("pass", "fail", "partial", "unverifiable", "not_applicable")
+    if not isinstance(total, int) or not isinstance(rows, list):
+        return []  # Shape errors are reported by the schema validator.
+    errors: list[str] = []
+    bucket_values = [compliance.get(name) for name in bucket_names]
+    if all(isinstance(value, int) for value in bucket_values) and sum(bucket_values) != total:
+        errors.append("requirements_compliance: status buckets must sum to total")
+    if len(rows) != total:
+        errors.append("requirements_compliance: requirements row count must equal total")
+    ids = [row.get("id") for row in rows if isinstance(row, dict)]
+    if len(ids) != len(set(ids)):
+        errors.append("requirements_compliance: requirement IDs must be unique")
+    return errors
+
+
 def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     """Validate the final `$OUTPUT_DIR/threat-model.yaml` export.
 
@@ -1087,6 +1109,7 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     errors.extend(_check_threat_hypotheses_invariants(data))
     errors.extend(_check_boundary_refs(data))
     errors.extend(_check_final_boundary_links(data))
+    errors.extend(_check_requirements_compliance_invariants(data))
     advisories: list[str] = []
     # Detect F-NNN numbering gaps. A gap (e.g. F-001..F-013, F-015..) means
     # the threat-analyst dropped a finding without reflowing the IDs, leaving

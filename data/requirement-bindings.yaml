@@ -179,6 +179,7 @@ requirements:
   REQ-FLW-003:
     applies_to:
       - scripts/orchestration_controller.py
+      - scripts/context_routing.py
       - scripts/validate_intermediate.py
       - scripts/compose_threat_model.py
       - schemas/**
@@ -196,12 +197,19 @@ requirements:
       - tests/test_compose_threat_model.py::test_cli_exit_1_on_missing_fragment
       - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_boundary_after_an_unverified_dispatch_rejects
       - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_changed_artifact_still_aborts_the_run
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_jointly_rewritten_plan_and_receipt_do_not_replace_the_emitted_expectation
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_missing_pending_marker_with_a_plan_aborts
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_malformed_verification_marker_aborts
       - tests/test_orchestration_controller.py::test_the_boundary_gate_is_reachable_from_the_command_line
 
   REQ-REQ-001:
     applies_to:
       - scripts/compose_threat_model.py
+      - scripts/build_threat_model_yaml.py
+      - scripts/emit_requirement_trace_to_model.py
+      - scripts/validate_intermediate.py
       - schemas/requirements-catalog.schema.yaml
+      - schemas/threat-model.output.schema.yaml
     decisions:
       - RQ-1
       - RQ-3
@@ -214,6 +222,10 @@ requirements:
       - tests/test_requirements_mapping.py::test_legacy_requirement_id_is_honoured_and_unlinked_threats_excluded
       - tests/test_requirements_mapping.py::test_remediation_reference_ignored_without_requirements_yaml
       - tests/test_requirements_mapping.py::test_cited_finding_opens_a_row_when_no_threat_declares_the_requirement
+      - tests/test_build_threat_model_yaml.py::test_strict_export_rejects_an_incomplete_assessment
+      - tests/test_requirements_trace.py::TestPostComposeRequirementsExport::test_complete_stage2_assessment_is_persisted_in_the_yaml
+      - tests/test_requirements_trace.py::TestPostComposeRequirementsExport::test_missing_stage2_assessment_fails_without_rewriting_yaml
+      - tests/test_validate_intermediate.py::test_requirements_compliance_schema_rejects_missing_buckets_and_unknown_status
 
   REQ-BIZ-001:
     applies_to:

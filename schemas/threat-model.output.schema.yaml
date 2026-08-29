@@ -329,9 +329,10 @@ properties:
     # The status buckets sum to `total` — the reconciliation rule the control
     # effectiveness line learned the hard way.
     type: object
-    required: [total, pass, fail, partial]
+    additionalProperties: false
+    required: [total, pass, fail, partial, unverifiable, not_applicable, requirements]
     properties:
-      total: {type: integer, minimum: 0}
+      total: {type: integer, minimum: 1}
       pass: {type: integer, minimum: 0}
       fail: {type: integer, minimum: 0}
       partial: {type: integer, minimum: 0}
@@ -339,17 +340,25 @@ properties:
       not_applicable: {type: integer, minimum: 0}
       requirements:
         type: array
+        minItems: 1
         items:
           type: object
-          required: [id, status]
+          additionalProperties: false
+          required: [id, status, priority, title, finding_ids]
           properties:
             id: {type: string, minLength: 1}
-            status: {type: string, minLength: 1}
-            priority: {type: [string, "null"]}
-            title: {type: [string, "null"]}
+            status: {type: string, enum: [PASS, FAIL, PARTIAL, UNVERIFIABLE, N/A]}
+            priority:
+              type: [string, "null"]
+              enum: [MUST, SHOULD, MAY, null]
+            title:
+              type: [string, "null"]
+              minLength: 1
             finding_ids:
               type: array
-              items: {type: string}
+              uniqueItems: true
+              items: {type: string, pattern: "^F-[0-9]{3,}$"}
+
 
   tier_root_causes:
     # Per-tier architectural root causes (terse bullet items) consumed by the

@@ -318,3 +318,55 @@ class TestAnalystSlice:
         for row in contexts.build_rows(catalog):
             for req in row["requirements"]:
                 assert "blueprint_guidance" not in req
+
+
+class TestPostComposeRequirementsExport:
+    def _run(self, tmp_path: Path, monkeypatch, *, fragment: str | None) -> tuple[object, Path]:
+        emitter = _load_module(
+            "emit_requirement_trace_to_model_test",
+            REPO_ROOT / "scripts" / "emit_requirement_trace_to_model.py",
+        )
+        (tmp_path / ".requirements.yaml").write_text(yaml.safe_dump(CATALOG), encoding="utf-8")
+        if fragment is not None:
+            (tmp_path / ".fragments").mkdir()
+            (tmp_path / ".fragments" / "requirements-compliance.md").write_text(fragment, encoding="utf-8")
+        yaml_path = tmp_path / "threat-model.yaml"
+        yaml_path.write_text("mitigations: []\nthreats: []\n", encoding="utf-8")
+        monkeypatch.setattr(emitter, "validate_threat_model_output", lambda _doc: (True, []))
+        return emitter, yaml_path
+
+    def test_complete_stage2_assessment_is_persisted_in_the_yaml(self, tmp_path, monkeypatch):
+        fragment = """\
+| Requirement | Status | Priority | Evidence |
+| --- | --- | --- | --- |
+| `AC-002`: Authorization | ✅ PASS | MUST | server guard |
+| `IV-001`: Validation | ❌ FAIL | MUST | F-001 |
+| `LM-001`: Logging | ❓ UNVERIFIABLE | SHOULD | not observed |
+"""
+        emitter, yaml_path = self._run(tmp_path, monkeypatch, fragment=fragment)
+        assert "written" in emitter.emit(tmp_path)
+        compliance = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))["requirements_compliance"]
+        assert compliance["total"] == 3
+        assert compliance["requirements"][1]["finding_ids"] == ["F-001"]
+
+    def test_missing_stage2_assessment_fails_without_rewriting_yaml(self, tmp_path, monkeypatch):
+        emitter, yaml_path = self._run(tmp_path, monkeypatch, fragment=None)
+        before = yaml_path.read_bytes()
+        with pytest.raises(emitter.RequirementsComplianceError, match="no Stage-2 compliance assessment"):
+            emitter.emit(tmp_path)
+        assert yaml_path.read_bytes() == before
+
+    def test_schema_failure_fails_without_rewriting_yaml(self, tmp_path, monkeypatch):
+        fragment = """\
+| Requirement | Status | Priority | Evidence |
+| --- | --- | --- | --- |
+| `AC-002`: Authorization | ✅ PASS | MUST | server guard |
+| `IV-001`: Validation | ❌ FAIL | MUST | F-001 |
+| `LM-001`: Logging | ✅ PASS | SHOULD | audit log |
+"""
+        emitter, yaml_path = self._run(tmp_path, monkeypatch, fragment=fragment)
+        before = yaml_path.read_bytes()
+        monkeypatch.setattr(emitter, "validate_threat_model_output", lambda _doc: (False, ["bad contract"]))
+        with pytest.raises(emitter.RequirementsComplianceError, match="bad contract"):
+            emitter.emit(tmp_path)
+        assert yaml_path.read_bytes() == before
