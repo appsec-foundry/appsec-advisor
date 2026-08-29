@@ -1297,6 +1297,59 @@ def _extract_recovery_events(output_dir: Path) -> list[dict]:
     return issues
 
 
+def _extract_business_context_reach(output_dir: Path) -> list[dict]:
+    """Report declared business context that reached no component.
+
+    The document only affects the run through the per-component projection the
+    control analyst writes into `.stride-analyst-context.json`. A context that
+    maps to nothing is indistinguishable from no context at all in every later
+    artifact, so the run has to say so — otherwise the operator reads a model
+    that silently ignored the input they supplied.
+    """
+    cfg_path = output_dir / ".skill-config.json"
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(cfg, dict) or cfg.get("skip_business_context"):
+        return []
+
+    repo_root = Path(str(cfg.get("repo_root") or ""))
+    declared = (output_dir / ".business-context-input.md").is_file() or (
+        bool(str(repo_root)) and (repo_root / "docs" / "business-context.md").is_file()
+    )
+    if not declared:
+        return []
+
+    try:
+        analyst = json.loads((output_dir / ".stride-analyst-context.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(analyst, dict):
+        return []
+
+    mapped = sum(
+        1
+        for entry in analyst.values()
+        if isinstance(entry, dict) and isinstance(entry.get("business_context"), dict) and entry["business_context"]
+    )
+    if mapped:
+        return []
+    return [
+        {
+            "category": "business_context_unmapped",
+            "severity": "warning",
+            "title": "Business context was declared but mapped to no component — it did not affect this analysis",
+            "evidence": {
+                "log_file": ".stride-analyst-context.json",
+                "log_line": 1,
+                "raw_event": f"components_with_business_context=0 of {len(analyst)}",
+                "outcome": "context_ignored",
+            },
+        }
+    ]
+
+
 def _extract_render_integrity(output_dir: Path) -> list[dict]:
     """Flag a structurally incomplete report.
 
@@ -1876,6 +1929,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))
     issues.extend(_extract_recovery_events(output_dir))
+    issues.extend(_extract_business_context_reach(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))

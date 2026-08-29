@@ -738,6 +738,18 @@ properties:
         impact_summary:
           # Legacy alias for `impact_description`.
           type: [string, "null"]
+        business_context_basis:
+          # Which declared business-context fields apply to this finding's
+          # component, written deterministically from the validated
+          # per-component projection. Field names only — the business prose is
+          # never copied into the delivered model. Absent when no context was
+          # declared, none mapped to the component, or the run skipped context.
+          type: array
+          uniqueItems: true
+          maxItems: 3
+          items:
+            type: string
+            enum: [impact_if_compromised, sensitive_assets, security_obligations]
         likelihood:
           type: string
           enum: [Critical, High, Medium, Low, Informational]

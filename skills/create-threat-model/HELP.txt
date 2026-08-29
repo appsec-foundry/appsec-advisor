@@ -147,8 +147,8 @@ TARGET & SCAN
                                interactive analysis asks for it instead).
                                Applies to a new or rebuilt analysis; refused
                                on a run that cannot read it
-  --skip-context               Run without business context and without the
-                               question
+  --skip-context               Run without business context: no question, and
+                               docs/business-context.md is left unread
 
 INCREMENTAL / CI
   --incremental                Re-analyze only components changed since last run

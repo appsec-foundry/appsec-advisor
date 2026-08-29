@@ -249,7 +249,9 @@ requirements:
       - scripts/build_stride_dispatch_manifest.py
       - scripts/triage_validate_ratings.py
       - agents/appsec-control-analyst.md
+      - agents/appsec-stride-analyzer-v2.md
       - schemas/stride-component-business-context.schema.json
+      - schemas/threat-model.output.schema.yaml
     decisions:
       - RC-1
     documents:
@@ -261,6 +263,25 @@ requirements:
       - tests/test_build_threat_model_yaml.py::test_build_meta_records_which_file_the_context_digest_came_from
       - tests/test_dispatch_manifest.py::test_declared_business_assets_make_a_component_crown_jewel
       - tests/test_triage_validate_ratings.py::test_step5b_flags_low_impact_where_context_declares_assets
+      - tests/test_build_threat_model_yaml.py::test_declared_context_marks_the_findings_of_its_component
+      - tests/test_build_threat_model_yaml.py::test_business_context_basis_never_carries_the_business_prose
+
+  REQ-BIZ-004:
+    applies_to:
+      - scripts/orchestration_controller.py
+      - scripts/build_threat_modeling_context.py
+      - scripts/aggregate_run_issues.py
+      - scripts/compose_threat_model.py
+    decisions:
+      - RC-1
+    documents:
+      - docs/threat-modeler.md
+    coverage: direct
+    guards:
+      - tests/test_orchestration_controller.py::test_declared_context_that_cannot_be_captured_stops_the_run
+      - tests/test_aggregate_run_issues.py::test_declared_context_mapping_to_no_component_is_surfaced
+      - tests/test_compose_threat_model.py::test_run_statistics_disclose_the_business_context_source
+      - tests/test_build_threat_modeling_context.py::test_skip_context_excludes_the_repository_business_context
 
   REQ-RPT-001:
     applies_to:

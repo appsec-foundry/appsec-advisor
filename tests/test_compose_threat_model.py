@@ -6483,3 +6483,53 @@ def test_exposure_and_kind_legends_define_their_vocabulary(tmp_path: Path) -> No
     for _surface, changes in compose._BOUNDARY_KIND_AXES.values():
         for change in changes:
             assert change in kind_legend, f"{change} can render in Kind but is not explained"
+
+
+# ---------------------------------------------------------------------------
+# REQ-BIZ-004 — the report names the business-context file it read
+# ---------------------------------------------------------------------------
+
+
+def _run_stats_ctx(tmp_path, yaml_data):
+    return compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data=yaml_data,
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+    )
+
+
+def test_run_statistics_disclose_the_business_context_source(tmp_path):
+    ctx = _run_stats_ctx(
+        tmp_path,
+        {
+            "meta": {"business_context_source": "docs/business-context.md"},
+            "threats": [
+                {"id": "T-001", "business_context_basis": ["sensitive_assets"]},
+                {"id": "T-002", "business_context_basis": ["impact_if_compromised"]},
+                {"id": "T-003"},
+            ],
+        },
+    )
+
+    out = compose._render_appendix_run_statistics(ctx, None, {})
+
+    assert "| Business context | `docs/business-context.md` — applies to 2 finding(s) |" in out
+
+
+def test_run_statistics_say_when_declared_context_reached_nothing(tmp_path):
+    ctx = _run_stats_ctx(
+        tmp_path,
+        {"meta": {"business_context_source": ".business-context-input.md"}, "threats": [{"id": "T-001"}]},
+    )
+
+    out = compose._render_appendix_run_statistics(ctx, None, {})
+
+    assert "| Business context | `.business-context-input.md` — mapped to no component |" in out
+
+
+def test_run_statistics_omit_the_row_without_declared_context(tmp_path):
+    out = compose._render_appendix_run_statistics(_run_stats_ctx(tmp_path, {"meta": {}, "threats": []}), None, {})
+
+    assert "Business context" not in out

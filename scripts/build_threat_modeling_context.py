@@ -360,7 +360,7 @@ def _related_context(repo_root: Path, output_dir: Path) -> tuple[str, str]:
     return declared_status, "\n".join(rows)
 
 
-def build(repo_root: Path, output_dir: Path, plugin_root: Path) -> Path:
+def build(repo_root: Path, output_dir: Path, plugin_root: Path, *, skip_business_context: bool = False) -> Path:
     repo_root = repo_root.resolve(strict=True)
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -369,17 +369,28 @@ def build(repo_root: Path, output_dir: Path, plugin_root: Path) -> Path:
 
     repo_id = _repo_id(repo_root)
     external_status, external = _external_context(plugin_root, repo_id)
-    business_path = load_business_context.effective_source(repo_root, output_dir)
+    # `--skip-context` is a decision about this run's inputs, not only about the
+    # interactive question. Honouring it here is what makes the flag mean what
+    # it says: a repository that ships docs/business-context.md is analyzed
+    # without it.
+    business_path = None if skip_business_context else load_business_context.effective_source(repo_root, output_dir)
     business_source = (
         load_business_context.RUN_ONLY_NAME
         if business_path is not None and business_path.name == load_business_context.RUN_ONLY_NAME
         else load_business_context.REPO_RELATIVE
     )
-    business = _bounded_lines(business_path, 200) or "docs/business-context.md not present in this repository."
+    business = _bounded_lines(business_path, 200) or (
+        "Business context was skipped for this run (--skip-context)."
+        if skip_business_context
+        else "docs/business-context.md not present in this repository."
+    )
     # The report names its context sources from this row, so it carries the
     # file that was actually read — a run-only source is not the repository
     # file and must not be cited as one.
-    business_status = f"found ({business_source})" if business_path is not None else "not found"
+    if skip_business_context:
+        business_status = "skipped (--skip-context)"
+    else:
+        business_status = f"found ({business_source})" if business_path is not None else "not found"
     security_found = _first(
         repo_root,
         ("SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md", "docs/security/SECURITY.md"),
@@ -481,13 +492,23 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument(
+        "--skip-business-context",
+        action="store_true",
+        help="ignore any business context file for this run (--skip-context)",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        path = build(args.repo_root, args.output_dir, args.plugin_root.resolve())
+        path = build(
+            args.repo_root,
+            args.output_dir,
+            args.plugin_root.resolve(),
+            skip_business_context=args.skip_business_context,
+        )
     except (ContextBuildError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

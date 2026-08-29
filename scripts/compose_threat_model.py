@@ -13206,6 +13206,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         | Generated            | <ISO8601> |
         | Mode                 | <full/incremental/rebuild> |
         | Assessment depth     | <quick/standard/thorough> |
+        | Business context     | `<file>` — applies to <N> finding(s)   (conditional — only when declared) |
         | Plugin version       | <semver> (analysis v<N>) |
         | Orchestrator model   | <model-id> |
         | Repository           | <path> |
@@ -13325,6 +13326,15 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
             f"| STRIDE per-category cap | {stride_cap} threat(s) per category "
             f"per component (Critical-safe; `--stride-cap`) |"
         )
+    # Declared business context, disclosed the same way as the STRIDE cap: a
+    # reader cannot otherwise tell whether a supplied document reached this
+    # model, or which file it came from. The finding count is what makes the
+    # row falsifiable — a declared context that mapped to nothing says so.
+    bc_source = meta.get("business_context_source")
+    if bc_source:
+        bc_findings = sum(1 for t in (ctx.yaml_data.get("threats") or []) if t.get("business_context_basis"))
+        bc_reach = f"applies to {bc_findings} finding(s)" if bc_findings else "mapped to no component"
+        lines.append(f"| Business context | `{bc_source}` — {bc_reach} |")
     plugin_cell = f"{plugin_v}" + (f" (analysis v{analysis_v})" if analysis_v else "")
     lines.append(f"| Plugin version | {plugin_cell or '—'} |")
     lines.append(f"| Orchestrator model | {orch_model} |")

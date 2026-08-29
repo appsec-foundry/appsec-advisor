@@ -19,6 +19,7 @@ These tests lock in the M3.2 fixes for the bugs surfaced during the
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -1554,3 +1555,54 @@ def test_canary_aggregates_multiple_reasons_once():
         "no_recommender_for_category",
     ]
     assert sorted(canaries[0]["evidence"]["affected_categories"]) == ["max_turns_subagent", "novel_category"]
+
+
+# ---------------------------------------------------------------------------
+# REQ-BIZ-004 — declared context that reached no component is surfaced
+# ---------------------------------------------------------------------------
+
+
+def _context_run(tmp_path, analyst: dict, *, skip: bool = False):
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "business-context.md").write_text("Handles payouts.\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    cfg = {"repo_root": str(repo), "output_dir": str(out)}
+    if skip:
+        cfg["skip_business_context"] = True
+    (out / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (out / ".stride-analyst-context.json").write_text(json.dumps(analyst), encoding="utf-8")
+    return out
+
+
+def test_declared_context_mapping_to_no_component_is_surfaced(tmp_path):
+    out = _context_run(tmp_path, {"api": {"interfaces": ["http"]}, "db": {}})
+
+    issues = agg._extract_business_context_reach(out)
+
+    assert len(issues) == 1
+    assert issues[0]["category"] == "business_context_unmapped"
+    assert issues[0]["severity"] == "warning"
+    assert "components_with_business_context=0 of 2" in issues[0]["evidence"]["raw_event"]
+
+
+def test_mapped_business_context_produces_no_issue(tmp_path):
+    out = _context_run(tmp_path, {"api": {"business_context": {"sensitive_assets": ["funds"]}}})
+
+    assert agg._extract_business_context_reach(out) == []
+
+
+def test_no_issue_when_the_run_declared_no_business_context(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(tmp_path), "output_dir": str(out)}), "utf-8")
+    (out / ".stride-analyst-context.json").write_text(json.dumps({"api": {}}), encoding="utf-8")
+
+    assert agg._extract_business_context_reach(out) == []
+
+
+def test_skipped_business_context_produces_no_issue(tmp_path):
+    out = _context_run(tmp_path, {"api": {}}, skip=True)
+
+    assert agg._extract_business_context_reach(out) == []

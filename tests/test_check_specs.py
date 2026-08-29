@@ -199,7 +199,7 @@ def test_applicable_ignores_paths_outside_repository(catalog_root):
 def test_main_reports_requirement_and_coverage_counts(capsys):
     assert check_specs.main([]) == 0
     output = capsys.readouterr().out
-    assert "26 requirements" in output
+    assert "27 requirements" in output
     assert "direct" in output and "partial" in output and "advisory" in output
 
 

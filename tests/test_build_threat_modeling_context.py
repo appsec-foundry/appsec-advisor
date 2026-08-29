@@ -234,3 +234,31 @@ def test_escapes_repository_identity_in_the_metadata_table(tmp_path, monkeypatch
     text = path.read_text(encoding="utf-8")
     assert "| Repository | repo \\| injected ## heading |" in text
     assert "\n## heading" not in text
+
+
+# ---------------------------------------------------------------------------
+# REQ-BIZ-004 — --skip-context runs without business context, not just without
+# the question
+# ---------------------------------------------------------------------------
+
+
+def test_skip_context_excludes_the_repository_business_context(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "business-context.md").write_text(
+        "SENTINEL settles customer payouts for merchants.\n", encoding="utf-8"
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+
+    builder.build(repo, out, Path(__file__).resolve().parent.parent, skip_business_context=True)
+    skipped = (out / ".threat-modeling-context.md").read_text(encoding="utf-8")
+
+    assert "SENTINEL" not in skipped
+    assert "| Business Context File | skipped (--skip-context) |" in skipped
+
+    builder.build(repo, out, Path(__file__).resolve().parent.parent)
+    included = (out / ".threat-modeling-context.md").read_text(encoding="utf-8")
+
+    assert "SENTINEL" in included
+    assert "| Business Context File | found (docs/business-context.md) |" in included

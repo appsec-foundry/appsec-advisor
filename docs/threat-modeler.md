@@ -304,9 +304,11 @@ Applicable policy, contractual, legal, or regulatory duties.
 Conditions you assume rather than enforce in code.
 ```
 
-Partial answers are fine. Named sensitive assets keep their components in standard scope and protect them from ceiling drops. They do not by themselves disable cheap STRIDE. When technical ranking scores are equal, mapped compromise impact, sensitive assets, or obligations place affected findings and mitigations first. This tie-breaker does not change severity or mitigation priority.
+Partial answers are fine. Named sensitive assets keep their components in standard scope and protect them from ceiling drops. They do not by themselves disable cheap STRIDE. Declared compromise impact and the sensitive assets an attack path actually reaches weight the impact rating of a finding the repository evidence already supports; they never create a finding, raise likelihood, or relax a severity cap. When technical ranking scores are equal, mapped compromise impact, sensitive assets, or obligations place affected findings and mitigations first.
 
-On a fresh interactive run, you can paste this context or provide a raw Markdown or plain-text URL. The URL is checked before it is fetched, and content containing a credential is refused. Use `--skip-context` if you do not want the question. A headless run accepts `--context <url|path>` for that run only; it never writes `docs/business-context.md`.
+The report's run statistics name the file the context came from and how many findings it applied to, and each of those findings records which declared fields apply. A declared context that maps to no component is reported as a run issue.
+
+On a fresh interactive run, you can paste this context or provide a raw Markdown or plain-text URL. The URL is checked before it is fetched, and content containing a credential is refused. `--skip-context` runs without business context at all: no question, and a stored `docs/business-context.md` is left unread. A headless run accepts `--context <url|path>` for that run only; it never writes `docs/business-context.md`. The run captures that source itself before the analysis starts, so a URL the policy rejects, an oversized file, or a source carrying a credential stops the run with the reason instead of scanning as if nothing had been passed.
 
 Changing persistent context does not re-rate an existing model automatically. Run `--full` to apply it to every finding. Keep actor definitions, abuse cases, trust boundaries, threat ratings, and claimed controls out of this file; they have separate inputs or require repository evidence.
 

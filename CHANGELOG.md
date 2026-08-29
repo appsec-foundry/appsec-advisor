@@ -26,8 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - A missing lockfile, an undigested base image, a missing workflow `permissions:` block and an unpinned action are now Medium instead of High.
+- Business context supplied with `--context` is now captured by the run itself, and a source that cannot be read stops the run instead of being dropped in silence.
+- The report's run statistics name the business-context file that was read and how many findings it applied to, and each of those findings records which declared fields apply to it.
 
 ### Fixed
+
+- `--skip-context` now runs without business context, instead of only skipping the question while still reading `docs/business-context.md`.
+- Business context supplied for one run no longer leaks into the next run in the same output directory.
+- A declared business context that maps to no component is now reported as a run issue instead of passing unnoticed.
 
 - The requirements harvester now takes the whole requirement section, recognises IDs written without brackets, and no longer duplicates entries.
 - Section 9 now says when abuse-case verification did not run instead of reporting that no abuse case was identified, and a quick run names the skipped verification in its scope banner.
@@ -43,7 +49,7 @@ labelled the release line itself.
 
 - A scan now reports the sandbox, approval, hook and tool-trust posture set by a repository's committed coding-agent configuration for Claude Code, Codex, Copilot, Gemini CLI and Kiro.
 - The requirements harvester can emit selected functional requirements as single-file OpenSpec and SpecDD specifications.
-- New and rebuilt analyses can collect optional business context interactively or through `--context`, use it to give named sensitive-asset components full-depth analysis and break ranking ties, or bypass collection with `--skip-context`.
+- New and rebuilt analyses can collect optional business context interactively or through `--context`, use it to keep named sensitive-asset components in scope and to weight finding impact and order, or leave it out with `--skip-context`.
 - LLM analysis now checks prompt-only behavioural limits, action auditability, permitted data classes, and approval gates, with organization policy supplied through `llm_policy`. See `docs/org-profiles.md`.
 - Threat models can now be exported as alpha OWASP Threat Dragon v2 JSON for Threat Dragon and ThreatAtlas with `--formats threatdragon` or `create-threat-model --threatdragon`. See `docs/threat-dragon-export.md`.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.

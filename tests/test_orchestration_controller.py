@@ -5926,3 +5926,69 @@ class TestAbortLatchIsReversibleAndAuditable:
         action = controller.clear_abort(out, "nothing to do")
         assert action["action"] == "run_gate"
         assert "RUN_ABORT_CLEARED" not in (out / ".agent-run.log").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# REQ-BIZ-004 — a declared --context source reaches the run or stops it
+# ---------------------------------------------------------------------------
+
+
+def test_declared_context_that_cannot_be_captured_stops_the_run(tmp_path):
+    """Silently analyzing without the document the operator passed is the
+    failure this replaces: the capture is deterministic and fails closed."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+    cfg = {"repo_root": str(repo), "output_dir": str(out), "business_context_source": str(tmp_path / "missing.md")}
+
+    with pytest.raises(controller.ControllerError):
+        controller._capture_business_context(cfg, [])
+
+    assert not (out / ".business-context-input.md").exists()
+
+
+def test_declared_context_is_captured_before_stage_one(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+    source = tmp_path / "ctx.md"
+    source.write_text("Settles customer payouts.\n", encoding="utf-8")
+    receipts: list[str] = []
+
+    controller._capture_business_context(
+        {"repo_root": str(repo), "output_dir": str(out), "business_context_source": str(source)}, receipts
+    )
+
+    captured = out / ".business-context-input.md"
+    assert captured.is_file()
+    assert "Settles customer payouts." in captured.read_text(encoding="utf-8")
+    assert receipts == ["business context: captured for this run"]
+    # Never persisted into the analyzed repository.
+    assert not (repo / "docs" / "business-context.md").exists()
+
+
+def test_no_declared_context_captures_nothing(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    receipts: list[str] = []
+
+    controller._capture_business_context({"repo_root": str(tmp_path), "output_dir": str(out)}, receipts)
+
+    assert receipts == []
+    assert not (out / ".business-context-input.md").exists()
+
+
+def test_full_preflight_cleanup_drops_a_stale_run_only_context(tmp_path):
+    """`effective_source` prefers the run-only file, so one left behind by an
+    earlier run would shadow the repository's own document."""
+    out = tmp_path / "out"
+    out.mkdir()
+    stale = out / ".business-context-input.md"
+    stale.write_text("Context from a previous run.\n", encoding="utf-8")
+
+    removed = controller._cleanup_full(out)
+
+    assert ".business-context-input.md" in removed
+    assert not stale.exists()

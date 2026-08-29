@@ -3085,3 +3085,78 @@ def test_already_valid_cwe_is_returned_byte_identical(raw):
     """
     assert re.match(r"^CWE-\d+$", raw), "fixture must already satisfy the schema"
     assert b._normalize_cwe(raw) == raw
+
+
+# ---------------------------------------------------------------------------
+# REQ-BIZ-003 — a finding names the declared context that weights it
+# ---------------------------------------------------------------------------
+
+
+def _analyst_context(tmp_path: Path, payload: dict) -> Path:
+    (tmp_path / ".stride-analyst-context.json").write_text(json.dumps(payload), encoding="utf-8")
+    return tmp_path
+
+
+def test_declared_context_marks_the_findings_of_its_component(tmp_path):
+    """Only components the analyst mapped material context onto are marked, and
+    only the three fields the ranking tie-break also treats as material."""
+    _analyst_context(
+        tmp_path,
+        {
+            "payments-svc": {
+                "business_context": {
+                    "impact_if_compromised": "Loss of customer funds.",
+                    "sensitive_assets": ["settlement balances"],
+                }
+            },
+            # business_purpose is descriptive, not material: no mark.
+            "docs-site": {"business_context": {"business_purpose": "Publishes marketing pages."}},
+        },
+    )
+    threats = [
+        {"id": "T-001", "component": "payments-svc"},
+        {"id": "T-002", "component": "docs-site"},
+        {"id": "T-003", "component": "unmapped-svc"},
+    ]
+
+    marked = b._apply_business_context_basis(threats, tmp_path, {})
+
+    assert marked == 1
+    assert threats[0]["business_context_basis"] == ["impact_if_compromised", "sensitive_assets"]
+    assert "business_context_basis" not in threats[1]
+    assert "business_context_basis" not in threats[2]
+
+
+def test_business_context_basis_never_carries_the_business_prose(tmp_path):
+    """The delivered model records which fields applied, never what they said."""
+    secret_prose = "Settles payouts for merchant ACME under contract 4711."
+    _analyst_context(
+        tmp_path,
+        {"payments-svc": {"business_context": {"impact_if_compromised": secret_prose}}},
+    )
+    threats = [{"id": "T-001", "component": "payments-svc"}]
+
+    b._apply_business_context_basis(threats, tmp_path, {})
+
+    assert threats[0]["business_context_basis"] == ["impact_if_compromised"]
+    assert secret_prose not in json.dumps(threats)
+
+
+def test_skip_context_leaves_every_finding_unmarked(tmp_path):
+    _analyst_context(tmp_path, {"payments-svc": {"business_context": {"sensitive_assets": ["funds"]}}})
+    threats = [{"id": "T-001", "component": "payments-svc"}]
+
+    assert b._apply_business_context_basis(threats, tmp_path, {"skip_business_context": True}) == 0
+    assert "business_context_basis" not in threats[0]
+
+
+def test_meta_reports_no_business_context_when_the_run_skipped_it(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "business-context.md").write_text("Handles payouts.\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    cfg = {"output_dir": str(out), "skip_business_context": True}
+
+    assert b._business_context_digest(cfg, repo) is None
+    assert b._business_context_source(cfg, repo) is None

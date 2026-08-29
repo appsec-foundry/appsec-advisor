@@ -24,9 +24,15 @@ def test_business_context_reaches_the_default_full_runtime():
     assert "SKIP_BUSINESS_CONTEXT = skip_business_context" in runtime
     assert "skip_business_context` is true" in runtime
     assert runtime.index("modes/business-context.md") < runtime.index("## 3. Bind compact state")
-    assert "Step 0 — A source was supplied" in mode
     assert "load_business_context.py" in mode
     assert "business-context question" in router
+
+    # The mode file is the interactive question only. A `--context` source is
+    # captured by the controller pre-flight, so the supplied document no longer
+    # depends on this instruction being followed.
+    assert "Step 0" not in mode
+    assert "interactive question only" in mode
+    assert "business_context_source` is\nnon-empty" in runtime
 
 
 def test_full_runtime_loads_only_controller_returned_stage_surfaces():

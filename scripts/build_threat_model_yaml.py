@@ -64,6 +64,7 @@ sys.path.insert(0, str(_SCRIPT_DIR))
 import load_business_context  # noqa: E402
 import requirements_trace  # noqa: E402
 import secret_scan  # noqa: E402
+import triage_compute_ranking  # noqa: E402
 from _atomic_io import atomic_write_text  # noqa: E402
 from _boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from _boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
@@ -807,9 +808,35 @@ def _output_mode(skill_cfg: dict) -> str:
     return "incremental" if str(skill_cfg.get("mode") or "full").lower() == "incremental" else "full"
 
 
+def _apply_business_context_basis(threats: list[dict], output_dir: Path, skill_cfg: dict) -> int:
+    """Record on each finding which declared context fields apply to its component.
+
+    Everything downstream of the STRIDE analyzers — the report, the exports, the
+    follow-on tools — reads this file and nothing else, so without this the run
+    cannot say whether the supplied document reached a given finding. The value
+    carries field names only, never the business prose: the document stays out of
+    the delivered model, and the record stays deterministic.
+
+    Same three material fields the ranking tie-break uses, from the same
+    validated projection, so a finding cannot be marked here and unmarked there.
+    Returns how many findings were marked."""
+    if skill_cfg.get("skip_business_context"):
+        return 0
+    basis_by_component = triage_compute_ranking._business_context_basis_by_component(output_dir)
+    if not basis_by_component:
+        return 0
+    marked = 0
+    for threat in threats:
+        basis = triage_compute_ranking._finding_business_context_basis(threat, basis_by_component)
+        if basis:
+            threat["business_context_basis"] = list(basis)
+            marked += 1
+    return marked
+
+
 def _business_context_digest(skill_cfg: dict, repo_root: Path) -> str | None:
     output_dir = skill_cfg.get("output_dir")
-    if not output_dir:
+    if not output_dir or skill_cfg.get("skip_business_context"):
         return None
     return load_business_context.context_digest(repo_root, Path(output_dir))
 
@@ -821,7 +848,7 @@ def _business_context_source(skill_cfg: dict, repo_root: Path) -> str | None:
     say later whether the context was edited or was never stored. The name can.
     """
     output_dir = skill_cfg.get("output_dir")
-    if not output_dir:
+    if not output_dir or skill_cfg.get("skip_business_context"):
         return None
     path = load_business_context.effective_source(repo_root, Path(output_dir))
     if path is None:
@@ -2664,6 +2691,10 @@ def main() -> int:
     threats, threat_warnings = build_threats(merged, register_floor=skill_cfg.get("register_severity_floor", "medium"))
     for w in threat_warnings:
         sys.stderr.write(f"  {w}\n")
+
+    marked = _apply_business_context_basis(threats, od, skill_cfg)
+    if marked:
+        sys.stderr.write(f"  business context applies to {marked} finding(s)\n")
 
     # The configured catalog decides what the organisation requires. An analyzer
     # ID the catalog never declared is dropped here, before it can reach

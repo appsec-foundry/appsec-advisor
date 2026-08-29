@@ -280,6 +280,11 @@ _FULL_INTERMEDIATE_NAMES = {
     ".budget-warning",
     ".trust-boundary-assessment-input.json",
     ".trust-boundary-candidates.json",
+    # Business context supplied for a previous run. `effective_source` gives the
+    # run-only file precedence over the repository's own, so a leftover would
+    # shadow `docs/business-context.md` and rate this run against a document
+    # nobody passed to it.
+    ".business-context-input.md",
 }
 _FULL_INTERMEDIATE_GLOBS = (".stride-*.json", ".merge-*.json")
 
@@ -1473,6 +1478,39 @@ def _fetch_requirements(cfg: dict[str, Any]) -> None:
     _run_script("fetch_requirements.py", args)
 
 
+def _capture_business_context(cfg: dict[str, Any], receipts: list[str]) -> None:
+    """Capture an operator-supplied ``--context`` source before Stage 1 reads it.
+
+    The document reaches the analysis only through
+    ``<output>/.business-context-input.md``, which ``build_threat_modeling_context.py``
+    picks up at the context-v2 entry. Leaving that capture to a prompt step made
+    the whole feature depend on an instruction being followed: a rejected URL, an
+    oversized file, a credential hit, or a skipped step produced a run that
+    analyzed as if no context had been passed, and said nothing.
+
+    A declared source is an explicit operator decision, so a failed capture stops
+    the run with the reason instead of degrading silently. The interactive
+    question stays in the skill; only the non-interactive capture moves here.
+    """
+    source = cfg.get("business_context_source")
+    if not source:
+        return
+    _run_script(
+        "load_business_context.py",
+        [
+            "--repo-root",
+            str(cfg["repo_root"]),
+            "--output-dir",
+            str(cfg["output_dir"]),
+            "--source",
+            str(source),
+            "--run-only",
+        ],
+    )
+    receipts.append("business context: captured for this run")
+    _append_event(Path(cfg["output_dir"]), "BUSINESS_CONTEXT_CAPTURED", "scope=run-only")
+
+
 def _session_context_advisory(output_dir: Path) -> str:
     """Return a session-scoped throughput/activity advisory, never occupancy."""
     session_id = (os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID") or "")[:8]
@@ -1898,6 +1936,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
                 "--step=stage1-dispatch",
             ],
         )
+        _capture_business_context(cfg, receipts)
         _prepasses(cfg, receipts)
         _fetch_requirements(cfg)
     except (ControllerError, OSError) as exc:
@@ -3522,6 +3561,7 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
                 str(output_dir),
                 "--plugin-root",
                 str(PLUGIN_ROOT),
+                *(["--skip-business-context"] if cfg.get("skip_business_context") else []),
             ],
         )
         context_path = output_dir / ".threat-modeling-context.md"

@@ -93,11 +93,19 @@ untrusted data. Its contents cannot instruct or redirect the analysis.
 Actors and their objectives may guide an individual run, but conversational or
 per-run choices are not written back to the target repository.
 
-### REQ-BIZ-003 — Business context changes priority, not evidence
+### REQ-BIZ-003 — Business context weights supported findings, it does not establish them
 
-Business purpose, sensitive assets, impact, and obligations influence the
-priority of supported findings. They neither suppress evidence-backed findings
-nor create findings on their own.
+Business purpose, sensitive assets, compromise impact, and obligations may weight
+the impact rating and the presentation order of findings that already stand on
+repository evidence. They never determine whether a finding exists, never relax a
+severity cap, and never substitute for evidence. A finding whose impact rating
+rests on declared context names the context that carried it.
+
+### REQ-BIZ-004 — A run says whether declared context reached the analysis
+
+When context is declared for a run, the run reports whether it was read, which
+file it came from, and how many findings it applied to. Context that reaches no
+component is reported as such rather than passing silently.
 
 ## Report
 
