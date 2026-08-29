@@ -21,9 +21,10 @@ pregeneration and the filesystem-authoritative compose handoff.
    ▶ Stage 2 - Report rendering starting  (expect ~<EST_STAGE2> min, model: <RENDERER_MODEL>, renderer budget)
      ⟶ Authoring required LLM fragments and invoking the deterministic compose tail
    ```
-3. Reduce `RENDERER_MODEL` to a bare Agent model alias and set it explicitly.
-   Pass all non-null aliases from `SKILL-full-runtime.md`. Request only concise
-   status, artifact paths, and blockers; never reproduce report bodies.
+3. Set the Agent model to `dispatch_values.renderer_model_alias` verbatim;
+   `RENDERER_MODEL` is an operator id the Agent tool rejects. Pass all non-null
+   aliases from `SKILL-full-runtime.md`. Request only concise status, artifact
+   paths, and blockers; never reproduce report bodies.
 
    - `ms-only`: call only `appsec-advisor:appsec-ms-renderer`, description
      `Render: Management Summary`. This is default

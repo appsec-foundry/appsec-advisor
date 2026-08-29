@@ -1057,7 +1057,26 @@ class TestSecretMaskingInLogOutput:
         assert "RealSecret123" not in log
 
     def test_bash_warn_masks_secret_in_response(self, tmp_path):
-        """Secrets in bash error responses must be masked in BASH_WARN log entries."""
+        """A secret on the reported diagnostic line must be masked, not dropped."""
+        event = make_post_tool_event(
+            "Bash",
+            inp={"command": "cat config.env"},
+            resp="Permission denied reading api_key='AIzaSyDk1234567890'",
+        )
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "BASH_WARN" in log
+        assert "AIzaSyDk1234567890" not in log
+        assert "****" in log
+
+    def test_bash_warn_never_leaks_a_secret_from_an_unreported_line(self, tmp_path):
+        """A secret elsewhere in the response must not reach the log either.
+
+        BASH_WARN reports the diagnostic line rather than the head of the raw
+        blob, so this secret is never selected in the first place. Masking is
+        what makes that safe rather than lucky — assert the outcome, since
+        which line gets picked is an implementation choice that may change.
+        """
         event = make_post_tool_event(
             "Bash",
             inp={"command": "cat config.env"},
@@ -1067,7 +1086,6 @@ class TestSecretMaskingInLogOutput:
         assert rc == 0
         assert "BASH_WARN" in log
         assert "AIzaSyDk1234567890" not in log
-        assert "****" in log
 
 
 # ===========================================================================

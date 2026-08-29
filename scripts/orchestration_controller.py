@@ -431,6 +431,12 @@ _DISPATCH_KEYS = (
     "max_cost_usd",
 )
 _DISPATCH_EXTRA_KEYS = (
+    "abuse_verifier_model_alias",
+    "architect_model_alias",
+    "qa_content_model_alias",
+    "qa_routine_model_alias",
+    "renderer_model_alias",
+    "model_pins_dropped",
     "actor_discovery_model",
     "compat_label",
     "estimate_source",
@@ -1644,6 +1650,75 @@ def _duration_estimate(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Config keys naming a model an agent is actually dispatched with. Deliberately
+# an allowlist, not a ``*_model`` suffix match: ``reasoning_model`` carries a
+# tier label (``sonnet-economy``), so a suffix rule mints a meaningless alias
+# for it — which is how the first cut of this function broke every action
+# against the ``dispatch_values`` property-name enum.
+_AGENT_MODEL_KEYS = (
+    "abuse_verifier_model",
+    "actor_discovery_model",
+    "architect_model",
+    "config_scanner_model",
+    "context_resolver_model",
+    "evidence_verifier_model",
+    "merger_model",
+    "orchestrator_model",
+    "qa_content_model",
+    "qa_routine_model",
+    "recon_scanner_model",
+    "renderer_model",
+    "stride_model",
+    "triage_model",
+)
+
+# The subset a thin runtime hands to the Agent tool straight out of
+# ``dispatch_values``: Stage 1d, 2, 3 and 4 dispatch from these keys by name.
+# Every context-v2 role is excluded on purpose — those already receive a
+# reduced ``dispatch_jobs[].model`` from ``_context_v2_job_metadata``, so an
+# alias here would be a second copy of an answer they already have, against a
+# ``maxProperties`` budget the transition payload is deliberately kept under.
+_DISPATCH_ALIAS_MODEL_KEYS = (
+    "abuse_verifier_model",
+    "architect_model",
+    "qa_content_model",
+    "qa_routine_model",
+    "renderer_model",
+)
+
+
+def _with_model_aliases(values: dict[str, Any]) -> dict[str, Any]:
+    """Add a dispatch-ready ``<role>_model_alias`` beside every ``<role>_model``.
+
+    ``*_model`` carries operator intent and stays untouched: on the headless
+    path an exact id like ``claude-sonnet-5`` is honoured, and rewriting it here
+    would throw that away. But the interactive Agent tool accepts only the
+    closed alias set, so the same field cannot serve both callers. Emitting the
+    reduction as its own key lets a thin runtime pass a value straight through
+    instead of converting it in prose — the step that was skipped at Stage 2 of
+    run a2a0e355, costing a rejected dispatch.
+
+    ``model_pins_dropped`` names the roles whose configured version pin the
+    alias set cannot express, so an inert knob is visible rather than silent.
+
+    Every key is emitted unconditionally — ``None`` for a role this run does
+    not staff, an empty string when no pin was dropped. A payload whose shape
+    depends on the config is one a consumer has to probe before reading, and
+    the dispatch-key drift guard could no longer state an exact set.
+    """
+    enriched = dict(values)
+    for key in _DISPATCH_ALIAS_MODEL_KEYS:
+        value = values.get(key)
+        enriched[f"{key}_alias"] = _bare_agent_model(value) if value is not None else None
+    dropped = [
+        f"{key}={values[key]}"
+        for key in _AGENT_MODEL_KEYS
+        if values.get(key) is not None and not _model_pin_is_expressible(values[key])
+    ]
+    enriched["model_pins_dropped"] = ", ".join(dropped)
+    return enriched
+
+
 def _dispatch_values_transition(cfg: dict[str, Any]) -> dict[str, Any]:
     """Config subset for a mid-run transition, not a binding point.
 
@@ -1668,7 +1743,7 @@ def _dispatch_values_transition(cfg: dict[str, Any]) -> dict[str, Any]:
     values["actor_discovery_model"] = (
         cfg.get("actor_discovery_model") or os.environ.get("APPSEC_ACTOR_DISCOVERY_MODEL") or "sonnet"
     )
-    return values
+    return _with_model_aliases(values)
 
 
 def _dispatch_values(
@@ -1693,7 +1768,7 @@ def _dispatch_values(
         }
     )
     values.update(estimate or _duration_estimate(cfg))
-    return values
+    return _with_model_aliases(values)
 
 
 def _missing_permissions_action(cfg: dict[str, Any], repo_root: Path, output_dir: Path) -> dict[str, Any] | None:
@@ -2403,13 +2478,35 @@ def _context_v2_common(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Claude Agent's closed model vocabulary. The tool rejects anything else
+# outright (``InputValidationError``), so every value the orchestrator passes as
+# an Agent ``model`` has to come from this set — an operator id such as
+# ``claude-sonnet-5`` is not a member and never was.
+_AGENT_MODEL_ALIASES = ("opus", "haiku", "sonnet", "fable")
+
+
 def _bare_agent_model(value: Any) -> str:
     """Reduce an operator-selected model ID to Claude Agent's closed aliases."""
     lowered = str(value or "sonnet").lower()
-    for alias in ("opus", "haiku", "sonnet"):
+    for alias in _AGENT_MODEL_ALIASES:
         if alias in lowered:
             return alias
     return "sonnet"
+
+
+def _model_pin_is_expressible(value: Any) -> bool:
+    """Report whether an operator model id survives the reduction to an alias.
+
+    ``claude-sonnet-5`` and ``claude-sonnet-4-6`` both reduce to ``sonnet``:
+    the alias set has no way to name a Sonnet *version*, so a version pin is
+    silently dropped on every interactive dispatch. The resolver sets such pins
+    deliberately (``resolve_config.py`` triage/merger/renderer/abuse_verifier),
+    which is sound on the headless path and inert here. Saying so out loud is
+    the difference between a documented trade-off and a knob that quietly does
+    nothing.
+    """
+    text = str(value or "").strip().lower()
+    return not text or text in _AGENT_MODEL_ALIASES
 
 
 def _context_v2_job_metadata(cfg: dict[str, Any], role: str) -> dict[str, str]:
@@ -4232,6 +4329,17 @@ def _context_v2_stride_wave_action(
     jobs: list[dict[str, Any]] = []
     structured: list[dict[str, Any]] = []
     seen: set[str] = set()
+    # The same coverage test the completion aggregator applies, moved to the one
+    # moment it can still matter: reported at the end of a run it describes an
+    # analysis already written to the report; reported here it reaches the
+    # operator while the wave is still ahead of them. Advisory by design —
+    # routing this thin is a judgment the analyst is allowed to make — so a
+    # missing helper costs the advisory, never the dispatch.
+    thin_coverage: list[str] = []
+    try:
+        from aggregate_run_issues import evidence_coverage_shortfall as _coverage_shortfall  # noqa: PLC0415
+    except ImportError:
+        _coverage_shortfall = None
     for claimed_component in claimed_components:
         claimed_id = claimed_component.get("component_id") if isinstance(claimed_component, dict) else None
         component = by_id.get(claimed_id)
@@ -4255,6 +4363,17 @@ def _context_v2_stride_wave_action(
         slices = bundle.get("source_slices")
         if not isinstance(slices, list):
             raise ControllerError(f"stride-evidence-bundle-v1 has no source_slices for {component_id}")
+        if _coverage_shortfall is not None:
+            covered = len(
+                {
+                    row.get("path")
+                    for row in slices
+                    if isinstance(row, dict) and row.get("repository_id") == "primary" and row.get("path")
+                }
+            )
+            ratio = _coverage_shortfall(component.get("file_count"), covered)
+            if ratio is not None:
+                thin_coverage.append(f"{component_id} {covered}/{component.get('file_count')} ({ratio:.0%})")
         bundle_receipt = _validated_json_receipt(
             output_dir,
             bundle_path,
@@ -4480,7 +4599,8 @@ def _context_v2_stride_wave_action(
         "dispatch_jobs": jobs,
         "artifact_receipts": structured,
         "receipts": [
-            f"Context-v2 STRIDE wave admitted for {len(jobs)} component(s) after persisted attempt accounting"
+            f"Context-v2 STRIDE wave admitted for {len(jobs)} component(s) after persisted attempt accounting",
+            *([f"Thin evidence routing (advisory): {'; '.join(thin_coverage[:6])}"] if thin_coverage else []),
         ],
     }
     try:

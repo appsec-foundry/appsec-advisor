@@ -33,7 +33,9 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    JOB_ID=<dispatch_jobs[].job_id>
    ```
 
-   Use the job model alias; never replace a versioned ID with 4.6. Run
+   Use the job model alias — `dispatch_jobs[].model`, else
+   `dispatch_values.abuse_verifier_model_alias`; `MODEL_ID` keeps the operator
+   id, which the Agent tool rejects. Never replace a versioned ID with 4.6. Run
    one blocking waiter with every job's candidate id:
 
    ```bash

@@ -48,11 +48,12 @@ exit exactly:
   non-zero exit is blocking. A `repair_required` status enters the repair loop.
 
 For a QA dispatch, use `appsec-advisor:appsec-qa-reviewer`, description
-`QA review of threat model`, and an explicit model: `QA_CONTENT_MODEL` when the
-repair plan contains `invariants`, `ms_structure`, or `contract`; otherwise
-`QA_ROUTINE_MODEL`. Reduce that value to a bare Agent model alias before passing
-it, as in Stage 2 — the resolved config carries operator model IDs such as
-`claude-sonnet-4-6`, which the Agent tool rejects outright. Pass only `REPO_ROOT`, `OUTPUT_DIR`,
+`QA review of threat model`, and an explicit model taken verbatim from
+`dispatch_values.qa_content_model_alias` when the repair plan contains
+`invariants`, `ms_structure`, or `contract`; otherwise
+`dispatch_values.qa_routine_model_alias`. The matching `QA_CONTENT_MODEL` /
+`QA_ROUTINE_MODEL` values are operator model IDs such as `claude-sonnet-4-6`,
+which the Agent tool rejects outright. Pass only `REPO_ROOT`, `OUTPUT_DIR`,
 `CONTEXT_FILE=$OUTPUT_DIR/.threat-modeling-context.md`, `QA_DEPTH`, and the
 repair-plan path. The reviewer is read-only for canonical report artifacts and
 must write `.qa-status.json` last.

@@ -947,6 +947,41 @@ def _clip(s, n: int = 120) -> str:
     return s[:n] + "…" if len(s) > n else s
 
 
+# Same shape as the BASH_WARN trigger: a tool speaking about itself at column 0.
+_DIAGNOSTIC_ANCHOR_RE = re.compile(r"(?m)^[ \t]*(?:usage:|\S*:\s*error:|\S+\.(?:py|sh):\s+\S)")
+
+
+def _diagnostic_excerpt(stderr_text: str, stdout_text: str, resp: object, error_kw=(), limit: int = 240) -> str:
+    """Return the line that explains a warning, not the head of a dict repr.
+
+    ``str(resp)`` starts ``{'stdout': "…``, so clipping it spends the budget on
+    a wrapper and cuts the message off mid-sentence. Run a2a0e355 lost the
+    reason for three ``cannot validate STRIDE logging depth`` warnings that way
+    — the log had recorded the warning and truncated its own evidence, leaving
+    the defect permanently undiagnosable. Prefer the diagnostic line itself,
+    and only fall back to the blob when nothing else is recognisable.
+    """
+    sources = [text for text in (stderr_text, stdout_text) if text]
+    for source in sources:
+        match = _DIAGNOSTIC_ANCHOR_RE.search(source)
+        if match:
+            return _clip(source[match.start() :].splitlines()[0].strip(), limit)
+    for source in sources:
+        for line in source.splitlines():
+            if any(kw in line.lower() for kw in error_kw):
+                # A traceback header announces a failure without naming it; the
+                # exception on the last line is the part worth keeping.
+                if line.strip().startswith("Traceback (most recent call last)"):
+                    tail = [row.strip() for row in source.splitlines() if row.strip()]
+                    return _clip(tail[-1], limit)
+                return _clip(line.strip(), limit)
+    for source in sources:
+        for line in source.splitlines():
+            if line.strip():
+                return _clip(line.strip(), limit)
+    return _clip(str(resp), limit)
+
+
 def _runtime_agent_id(value: object) -> str:
     """Extract Claude Code's existing agentId from a tool result."""
     if isinstance(value, dict):
@@ -3232,7 +3267,8 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
             is_warn = False
         if is_warn:
             cmd = _mask_secrets(_clip(cmd_str, 80))
-            _write("WARN ", "BASH_WARN", f"cmd={cmd}  resp={_mask_secrets(_clip(str(resp), 100))}{dur_tail}", sid)
+            excerpt = _diagnostic_excerpt(stderr_text, stdout_text, resp, ERROR_KW)
+            _write("WARN ", "BASH_WARN", f"cmd={cmd}  resp={_mask_secrets(excerpt)}{dur_tail}", sid)
         else:
             # BASH_OK closes the diagnostic gap: previously only WARN-Bash hit
             # the log, so any successful long-running script (compose_threat_model.py,

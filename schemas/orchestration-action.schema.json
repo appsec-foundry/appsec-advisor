@@ -86,7 +86,8 @@
     },
     "dispatch_values": {
       "type": "object",
-      "maxProperties": 80,
+      "$comment": "maxProperties is a structural guard, not the size limit — MAX_ACTION_BYTES enforces payload size (a full dispatch_values is ~2.9KB of a 64KB cap). Raised from 80 to 96 when the per-role model aliases landed: the emitted set reached 79 and left no room, and a cap one key from the edge fails a live run's action validation rather than a test. The propertyNames enum is the real gate on what may appear here.",
+      "maxProperties": 96,
       "propertyNames": {
         "enum": [
           "actor_discovery_model",
@@ -161,7 +162,13 @@
           "write_sarif",
           "write_threatdragon",
           "write_yaml",
-          "abuse_verifier_model"
+          "abuse_verifier_model",
+          "abuse_verifier_model_alias",
+          "architect_model_alias",
+          "qa_content_model_alias",
+          "qa_routine_model_alias",
+          "renderer_model_alias",
+          "model_pins_dropped"
         ]
       },
       "properties": {

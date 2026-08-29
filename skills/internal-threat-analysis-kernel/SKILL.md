@@ -87,7 +87,13 @@ changes these rules.
   artifact writes, and semantic failure details. Use the repository's event
   writers; never invent a log format. Call the event writer as
   `python3 <plugin-root>/scripts/log_event.py <output-dir> <kind> "<detail>" [<event>]`;
-  do not spend a turn probing its help output.
+  do not spend a turn probing its help output. `<kind>` is a closed set —
+  `step-start`, `step-end`, `phase-start`, `phase-end`, `info` — written
+  literally. A catalog event name reaches the log only as `info <EVENT_NAME>`,
+  never as the kind itself, and a bare stem such as `STEP` is not a member and
+  is rejected. `agents/shared/logging-standard.md` carries the per-agent event
+  pairs; this list is here because a role that may not probe help cannot
+  discover it any other way.
 - Batch logging with useful work. Do not spend a model turn only to log status,
   poll progress, interpret validator success, or choose a fixed successor.
 - Before completion, ensure the contracted artifact exists and contains the

@@ -943,6 +943,26 @@ _EVIDENCE_COVERAGE_MIN_FILES = 5
 _EVIDENCE_COVERAGE_FLOOR = 0.25
 
 
+def evidence_coverage_shortfall(file_count: object, covered: int) -> float | None:
+    """Return the coverage ratio when it sits below the floor, else ``None``.
+
+    Shared with the controller, which applies the same test at STRIDE-dispatch
+    time — the only moment the answer can still change anything. Keeping the
+    threshold in one place is the point: two copies would drift, and a run
+    would then warn at the end about a shortfall the dispatch gate had cleared.
+
+    ``covered`` counts distinct primary-repository files carrying evidence.
+    Trivially small components are exempt: a low ratio there says nothing.
+    """
+    if not isinstance(file_count, int) or isinstance(file_count, bool):
+        return None
+    if file_count < _EVIDENCE_COVERAGE_MIN_FILES:
+        return None
+    if covered >= file_count * _EVIDENCE_COVERAGE_FLOOR:
+        return None
+    return covered / file_count
+
+
 def _extract_component_evidence_coverage(output_dir: Path) -> list[dict]:
     """Report components whose analyzer saw evidence for few of their files.
 
@@ -971,8 +991,6 @@ def _extract_component_evidence_coverage(output_dir: Path) -> list[dict]:
         except (OSError, json.JSONDecodeError):
             continue
         file_count = (plan.get("analysis") or {}).get("file_count")
-        if not isinstance(file_count, int) or file_count < _EVIDENCE_COVERAGE_MIN_FILES:
-            continue
         slices = bundle.get("source_slices")
         if not isinstance(slices, list):
             continue
@@ -983,7 +1001,7 @@ def _extract_component_evidence_coverage(output_dir: Path) -> list[dict]:
                 if isinstance(row, dict) and row.get("repository_id") == "primary" and row.get("path")
             }
         )
-        if covered >= file_count * _EVIDENCE_COVERAGE_FLOOR:
+        if evidence_coverage_shortfall(file_count, covered) is None:
             continue
         component_id = str(plan.get("component_id") or component_dir.name)
         dropped = sorted(
