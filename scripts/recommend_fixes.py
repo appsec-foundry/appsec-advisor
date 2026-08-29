@@ -711,7 +711,47 @@ def _recommend_default(issue: dict, output_dir: Path) -> dict:
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+def _recommend_business_context_unmapped(issue: dict, output_dir: Path) -> dict:
+    """Declared business context that the control analyst mapped to no component.
+
+    Nothing is broken in the pipeline: the document was read and fenced, the
+    analyst simply found no component the facts apply to. That is either a
+    document written about the product rather than about what the code contains,
+    or a component inventory whose names the document never touches. Both are
+    the operator's call, so this proposes reading, never editing.
+    """
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": (
+            "Business context was declared for this run but applies to no component, "
+            "so it changed neither scope nor any finding."
+        ),
+        "rationale": (
+            "The control analyst projects declared facts onto component IDs; only a "
+            "mapped component reaches STRIDE, crown-jewel selection, and the ranking "
+            "tie-break. An unmapped context usually describes the product in terms the "
+            "component inventory does not use — name the concrete services, data "
+            "stores, and assets instead."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": "docs/business-context.md",
+                "details": (
+                    "Compare the wording with the component names in .components.json "
+                    "and state the sensitive assets and compromise impact per service."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
+    "business_context_unmapped": _recommend_business_context_unmapped,
     "component_evidence_coverage": _recommend_component_evidence_coverage,
     "max_turns_subagent": _recommend_max_turns_subagent,
     # A soft budget crossing is the same finding at warning severity — the
