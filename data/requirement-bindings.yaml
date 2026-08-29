@@ -322,6 +322,7 @@ requirements:
     applies_to:
       - agents/shared/prose-style.md
       - agents/shared/prose-samples.md
+      - scripts/_lib_manifest.py
       - scripts/inline_code_formatter.py
       - scripts/apply_prose_fixes.py
       - scripts/compose_threat_model.py
@@ -341,6 +342,8 @@ requirements:
       - tests/test_inline_code_formatter.py::test_rule_6_code_matrix_formats_complete_tokens
       - tests/test_inline_code_formatter.py::test_partial_authored_span_is_repaired_as_one_expression
       - tests/test_inline_code_formatter.py::test_formatter_is_idempotent
+      - tests/test_inline_code_formatter.py::test_repository_vocabulary_uses_shared_parser_across_ecosystems
+      - tests/test_inline_code_formatter.py::test_structured_vocabulary_terminates_on_cycles
       - tests/test_qa_checks_cov_band3.py::test_inline_code_format_scans_table_and_blockquote_but_skips_opaque_markdown
       - tests/test_e2e_pipeline.py::test_composed_report_has_no_inline_code_residue
 

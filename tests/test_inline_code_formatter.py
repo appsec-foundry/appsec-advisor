@@ -51,6 +51,13 @@ def test_ambiguous_packages_require_repository_evidence() -> None:
     assert "`libxmljs2`" in evidenced
 
 
+def test_evidenced_package_accepts_sentence_punctuation_but_not_qualified_suffixes() -> None:
+    source = "Replace rack. Keep rack: the adapter and rack.com unchanged."
+    output, changes = formatter.format_inline_code(source, {"rack"})
+    assert output == "Replace `rack`. Keep `rack`: the adapter and rack.com unchanged."
+    assert changes == 2
+
+
 def test_balanced_expression_never_swallows_trailing_prose() -> None:
     source = "Use vm.runInContext(safeEval()) here."
     output, changes = formatter.format_inline_code(source)
@@ -123,6 +130,42 @@ def test_repository_vocabulary_reads_manifest_dependencies(tmp_path: Path) -> No
     assert formatter.repository_vocabulary(tmp_path) == frozenset({"express-jwt", "@scope/pkg"})
 
 
+def test_repository_vocabulary_uses_shared_parser_across_ecosystems(tmp_path: Path) -> None:
+    manifests = {
+        "package.json": '{"dependencies": {"express-jwt": "1.0.0"}}',
+        "requirements.txt": "django==5.0\n",
+        "go.mod": "module example.test/app\nrequire github.com/gin-gonic/gin v1.10.0\n",
+        "pom.xml": (
+            "<project><dependency><groupId>com.fasterxml.jackson.core</groupId>"
+            "<artifactId>jackson-databind</artifactId><version>2.17.0</version></dependency></project>"
+        ),
+        "Gemfile": "gem 'rack', '3.1.0'\n",
+        "composer.json": '{"require": {"symfony/http-foundation": "^7.0"}}',
+        "Cargo.toml": '[dependencies]\nserde = "1.0"\n',
+        "App.csproj": '<Project><PackageReference Include="Newtonsoft.Json" Version="13.0.3" /></Project>',
+    }
+    for name, content in manifests.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+
+    expected = {
+        "express-jwt",
+        "django",
+        "github.com/gin-gonic/gin",
+        "com.fasterxml.jackson.core:jackson-databind",
+        "rack",
+        "symfony/http-foundation",
+        "serde",
+        "Newtonsoft.Json",
+    }
+    vocabulary = formatter.repository_vocabulary(tmp_path)
+    assert expected <= vocabulary
+
+    source = "Replace " + ", ".join(sorted(expected)) + "."
+    formatted, changes = formatter.format_inline_code(source, vocabulary)
+    assert all(f"`{package}`" in formatted for package in expected)
+    assert changes == len(expected)
+
+
 def test_repository_vocabulary_rejects_escaping_symlink(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside-package.json"
     outside.write_text(json.dumps({"dependencies": {"not-admitted": "1"}}), encoding="utf-8")
@@ -141,3 +184,49 @@ def test_structured_vocabulary_uses_only_code_bearing_fields() -> None:
     assert "req.body.email" in vocabulary
     assert "npm audit --omit=dev" in vocabulary
     assert "not-a-package" not in vocabulary
+
+
+def test_structured_vocabulary_terminates_on_cycles() -> None:
+    cyclic: dict[str, object] = {"snippet": "return req.body.email"}
+    cyclic["self"] = cyclic
+
+    vocabulary = formatter.structured_vocabulary(cyclic)
+
+    assert "req.body.email" in vocabulary
+
+
+def test_structured_vocabulary_revisits_aliases_under_code_bearing_keys() -> None:
+    shared = ["sharedSecurityAdapter"]
+    data = {"scenario": shared, "snippet": shared}
+
+    vocabulary = formatter.structured_vocabulary(data)
+
+    assert "sharedSecurityAdapter" in vocabulary
+
+
+def test_structured_vocabulary_respects_depth_and_node_bounds() -> None:
+    deep: dict[str, object] = {"snippet": "topLevelAdapter"}
+    cursor = deep
+    for _ in range(100):
+        child: dict[str, object] = {}
+        cursor["child"] = child
+        cursor = child
+    cursor["snippet"] = "bottomLevelAdapter"
+
+    vocabulary = formatter.structured_vocabulary(deep, max_depth=8, max_nodes=20)
+
+    assert "topLevelAdapter" in vocabulary
+    assert "bottomLevelAdapter" not in vocabulary
+
+
+def test_structured_vocabulary_bounds_wide_branching() -> None:
+    wide = [{"snippet": f"adapter{index}Call()"} for index in range(1_000)]
+
+    vocabulary = formatter.structured_vocabulary(wide, max_nodes=10)
+
+    assert len(vocabulary) <= 9
+
+
+def test_structured_vocabulary_ignores_oversized_strings() -> None:
+    vocabulary = formatter.structured_vocabulary({"snippet": "x" * 20_000})
+    assert vocabulary == frozenset()

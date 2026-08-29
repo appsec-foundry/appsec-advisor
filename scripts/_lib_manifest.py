@@ -4,6 +4,7 @@ across the ecosystems appsec-advisor targets.
 
 Used by:
   - scripts/emit_known_bad_libs.py    (Proposal 2 — known-bad-libs match)
+  - scripts/inline_code_formatter.py  (repository-backed package vocabulary)
 
 Design choices:
   - Manifest-only (no lockfile walk). The architectural choice is the
@@ -52,29 +53,38 @@ _COMPOSER_MANIFEST_NAMES = ("composer.json",)
 _CARGO_MANIFEST_NAMES = ("Cargo.toml",)
 _NUGET_MANIFEST_NAMES = ("packages.config",)  # *.csproj parsed too — see below
 
+_MANIFEST_NAMES = frozenset(
+    _NPM_MANIFEST_NAMES
+    + _PIP_MANIFEST_NAMES
+    + _GO_MANIFEST_NAMES
+    + _MAVEN_MANIFEST_NAMES
+    + _GEM_MANIFEST_NAMES
+    + _COMPOSER_MANIFEST_NAMES
+    + _CARGO_MANIFEST_NAMES
+    + _NUGET_MANIFEST_NAMES
+)
+MANIFEST_DISCOVERY_EXCLUDED_DIRS = frozenset(
+    {"node_modules", ".venv", "venv", "vendor", "target", "build", "dist", ".git", ".tox", "__pycache__"}
+)
+
+
+def is_manifest_path(path: Path) -> bool:
+    """Return whether ``path`` has a supported dependency-manifest name."""
+
+    return path.name in _MANIFEST_NAMES or path.suffix == ".csproj"
+
 
 def discover_manifests(repo_root: Path) -> list[Path]:
     """Walk repo_root and return all manifest files. Skips common vendor
     dirs (node_modules, .venv, vendor/, target/, build/).
     """
-    skip = {"node_modules", ".venv", "venv", "vendor", "target", "build", "dist", ".git", ".tox", "__pycache__"}
-    all_names = (
-        _NPM_MANIFEST_NAMES
-        + _PIP_MANIFEST_NAMES
-        + _GO_MANIFEST_NAMES
-        + _MAVEN_MANIFEST_NAMES
-        + _GEM_MANIFEST_NAMES
-        + _COMPOSER_MANIFEST_NAMES
-        + _CARGO_MANIFEST_NAMES
-        + _NUGET_MANIFEST_NAMES
-    )
     out: list[Path] = []
     for p in repo_root.rglob("*"):
         if not p.is_file():
             continue
-        if any(part in skip for part in p.parts):
+        if any(part in MANIFEST_DISCOVERY_EXCLUDED_DIRS for part in p.parts):
             continue
-        if p.name in all_names or p.suffix == ".csproj":
+        if is_manifest_path(p):
             out.append(p)
     return out
 
@@ -111,7 +121,7 @@ def parse_manifest(path: Path, repo_root: Path) -> list[Dep]:
             return _parse_csproj(path, rel)
         if path.name == "packages.config":
             return _parse_packages_config(path, rel)
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (AttributeError, OSError, RecursionError, TypeError, UnicodeError, json.JSONDecodeError, ValueError):
         # Best-effort; surface nothing rather than crashing the pipeline.
         return []
     return []

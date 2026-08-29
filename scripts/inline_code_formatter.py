@@ -22,13 +22,14 @@ single document-level owner and delegates every plain-text run here.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+
+import _lib_manifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +175,9 @@ _PROTOCOL_IDENTIFIERS = frozenset(
 _TRAILING_PUNCTUATION = ".,;:!?"
 _MAX_KNOWN_TOKENS = 512
 _MAX_KNOWN_TOKEN_LENGTH = 160
+_MAX_STRUCTURED_DEPTH = 64
+_MAX_STRUCTURED_NODES = 20_000
+_MAX_STRUCTURED_STRING_LENGTH = 16_384
 _OPTIONAL_PLURAL_ARGUMENTS = frozenset({"s", "es", "ies"})
 _DOMAIN_SUFFIXES = frozenset({"ai", "app", "co", "com", "dev", "gg", "io", "js", "net", "org", "xyz"})
 _CODE_OBJECT_HEADS = frozenset({"ctx", "document", "lib", "Object", "process", "req", "res", "self", "this", "window"})
@@ -447,7 +451,7 @@ def _known_token_pattern(tokens: tuple[str, ...]) -> re.Pattern[str] | None:
     )
     if not safe:
         return None
-    return re.compile(r"(?<![\w.@/+:-])(?:" + "|".join(re.escape(token) for token in safe) + r")(?![\w.@/+:-])")
+    return re.compile(r"(?<![\w.@/+:-])(?:" + "|".join(re.escape(token) for token in safe) + r")(?![\w@/+-]|\.\w|:\w)")
 
 
 def candidates(text: str, known_tokens: Iterable[str] = ()) -> list[CodeCandidate]:
@@ -525,53 +529,6 @@ def format_inline_code(text: str, known_tokens: Iterable[str] = ()) -> tuple[str
     return "".join(output), len(selected)
 
 
-def _dependency_name(requirement: str) -> str:
-    match = re.match(r"\s*([A-Za-z0-9_.-]+(?:\[[^\]]+\])?)", requirement)
-    return match.group(1).split("[", 1)[0] if match else ""
-
-
-def _manifest_tokens(path: Path) -> set[str]:
-    tokens: set[str] = set()
-    try:
-        if path.stat().st_size > 1_000_000:
-            return tokens
-        if path.name == "package.json":
-            data = json.loads(path.read_text(encoding="utf-8"))
-            for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
-                value = data.get(key) if isinstance(data, dict) else None
-                if isinstance(value, dict):
-                    tokens.update(name for name in value if isinstance(name, str))
-        elif path.name == "pyproject.toml":
-            text = path.read_text(encoding="utf-8")
-            # Python 3.10 is the supported floor, so avoid a runtime dependency
-            # on tomllib/tomli for this advisory vocabulary.  Project arrays
-            # and Poetry dependency tables have deliberately simple, bounded
-            # extraction rules; malformed TOML merely contributes no token.
-            for match in re.finditer(r"(?ms)^dependencies\s*=\s*\[(.*?)^\]", text):
-                for quoted in re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)):
-                    if name := _dependency_name(quoted):
-                        tokens.add(name)
-            poetry = re.search(r"(?ms)^\[tool\.poetry\.dependencies\]\s*$\n(.*?)(?=^\[|\Z)", text)
-            if poetry:
-                for name in re.findall(r"(?m)^\s*([A-Za-z0-9_.-]+)\s*=", poetry.group(1)):
-                    if name.lower() != "python":
-                        tokens.add(name)
-        elif path.name in {"Cargo.toml", "Pipfile"}:
-            text = path.read_text(encoding="utf-8")
-            section_names = r"dependencies|dev-dependencies|build-dependencies|packages|dev-packages"
-            for section in re.finditer(rf"(?ms)^\[(?:{section_names})\]\s*$\n(.*?)(?=^\[|\Z)", text):
-                tokens.update(re.findall(r"(?m)^\s*([A-Za-z0-9_.-]+)\s*=", section.group(1)))
-        elif path.name.startswith("requirements") and path.suffix == ".txt":
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if line.lstrip().startswith(("#", "-")):
-                    continue
-                if name := _dependency_name(line):
-                    tokens.add(name)
-    except (OSError, UnicodeError, ValueError, TypeError):
-        return set()
-    return tokens
-
-
 def repository_vocabulary(
     repo_root: Path,
     *,
@@ -584,7 +541,6 @@ def repository_vocabulary(
         root = repo_root.resolve(strict=True)
     except OSError:
         return frozenset()
-    names = {"package.json", "pyproject.toml", "Cargo.toml", "Pipfile"}
     manifest_paths: list[Path] = []
     entries_seen = 0
     try:
@@ -593,7 +549,11 @@ def repository_vocabulary(
             remaining = max_entries - entries_seen
             if remaining <= 0:
                 break
-            safe_directories = sorted(name for name in dirnames if not (base / name).is_symlink())[:remaining]
+            safe_directories = sorted(
+                name
+                for name in dirnames
+                if name not in _lib_manifest.MANIFEST_DISCOVERY_EXCLUDED_DIRS and not (base / name).is_symlink()
+            )[:remaining]
             dirnames[:] = safe_directories
             entries_seen += len(safe_directories)
             for filename in sorted(filenames):
@@ -603,7 +563,7 @@ def repository_vocabulary(
                 path = base / filename
                 if path.is_symlink():
                     continue
-                if path.name not in names and not (path.name.startswith("requirements") and path.suffix == ".txt"):
+                if not _lib_manifest.is_manifest_path(path):
                     continue
                 try:
                     path.resolve(strict=True).relative_to(root)
@@ -616,7 +576,12 @@ def repository_vocabulary(
         pass
     tokens: set[str] = set()
     for path in manifest_paths:
-        tokens.update(_manifest_tokens(path))
+        try:
+            if path.stat().st_size > 1_000_000:
+                continue
+        except OSError:
+            continue
+        tokens.update(dep.package for dep in _lib_manifest.parse_manifest(path, root))
     return frozenset(sorted(tokens, key=lambda item: (-len(item), item))[:_MAX_KNOWN_TOKENS])
 
 
@@ -635,27 +600,56 @@ _STRUCTURED_CODE_KEYS = frozenset(
 )
 
 
-def structured_vocabulary(value: Any) -> frozenset[str]:
-    """Extract explicit code tokens from code-bearing structured fields."""
+def structured_vocabulary(
+    value: Any,
+    *,
+    max_depth: int = _MAX_STRUCTURED_DEPTH,
+    max_nodes: int = _MAX_STRUCTURED_NODES,
+) -> frozenset[str]:
+    """Extract bounded code evidence from possibly cyclic structured data."""
+
+    if max_depth < 0 or max_nodes <= 0:
+        return frozenset()
 
     tokens: set[str] = set()
+    active_containers: set[int] = set()
+    stack: list[tuple[Iterator[tuple[Any, str]], int, int | None]] = [(iter(((value, ""),)), 0, None)]
+    nodes_seen = 0
 
-    def visit(node: Any, key: str = "") -> None:
-        if isinstance(node, dict):
-            for child_key, child in node.items():
-                visit(child, str(child_key))
-            return
-        if isinstance(node, list):
-            for child in node:
-                visit(child, key)
-            return
-        if not isinstance(node, str):
-            return
-        tokens.update(match.group(1) for match in _BACKTICK_CONTENT_RE.finditer(node))
+    def add_token(token: str) -> None:
+        if 0 < len(token) <= _MAX_KNOWN_TOKEN_LENGTH and len(tokens) < _MAX_KNOWN_TOKENS:
+            tokens.add(token)
+
+    while stack and nodes_seen < max_nodes and len(tokens) < _MAX_KNOWN_TOKENS:
+        iterator, depth, container_identity = stack[-1]
+        try:
+            node, key = next(iterator)
+        except StopIteration:
+            stack.pop()
+            if container_identity is not None:
+                active_containers.discard(container_identity)
+            continue
+        nodes_seen += 1
+        if isinstance(node, (dict, list)):
+            identity = id(node)
+            if identity in active_containers or depth >= max_depth:
+                continue
+            active_containers.add(identity)
+            if isinstance(node, dict):
+                children = ((child, str(child_key)) for child_key, child in node.items())
+            else:
+                children = ((child, key) for child in node)
+            stack.append((iter(children), depth + 1, identity))
+            continue
+        if not isinstance(node, str) or len(node) > _MAX_STRUCTURED_STRING_LENGTH:
+            continue
+        for match in _BACKTICK_CONTENT_RE.finditer(node):
+            add_token(match.group(1))
         if key in _STRUCTURED_CODE_KEYS:
-            if "\n" not in node and 0 < len(node) <= 240:
-                tokens.add(node.strip())
-            tokens.update(item.text for item in candidates(node))
+            stripped = node.strip()
+            if "\n" not in node and stripped:
+                add_token(stripped)
+            for item in candidates(node):
+                add_token(item.text)
 
-    visit(value)
-    return frozenset(token for token in tokens if token)
+    return frozenset(tokens)

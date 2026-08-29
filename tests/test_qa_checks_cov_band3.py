@@ -1264,6 +1264,16 @@ def test_inline_code_format_ignores_malformed_structured_vocabulary(tmp_path):
     assert rep.warnings == []
 
 
+def test_inline_code_format_handles_recursive_structured_vocabulary(tmp_path):
+    md = _md(tmp_path, "The finding uses cyclic-security-adapter here.\n")
+    (tmp_path / "threat-model.yaml").write_text(
+        "evidence: &evidence\n  snippet: cyclic-security-adapter\n  related: *evidence\n",
+        encoding="utf-8",
+    )
+    rep = qa.check_inline_code_format(md)
+    assert any("cyclic-security-adapter" in warning for warning in rep.warnings)
+
+
 # ===========================================================================
 # check_label_as_code
 # ===========================================================================

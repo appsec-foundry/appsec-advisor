@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Code references now use one balanced formatter across report sections, so complete snippets stay intact and surrounding prose remains outside code spans.
+- Code references now use one balanced formatter across report sections and dependency ecosystems, so packages and complete snippets stay intact while surrounding prose remains outside code spans.
 - `--skip-context` now runs without business context, instead of only skipping the question while still reading `docs/business-context.md`.
 - Business context supplied for one run no longer leaks into the next run in the same output directory.
 - A declared business context that maps to no component is now reported as a run issue instead of passing unnoticed.

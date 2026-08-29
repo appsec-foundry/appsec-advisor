@@ -11,6 +11,27 @@ import _lib_manifest as M
 # ---------------------------------------------------------------------------
 
 
+def test_is_manifest_path_covers_all_supported_ecosystems():
+    supported = {
+        "package.json",
+        "requirements.txt",
+        "pyproject.toml",
+        "setup.py",
+        "Pipfile",
+        "go.mod",
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "Gemfile",
+        "composer.json",
+        "Cargo.toml",
+        "packages.config",
+        "App.csproj",
+    }
+    assert all(M.is_manifest_path(Path(name)) for name in supported)
+    assert not M.is_manifest_path(Path("README.md"))
+
+
 def test_discover_manifests_finds_known_names(tmp_path: Path):
     (tmp_path / "package.json").write_text("{}")
     (tmp_path / "requirements.txt").write_text("")
@@ -50,6 +71,12 @@ def test_parse_manifest_unknown_name_returns_empty(tmp_path: Path):
 def test_parse_manifest_malformed_json_returns_empty(tmp_path: Path):
     p = tmp_path / "package.json"
     p.write_text("{ not valid json")
+    assert M.parse_manifest(p, tmp_path) == []
+
+
+def test_parse_manifest_wrong_json_shape_returns_empty(tmp_path: Path):
+    p = tmp_path / "package.json"
+    p.write_text('{"dependencies": []}')
     assert M.parse_manifest(p, tmp_path) == []
 
 
