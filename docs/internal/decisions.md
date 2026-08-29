@@ -171,6 +171,7 @@ Removing an entry means listing it here in the same change.
 | RN-1 | The render path is a mutation sequence and its order is load-bearing: `compose_threat_model.py --strict`, then `apply_prose_fixes.py`, then `qa_checks.py autofix` | — *(guard not located)* | `docs/internal/contracts/orchestration-actions.md` |
 | RN-2 | A normalization pass is idempotent; running it twice changes nothing, or a re-render invents differences | `test_apply_fixes_is_idempotent_for_core_rewrites`, `test_autofix_is_idempotent_on_paths`, `test_r7_full_pipeline_is_idempotent` | `scripts/apply_prose_fixes.py`, `scripts/qa_checks.py` |
 | RN-4 | The deterministic emitters run in a fixed sequence | `test_emitter_sequence_preserved_in_order` | `scripts/auto_emitter_pass.sh` |
+| RN-5 | One source-preserving recognizer owns inline-code token boundaries for composition, walkthroughs, normalization, autofix, and QA; it formats a complete balanced expression or leaves it unchanged | `tests/test_inline_code_formatter.py`, `tests/test_qa_checks_cov_band3.py::test_inline_code_format_scans_table_and_blockquote_but_skips_opaque_markdown` | `scripts/inline_code_formatter.py` |
 
 ## Report and artifacts
 

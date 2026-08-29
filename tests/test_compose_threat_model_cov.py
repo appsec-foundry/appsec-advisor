@@ -954,13 +954,12 @@ class TestCodifyInlineIdentifiers:
         assert out == s
 
 
-class TestCodeTokenIsEmbedded:
-    def test_member_access_embedded(self):
-        # token preceded by '.' is embedded
-        assert compose._code_token_is_embedded(".reverse()", 1, 10) is True
+class TestCompleteCodeTokenFormatting:
+    def test_member_call_is_not_split(self):
+        assert compose._codify_inline_identifiers("use value.reverse() here") == "use `value.reverse()` here"
 
-    def test_standalone_not_embedded(self):
-        assert compose._code_token_is_embedded("a reverse() b", 2, 11) is False
+    def test_standalone_call_is_formatted(self):
+        assert compose._codify_inline_identifiers("a reverse() call") == "a `reverse()` call"
 
 
 # ---------------------------------------------------------------------------

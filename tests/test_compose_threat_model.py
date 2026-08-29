@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -46,6 +47,29 @@ qa = _load_module("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
 # The §1 exposure rating comes from this shared contract; the tests read the
 # scale from it rather than restating it.
 criticality = _load_module("_boundary_criticality", REPO_ROOT / "scripts" / "_boundary_criticality.py")
+
+
+def test_inline_code_vocabulary_ignores_model_selected_repository(tmp_path: Path, monkeypatch) -> None:
+    selected: list[Path] = []
+    monkeypatch.setattr(
+        compose._inline_code_formatter,
+        "repository_vocabulary",
+        lambda path: selected.append(path) or frozenset({"known-package"}),
+    )
+    ctx = SimpleNamespace(
+        output_dir=tmp_path,
+        yaml_data={"meta": {"repository_root": "/model-selected"}},
+    )
+
+    assert "known-package" not in compose._inline_code_vocabulary(ctx)
+    assert selected == []
+
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"repo_root": str(tmp_path / "trusted-repository")}),
+        encoding="utf-8",
+    )
+    assert "known-package" in compose._inline_code_vocabulary(ctx)
+    assert selected == [tmp_path / "trusted-repository"]
 
 
 def _prepare_output_dir(tmp_path: Path) -> Path:
@@ -2344,8 +2368,8 @@ def test_attack_tree_wide_still_single_block() -> None:
 def test_codify_inline_identifiers_no_mid_token_backticks() -> None:
     """Story-Card prose path wrapping must not split a path/extension mid-token.
 
-    Regression: `_CODE_FILE_RE` wraps the whole path, then `_CODE_DOTTED_RE`
-    used to re-match `component.html` INSIDE that fresh span, yielding
+    Regression: sequential token matchers used to re-match `component.html`
+    INSIDE a fresh path span, yielding
     `administration.` `component.html` `:26` (mid-token backticks). Each code
     matcher now runs only outside existing spans.
     """
@@ -2422,14 +2446,12 @@ def test_codify_inline_identifiers_does_not_overmatch_at_signs_or_plain_slashes(
     assert "`input/output`" not in compose._codify_inline_identifiers("an input/output boundary")
 
 
-def test_balance_code_spans_merges_partially_wrapped_expression() -> None:
+def test_canonical_formatter_merges_partially_wrapped_expression() -> None:
     """An arrow-function / multi-call expression the author only half-wrapped
     must render as ONE code span, not half-monospaced prose.
 
-    Regression (juice-shop 2026-06-24): the per-token matchers skip non-empty
-    paren calls + arrow functions, so `foo.forEach((x) => { `bar(x)` })` shipped
-    with only the inner call backticked. `_codify_inline_identifiers` now runs
-    `_balance_code_spans` as a final pass.
+    Regression (juice-shop 2026-06-24): the old per-token matchers skipped
+    non-empty calls and arrow functions, so only the inner call was formatted.
     """
     raw = (
         "◌ ambiguous - notifications.forEach((notification) => "
@@ -2444,16 +2466,20 @@ def test_balance_code_spans_merges_partially_wrapped_expression() -> None:
     assert compose._codify_inline_identifiers(out) == out
 
 
-def test_balance_code_spans_leaves_standalone_span_and_prose_untouched() -> None:
+def test_canonical_formatter_leaves_standalone_span_and_prose_untouched() -> None:
     """A balanced standalone span surrounded by prose must NOT absorb words."""
     # `socket.emit()` is whole; "call broadcasts" is prose → no merge.
-    assert compose._balance_code_spans("the `socket.emit()` call broadcasts") == "the `socket.emit()` call broadcasts"
+    assert (
+        compose._codify_inline_identifiers("the `socket.emit()` call broadcasts")
+        == "the `socket.emit()` call broadcasts"
+    )
     # file:line locator followed by prose → untouched.
     assert (
-        compose._balance_code_spans("`routes/foo.ts:9` defines the handler") == "`routes/foo.ts:9` defines the handler"
+        compose._codify_inline_identifiers("`routes/foo.ts:9` defines the handler")
+        == "`routes/foo.ts:9` defines the handler"
     )
     # no backticks at all → returned verbatim.
-    assert compose._balance_code_spans("plain prose, no code") == "plain prose, no code"
+    assert compose._codify_inline_identifiers("plain prose, no code") == "plain prose, no code"
 
 
 def test_curate_top_mitigations_floor_and_llm_order() -> None:
@@ -5992,7 +6018,7 @@ def test_codify_leaves_prose_apostrophes_alone() -> None:
     assert compose._codify_inline_identifiers(raw) == raw
 
 
-def test_string_literal_is_code_rejects_single_keyword_slug() -> None:
+def test_canonical_literal_recognition_rejects_single_keyword_slug() -> None:
     """A quoted kebab-case slug/id that merely CONTAINS one SQL keyword as a
     hyphen-delimited word is NOT code — `\\bupdate\\b` fires inside
     "dependency-update-posture" (a `-` is a word boundary), which used to
@@ -6005,18 +6031,15 @@ def test_string_literal_is_code_rejects_single_keyword_slug() -> None:
         "select-list",
         "where-clause",
     ):
-        assert not compose._string_literal_is_code(slug), f"slug wrongly flagged as code: {slug!r}"
-    # Real multi-keyword SQL and 1-keyword-plus-operator fragments STILL count.
-    assert compose._string_literal_is_code("select id from users where x = 1")
-    assert compose._string_literal_is_code("o.owner_id = u.id where u.email = x")
-    assert compose._string_literal_is_code("q = 'a' + b")
+        quoted = f"'{slug}'"
+        assert compose._codify_inline_identifiers(quoted) == quoted
+    assert compose._codify_inline_identifiers("'select id from users where x = 1'").startswith("`")
 
 
 def test_html_anchor_id_not_backticked() -> None:
     """Regression (golden): an injected `<a id="…">` heading anchor whose slug
     contains a SQL keyword must survive the render passes un-backticked."""
     line = '<a id="dependency-update-posture"></a>'
-    assert compose._wrap_code_string_literals(line) == line
     assert compose._fold_code_strings_in_prose(line) == line
 
 

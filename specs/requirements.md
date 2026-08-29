@@ -122,9 +122,7 @@ may assign them again.
 
 ### REQ-RPT-003 — The report is concise and actionable for engineers
 
-A finding identifies where the problem is, why an attack works, and what must
-change in the repository's own vocabulary. References point only to locations
-that exist.
+A finding identifies where the problem is, why an attack works, and what must change in the repository's own vocabulary. References point only to locations that exist. Code symbols, source paths, configuration identifiers, and complete code expressions use one inline-code format consistently across report sections without consuming surrounding prose.
 
 ### REQ-RPT-005 — Mitigations are prioritized and verifiable
 

@@ -61,11 +61,13 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import _ms_component_refs
 import _safe_cond
 import _severity_rollup
+import apply_prose_fixes as _prose_formatter
+import inline_code_formatter as _inline_code_formatter
 import jinja2
 import requirements_trace
 import yaml
@@ -12731,33 +12733,15 @@ def _linkify_bare_requirement_refs(ctx: RenderContext, md: str) -> str:
 
 
 def _fold_code_strings_in_prose(md: str) -> str:
-    """Fold a whole code-signal quoted string literal (a SQL query, a
-    concatenated expression) into ONE backtick span, across all prose.
+    """Protect complete code expressions before dotted-brand escaping.
 
-    Runs BEFORE ``_escape_dot_tld_identifiers`` so that pass — which would
-    otherwise mistake a column ref like ``u.id`` for the Indonesia ``.id``
-    ccTLD and backtick it mid-string — sees the literal as an already-masked
-    span and leaves its interior alone. Without this, the stray inner backtick
-    then defeats the whole-literal fold and the per-token matchers half-backtick
-    the query (``on `o.owner_id` = `u.id` where `u.email` = …``). Skips fenced
-    blocks and heading lines; idempotent."""
-    if not md:
-        return md
-    out_chunks: list[str] = []
-    for chunk in re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL):
-        if chunk.startswith("```"):
-            out_chunks.append(chunk)
-            continue
-        lines = chunk.split("\n")
-        for i, line in enumerate(lines):
-            if re.match(r"^\s{0,3}#{1,6}\s", line):
-                continue  # heading
-            lines[i] = _wrap_code_string_literals(line)
-        out_chunks.append("\n".join(lines))
-    return "".join(out_chunks)
+    This compatibility entry point delegates to the report-wide recognizer;
+    it no longer carries a separate SQL/string pattern engine.
+    """
+    return _prose_formatter.apply_code_formatting(md)[0]
 
 
-def _codify_inline_code_in_prose(md: str) -> str:
+def _codify_inline_code_in_prose(md: str, known_tokens: Iterable[str] = ()) -> str:
     """Backtick un-marked inline code (member access, calls, dotted refs, file
     paths, UPPER_SNAKE env/secret names) across ALL prose — the §3 walkthrough
     steps and §8/§10 Issue/Evidence/Fix/How cards are LLM-authored and backtick
@@ -12765,20 +12749,20 @@ def _codify_inline_code_in_prose(md: str) -> str:
     span-masking ``_codify_inline_identifiers`` so existing backtick spans,
     markdown links, and HTML tags are never touched; only adds the missing
     monospacing. Skips fenced code blocks and heading lines. Idempotent."""
-    if not md:
-        return md
-    out_chunks: list[str] = []
-    for chunk in re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL):
-        if chunk.startswith("```"):
-            out_chunks.append(chunk)
-            continue
-        lines = chunk.split("\n")
-        for i, line in enumerate(lines):
-            if re.match(r"^\s{0,3}#{1,6}\s", line):
-                continue  # heading
-            lines[i] = _codify_inline_identifiers(line)
-        out_chunks.append("\n".join(lines))
-    return "".join(out_chunks)
+    return _prose_formatter.apply_code_formatting(md, known_tokens)[0]
+
+
+def _inline_code_vocabulary(ctx: RenderContext) -> frozenset[str]:
+    """Return code semantics without letting model output select read paths."""
+
+    tokens = set(_inline_code_formatter.structured_vocabulary(ctx.yaml_data))
+    # The structured model is untrusted and may contain meta.repository_root.
+    # Only the orchestrator-owned run configuration may select the repository
+    # whose bounded manifests supplement ambiguous package names.
+    repo_root_raw = _read_skill_config(ctx.output_dir).get("repo_root")
+    if isinstance(repo_root_raw, str) and repo_root_raw:
+        tokens.update(_inline_code_formatter.repository_vocabulary(Path(repo_root_raw)))
+    return frozenset(tokens)
 
 
 _FINDING_DOT_REF_RE = re.compile(
@@ -14463,162 +14447,6 @@ def _fix_action_lead(cwe_norm: str) -> str:
 # keys as code. Conservative — only wraps tokens that look strongly like
 # code references (file extensions, function-call shape, env-var case)
 # and never doubles existing backticks.
-_CODE_FILE_RE = re.compile(
-    r"(?<![`/\w])"  # not already in backticks or inside a path
-    # `(?<!\\)` immediately before the extension-dot: a backslash there means
-    # `_escape_dot_tld_identifiers` already deliberately escaped this token as
-    # a known brand name (`Node\.js`) — do not re-match it as a fake ".js file"
-    # and re-wrap it in backticks, which leaks the backslash in the rendered
-    # code span (juice-shop 2026-07-02). Genuine paths (`bar.ts`) are unaffected
-    # since the char right before their extension-dot is never a backslash.
-    r"([A-Za-z_][A-Za-z0-9_./\\-]*(?<!\\)\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|"
-    r"yml|yaml|json|xml|toml|ini|env|sh|sql|html|css|scss|md|conf)"
-    r"(?::\d+(?:-\d+)?)?)"  # optional :line[-end]
-    r"(?![`\w.])"
-)
-_CODE_CALL_RE = re.compile(
-    r"(?<![`\w])"
-    r"([A-Za-z_][A-Za-z0-9_]*"
-    r"(?:\.[A-Za-z_][A-Za-z0-9_]*)+\(\))"  # foo.bar() / a.b.c()
-    r"(?![`\w])"
-)
-_CODE_BARE_CALL_RE = re.compile(
-    r"(?<![`\w])"
-    r"([A-Za-z_][A-Za-z0-9_]{2,}\(\))"  # plain identifier()
-    r"(?![`\w])"
-)
-_CODE_DOTTED_RE = re.compile(
-    r"(?<![`\w/])"
-    r"([a-z][a-zA-Z0-9_]*"
-    # Inner segments may start uppercase so member chains ending in a
-    # class/constant resolve fully: req.body.UserId, secrets.GITHUB_TOKEN,
-    # process.env.LLM_API_KEY. They must start with a LETTER (not `_`) so a
-    # markdown italic close — `… stay valid._` → `valid` + `._` — is never
-    # mistaken for a dotted member. First segment stays lowercase-anchored so
-    # prose like "U.S." is never wrapped.
-    r"(?:\.[A-Za-z][a-zA-Z0-9_]*){1,3})"
-    # Reject a continuation (`.word`, `(`, word char, backtick) but ALLOW a
-    # trailing sentence period (`.` + space/end) so `… req.user.id.` matches.
-    r"(?![`\w(]|\.\w)"
-)
-# UPPER_SNAKE environment / secret identifiers — GITHUB_TOKEN, NODE_ENV,
-# ORG_ADMIN_TOKEN, LLM_API_KEY. Requires ≥1 underscore so prose acronyms
-# (XSS, CSRF, SQL) are never wrapped. A leading `secrets.`/`process.env.`
-# member is handled by _CODE_DOTTED_RE; this catches the bare token.
-_CODE_ENV_RE = re.compile(r"(?<![`\w.])([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?![`\w])")
-# Scoped npm package names — `@ai-sdk/openai-compatible`, `@nestjs/common`.
-# The §1 trust-boundary cell rendered `@ai-sdk/openai-compatible` as plain prose
-# right next to a correctly monospaced `LLM_API_KEY` and `routes/chat.ts`
-# (user 2026-07-31): no other matcher covers a `@scope/name` with no extension
-# and no call parens. Deliberately narrow so ordinary prose cannot match:
-#   * the `@` must open the token (nothing word-like, `.`, `@` or `-` before it),
-#     so an email local part — `admin@juice-sh.op`, `a@b/c` — never matches;
-#   * a `/` separator is REQUIRED, so a bare `@mention` stays prose;
-#   * both halves are npm-legal lowercase (`a-z0-9._-`) and must start
-#     alphanumeric, so `@ Scope / Name` and `word/word` cannot match.
-_CODE_SCOPED_PKG_RE = re.compile(r"(?<![\w.@-])(@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*)(?![`\w/])")
-
-
-# --- Fail-closed guards for the two AMBIGUOUS matchers -------------------
-# `_CODE_FILE_RE` (`Stem.js`) and `_CODE_DOTTED_RE` (`word.word`) match token
-# *shapes* that also occur in product names (`Node.js`, `socket.io`,
-# `Fastify.js`) and prose abbreviations (`e.g`, `i.e`). Wrapping those in
-# backticks reads as a spurious code reference. The old defence subtracted a
-# hand-maintained brand allowlist (`_DOT_TLD_KNOWN_NAMES`) — fail-open: any
-# un-listed library (`engine.io`, `Fastify.js`) leaked. Instead require
-# POSITIVE evidence the token is real code before wrapping; unknown-but-code-
-# shaped prose stays prose.
-#
-# JS-ecosystem extensions whose `Stem.ext` form collides with library naming.
-# `.ts`/`.tsx` are deliberately EXCLUDED — a bare Capitalised `App.tsx` is far
-# more likely a real component file than a product name, and TS-named brands
-# are rare. Brands overwhelmingly use `.js`.
-_BRAND_RISK_EXT = frozenset({"js", "jsx", "mjs", "cjs"})
-# Dotted-token last-segments that mark a PRODUCT / DOMAIN, not a method call:
-# `socket.io`, `engine.io`, `evil.com`, `foo.dev`. A real API call ends in a
-# method name (`socket.emit`, `restTemplate.getForObject`) whose last segment
-# is none of these.
-_DOTTED_NONCODE_SUFFIX = frozenset({"io", "js", "net", "org", "com", "dev", "ai", "co", "gg", "app", "xyz"})
-# …unless a known code head precedes it (defensive; `req.io` etc. are code).
-_DOTTED_CODE_HEADS = frozenset({"req", "res", "ctx", "this", "self", "process", "window", "document", "console"})
-
-
-def _file_token_is_product_name(token: str) -> bool:
-    """True when a ``_CODE_FILE_RE`` match is almost certainly a product name,
-    not a file reference: a JS-ecosystem extension on a single Capitalised
-    stem, with no path separator and no ``:line`` locator. Real file references
-    in these reports carry a path (``routes/login.ts``) or a locator
-    (``OrderLookupDao.java:22``); bare ``Fastify.js`` / ``Node.js`` do not."""
-    if "/" in token or "\\" in token or ":" in token:
-        return False  # has a path or a :line -> a real reference
-    stem, _, rest = token.partition(".")
-    ext = rest.rsplit(".", 1)[-1].lower()
-    if ext not in _BRAND_RISK_EXT:
-        return False
-    # Single Capitalised word stem == product-shaped (Node, Vue, Fastify, Hapi).
-    return bool(re.fullmatch(r"[A-Z][A-Za-z0-9]*", stem))
-
-
-def _dotted_token_is_code(token: str) -> bool:
-    """False for the two dotted shapes that are NOT code: prose abbreviations
-    (``e.g``, ``i.e``, ``a.m`` — any single-letter segment) and product /
-    domain names (``socket.io``, ``engine.io``, ``evil.com`` — a product/TLD
-    last segment with no known code head). Everything else — real method calls
-    (``socket.emit``, ``restTemplate.getForObject``) and member chains
-    (``req.body.email``) — stays code."""
-    segs = token.lower().split(".")
-    if all(len(s) == 1 for s in segs):
-        return False  # abbreviation: e.g / i.e / a.m / a.k.a
-    if segs[-1] in _DOTTED_NONCODE_SUFFIX and segs[0] not in _DOTTED_CODE_HEADS:
-        return False  # product / domain: socket.io, evil.com
-    return True
-
-
-# A quoted string literal that is really CODE (a SQL query, a concatenated
-# expression) — wrap the WHOLE literal as one span so the per-token matchers
-# never reach inside it and half-backtick a column ref (`o.owner_id`) while
-# leaving the surrounding query as prose. The code-signal gate keeps ordinary
-# prose apostrophes ("the attacker's request") out: they carry no SQL keyword
-# and no `=`+operator combination.
-_SQL_KW_RE = re.compile(
-    r"\b(select|insert|update|delete|drop|union|from|where|join|values|"
-    r"create|alter|exec)\b",
-    re.I,
-)
-# Escape-aware so a Java/JS literal ending in a backslash-escaped quote
-# (`'… = \''`) is captured whole instead of cut at the inner `\'`.
-_CODE_STRING_RE = re.compile(r"(?<!`)('(?:[^'\n`\\]|\\.){6,240}'|\"(?:[^\"\n`\\]|\\.){6,240}\")(?!`)")
-
-
-def _string_literal_is_code(inner: str) -> bool:
-    # A real SQL statement co-occurs ≥2 distinct keywords (SELECT…FROM,
-    # …JOIN…WHERE). A kebab-case slug / CSS class that merely CONTAINS one
-    # keyword as a hyphen-delimited word is NOT code — `-` is a `\b` boundary,
-    # so `\bupdate\b` fires spuriously inside an anchor id like
-    # "dependency-update-posture" (and "create-account", "data-from-source"),
-    # which then backtick-wrapped the whole `<a id="…">` and broke the anchor.
-    kw = len({m.group(1).lower() for m in _SQL_KW_RE.finditer(inner)})
-    if kw >= 2:
-        return True
-    # An assignment / concatenation expression — or a single-keyword query
-    # fragment that also carries a query operator (`… where x = …`).
-    return "=" in inner and ("+" in inner or "(" in inner or ";" in inner or kw >= 1)
-
-
-def _wrap_code_string_literals(text: str) -> str:
-    """Backtick a whole quoted string literal when it is unambiguously code."""
-
-    def _repl(m: re.Match[str]) -> str:
-        span = m.group(1)
-        if not _string_literal_is_code(span[1:-1]):
-            return span
-        return f"`{span}`"
-
-    return _CODE_STRING_RE.sub(_repl, text)
-
-
-_CODE_SPAN_MASK_RE = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
-
 # A finding/mitigation title carries its evidence pointer as a TRAILING
 # parenthetical locator — `(routes/api/Users)`, `(updateProductReviews.ts:18)`,
 # `(package.json:7)`, `(Dockerfile)`. The LLM backticks it inconsistently, so the
@@ -14668,60 +14496,6 @@ def _strip_label_code(label: str) -> str:
     return label.replace("`", "") if label else label
 
 
-def _code_token_is_embedded(seg: str, ms: int, me: int) -> bool:
-    """True when the matched code token sits INSIDE a larger un-backticked
-    expression / string literal / hyphenated word, where wrapping just this
-    inner token produces broken partial formatting — e.g.
-    ``btoa(...split('').`reverse()`.join(''))`` or ``admin@juice-`sh.op```.
-    Such tokens stay plain prose (2026-06-02 user request — Story Card Issue
-    code must not be half-backticked). Standalone tokens (space / paren-in-
-    prose boundaries) are unaffected.
-    """
-    before = seg[ms - 1] if ms > 0 else " "
-    after = seg[me] if me < len(seg) else " "
-    # Preceded by a member-access dot, identifier underscore, or a hyphen that
-    # joins it into a larger word/domain → it is a fragment, not a standalone.
-    if before in "._-":
-        return True
-    # Wrapped in matching quotes → it is a string-literal fragment.
-    if before in "'\"" and after in "'\"":
-        return True
-    return False
-
-
-def _sub_outside_spans(pattern: re.Pattern[str], s: str, reject: Callable[[str], bool] | None = None) -> str:
-    """Wrap `pattern` group(1) in backticks, but ONLY in the parts of `s`
-    that are not already inside a backtick span / link target / HTML tag /
-    entity. Prevents a later code matcher from re-wrapping a token inside a
-    span an earlier matcher just created. Tokens that `_code_token_is_embedded`
-    flags as mid-expression are left untouched (no partial backticking).
-
-    ``reject`` is an optional fail-closed guard: when it returns True for a
-    matched token, the token is left as prose (used to keep product names and
-    prose abbreviations out of the ambiguous file / dotted matchers)."""
-
-    def _wrap_seg(seg: str) -> str:
-        def _repl(mm: re.Match[str]) -> str:
-            if _code_token_is_embedded(seg, mm.start(1), mm.end(1)):
-                return mm.group(0)
-            if reject is not None and reject(mm.group(1)):
-                return mm.group(0)
-            return f"`{mm.group(1)}`"
-
-        return pattern.sub(_repl, seg)
-
-    out: list[str] = []
-    pos = 0
-    for m in _CODE_SPAN_MASK_RE.finditer(s):
-        if m.start() > pos:
-            out.append(_wrap_seg(s[pos : m.start()]))
-        out.append(m.group(0))
-        pos = m.end()
-    if pos < len(s):
-        out.append(_wrap_seg(s[pos:]))
-    return "".join(out)
-
-
 def _codify_inline_identifiers(text: str) -> str:
     """Wrap unmarked code identifiers (file paths, calls, dotted refs)
     in `backticks` so Story Card prose renders them as inline code.
@@ -14729,170 +14503,7 @@ def _codify_inline_identifiers(text: str) -> str:
     Skips text inside existing backticks and existing Markdown link
     targets so we never double-wrap or break links.
     """
-    if not text:
-        return text
-
-    # Tokenise: keep already-quoted segments (backtick-spans and
-    # parenthesised link targets) opaque, wrap only the prose runs in
-    # between. This avoids double-wrapping `` `foo` `` → `` ``foo`` ``
-    # and never edits a Markdown URL like `(https://example.com)`.
-    parts: list[str] = []
-    pos = 0
-    span_re = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
-    for m in span_re.finditer(text):
-        if m.start() > pos:
-            parts.append(text[pos : m.start()])  # prose run
-            parts.append("\x00")  # marker
-        parts.append(m.group(0))  # passthrough span
-        pos = m.end()
-    if pos < len(text):
-        parts.append(text[pos:])
-        parts.append("\x00")
-
-    out_parts: list[str] = []
-    for p in parts:
-        if p == "\x00":
-            continue
-        if p.startswith("`") or p.startswith("](") or p.startswith("<") or p.startswith("&#"):
-            out_parts.append(p)
-            continue
-        # Apply the four code matchers in priority order, but each one ONLY
-        # outside spans already wrapped by an earlier matcher in this same
-        # run. Without this, `_CODE_FILE_RE` wraps a full path
-        # (`frontend/…/administration.component.html:26`) and then
-        # `_CODE_DOTTED_RE` re-matches `component.html` INSIDE that fresh span,
-        # producing mid-token backticks (`administration.`component.html`:26`).
-        # The outer span mask only knows about backticks present before this
-        # run; spans created here must be protected too.
-        run = p
-        # First fold whole code-signal string literals into one span so no
-        # per-token matcher reaches inside a SQL query / concatenated
-        # expression and half-backticks a column ref.
-        run = _wrap_code_string_literals(run)
-        # Two matchers are ambiguous and run fail-closed (positive-evidence
-        # guard); the other three shapes are unambiguously code.
-        # Scoped packages run BEFORE the file matcher: `@scope/name.js` would
-        # otherwise be half-wrapped as a `name.js` "file" inside the package name.
-        run = _sub_outside_spans(_CODE_SCOPED_PKG_RE, run)
-        run = _sub_outside_spans(_CODE_FILE_RE, run, reject=_file_token_is_product_name)
-        run = _sub_outside_spans(_CODE_CALL_RE, run)
-        run = _sub_outside_spans(_CODE_BARE_CALL_RE, run)
-        run = _sub_outside_spans(_CODE_DOTTED_RE, run, reject=lambda t: not _dotted_token_is_code(t))
-        run = _sub_outside_spans(_CODE_ENV_RE, run)
-        out_parts.append(run)
-    # Final pass: absorb un-backticked code that FLANKS an inline span the
-    # author only partially wrapped (e.g. `foo.forEach((x) => { `bar(x)` })`).
-    # The per-token matchers above deliberately skip non-empty-paren calls and
-    # arrow functions, so a multi-statement expression would otherwise render
-    # half-monospaced (juice-shop 2026-06-24 user report). `_balance_code_spans`
-    # merges the whole balanced expression into one span.
-    return _balance_code_spans("".join(out_parts))
-
-
-_BRACKET_OPENERS = {"(": ")", "[": "]", "{": "}"}
-_BRACKET_CLOSERS = {")": "(", "]": "[", "}": "{"}
-# A flank between an inline span and the surrounding expression may carry only
-# code-shaped characters; a natural-language word (≥2 letters, space-bounded on
-# both sides and not glued to `.`/`(`/etc.) blocks the merge.
-_FLANK_CODE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") | set(
-    ".(){}[]_$@/\\:'\"=>,;+-*%&|!? \t"
-)
-_FLANK_WORD_RE = re.compile(r"[A-Za-z][A-Za-z]+")
-_FLANK_CALL_HEAD_RE = re.compile(r"[A-Za-z_$][\w$.]*\(")
-
-
-def _flank_is_standalone_word(text: str, start: int, end: int) -> bool:
-    """True when ``text[start:end]`` is an alphabetic word bounded by non-glue
-    context on BOTH sides — i.e. prose, not a code identifier attached to
-    ``.`` / ``(`` / ``)`` / ``_`` etc."""
-    glue = set(".(){}[]_$@/\\:")
-    before = text[start - 1] if start > 0 else " "
-    after = text[end] if end < len(text) else " "
-    return before not in glue and after not in glue
-
-
-def _flank_balance(s: str) -> int:
-    """Net unclosed-opener depth of ``s`` (positive = more openers), ignoring
-    brackets inside single/double quotes."""
-    depth = 0
-    quote = None
-    for ch in s:
-        if quote:
-            if ch == quote:
-                quote = None
-            continue
-        if ch in "'\"":
-            quote = ch
-        elif ch in _BRACKET_OPENERS:
-            depth += 1
-        elif ch in _BRACKET_CLOSERS:
-            depth -= 1
-    return depth
-
-
-def _flank_boundary_left(text: str, end: int) -> int:
-    """Leftmost index of the contiguous code flank ending at ``end`` (exclusive):
-    walk left over code-shaped chars, then cut to just after the last standalone
-    prose word so a sentence prefix is never swallowed."""
-    i = end
-    while i > 0 and text[i - 1] in _FLANK_CODE_CHARS:
-        i -= 1
-    cut = i
-    for m in _FLANK_WORD_RE.finditer(text, i, end):
-        if _flank_is_standalone_word(text, m.start(), m.end()):
-            cut = m.end()
-    while cut < end and text[cut] in " \t-:":
-        cut += 1
-    return cut
-
-
-def _flank_boundary_right(text: str, start: int) -> int:
-    """Exclusive end index of the contiguous code flank beginning at ``start``:
-    walk right over code-shaped chars, then cut before the first standalone
-    prose word so trailing narration is never swallowed."""
-    i = start
-    n = len(text)
-    while i < n and text[i] in _FLANK_CODE_CHARS:
-        i += 1
-    end = i
-    for m in _FLANK_WORD_RE.finditer(text, start, end):
-        if _flank_is_standalone_word(text, m.start(), m.end()):
-            cut = m.start()
-            while cut > start and text[cut - 1] in " \t":
-                cut -= 1
-            return cut
-    return end
-
-
-def _balance_code_spans(text: str) -> str:
-    """Absorb un-backticked code FLANKING an inline ``code`` span into one span
-    when the author only partially wrapped a single bracketed expression — e.g.
-    ``foo.forEach((x) => { `bar(x)` })`` → ``` `foo.forEach((x) => { bar(x) })` ```.
-
-    Conservative + idempotent: fires only when the left flank opens brackets
-    (and carries a call/arrow head) that the right flank closes around the span,
-    so balanced standalone spans and ordinary prose are left untouched.
-    """
-    if text.count("`") < 2:
-        return text
-    spans = [(m.start(), m.end()) for m in re.finditer(r"`[^`]+`", text)]
-    # Right-to-left so earlier indices stay valid as we splice.
-    for a, b in reversed(spans):
-        left_start = _flank_boundary_left(text, a)
-        right_end = _flank_boundary_right(text, b)
-        left = text[left_start:a]
-        right = text[b:right_end]
-        ld = _flank_balance(left)
-        rd = _flank_balance(right)
-        # Partial-wrap signature: left opens net brackets, right closes exactly
-        # those, and the left flank is real code (a call/arrow head), not prose.
-        if ld <= 0 or (ld + rd) != 0 or not _FLANK_CALL_HEAD_RE.search(left):
-            continue
-        inner = text[a + 1 : b - 1]
-        merged = "`" + left.rstrip() + (" " if left.endswith(" ") else "") + inner + right.rstrip() + "`"
-        trail = right[len(right.rstrip()) :]
-        text = text[:left_start] + merged + trail + text[right_end:]
-    return text
+    return _inline_code_formatter.format_inline_code(text)[0]
 
 
 # OWASP Top 10:2025 category → canonical deep-link (mirrors
@@ -17329,66 +16940,9 @@ def sev_label_strict(sev_key: str) -> str:
 # Inline-code helpers for §9 Mitigation prose (M-NNN how / verification).
 # ---------------------------------------------------------------------------
 
-# Pattern → matches code-shaped tokens that should be wrapped in backticks
-# in mitigation `how` / `why` / `verification` / `steps[]` text.
-#
-# Conservative on purpose: each alternative has at least one unambiguous
-# code marker (parens, slashes, `.ext`, `--flag`, `@version`, HTTP method
-# literal, `process.env.X`). False positives prefer "leave alone" over
-# "wrap a normal word as code".
-# A single argument token: non-period/whitespace chunk, optionally
-# followed by `.<chunk>` (file extension etc.). Excludes the
-# sentence-final period that's followed by whitespace + uppercase.
-# Used by all command-with-args alternates below.
-# Local helper:  ARG = r"[^\s,;.]+(?:\.[^\s,;.]+)*"
-_INLINE_CODE_PATTERNS: list[str] = [
-    # Shell command + at least one argument. Argument tokens may include
-    # `.` (filenames) and `/` (paths) but stop at sentence-final
-    # punctuation (period+space, comma+space, etc.).
-    r"(?:^|(?<=[\s(]))"  # start-of-line OR after whitespace/open-paren
-    r"(?:npm (?:install|run|test|audit) [^\s,;.]+(?:\.[^\s,;.]+)*(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
-    r"|openssl [a-z]+(?:\s+-[a-zA-Z]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)?){1,4}"
-    r"|grep -[a-zA-Z]+ [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
-    r"|curl -[a-zA-Z]+ [^\s]+"
-    r"|git [a-z]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
-    r"|python3 [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
-    r"|node [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*)",
-    # HTTP method + path: `POST /rest/user/login`, `GET /api/Users`.
-    r"\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /[A-Za-z0-9_/\-{}.:?=&]+",
-    # File path with extension, optionally followed by :line or :line-line:
-    # `lib/insecurity.ts:23`, `frontend/src/app.module.ts`, `routes/x.ts:20-25`.
-    # The range branch `(?:-\d+)?` keeps `file.ts:20-25` a single wrapped token —
-    # without it the `\b` after `:20` splits the span, leaving `-25` un-backticked.
-    r"\b[A-Za-z_][A-Za-z0-9_./\-]*\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|toml|md|html|css|scss)(?::\d+(?:-\d+)?)?\b",
-    # JS/TS expressions:
-    #   `bcrypt.hash(password, 12)`, `crypto.createHash('md5')`,
-    #   `process.env.JWT_PRIVATE_KEY`,
-    #   `sanitizer.bypassSecurityTrustHtml(html)`, `models.sequelize.query()`,
-    #   `DomSanitizer.sanitize(SecurityContext.HTML, html)`,
-    #   `rateLimit({ windowMs: 15, max: 10 })` (function call without dot).
-    r"\b(?:process\.env\.[A-Z_][A-Z0-9_]*"
-    r"|(?:[a-zA-Z_][a-zA-Z0-9_]*\.)+[a-zA-Z_][a-zA-Z0-9_]*\([^()\n]{0,200}\)"
-    r"|[a-zA-Z_][a-zA-Z0-9_]{2,}\((?:\{[^{}\n]{0,200}\}|[^()\n]{0,200})\))",
-    # Bare camelCase identifiers (no dot/paren), e.g. `safeEval`, `imageUrl`,
-    # `bypassSecurityTrustHtml`, `isRedirectAllowed`, `multi`. A lowercase start
-    # with an internal uppercase is a code identifier — prose words almost never
-    # carry a mid-word capital, so this stays code-only in §9 How/Why/steps.
-    r"\b[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*\b",
-    # Bare route / directory paths: `/ftp/`, `/support/logs/`, `/rest/user`.
-    # The leading whitespace/paren lookbehind keeps prose `and/or`, `TLS/SSL`,
-    # `input/output` out (no space before the slash there).
-    r"(?<=[\s(])/[A-Za-z][A-Za-z0-9_\-]*(?:/[A-Za-z0-9_\-{}:.]+)*/?",
-    # Config object literal carrying a key:value, e.g. `{ noent: true }`,
-    # `{ multi: true }`, `{ windowMs: 900000 }`.
-    r"\{[^{}\n]{0,80}:[^{}\n]{0,80}\}",
-    # Long npm package@version: `express-jwt@0.1.3`, `@types/bcrypt`.
-    r"@[a-z][a-z0-9-]*/[a-z][a-z0-9-]*"  # scoped package
-    r"|\b[a-z][a-z0-9-]*@\d+(?:\.\d+){0,2}(?:[\-+][a-zA-Z0-9.]+)?\b",
-]
 
-_INLINE_CODE_RE = re.compile("|".join(_INLINE_CODE_PATTERNS))
-
-
+# Mitigation prose delegates to the report-wide recognizer. This local helper
+# remains only as a stable renderer entry point for existing callers.
 def _norm_step(text: object) -> str:
     """Normalise a remediation line for duplicate comparison.
 
@@ -17408,51 +16962,7 @@ def _wrap_inline_code(text: str) -> str:
     fenced/inline code regions verbatim. Idempotent — running this twice
     produces the same output (already-wrapped tokens are skipped).
     """
-    if not text:
-        return text
-
-    # Tokenize into "kept-verbatim" chunks (existing backticks, fenced code)
-    # and "scannable" chunks. Only the scannable chunks go through the regex
-    # so that already-wrapped code stays unchanged.
-    chunks: list[tuple[str, str]] = []  # (kind, content); kind ∈ {keep, scan}
-    cursor = 0
-    skip_re = re.compile(r"`[^`\n]+`|```[\s\S]*?```", re.MULTILINE)
-    for m in skip_re.finditer(text):
-        if m.start() > cursor:
-            chunks.append(("scan", text[cursor : m.start()]))
-        chunks.append(("keep", m.group(0)))
-        cursor = m.end()
-    if cursor < len(text):
-        chunks.append(("scan", text[cursor:]))
-
-    def _wrap_one(mm: re.Match[str]) -> str:
-        token = mm.group(0)
-        # Push trailing sentence-end punctuation BACK out of the code span
-        # so prose punctuation stays visible. `.` is excluded only when it
-        # isn't required for a file extension (we keep `.ts` / `.js` etc.).
-        trailing = ""
-        while token and token[-1] in ".,;:!?":
-            # Keep `.<ext>` inside the wrap when the wrap is exactly that.
-            ch = token[-1]
-            if ch == "." and re.search(
-                r"\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|"
-                r"toml|md|html|css|scss)$",
-                token[:-1] + ch,
-            ):
-                break
-            trailing = ch + trailing
-            token = token[:-1]
-        if not token:
-            return mm.group(0)
-        return f"`{token}`{trailing}"
-
-    out: list[str] = []
-    for kind, content in chunks:
-        if kind == "keep":
-            out.append(content)
-            continue
-        out.append(_INLINE_CODE_RE.sub(_wrap_one, content))
-    return "".join(out)
+    return _inline_code_formatter.format_inline_code(text)[0]
 
 
 def _load_sibling_module(name: str):
@@ -17540,10 +17050,7 @@ def _abuse_cases_placeholder(ctx: RenderContext) -> str:
     label = str(_read_skill_config(ctx.output_dir).get("abuse_case_label") or "").strip()
     reason = label.removeprefix("skipped").strip().strip("()").strip()[:60]
     suffix = f" ({reason})" if reason else ""
-    return (
-        f"_Abuse-case verification did not run for this assessment{suffix}. "
-        "No abuse-case scenario was evaluated._"
-    )
+    return f"_Abuse-case verification did not run for this assessment{suffix}. No abuse-case scenario was evaluated._"
 
 
 def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
@@ -18784,9 +18291,7 @@ def render(
             # Stage 1d ran no matcher and no verifier (explicit --no-abuse-cases,
             # or the quick-depth default). §9 must then say so instead of
             # rendering its "none identified" placeholder over an unassessed area.
-            "skip_abuse_case_verification": bool(
-                _read_skill_config(output_dir).get("skip_abuse_case_verification")
-            ),
+            "skip_abuse_case_verification": bool(_read_skill_config(output_dir).get("skip_abuse_case_verification")),
             # 13-section schema_v2 — the only supported §7 contract.
             "security_schema": _resolve_security_schema(output_dir),
         },
@@ -19097,7 +18602,12 @@ def render(
     )
     # Backtick inline code the LLM left un-marked across all prose (after the
     # ref/dot passes so it never wraps a freshly-built link's anchor).
-    rendered = _apply_outside_changelog(rendered, _codify_inline_code_in_prose)
+    # Evidence-led vocabulary supplements syntax-shaped candidates with
+    # ambiguous dependency names declared by the target repository. Manifest
+    # reads are bounded and contained by the canonical formatter; invalid or
+    # absent repository context simply contributes no names.
+    code_tokens = _inline_code_vocabulary(ctx)
+    rendered = _apply_outside_changelog(rendered, lambda text: _codify_inline_code_in_prose(text, code_tokens))
     # Final, authoritative locator normalisation — runs AFTER every section
     # render, fragment injection, and T→F bridge, so any reference-trailing
     # `(path/file:line)` (incl. §3/§9 and MS leaderboard cells produced past the

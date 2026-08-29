@@ -34,11 +34,10 @@ prose = _load()
 # --- _wrap_line http-method-path trailing punctuation / wildcard (426,433-437)
 
 
-def test_http_method_path_wildcard_route_skipped():
+def test_http_method_path_wildcard_route_is_code():
     line = "Call GET /api/* to fetch."
     out, _ = prose._wrap_line(line)
-    # Wildcard route must NOT be backticked.
-    assert "`/api/*`" not in out
+    assert "`/api/*`" in out
 
 
 def test_http_method_path_trailing_punct_outside_backtick():
@@ -51,10 +50,10 @@ def test_http_method_path_trailing_punct_outside_backtick():
 # --- _wrap_line generic branches: glob, before ._, quotes, after (464,489,491,493,495,506)
 
 
-def test_wrap_line_glob_token_skipped():
+def test_wrap_line_glob_token_is_code():
     line = "The pattern routes/** matches everything."
     out, _ = prose._wrap_line(line)
-    assert "`routes/**`" not in out
+    assert "`routes/**`" in out
 
 
 def test_wrap_line_member_access_prefix_skipped():

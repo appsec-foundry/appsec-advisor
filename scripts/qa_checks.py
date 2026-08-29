@@ -4653,7 +4653,8 @@ def _run_autofix(md_path: Path, repo_root: Path) -> int:
     try:
         import apply_prose_fixes as _apf  # sibling script
 
-        _apf_text, apf_fixes = _apf.apply_code_formatting(md.read_text(encoding="utf-8"))
+        code_tokens = _inline_code_vocabulary(md, repo_root)
+        _apf_text, apf_fixes = _apf.apply_code_formatting(md.read_text(encoding="utf-8"), code_tokens)
         if apf_fixes and _apf_text != md.read_text(encoding="utf-8"):
             atomic_write_text(md, _apf_text)
             _PrePass.reset()
@@ -4794,7 +4795,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # Fix (7): dense "Where it falls short." paragraphs — warning-only.
     falls_short_report = check_falls_short_format(md)
     # M-12c: path-shaped tokens that should be backticked per prose-style Rule 6.
-    inline_code_report = check_inline_code_format(md)
+    inline_code_report = check_inline_code_format(md, repo_root)
     label_as_code_report = check_label_as_code(md)
     # M1: evidence-integrity check — line in-range, not pure-noise,
     # absence-greps replayed. Reads .threats-merged.json (preferred) or
@@ -8204,24 +8205,29 @@ def check_hypothesis_validation_objective(md_path: Path) -> Report:
     return report
 
 
-def check_inline_code_format(md_path: Path) -> Report:
-    """M-12c: Flag path-shaped tokens that appear unbacked in prose.
+def _inline_code_vocabulary(md_path: Path, repo_root: Path | None = None) -> frozenset[str]:
+    """Return bounded repository and structured evidence for code semantics."""
 
-    Conservative scope — only path-like tokens of the form
-    ``segment/segment.ext[:line]`` with a recognised source-tree
-    extension. Function-call tokens like ``eval()`` and dotted accesses
-    are NOT flagged here because they generate too many false positives
-    on benign prose ("the eval() builtin is deprecated"); prose-style.md
-    Rule 6 is the authoring guidance and the QA gate enforces only the
-    high-cost / high-signal subset.
+    import yaml
+    from inline_code_formatter import repository_vocabulary, structured_vocabulary
 
-    Excluded contexts:
-      - inside backticks (`...`)
-      - inside code fences (```...```)
-      - inside markdown link targets (`[label](path/to/x)`)
-      - inside HTML attributes (e.g. `href="..."`)
-      - in headings (`#`/`##`/`###`/`####`/`#####`/`######` lines)
-      - in table rows (lines starting with `|`)
+    tokens = set(repository_vocabulary(repo_root)) if repo_root else set()
+    yaml_path = md_path.with_name("threat-model.yaml")
+    try:
+        if yaml_path.is_file() and yaml_path.stat().st_size <= 5_000_000:
+            tokens.update(structured_vocabulary(_fast_yaml_load(yaml_path.read_text(encoding="utf-8")) or {}))
+    except (OSError, UnicodeError, ValueError, TypeError, yaml.YAMLError):
+        pass
+    return frozenset(tokens)
+
+
+def check_inline_code_format(md_path: Path, repo_root: Path | None = None) -> Report:
+    """Flag tokens the canonical formatter would change.
+
+    Detection and autofix deliberately share ``inline_code_formatter``. A
+    token class cannot be fixable in one path but invisible in the other.
+    Markdown fences, headings, existing code spans, links, and HTML are kept
+    opaque by the same source-preserving scanner used during rendering.
     """
     report = Report("inline_code_format")
     try:
@@ -8230,89 +8236,25 @@ def check_inline_code_format(md_path: Path) -> Report:
         report.issues.append(f"cannot read {md_path}: {e}")
         return report
 
-    # Drop fenced code blocks entirely.
-    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    from inline_code_formatter import MarkdownScanState, candidates
 
-    extensions = (
-        "ts",
-        "tsx",
-        "js",
-        "jsx",
-        "json",
-        "yaml",
-        "yml",
-        "py",
-        "go",
-        "rs",
-        "java",
-        "kt",
-        "rb",
-        "php",
-        "cs",
-        "c",
-        "h",
-        "cpp",
-        "hpp",
-        "swift",
-        "scala",
-        "md",
-        "html",
-        "css",
-        "scss",
-        "sql",
-        "sh",
-        "bash",
-        "ps1",
-        "toml",
-        "lock",
-        "env",
-    )
-    path_re = re.compile(r"[A-Za-z][\w.-]*/[\w./-]+\.(?:" + "|".join(extensions) + r")(?::\d+)?\b")
-    backtick_span_re = re.compile(r"`[^`\n]+`")
-    md_link_url_re = re.compile(r"\]\(([^)]+)\)")
-    html_attr_re = re.compile(r'(?:href|src|action|formaction)="[^"]+"')
-
-    lines = text.splitlines()
-    flagged: list[tuple[int, str]] = []
-    in_html_block = False
-
-    for lineno, line in enumerate(lines, start=1):
-        stripped = line.lstrip()
-        # Skip headings, table rows.
-        if stripped.startswith("#") or stripped.startswith("|"):
+    known_tokens = _inline_code_vocabulary(md_path, repo_root)
+    flagged: list[tuple[int, str, str]] = []
+    scan_state = MarkdownScanState()
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        if not scan_state.scannable(line):
             continue
-        # Skip raw-HTML blockquote / blocks roughly (best-effort — full
-        # HTML parsing is out of scope for a regex gate).
-        if "<blockquote" in stripped:
-            in_html_block = True
-        if in_html_block:
-            if "</blockquote>" in stripped:
-                in_html_block = False
-            continue
-
-        # Mask out content that is legitimately allowed to contain paths:
-        # already-backticked spans, markdown-link URLs, HTML attributes.
-        masked = backtick_span_re.sub(lambda m: " " * len(m.group(0)), line)
-        masked = md_link_url_re.sub(lambda m: "](" + " " * len(m.group(1)) + ")", masked)
-        masked = html_attr_re.sub(lambda m: " " * len(m.group(0)), masked)
-
-        for m in path_re.finditer(masked):
-            tok = m.group(0)
-            # Skip the dotted glob exemption (e.g. `routes/**` — used in
-            # YAML-derived prose) — these are wildcards, not file paths.
-            if "**" in tok or "*" in tok:
-                continue
-            flagged.append((lineno, tok))
+        flagged.extend((lineno, item.text, item.kind) for item in candidates(line, known_tokens))
 
     if flagged:
         # Aggregate per-token to keep output compact.
         from collections import Counter
 
-        counter = Counter(tok for _, tok in flagged)
-        for tok, n in counter.most_common(20):
-            lines_with = sorted({ln for ln, t in flagged if t == tok})[:3]
+        counter = Counter((token, kind) for _, token, kind in flagged)
+        for (token, kind), n in counter.most_common(20):
+            lines_with = sorted({line for line, found, _ in flagged if found == token})[:3]
             report.warnings.append(
-                f"unbacked path-shaped token {tok!r} appears {n}× in prose "
+                f"unformatted {kind} token {token!r} appears {n}× in prose "
                 f"(line(s) {lines_with}{'…' if n > 3 else ''}) — wrap in "
                 f"backticks per prose-style Rule 6"
             )

@@ -1079,6 +1079,15 @@ class TestProseStyleAnchor:
             f"See prose-style.md → 'Companion file' for the rationale."
         )
 
+    def test_inline_code_semantics_are_owned_at_production(self):
+        style = PROSE_STYLE_FILE.read_text(encoding="utf-8")
+        stride = (AGENTS_DIR / "appsec-stride-analyzer-v2.md").read_text(encoding="utf-8")
+        renderer = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
+        assert "Producer ownership:" in style
+        assert "author these backticks in every Markdown-bearing prose field" in style
+        assert "Kernel preloads `shared/prose-style.md`" in stride
+        assert "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md" in renderer
+
     @pytest.mark.parametrize(
         "agent_file",
         AGENT_FILES_AUTHORING_PROSE,

