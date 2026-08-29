@@ -36,7 +36,16 @@
   },
   "permissions": {
     "ask": [
-      "Edit(/specs/requirements.md)"
+      "Edit(specs/requirements.md)",
+      "Write(specs/requirements.md)"
+    ],
+    "deny": [
+      "Edit(.claude/settings.json)",
+      "Write(.claude/settings.json)",
+      "Edit(scripts/spec_guard.py)",
+      "Write(scripts/spec_guard.py)",
+      "Edit(scripts/requirements_hook.py)",
+      "Write(scripts/requirements_hook.py)"
     ]
   },
   "sandbox": {
