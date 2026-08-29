@@ -157,8 +157,12 @@ MODES
                                fragments (no re-analysis); for fragment/render
                                changes, not code changes
 
-  These three are the supported modes. A run reassesses the whole repository;
-  reassess a changed repository with --full, which preserves report history.
+  --base <ref>                 Git ref the change summary diffs against
+                               (default: the prior scan commit)
+
+  These three modes are the supported ones. A run reassesses the whole
+  repository; reassess a changed repository with --full, which preserves
+  report history.
 
   Rejected before any run state changes or any agent is dispatched:
   --incremental, --pr-mode, --resume, --dry-run, --max-wall-time, --max-cost

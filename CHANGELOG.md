@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The help no longer documents `--incremental`, `--pr-mode`, `--resume`, `--dry-run`, `--max-wall-time` and `--max-cost`, which the runtime rejects before a run starts.
 - Business context supplied for one run no longer leaks into the next run in the same output directory.
 - A declared business context that maps to no component is now reported as a run issue instead of passing unnoticed.
+- A finished run now clears its transient files from the output directory again; a run that ended with QA unclean still keeps them for diagnosis.
 
 - The requirements harvester now takes the whole requirement section, recognises IDs written without brackets, and no longer duplicates entries.
 - Section 9 now says when abuse-case verification did not run instead of reporting that no abuse case was identified, and a quick run names the skipped verification in its scope banner.

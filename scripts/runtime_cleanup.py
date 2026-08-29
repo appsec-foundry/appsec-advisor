@@ -98,6 +98,9 @@ Safety gates — skip entire cleanup when any of these hold:
 Invocation:
 
   python3 runtime_cleanup.py <OUTPUT_DIR> [--stage all|pre-qa|post-qa|post-architect]
+                                          # the pipeline invokes post-qa (and
+                                          # post-architect); post-qa carries the
+                                          # always-cleanup wave on a clean run
                                           [--keep-runtime-files]
                                           [--keep-run-issues]              # deferred plugin diagnosis
                                           [--force]                        # bypass safety gates
@@ -413,13 +416,26 @@ def run_cleanup(
     # --- resolve which paths are in scope for this stage --------------------
     files: list[str] = []
     dirs: list[str] = []
+    always_scheduled = False
     if stage in {"all", "pre-qa"}:
         files.extend(ALWAYS_FILES)
         dirs.extend(ALWAYS_DIRS)
+        always_scheduled = True
     if stage in {"all", "post-qa"}:
         qa_status_ok = _status_file_is_pass(output_dir / ".qa-status.json")
         qa_plan_ok = _repair_plan_is_empty(output_dir / ".qa-repair-plan.json")
         if qa_status_ok and qa_plan_ok:
+            # The always-cleanup wave belongs to a finished run, and `post-qa` is
+            # the only stage the pipeline invokes — nothing calls `pre-qa`, so
+            # gating this wave on that stage alone left every transient artifact
+            # behind in the output directory for good. Running it here honours
+            # what the whitelist contract already promises ("after a successful
+            # run") while a run that did not finish cleanly keeps the artifacts
+            # a diagnosis needs.
+            if not always_scheduled:
+                files.extend(ALWAYS_FILES)
+                dirs.extend(ALWAYS_DIRS)
+                always_scheduled = True
             files.extend(POST_QA_FILES_IF_PASS)
             dirs.extend(POST_QA_DIRS)
         else:
