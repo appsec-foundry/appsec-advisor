@@ -18,16 +18,22 @@ import stride_dispatch_waves
 PENDING_EXIT_CODE = 75
 
 
-def _run_progress(script: Path, output_dir: Path, expected: int, *, force: bool) -> int:
+def _run_progress(script: Path, output_dir: Path, expected: int, *, force: bool) -> tuple[int, str]:
+    """Poll once; return the exit code and the progress text for the caller.
+
+    The text is returned rather than printed so the poll loop can drop a round
+    that repeats the previous one. A wave joined over 24 rounds forwarded 24
+    full progress dumps into the orchestrator's context, 23 of them already
+    stale by the time the call returned — measured at 5.8KB for a single
+    waiter call on run a2a0e355.
+    """
     cmd = [sys.executable, str(script), str(output_dir), str(expected)]
     if force:
         cmd.append("--force")
     proc = subprocess.run(cmd, text=True, capture_output=True)
-    if proc.stdout:
-        print(proc.stdout, end="")
     if proc.stderr:
         print(proc.stderr, end="", file=sys.stderr)
-    return proc.returncode
+    return proc.returncode, proc.stdout or ""
 
 
 def _wave_status(output_dir: Path, component_ids: list[str]) -> str | None:
@@ -73,11 +79,19 @@ def main(argv: list[str] | None = None) -> int:
     start = time.time()
     last_rc = 1
     last_wave_status: str | None = None
+    previous_progress: str | None = None
     for round_no in range(1, args.rounds + 1):
         elapsed = int(time.time() - start)
         elapsed_s = f"{elapsed // 60}m{elapsed % 60:02d}s"
-        print(f"  ↳ (+{elapsed_s}) STRIDE progress poll {round_no}/{args.rounds}")
-        last_rc = _run_progress(progress_script, args.output_dir, args.expected, force=(round_no == 1))
+        last_rc, progress = _run_progress(progress_script, args.output_dir, args.expected, force=(round_no == 1))
+        # Report a round only when it says something the last one did not, so
+        # the caller sees every state transition — including the final ready
+        # count the stage runtime reads — without the identical rounds between.
+        if progress != previous_progress:
+            print(f"  ↳ (+{elapsed_s}) STRIDE progress poll {round_no}/{args.rounds}")
+            if progress:
+                print(progress, end="")
+            previous_progress = progress
         last_wave_status = _wave_status(args.output_dir, args.component)
         if last_wave_status == "complete" or (last_wave_status is None and last_rc == 0):
             return 0

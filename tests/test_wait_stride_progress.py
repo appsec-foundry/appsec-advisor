@@ -17,7 +17,7 @@ import wait_stride_progress as wsp
 # ---------------------------------------------------------------------------
 # _run_progress
 # ---------------------------------------------------------------------------
-def test_run_progress_returns_code_and_forwards_output(monkeypatch, capsys):
+def test_run_progress_returns_code_and_progress_text(monkeypatch, capsys):
     captured_cmd = {}
 
     def fake_run(cmd, text, capture_output):
@@ -25,10 +25,13 @@ def test_run_progress_returns_code_and_forwards_output(monkeypatch, capsys):
         return subprocess.CompletedProcess(cmd, 0, stdout="hello-out", stderr="hello-err")
 
     monkeypatch.setattr(wsp.subprocess, "run", fake_run)
-    rc = wsp._run_progress(Path("/x/stride_progress.py"), Path("/out"), 3, force=False)
+    rc, progress = wsp._run_progress(Path("/x/stride_progress.py"), Path("/out"), 3, force=False)
     assert rc == 0
+    # Progress text is handed back rather than printed, so the poll loop can
+    # decide whether this round says anything the previous one did not.
+    assert progress == "hello-out"
     out, err = capsys.readouterr()
-    assert "hello-out" in out
+    assert "hello-out" not in out
     assert "hello-err" in err
     # No --force when force=False
     assert "--force" not in captured_cmd["cmd"]
@@ -43,8 +46,9 @@ def test_run_progress_appends_force_flag(monkeypatch, capsys):
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
     monkeypatch.setattr(wsp.subprocess, "run", fake_run)
-    rc = wsp._run_progress(Path("/x/sp.py"), Path("/out"), 5, force=True)
+    rc, progress = wsp._run_progress(Path("/x/sp.py"), Path("/out"), 5, force=True)
     assert rc == 1
+    assert progress == ""
     assert "--force" in captured_cmd["cmd"]
 
 
@@ -80,7 +84,7 @@ def test_main_returns_0_on_first_round_success(tmp_path, monkeypatch):
 
     def fake_run_progress(script, output_dir, expected, *, force):
         calls.append(force)
-        return 0  # ready immediately
+        return 0, ""  # ready immediately
 
     monkeypatch.setattr(wsp, "_run_progress", fake_run_progress)
     slept = []
@@ -96,7 +100,7 @@ def test_main_waits_for_wave_validation_after_seed_file_appears(tmp_path, monkey
     """OR-5: a background analyzer's write-first seed is not completion."""
     root = _make_root_with_progress(tmp_path)
     (tmp_path / ".dispatch-waves.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: 0)
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (0, ""))
     states = iter(["pending", "complete"])
     monkeypatch.setattr(wsp, "_wave_status", lambda _out, _components: next(states))
     slept = []
@@ -135,7 +139,7 @@ def test_main_pending_wave_cannot_exit_zero_at_poll_cap(tmp_path, monkeypatch, c
     """OR-5: ready-looking seed counts must not turn a pending wave green."""
     root = _make_root_with_progress(tmp_path)
     (tmp_path / ".dispatch-waves.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: 0)
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (0, ""))
     monkeypatch.setattr(wsp, "_wave_status", lambda _out, _components: "pending")
     monkeypatch.setattr(wsp.time, "sleep", lambda _seconds: None)
 
@@ -164,7 +168,7 @@ def test_main_pending_wave_cannot_exit_zero_at_poll_cap(tmp_path, monkeypatch, c
 
 def test_main_returns_high_rc_immediately(tmp_path, monkeypatch):
     root = _make_root_with_progress(tmp_path)
-    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: 2)
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (2, ""))
     monkeypatch.setattr(wsp.time, "sleep", lambda s: None)
 
     rc = wsp.main([str(tmp_path), "4", "--plugin-root", str(root)])
@@ -175,7 +179,7 @@ def test_main_succeeds_after_a_few_rounds(tmp_path, monkeypatch):
     root = _make_root_with_progress(tmp_path)
     rcs = iter([1, 1, 0])  # not-ready, not-ready, ready
 
-    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: next(rcs))
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (next(rcs), ""))
     slept = []
     monkeypatch.setattr(wsp.time, "sleep", lambda s: slept.append(s))
 
@@ -187,7 +191,7 @@ def test_main_succeeds_after_a_few_rounds(tmp_path, monkeypatch):
 def test_main_interval_floor_is_one(tmp_path, monkeypatch):
     root = _make_root_with_progress(tmp_path)
     rcs = iter([1, 0])
-    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: next(rcs))
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (next(rcs), ""))
     slept = []
     monkeypatch.setattr(wsp.time, "sleep", lambda s: slept.append(s))
 
@@ -200,7 +204,7 @@ def test_main_cap_reached_emits_warn_and_returns_last_rc(tmp_path, monkeypatch, 
     root = _make_root_with_progress(tmp_path)
     # Always not-ready -> exhaust all rounds. Use 13 rounds to also hit the
     # round==12 slow-warning branch.
-    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: 1)
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (1, ""))
     monkeypatch.setattr(wsp.time, "sleep", lambda s: None)
 
     rc = wsp.main([str(tmp_path), "5", "--plugin-root", str(root), "--rounds", "13"])
@@ -214,8 +218,48 @@ def test_main_default_plugin_root(tmp_path, monkeypatch):
     # Exercise the `args.plugin_root or <derived>` branch (no --plugin-root).
     # Point the derived progress script lookup at the real repo, then short
     # circuit the loop with a ready first round.
-    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: 0)
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (0, ""))
     monkeypatch.setattr(wsp.time, "sleep", lambda s: None)
     # Real repo has scripts/stride_progress.py, so the is_file() guard passes.
     rc = wsp.main([str(tmp_path), "2"])
     assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# Repeated poll rounds must not be forwarded
+#
+# A wave joined over 24 rounds sent 24 full progress dumps into the
+# orchestrator's context, 23 already stale by the time the call returned —
+# 5.8KB for one waiter call on run a2a0e355.
+# ---------------------------------------------------------------------------
+
+
+def test_identical_rounds_are_reported_once(tmp_path, monkeypatch, capsys):
+    root = _make_root_with_progress(tmp_path)
+    monkeypatch.setattr(wsp.time, "sleep", lambda s: None)
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (1, "[stride] 0/2 ready\n"))
+
+    wsp.main([str(tmp_path), "2", "--rounds", "6", "--plugin-root", str(root)])
+    out = capsys.readouterr().out
+    assert out.count("[stride] 0/2 ready") == 1, "an unchanged round must not repeat itself"
+    assert out.count("STRIDE progress poll") == 1
+
+
+def test_every_state_transition_is_still_reported(tmp_path, monkeypatch, capsys):
+    root = _make_root_with_progress(tmp_path)
+    monkeypatch.setattr(wsp.time, "sleep", lambda s: None)
+    steps = iter(
+        [
+            (1, "[stride] 0/2 ready\n"),
+            (1, "[stride] 0/2 ready\n"),
+            (1, "[stride] 1/2 ready\n"),
+            (1, "[stride] 1/2 ready\n"),
+            (1, "[stride] 2/2 ready\n"),
+        ]
+    )
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: next(steps))
+
+    wsp.main([str(tmp_path), "2", "--rounds", "5", "--plugin-root", str(root)])
+    out = capsys.readouterr().out
+    for expected in ("0/2 ready", "1/2 ready", "2/2 ready"):
+        assert out.count(expected) == 1, f"transition to {expected} must survive deduplication"
