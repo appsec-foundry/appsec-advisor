@@ -164,15 +164,32 @@ def _skeleton(data: Any, paths: list[tuple]) -> Any:
 
 
 def text_invariants(text: str) -> dict[str, list[str]]:
-    """Tokens that a rewrite must carry over unchanged, as sorted multisets."""
+    """Tokens a rewrite must carry over unchanged, as sorted multisets.
+
+    Extracted from the text with its backticks stripped. `prose-style.md` Rule 6
+    requires a code token to be fenced, so a rewrite that obeys the style adds
+    backticks the original lacked; pinning the fenced form would revert exactly
+    the improvements this pass exists to make. What is pinned is the token.
+    """
+    plain = text.replace("`", "")
     return {
-        "identifiers": sorted(_ID_RE.findall(text)),
-        "code_spans": sorted(_CODE_SPAN_RE.findall(text)),
-        "link_targets": sorted(_LINK_TARGET_RE.findall(text)),
-        "urls": sorted(_URL_RE.findall(text)),
-        "paths": sorted(_PATH_RE.findall(text)),
-        "numbers": sorted(_NUMBER_RE.findall(text)),
+        "identifiers": sorted(_ID_RE.findall(plain)),
+        "link_targets": sorted(_LINK_TARGET_RE.findall(plain)),
+        "urls": sorted(_URL_RE.findall(plain)),
+        "paths": sorted(_PATH_RE.findall(plain)),
+        "numbers": sorted(_NUMBER_RE.findall(plain)),
     }
+
+
+def dropped_code_spans(old: str, new: str) -> list[str]:
+    """Fenced spans of ``old`` that no longer appear in ``new`` in any form.
+
+    Presence, not count: a span repeated twice and kept once passes. The token
+    classes above carry the exact accounting; this catches a span the other
+    patterns do not describe, such as a bare symbol name.
+    """
+    plain_new = new.replace("`", "")
+    return sorted({span for span in _CODE_SPAN_RE.findall(old) if span not in plain_new})
 
 
 def _first_structural_difference(before: Any, after: Any, path: tuple = ()) -> tuple | None:
@@ -256,6 +273,9 @@ def _token_violations(file_name: str, where: str, old: str, new: str) -> list[di
                 "detail": f"{where}: lost {lost or '[]'}, added {added or '[]'}",
             }
         )
+    dropped = dropped_code_spans(old, new)
+    if dropped:
+        out.append({"file": file_name, "kind": "code_spans_dropped", "detail": f"{where}: lost {dropped}"})
     return out
 
 

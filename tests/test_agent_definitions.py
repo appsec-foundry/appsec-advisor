@@ -1049,6 +1049,9 @@ PROSE_SAMPLES_FILE = AGENTS_DIR / "shared" / "prose-samples.md"
 
 AGENT_FILES_AUTHORING_PROSE = [
     AGENTS_DIR / "appsec-threat-renderer.md",
+    # The Stage-4 editorial pass rewrites prose that ships, so it edits toward
+    # the same anchor the authors write to rather than a second style of its own.
+    AGENTS_DIR / "appsec-architect-reviewer.md",
     AGENTS_DIR / "appsec-secarch-renderer.md",
     AGENTS_DIR / "appsec-ms-renderer.md",
     AGENTS_DIR / "appsec-stride-analyzer-v2.md",

@@ -148,8 +148,31 @@ def test_a_rewritten_evidence_locator_is_caught(output_dir: Path) -> None:
     _write_model(output_dir, edited)
 
     violations = _verify(output_dir)
-    assert {v["kind"] for v in violations} >= {"code_spans_changed"}
+    assert {v["kind"] for v in violations} >= {"paths_changed", "code_spans_dropped"}
     assert any("server/api.ts:42" in v["detail"] for v in violations)
+
+
+def test_adding_backticks_the_style_requires_is_not_a_violation(output_dir: Path) -> None:
+    """prose-style Rule 6 fences code tokens. A rewrite that obeys it must not
+    be read as losing the unfenced original."""
+    _snapshot(output_dir)
+    edited = copy.deepcopy(BASE_MODEL)
+    edited["threats"][0]["impact_description"] = "Full read access to the 3 tables owned by `accounts`."
+    edited["threats"][0]["evidence_summary"] = "server/api.ts:42 concatenates `req.query.id` into the statement."
+    _write_model(output_dir, edited)
+
+    assert _verify(output_dir) == []
+
+
+def test_a_dropped_code_span_is_caught(output_dir: Path) -> None:
+    _snapshot(output_dir)
+    edited = copy.deepcopy(BASE_MODEL)
+    edited["threats"][0]["evidence_summary"] = "The handler in `server/api.ts:42` concatenates user input."
+    _write_model(output_dir, edited)
+
+    violations = _verify(output_dir)
+    assert "code_spans_dropped" in {v["kind"] for v in violations}
+    assert any("req.query.id" in v["detail"] for v in violations)
 
 
 def test_a_dropped_unproven_marking_is_caught(output_dir: Path) -> None:

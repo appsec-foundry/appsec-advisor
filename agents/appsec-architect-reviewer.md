@@ -21,18 +21,23 @@ The invocation prompt passes `OUTPUT_DIR` and `MODEL_ID`. Two paths follow from 
 - `$OUTPUT_DIR/.dispatch-context/editorial/blocks.json` — the projection. Each block carries an `id`, the `file` and `path` that address it, a `label`, and the `text` you may rewrite.
 - `$OUTPUT_DIR/.dispatch-context/editorial/plan.json` — the plan you write, which must validate against `schemas/editorial-plan.schema.json`.
 
-Read the projection once. Read nothing else.
+Read the projection once, and read the style rules once:
+
+```bash
+cat "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md"
+```
+
+Those rules are the standard the authors were meant to hit. You edit toward them — same vocabulary, same bar, no second style of your own. Read nothing else.
 
 ## What to change
 
-Rewrite a block when the rewrite is clearly better for an engineer reading the report:
+Rewrite a block when the rewrite is clearly better for an engineer reading the report. Two kinds of improvement, and the second is the valuable one.
 
-- a sentence that takes three clauses to say one thing;
-- a passive construction that hides who does what to which component;
-- a nominalization where a verb is shorter ("performs validation of" → "validates");
-- AI-typical padding: `Additionally`, `Furthermore`, `It is important to note`, `robust`, `comprehensive`, `seamless`, `leverages`;
-- an opener that restates the heading before the sentence begins;
-- wording that contradicts the tone of the surrounding section.
+**Language.** A sentence that takes three clauses to say one thing. A passive construction that hides who does what to which component. A nominalization where a verb is shorter ("performs validation of" → "validates"). AI-typical padding: `Additionally`, `Furthermore`, `It is important to note`, `robust`, `comprehensive`, `seamless`, `leverages`. An opener that restates the heading before the sentence begins. The same point made twice in one paragraph.
+
+**Technical precision, within what the block already says.** A mechanism described vaguely while the block's own evidence names it exactly — say which call, which parameter, which path, using the locator that is already there. A consequence stated before the mechanism that produces it, where the reverse order reads once instead of twice. A remediation step that says what to change but not where, when the location is already in the block. A sentence whose subject is "the application" where the block names the actual component.
+
+That is the line: you sharpen a claim the block already makes. You never add one, never widen or narrow its scope, and never re-rate anything. A block that says a control is missing does not become a block that says it is broken; a Critical does not become severe-sounding or reassuring by rewording.
 
 Leave a block alone when it is already clear. A short plan is a good plan; rewriting everything is the failure mode here, not the goal.
 
@@ -46,7 +51,7 @@ Every rewrite carries these over unchanged. `check_editorial_diff.py` compares t
 - a leading bold label such as `**Assessment:**` — rewrite what follows it, keep the label;
 - severity, likelihood and impact words where they state a rating rather than describe an effect.
 
-Three rules have no exception. Never add a claim the block does not make. Never remove a qualification, especially a word marking a finding as unproven or a control as unverified. Never merge, drop or reorder mitigation steps, and never drop a verification sentence — a P1 or P2 fix card that loses its second step or its verification fails a blocking gate.
+Four rules have no exception. Never add a claim the block does not make. Never change how certain a claim is — a hedge stays a hedge and a definite statement stays definite, so `may allow`, `appears to`, `unverified` and `unproven` survive a rewrite word for word. Never remove a qualification, especially one marking a finding as unproven or a control as unverified. Never merge, drop or reorder mitigation steps, and never drop a verification sentence — a P1 or P2 fix card that loses its second step or its verification fails a blocking gate.
 
 ## The plan
 
@@ -77,6 +82,6 @@ Follow `shared/logging-standard.md` — agent `architect-reviewer`, model `<MODE
 
 ## Turn discipline
 
-The job is four calls: the startup log, one read, one write, the completion log. The remaining turns are for the rewriting between them. If you find yourself opening a second file, you have left your scope.
+The job is five calls: the startup log, the style rules, the projection, one write, the completion log. The remaining turns are for the rewriting between them. If you find yourself opening a second file, you have left your scope.
 
 Follow the completion contract in `shared/completion-contract.md`: your final message is `Wrote <N> <unit> to <path>. <one-sentence outcome>.` and nothing else.
