@@ -90,6 +90,46 @@ def test_rejected_actions_are_surfaced(output_dir: Path, capsys: pytest.CaptureF
     assert "Rejected: 2 action(s)" in out
 
 
+def test_a_wholesale_rejected_plan_is_not_reported_as_nothing_to_do(
+    output_dir: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The applier exits 1 on a schema violation and leaves an empty report.
+
+    Read through `apply-report.json` alone, that is indistinguishable from a
+    pass that proposed nothing: both counts read 0. The reviewer's whole output
+    then disappears behind "No rewrite needed", which reads like a clean bill
+    of health.
+    """
+    _clean_pass(output_dir)
+    (output_dir / receipt.CONTEXT_DIR / "apply-report.json").write_text("", encoding="utf-8")
+
+    assert receipt.main([str(output_dir)]) == 0
+    out = capsys.readouterr().out
+    status = json.loads((output_dir / receipt.STATUS_NAME).read_text(encoding="utf-8"))
+
+    assert "No rewrite needed" not in out
+    assert "Proposed 6 edit(s) across 40 blocks, applied none" in out
+    assert "The applier refused the plan and wrote no report" in out
+    assert status["apply_report_missing"] is True
+    assert status["edits_proposed"] == 6
+    assert status["edits_applied"] == 0
+
+
+def test_a_plan_applied_to_zero_blocks_still_names_its_proposals(
+    output_dir: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A real report that applied nothing is still not "no rewrite needed"."""
+    _clean_pass(output_dir)
+    _write(output_dir, "apply-report.json", {"applied_count": 0, "rejected_count": 6, "files_touched": []})
+
+    assert receipt.main([str(output_dir)]) == 0
+    out = capsys.readouterr().out
+
+    assert "Proposed 6 edit(s) across 40 blocks, applied none" in out
+    assert "Rejected: 6 action(s)" in out
+    assert "The applier refused the plan and wrote no report" not in out
+
+
 def test_structural_warnings_reach_the_console(output_dir: Path, capsys: pytest.CaptureFixture) -> None:
     _clean_pass(output_dir)
     (output_dir / receipt.PRE_PASS_NAME).write_text(

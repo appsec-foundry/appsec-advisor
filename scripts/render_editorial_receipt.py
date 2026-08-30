@@ -80,12 +80,21 @@ def build_status(output_dir: Path) -> dict:
     context = output_dir / CONTEXT_DIR
     projection = _load(context / "blocks.json") or {}
     plan = _load(context / "plan.json") or {}
-    apply_report = _load(context / "apply-report.json") or {}
+    apply_raw = _load(context / "apply-report.json")
+    apply_report = apply_raw if isinstance(apply_raw, dict) else {}
     guard_report = _load(context / "guard-report.json") or {}
     advisories = _advisory_findings(_load(output_dir / PRE_PASS_NAME))
 
     reverted = bool(guard_report.get("restored")) or guard_report.get("status") == "violations"
     applied = 0 if reverted else int(apply_report.get("applied_count") or 0)
+
+    # The applier exits non-zero when it refuses the plan outright — a schema
+    # violation in a single action rejects the whole file — and the shell
+    # redirection then leaves an empty `apply-report.json` behind. Read through
+    # that report alone and the pass is indistinguishable from one that
+    # proposed nothing: `applied_count` and `rejected_count` both read 0. The
+    # flag is what lets the receipt say which of the two happened.
+    apply_report_missing = not apply_report
 
     return {
         "status": "pass",
@@ -95,6 +104,7 @@ def build_status(output_dir: Path) -> dict:
         "edits_proposed": len(plan.get("actions") or []),
         "edits_applied": applied,
         "edits_rejected": int(apply_report.get("rejected_count") or 0),
+        "apply_report_missing": apply_report_missing,
         "guard_violations": int(guard_report.get("violation_count") or 0),
         "reverted": reverted,
         "files_touched": [] if reverted else list(apply_report.get("files_touched") or []),
@@ -111,6 +121,16 @@ def render(status: dict) -> str:
     elif status["edits_applied"]:
         files = ", ".join(status["files_touched"]) or "—"
         lines.append(f"  Rewrote {status['edits_applied']} of {status['blocks_offered']} blocks in {files}")
+    elif status["edits_proposed"]:
+        # A proposed-but-unapplied pass is not a quiet one. Saying "no rewrite
+        # needed" here hides the reviewer's whole output behind a wording that
+        # reads like a clean bill of health.
+        lines.append(
+            f"  Proposed {status['edits_proposed']} edit(s) across {status['blocks_offered']} blocks, "
+            f"applied none — the report keeps its original wording"
+        )
+        if status["apply_report_missing"]:
+            lines.append("  The applier refused the plan and wrote no report — see plan.json for the rejected actions")
     else:
         lines.append(f"  No rewrite needed across {status['blocks_offered']} blocks")
     if status["edits_rejected"]:
@@ -133,6 +153,7 @@ def log_detail(status: dict) -> str:
         f"proposed={status['edits_proposed']} "
         f"applied={status['edits_applied']} "
         f"rejected={status['edits_rejected']} "
+        f"apply_report_missing={str(status['apply_report_missing']).lower()} "
         f"guard_violations={status['guard_violations']} "
         f"reverted={str(status['reverted']).lower()} "
         f"advisory_warnings={len(status['advisory_findings'])}"

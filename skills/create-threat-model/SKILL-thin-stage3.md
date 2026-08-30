@@ -105,6 +105,22 @@ commands pass, write `.qa-status.json` last with `status=pass` and the selected
 source; on a skipped QA path use `source=secret-gate-only` and
 `qa_skipped=true`.
 
+Then print the receipt, immediately — this stage's only console output, and the
+sole place the run reports what QA did while it is still the reader's context:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_qa_receipt.py" "$OUTPUT_DIR" \
+  --gate-exit <final qa_checks.py gate exit> \
+  --repair-iterations <iterations the loop consumed> \
+  [--dispatched <agent> ...]
+```
+
+Emit its stdout verbatim. The counts it needs from the runtime are the ones the
+filesystem cannot carry; omit `--dispatched` when no agent ran, and pass `0`
+for a deterministic pass. The script is a reader — it never writes
+`.qa-status.json`. A non-zero exit there is a reporting failure, not a release
+failure: report it and continue.
+
 Record the deterministic fast path as zero-token Stage 3 stats. Record each QA
 or fixer call separately, with fixer variants `repair-<iteration>` and its own
 dispatch start time. Stop the heartbeat, mark Stage 3 complete only after the
