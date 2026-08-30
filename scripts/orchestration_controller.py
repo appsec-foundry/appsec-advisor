@@ -1962,19 +1962,34 @@ def _dispatch_values_transition(cfg: dict[str, Any]) -> dict[str, Any]:
 # ``test_dispatch_values_stage.py`` re-derives this from the runtimes and fails
 # when one of them starts reading a key this set does not carry.
 _STAGE_TRANSITION_KEYS = (
-    "output_dir", "repo_root", "plugin_root", "run_id",
-    "assessment_depth", "qa_depth", "skip_qa", "max_repair_iterations",
+    "output_dir",
+    "repo_root",
+    "plugin_root",
+    "run_id",
+    "assessment_depth",
+    "qa_depth",
+    "skip_qa",
+    "max_repair_iterations",
     "skip_abuse_case_verification",
-    "architect_review", "check_requirements", "keep_runtime_files",
+    "architect_review",
+    "check_requirements",
+    "keep_runtime_files",
     "reasoning_model",
-    "write_yaml", "write_sarif", "write_pdf", "write_html",
-    "write_pentest_tasks", "write_threatdragon",
-    "pentest_format", "pentest_target",
+    "write_yaml",
+    "write_sarif",
+    "write_pdf",
+    "write_html",
+    "write_pentest_tasks",
+    "write_threatdragon",
+    "pentest_format",
+    "pentest_target",
     # No ``estimate_*``: those are computed for `prepare` from a separate
     # estimate object, are not config, and only feed a banner string the session
     # already bound. A missing one costs a number in one line of console text.
-    "skip_attack_paths_authoring", "skip_attack_walkthroughs",
-    "diagram_depth", "enrich_arch_fragments",
+    "skip_attack_paths_authoring",
+    "skip_attack_walkthroughs",
+    "diagram_depth",
+    "enrich_arch_fragments",
 )
 
 

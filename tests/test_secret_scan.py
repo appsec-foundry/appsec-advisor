@@ -186,8 +186,7 @@ def test_credential_parameter_name_in_prose_not_flagged(secret_scan, raw):
         # no English word — so the backward mid-sentence test failed and the
         # next word of the sentence was harvested as a 10-char credential. It
         # then nuked every literal "referenced" in the freshly rendered report.
-        '      "LLM_API_KEY: referenced in routes/chat.ts:111 via process.env '
-        '— value at runtime only, not hardcoded"',
+        '      "LLM_API_KEY: referenced in routes/chat.ts:111 via process.env — value at runtime only, not hardcoded"',
         # Same shape, other lead-ins that carry prose but no preceding word.
         "- API_KEY: referenced in the config loader, never hardcoded",
         "// token: retrieved from the vault at startup and cached in memory",

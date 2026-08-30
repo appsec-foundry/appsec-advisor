@@ -662,7 +662,7 @@ def test_blueprint_reference_names_and_links_the_matched_sections(tmp_path: Path
         "  url: https://x/input-validation\n"
         "  sections:\n"
         "  - title: 4. Parameterized Data Access\n"
-        "    url: https://x/sql-injection\n"          # deliberately NOT the blueprint url
+        "    url: https://x/sql-injection\n"  # deliberately NOT the blueprint url
         "    content: Bind every value through the driver.\n"
         "    references:\n"
         "    - id: SEC-INJ-1\n",

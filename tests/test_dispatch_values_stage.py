@@ -57,8 +57,14 @@ def _cfg() -> dict:
 # `prepare` from a separate estimate object rather than read from config, and
 # feeds only a banner string the session bound in §3 — losing it costs a number
 # in one line of console text, not a dispatch.
-DISPLAY_ONLY_KEYS = {"estimate_stage1_min", "estimate_stage2_min", "estimate_stage3_min",
-                     "estimate_stage4_min", "estimate_total_pretty", "estimate_source"}
+DISPLAY_ONLY_KEYS = {
+    "estimate_stage1_min",
+    "estimate_stage2_min",
+    "estimate_stage3_min",
+    "estimate_stage4_min",
+    "estimate_total_pretty",
+    "estimate_source",
+}
 
 
 def test_every_alias_a_stage_runtime_reads_survives_the_trim():

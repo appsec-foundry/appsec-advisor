@@ -408,9 +408,7 @@ def build(repo_root: Path, output_dir: Path, plugin_root: Path, *, skip_business
     # the repository. Leave the block out rather than duplicate the secret.
     business_secret_hits: list[str] = []
     if business_path is not None:
-        business_secret_hits = [
-            f"line {hit.line} ({hit.pattern})" for hit in secret_scan.scan_text(business)[:5]
-        ]
+        business_secret_hits = [f"line {hit.line} ({hit.pattern})" for hit in secret_scan.scan_text(business)[:5]]
         if business_secret_hits:
             business = (
                 "Business context was withheld: it contains what looks like a credential at "

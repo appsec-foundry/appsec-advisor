@@ -74,9 +74,7 @@ def _resolved_bounds() -> dict[str, tuple[int, int | None]]:
     `low`, which nothing else checks and which is what catches a gutted prompt.
     """
     budgeted = _byte_budgets()
-    return {
-        relpath: (low, None if relpath in budgeted else high) for relpath, (low, high) in _BOUNDS.items()
-    }
+    return {relpath: (low, None if relpath in budgeted else high) for relpath, (low, high) in _BOUNDS.items()}
 
 
 def test_ceiling_is_not_recorded_in_both_places():

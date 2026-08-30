@@ -4305,9 +4305,7 @@ _V2_STATUS_TOKENS = {
 # lib/insecurity.ts" and "See routes/login.ts" pass through untouched. Callers
 # must keep using the raw field for suppression decisions — this only governs
 # whether the value is emitted AS the paragraph.
-_V2_FILE_REF_RE = re.compile(
-    r"^\.?[\w.-]+(?:/[\w.-]+)*\.[A-Za-z]\w{0,9}(?::\d+(?:[-,]\d+)*)?$"
-)
+_V2_FILE_REF_RE = re.compile(r"^\.?[\w.-]+(?:/[\w.-]+)*\.[A-Za-z]\w{0,9}(?::\d+(?:[-,]\d+)*)?$")
 
 
 def _v2_is_file_ref_list(text: str) -> bool:

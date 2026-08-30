@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import jsonschema
-from validate_fragment import fragment_invariant_errors
 import yaml
 from _atomic_io import atomic_write_json
 from reclassify_components import (  # shared path-ownership resolver — see _evidence_owners
@@ -32,6 +31,7 @@ from reclassify_components import (
 )
 from reserve_ids import ensure_counter_at_least, reserve
 from sanitize_perimeter_claims import sanitize_perimeter_prose
+from validate_fragment import fragment_invariant_errors
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 NORMALIZED_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "trust-boundaries.schema.json"
@@ -2267,9 +2267,7 @@ def promote_candidates(
     # mandated self-check enforces exactly what this gate enforces — see the
     # docstring there for why they may not live here. Raising the first error
     # preserves the wording callers and tests match on.
-    invariant_errors = fragment_invariant_errors(
-        "trust-boundary-candidates", candidate_doc, context=assessment
-    )
+    invariant_errors = fragment_invariant_errors("trust-boundary-candidates", candidate_doc, context=assessment)
     if invariant_errors:
         raise ValueError(invariant_errors[0])
 

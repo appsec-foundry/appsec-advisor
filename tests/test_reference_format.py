@@ -488,10 +488,8 @@ def test_normalize_reference_drops_echoed_url():
     """
     canonical = "[CWE-798: Use of Hard-coded Credentials](https://cwe.mitre.org/data/definitions/798.html)"
     for echo in (
-        "[CWE-798](https://cwe.mitre.org/data/definitions/798.html): "
-        "`https://cwe.mitre.org/data/definitions/798.html`",
-        "[CWE-798](https://cwe.mitre.org/data/definitions/798.html) - "
-        "https://cwe.mitre.org/data/definitions/798.html",
+        "[CWE-798](https://cwe.mitre.org/data/definitions/798.html): `https://cwe.mitre.org/data/definitions/798.html`",
+        "[CWE-798](https://cwe.mitre.org/data/definitions/798.html) - https://cwe.mitre.org/data/definitions/798.html",
     ):
         assert compose._normalize_reference(echo) == canonical
 
@@ -503,17 +501,17 @@ def test_normalize_reference_keeps_a_different_trailing_url():
 
 
 def test_normalize_reference_links_unlinked_text_and_url():
-    assert compose._normalize_reference(
-        "OWASP LLM Top 10 LLM01: https://owasp.org/www-project-top-10-for-llm/"
-    ) == "[OWASP LLM Top 10 LLM01](https://owasp.org/www-project-top-10-for-llm/)"
+    assert (
+        compose._normalize_reference("OWASP LLM Top 10 LLM01: https://owasp.org/www-project-top-10-for-llm/")
+        == "[OWASP LLM Top 10 LLM01](https://owasp.org/www-project-top-10-for-llm/)"
+    )
 
 
 def test_normalize_reference_is_idempotent():
     """Normalising an already-normalised value must be a no-op."""
     for src in (
         "[CWE-89](https://cwe.mitre.org/data/definitions/89.html)",
-        "[CWE-798](https://cwe.mitre.org/data/definitions/798.html) - "
-        "https://cwe.mitre.org/data/definitions/798.html",
+        "[CWE-798](https://cwe.mitre.org/data/definitions/798.html) - https://cwe.mitre.org/data/definitions/798.html",
         "OWASP LLM Top 10 LLM01: https://owasp.org/www-project-top-10-for-llm/",
         "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html",
         "CWE-306",

@@ -46,9 +46,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import scan_excludes  # noqa: E402
 from secret_scan import (  # noqa: E402
-    CREDENTIAL_KEYWORDS,
     _PROSE_VOWEL_RE,
     _PROSE_WORD_RE,
+    CREDENTIAL_KEYWORDS,
     _value_is_masked,
     scan_file,
     scan_text,
