@@ -512,7 +512,7 @@ class TestRunIdleHelper:
 class TestRunIdleDetection:
     """Loop wiring for the global stall WARN (gated on --run-idle-seconds)."""
 
-    def _run(self, sw, out_dir, idle_fn, *, run_idle_seconds=300, iters=1):
+    def _run(self, sw, out_dir, idle_fn, *, run_idle_seconds=300, iters=1, abandon_after_seconds=0):
         # Drive the detector with a controllable idle reading.
         sw._run_idle_seconds = idle_fn  # type: ignore[assignment]
         return sw.watch(
@@ -524,6 +524,7 @@ class TestRunIdleDetection:
             component_timeout_seconds=999,
             max_iterations=iters,
             run_idle_seconds=run_idle_seconds,
+            abandon_after_seconds=abandon_after_seconds,
         )
 
     def test_fires_warn_when_idle_exceeds_threshold(self, out_dir, silent_heartbeat):
@@ -553,6 +554,71 @@ class TestRunIdleDetection:
         log = (out_dir / ".agent-run.log").read_text()
         assert log.count("RUN_IDLE") == 2
         assert log.count("RUN_RESUMED") == 1
+
+    def test_the_idle_reading_is_taken_once_per_tick(self, out_dir, silent_heartbeat):
+        """The warning and the abandon ceiling share one measurement.
+
+        Two calls would scan both logs twice and read the run's activity at two
+        different instants, so a tick could warn about one number and decide to
+        abandon on another.
+        """
+        sw = silent_heartbeat
+        calls = []
+
+        def probe(*_a, **_k):
+            calls.append(1)
+            return 10.0
+
+        self._run(sw, out_dir, probe, iters=3, abandon_after_seconds=3600)
+        assert len(calls) == 3
+
+
+class TestAbandonCeiling:
+    """A run that ends without releasing its lock must not be heartbeated forever."""
+
+    def _run(self, sw, out_dir, idle_fn, *, abandon_after_seconds=3600, iters=2):
+        sw._run_idle_seconds = idle_fn  # type: ignore[assignment]
+        return sw.watch(
+            output_dir=out_dir,
+            plugin_root=REPO_ROOT,
+            heartbeat_interval=0,
+            stride_stale_seconds=999,
+            stride_canary_seconds=999,
+            component_timeout_seconds=999,
+            max_iterations=iters,
+            run_idle_seconds=0,
+            abandon_after_seconds=abandon_after_seconds,
+        )
+
+    def test_stops_heartbeating_past_the_ceiling(self, out_dir, silent_heartbeat):
+        # The 2026-08-30 juice-shop2 watchdog refreshed a finished run's lock
+        # for 7.5 hours, so no later run could ever reap it.
+        sw = silent_heartbeat
+        rc = self._run(sw, out_dir, lambda *_a, **_k: 4000.0)
+        log = (out_dir / ".agent-run.log").read_text()
+        assert rc == 0
+        assert "WATCHDOG_ABANDONED" in log
+        assert "abandoned" in log
+
+    def test_does_not_remove_the_lock_itself(self, out_dir, silent_heartbeat):
+        # It never owned the lock; racing an orderly cleanup for a foreign file
+        # is how two runs end up sharing an output directory. Going stale is
+        # what lets the next acquisition reap it.
+        sw = silent_heartbeat
+        self._run(sw, out_dir, lambda *_a, **_k: 4000.0)
+        assert (out_dir / ".appsec-lock").is_file()
+
+    def test_a_working_run_is_never_abandoned(self, out_dir, silent_heartbeat):
+        # Every tool call and phase boundary resets the reading, so a live run
+        # cannot reach the ceiling.
+        sw = silent_heartbeat
+        self._run(sw, out_dir, lambda *_a, **_k: 120.0)
+        assert "WATCHDOG_ABANDONED" not in (out_dir / ".agent-run.log").read_text()
+
+    def test_disabled_with_zero(self, out_dir, silent_heartbeat):
+        sw = silent_heartbeat
+        self._run(sw, out_dir, lambda *_a, **_k: 999999.0, abandon_after_seconds=0)
+        assert "WATCHDOG_ABANDONED" not in (out_dir / ".agent-run.log").read_text()
 
 
 # ---------------------------------------------------------------------------

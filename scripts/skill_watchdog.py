@@ -128,6 +128,24 @@ _FINALIZATION_CAP_PCT = 99
 
 _LOG_NAME = ".agent-run.log"
 _HOOK_LOG_NAME = ".hook-events.log"
+
+# The watchdog's only stop condition is the lock disappearing, and the lock
+# disappears when cleanup releases it. When a run ends without releasing it —
+# an abort, a crash, a completion path that did not reach cleanup — the two
+# depend on each other and neither happens: the watchdog keeps refreshing the
+# heartbeat, `acquire_lock._classify_lock` keeps reading `fresh`, and no later
+# run can reap the lock. A 2026-08-30 juice-shop2 run held one that way for
+# 7.5 hours after finishing.
+#
+# This ceiling breaks the cycle. `_run_idle_seconds` excludes the watchdog's
+# own log lines and heartbeats, so it measures the RUN, not this process: on a
+# live run it cannot reach an hour, because every tool call and phase boundary
+# resets it. Past the ceiling the watchdog stops refreshing and exits, the
+# heartbeat goes stale on its own, and the existing HEARTBEAT_STALE_SECONDS
+# rule reaps the lock at the next acquisition. The watchdog does not remove the
+# lock itself — it never owned it, and racing an orderly cleanup for a file it
+# does not own is how two runs end up sharing an output directory.
+ABANDON_AFTER_SECONDS = 3600
 _TICK_NAME = ".skill-watchdog.tick"
 _AGENT_NAME = "skill-watchdog"
 
@@ -635,6 +653,7 @@ def watch(
     *,
     substep2_idle_seconds: int = 0,
     run_idle_seconds: int = 0,
+    abandon_after_seconds: int = ABANDON_AFTER_SECONDS,
 ) -> int:
     lock_path = output_dir / ".appsec-lock"
     if not output_dir.is_dir():
@@ -852,8 +871,15 @@ def watch(
         # ("is it stuck or still working?") that this signal answers in real
         # time instead of after a 46-min abort. `run_idle_seconds <= 0`
         # disables it (parity with the other --*-seconds knobs).
+        # Measured once per tick and shared with the abandon ceiling in 7c-2:
+        # the call scans both logs, and calling it twice would also read the
+        # run's activity at two different instants.
+        idle_measured: float | None = None
+        if run_idle_seconds > 0 or abandon_after_seconds > 0:
+            idle_measured = _run_idle_seconds(output_dir, run_start_iso)
+
         if run_idle_seconds > 0:
-            idle = _run_idle_seconds(output_dir, run_start_iso)
+            idle = idle_measured or 0.0
             if idle >= run_idle_seconds:
                 run_idle_peak = max(run_idle_peak, idle)
                 if not run_idle_fired:
@@ -883,6 +909,29 @@ def watch(
                 # total before resetting (adds 0 when no stall was active).
                 idle_total += run_idle_peak
                 run_idle_peak = 0.0
+
+        # 7c-2 — abandon a run that stopped without releasing its lock.
+        # See ABANDON_AFTER_SECONDS: refreshing the heartbeat past this point
+        # keeps a finished run's lock reading `fresh` forever and locks the
+        # output directory against every later run. Measured independently of
+        # `run_idle_seconds`, which only controls the warning above and may be
+        # disabled.
+        if abandon_after_seconds > 0 and idle_measured is not None:
+            abandoned_for = idle_measured
+            if abandoned_for >= abandon_after_seconds:
+                _log(
+                    output_dir,
+                    "WARN",
+                    "WATCHDOG_ABANDONED",
+                    f"no run activity for {int(abandoned_for)}s "
+                    f"(ceiling={abandon_after_seconds}s) — the run ended without releasing "
+                    f"{lock_path.name}. Refreshing the heartbeat past this point would keep "
+                    f"the lock reading fresh and block every later run against this output "
+                    f"directory. Stopping the heartbeat; the lock goes stale and the next "
+                    f"acquisition reaps it.",
+                )
+                _log(output_dir, "INFO", "WATCHDOG_END", f"abandoned  iter={iteration}")
+                return 0
 
         # 7d — periodic RUN_PROGRESS line: coarse phase-granular % plus net
         # runtime (wall minus cumulative standby). Best-effort and additive —
@@ -979,6 +1028,17 @@ def main(argv: list[str]) -> int:
         "phase.",
     )
     p.add_argument(
+        "--abandon-after-seconds",
+        type=int,
+        default=int(os.environ.get("APPSEC_WATCHDOG_ABANDON_SECONDS", str(ABANDON_AFTER_SECONDS))),
+        help="Stop refreshing the heartbeat and exit once the run has shown no "
+        "activity for this long (default 3600 = 1 h, override via env "
+        "APPSEC_WATCHDOG_ABANDON_SECONDS). Without it a run that ends without "
+        "releasing its lock leaves this process refreshing the heartbeat "
+        "forever, which keeps the lock reading fresh and blocks every later run "
+        "against the same output directory. Set 0 to disable.",
+    )
+    p.add_argument(
         "--max-iterations", type=int, default=None, help="Optional cap on iterations (test hook; not for production)."
     )
     args = p.parse_args(argv[1:])
@@ -997,6 +1057,7 @@ def main(argv: list[str]) -> int:
             max_iterations=args.max_iterations,
             substep2_idle_seconds=args.substep2_idle_seconds,
             run_idle_seconds=args.run_idle_seconds,
+            abandon_after_seconds=args.abandon_after_seconds,
         )
     except KeyboardInterrupt:
         raise
