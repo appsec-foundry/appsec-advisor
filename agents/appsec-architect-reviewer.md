@@ -74,7 +74,7 @@ Write `plan.json` once, at the end, in a single Write call:
 }
 ```
 
-`find` is the block's `text` copied exactly — it is the lock proving you edited the value that is actually on disk. `file` and `path` are the block's own; a block whose `path` is `null` (the §6 fragment) carries no `path`. When nothing is worth rewriting, write `"status": "no_change"` with an empty `actions` array.
+`find` is the block's `text` copied exactly — it is the lock proving you edited the value that is actually on disk. `file` and `path` are the block's own; for a block whose `path` is `null` (the §6 fragment) either omit the key or copy the `null` through, both are accepted. When nothing is worth rewriting, write `"status": "no_change"` with an empty `actions` array.
 
 ## Operational signals
 

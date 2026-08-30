@@ -57,9 +57,9 @@
           "description": "Path relative to $OUTPUT_DIR. The applier hard-rejects anything else; the six force-regenerated fragments are excluded because the next compose overwrites them."
         },
         "path": {
-          "type": "string",
+          "type": ["string", "null"],
           "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\[[0-9]+\\]|\\.[A-Za-z_][A-Za-z0-9_]*)*$",
-          "description": "Field address such as `threats[12].scenario` or `mitigations[3].steps[1]`. Required for the yaml and JSON targets, forbidden for the Markdown fragment. The applier accepts only addresses on the editable allow-list in scripts/check_editorial_diff.py."
+          "description": "Field address such as `threats[12].scenario` or `mitigations[3].steps[1]`. Required for the yaml and JSON targets, absent for the Markdown fragment, where an explicit `null` counts as absent: the projection addresses that block with `\"path\": null`, so copying the block's own key back is the natural reading, and the applier's own check already treats null and missing alike. Holding the schema stricter than the applier cost a whole pass — one null in one Markdown action rejected the plan, its 19 valid yaml actions included. The applier accepts only addresses on the editable allow-list in scripts/check_editorial_diff.py."
         },
         "find": {
           "type": "string",

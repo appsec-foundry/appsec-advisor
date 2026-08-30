@@ -123,6 +123,39 @@ def test_a_markdown_block_rewrite_lands(output_dir: Path) -> None:
     assert text.startswith("## 6.1 Input validation")
 
 
+def test_a_markdown_action_may_carry_an_explicit_null_path(output_dir: Path) -> None:
+    """The projection addresses the §6 fragment with `"path": null`.
+
+    Copying that key back is the natural reading of the block, and the
+    applier's own check already treats null and missing alike. The schema used
+    to disagree, and one such action rejected the whole plan — the 19 valid
+    yaml actions beside it included.
+    """
+    _plan(
+        output_dir,
+        [
+            {
+                "file": ".fragments/security-architecture.md",
+                "path": None,
+                "find": "The handler builds its query by concatenation.",
+                "replace": "The handler builds its query by string concatenation.",
+            },
+            {
+                "file": "threat-model.yaml",
+                "path": "threats[0].scenario",
+                "find": "The handler concatenates the id.",
+                "replace": "The handler concatenates the id into the statement.",
+            },
+        ],
+    )
+
+    assert applier.main([str(output_dir)]) == 0
+    assert "string concatenation" in (output_dir / ".fragments" / "security-architecture.md").read_text(
+        encoding="utf-8"
+    )
+    assert _model(output_dir)["threats"][0]["scenario"] == "The handler concatenates the id into the statement."
+
+
 def test_a_step_inside_a_list_is_addressable(output_dir: Path) -> None:
     _plan(
         output_dir,
