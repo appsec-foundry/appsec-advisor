@@ -1,7 +1,7 @@
 name: Fixture E2E (Dispatch)
 
 # Manually dispatched fixture E2E: run the threat-model pipeline against one or
-# all fixtures from matthiasrohr/appsec-advisor-fixtures and verify each report
+# all fixtures from appsec-foundry/appsec-advisor-fixtures and verify each report
 # against that fixture's out-of-repo oracle.
 #
 # Deliberately separate from threat-model-dispatch.yml. That workflow scans a
@@ -13,7 +13,7 @@ name: Fixture E2E (Dispatch)
 # from the fixtures repo at run time. The `options:` block below is the single
 # place the list is written down - the resolve job reads it back out of this file
 # and hard-fails when it drifts from what <fixture-root>/repos contains, so
-# adding a fixture to matthiasrohr/appsec-advisor-fixtures without updating the
+# adding a fixture to appsec-foundry/appsec-advisor-fixtures without updating the
 # dropdown is loud, never silent. Paths and driver are still DERIVED from the
 # checkout, not enumerated.
 #
@@ -156,7 +156,7 @@ jobs:
       - name: Checkout appsec-advisor-fixtures
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          repository: matthiasrohr/appsec-advisor-fixtures
+          repository: appsec-foundry/appsec-advisor-fixtures
           ref: ${{ inputs.fixtures_ref }}
           path: fixtures
           persist-credentials: false
@@ -315,7 +315,7 @@ jobs:
       - name: Checkout appsec-advisor-fixtures
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          repository: matthiasrohr/appsec-advisor-fixtures
+          repository: appsec-foundry/appsec-advisor-fixtures
           ref: ${{ inputs.fixtures_ref }}
           path: fixtures
           persist-credentials: false

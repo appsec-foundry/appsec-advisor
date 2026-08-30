@@ -301,7 +301,7 @@ the code with it.
 A secure-coding baseline is an instruction file the coding assistant loads
 before it writes code, so an organization's rules apply on every prompt rather
 than only on the ones that mention security. The plugin ships one — the
-[AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline),
+[AI Secure Coding Baseline](https://github.com/appsec-foundry/ai-secure-coding-baseline),
 id `aisec-0.1` — installs it with `/appsec-advisor:install-baseline`, and the session
 banner flags it when it is missing or mismatched.
 

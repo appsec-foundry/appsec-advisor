@@ -43,7 +43,7 @@ With this profile, a plain `/my-appsec:create-threat-model` uses standard depth,
 **3. Clone the upstream release.**
 
 ```console
-$ git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" https://github.com/matthiasrohr/appsec-advisor upstream/appsec-advisor
+$ git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" https://github.com/appsec-foundry/appsec-advisor upstream/appsec-advisor
 ```
 
 **4. Build a local branded plugin directory.**
@@ -121,7 +121,7 @@ $ git init
 $ mkdir -p org-profile/context org-profile/actors
 $ printf 'build/\ndist/\n' > .gitignore
 $ APPSEC_ADVISOR_REF=v0.4.0-beta
-$ git submodule add https://github.com/matthiasrohr/appsec-advisor upstream/appsec-advisor
+$ git submodule add https://github.com/appsec-foundry/appsec-advisor upstream/appsec-advisor
 $ git -C upstream/appsec-advisor checkout "$APPSEC_ADVISOR_REF"
 $ git add .gitignore .gitmodules upstream/appsec-advisor
 $ git commit -m "Pin upstream appsec-advisor"
@@ -133,7 +133,7 @@ The example repos already use Option 1:
 
 - [GitHub Actions example](../examples/internal-packaging-github)
 - [GitLab CI example](../examples/internal-packaging-gitlab)
-- [Organization packaging template](https://github.com/matthiasrohr/appsec-advisor-packaging-template) with an org profile, CI pipelines, and build scripts
+- [Organization packaging template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) with an org profile, CI pipelines, and build scripts
 
 ## Step 2 - Write the org profile
 
@@ -318,7 +318,7 @@ Make sure `upstream/appsec-advisor/` exists. With Option 1 from Step 1, clone it
 ```console
 # Option 1 only: create the ignored upstream checkout.
 $ APPSEC_ADVISOR_REF=v0.4.0-beta
-$ git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" https://github.com/matthiasrohr/appsec-advisor upstream/appsec-advisor
+$ git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" https://github.com/appsec-foundry/appsec-advisor upstream/appsec-advisor
 ```
 
 With Option 2, the directory is the submodule checkout. Initialize it if this is a fresh clone of your packaging repo:
@@ -383,7 +383,7 @@ For Option 1, set these CI variables:
 
 | Variable | Required | Meaning |
 |---|---:|---|
-| `APPSEC_ADVISOR_URL` | yes | upstream or fork URL, for example `https://github.com/matthiasrohr/appsec-advisor.git` |
+| `APPSEC_ADVISOR_URL` | yes | upstream or fork URL, for example `https://github.com/appsec-foundry/appsec-advisor.git` |
 | `APPSEC_ADVISOR_REF` | yes | pinned tag or branch, for example `v0.4.0-beta` |
 | `INTERNAL_NAME` | no | plugin namespace, default `acme-appsec` |
 | `VERSION` | no | package version; defaults to a CI snapshot version |

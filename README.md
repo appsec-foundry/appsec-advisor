@@ -59,7 +59,7 @@ For most repositories, run the Claude Code session on Sonnet 4.6. The orchestrat
 Clone the plugin once, then start Claude Code from the repository you want to assess:
 
 ```bash
-git clone https://github.com/matthiasrohr/appsec-advisor.git /path/to/appsec-advisor
+git clone https://github.com/appsec-foundry/appsec-advisor.git /path/to/appsec-advisor
 cd /path/to/repository-to-assess
 claude --plugin-dir /path/to/appsec-advisor
 ```
@@ -114,7 +114,7 @@ Updates preserve finding IDs. Review decisions are stored separately, and publis
 - Runs support only full, rebuild, and rerender; reassess a changed repository with `--full`.
 - Threat analysis costs 39.8% less at quick depth and 26.8% less at thorough depth in reference runs.
 - Trust boundaries are assessed, drawn in the architecture diagram, and linked to findings that cross them.
-- `install-baseline` and `verify-baseline` put the bundled [AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline) into Claude Code's instruction files and let CI verify it.
+- `install-baseline` and `verify-baseline` put the bundled [AI Secure Coding Baseline](https://github.com/appsec-foundry/ai-secure-coding-baseline) into Claude Code's instruction files and let CI verify it.
 - Scans can take business context interactively or through `--context`; named sensitive assets keep their component in scope, and the report says which file was read and how many findings it applied to.
 - `--formats threatdragon` exports alpha Threat Dragon v2 JSON for Threat Dragon and OWASP ThreatAtlas.
 - Organization profiles can include custom skills and baselines, configure the session banner, and disable individual skills.
@@ -177,7 +177,7 @@ Review the bundle before attaching it to a GitHub issue. The command excludes so
 
 ## Enterprise rollout
 
-AppSec and Platform teams can supply organization-specific requirements, defaults, guardrails, skills, hooks, and MCP servers. The [organization packaging template](https://github.com/matthiasrohr/appsec-advisor-packaging-template) keeps this configuration in a separate internal package built from a pinned upstream release. Core agent definitions remain upstream-owned.
+AppSec and Platform teams can supply organization-specific requirements, defaults, guardrails, skills, hooks, and MCP servers. The [organization packaging template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) keeps this configuration in a separate internal package built from a pinned upstream release. Core agent definitions remain upstream-owned.
 
 ![Example rollout from an upstream release to an Acme-branded plugin](docs/images/orgpackaging.svg)
 
@@ -207,8 +207,8 @@ The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `template
 
 ### Companion repositories
 
-- [appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template) builds organization-specific plugin packages from pinned upstream releases.
-- [ai-secure-coding-baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline) contains the secure-coding rules bundled by the plugin.
+- [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) builds organization-specific plugin packages from pinned upstream releases.
+- [ai-secure-coding-baseline](https://github.com/appsec-foundry/ai-secure-coding-baseline) contains the secure-coding rules bundled by the plugin.
 
 ### Comparable tools
 

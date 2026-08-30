@@ -271,11 +271,11 @@ def test_patch_config(tmp_path):
 def test_patch_config_keeps_upstream_url_when_no_info_url_given(tmp_path):
     build = tmp_path / "build"
     build.mkdir()
-    upstream = {"banner": {"url": "https://github.com/matthiasrohr/appsec-advisor"}}
+    upstream = {"banner": {"url": "https://github.com/appsec-foundry/appsec-advisor"}}
     (build / "config.json").write_text(json.dumps(upstream), encoding="utf-8")
     pkg.patch_config(build)
     data = json.loads((build / "config.json").read_text())
-    assert data["banner"]["url"] == "https://github.com/matthiasrohr/appsec-advisor"
+    assert data["banner"]["url"] == "https://github.com/appsec-foundry/appsec-advisor"
 
 
 def test_patch_config_sets_organization_info_url(tmp_path):

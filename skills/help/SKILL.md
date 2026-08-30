@@ -169,4 +169,4 @@ plugin directory, documented in `docs/configuration.md`.
 
 ## More information
 
-https://github.com/matthiasrohr/appsec-advisor
+https://github.com/appsec-foundry/appsec-advisor
