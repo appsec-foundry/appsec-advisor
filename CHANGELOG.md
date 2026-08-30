@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An organization profile can refresh the secure-coding baseline it vendors from its own source.
 - Headless runs can start Claude Code through a wrapper given by the environment.
 - Run Issues now reports a stage claiming more agent dispatches than the run spawned, a component whose findings all came from files the context routing never delivered, and a requirements assessment the YAML export does not carry.
+- `/appsec-advisor:authnz-review` accepts `--pentest-tasks`, `--pentest-format` and `--pentest-target`, defaulting them to the organization profile's outputs block, and exports its findings as pentest tasks with the discovered routes as the endpoint catalog.
 
 ### Changed
 

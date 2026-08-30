@@ -6,9 +6,10 @@ description: >-
   dispatches a specialized agent that reasons over the combined output:
   cross-component IDOR chains, RBAC coverage gaps, JWT misconfiguration, and
   privilege-escalation signals. Optionally annotates findings with violated
-  requirement IDs from a requirements catalog or Phase 8b violations index.
-  Does NOT require a prior threat model run. Prints results to the console;
-  file output only with --save.
+  requirement IDs from a requirements catalog or Phase 8b violations index,
+  and exports the findings as pentest tasks for an AI pentest agent. Does NOT
+  require a prior threat model run. Prints results to the console; file output
+  only with --save or --pentest-tasks.
 ---
 
 You are performing a focused AuthN/AuthZ review of a repository. Follow the
@@ -70,6 +71,8 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim and 
 USAGE
   /appsec-advisor:authnz-review [--repo <path>] [--requirements <path>]
                                  [--with-threat-model] [--save] [--gate]
+                                 [--pentest-tasks | --no-pentest-tasks]
+                                 [--pentest-format <fmt>] [--pentest-target <url>]
 
 OPTIONS
   --repo <path>           Repository root to analyze (default: current directory)
@@ -79,6 +82,16 @@ OPTIONS
                           STRIDE run in docs/security/
   --save                  Write authnz-report.md + .authnz-report.json to
                           docs/security/ in addition to console output
+  --pentest-tasks         Write docs/security/pentest-tasks-authnz.yaml —
+                          verification tasks for an AI pentest agent, one per
+                          finding with an eligible CWE and file:line evidence
+  --no-pentest-tasks      Skip that export even if the org profile enables it
+  --pentest-format <fmt>  generic (default) or strix
+  --pentest-target <url>  Base URL of the running target, e.g.
+                          http://localhost:3000
+
+  The three pentest values default to the organization profile's outputs
+  block (pentest_tasks, pentest_format, pentest_target) when one is active.
   --gate                  Exit non-zero when Critical or High findings exist
 
 WHAT IT ANALYZES
@@ -105,7 +118,30 @@ Parse the user's message or slash-command arguments:
 - `--with-threat-model` → `WITH_THREAT_MODEL=true`
 - `--save` → `SAVE_FILES=true`; set `OUTPUT_DIR=<REPO_ROOT>/docs/security`
   and run `mkdir -p "$OUTPUT_DIR"`
+- `--pentest-tasks` → `PENTEST_TASKS=true`
+- `--no-pentest-tasks` → `PENTEST_TASKS=false`, even when the organization
+  profile enables it
+- `--pentest-format <fmt>` → `PENTEST_FORMAT` (`generic` | `strix`; reject any
+  other value with a one-line error and stop)
+- `--pentest-target <url>` → `PENTEST_TARGET`
 - `--gate` → `GATE_MODE=true`
+
+Then resolve the organization defaults for the three pentest values — the
+same `outputs` block `create-threat-model` honours, so both skills answer to
+one profile:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/resolve_org_profile.py" --repo "$REPO_ROOT"
+```
+
+The resolver prints JSON and writes nothing. Read `defaults.write_pentest_tasks`,
+`defaults.pentest_format` and `defaults.pentest_target` from it; a key that is
+absent or `null` means the profile says nothing. A command-line flag always
+wins over the profile. Where neither speaks: `PENTEST_TASKS=false`,
+`PENTEST_FORMAT=generic`, `PENTEST_TARGET=none`. Any resolver failure (non-zero
+exit, unparseable output) leaves all three at those defaults — a broken profile
+must not silently change what a review writes. Record `PENTEST_SOURCE` as
+`flag` or `org profile <preset>` for the introduction block.
 
 When `SAVE_FILES` is not set, use a temp dir for scanner sidecar files:
 ```bash
@@ -113,6 +149,11 @@ SCRATCH_DIR="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH_DIR"' EXIT
 OUTPUT_DIR="$SCRATCH_DIR"
 ```
+
+The pentest exporter reads the report from disk, so set
+`AGENT_SAVE_MODE=true` when `SAVE_FILES=true` **or** `PENTEST_TASKS=true`,
+else `false`. With `--pentest-tasks` but no `--save`, the report is written
+into the temp dir and removed on exit — only the task file survives.
 
 Record start time: `START_EPOCH=$(date +%s)`
 
@@ -124,6 +165,8 @@ authnz-review  <repo name (basename of REPO_ROOT)>
   <REPO_ROOT>
   route inventory · auth-check scan · IDOR confirmation · cross-component reasoning
   requirements: <REQUIREMENTS_PATH or: none>  ·  output: <docs/security/ | console only>
+  pentest tasks: <PENTEST_FORMAT>  ·  target: <PENTEST_TARGET or: none>  ·  <PENTEST_SOURCE>
+                                       ← omit line when PENTEST_TASKS is false
 ```
 
 ---
@@ -232,7 +275,9 @@ authentication or authorization signals at all:
 - scanner findings == 0 (from `.source-auth-findings.json`)
 - confirmed instances == 0 (from `.authz-confirm-findings.json`)
 
-When **all three** are true, skip Steps 5–9 and print:
+When **all three** are true, skip Steps 5–9b and print (when
+`PENTEST_TASKS=true`, add `⚪ --pentest-tasks: no findings with code evidence
+— no task file written` after the finding block):
 
 ```
 Phase 4/5 · Cross-component reasoning                   [ 60%]
@@ -289,7 +334,7 @@ Dispatch `appsec-advisor:appsec-authnz-analyzer` with this prompt
 REPO_ROOT=<REPO_ROOT>
 OUTPUT_DIR=<OUTPUT_DIR>
 MODEL_ID=<session model, e.g. sonnet>
-SAVE_MODE=<true if SAVE_FILES=true, else false>
+SAVE_MODE=<AGENT_SAVE_MODE>
 
 SOURCE_AUTH_FINDINGS_PATH=<OUTPUT_DIR>/.source-auth-findings.json
 ROUTE_INVENTORY_PATH=<OUTPUT_DIR>/.route-inventory.json
@@ -302,11 +347,11 @@ COMPONENT_INVENTORY_PATH=<$REPO_ROOT/docs/security/.components.json if exists, e
 
 Wait for the agent to complete.
 
-**When `SAVE_FILES=false`:** extract the JSON from the agent's final message
-between the `AUTHNZ_REPORT_START` and `AUTHNZ_REPORT_END` markers. Parse it
-into memory as `REPORT`. Do not read from disk.
+**When `AGENT_SAVE_MODE=false`:** extract the JSON from the agent's final
+message between the `AUTHNZ_REPORT_START` and `AUTHNZ_REPORT_END` markers.
+Parse it into memory as `REPORT`. Do not read from disk.
 
-**When `SAVE_FILES=true`:** read `$OUTPUT_DIR/.authnz-report.json` into
+**When `AGENT_SAVE_MODE=true`:** read `$OUTPUT_DIR/.authnz-report.json` into
 memory as `REPORT`.
 
 Extract the `summary` block from `REPORT`.
@@ -495,6 +540,37 @@ Print:
 ```
   Saved → docs/security/authnz-report.md
   Saved → docs/security/.authnz-report.json
+```
+
+---
+
+## Step 9b — Pentest tasks (only when --pentest-tasks)
+
+Only when `PENTEST_TASKS=true`. Run:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_pentest_tasks.py" \
+  --authnz "$OUTPUT_DIR/.authnz-report.json" \
+  --route-inventory "$OUTPUT_DIR/.route-inventory.json" \
+  --output "$REPO_ROOT/docs/security/pentest-tasks-authnz.yaml" \
+  --dialect "$PENTEST_FORMAT" \
+  --project "<repo name>"
+```
+
+Append `--target-url "$PENTEST_TARGET"` when `PENTEST_TARGET` is not `none`.
+The exporter emits one verification task per finding whose CWE is on
+`data/pentest-eligible-cwes.yaml` and whose evidence carries file **and**
+line — design-level findings without code evidence are dropped, so the task
+count is normally lower than the finding count. Every task carries a
+`safety` block declaring the run read-only; the target URL is written to
+`meta.target.base_url` and never contacted.
+
+If non-zero exit, print the stderr and continue to Step 10 — a failed export
+does not invalidate the review.
+
+Print (task count from the exporter's `VALID: wrote <N> pentest tasks` line):
+```
+  Saved → docs/security/pentest-tasks-authnz.yaml  (<N> tasks, <PENTEST_FORMAT>, target <PENTEST_TARGET or: none>)
 ```
 
 ---
