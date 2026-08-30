@@ -223,6 +223,20 @@ def test_verify_restores_and_still_fails(output_dir: Path, capsys: pytest.Captur
     assert guard.main(["verify", "--output-dir", str(output_dir)]) == 0
 
 
+def test_restore_rolls_back_an_edit_the_invariants_allowed(output_dir: Path) -> None:
+    """A later gate can reject bytes the guard itself accepted; the polish is
+    then discarded without failing the run."""
+    _snapshot(output_dir)
+    edited = copy.deepcopy(BASE_MODEL)
+    edited["threats"][0]["scenario"] = "`server/api.ts:42` builds the query by concatenation, reachable anonymously."
+    _write_model(output_dir, edited)
+    assert _verify(output_dir) == []
+
+    assert guard.main(["restore", "--output-dir", str(output_dir)]) == 0
+    restored = yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))
+    assert restored["threats"][0]["scenario"] == BASE_MODEL["threats"][0]["scenario"]
+
+
 def test_verify_without_a_snapshot_is_a_usage_error(output_dir: Path) -> None:
     assert guard.main(["verify", "--output-dir", str(output_dir)]) == 1
 

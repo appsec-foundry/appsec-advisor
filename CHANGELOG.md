@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The final stage now polishes the report's wording instead of reviewing it a second time: it runs once on Sonnet, rewrites prose only, and reverts itself if a finding, rating, evidence locator, link or number would change. It reports what it rewrote.
 - A missing lockfile, an undigested base image, a missing workflow `permissions:` block and an unpinned action are now Medium instead of High.
 - Business context supplied with `--context` is now captured by the run itself, and a source that cannot be read stops the run instead of being dropped in silence.
 - The report's run statistics name the business-context file that was read and how many findings it applied to, and each of those findings records which declared fields apply to it.

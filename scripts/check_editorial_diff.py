@@ -21,6 +21,7 @@ Usage::
 
     check_editorial_diff.py snapshot --output-dir DIR
     check_editorial_diff.py verify   --output-dir DIR [--restore]
+    check_editorial_diff.py restore  --output-dir DIR
 
 ``snapshot`` stores the guarded files verbatim in ``.editorial-snapshot.json``.
 ``verify`` recomputes both sides from those bytes, so the report can name the
@@ -367,7 +368,7 @@ def restore(snapshot: dict, output_dir: Path) -> list[str]:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="check_editorial_diff.py", description=__doc__)
-    parser.add_argument("command", choices=["snapshot", "verify"])
+    parser.add_argument("command", choices=["snapshot", "verify", "restore"])
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--snapshot", help=f"snapshot path (default: <output-dir>/{SNAPSHOT_NAME})")
     parser.add_argument(
@@ -400,6 +401,15 @@ def main(argv: list[str]) -> int:
         if not snapshot_path.is_file():
             raise GuardError(f"no snapshot at {snapshot_path} — run `snapshot` before the editorial dispatch")
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+
+        if args.command == "restore":
+            # Unconditional roll-back. `verify --restore` only fires on an
+            # invariant violation; a later gate that rejects the edited bytes
+            # needs this, so a failed polish costs the polish and not the run.
+            restored = restore(snapshot, output_dir)
+            json.dump({"status": "restored", "restored": restored}, sys.stdout, indent=2, sort_keys=True)
+            sys.stdout.write("\n")
+            return 0
         violations = verify(snapshot, output_dir)
         report = {
             "status": "clean" if not violations else "violations",

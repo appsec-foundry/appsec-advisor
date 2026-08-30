@@ -70,7 +70,7 @@ EXPECTED_MAX_TURNS = {
     # juice-shop run consumed 81 and 90 turns and each truncated at 40, and a
     # resume costs a full context re-prefill (the pair read 21M cached tokens),
     # so the higher ceiling is the cheaper of the two shapes.
-    "appsec-architect-reviewer": 100,
+    "appsec-architect-reviewer": 30,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
     # 20 → 40 (2026-08-22): 8fbbd534 had taken this from 60 to 20 while
@@ -137,10 +137,11 @@ MIN_MAX_TURNS = {
     # 74846143 (2026-08-07): a live run consumed all 25 turns and skipped the
     # required Markdown validator.
     "appsec-recon-scanner": 36,
-    # 2026-08-30: two thorough reviews in one run needed 81 and 90 turns over a
-    # ~450 KB YAML and a ~440 KB report. Below that the review truncates and has
-    # to be resumed, which re-prefills its whole context.
-    "appsec-architect-reviewer": 90,
+    # 2026-08-30: the role stopped being a review. It no longer reads the report
+    # or the YAML — it reads one bounded projection and writes one plan, four
+    # tool calls in total — so the 90-turn floor a full review needed no longer
+    # describes this job. The first measured editorial run replaces this floor.
+    "appsec-architect-reviewer": 12,
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
