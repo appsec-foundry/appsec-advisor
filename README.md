@@ -54,12 +54,28 @@ Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10
 
 For most repositories, run the Claude Code session on Sonnet 4.6. The orchestration session remains active for the full assessment and therefore has the largest effect on cost. Agent models are routed separately: a standard scan uses Sonnet 5 for judgment and report authoring, while STRIDE discovery remains on Sonnet 4.6. Very large repositories may require a Sonnet 5 session for the larger context window. See [Model Selection](docs/model-selection.md).
 
-### 1. Start Claude Code in the target repository
+### 1. Install the plugin
 
-Clone the plugin once, then start Claude Code from the repository you want to assess:
+Add the marketplace and install the plugin. This installs the current release and needs no checkout:
 
 ```bash
-git clone https://github.com/appsec-foundry/appsec-advisor.git /path/to/appsec-advisor
+claude plugin marketplace add appsec-foundry/appsec-advisor
+claude plugin install appsec-advisor@appsec-foundry
+```
+
+Later releases arrive with `claude plugin update appsec-advisor`, which takes effect after a restart.
+
+Then start Claude Code from the repository you want to assess:
+
+```bash
+cd /path/to/repository-to-assess
+claude
+```
+
+To run the development branch instead of a release, clone the repository and start Claude Code with the checkout:
+
+```bash
+git clone --branch dev https://github.com/appsec-foundry/appsec-advisor.git /path/to/appsec-advisor
 cd /path/to/repository-to-assess
 claude --plugin-dir /path/to/appsec-advisor
 ```

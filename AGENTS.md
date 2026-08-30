@@ -104,6 +104,7 @@ reviewed implementation work.
 | Permissions | `data/required-permissions.yaml` | `tests/test_check_permissions.py` |
 | Target-specific fixture data | `data/test-target-vocabulary.yaml` | `tests/test_check_target_specificity.py` |
 | Organization packaging | org-profile schema and invariants, decisions `EX-*` | packaging and smoke tests |
+| Plugin distribution | `.claude-plugin/marketplace.json`, README installation steps | `tests/test_marketplace_manifest.py` |
 | Secure-coding baseline | baseline scripts and `config.json` | baseline tests |
 | Run state and liveness | state scripts and status runbook | state and status tests |
 | Runtime cost and telemetry | cost model, logging standard, decisions `OR-*`, `MD-*` | cost, event-log, and hook tests |
