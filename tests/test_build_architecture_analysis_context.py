@@ -55,6 +55,55 @@ def test_recon_projection_preserves_headings_and_discloses_truncation() -> None:
     assert projected["source"]["sha256"] == hashlib.sha256(payload).hexdigest()
 
 
+def test_recon_projection_prefers_lines_naming_a_source_file() -> None:
+    """Truncation must not decide by position which findings survive.
+
+    A level-3 section keeps 3 body lines. Taking the first three dropped every
+    concrete file reference whenever a scanner wrote prose first — measured on a
+    full run, half the evidence-bearing lines were lost that way.
+    """
+    payload = (
+        b"### Findings\n"
+        b"This section summarises the observed surface.\n"
+        b"Several endpoints were reviewed for their configuration.\n"
+        b"The remaining notes are descriptive.\n"
+        b"Permissive CORS configured in server.ts:182\n"
+        b"Archive extraction without path validation in routes/fileUpload.ts:28\n"
+    )
+
+    projected = context.project_recon_summary(payload)
+    kept = projected["sections"][0]["lines"]
+
+    assert len(kept) == 3
+    assert any("server.ts:182" in line for line in kept)
+    assert any("routes/fileUpload.ts:28" in line for line in kept)
+
+
+def test_recon_projection_keeps_selected_lines_in_document_order() -> None:
+    payload = (
+        b"### Findings\n"
+        b"Prose that mentions no file at all.\n"
+        b"First hit in alpha.ts:1\n"
+        b"More prose in between.\n"
+        b"Second hit in beta.ts:2\n"
+    )
+
+    kept = context.project_recon_summary(payload)["sections"][0]["lines"]
+
+    assert [line for line in kept if ".ts:" in line] == [
+        "First hit in alpha.ts:1",
+        "Second hit in beta.ts:2",
+    ]
+
+
+def test_recon_projection_falls_back_to_document_order_without_references() -> None:
+    payload = ("### Notes\n" + "\n".join(f"plain line {index}" for index in range(6))).encode()
+
+    kept = context.project_recon_summary(payload)["sections"][0]["lines"]
+
+    assert kept == ["plain line 0", "plain line 1", "plain line 2"]
+
+
 def test_recon_projection_rejects_non_markdown_input() -> None:
     try:
         context.project_recon_summary(b"plain text only\n")
