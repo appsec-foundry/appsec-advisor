@@ -154,7 +154,23 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--no-print", action="store_true", help="write the status file, print nothing")
     args = parser.parse_args(argv)
 
-    output_dir = Path(args.output_dir)
+    # An unset `$OUTPUT_DIR` reaches us as an empty argument, and `Path("")` is
+    # `PosixPath('.')` — under an agent that is the scanned repository's root.
+    # The `is_dir()` check below cannot catch it, because `'.'` is always a
+    # directory, so both writes below would land in a foreign worktree and
+    # change the fingerprint the evidence bundle is bound to. An option name in
+    # this slot means the arguments shifted for the same reason. Refuse both.
+    # `scripts/log_event.py` carries the same guard; `tests/test_run_path_guard.py`
+    # holds every writer to it.
+    raw = args.output_dir.strip()
+    if not raw:
+        print("render_editorial_receipt.py: output_dir is empty — is $OUTPUT_DIR exported?", file=sys.stderr)
+        return 2
+    if raw.startswith("-"):
+        print(f"render_editorial_receipt.py: output_dir looks like an option: {raw!r}", file=sys.stderr)
+        return 2
+
+    output_dir = Path(raw)
     if not output_dir.is_dir():
         print(f"render_editorial_receipt.py: output dir not found: {output_dir}", file=sys.stderr)
         return 2
