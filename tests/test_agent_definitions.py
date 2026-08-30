@@ -52,7 +52,10 @@ EXPECTED_MAX_TURNS = {
     "appsec-recon-scanner": 36,
     "appsec-stride-analyzer-v2": 96,
     "appsec-triage-validator": 20,
-    "appsec-threat-merger": 12,
+    # 12 → 18 (2026-08-30): a thorough juice-shop run logged MAX_TURNS at 12/12,
+    # where the soft budget equalled the harness ceiling, so the merge decisions
+    # may have been cut off with no headroom to absorb a wider candidate set.
+    "appsec-threat-merger": 18,
     "appsec-threat-renderer": 80,
     "appsec-secarch-renderer": 60,
     # 32 → 60 (2026-08-27): a standard-depth juice-shop run stopped this agent
@@ -62,7 +65,12 @@ EXPECTED_MAX_TURNS = {
     # ceilings. Matched to its sibling.
     "appsec-ms-renderer": 60,
     "appsec-qa-reviewer": 200,
-    "appsec-architect-reviewer": 40,
+    # 40 → 100 (2026-08-30): 40 could never have sufficed — the agent's own
+    # budget table summed to 41 turns at thorough depth. Two reviews in one
+    # juice-shop run consumed 81 and 90 turns and each truncated at 40, and a
+    # resume costs a full context re-prefill (the pair read 21M cached tokens),
+    # so the higher ceiling is the cheaper of the two shapes.
+    "appsec-architect-reviewer": 100,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
     # 20 → 40 (2026-08-22): 8fbbd534 had taken this from 60 to 20 while
@@ -129,6 +137,10 @@ MIN_MAX_TURNS = {
     # 74846143 (2026-08-07): a live run consumed all 25 turns and skipped the
     # required Markdown validator.
     "appsec-recon-scanner": 36,
+    # 2026-08-30: two thorough reviews in one run needed 81 and 90 turns over a
+    # ~450 KB YAML and a ~440 KB report. Below that the review truncates and has
+    # to be resumed, which re-prefills its whole context.
+    "appsec-architect-reviewer": 90,
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
