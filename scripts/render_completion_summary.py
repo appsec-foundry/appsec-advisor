@@ -839,6 +839,11 @@ def build_next_steps(
     every entry must be an action the reader can actually take. Anything purely
     informational belongs in `build_run_notes`, not here.
 
+    An action that ADDS to reading the report rather than replacing it belongs
+    in `build_follow_ups`. Uploading the SARIF and re-running deeper used to sit
+    in this list, where the trailing "or" offered them as a choice against
+    reading the report — which is not a choice anyone makes.
+
     Entry 0 is the report step and stays first (it is the one most readers
     want). Because the renderer ends every entry but the last with a trailing
     "or", the following entry must read on from it — start entries after the
@@ -849,8 +854,6 @@ def build_next_steps(
     """
     lines: list[str] = []
     sev = metrics["threats_by_sev"]
-    critical = sev.get("Critical", 0)
-    high = sev.get("High", 0)
 
     # One short line: path plus where to start reading. The register slice used
     # to be appended here ('…then Section 8 "Findings Register" for Critical
@@ -865,14 +868,24 @@ def build_next_steps(
         lines.append("triage the findings via /appsec-advisor:review-threat-model")
 
     # Asking is the non-mutating default exploration path and must stay visible
-    # rather than sink into an easy-to-miss footer. Show the questions, NOT
+    # rather than sink into an easy-to-miss footer. Show the question, NOT
     # `/appsec-advisor:ask-threat-model`: that skill routes itself from any
     # natural-language query about the model ("the default surface for every
     # natural-language query", its own description), so naming the command
     # implies a step the reader does not have to take. The question IS the
     # invocation. review-threat-model is the opposite case — a triage console
     # with modes that has to be started — so it keeps its command.
-    lines.append('just ask — e.g. "What are the most critical findings?" or "What should I fix first?"')
+    #
+    # Name the addressee anyway. "just ask" said what to say without saying to
+    # whom, and the reader is looking at terminal output with no reason to
+    # assume the next prompt is the place. One example question, not two: the
+    # renderer appends its own "or" to this entry, and a second example put a
+    # third "or" in the same line.
+    #
+    # The example follows the findings. On a clean run "What should I fix
+    # first?" asks about findings the run did not produce.
+    example = "What should I fix first?" if sum(sev.values()) else "What did the scan cover?"
+    lines.append(f'ask me about it — e.g. "{example}"')
 
     # Architect review — only surface the dot-file when it contains actionable defects.
     # Advisory-only reviews (technical_defects=0, no repair plan) are internal
@@ -891,18 +904,35 @@ def build_next_steps(
         if _arch_has_defects:
             lines.append(f"read the architect review — {output_dir}/.architect-review.md")
 
-    # SARIF uploaded.
-    if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
-        lines.append("upload threat-model.sarif.json to GitHub Advanced Security / SonarQube / DefectDojo")
-
-    # Sonnet-only run with significant Critical/High.
-    if cfg.get("reasoning_model") == "sonnet" and (critical + high) >= 3:
-        lines.append(
-            "re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)"
-        )
-
     # Cap at 5.
     return lines[:5]
+
+
+def build_follow_ups(output_dir: Path, metrics: dict, cfg: dict) -> list[str]:
+    """Actions that ADD to reading the report rather than replacing it.
+
+    Kept apart from `build_next_steps` because the renderer joins that list
+    with "or". Uploading the SARIF is something a reader does as well as
+    reading the report, not instead of it, and a re-run is a decision taken
+    after reading rather than in place of it.
+
+    Authored as sentences that stand on their own — nothing precedes them to
+    read on from, so they start with an uppercase verb.
+    """
+    out: list[str] = []
+    sev = metrics["threats_by_sev"]
+
+    # Name the file and the class of tool, not three products: a reader has one
+    # SARIF consumer and the list read as a menu to choose from.
+    if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
+        out.append("Upload threat-model.sarif.json to your SARIF consumer (code scanning, SonarQube, DefectDojo)")
+
+    # Sonnet-only run with significant Critical/High.
+    if cfg.get("reasoning_model") == "sonnet" and (sev.get("Critical", 0) + sev.get("High", 0)) >= 3:
+        out.append(
+            "Re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)"
+        )
+    return out
 
 
 def build_run_notes(output_dir: Path, cfg: dict) -> list[str]:
@@ -1659,7 +1689,11 @@ def render_composition_health(health: Optional[dict], report_md: Optional[Path] 
     return lines
 
 
-def render_next_steps(next_steps: list[str], notes: Optional[list[str]] = None) -> list[str]:
+def render_next_steps(
+    next_steps: list[str],
+    notes: Optional[list[str]] = None,
+    follow_ups: Optional[list[str]] = None,
+) -> list[str]:
     """Bullet the steps and join them with "or" — they are alternatives.
 
     A numbered 1-2-3 list reads as "do all three, in this order". Reading the
@@ -1672,17 +1706,30 @@ def render_next_steps(next_steps: list[str], notes: Optional[list[str]] = None) 
     The "or" attaches to the entry's LAST physical line, so a step with
     continuation lines still ends on the conjunction rather than hiding it
     mid-block.
+
+    `follow_ups` are additive actions (`build_follow_ups`) and get no "or":
+    they belong under their own heading, because chaining them into the
+    alternatives offered "upload the SARIF" as a substitute for reading the
+    report. They render even when the alternatives list is empty.
     """
-    if not next_steps:
+    if not next_steps and not follow_ups:
         return []
-    lines = ["", "Next Steps" + (" — pick one, they are alternatives" if len(next_steps) > 1 else "")]
-    last = len(next_steps) - 1
-    for i, step in enumerate(next_steps):
-        head, *rest = str(step).split("\n")
-        block = [f"  - {head}"] + [f"    {cont}" for cont in rest]
-        if i != last:
-            block[-1] += " or"
-        lines.extend(block)
+    lines: list[str] = []
+    if next_steps:
+        lines.extend(["", "Next Steps" + (" — pick one, they are alternatives" if len(next_steps) > 1 else "")])
+        last = len(next_steps) - 1
+        for i, step in enumerate(next_steps):
+            head, *rest = str(step).split("\n")
+            block = [f"  - {head}"] + [f"    {cont}" for cont in rest]
+            if i != last:
+                block[-1] += " or"
+            lines.extend(block)
+    if follow_ups:
+        lines.extend(["", "Also"])
+        for follow_up in follow_ups:
+            head, *rest = str(follow_up).split("\n")
+            lines.append(f"  - {head}")
+            lines.extend(f"    {cont}" for cont in rest)
     for note in notes or []:
         lines.append("")
         lines.append(f"  Note: {note}")
@@ -1869,6 +1916,7 @@ def render_summary(
     stats = extract_run_statistics(output_dir, yaml_data)
     cost = extract_costs(output_dir, plugin_root)
     next_steps = build_next_steps(output_dir, repo_root, metrics, cfg)
+    follow_ups = build_follow_ups(output_dir, metrics, cfg)
     run_notes = build_run_notes(output_dir, cfg)
 
     lines: list[str] = []
@@ -1906,7 +1954,7 @@ def render_summary(
     # omitted entirely (no extra noise).
     run_issues = extract_run_issues(output_dir)
     lines.extend(render_run_issues(run_issues, plugin_dev=cfg.get("plugin_dev", False)))
-    lines.extend(render_next_steps(next_steps, run_notes))
+    lines.extend(render_next_steps(next_steps, run_notes, follow_ups))
     lines.extend(render_security_notice(output_dir))
     lines.extend(render_run_statistics(stats, cost, verbose=cfg.get("verbose", False)))
     lines.extend(render_log_files(output_dir))

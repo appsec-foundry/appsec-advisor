@@ -617,12 +617,33 @@ class TestNextSteps:
         return {"threats_by_sev": {"Critical": critical, "High": high, "Medium": 0, "Low": 0}}
 
     def test_always_line_1_present(self, tmp_path):
-        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
         assert "Management Summary" in lines[0]
-        ask = next(l for l in lines if "just ask" in l)
+        ask = next(l for l in lines if "ask me" in l)
         # A bare skill link does not tell the reader what to ask it.
         assert "What should I fix first?" in ask
-        assert "What are the most critical findings?" in ask
+
+    def test_the_ask_step_names_an_addressee(self, tmp_path):
+        # "just ask" said what to say without saying to whom, and the reader is
+        # looking at terminal output with no reason to assume the next prompt
+        # is the place.
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
+        assert any(l.startswith("ask me about it") for l in lines)
+
+    def test_the_ask_step_carries_one_example_not_two(self, tmp_path):
+        # render_next_steps appends its own "or" to this entry; a second
+        # example question put a third "or" in the same line.
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
+        ask = next(l for l in lines if "ask me" in l)
+        assert ask.count("?") == 1
+        assert " or " not in ask
+
+    def test_the_ask_example_follows_the_findings(self, tmp_path):
+        # On a clean run "What should I fix first?" asks about findings the run
+        # did not produce.
+        clean = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
+        assert any("What did the scan cover?" in l for l in clean)
+        assert not any("fix first" in l for l in clean)
 
     def test_ask_step_does_not_name_the_skill_command(self, tmp_path):
         # ask-threat-model routes itself from any natural-language question
@@ -680,15 +701,25 @@ class TestNextSteps:
         )
         assert any("architect-review.md" in l for l in lines)
 
-    def test_sarif_hint_shown_when_file_exists(self, tmp_path):
+    def test_sarif_hint_is_a_follow_up_not_an_alternative(self, tmp_path):
+        # Uploading the SARIF is something a reader does as well as reading the
+        # report; chained into the alternatives it read as instead of.
         (tmp_path / "threat-model.sarif.json").write_text("{}")
-        lines = rcs.build_next_steps(
-            tmp_path,
-            tmp_path,
-            self._metrics(),
-            self._cfg(write_sarif=True),
-        )
-        assert any("sarif" in l.lower() for l in lines)
+        cfg = self._cfg(write_sarif=True)
+        steps = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), cfg)
+        follow_ups = rcs.build_follow_ups(tmp_path, self._metrics(), cfg)
+
+        assert not any("threat-model.sarif.json" in l for l in steps)
+        assert any("threat-model.sarif.json" in l for l in follow_ups)
+
+    def test_the_sarif_hint_names_a_tool_class_not_three_products(self, tmp_path):
+        # A reader has one SARIF consumer; the product list read as a menu.
+        (tmp_path / "threat-model.sarif.json").write_text("{}")
+        follow_ups = rcs.build_follow_ups(tmp_path, self._metrics(), self._cfg(write_sarif=True))
+        assert any("your SARIF consumer" in l for l in follow_ups)
+
+    def test_no_sarif_hint_without_the_file(self, tmp_path):
+        assert rcs.build_follow_ups(tmp_path, self._metrics(), self._cfg(write_sarif=True)) == []
 
     def test_requirements_are_not_a_generic_follow_up(self, tmp_path):
         lines = rcs.build_next_steps(
@@ -700,21 +731,26 @@ class TestNextSteps:
         assert not any("--requirements" in l for l in lines)
 
     def test_reasoning_hint_only_for_sonnet_with_findings(self, tmp_path):
-        sonnet_many = rcs.build_next_steps(
-            tmp_path,
+        sonnet_many = rcs.build_follow_ups(
             tmp_path,
             self._metrics(critical=2, high=2),
             self._cfg(reasoning_model="sonnet"),
         )
         assert any("--reasoning-model opus" in l for l in sonnet_many)
 
-        opus_cheap = rcs.build_next_steps(
-            tmp_path,
+        opus_cheap = rcs.build_follow_ups(
             tmp_path,
             self._metrics(critical=2, high=2),
             self._cfg(reasoning_model="opus-cheap"),
         )
         assert not any("--reasoning-model opus" in l for l in opus_cheap)
+
+        sonnet_few = rcs.build_follow_ups(
+            tmp_path,
+            self._metrics(critical=1),
+            self._cfg(reasoning_model="sonnet"),
+        )
+        assert sonnet_few == []
 
     def test_capped_at_five_items(self, tmp_path):
         (tmp_path / "package.json").write_text("{}")
@@ -1682,6 +1718,30 @@ class TestRenderMisc:
         out = rcs.render_next_steps(["read", "ask"], ["Baseline established."])
         assert out[-1] == "  Note: Baseline established."
         assert sum(1 for line in out if line.startswith("  - ")) == 2
+
+    def test_follow_ups_get_their_own_heading_and_no_or(self):
+        # Chained into the alternatives, "upload the SARIF" read as a
+        # substitute for reading the report.
+        out = rcs.render_next_steps(["read", "ask"], None, ["Upload the SARIF"])
+        assert "Also" in out
+        assert out.index("Also") > out.index("  - read or")
+        assert out[-1] == "  - Upload the SARIF"
+        assert not any(line.endswith(" or") for line in out[out.index("Also") :])
+
+    def test_the_last_alternative_keeps_no_or_when_follow_ups_follow(self):
+        out = rcs.render_next_steps(["read", "ask"], None, ["Upload the SARIF"])
+        assert "  - ask" in out
+
+    def test_follow_ups_render_without_alternatives(self):
+        out = rcs.render_next_steps([], None, ["Upload the SARIF"])
+        assert out == ["", "Also", "  - Upload the SARIF"]
+
+    def test_follow_ups_indent_continuation_lines(self):
+        out = rcs.render_next_steps([], None, ["Upload the SARIF\nto your consumer"])
+        assert out[-2:] == ["  - Upload the SARIF", "    to your consumer"]
+
+    def test_nothing_at_all_renders_nothing(self):
+        assert rcs.render_next_steps([], None, []) == []
 
     def test_render_log_files(self, tmp_path: Path):
         (tmp_path / ".qa-status.json").write_text("{}")
