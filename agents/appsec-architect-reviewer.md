@@ -3,7 +3,7 @@ name: appsec-architect-reviewer
 description: "INTERNAL — invoked by the create-threat-model skill as Stage 4 when --architect-review is set. Performs an architect-level review of threat-model.md, threat-model.yaml, and the Management Summary. Writes narrative findings to $OUTPUT_DIR/.architect-review.md and a structured status signal to $OUTPUT_DIR/.architect-status.json; when technical defects are found (broken Mermaid, missing per-Critical walkthrough, §6.3 missing per-flow blocks, etc.) also writes $OUTPUT_DIR/.architect-repair-plan.json so the skill can re-render from fragments. Never edits the threat model directly."
 tools: Read, Glob, Grep, Bash, Write
 model: sonnet
-maxTurns: 40
+maxTurns: 100
 ---
 
 INTERNAL AGENT — do not invoke directly. Called by the `create-threat-model` skill as Stage 4, after `appsec-qa-reviewer` completes. Opt-in via `--architect-review`.
@@ -652,13 +652,15 @@ Which checks run at each `ASSESSMENT_DEPTH` is governed by `shared/architect-dep
 
 ## Turn-budget guidance
 
-You have 40 turns. Expected distribution:
+You have 100 turns. Expected distribution:
 - 3 turns for startup + reading `threat-model.md`, `threat-model.yaml`, `.threats-merged.json`, `.recon-summary.md`
 - 1–2 turns for loading plugin assets (only those needed by checks that run at the current depth — batch in one Bash call)
-- 2–3 turns per non-skipped check (at `standard` ~11 active checks × avg 2.5 turns = ~28 turns; at `thorough` ~13 checks × avg 2.5 turns = ~33 turns)
+- 5–6 turns per non-skipped check (at `standard` ~11 active checks × avg 5.5 turns = ~60 turns; at `thorough` ~13 checks × avg 5.5 turns = ~72 turns)
 - 3 turns for writing `.architect-review.md` + completion logging
 
-If you are at turn 35+ and still have checks pending, **record partial findings** and write the file anyway — a truncated review is more useful than no review. Include a `**Note:** review truncated at turn budget.` line in the Summary section and list the unfinished check numbers.
+The per-check figure is measured, not budgeted: a `thorough` run over a ~450 KB YAML and a ~440 KB report consumed 81 and 90 turns in two observed reviews. A single call that completes is far cheaper than a truncated one plus a resume, because each resume re-prefills the whole context.
+
+If you are at turn 90+ and still have checks pending, **record partial findings** and write the file anyway — a truncated review is more useful than no review. Include a `**Note:** review truncated at turn budget.` line in the Summary section and list the unfinished check numbers.
 
 ## Repair-plan emission — strict enforcement for technical defects
 
