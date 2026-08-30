@@ -6,23 +6,24 @@ Stage 4 no longer reviews the report. It rewrites its prose once, on Sonnet, and
 
 ## Why the review had to go
 
-Measured from `.agent-run.log` of the thorough juice-shop2 run:
+Measured from `.agent-run.log` of the thorough juice-shop2 run of 2026-08-30, timestamps UTC, windows taken from `AGENT_SPAWN` to `AGENT_DONE`:
 
 | Step | Window | Duration | Result |
 |---|---|---|---|
-| Architect round 1, deterministic pre-pass | 08:17:01 → 08:17:33 | 32 s | 14 findings (checks 1, 3, 5, 6, 12, 13, 14, 15) |
-| Architect round 1, LLM checks 2, 4, 7–11 | 08:17:33 → 08:29:06 | 11 min 33 s | 29 findings, 1 technical defect |
-| Fragment fixer | 08:30:04 → 08:31:27 | 1 min 23 s | 3 actions, `gate_exit_code: 0`, converged |
-| Architect round 2 (verification) | 08:32:54 → 08:49:06 | 16 min 12 s | 26 findings, 0 technical defects, pass |
-| **Stage 4 total** | 08:16:55 → 08:49:06 | **32 min** | one repaired fragment |
+| Architect round 1 | 13:22:35 → 13:37:03 | 14 min 28 s | 30 findings (19 warnings, 11 info), 4 technical defects, `repair_required` |
+| Fragment fixer | 13:37:20 → 13:46:46 | 9 min 26 s | 4 actions applied, 3 skipped, `gate_exit: 0`, converged |
+| Architect round 2 (verification) | 13:47:28 → 14:02:56 | 15 min 28 s | 30 findings, 0 technical defects, pass |
+| **Stage 4 total** | 13:22:35 → 14:02:56 | **40 min 21 s** | one repaired fragment |
 
-A second thorough run the same afternoon took 40 minutes for the same shape, and a parallel cost analysis put the Stage-4 loop at 431k tokens — a fifth of the run — for four fragment edits, of which the architect alone was 349k.
+The deterministic-versus-LLM split inside round 1 is not reconstructible from this log: the agent emits all fifteen `Check n/15` pairs in one burst at 13:31:59, nine minutes after it started, so the step timestamps record when it wrote them down rather than when it ran them.
+
+Token counts are `in + out + cache_write` from the `AGENT_USAGE` lines, against a run total of 5.14M. The Stage-4 loop cost 867k, 16.8% of the run, for four fragment edits; the architect alone was 705k, 13.7%.
 
 Three findings decided the rework.
 
-**The second pass confirmed what was already verified.** The runtime required a full re-review after every repair, so 16 minutes and 168k Opus tokens went into turning `repair_required` into `pass` on a repair the fixer had already checked with `gate_exit_code: 0`.
+**The second pass confirmed what was already verified.** The runtime required a full re-review after every repair, so 15 minutes and 315k Opus tokens went into turning `repair_required` into `pass` on a repair the fixer had already checked with `gate_exit: 0`.
 
-**The review's output reached nobody.** It found real things — the Management Summary counting 59 findings against a register of 76, no P1 mitigation for any effective-Critical finding, a missing browser-to-API trust boundary, an unmodelled LLM service — and wrote them to `.architect-review.md`, which no deliverable reads. `grep` across `scripts/`, `skills/` and `agents/` finds only runtime cleanup, `publish_threat_model.py`, `postscan_secret_check.py`, and one completion-summary line suggesting the reader open the file. The same observations recurred in two consecutive runs.
+**The review's output reached nobody.** It found real things — the Management Summary counting 59 findings against a register of 76, no P1 mitigation for any effective-Critical finding, a missing browser-to-API trust boundary, an unmodelled LLM service — and wrote them to `.architect-review.md`, which no deliverable reads. The count mismatch is not the reporting threshold at work: the yaml holds 18 Critical, 32 High and 26 Medium and nothing below, so the Management Summary's `Critical: 9 · High: 28 · Medium: 22` undercounts every band. `grep` across `scripts/`, `skills/` and `agents/` finds only runtime cleanup, `publish_threat_model.py`, `postscan_secret_check.py`, and one completion-summary line suggesting the reader open the file. The same observations recurred in two consecutive runs.
 
 **Nobody owned the language.** `apply_prose_fixes.py` applies seven regex fix classes and explicitly declines paragraph restructuring; `agents/shared/prose-style.md` binds the authoring roles, but each sees only its own slice. Tone across sections, redundancy between the Management Summary and §6, and clumsy sentences were unowned.
 
@@ -33,11 +34,17 @@ Three findings decided the rework.
 1. `build_editorial_context.py` writes the projection; `check_editorial_diff.py snapshot` records the guarded files; `architect_structural_checks.py all` runs as an advisory pre-pass. No agent so far, 32 seconds.
 2. One dispatch of `appsec-architect-reviewer`, `run_in_background: false`. It reads `shared/prose-style.md` and the projection, writes one plan, and holds no `Edit` tool.
 3. `apply_editorial_plan.py` performs every write, `check_editorial_diff.py verify --restore` checks it, and the canonical tail re-renders: strict compose, prose fixes, QA gate, section integrity, secret gate.
-4. `render_editorial_receipt.py` writes `.architect-status.json` and prints what happened.
+4. `render_editorial_receipt.py` writes `.architect-status.json`, appends one `EDITORIAL_PASS` line to `.agent-run.log`, and prints what happened.
 
 Nothing judges, so nothing is re-judged. A QA gate that rejects the edited bytes triggers `check_editorial_diff.py restore` and one re-render of the original: a failed polish costs the polish, never the run.
 
-`.architect-status.json` stays the stage's status artifact, so the controller gate at `orchestration_controller.py:6681`, runtime cleanup, `check_state.py`, `baseline_state.py`, `publish_threat_model.py`, `aggregate_run_issues.py` and the completion summary need no change.
+`.architect-status.json` stays the stage's status artifact, so the controller gate at `orchestration_controller.py:6681`, runtime cleanup, `check_state.py`, `baseline_state.py`, `publish_threat_model.py`, `aggregate_run_issues.py` and the completion summary keep working unchanged. Two consequences follow from the status being permanently `pass`, and both are deliberate.
+
+The status has to be `pass`. `_status_passes` at `orchestration_controller.py:6662` re-dispatches Stage 4 for any other value, so a status that reported a reverted pass honestly would put the stage in a loop. The stage therefore cannot signal its own failure through this file, and a genuine defect stays a blocking gate's business.
+
+That makes three consumers unreachable: `_recommend_architect_status_not_pass` in `recommend_fixes.py`, the `architect_status_not_pass` branch at `aggregate_run_issues.py:1918`, and the preserve branch at `runtime_cleanup.py:455`. `render_completion_summary.py:880` is unreachable for a different reason — nothing writes `.architect-review.md` any more. All four are left in place for the same reason as the orphaned shared rule files: restoring the deep review behind a flag should be wiring, not a rewrite.
+
+The `EDITORIAL_PASS` log line exists because of the first consequence. A permanent `pass` means `runtime_cleanup` reaps `.architect-status.json` through `POST_ARCH_FILES_IF_PASS` on every completed run, and `.dispatch-context/` goes with the ALWAYS wave, so the counts would otherwise be gone by the time anyone asks how the pass performed. `.agent-run.log` is in `runtime_cleanup`'s `NEVER` set and survives.
 
 ## What it may touch
 
@@ -67,6 +74,8 @@ Technical precision within what the block already says: a mechanism described va
 
 The line: it sharpens a claim the block already makes. It never adds one, never widens or narrows its scope, never re-rates anything, and never changes how certain a claim is — a hedge stays a hedge. Mitigations carry their own floor: REQ-RPT-005 and `validate_mitigation_quality.py` require two ordered steps and a verification instruction on every P1/P2 fix card, so steps are never merged, dropped or reordered.
 
+Both kinds of improvement stop at the edge of the block. The agent sees 228 isolated texts labelled `F-012 · scenario` and is told not to open the report, the yaml or the repository, so it has no section order, no neighbouring blocks and no architecture. Consistency between two places in the report is therefore out of reach — including the first follow-up below, the same finding rated Critical in the Management Summary and Medium in §8. This stage improves how a paragraph reads; whether two paragraphs agree stays a deterministic check's job.
+
 It edits toward `agents/shared/prose-style.md`, the anchor the authoring agents already write to, and is listed in `AGENT_FILES_AUTHORING_PROSE` so that stays wired.
 
 ## The guard
@@ -81,13 +90,13 @@ Invariants are read with backticks stripped. `prose-style.md` Rule 6 requires co
 
 ## Cost, honestly
 
-Removed and measured: 40 minutes of wall clock in the last run, of which 15 minutes and 168k Opus tokens were the confirmation pass; the architect as a whole was 349k tokens, 16% of the run's subagent total.
+Removed and measured: 40 minutes of wall clock in the last run, of which 15 minutes and 315k Opus tokens were the confirmation pass; the architect as a whole was 705k tokens, 13.7% of the run's subagent total, and the loop with its fixer 867k, 16.8%.
 
 Added and estimated: one Sonnet dispatch reading a 51 KB projection plus the 20 KB style anchor, writing a plan whose size grows with the number of rewrites. Roughly six tool calls. Turn ceiling 100 → 30, floor 90 → 12, model default Opus → Sonnet.
 
 That is arithmetic, not a measurement. The first real run should produce three numbers: how many of the offered blocks were rewritten, how many the applier or guard rejected, and how many turns the pass used. The turn floor came down because the role changed, not because a run proved 12 sufficient — `tests/test_agent_definitions.py:88` records that every shipped turn-kill was a budget set too small.
 
-STRIDE remains the larger cost at 795k tokens, 36%. Stage 4 is not where the run's expense mostly lives.
+STRIDE remains the larger cost at 2.03M tokens, 39.5%. Stage 4 is not where the run's expense mostly lives.
 
 ## What the change costs in coverage
 
@@ -111,8 +120,8 @@ The four `agents/shared/architect-{coherence-rules,coverage-signals,depth-matrix
 | `scripts/build_editorial_context.py` | projects the editable blocks to `.dispatch-context/editorial/blocks.json`, only addresses the guard admits |
 | `scripts/apply_editorial_plan.py`, `schemas/editorial-plan.schema.json` | the only writer; allow-listed addresses, `find` as optimistic lock, exactly-once Markdown match |
 | `scripts/check_editorial_diff.py` | `snapshot`, `verify [--restore]`, `restore` |
-| `scripts/render_editorial_receipt.py` | writes `.architect-status.json`, prints the receipt including the advisory warnings |
-| `agents/appsec-architect-reviewer.md` | 754 lines → 82; tools `Read`, `Write`, `Bash`; Sonnet; 30 turns |
+| `scripts/render_editorial_receipt.py` | writes `.architect-status.json`, logs `EDITORIAL_PASS` to `.agent-run.log`, prints the receipt including the advisory warnings |
+| `agents/appsec-architect-reviewer.md` | 734 lines → 87; tools `Read`, `Write`, `Bash`; Sonnet; 30 turns |
 | `skills/create-threat-model/SKILL-thin-stage4.md` | one pass, no repair loop |
 
 Projection size against the real run at the defaults (`--max-findings 20`, floor `high`): 228 blocks, 51 KB — 153 from the yaml, 63 §6 paragraphs, 12 from the Management-Summary fragments, against 541 editable fields and 104 KB unbounded. The §6 filter skips headings, tables, fences, HTML, list items, the mechanical bold labels (`**Status:**`, `**Implemented controls:**`) and `FROZEN` regions, and requires a sentence of at least 80 characters once a bold label is stripped.
@@ -121,7 +130,8 @@ Runtime state lives under `.dispatch-context/editorial/`, which `runtime_cleanup
 
 ## Open
 
-- The first measured run. Until it exists, the turn ceiling, the `--max-findings` cap and the claim that the polish is worth its dispatch are all estimates.
+- The first measured run. Until it exists, the turn ceiling, the `--max-findings` cap and the claim that the polish is worth its dispatch are all estimates. The `EDITORIAL_PASS` log line carries the counts; the turn count still has to come from the dispatch itself.
+- Should a second, cheap pass see the report rather than isolated blocks? Cross-block consistency is what an architect reviewer was for, and no deterministic check replaces all of it. Any answer has to say what such a pass may write, given that this one's guarantees rest on it writing nothing but wording.
 - Should `architect_structural_checks.py all` run at every depth rather than only in Stage 4? It costs 32 seconds, and its quality-bar and verdict-plausibility detection never runs at `quick` or `standard` today.
 - Should the deep checks return behind their own flag? `--architect-review` now means "run the editorial pass at `standard`" and can no longer carry that second meaning.
 - Rename or not. `appsec-architect-reviewer` no longer reviews. The id appears in the turn-budget test, the logging table, `resolve_config` keys, the completion-summary regexes at `render_completion_summary.py:690–719` and the cost model, so the rename is a separate, mechanical change.
