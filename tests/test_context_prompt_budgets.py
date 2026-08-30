@@ -40,7 +40,10 @@ SURFACE_MAX_BYTES_RATCHET = {
     "architecture_analyst_role": 12000,
     "control_analyst_role": 12000,
     "post_stride_synthesizer_role": 12000,
-    "stride_analyzer_role": 12000,
+    # 12000 -> 14500 (2026-08-30): requirements and blueprint provenance grew
+    # the role to 12764 bytes, past the hard budget and inside the headroom
+    # band. See the note in data/context-budgets.yaml.
+    "stride_analyzer_role": 14500,
     "stride_lens_llm": 7000,
     "stride_lens_agentic": 8000,
     "stride_lens_spa": 3500,

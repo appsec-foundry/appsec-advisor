@@ -89,7 +89,17 @@ surfaces:
     max_bytes: 12000
   stride_analyzer_role:
     path: agents/appsec-stride-analyzer-v2.md
-    max_bytes: 12000
+    # 12000 -> 14500 (2026-08-30): carrying requirements and blueprint
+    # provenance into findings and mitigations grew the role to 12764 bytes,
+    # past the hard budget, with no band left for the ten-percent headroom
+    # guard. The eight sections are each 800-2200 bytes of distinct contract
+    # (ownership, admission, bounded reads, write-first, prior/actor/boundary
+    # handling, the six-category workflow, finding admission, output), so
+    # fitting 12000 meant cutting a third of one of them out of the most
+    # quality-critical prompt in the pipeline. Raised instead. This is not a
+    # licence to grow: the role ships once per STRIDE component, so a standard
+    # run pays every byte here seven times.
+    max_bytes: 14500
   stride_lens_llm:
     path: agents/shared/owasp-llm-top10.md
     max_bytes: 7000
