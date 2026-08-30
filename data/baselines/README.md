@@ -24,7 +24,7 @@ moves all three together.
 
 | File | Baseline id | Source |
 |---|---|---|
-| `secure-coding-baseline.md` | `aisec-0.1` | <https://github.com/appsec-foundry/ai-secure-coding-baseline> |
+| `secure-coding-baseline.md` | `aisec-0.1` | <https://github.com/appsec-foundry/aiscb> |
 
 ## Attribution
 

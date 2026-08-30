@@ -130,7 +130,7 @@ Updates preserve finding IDs. Review decisions are stored separately, and publis
 - Runs support only full, rebuild, and rerender; reassess a changed repository with `--full`.
 - Threat analysis costs 39.8% less at quick depth and 26.8% less at thorough depth in reference runs.
 - Trust boundaries are assessed, drawn in the architecture diagram, and linked to findings that cross them.
-- `install-baseline` and `verify-baseline` put the bundled [AI Secure Coding Baseline](https://github.com/appsec-foundry/ai-secure-coding-baseline) into Claude Code's instruction files and let CI verify it.
+- `install-baseline` and `verify-baseline` put the bundled [AI Secure Coding Baseline](https://github.com/appsec-foundry/aiscb) into Claude Code's instruction files and let CI verify it.
 - Scans can take business context interactively or through `--context`; named sensitive assets keep their component in scope, and the report says which file was read and how many findings it applied to.
 - `--formats threatdragon` exports alpha Threat Dragon v2 JSON for Threat Dragon and OWASP ThreatAtlas.
 - Organization profiles can include custom skills and baselines, configure the session banner, and disable individual skills.
@@ -224,7 +224,7 @@ The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `template
 ### Companion repositories
 
 - [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) builds organization-specific plugin packages from pinned upstream releases.
-- [ai-secure-coding-baseline](https://github.com/appsec-foundry/ai-secure-coding-baseline) contains the secure-coding rules bundled by the plugin.
+- [aiscb](https://github.com/appsec-foundry/aiscb) contains the secure-coding rules bundled by the plugin.
 
 ### Comparable tools
 
