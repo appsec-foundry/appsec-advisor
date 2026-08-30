@@ -53,6 +53,10 @@ try:
     from scan_excludes import is_excluded as _scan_is_excluded  # type: ignore
 except Exception:  # pragma: no cover
     _scan_is_excluded = None
+try:
+    from scan_excludes import is_assessment_artifact as _scan_is_assessment_artifact  # type: ignore
+except Exception:  # pragma: no cover
+    _scan_is_assessment_artifact = None
 
 
 _DEFAULT_RULES_YAML = _HERE.parent / "data" / "architecture-coverage-rules.yaml"
@@ -135,13 +139,24 @@ _SINK_SANITIZER = re.compile(r"(?i)(?:DOMPurify\.sanitize|sanitize\s*\(|escapeHt
 # ---------------------------------------------------------------------------
 
 
-def _is_excluded(rel: str) -> bool:
+def _is_excluded(rel: str, repo_root: Path | None = None) -> bool:
     # bugs2 Bug 3 — opt-out for specialised audits (lockfile / supply chain).
     if os.environ.get("APPSEC_ARCH_INCLUDE_VENDOR") == "1":
         return False
     if _scan_is_excluded is not None:
         try:
             if _scan_is_excluded(rel):
+                return True
+        except Exception:  # pragma: no cover
+            pass
+    # A prior run's output committed under any name is not source evidence.
+    # `is_excluded` only knows the fixed `docs/security/` prefix, so a copied,
+    # renamed or A/B-compared output directory walks straight back in and the
+    # engine cites its own earlier verdicts as if they were code. Detect those
+    # directories by their on-disk signature instead of their name.
+    if repo_root is not None and _scan_is_assessment_artifact is not None:
+        try:
+            if _scan_is_assessment_artifact(rel, repo_root):
                 return True
         except Exception:  # pragma: no cover
             pass
@@ -152,10 +167,10 @@ def _is_excluded(rel: str) -> bool:
 def _walk_sources(repo_root: Path) -> Iterable[Path]:
     for dirpath, dirnames, filenames in os.walk(repo_root):
         rel_dir = str(Path(dirpath).relative_to(repo_root)).replace("\\", "/")
-        dirnames[:] = [d for d in dirnames if not _is_excluded(f"{rel_dir}/{d}" if rel_dir != "." else d)]
+        dirnames[:] = [d for d in dirnames if not _is_excluded(f"{rel_dir}/{d}" if rel_dir != "." else d, repo_root)]
         for name in filenames:
             rel = str((Path(dirpath) / name).relative_to(repo_root)).replace("\\", "/")
-            if _is_excluded(rel):
+            if _is_excluded(rel, repo_root):
                 continue
             p = Path(dirpath) / name
             if p.suffix.lower() not in _SOURCE_EXTS:
