@@ -54,6 +54,14 @@ a finding only when target-repository evidence confirms it.
 External context may identify a hypothesis, but only source, configuration, git
 history, or target-owned declarations can establish and score a finding.
 
+### REQ-MOD-009 — An unproven finding says that it is unproven
+
+A finding whose insecure state is observed but whose exploitability is not
+established is reported and is marked as unproven wherever it appears. Its
+severity follows the security impact it would have, not the strength of its
+evidence. It carries no score and does not count as a confirmed instance, and a
+verdict that asserts confirmed exploitation does not rest on it.
+
 ## Security architecture
 
 ### REQ-ARC-001 — Architecture ratings describe the controls that apply

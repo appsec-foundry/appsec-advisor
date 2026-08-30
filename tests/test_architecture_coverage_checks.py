@@ -361,6 +361,23 @@ def test_tls_localhost_http_is_not_finding(tmp_path: Path) -> None:
     assert v["status"] in {"present", "partial"}
 
 
+def test_tls_http_url_in_a_comment_is_not_an_anti_pattern(tmp_path: Path) -> None:
+    """An `http://` URL in prose says nothing about TLS verification.
+
+    Vendored sources carry author and license comments with plain-HTTP URLs.
+    Rating Transport Encryption from one of those is what FE-2 forbids, and it
+    made every repository with a bundled third-party file report a High
+    cleartext-transport candidate.
+    """
+    (tmp_path / "OrbitControls.js").write_text(
+        "/**\n * @author mrdoob / http://mrdoob.com\n * @author alteredq / http://alteredqualia.com/\n */\n"
+    )
+    out = _run_engine(tmp_path)
+    v = _verdict(out, "ARCH-TLS-001")
+    assert v["status"] != "anti_pattern"
+    assert "ARCH-TLS-001" not in [c["rule_id"] for c in out["anti_pattern_candidates"]]
+
+
 # ---------------------------------------------------------------------------
 # Cookie hardening — ARCH-COOKIE-001
 # ---------------------------------------------------------------------------

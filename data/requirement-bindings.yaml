@@ -142,6 +142,21 @@ requirements:
       - tests/test_agent_definitions.py::test_cross_repo_mismatch_requires_target_evidence
       - tests/test_build_threat_modeling_context.py::test_supplied_reference_document_is_admitted_as_fenced_and_named_data
 
+  REQ-MOD-009:
+    applies_to:
+      - scripts/merge_threats.py
+      - scripts/_severity_rollup.py
+      - scripts/build_posture_verdict.py
+      - scripts/compose_threat_model.py
+      - schemas/stride.schema.yaml
+      - schemas/threats-merged.schema.yaml
+    decisions:
+      - FE-1
+      - WK-4
+    documents: []
+    coverage: advisory
+    guards: []
+
   REQ-ARC-001:
     applies_to:
       - data/architecture-coverage-rules.yaml

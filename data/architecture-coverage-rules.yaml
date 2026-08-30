@@ -260,7 +260,13 @@ hard_rules:
         - "(?i)rejectUnauthorized\\s*:\\s*false"
         - "(?i)tlsAllowInvalidCertificates\\s*[:=]\\s*true"
         - "(?i)tls\\s*[:=]\\s*false"
-        - "(?i)(?<![a-z])http://(?!localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|\\[::1\\])"
+        # A bare `http://` URL is a precondition signal, not positive evidence:
+        # it matches author comments, docs, and license headers, which say
+        # nothing about whether TLS verification is disabled. Rating a control
+        # from a string in a comment is what decision FE-2 forbids, and the
+        # rule's own `required_evidence` asks for a concrete assignment or
+        # option-object literal. Cleartext endpoints need their own rule bound
+        # to configuration files.
     exculpatory_signals:
       any_pattern:
         - "(?i)sslmode\\s*=\\s*(require|verify-(ca|full))"

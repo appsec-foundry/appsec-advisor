@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Transport Encryption is no longer rated from a plain-HTTP URL in a comment, so a bundled third-party file stops producing a cleartext-transport verdict.
 - An agent call the host answers asynchronously is recorded as launched instead of rejected, so a finished agent no longer holds turns and budget claims that skipped abuse-case verification.
 - A subagent that ends its last turn on a tool call is no longer recorded as failed.
 - Stage 2 budgets its attempts per blocking cause, and the abort names the step that actually blocked.
