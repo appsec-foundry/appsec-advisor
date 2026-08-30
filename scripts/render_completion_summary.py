@@ -831,7 +831,12 @@ def build_next_steps(
     metrics: dict,
     cfg: dict,
 ) -> list[str]:
-    """Apply the conditional rules from SKILL.md → "Next Steps block".
+    """Build the Next Steps block: what the reader can do with the report.
+
+    This function is the rule set, not a copy of one. The block used to be
+    specified in SKILL.md, which no longer carries a "Next Steps block"
+    section — the runtime is compact and the summary is deterministic, so the
+    conditions live here with the code that applies them.
 
     Returns a capped 5-item list of MUTUALLY ALTERNATIVE actions: read the
     report, *or* triage it, *or* ask it a question. None of them requires the
