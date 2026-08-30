@@ -37,7 +37,11 @@ def _write(output_dir: Path, name: str, payload: dict) -> None:
 def _clean_pass(output_dir: Path) -> None:
     _write(output_dir, "blocks.json", {"selection": {"blocks_total": 40}})
     _write(output_dir, "plan.json", {"status": "edits", "actions": [{"file": "threat-model.yaml"}] * 6})
-    _write(output_dir, "apply-report.json", {"applied_count": 6, "rejected_count": 0, "files_touched": ["threat-model.yaml"]})
+    _write(
+        output_dir,
+        "apply-report.json",
+        {"applied_count": 6, "rejected_count": 0, "files_touched": ["threat-model.yaml"]},
+    )
     _write(output_dir, "guard-report.json", {"status": "clean", "violation_count": 0, "restored": []})
 
 
@@ -56,7 +60,11 @@ def test_the_outcome_lands_in_the_status_file(output_dir: Path) -> None:
 
 def test_a_reverted_pass_reports_no_applied_edits(output_dir: Path) -> None:
     _clean_pass(output_dir)
-    _write(output_dir, "guard-report.json", {"status": "violations", "violation_count": 2, "restored": ["threat-model.yaml"]})
+    _write(
+        output_dir,
+        "guard-report.json",
+        {"status": "violations", "violation_count": 2, "restored": ["threat-model.yaml"]},
+    )
 
     assert receipt.main([str(output_dir), "--no-print"]) == 0
     status = json.loads((output_dir / receipt.STATUS_NAME).read_text(encoding="utf-8"))
@@ -69,7 +77,11 @@ def test_a_reverted_pass_reports_no_applied_edits(output_dir: Path) -> None:
 
 def test_rejected_actions_are_surfaced(output_dir: Path, capsys: pytest.CaptureFixture) -> None:
     _clean_pass(output_dir)
-    _write(output_dir, "apply-report.json", {"applied_count": 4, "rejected_count": 2, "files_touched": ["threat-model.yaml"]})
+    _write(
+        output_dir,
+        "apply-report.json",
+        {"applied_count": 4, "rejected_count": 2, "files_touched": ["threat-model.yaml"]},
+    )
 
     assert receipt.main([str(output_dir)]) == 0
     out = capsys.readouterr().out
