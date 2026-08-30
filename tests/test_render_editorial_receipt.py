@@ -148,3 +148,51 @@ def test_unparseable_inputs_do_not_crash(output_dir: Path) -> None:
 
 def test_a_missing_output_dir_is_a_usage_error(tmp_path: Path) -> None:
     assert receipt.main([str(tmp_path / "nope")]) == 2
+
+
+def test_the_counts_survive_in_the_run_log(output_dir: Path) -> None:
+    """`.architect-status.json` is reaped on a clean run; the log line is not.
+
+    `runtime_cleanup` removes `POST_ARCH_FILES_IF_PASS` whenever the status is
+    `pass`, and the editorial pass is always `pass`. Without this line a
+    finished run keeps no record of how the pass performed.
+    """
+    _clean_pass(output_dir)
+
+    assert receipt.main([str(output_dir), "--no-print"]) == 0
+    line = (output_dir / receipt.LOG_NAME).read_text(encoding="utf-8")
+
+    assert "EDITORIAL_PASS" in line
+    assert "architect-reviewer" in line
+    for field in ("offered=40", "proposed=6", "applied=6", "rejected=0", "guard_violations=0", "reverted=false"):
+        assert field in line
+
+
+def test_the_run_log_records_a_reverted_pass_as_reverted(output_dir: Path) -> None:
+    _clean_pass(output_dir)
+    _write(output_dir, "guard-report.json", {"status": "violations", "violation_count": 2, "restored": ["a.md"]})
+
+    assert receipt.main([str(output_dir), "--no-print"]) == 0
+    line = (output_dir / receipt.LOG_NAME).read_text(encoding="utf-8")
+
+    assert "reverted=true" in line
+    assert "applied=0" in line
+    assert "guard_violations=2" in line
+
+
+def test_the_log_line_is_appended_not_overwritten(output_dir: Path) -> None:
+    """Stage 4 writes into a log the whole run has been appending to."""
+    _clean_pass(output_dir)
+    (output_dir / receipt.LOG_NAME).write_text("earlier stage line\n", encoding="utf-8")
+
+    assert receipt.main([str(output_dir), "--no-print"]) == 0
+
+    assert (output_dir / receipt.LOG_NAME).read_text(encoding="utf-8").startswith("earlier stage line\n")
+
+
+def test_an_unwritable_log_does_not_fail_the_stage(output_dir: Path) -> None:
+    _clean_pass(output_dir)
+    (output_dir / receipt.LOG_NAME).mkdir()
+
+    assert receipt.main([str(output_dir), "--no-print"]) == 0
+    assert (output_dir / receipt.STATUS_NAME).is_file()

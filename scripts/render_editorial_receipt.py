@@ -10,7 +10,15 @@ Reads the projection, the plan, and the applier and guard reports, then:
 
   * writes ``.architect-status.json`` — the artifact the controller's Stage-4
     gate and the completion summary already read, so no other consumer changes;
+  * appends one ``EDITORIAL_PASS`` line to ``.agent-run.log``;
   * prints a short receipt for the console.
+
+The log line is what survives the run. ``.architect-status.json`` is in
+``runtime_cleanup``'s ``POST_ARCH_FILES_IF_PASS``, and the status below is
+always ``pass``, so a completed run reaps it; ``.dispatch-context/`` goes with
+the ALWAYS wave. Without the log line every count here would be gone by the
+time anyone asks how the pass performed — the exact gap this script exists to
+close. ``.agent-run.log`` is in ``runtime_cleanup``'s ``NEVER`` set.
 
 The status is ``pass`` whenever the stage completed, including when the pass
 rewrote nothing or the guard reverted it. Stage 4 no longer judges the report,
@@ -29,10 +37,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _atomic_io import atomic_write_json  # noqa: E402
+from event_log import format_line  # noqa: E402
 
 CONTEXT_DIR = ".dispatch-context/editorial"
 STATUS_NAME = ".architect-status.json"
 PRE_PASS_NAME = ".architect-pre-pass.json"
+LOG_NAME = ".agent-run.log"
 
 
 def _load(path: Path) -> Any:
@@ -116,6 +126,28 @@ def render(status: dict) -> str:
     return "\n".join(lines)
 
 
+def log_detail(status: dict) -> str:
+    """The counts a later diagnosis needs, as one flat key=value detail."""
+    return (
+        f"offered={status['blocks_offered']} "
+        f"proposed={status['edits_proposed']} "
+        f"applied={status['edits_applied']} "
+        f"rejected={status['edits_rejected']} "
+        f"guard_violations={status['guard_violations']} "
+        f"reverted={str(status['reverted']).lower()} "
+        f"advisory_warnings={len(status['advisory_findings'])}"
+    )
+
+
+def append_log(output_dir: Path, status: dict) -> None:
+    """Best-effort — a failed log write never fails the stage."""
+    try:
+        with open(output_dir / LOG_NAME, "a", encoding="utf-8") as fh:
+            fh.write(format_line("EDITORIAL_PASS", log_detail(status), component="architect-reviewer"))
+    except OSError:
+        pass
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="render_editorial_receipt.py", description=__doc__)
     parser.add_argument("output_dir")
@@ -133,6 +165,7 @@ def main(argv: list[str]) -> int:
     except OSError as exc:
         print(f"render_editorial_receipt.py: cannot write {STATUS_NAME}: {exc}", file=sys.stderr)
         return 2
+    append_log(output_dir, status)
 
     if not args.no_print:
         print(render(status))
