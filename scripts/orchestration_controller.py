@@ -1954,6 +1954,54 @@ def _dispatch_values_transition(cfg: dict[str, Any]) -> dict[str, Any]:
     return _with_model_aliases(values)
 
 
+# What a Stage 1d/2/3/4 transition actually reads, beyond the model keys added
+# below. Derived from the thin runtimes, not guessed: the completion runtime
+# builds its argv as flag pairs from the ``write_*``/``check_requirements``/
+# ``architect_review`` switches, and a wrong argv aborts the run at its last
+# step, so those stay even though they are cheap booleans.
+# ``test_dispatch_values_stage.py`` re-derives this from the runtimes and fails
+# when one of them starts reading a key this set does not carry.
+_STAGE_TRANSITION_KEYS = (
+    "output_dir", "repo_root", "plugin_root", "run_id",
+    "assessment_depth", "qa_depth", "skip_qa", "max_repair_iterations",
+    "skip_abuse_case_verification",
+    "architect_review", "check_requirements", "keep_runtime_files",
+    "reasoning_model",
+    "write_yaml", "write_sarif", "write_pdf", "write_html",
+    "write_pentest_tasks", "write_threatdragon",
+    "pentest_format", "pentest_target",
+    # No ``estimate_*``: those are computed for `prepare` from a separate
+    # estimate object, are not config, and only feed a banner string the session
+    # already bound. A missing one costs a number in one line of console text.
+    "skip_attack_paths_authoring", "skip_attack_walkthroughs",
+    "diagram_depth", "enrich_arch_fragments",
+)
+
+
+def _dispatch_values_stage(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Config subset for a stage transition, not a binding point.
+
+    Same reasoning as ``_dispatch_values_transition``, applied to the Stage
+    1d/2/3/4 boundaries it deliberately left out. Those kept re-sending the
+    whole resolved config: measured on run 91e1dd39, ``prepare-abuse``,
+    ``prepare-stage2`` and ``next`` replayed ~65 keys per call, none of which
+    changes after ``prepare`` binds them once (SKILL-full-runtime.md §3).
+
+    The Stage-1 form cannot be reused verbatim: it carries only
+    ``SEMANTIC_ROLE_MODEL_KEYS``, which excludes ``renderer_model`` and the
+    ``qa_*`` keys, so ``renderer_model_alias`` and friends would come back
+    ``None`` and Stage 2 and 3 would dispatch against a null model. This form
+    keeps exactly the dispatch alias keys those stages name.
+
+    Everything else stays available through ``config_path``, which every action
+    already returns.
+    """
+    keys = set(_STAGE_TRANSITION_KEYS) | set(_DISPATCH_ALIAS_MODEL_KEYS)
+    values = {key: cfg.get(key) for key in sorted(keys) if key in _DISPATCH_KEYS or key in cfg}
+    values["plugin_root"] = str(PLUGIN_ROOT)
+    return _with_model_aliases(values)
+
+
 def _dispatch_values(
     cfg: dict[str, Any],
     estimate: dict[str, Any] | None = None,
@@ -5656,7 +5704,7 @@ def _stage1d_route(output_dir: Path, cfg: dict[str, Any], retry_key: str) -> dic
             "stage": "stage1d",
             "instruction_file": str(THIN_STAGE1D_RUNTIME),
             "config_path": str(output_dir / ".skill-config.json"),
-            "dispatch_values": _dispatch_values(cfg),
+            "dispatch_values": _dispatch_values_stage(cfg),
             "receipts": [
                 "Stage 1d has not run for this report: load the returned Stage-1d runtime, "
                 "follow it, then repeat this transition"
@@ -5679,7 +5727,7 @@ def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dic
         "mode": cfg["mode"],
         "stage": "stage1d",
         "config_path": str(config_path),
-        "dispatch_values": _dispatch_values(cfg),
+        "dispatch_values": _dispatch_values_stage(cfg),
     }
     if cfg.get("skip_abuse_case_verification"):
         return {**common, "action": "run_gate", "receipts": ["Abuse verification disabled"]}
@@ -6054,7 +6102,7 @@ def prepare_stage2(output_dir: Path) -> dict[str, Any]:
         "renderer_profile": renderer_profile,
         "instruction_file": str(THIN_STAGE2_RUNTIME),
         "config_path": str(config_path),
-        "dispatch_values": _dispatch_values(cfg),
+        "dispatch_values": _dispatch_values_stage(cfg),
         "receipts": [f"Stage-2 structural fragments prepared; renderer_profile={renderer_profile}", *receipts],
     }
 
@@ -6487,7 +6535,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
         "schema_version": 1,
         "mode": cfg["mode"],
         "config_path": str(config_path),
-        "dispatch_values": _dispatch_values(cfg),
+        "dispatch_values": _dispatch_values_stage(cfg),
     }
     if not (output_dir / "threat-model.yaml").is_file():
         return {

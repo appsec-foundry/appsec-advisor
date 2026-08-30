@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A missing lockfile, an undigested base image, a missing workflow `permissions:` block and an unpinned action are now Medium instead of High.
 - Business context supplied with `--context` is now captured by the run itself, and a source that cannot be read stops the run instead of being dropped in silence.
 - The report's run statistics name the business-context file that was read and how many findings it applied to, and each of those findings records which declared fields apply to it.
+- A stage transition no longer replays the whole resolved configuration, so a long run accumulates less orchestrator context.
 
 ### Fixed
 
