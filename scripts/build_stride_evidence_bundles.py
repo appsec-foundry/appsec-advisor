@@ -28,7 +28,14 @@ RELATED_REPOS_SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "related-repos.schema.yaml
 MAX_BUNDLE_BYTES = 65_536
 MAX_ESTIMATED_TOKENS = 16_384
 MAX_SOURCE_LINES = 400
-MAX_SOURCE_SLICES = 24
+# Counts slices, not content, so it binds long before the budgets that exist to
+# protect the analyzer's context. Observed across a full run: the three largest
+# components stopped at exactly this cap while spending 6-16% of MAX_SOURCE_LINES
+# and about a third of MAX_BUNDLE_BYTES — evidence was dropped with most of the
+# real budget unused, because slices average well under a kilobyte. Keep it high
+# enough that MAX_BUNDLE_BYTES / MAX_ESTIMATED_TOKENS / MAX_SOURCE_LINES stay the
+# effective limits, since those bound what the prompt actually costs.
+MAX_SOURCE_SLICES = 64
 MAX_SLICE_LINES = 40
 MAX_CLASS_VALUES = 32
 MAX_VALUE_CHARS = 4096

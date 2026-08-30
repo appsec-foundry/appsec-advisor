@@ -98,7 +98,7 @@
               "candidate_files": { "type": "integer", "minimum": 0, "maximum": 100000 },
               "projected_files": {
                 "type": "array",
-                "maxItems": 24,
+                "maxItems": 64,
                 "uniqueItems": true,
                 "items": { "$ref": "#/$defs/repository_path" }
               },
@@ -173,7 +173,7 @@
     },
     "source_slices": {
       "type": "array",
-      "maxItems": 24,
+      "maxItems": 64,
       "items": {
         "type": "object",
         "required": [

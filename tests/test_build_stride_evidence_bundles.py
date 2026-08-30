@@ -905,7 +905,12 @@ def test_focus_receipt_discloses_source_budget_omissions(tmp_path):
 def test_later_focus_mechanism_cannot_be_starved_by_lexical_signal_fanout(tmp_path):
     repo, output = _repo(tmp_path)
     early = repo / "src" / "a-common.py"
-    early.write_text("\n".join(f"value_{index} = {index}" for index in range(40)) + "\n", encoding="utf-8")
+    # One line per finding below, so the file scales with the slice budget
+    # instead of pinning a literal that a raised cap would overrun.
+    early.write_text(
+        "\n".join(f"value_{index} = {index}" for index in range(bundles.MAX_SOURCE_SLICES + 5)) + "\n",
+        encoding="utf-8",
+    )
     focused = repo / "src" / "z-sensitive.py"
     focused.write_text("browser_input = location.search\nrender(browser_input)\n", encoding="utf-8")
     findings = [
@@ -967,7 +972,12 @@ def test_unsignalled_focus_path_survives_a_full_signal_slice_budget(tmp_path):
     """
     repo, output = _repo(tmp_path)
     noisy = repo / "src" / "a-noisy.py"
-    noisy.write_text("\n".join(f"value_{index} = {index}" for index in range(40)) + "\n", encoding="utf-8")
+    # One line per finding below, so the file scales with the slice budget
+    # instead of pinning a literal that a raised cap would overrun.
+    noisy.write_text(
+        "\n".join(f"value_{index} = {index}" for index in range(bundles.MAX_SOURCE_SLICES + 5)) + "\n",
+        encoding="utf-8",
+    )
     unsignalled = repo / "src" / "z-tooling.py"
     unsignalled.write_text("def run(param):\n    return db.find(where='x == ' + param)\n", encoding="utf-8")
     findings = [
@@ -1673,3 +1683,19 @@ def test_cli_writes_manifest_and_bundle(tmp_path):
     manifest = json.loads(manifest_path.read_text())
     assert manifest["context_version"] == 2
     assert (output / manifest["components"][0]["evidence_bundle_path"]).is_file()
+
+
+def test_schema_slice_caps_track_the_code_constant():
+    """The bundle schema must not pin the slice budget independently.
+
+    `maxItems` on `source_slices` and `projected_files` duplicated
+    MAX_SOURCE_SLICES as a literal. Raising the constant alone produced bundles
+    the builder accepted and the schema then rejected, so the two must be
+    asserted together rather than kept in sync by hand.
+    """
+    schema = json.loads(bundles.SCHEMA_PATH.read_text(encoding="utf-8"))
+    assert schema["properties"]["source_slices"]["maxItems"] == bundles.MAX_SOURCE_SLICES
+
+    focus = schema["properties"]["path_routing"]["properties"]["focus_admission"]
+    projected = focus["items"]["properties"]["projected_files"]
+    assert projected["maxItems"] == bundles.MAX_SOURCE_SLICES
