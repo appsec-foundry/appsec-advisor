@@ -30,6 +30,13 @@ reviewed implementation work.
 
 ## Rules that always apply
 
+### Branch flow
+
+- Development happens on `dev`. Every branch starts from `dev`, and every pull request targets `dev`, whatever base a tool offers by default.
+- `main` carries releases only. It changes through two paths: a `dev` → `main` merge at a release, and a hotfix. Both end in a `v*` tag.
+- A hotfix branches from `main` and targets `main`, and is merged back into `dev` right after the tag so the next release keeps the fix.
+- Never commit to `main` directly, and never merge any other branch into it.
+
 ### Fix the source, not the symptom
 
 - Trace a behavior through its producer, contract, consumer, validation, tests,
