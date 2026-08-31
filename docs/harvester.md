@@ -25,7 +25,9 @@ The script crawls configured pages and writes the catalog. Publish that file at 
 
 ### 1. Test with the bundled catalog
 
-The bundled mock server lets you test the audit before connecting an internal catalog. Its catalog is a curated, OWASP-informed demonstration baseline rather than an official OWASP standard or a claim of complete coverage. It uses OWASP Top 10:2025 for risk classification and current ASVS and Cheat Sheet references for verifiable controls and implementation guidance.
+The bundled mock server lets you test the audit before connecting an internal catalog. Its requirement text is a curated baseline informed by OWASP ASVS 5.0.0, the OWASP Top 10:2025, and the OWASP Cheat Sheets, rather than an official OWASP standard or a claim of complete coverage.
+
+Its links model an organization's own portal at `appsec.int.example.com`, with a requirement page per category, each requirement anchored on that page, and a page per blueprint. That is the shape `harvest_requirements.py` writes from your own sources. The links are placeholders and do not resolve.
 
 ```bash
 # Serve the bundled example requirements YAML on 127.0.0.1:4444
@@ -106,13 +108,13 @@ Selection is explicit rather than based on requirement wording. This keeps a sec
     {
       "id": "application-behavior",
       "type": "requirement",
-      "crawl_url": "https://product.example.com/requirements",
+      "crawl_url": "https://product.int.example.com/requirements",
       "outputs": ["openspec", "specdd"]
     },
     {
       "id": "secure-coding-guidelines",
       "type": "requirement",
-      "crawl_url": "https://security.example.com/secure-coding",
+      "crawl_url": "https://appsec.int.example.com/secure-coding",
       "outputs": ["catalog"]
     }
   ]
@@ -135,7 +137,7 @@ The crawler reads `scripts/harvest-config.json`. This is the minimum useful conf
 ```jsonc
 {
   "description": "ACME Corp AppSec requirements",
-  "url": "https://security.example.com",
+  "url": "https://appsec.int.example.com",
   "output": "../data/appsec-requirements-fallback.yaml",
 
   "request": {
@@ -150,14 +152,14 @@ The crawler reads `scripts/harvest-config.json`. This is the minimum useful conf
       "type": "requirement",
       "mode": "structured",
       "title": "Internal Security Requirements",
-      "crawl_url": "https://security.example.com/requirements"
+      "crawl_url": "https://appsec.int.example.com/requirements"
     },
     {
       "id": "api-blueprints",
       "type": "blueprint",
       "mode": "full",
       "title": "API Security Blueprints",
-      "crawl_url": "https://security.example.com/blueprints/api"
+      "crawl_url": "https://appsec.int.example.com/blueprints/api"
     }
   ]
 }

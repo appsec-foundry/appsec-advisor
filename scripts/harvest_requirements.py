@@ -35,7 +35,7 @@ Configuration:
         - description / url / output — optional metadata + output path
 
 How discovery works (per source):
-    1. Fetch crawl_url (e.g. https://security.example.com/scg)
+    1. Fetch crawl_url (e.g. https://appsec.int.example.com/scg)
     2. Include the fetched crawl_url page itself in the pages to index
     3. Collect and fetch direct same-origin <a href> links that are children of
        the base path (linked pages are capped at max_pages; crawling is not recursive)

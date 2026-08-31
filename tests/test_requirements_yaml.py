@@ -19,29 +19,14 @@ import yaml
 REQUIREMENTS_FILE = Path(__file__).parent.parent / "examples" / "appsec-requirements-example.yaml"
 
 VALID_PRIORITIES = {"MUST", "SHOULD", "MAY"}
-TOP10_2025_PREFIX = "https://owasp.org/Top10/2025/"
-EXPECTED_LLM_URLS = {
-    "LLM-001": "https://genai.owasp.org/llmrisk/llm01-prompt-injection/",
-    "LLM-002": "https://genai.owasp.org/llmrisk/llm022025-sensitive-information-disclosure/",
-    "LLM-003": "https://genai.owasp.org/llmrisk/llm032025-supply-chain/",
-    "LLM-004": "https://genai.owasp.org/llmrisk/llm04-data-and-model-poisoning/",
-    "LLM-005": "https://genai.owasp.org/llmrisk/llm052025-improper-output-handling/",
-    "LLM-006": "https://genai.owasp.org/llmrisk/llm062025-excessive-agency/",
-    "LLM-007": "https://genai.owasp.org/llmrisk/llm072025-system-prompt-leakage/",
-    "LLM-008": "https://genai.owasp.org/llmrisk/llm082025-vector-and-embedding-weaknesses/",
-    "LLM-009": "https://genai.owasp.org/llmrisk/llm092025-misinformation/",
-    "LLM-010": "https://genai.owasp.org/llmrisk/llm102025-unbounded-consumption/",
-}
-DEPRECATED_URL_PARTS = (
-    "/Top10/A01_2021-",
-    "/Top10/A02_2021-",
-    "/Top10/A03_2021-",
-    "/Top10/A05_2021-",
-    "/Top10/A06_2021-",
-    "/Top10/A09_2021-",
-    "/CORS_Security_Cheat_Sheet.html",
-    "/JSON_Web_Token_for_Java_Cheat_Sheet.html",
-)
+
+# The example models a catalog published on one organization-internal portal, the
+# shape `harvest_requirements.py` produces: a requirement page per category, a
+# requirement anchored on its page, a blueprint page per blueprint, a blueprint
+# section anchored on its page. Every link in the file stays inside that host.
+CATALOG_HOST = "https://appsec.int.example.com"
+REQUIREMENT_PAGE_PREFIX = f"{CATALOG_HOST}/req/"
+BLUEPRINT_PAGE_PREFIX = f"{CATALOG_HOST}/blueprints/"
 
 
 # ---------------------------------------------------------------------------
@@ -99,12 +84,14 @@ class TestTopLevel:
         assert data["source"] == "bundled-example"
         assert "not an official OWASP standard" in data["description"]
 
+    def test_catalog_declares_its_own_home(self, data):
+        assert data["url"] == CATALOG_HOST
+
     def test_source_metadata_matches_catalog_items(self, data):
         metadata = {entry["id"]: entry for entry in data["sources_meta"]}
         assert set(metadata) == {"owasp-informed-requirements", "owasp-informed-blueprints"}
-        assert metadata["owasp-informed-requirements"]["reference_url"].endswith(
-            "/www-project-application-security-verification-standard/"
-        )
+        assert metadata["owasp-informed-requirements"]["reference_url"] == f"{CATALOG_HOST}/req"
+        assert metadata["owasp-informed-blueprints"]["reference_url"] == f"{CATALOG_HOST}/blueprints"
 
         requirement_counts = {
             source_id: sum(
@@ -161,15 +148,12 @@ class TestCategories:
             reqs = cat.get("requirements", [])
             assert isinstance(reqs, list) and len(reqs) > 0, f"Category {cat['id']} has no requirements"
 
-    def test_categories_declare_scope_and_current_risk_mapping(self, data):
+    def test_categories_declare_scope_and_a_requirement_page(self, data):
         for category in data["categories"]:
             assert category.get("context"), f"Category {category['id']} has no applicability context"
-            if category["id"] == "CAT-LLM":
-                assert category["url"] == "https://genai.owasp.org/llm-top-10/"
-            else:
-                assert category["url"].startswith(TOP10_2025_PREFIX), (
-                    f"Category {category['id']} is not mapped to OWASP Top 10:2025"
-                )
+            assert category["url"].startswith(REQUIREMENT_PAGE_PREFIX), (
+                f"Category {category['id']} does not point at a requirement page on {CATALOG_HOST}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -251,31 +235,13 @@ class TestRequirements:
         assert "prompt injection cannot be eliminated" in requirements["LLM-001"]
         assert "enforced outside the model" in requirements["LLM-007"]
 
-    def test_references_use_current_supported_urls(self, data, all_requirements):
-        urls = [category["url"] for category in data["categories"]]
-        urls.extend(requirement["url"] for requirement in all_requirements)
-        urls.extend(
-            section.get("url", "")
-            for blueprint in data.get("blueprints", [])
-            for section in blueprint.get("sections", [])
-        )
-        urls.extend(
-            reference.get("url", "")
-            for blueprint in data.get("blueprints", [])
-            for section in blueprint.get("sections", [])
-            for reference in section.get("references", [])
-            if isinstance(reference, dict)
-        )
-
-        for url in urls:
-            assert not any(part in url for part in DEPRECATED_URL_PARTS), f"Deprecated or removed reference URL: {url}"
-
-        llm_requirements = {
-            requirement["id"]: requirement["url"]
-            for requirement in all_requirements
-            if requirement["id"].startswith("LLM-")
-        }
-        assert llm_requirements == EXPECTED_LLM_URLS
+    def test_every_requirement_is_anchored_on_its_category_page(self, data):
+        for category in data["categories"]:
+            for requirement in category["requirements"]:
+                expected = f"{category['url']}#{requirement['id'].lower()}"
+                assert requirement["url"] == expected, (
+                    f"Requirement {requirement['id']} is not anchored on its category page: {requirement['url']}"
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +288,37 @@ class TestBlueprints:
                         f"Blueprint {bp['id']} section '{sec['title']}' references unknown requirement '{ref['id']}'"
                     )
 
+    def test_blueprint_sections_are_anchored_on_their_blueprint_page(self, data):
+        """`topics` is the ordered heading-anchor list of the page, so it must cover
+        every section anchor. A page without headings falls back to `#overview`."""
+        for bp in data["blueprints"]:
+            assert bp["url"].startswith(BLUEPRINT_PAGE_PREFIX), (
+                f"Blueprint {bp['id']} does not point at a blueprint page on {CATALOG_HOST}"
+            )
+            topics = bp.get("topics") or []
+            anchors = []
+            for sec in bp["sections"]:
+                prefix = f"{bp['url']}#"
+                assert sec["url"].startswith(prefix), (
+                    f"Blueprint {bp['id']} section '{sec['title']}' is not anchored on its own page: {sec['url']}"
+                )
+                anchor = sec["url"][len(prefix) :]
+                assert anchor in topics or (not topics and anchor == "overview"), (
+                    f"Blueprint {bp['id']} section anchor '{anchor}' is not one of the page's headings"
+                )
+                anchors.append(anchor)
+            assert len(set(anchors)) == len(anchors), f"Blueprint {bp['id']} has duplicate section anchors: {anchors}"
+
+    def test_blueprint_references_link_to_the_requirement_itself(self, data, all_requirements):
+        requirement_urls = {requirement["id"]: requirement["url"] for requirement in all_requirements}
+        for bp in data["blueprints"]:
+            for sec in bp["sections"]:
+                for ref in sec.get("references", []):
+                    assert ref["url"] == requirement_urls[ref["id"]], (
+                        f"Blueprint {bp['id']} links {ref['id']} to {ref['url']}, "
+                        f"not to the requirement itself ({requirement_urls[ref['id']]})"
+                    )
+
     def test_blueprints_use_declared_source_and_safe_examples(self, data):
         blueprints = data["blueprints"]
         assert len(blueprints) == 12
@@ -349,3 +346,22 @@ class TestCrossReferences:
             prefix_to_cats.setdefault(prefix, set()).add(req["_category_id"])
         for prefix, cats in prefix_to_cats.items():
             assert len(cats) == 1, f"Prefix '{prefix}' appears in multiple categories: {cats}"
+
+    def test_every_link_field_stays_on_the_catalog_host(self, data):
+        """The example stands in for one organization's own catalog, so every `url`
+        and `reference_url` resolves inside it. Illustrative hosts inside section
+        prose (a CSP source list, an issuer) are content, not links, and are exempt."""
+
+        def links(node, path="$"):
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key in ("url", "reference_url") and isinstance(value, str):
+                        yield f"{path}.{key}", value
+                    else:
+                        yield from links(value, f"{path}.{key}")
+            elif isinstance(node, list):
+                for index, value in enumerate(node):
+                    yield from links(value, f"{path}[{index}]")
+
+        strays = [(path, url) for path, url in links(data) if not url.startswith(CATALOG_HOST)]
+        assert not strays, f"Link fields outside {CATALOG_HOST}: {strays}"

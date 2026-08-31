@@ -164,7 +164,7 @@ Assessments consume model tokens and usually take tens of minutes; thorough runs
 /appsec-advisor:audit-security-requirements
 
 # Use a catalog URL for this run
-/appsec-advisor:audit-security-requirements --requirements https://URL/appsec-requirements.yaml
+/appsec-advisor:audit-security-requirements --requirements https://appsec.int.example.com/appsec-requirements.yaml
 ```
 
 If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml` or use the [requirements harvester](docs/harvester.md). See the [Requirements Audit reference](docs/security-requirements-audit-skill.md) for setup and options.

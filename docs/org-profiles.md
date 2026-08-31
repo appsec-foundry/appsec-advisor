@@ -128,7 +128,7 @@ compatibility:
 default_preset: ci-standard
 requirements:
   source:
-    requirements_yaml_url: "https://security.acme.example/appsec-requirements.yaml"
+    requirements_yaml_url: "https://appsec.int.example.com/appsec-requirements.yaml"
     label: "Acme AppSec Requirements"
     fail_mode: cache_fallback
   create_threat_model:
@@ -223,7 +223,7 @@ Overridden by `--fail-on`.
 ```yaml
 policy:
   disable_opus: true
-  url_allowlist: [security.acme.example, raw.githubusercontent.com]
+  url_allowlist: [appsec.int.example.com, raw.githubusercontent.com]
 ```
 
 `disable_opus` downgrades every Opus selection to Sonnet — a cost or compliance
@@ -266,7 +266,7 @@ customize the banner, and one turns it off:
 ```yaml
 banner:
   headline: "ACME AppSec Advisor"          # replaces the plugin name on the identity line
-  url: "https://git.acme.internal/appsec"  # printed by the help skill
+  url: "https://git.int.example.com/appsec"  # printed by the help skill
   enabled: true                            # false ships a build that opens silently
 ```
 
@@ -311,7 +311,7 @@ Use the `baseline:` block to ship your own instead:
 baseline:
   id: acme-sec-1.0
   name: "ACME Secure Coding Baseline"
-  url: "https://security.acme.example/secure-coding-baseline.md"
+  url: "https://appsec.int.example.com/secure-coding-baseline.md"
   file: baselines/acme-sec.md          # offline fallback, inside the profile dir
 ```
 
@@ -325,7 +325,7 @@ Or point at a git repository, for a baseline that is not served as a raw file:
 baseline:
   id: acme-sec-1.0
   git:
-    url: "git@git.acme.internal:appsec/baseline.git"
+    url: "git@git.int.example.com:appsec/baseline.git"
     ref: main
     path: secure-coding-baseline.md
 ```
@@ -390,7 +390,7 @@ of your baseline never fails, because failing it would demand a downgrade.
 ```yaml
 baseline:
   id: acme-sec-1.0
-  url: "https://security.acme.example/secure-coding-baseline.md"
+  url: "https://appsec.int.example.com/secure-coding-baseline.md"
   enforce: true
 ```
 
@@ -681,7 +681,7 @@ Ignore the packaged profile for one run:
 Override requirements for one run:
 
 ```
-/appsec-advisor:create-threat-model --requirements https://security.example.test/r.yaml
+/appsec-advisor:create-threat-model --requirements https://appsec.int.example.com/r.yaml
 /appsec-advisor:create-threat-model --no-requirements
 ```
 

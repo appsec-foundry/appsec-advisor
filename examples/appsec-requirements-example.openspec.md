@@ -12,7 +12,7 @@ Login, registration, credential recovery, verification, token issuance, and othe
 
 **Category:** Authentication & Access Control
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/authentication-access-control#ac-003>
 
 #### Scenario: Repeated authentication attempts are throttled
 
@@ -26,7 +26,7 @@ Workforce and privileged users MUST authenticate through the organization-manage
 
 **Category:** Authentication & Access Control
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/authentication-access-control#ac-004>
 
 #### Scenario: Privileged workforce user starts a session
 
@@ -41,7 +41,7 @@ Every request for a protected object MUST authorize the authenticated identity a
 
 **Category:** Authentication & Access Control
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/authentication-access-control#ac-006>
 
 #### Scenario: User requests a resource from another tenant
 
@@ -55,7 +55,7 @@ Client error responses MUST NOT expose stack traces, query text, internal paths,
 
 **Category:** Error Handling & Security Events
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/error-handling-security-events#eh-002>
 
 #### Scenario: Request processing fails unexpectedly
 
@@ -69,7 +69,7 @@ Applications that use cookie-based or other ambient browser credentials MUST rej
 
 **Category:** Web & Frontend Security
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/web-frontend-security#web-001>
 
 #### Scenario: Cross-site state-changing request
 

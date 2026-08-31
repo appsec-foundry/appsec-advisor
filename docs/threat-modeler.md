@@ -189,7 +189,7 @@ Full and rebuild scans keep every selected component in scope. By default, STRID
 Use `--requirements` to include an AppSec requirements catalog. See the [harvester guide](harvester.md) for creating one.
 
 ```text
-/appsec-advisor:create-threat-model --requirements https://URL/appsec-requirements.yaml
+/appsec-advisor:create-threat-model --requirements https://appsec.int.example.com/appsec-requirements.yaml
 ```
 
 Once `requirements_yaml_url` is configured, later runs use the catalog without the flag.

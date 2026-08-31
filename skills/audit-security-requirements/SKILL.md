@@ -367,8 +367,8 @@ and exit 2:
 No security requirements are configured yet, and the plugin cache is empty.
 
 Tell the audit where your requirements live, one of:
-  • --requirements https://your-org/appsec-requirements.yaml   (fetch + remember)
-  • drop a catalog at docs/security/requirements.yaml          (local repo file)
+  • --requirements https://appsec.int.example.com/appsec-requirements.yaml   (fetch + remember)
+  • drop a catalog at docs/security/requirements.yaml                        (local repo file)
   • configure an org profile (see docs/org-profiles.md)
 
 Or try it now against the bundled example catalog:

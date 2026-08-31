@@ -153,11 +153,11 @@ compatibility:
 default_preset: ci-standard
 
 policy:
-  url_allowlist: [security.acme.example]   # restrict remote fetches to your hosts
+  url_allowlist: [appsec.int.example.com]   # restrict remote fetches to your hosts
 
 requirements:
   source:
-    requirements_yaml_url: "https://security.acme.example/appsec-requirements.yaml"
+    requirements_yaml_url: "https://appsec.int.example.com/appsec-requirements.yaml"
     label: "Acme AppSec Requirements"
     cache: true
     fail_mode: cache_fallback
