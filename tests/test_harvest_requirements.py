@@ -595,6 +595,7 @@ def test_run_writes_one_catalog_file_per_blueprint_source(monkeypatch, tmp_path)
                 {
                     "id": "api-blueprint",
                     "type": "blueprint",
+                    "title": "API Blueprint",
                     "crawl_url": "https://example.test/bp/api",
                     "catalog_file": "blueprints/api.yaml",
                 },
@@ -693,6 +694,12 @@ def test_run_writes_one_catalog_file_per_blueprint_source(monkeypatch, tmp_path)
     ]
     # Each file is a catalog in its own right, so the shared schema accepts it.
     assert harvester.rstate.validate_catalog((split_dir / "api.yaml").read_bytes())[0] == []
+
+    # The file says what it is and where it came from, and keeps short lists on one line.
+    raw = (split_dir / "api.yaml").read_text(encoding="utf-8").splitlines()
+    assert raw[0] == "# API Blueprint"
+    assert raw[1].startswith("# Harvested from https://example.test/bp/api on ")
+    assert "    references: [{id: SEC-001, url: 'https://example.test/sec-001'}]" in raw
 
 
 def test_resolve_source_catalog_files_rejects_unusable_declarations(tmp_path):
@@ -1560,9 +1567,65 @@ def test_blueprint_sections_capture_tables_and_definition_lists():
 
     section = harvester.parse_blueprint_page(html, "https://example.test/csp", mode="full")["sections"][0]
 
-    assert "default-src 'self'" in section["content"]
-    assert "frame-ancestors 'none'" in section["content"]
-    assert "report-uri Point at the central collector" in section["content"]
+    # Every enumerated item keeps a line and a subject of its own.
+    assert section["content"].splitlines() == [
+        "Use the baseline policy below.",
+        "- default-src — 'self'",
+        "- frame-ancestors — 'none'",
+        "- report-uri — Point at the central collector.",
+    ]
+
+
+def test_blueprint_section_keeps_one_line_per_block_and_drops_repeats():
+    html = """
+    <main>
+      <h1>SPA Blueprint</h1>
+      <h2 id="session">Session Handling</h2>
+      <p>Tokens are held by the BFF.</p>
+      <ul>
+        <li>Never store tokens in localStorage</li>
+        <li>Never store tokens in localStorage</li>
+        <li>Renew silently through the BFF</li>
+      </ul>
+    </main>
+    """
+
+    section = harvester.parse_blueprint_page(html, "https://example.test/spa", mode="full")["sections"][0]
+
+    # The block the page renders twice is dropped, the rest keeps its own line.
+    assert section["content"].splitlines() == [
+        "Tokens are held by the BFF.",
+        "- Never store tokens in localStorage",
+        "- Renew silently through the BFF",
+    ]
+    # A section longer than one line reaches the file as a literal block.
+    assert isinstance(harvester.wrap_long(section["content"]), harvester.LiteralStr)
+    assert harvester.wrap_long("one short line") == "one short line"
+
+
+def test_section_content_truncates_without_a_trailing_space():
+    # A literal block cannot carry a trailing space, so the cut must not leave one.
+    assert harvester.section_content(["alpha beta gamma"], 6) == "alpha"
+
+
+def test_short_lists_are_dumped_on_one_line():
+    dumped = harvester.yaml.dump(
+        {"topics": harvester.FlowList(["api", "cors"]), "plain": ["api", "cors"]},
+        default_flow_style=False,
+        sort_keys=False,
+    )
+
+    assert "topics: [api, cors]" in dumped
+    assert "plain:\n- api\n- cors" in dumped
+
+
+def test_a_crawled_title_cannot_break_out_of_the_file_header():
+    header = harvester.file_header(
+        "Blueprint\nurl: https://attacker.test", "https://example.test/bp", "2026-08-31T00:00:00Z"
+    )
+
+    assert all(line.startswith("# ") for line in header.splitlines())
+    assert harvester.yaml.safe_load(header + "categories: []\n") == {"categories": []}
 
 
 def test_requirement_text_keeps_word_boundaries_across_inline_tags():

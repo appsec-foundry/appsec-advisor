@@ -86,6 +86,8 @@ The output follows [`schemas/requirements-catalog.schema.yaml`](../schemas/requi
 python3 scripts/requirements_state.py --validate data/appsec-requirements-fallback.yaml [--strict]
 ```
 
+Every written file opens with two comment lines naming the document and the page it was harvested from. A blueprint section keeps one line per paragraph, list item, and table row of the source page, so the section reads like the page it came from; a table row keeps its cells apart with an em dash, and a definition stays on the line of its term. Short lists such as `topics` and `references` stay on one line.
+
 OpenSpec and SpecDD exports are single files. The renderer checks their required section and scenario structure without adding either project's CLI as a runtime dependency. The repository carries matching examples at [`examples/appsec-requirements-example.openspec.md`](../examples/appsec-requirements-example.openspec.md) and [`examples/appsec-requirements-example.sdd`](../examples/appsec-requirements-example.sdd); their requirement statements are tested against the bundled YAML, while their concrete scenarios remain illustrative.
 
 ### Selecting functional requirements

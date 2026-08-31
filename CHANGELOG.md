@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Run Issues now reports a stage claiming more agent dispatches than the run spawned, a component whose findings all came from files the context routing never delivered, and a requirements assessment the YAML export does not carry.
 - `/appsec-advisor:authnz-review` accepts `--pentest-tasks`, `--pentest-format` and `--pentest-target`, defaulting them to the organization profile's outputs block, and exports its findings as pentest tasks with the discovered routes as the endpoint catalog.
 - A blueprint source in the requirements harvester can write its blueprints into a catalog file of its own, named by `catalog_file` in the source, next to the combined catalog.
+- Harvested catalogs name their source in a header comment, and a blueprint section keeps one line per paragraph, list item and table row instead of running them together.
 
 ### Changed
 

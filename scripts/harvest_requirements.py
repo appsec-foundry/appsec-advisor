@@ -346,6 +346,23 @@ def deduplicate_text(text: str) -> str:
     return " ".join(seen)
 
 
+def section_content(parts: list[str], max_chars: int) -> str:
+    """Join the blocks of one section into readable text: one line per block.
+
+    A paragraph, list item, or table row of the source page stays a line of its
+    own, so the harvested section reads like the page it came from rather than
+    as one run-on paragraph. Blocks the source renders twice are dropped, as are
+    sentences repeated inside a block.
+    """
+    lines: list[str] = []
+    for part in parts:
+        line = deduplicate_text(part).strip()
+        if not line or (lines and line == lines[-1]):
+            continue
+        lines.append(line)
+    return "\n".join(lines)[:max_chars].rstrip()
+
+
 UNBRACKETED_EXCLUDED_TAGS = ("pre", "code", "a")
 
 
@@ -757,6 +774,7 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
     current_title: Optional[str] = None
     current_anchor: Optional[str] = None
     current_parts: list[str] = []
+    last_tag: Optional[str] = None
     heading_anchors: list[str] = []  # collected even in summary mode for topics
     # Paragraphs before the first heading (used when there are no sections)
     preamble_parts: list[str] = []
@@ -772,25 +790,37 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
                 heading_anchors.append(heading_id)
                 if mode == "full":
                     if current_title:
-                        raw = " ".join(current_parts).strip()
                         sections.append(
                             {
                                 "title": current_title,
                                 "anchor": current_anchor,
-                                "content": deduplicate_text(raw)[:max_section_chars],
+                                "content": section_content(current_parts, max_section_chars),
                             }
                         )
                     current_title = heading_title
                     current_anchor = heading_id
                     current_parts = []
+                last_tag = el.name
                 continue
             if el.name in BLUEPRINT_CONTENT_TAGS and el.find_parent(BLUEPRINT_CONTENT_TAGS) is not None:
                 continue  # nested match (e.g. <p> inside <li>) — parent already captures this text
-            text = element_text(el)
+            if el.name == "tr":
+                # Without a separator the cells glue into a run-on line in which
+                # no value can be attributed to its subject.
+                cells = [element_text(cell) for cell in el.find_all(["th", "td"], recursive=False)]
+                text = " — ".join(cell for cell in cells if cell)
+            else:
+                text = element_text(el)
             if not text:
                 continue
-            if el.name in ITEM_TAGS and not text.endswith((".", ";", ":", "!", "?")):
-                text += ";"  # keep one row or list item apart from the next
+            if el.name in ITEM_TAGS or el.name == "dt":
+                text = f"- {text}"  # a row, list item, or term stays one item
+            if el.name == "dd" and last_tag == "dt" and current_parts:
+                # A definition and its term are one item, not two lines.
+                current_parts[-1] = f"{current_parts[-1]} — {text.removeprefix('- ')}"
+                last_tag = el.name
+                continue
+            last_tag = el.name
             if not current_title:
                 # Before first heading: collect preamble, first meaningful sentence → summary
                 if len(text) > 30 and not summary:
@@ -802,23 +832,21 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
                 current_parts.append(text)
 
         if mode == "full" and current_title:
-            raw = " ".join(current_parts).strip()
             sections.append(
                 {
                     "title": current_title,
                     "anchor": current_anchor,
-                    "content": deduplicate_text(raw)[:max_section_chars],
+                    "content": section_content(current_parts, max_section_chars),
                 }
             )
 
     # For flat pages with no section headings (e.g. CORS), collect preamble as one section
     if mode == "full" and not sections and preamble_parts:
-        all_preamble = (summary + " " + " ".join(preamble_parts)).strip()
         sections.append(
             {
                 "title": "Overview",
                 "anchor": "overview",
-                "content": deduplicate_text(all_preamble)[:max_section_chars],
+                "content": section_content([summary, *preamble_parts], max_section_chars),
             }
         )
 
@@ -847,15 +875,42 @@ class LiteralStr(str):
     pass
 
 
+class FlowList(list):
+    """A list the dumper keeps on one line, for short scalar or ID sequences."""
+
+
 def literal_representer(dumper, data):
     return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
 
 
+def flow_list_representer(dumper, data):
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
+
+
 yaml.add_representer(LiteralStr, literal_representer)
+yaml.add_representer(FlowList, flow_list_representer)
 
 
 def wrap_long(text: str, threshold: int = 120) -> str:
-    return LiteralStr(text) if len(text) > threshold else text
+    """Give long or multi-line text a literal block, which keeps its lines readable."""
+    return LiteralStr(text) if "\n" in text or len(text) > threshold else text
+
+
+def comment_line(text: str) -> str:
+    """Fold text into one safe YAML comment line.
+
+    The text can come from a crawled page, so every newline is collapsed: a
+    comment that breaks into a second line would leave the comment and be read
+    as document content.
+    """
+    return re.sub(r"\s+", " ", str(text)).strip()[:200]
+
+
+def file_header(title: str, origin: str, generated: str) -> str:
+    """Name the document and its origin in comment lines above the YAML."""
+    lines = [f"# {comment_line(title)}"] if title else []
+    lines.append(f"# Harvested from {comment_line(origin)} on {generated}. Do not edit by hand.")
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -1045,10 +1100,10 @@ def harvest_blueprints_source(
         entry: dict = {
             "id": bp_id,
             "source_id": source_id,
-            "url": url,
             "title": parsed["title"],
+            "url": url,
             "summary": wrap_long(parsed["summary"]),
-            "topics": parsed["topics"],
+            "topics": FlowList(parsed["topics"]),
         }
         if mode == "full" and parsed.get("sections"):
             entry["sections"] = [
@@ -1099,7 +1154,7 @@ def add_references_to_blueprints(blueprints: list[dict], req_url_map: dict) -> i
         for section in bp.get("sections", []):
             refs = resolve_references(section.get("content", ""), req_url_map)
             if refs:
-                section["references"] = refs
+                section["references"] = FlowList(refs)
                 total += len(refs)
     return total
 
@@ -1623,6 +1678,7 @@ def run(args: argparse.Namespace) -> int:
     if CATALOG_OUTPUT in requested:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
+            f.write(file_header(doc.get("description", ""), doc.get("url") or config_path.name, doc["generated"]))
             yaml.dump(doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120)
 
         print(f"\nWritten: {output_path}")
@@ -1648,6 +1704,7 @@ def run(args: argparse.Namespace) -> int:
 
     if source_files:
         header = {key: doc[key] for key in ("generated", "source", "description", "url") if key in doc}
+        meta_by_source = {meta["id"]: meta for meta in sources_meta}
         for source_id, path in source_files.items():
             entries = [entry for entry in blueprints if entry.get("source_id") == source_id]
             if not entries:
@@ -1657,7 +1714,15 @@ def run(args: argparse.Namespace) -> int:
             path.parent.mkdir(parents=True, exist_ok=True)
             bp_doc = dict(header)
             bp_doc.update({"categories": [], "blueprints": entries})
+            meta = meta_by_source.get(source_id, {})
             with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    file_header(
+                        meta.get("title") or entries[0].get("title", ""),
+                        meta.get("crawl_url") or entries[0].get("url", ""),
+                        doc["generated"],
+                    )
+                )
                 yaml.dump(bp_doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120)
             # Errors only: the content warnings are computed over `categories`,
             # which a blueprint file leaves empty by design.
