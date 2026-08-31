@@ -630,19 +630,38 @@ class TestNextSteps:
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
         assert any(l.startswith("ask me about it") for l in lines)
 
-    def test_the_ask_step_carries_one_example_not_two(self, tmp_path):
-        # render_next_steps appends its own "or" to this entry; a second
-        # example question put a third "or" in the same line.
+    def test_the_ask_step_carries_two_examples(self, tmp_path):
+        # One example reads as *the* question to ask rather than as an instance
+        # of a kind, which is what "e.g." is there to say.
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
         ask = next(l for l in lines if "ask me" in l)
-        assert ask.count("?") == 1
-        assert " or " not in ask
+        assert ask.count("?") == 2
+        assert " or " in ask
 
-    def test_the_ask_example_follows_the_findings(self, tmp_path):
+    def test_the_ask_step_stays_last_so_no_third_or_lands_on_it(self, tmp_path):
+        # This is what makes two examples safe: render_next_steps appends "or"
+        # to every entry BUT the last, and a second example under the old
+        # ordering put a third conjunction in the same line.
+        cfg = self._cfg(architect_review=True)
+        (tmp_path / ".architect-review.md").write_text("x", encoding="utf-8")
+        (tmp_path / ".architect-status.json").write_text('{"technical_defects": 3}', encoding="utf-8")
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), cfg)
+
+        assert "ask me about it" in lines[-1], "the ask step must stay last"
+        assert any("architect review" in l for l in lines), "the architect entry still renders"
+
+        rendered = rcs.render_next_steps(lines)
+        ask_line = next(l for l in rendered if "ask me about it" in l)
+        assert not ask_line.rstrip().endswith("or")
+        assert ask_line.count(" or ") == 1, "only the one joining the two examples"
+
+    def test_the_ask_examples_follow_the_findings(self, tmp_path):
         # On a clean run "What should I fix first?" asks about findings the run
         # did not produce.
         clean = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
-        assert any("What did the scan cover?" in l for l in clean)
+        ask = next(l for l in clean if "ask me" in l)
+        assert "What did the scan cover?" in ask
+        assert "What was out of scope?" in ask
         assert not any("fix first" in l for l in clean)
 
     def test_ask_step_does_not_name_the_skill_command(self, tmp_path):

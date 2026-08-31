@@ -850,9 +850,12 @@ def build_next_steps(
     reading the report — which is not a choice anyone makes.
 
     Entry 0 is the report step and stays first (it is the one most readers
-    want). Because the renderer ends every entry but the last with a trailing
-    "or", the following entry must read on from it — start entries after the
-    first with a lowercase verb ("triage the findings…", not "Triage…").
+    want), and the "ask me about it" step stays last — it is the open-ended
+    fallback, and being last is what lets it carry two example questions without
+    the renderer's trailing "or" landing on top of theirs. Because the renderer
+    ends every entry but the last with a trailing "or", the following entry must
+    read on from it — start entries after the first with a lowercase verb
+    ("triage the findings…", not "Triage…").
 
     A step may carry `\\n`-separated continuation lines; the renderer indents
     them under the step.
@@ -881,17 +884,6 @@ def build_next_steps(
     # invocation. review-threat-model is the opposite case — a triage console
     # with modes that has to be started — so it keeps its command.
     #
-    # Name the addressee anyway. "just ask" said what to say without saying to
-    # whom, and the reader is looking at terminal output with no reason to
-    # assume the next prompt is the place. One example question, not two: the
-    # renderer appends its own "or" to this entry, and a second example put a
-    # third "or" in the same line.
-    #
-    # The example follows the findings. On a clean run "What should I fix
-    # first?" asks about findings the run did not produce.
-    example = "What should I fix first?" if sum(sev.values()) else "What did the scan cover?"
-    lines.append(f'ask me about it — e.g. "{example}"')
-
     # Architect review — only surface the dot-file when it contains actionable defects.
     # Advisory-only reviews (technical_defects=0, no repair plan) are internal
     # artefacts; everything important is already in threat-model.md.
@@ -908,6 +900,30 @@ def build_next_steps(
                 pass
         if _arch_has_defects:
             lines.append(f"read the architect review — {output_dir}/.architect-review.md")
+
+    # Name the addressee anyway. "just ask" said what to say without saying to
+    # whom, and the reader is looking at terminal output with no reason to
+    # assume the next prompt is the place. Keep "about it": the pronoun binds
+    # the question space to the report, where "ask me something" would widen it
+    # to anything at all.
+    #
+    # Two examples, because one reads as *the* question to ask rather than as an
+    # instance of a kind — which is what "e.g." is there to say. This entry is
+    # appended LAST so the renderer adds no "or" to it: the earlier
+    # one-example-only rule existed solely because a trailing "or" after a
+    # second example put three conjunctions in one line. Last among a handful of
+    # bullets is still in view, and it is where the open-ended fallback belongs
+    # anyway — under the concrete alternatives rather than between them.
+    #
+    # The examples follow the findings, and lead with orientation before action,
+    # mirroring the two entries above (read it, then triage it). On a clean run
+    # "What should I fix first?" asks about findings the run did not produce.
+    examples = (
+        ("What are the most critical findings?", "What should I fix first?")
+        if sum(sev.values())
+        else ("What did the scan cover?", "What was out of scope?")
+    )
+    lines.append("ask me about it — e.g. " + " or ".join(f'"{question}"' for question in examples))
 
     # Cap at 5.
     return lines[:5]
