@@ -595,11 +595,32 @@ def fail_all_running(output_dir: str | Path, reason: str) -> list[LifecycleEvent
     return events
 
 
-def is_current_claim(output_dir: str | Path, call: dict[str, Any]) -> bool:
-    """Return whether telemetry still belongs to a current authoritative claim."""
-    call_id = call.get("agent_call_id")
-    if not call_id or not any(row.get("agent_call_id") == call_id for row in running_calls(output_dir)):
-        return False
+def latest_call_for_component(output_dir: str | Path, component_id: str) -> dict[str, Any] | None:
+    """Return the most recently spawned call for a component, running or not.
+
+    Telemetry that arrives after a call returned still has exactly one owner.
+    Whether that owner is still authoritative is `claim_is_authoritative`'s
+    question, not this one's.
+    """
+    try:
+        with _locked(output_dir):
+            state = _read_state_unlocked(output_dir)
+    except (LifecycleError, OSError):
+        return None
+    calls = [dict(call) for call in state["calls"] if call.get("component_id") == component_id]
+    if not calls:
+        return None
+    return max(calls, key=lambda call: (call.get("spawned_at") or 0, call.get("attempt") or 0))
+
+
+def claim_is_authoritative(output_dir: str | Path, call: dict[str, Any]) -> bool:
+    """Return whether a call's action and attempt still own the current claim.
+
+    Liveness is deliberately not part of this: a call owns its attempt until the
+    wave moves on, and its final telemetry is legitimate after it returned.
+    `is_current_claim` adds the running requirement on top, for the live
+    metering paths that genuinely need it.
+    """
     action_id = call.get("action_id")
     if action_id:
         try:
@@ -625,6 +646,14 @@ def is_current_claim(output_dir: str | Path, call: dict[str, Any]) -> bool:
         except (OSError, json.JSONDecodeError, AttributeError):
             return False
     return True
+
+
+def is_current_claim(output_dir: str | Path, call: dict[str, Any]) -> bool:
+    """Return whether telemetry still belongs to a current authoritative claim."""
+    call_id = call.get("agent_call_id")
+    if not call_id or not any(row.get("agent_call_id") == call_id for row in running_calls(output_dir)):
+        return False
+    return claim_is_authoritative(output_dir, call)
 
 
 def event_detail(event: LifecycleEvent) -> str:

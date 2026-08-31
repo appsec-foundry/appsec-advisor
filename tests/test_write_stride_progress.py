@@ -234,6 +234,143 @@ def test_progress_rejects_call_depth_that_contradicts_plan(tmp_path: Path) -> No
         progress.write_progress(tmp_path, "api", "API", 1, 9, "Context", ROOT)
 
 
+def test_progress_survives_the_call_closing_before_its_last_write(tmp_path: Path) -> None:
+    """The 2026-08-31 juice-shop run lost 8 progress writes to this race.
+
+    An analyzer's final write lands after SubagentStop already closed its
+    lifecycle call, so `running_calls()` returns nothing for the component.
+    Requiring a *running* call rejected the record although its attempt still
+    owned the claim; realtime-service closed at 05:11:11Z and every write in
+    the following 43s was dropped.
+    """
+    _plan(tmp_path, "full")
+    claim = _claim(tmp_path, "full")
+    agent_lifecycle.finish_call(tmp_path, "toolu_api_1")
+
+    payload = progress.write_progress(tmp_path, "api", "API", 9, 9, "Elevation of Privilege", ROOT)
+
+    assert {key: payload[key] for key in claim} == claim
+    assert payload["analysis_depth"] == "full"
+    assert json.loads((tmp_path / ".progress" / "api.json").read_text(encoding="utf-8")) == payload
+
+
+def test_a_closed_call_still_cannot_write_once_its_claim_moved_on(tmp_path: Path) -> None:
+    """Accepting a finished call must not also accept a superseded attempt."""
+    _plan(tmp_path, "full")
+    _claim(tmp_path, "full", attempt=1)
+    agent_lifecycle.finish_call(tmp_path, "toolu_api_1")
+    waves = json.loads((tmp_path / ".dispatch-waves.json").read_text(encoding="utf-8"))
+    waves["active_claim"]["attempts"]["api"] = 2
+    (tmp_path / ".dispatch-waves.json").write_text(json.dumps(waves), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="current dispatch claim"):
+        progress.write_progress(tmp_path, "api", "API", 1, 9, "Context", ROOT)
+
+
+def test_two_running_calls_for_one_component_stay_ambiguous(tmp_path: Path) -> None:
+    """Ambiguity is the case the guard exists for and must keep failing."""
+    _plan(tmp_path, "full")
+    _claim(tmp_path, "full", attempt=1)
+    _claim(tmp_path, "full", attempt=2)
+
+    with pytest.raises(ValueError, match="exactly one running"):
+        progress.write_progress(tmp_path, "api", "API", 1, 9, "Context", ROOT)
+
+
+def test_depth_guard_still_applies_after_the_component_call_closed(tmp_path: Path) -> None:
+    """Keying the guard on liveness made it opt-out by timing.
+
+    Once a component's call closed, `_is_dispatched_component` stopped
+    recognising it, so a late line naming that component kept whatever depth its
+    author chose — the forgery this guard was widened to catch.
+    """
+    _plan(tmp_path, "light")
+    _claim(tmp_path, "light")
+    agent_lifecycle.finish_call(tmp_path, "toolu_api_1")
+
+    rc = log_event.main(["log_event.py", str(tmp_path), "info", "AGENT_STEP", "component=api depth=full"])
+
+    assert rc == 0
+    logged = (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
+    assert "depth=light" in logged
+    assert "depth=full" not in logged
+
+
+def test_an_unvalidatable_inferred_claim_drops_the_depth_and_keeps_the_line(tmp_path: Path) -> None:
+    """The caller never claimed a component; we inferred one to police its depth.
+
+    When that inference can no longer be validated, the depth claim must go and
+    the event must stay — rejecting would discard telemetry over our own guess.
+    """
+    _plan(tmp_path, "light")
+    _claim(tmp_path, "light", attempt=1)
+    agent_lifecycle.finish_call(tmp_path, "toolu_api_1")
+    waves = json.loads((tmp_path / ".dispatch-waves.json").read_text(encoding="utf-8"))
+    waves["active_claim"]["attempts"]["api"] = 2
+    (tmp_path / ".dispatch-waves.json").write_text(json.dumps(waves), encoding="utf-8")
+
+    rc = log_event.main(["log_event.py", str(tmp_path), "info", "AGENT_STEP", "component=api depth=full"])
+
+    assert rc == 0
+    logged = (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
+    assert "component=api" in logged
+    assert "depth=" not in logged
+
+
+def test_an_explicit_component_claim_is_still_rejected_when_unvalidatable(tmp_path: Path) -> None:
+    """A caller that names the component itself is still held to the contract."""
+    _plan(tmp_path, "light")
+    _claim(tmp_path, "light", attempt=1)
+    waves = json.loads((tmp_path / ".dispatch-waves.json").read_text(encoding="utf-8"))
+    waves["active_claim"]["attempts"]["api"] = 2
+    (tmp_path / ".dispatch-waves.json").write_text(json.dumps(waves), encoding="utf-8")
+
+    rc = log_event.main(
+        [
+            "log_event.py",
+            str(tmp_path),
+            "step-start",
+            "[1/9] depth=full Spoofing",
+            "--agent",
+            "stride-analyzer-v2",
+            "--component-id",
+            "api",
+        ]
+    )
+
+    assert rc == 2
+
+
+def test_runtime_failure_is_reported_without_an_argparse_usage_block(tmp_path: Path) -> None:
+    """A usage block masked the reason in the 2026-08-31 run.
+
+    `parser.error` prefixes `usage:`, and the BASH_WARN excerpt anchors on that
+    line and keeps it instead of the message, so a late-write rejection was
+    recorded as an unreadable argparse dump.
+    """
+    _plan(tmp_path, "full")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "write_stride_progress.py"),
+            str(tmp_path),
+            "api",
+            "API",
+            "10",
+            "9",
+            "bad",
+            "--plugin-root",
+            str(ROOT),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "progress step must be within its total" in result.stderr
+    assert "usage:" not in result.stderr
+
+
 def test_status_rejects_old_v2_progress_when_new_attempt_is_active(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

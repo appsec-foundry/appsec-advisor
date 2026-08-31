@@ -82,9 +82,16 @@ _COMPONENT_TOKEN_RE = re.compile(r"\bcomponent\s*[:=]\s*([a-z0-9][a-z0-9-]{0,99}
 
 
 def _is_dispatched_component(output_dir: Path, component_id: str) -> bool:
-    """Whether a dispatched Agent call currently owns this component."""
+    """Whether a dispatched Agent call owns this component.
+
+    Not `running_calls`: an analyzer's last lines land after SubagentStop closed
+    its call, so keying this on liveness left the depth guard opt-out by timing.
+    A late line naming a `light` component kept whatever depth its author chose
+    — the very forgery the guard was widened to catch. Ownership outlives the
+    call; whether the claim is still current is `authoritative_call`'s question.
+    """
     try:
-        return any(call.get("component_id") == component_id for call in agent_lifecycle.running_calls(output_dir))
+        return agent_lifecycle.latest_call_for_component(output_dir, component_id) is not None
     except Exception:
         return False
 
@@ -310,6 +317,7 @@ def main(argv: list[str]) -> int:
 
     if agent == "stride-analyzer-v2" and not component_id:
         return _reject(argv[0], "stride-analyzer-v2 logging requires --component-id")
+    inferred_component = False
     if not component_id:
         # A depth claim about a named component is validated whoever writes it.
         # Keying the check on the caller naming itself made it opt-out: a line
@@ -318,18 +326,26 @@ def main(argv: list[str]) -> int:
         named = _COMPONENT_TOKEN_RE.search(detail)
         if named and _DEPTH_TOKEN_RE.search(detail) and _is_dispatched_component(output_dir, named.group(1)):
             component_id = named.group(1)
+            inferred_component = True
 
     if component_id:
         try:
             call = authoritative_call(output_dir, component_id, Path(__file__).resolve().parent.parent)
         except (OSError, ValueError, json.JSONDecodeError, ValidationError) as exc:
-            return _reject(argv[0], f"cannot validate STRIDE logging depth: {exc}")
-        detail = _DEPTH_TOKEN_RE.sub("", detail)
-        detail = re.sub(r"\s{2,}", " ", detail).strip(" ,;()")
-        detail = (
-            f"component={component_id} depth={call['analysis_depth']} action_id={call['action_id']} "
-            f"job_id={call['job_id']} attempt={call['attempt']}" + (f"  {detail}" if detail else "")
-        )
+            if not inferred_component:
+                return _reject(argv[0], f"cannot validate STRIDE logging depth: {exc}")
+            # The caller never claimed a component; we inferred one to police its
+            # depth token. Once that token can no longer be validated, drop the
+            # claim and keep the line — rejecting would discard legitimate
+            # telemetry over a guess of our own.
+            detail = re.sub(r"\s{2,}", " ", _DEPTH_TOKEN_RE.sub("", detail)).strip(" ,;()")
+        else:
+            detail = _DEPTH_TOKEN_RE.sub("", detail)
+            detail = re.sub(r"\s{2,}", " ", detail).strip(" ,;()")
+            detail = (
+                f"component={component_id} depth={call['analysis_depth']} action_id={call['action_id']} "
+                f"job_id={call['job_id']} attempt={call['attempt']}" + (f"  {detail}" if detail else "")
+            )
 
     _append_log(output_dir, event, detail, agent)
     _write_progress(output_dir, _progress_payload(kind, event, detail, agent))

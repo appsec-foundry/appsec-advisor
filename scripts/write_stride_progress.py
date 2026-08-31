@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -34,17 +35,29 @@ def authoritative_depth(output_dir: Path, component_id: str, plugin_root: Path) 
 
 
 def authoritative_call(output_dir: Path, component_id: str, plugin_root: Path) -> dict:
-    """Resolve the one running call that owns the current component attempt."""
+    """Resolve the call that owns the current component attempt.
+
+    A call that has returned still owns its attempt until the wave moves on.
+    An analyzer's last progress write routinely lands after SubagentStop closed
+    its call, so demanding a *running* call discarded legitimate final records:
+    the 2026-08-31 juice-shop run lost 8 that way, five of them within 43s of
+    realtime-service closing. Ambiguity — more than one running call for the
+    component — stays fatal, because that is the misattribution this guard
+    exists for. Staleness is caught by the claim check below, which compares the
+    attempt against the active claim and is unaffected by liveness.
+    """
     depth = authoritative_depth(output_dir, component_id, plugin_root)
     matches = [call for call in agent_lifecycle.running_calls(output_dir) if call.get("component_id") == component_id]
-    if len(matches) != 1:
+    if len(matches) > 1:
         raise ValueError("progress requires exactly one running Agent call for the component")
-    call = matches[0]
+    call = matches[0] if matches else agent_lifecycle.latest_call_for_component(output_dir, component_id)
+    if call is None:
+        raise ValueError("progress found no Agent call for the component")
     if not all(call.get(key) not in (None, "") for key in ("action_id", "job_id", "attempt")):
         raise ValueError("progress Agent call has no action, job, or attempt identity")
     if call.get("analysis_depth") != depth:
         raise ValueError("progress Agent call contradicts the authoritative analysis depth")
-    if not agent_lifecycle.is_current_claim(output_dir, call):
+    if not agent_lifecycle.claim_is_authoritative(output_dir, call):
         raise ValueError("progress Agent call does not own the current dispatch claim")
     return call
 
@@ -116,7 +129,12 @@ def main(argv: list[str] | None = None) -> int:
             args.plugin_root,
         )
     except (OSError, ValueError, json.JSONDecodeError, jsonschema.ValidationError) as exc:
-        parser.error(str(exc))
+        # Not `parser.error`: it prefixes an argparse usage block, and the
+        # BASH_WARN excerpt anchors on `usage:` and keeps that line instead of
+        # the reason. The 2026-08-31 run recorded a late-write rejection as an
+        # unreadable usage dump, which is how it was filed as an argv defect.
+        print(f"{parser.prog}: {exc}", file=sys.stderr)
+        return 2
     return 0
 
 
