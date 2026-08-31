@@ -19,7 +19,6 @@ def _args(
     output_formats=None,
     openspec_output=None,
     specdd_output=None,
-    blueprint_dir=None,
 ):
     return SimpleNamespace(
         config=str(config) if config else None,
@@ -27,7 +26,6 @@ def _args(
         output_formats=output_formats,
         openspec_output=str(openspec_output) if openspec_output else None,
         specdd_output=str(specdd_output) if specdd_output else None,
-        blueprint_dir=str(blueprint_dir) if blueprint_dir else None,
         token=token,
         dry_run=dry_run,
         verbose=verbose,
@@ -585,18 +583,28 @@ def test_run_rejects_blueprint_functional_target_and_output_collisions(monkeypat
     assert "different paths" in capsys.readouterr().err
 
 
-def test_run_blueprint_split_writes_one_catalog_file_per_blueprint(monkeypatch, tmp_path):
+def test_run_writes_one_catalog_file_per_blueprint_source(monkeypatch, tmp_path):
     catalog_output = tmp_path / "requirements.yaml"
-    split_dir = tmp_path / "blueprints"
     config = _write_config(
         tmp_path,
         {
             "description": "ACME requirements",
             "url": "https://appsec.int.example.com",
-            "blueprint_split": {"enabled": True, "output_dir": "blueprints"},
             "sources": [
                 {"id": "secure-coding", "type": "requirement", "crawl_url": "https://example.test/scg"},
-                {"id": "blueprints", "type": "blueprint", "crawl_url": "https://example.test/bp"},
+                {
+                    "id": "api-blueprint",
+                    "type": "blueprint",
+                    "crawl_url": "https://example.test/bp/api",
+                    "catalog_file": "blueprints/api.yaml",
+                },
+                {
+                    "id": "spa-blueprint",
+                    "type": "blueprint",
+                    "crawl_url": "https://example.test/bp/spa",
+                    "catalog_file": "blueprints/spa.yaml",
+                },
+                {"id": "unsplit-blueprint", "type": "blueprint", "crawl_url": "https://example.test/bp/misc"},
             ],
         },
     )
@@ -618,11 +626,11 @@ def test_run_blueprint_split_writes_one_catalog_file_per_blueprint(monkeypatch, 
             }
         ]
 
-    def fake_blueprints(_session, _cfg, _source, _verbose):
-        return [
+    blueprints_by_source = {
+        "api-blueprint": [
             {
                 "id": "BP-API",
-                "source_id": "blueprints",
+                "source_id": "api-blueprint",
                 "url": "https://example.test/bp/api",
                 "title": "API Blueprint",
                 "summary": "How to build an API",
@@ -634,63 +642,90 @@ def test_run_blueprint_split_writes_one_catalog_file_per_blueprint(monkeypatch, 
                         "content": "Follow SEC-001 for every endpoint.",
                     }
                 ],
-            },
+            }
+        ],
+        "spa-blueprint": [
             {
-                "id": "BP-FRONTEND",
-                "source_id": "blueprints",
-                "url": "https://example.test/bp/frontend",
-                "title": "Frontend Blueprint",
-                "summary": "How to build a frontend",
-                "topics": ["frontend"],
-            },
-        ]
+                "id": "BP-SPA",
+                "source_id": "spa-blueprint",
+                "url": "https://example.test/bp/spa",
+                "title": "SPA Blueprint",
+                "summary": "How to build a single-page app",
+                "topics": ["spa"],
+            }
+        ],
+        "unsplit-blueprint": [
+            {
+                "id": "BP-MISC",
+                "source_id": "unsplit-blueprint",
+                "url": "https://example.test/bp/misc",
+                "title": "Misc Blueprint",
+                "summary": "Everything else",
+                "topics": ["misc"],
+            }
+        ],
+    }
 
     monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
     monkeypatch.setattr(harvester, "harvest_requirements_source", fake_requirements)
-    monkeypatch.setattr(harvester, "harvest_blueprints_source", fake_blueprints)
+    monkeypatch.setattr(
+        harvester,
+        "harvest_blueprints_source",
+        lambda _session, _cfg, source, _verbose: blueprints_by_source[source["id"]],
+    )
 
     assert harvester.run(_args(config=config, output=catalog_output)) == 0
 
-    # The catalog stays complete; the per-blueprint files are an addition.
+    # The catalog stays complete; the per-source files are an addition.
     catalog = harvester.yaml.safe_load(catalog_output.read_text(encoding="utf-8"))
-    assert [bp["id"] for bp in catalog["blueprints"]] == ["BP-API", "BP-FRONTEND"]
+    assert [bp["id"] for bp in catalog["blueprints"]] == ["BP-API", "BP-SPA", "BP-MISC"]
     assert [category["id"] for category in catalog["categories"]] == ["SEC"]
 
-    assert sorted(path.name for path in split_dir.iterdir()) == ["bp-api.yaml", "bp-frontend.yaml"]
-    api = harvester.yaml.safe_load((split_dir / "bp-api.yaml").read_text(encoding="utf-8"))
+    split_dir = tmp_path / "blueprints"
+    assert sorted(path.name for path in split_dir.iterdir()) == ["api.yaml", "spa.yaml"]
+    api = harvester.yaml.safe_load((split_dir / "api.yaml").read_text(encoding="utf-8"))
     assert api["categories"] == []
     assert [bp["id"] for bp in api["blueprints"]] == ["BP-API"]
     assert api["description"] == "ACME requirements"
-    # Cross-references resolved in the same run survive into the split file.
+    # Cross-references resolved in the same run survive into the per-source file.
     assert api["blueprints"][0]["sections"][0]["references"] == [
         {"id": "SEC-001", "url": "https://example.test/sec-001"}
     ]
     # Each file is a catalog in its own right, so the shared schema accepts it.
-    assert harvester.rstate.validate_catalog((split_dir / "bp-api.yaml").read_bytes())[0] == []
+    assert harvester.rstate.validate_catalog((split_dir / "api.yaml").read_bytes())[0] == []
 
 
-def test_blueprint_file_names_are_sanitized_and_unique():
-    assert harvester.blueprint_file_stem("BP-API_V2") == "bp-api-v2"
-    assert harvester.blueprint_file_stem("../../etc/passwd") == "etc-passwd"
-    assert harvester.blueprint_file_stem("...") == "blueprint"
+def test_resolve_source_catalog_files_rejects_unusable_declarations(tmp_path):
+    config = tmp_path / "harvest-config.json"
 
-    split_dir = Path("/out/blueprints")
-    planned = harvester.plan_blueprint_files(
-        [{"id": "BP-API"}, {"id": "bp/api"}, {"id": "BP..API"}],
-        split_dir,
-    )
-    assert [path.name for path, _ in planned] == ["bp-api.yaml", "bp-api-2.yaml", "bp-api-3.yaml"]
-    assert all(path.parent == split_dir for path, _ in planned)
+    def resolve(*sources):
+        return harvester.resolve_source_catalog_files(list(sources), config)
+
+    blueprint = {"id": "bp", "type": "blueprint", "catalog_file": "out/bp.yaml"}
+    assert resolve(blueprint) == {"bp": (tmp_path / "out/bp.yaml").resolve()}
+    assert resolve({"id": "bp", "type": "blueprint"}) == {}
+
+    with pytest.raises(ValueError, match="non-empty path"):
+        resolve({"id": "bp", "type": "blueprint", "catalog_file": "  "})
+    with pytest.raises(ValueError, match="blueprint sources only"):
+        resolve({"id": "req", "type": "requirement", "catalog_file": "out/req.yaml"})
+    with pytest.raises(ValueError, match="already used by source 'bp'"):
+        resolve(blueprint, {"id": "twin", "type": "blueprint", "catalog_file": "out/../out/bp.yaml"})
 
 
-def test_run_rejects_malformed_blueprint_split_and_path_clash(monkeypatch, tmp_path, capsys):
-    def config_with(split, **extra):
+def test_run_rejects_a_catalog_file_that_would_overwrite_another_output(monkeypatch, tmp_path, capsys):
+    def config_with(catalog_file):
         return _write_config(
             tmp_path,
             {
-                "blueprint_split": split,
-                "sources": [{"id": "bp", "type": "blueprint", "crawl_url": "https://example.test/bp"}],
-                **extra,
+                "sources": [
+                    {
+                        "id": "bp",
+                        "type": "blueprint",
+                        "crawl_url": "https://example.test/bp",
+                        "catalog_file": catalog_file,
+                    }
+                ]
             },
         )
 
@@ -698,35 +733,38 @@ def test_run_rejects_malformed_blueprint_split_and_path_clash(monkeypatch, tmp_p
     monkeypatch.setattr(harvester, "harvest_blueprints_source", lambda *args, **kwargs: [{"id": "BP-API"}])
     monkeypatch.setattr(harvester.rstate, "validate_catalog", lambda _body: ([], []))
 
-    assert harvester.run(_args(config=config_with(["blueprints"]), output=tmp_path / "out.yaml")) == 1
-    assert "must be an object" in capsys.readouterr().err
-
-    assert harvester.run(_args(config=config_with({"enabled": True}), output=tmp_path / "out.yaml")) == 1
-    assert "non-empty 'output_dir'" in capsys.readouterr().err
-
-    # The split directory may not reuse the catalog's own file name.
-    clashing = config_with({"enabled": True, "output_dir": "."})
-    assert harvester.run(_args(config=clashing, output=tmp_path / "bp-api.yaml")) == 1
+    assert harvester.run(_args(config=config_with("out.yaml"), output=tmp_path / "out.yaml")) == 1
     assert "would overwrite another requested output" in capsys.readouterr().err
 
-    # A disabled split leaves the run untouched.
-    assert harvester.run(_args(config=config_with({"enabled": False}), output=tmp_path / "out.yaml")) == 0
+    assert harvester.run(_args(config=config_with(["blueprints"]), output=tmp_path / "out.yaml")) == 1
+    assert "non-empty path" in capsys.readouterr().err
 
 
-def test_blueprint_dir_flag_enables_the_split_for_one_run(monkeypatch, tmp_path):
+def test_run_keeps_the_last_good_file_when_a_source_harvests_nothing(monkeypatch, tmp_path, capsys):
     config = _write_config(
         tmp_path,
-        {"sources": [{"id": "bp", "type": "blueprint", "crawl_url": "https://example.test/bp"}]},
+        {
+            "sources": [
+                {
+                    "id": "bp",
+                    "type": "blueprint",
+                    "crawl_url": "https://example.test/bp",
+                    "catalog_file": "blueprints/bp.yaml",
+                }
+            ]
+        },
     )
+    previous = tmp_path / "blueprints" / "bp.yaml"
+    previous.parent.mkdir()
+    previous.write_text("categories: []\nblueprints: [{id: BP-OLD}]\n", encoding="utf-8")
+
     monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
-    monkeypatch.setattr(harvester, "harvest_blueprints_source", lambda *args, **kwargs: [{"id": "BP-API"}])
+    monkeypatch.setattr(harvester, "harvest_blueprints_source", lambda *args, **kwargs: [])
     monkeypatch.setattr(harvester.rstate, "validate_catalog", lambda _body: ([], []))
 
-    split_dir = tmp_path / "cli-blueprints"
-    result = harvester.run(_args(config=config, output=tmp_path / "out.yaml", blueprint_dir=split_dir))
-
-    assert result == 0
-    assert [path.name for path in split_dir.iterdir()] == ["bp-api.yaml"]
+    assert harvester.run(_args(config=config, output=tmp_path / "out.yaml")) == 0
+    assert "no blueprint harvested" in capsys.readouterr().err
+    assert previous.read_text(encoding="utf-8") == "categories: []\nblueprints: [{id: BP-OLD}]\n"
 
 
 # ---------------------------------------------------------------------------
@@ -1481,8 +1519,6 @@ def test_main_parses_cli_arguments_and_exits(monkeypatch, tmp_path):
             str(tmp_path / "out.openspec.md"),
             "--specdd-output",
             str(tmp_path / "out.sdd"),
-            "--blueprint-dir",
-            str(tmp_path / "blueprints"),
             "--token",
             "tok",
             "--dry-run",
@@ -1501,7 +1537,6 @@ def test_main_parses_cli_arguments_and_exits(monkeypatch, tmp_path):
     assert seen["args"].output_formats == ["openspec", "specdd"]
     assert seen["args"].openspec_output == str(tmp_path / "out.openspec.md")
     assert seen["args"].specdd_output == str(tmp_path / "out.sdd")
-    assert seen["args"].blueprint_dir == str(tmp_path / "blueprints")
     assert seen["args"].token == "tok"
     assert seen["args"].dry_run is True
     assert seen["args"].verbose is True

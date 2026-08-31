@@ -14,9 +14,6 @@ Options:
                         Override the single-file OpenSpec output path
     --specdd-output PATH
                         Override the single-file SpecDD output path
-    --blueprint-dir PATH
-                        Write one catalog file per blueprint into PATH
-                        (enables the split for this run)
     --token TOKEN       Bearer token (overrides HARVEST_AUTH_TOKEN env var)
     --dry-run           Fetch and parse but do not write the output file
     --verbose, -v       Print each parsed item
@@ -26,9 +23,10 @@ Options:
 Configuration:
     The config file is a JSON document with a top-level `sources` array. Each
     source declares {id, type, title, crawl_url, mode, [max_pages],
-    [section_max_chars], [reference_url], [outputs]}. Existing sources default
-    to outputs=["catalog"]. Add "openspec" and/or "specdd" only to sources
-    that describe observable functional behavior.
+    [section_max_chars], [reference_url], [outputs], [catalog_file]}. Existing
+    sources default to outputs=["catalog"]. Add "openspec" and/or "specdd" only
+    to sources that describe observable functional behavior. A blueprint source
+    with `catalog_file` also writes its own blueprints into that file.
 
     For a full template, see harvest-config.example.json (copy it to
     harvest-config.json and edit). Key sections:
@@ -36,8 +34,6 @@ Configuration:
         - defaults  — max_pages, requirements_mode, blueprints_mode, section_max_chars
         - sources[] — one entry per URL to crawl
         - description / url / output — optional metadata + output path
-        - blueprint_split — optional {enabled, output_dir}; writes one
-          catalog-shaped file per blueprint in addition to the catalog
 
 How discovery works (per source):
     1. Fetch crawl_url (e.g. https://appsec.int.example.com/scg)
@@ -1332,51 +1328,30 @@ def resolve_functional_output_path(
     return catalog_output_path.with_name(f"{catalog_output_path.stem}{suffix}")
 
 
-def resolve_blueprint_split_dir(args: argparse.Namespace, cfg: dict, config_path: Path) -> Optional[Path]:
-    """Resolve the per-blueprint output directory, or None when not requested.
+def resolve_source_catalog_files(sources: list[dict], config_path: Path) -> dict[str, Path]:
+    """Map every source that declares `catalog_file` onto its own catalog path.
 
-    The directory comes from the operator only: `--blueprint-dir` enables the
-    split for one run, `blueprint_split.enabled` for every run of a config.
+    The path comes from the operator's config and is resolved next to it. It is
+    reserved for blueprint sources: requirements reach the catalog and the
+    functional-spec exports, which carry their own output settings.
     """
-    explicit = getattr(args, "blueprint_dir", None)
-    if explicit:
-        return Path(explicit).resolve()
-    split_cfg = cfg.get("blueprint_split", {})
-    if not isinstance(split_cfg, dict):
-        raise ValueError("The top-level 'blueprint_split' configuration must be an object.")
-    if not split_cfg.get("enabled"):
-        return None
-    output_dir = split_cfg.get("output_dir")
-    if not isinstance(output_dir, str) or not output_dir.strip():
-        raise ValueError("blueprint_split.enabled requires a non-empty 'output_dir'.")
-    return (config_path.parent / output_dir).resolve()
-
-
-def blueprint_file_stem(blueprint_id: str) -> str:
-    """Derive a filesystem-safe file stem from a crawled blueprint ID.
-
-    Blueprint IDs are derived from crawled URL slugs and never reach the
-    filesystem verbatim: everything outside [a-z0-9] collapses into a single
-    dash, which leaves no separator, traversal sequence, or hidden-file name.
-    """
-    stem = re.sub(r"[^a-z0-9]+", "-", blueprint_id.lower()).strip("-")[:80]
-    return stem or "blueprint"
-
-
-def plan_blueprint_files(blueprints: list[dict], split_dir: Path) -> list[tuple[Path, dict]]:
-    """Map each blueprint onto its own file inside split_dir, keeping stems unique."""
-    planned: list[tuple[Path, dict]] = []
-    taken: set[str] = set()
-    for entry in blueprints:
-        base = blueprint_file_stem(str(entry.get("id", "")))
-        stem = base
-        suffix = 2
-        while stem in taken:
-            stem = f"{base}-{suffix}"
-            suffix += 1
-        taken.add(stem)
-        planned.append((split_dir / f"{stem}.yaml", entry))
-    return planned
+    files: dict[str, Path] = {}
+    claimed: dict[Path, str] = {}
+    for source in sources:
+        configured = source.get("catalog_file")
+        if configured is None:
+            continue
+        source_id = str(source.get("id", "unknown"))
+        if not isinstance(configured, str) or not configured.strip():
+            raise ValueError(f"Source '{source_id}': catalog_file must be a non-empty path.")
+        if source.get("type", "requirement") != "blueprint":
+            raise ValueError(f"Source '{source_id}': catalog_file applies to blueprint sources only.")
+        path = (config_path.parent / configured).resolve()
+        if path in claimed:
+            raise ValueError(f"Source '{source_id}': catalog_file is already used by source '{claimed[path]}'.")
+        claimed[path] = source_id
+        files[source_id] = path
+    return files
 
 
 # ---------------------------------------------------------------------------
@@ -1405,15 +1380,6 @@ def run(args: argparse.Namespace) -> int:
     if len(resolved_paths) != len(set(resolved_paths)):
         print("Requested outputs must use different paths.", file=sys.stderr)
         return 1
-    try:
-        split_dir = resolve_blueprint_split_dir(args, cfg, config_path)
-    except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    if CATALOG_OUTPUT not in requested:
-        # Blueprints only ever reach the catalog output; without it there is
-        # nothing to split.
-        split_dir = None
 
     req_cfg: dict = cfg.get("request", {})
     timeout: int = req_cfg.get("timeout_seconds", 15)
@@ -1499,6 +1465,20 @@ def run(args: argparse.Namespace) -> int:
             "No sources target the selected format. Add the format to a functional requirement source's outputs array.",
             file=sys.stderr,
         )
+        return 1
+
+    try:
+        source_files = resolve_source_catalog_files(sources, config_path)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if CATALOG_OUTPUT not in requested:
+        # Blueprints only ever reach the catalog output; without it there is
+        # nothing to write per source.
+        source_files = {}
+    clash = next((path for path in source_files.values() if path in set(resolved_paths)), None)
+    if clash:
+        print(f"A source catalog_file would overwrite another requested output: {clash}", file=sys.stderr)
         return 1
 
     req_categories: list[dict] = []
@@ -1589,14 +1569,6 @@ def run(args: argparse.Namespace) -> int:
 
     total_reqs = sum(len(c.get("requirements", [])) for c in req_categories)
 
-    blueprint_files: list[tuple[Path, dict]] = []
-    if split_dir is not None:
-        blueprint_files = plan_blueprint_files(blueprints, split_dir)
-        clash = next((path for path, _ in blueprint_files if path in set(resolved_paths)), None)
-        if clash:
-            print(f"A blueprint file would overwrite another requested output: {clash}", file=sys.stderr)
-            return 1
-
     export_contents: dict[str, str] = {}
     export_counts: dict[str, int] = {}
     for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
@@ -1638,11 +1610,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"  Categories:   {len(req_categories)}")
         print(f"  Requirements: {total_reqs}")
         print(f"  Blueprints:   {len(blueprints)}")
-        if split_dir is not None:
-            print(f"  Blueprint files: {len(blueprint_files)} in {split_dir}")
+        if source_files:
+            print(f"  Blueprint files: {len(source_files)}")
             if args.verbose:
-                for path, _ in blueprint_files:
-                    print(f"      {path.name}")
+                for source_id, path in source_files.items():
+                    print(f"      {source_id} → {path}")
         for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
             if kind in export_counts:
                 print(f"  {kind}: {export_counts[kind]} requirements")
@@ -1674,25 +1646,28 @@ def run(args: argparse.Namespace) -> int:
             )
             return 2
 
-    if blueprint_files:
+    if source_files:
         header = {key: doc[key] for key in ("generated", "source", "description", "url") if key in doc}
-        for path, entry in blueprint_files:
-            if path.parent != split_dir:
-                print(f"Refusing to write a blueprint outside {split_dir}: {path}", file=sys.stderr)
-                return 2
+        for source_id, path in source_files.items():
+            entries = [entry for entry in blueprints if entry.get("source_id") == source_id]
+            if not entries:
+                # A failed crawl must not replace the last good file with an empty one.
+                print(f"\n[WARN] Source '{source_id}': no blueprint harvested — {path} not written", file=sys.stderr)
+                continue
             path.parent.mkdir(parents=True, exist_ok=True)
             bp_doc = dict(header)
-            bp_doc.update({"categories": [], "blueprints": [entry]})
+            bp_doc.update({"categories": [], "blueprints": entries})
             with open(path, "w", encoding="utf-8") as f:
                 yaml.dump(bp_doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120)
             # Errors only: the content warnings are computed over `categories`,
-            # which a per-blueprint file leaves empty by design.
+            # which a blueprint file leaves empty by design.
             bp_errors, _ = rstate.validate_catalog(path.read_bytes())
             if bp_errors:
                 for error in bp_errors[:6]:
                     print(f"  ✗ schema error in {path.name}: {error}", file=sys.stderr)
                 return 2
-        print(f"\nWritten: {len(blueprint_files)} blueprint file(s) in {split_dir}")
+            print(f"\nWritten: {path}")
+            print(f"  Blueprints:   {len(entries)}")
 
     for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
         if kind not in export_contents:
@@ -1723,11 +1698,6 @@ def main() -> None:
     )
     parser.add_argument("--openspec-output", metavar="PATH")
     parser.add_argument("--specdd-output", metavar="PATH")
-    parser.add_argument(
-        "--blueprint-dir",
-        metavar="PATH",
-        help="write one catalog file per blueprint into PATH (enables the split for this run)",
-    )
     parser.add_argument("--token", metavar="TOKEN")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true")

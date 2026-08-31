@@ -132,23 +132,35 @@ The harvester never derives output paths, SpecDD ownership, or SpecDD modificati
 
 ### One file per blueprint
 
-By default a run writes a single catalog holding the requirements and every blueprint. `blueprint_split` additionally writes one file per blueprint, which keeps a blueprint reviewable and diffable on its own:
+A run writes one catalog holding the requirements and every blueprint. A blueprint source can additionally write its own blueprints into a file of its own, which keeps a blueprint reviewable and diffable by itself:
 
 ```jsonc
 {
   "output": "../data/appsec-requirements.yaml",
-  "blueprint_split": {
-    "enabled": true,
-    "output_dir": "../data/blueprints"
-  }
+  "sources": [
+    {
+      "id": "spa-blueprint",
+      "type": "blueprint",
+      "crawl_url": "https://appsec.int.example.com/blueprints/spa",
+      "catalog_file": "../data/blueprints/spa.yaml"
+    },
+    {
+      "id": "api-blueprint",
+      "type": "blueprint",
+      "crawl_url": "https://appsec.int.example.com/blueprints/api",
+      "catalog_file": "../data/blueprints/api.yaml"
+    }
+  ]
 }
 ```
 
-Each file is a catalog in its own right: an empty `categories` list and exactly one entry under `blueprints`. It validates against the same schema and can be passed to `--requirements` alone. The catalog keeps all blueprints as before, so nothing an existing consumer reads changes.
+`catalog_file` is resolved next to the config file and belongs to blueprint sources only. Requirements have `output` and the functional-spec exports.
 
-The file name comes from the blueprint ID, lowercased and reduced to `a–z`, `0–9`, and dashes, so `BP-API` becomes `blueprints/bp-api.yaml`. Because a blueprint ID is derived from a crawled URL, the name never reaches the filesystem verbatim, and IDs that collapse to the same name get a numeric suffix.
+Each file is a catalog in its own right: an empty `categories` list and the blueprints of that one source. It validates against the same schema and can be passed to `--requirements` alone. The main catalog keeps all blueprints, so nothing an existing consumer reads changes.
 
-`--blueprint-dir PATH` enables the split for a single run without editing the config. The run fails when a blueprint file would overwrite the catalog or one of the functional-spec exports.
+A source indexes its `crawl_url` and the child pages below it, so a source pointed at an index page writes every blueprint under it into one file. Point a source at a single blueprint page to get one file per blueprint.
+
+The run fails before crawling when two sources claim the same file, or when a file would overwrite the catalog or a functional-spec export. A source that harvests nothing leaves its file untouched, so a failed crawl does not replace the last good one with an empty file.
 
 ## Configuration
 
@@ -202,7 +214,6 @@ When a blueprint mentions a harvested requirement ID, the output links the bluep
 | `--format yaml\|openspec\|specdd\|all` | Select an output; repeat the flag to combine individual formats |
 | `--openspec-output PATH` | Override `openspec.output` for one run |
 | `--specdd-output PATH` | Override `specdd.output` for one run |
-| `--blueprint-dir PATH` | Write one file per blueprint into `PATH` for one run |
 | `--token TOKEN` | Pass a bearer token directly; prefer `auth_header_env` in CI |
 
 See `scripts/harvest-config.example.json` for all fields.
