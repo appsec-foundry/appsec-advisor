@@ -840,25 +840,24 @@ def build_next_steps(
 
     Returns a capped 5-item list of MUTUALLY ALTERNATIVE actions: read the
     report, *or* triage it, *or* ask it a question. None of them requires the
-    one before, so `render_next_steps` joins them with "or" — which is also why
-    every entry must be an action the reader can actually take. Anything purely
-    informational belongs in `build_run_notes`, not here.
+    one before, which is also why every entry must be an action the reader can
+    actually take. Anything purely informational belongs in `build_run_notes`,
+    not here.
 
     An action that ADDS to reading the report rather than replacing it belongs
     in `build_follow_ups`. Uploading the SARIF and re-running deeper used to sit
-    in this list, where the trailing "or" offered them as a choice against
-    reading the report — which is not a choice anyone makes.
+    in this list, where they read as a choice against reading the report —
+    which is not a choice anyone makes.
 
     Entry 0 is the report step and stays first (it is the one most readers
-    want), and the "ask me about it" step stays last — it is the open-ended
-    fallback, and being last is what lets it carry two example questions without
-    the renderer's trailing "or" landing on top of theirs. Because the renderer
-    ends every entry but the last with a trailing "or", the following entry must
-    read on from it — start entries after the first with a lowercase verb
-    ("triage the findings…", not "Triage…").
+    want), and the ask step stays last — it is the open-ended fallback, and it
+    is the only multi-line entry, so anything after it would be separated from
+    the first bullet by its example block. Each entry is a self-contained
+    imperative and starts capitalised; the list carries no conjunctions, so
+    nothing has to read on from the entry above it.
 
     A step may carry `\\n`-separated continuation lines; the renderer indents
-    them under the step.
+    them one level under the step.
     """
     lines: list[str] = []
     sev = metrics["threats_by_sev"]
@@ -873,7 +872,7 @@ def build_next_steps(
     # that turns them into a prioritised, owned remediation plan. Runs later and
     # independently of this pipeline, so it fits any follow-up session.
     if sum(sev.values()):
-        lines.append("triage the findings via /appsec-advisor:review-threat-model")
+        lines.append("Triage the findings — /appsec-advisor:review-threat-model")
 
     # Asking is the non-mutating default exploration path and must stay visible
     # rather than sink into an easy-to-miss footer. Show the question, NOT
@@ -899,21 +898,28 @@ def build_next_steps(
             except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 pass
         if _arch_has_defects:
-            lines.append(f"read the architect review — {output_dir}/.architect-review.md")
+            lines.append(f"Read the architect review — {output_dir}/.architect-review.md")
 
     # Name the addressee anyway. "just ask" said what to say without saying to
     # whom, and the reader is looking at terminal output with no reason to
-    # assume the next prompt is the place. Keep "about it": the pronoun binds
-    # the question space to the report, where "ask me something" would widen it
-    # to anything at all.
+    # assume the next prompt is the place.
     #
-    # Two examples, because one reads as *the* question to ask rather than as an
-    # instance of a kind — which is what "e.g." is there to say. This entry is
-    # appended LAST so the renderer adds no "or" to it: the earlier
-    # one-example-only rule existed solely because a trailing "or" after a
-    # second example put three conjunctions in one line. Last among a handful of
-    # bullets is still in view, and it is where the open-ended fallback belongs
-    # anyway — under the concrete alternatives rather than between them.
+    # The examples get one line each rather than being joined into the lead-in.
+    # Run together ('ask me about it — e.g. "…?" or "…?"') the second question
+    # trailed off the end of the longest line in the block and read as an
+    # afterthought; stacked under the lead-in they are two visibly equal
+    # offers. Two of them, because one reads as *the* question to ask rather
+    # than as an instance of a kind.
+    #
+    # The closing line is what keeps them examples. Without it a reader takes a
+    # stacked pair as the menu — precisely the failure the "e.g." was carrying
+    # before, and it cannot carry it from inside the lead-in once the questions
+    # sit on their own lines.
+    #
+    # This entry stays LAST: it is the only multi-line step, so a bullet after
+    # it would be cut off from the top of the list by the example block. Last
+    # among a handful of bullets is still in view, and it is where the
+    # open-ended fallback belongs anyway.
     #
     # The examples follow the findings, and lead with orientation before action,
     # mirroring the two entries above (read it, then triage it). On a clean run
@@ -923,7 +929,13 @@ def build_next_steps(
         if sum(sev.values())
         else ("What did the scan cover?", "What was out of scope?")
     )
-    lines.append("ask me about it — e.g. " + " or ".join(f'"{question}"' for question in examples))
+    lines.append(
+        "\n".join(
+            ["Or just ask me:"]
+            + [f'"{question}"' for question in examples]
+            + ["… or anything else about the report"]
+        )
+    )
 
     # Cap at 5.
     return lines[:5]
@@ -1715,36 +1727,39 @@ def render_next_steps(
     notes: Optional[list[str]] = None,
     follow_ups: Optional[list[str]] = None,
 ) -> list[str]:
-    """Bullet the steps and join them with "or" — they are alternatives.
+    """Bullet the steps — they are alternatives, not a sequence.
 
     A numbered 1-2-3 list reads as "do all three, in this order". Reading the
     report, triaging it, and asking it a question are none of that: each is a
     complete way to continue on its own. Bullets carry no sequence, so the list
-    no longer implies one; a trailing "or" on every entry but the last carries
-    the choice, the way it falls in a spoken sentence. Entries after the first
-    are authored lowercase so they read on from it (`build_next_steps`).
+    implies none.
 
-    The "or" attaches to the entry's LAST physical line, so a step with
-    continuation lines still ends on the conjunction rather than hiding it
-    mid-block.
+    Nothing joins the entries. A trailing "or" on every bullet but the last
+    used to carry the choice the way it falls in speech, but it forced every
+    entry to be a lowercase fragment reading on from the one above, and once
+    the ask step grew an example block the conjunction had to hang off the end
+    of a quoted question. Self-contained capitalised entries under a heading
+    are already read as alternatives; the word was doing less than it cost.
 
-    `follow_ups` are additive actions (`build_follow_ups`) and get no "or":
-    they belong under their own heading, because chaining them into the
-    alternatives offered "upload the SARIF" as a substitute for reading the
-    report. They render even when the alternatives list is empty.
+    Continuation lines indent one level PAST the bullet text, so a step's
+    example block hangs under it as a nested group instead of aligning with the
+    bullet text and reading as wrapped prose.
+
+    `follow_ups` are additive actions (`build_follow_ups`) under their own
+    heading, because listing them among the alternatives offered "upload the
+    SARIF" as a substitute for reading the report. They render even when the
+    alternatives list is empty, and keep the flat continuation indent — none of
+    them carries a nested block.
     """
     if not next_steps and not follow_ups:
         return []
     lines: list[str] = []
     if next_steps:
-        lines.extend(["", "Next Steps" + (" — pick one, they are alternatives" if len(next_steps) > 1 else "")])
-        last = len(next_steps) - 1
-        for i, step in enumerate(next_steps):
+        lines.extend(["", "Next Steps"])
+        for step in next_steps:
             head, *rest = str(step).split("\n")
-            block = [f"  - {head}"] + [f"    {cont}" for cont in rest]
-            if i != last:
-                block[-1] += " or"
-            lines.extend(block)
+            lines.append(f"  - {head}")
+            lines.extend(f"      {cont}" for cont in rest)
     if follow_ups:
         lines.extend(["", "Also"])
         for follow_up in follow_ups:

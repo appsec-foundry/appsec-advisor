@@ -628,32 +628,38 @@ class TestNextSteps:
         # looking at terminal output with no reason to assume the next prompt
         # is the place.
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
-        assert any(l.startswith("ask me about it") for l in lines)
+        assert any(l.startswith("Or just ask me:") for l in lines)
 
-    def test_the_ask_step_carries_two_examples(self, tmp_path):
+    def test_the_ask_step_carries_two_examples_on_their_own_lines(self, tmp_path):
         # One example reads as *the* question to ask rather than as an instance
-        # of a kind, which is what "e.g." is there to say.
+        # of a kind. Run together on the lead-in the second one trailed off the
+        # end of the longest line in the block; stacked they are equal offers.
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
         ask = next(l for l in lines if "ask me" in l)
         assert ask.count("?") == 2
-        assert " or " in ask
+        assert [part for part in ask.split("\n") if part.endswith('?"')] == [
+            '"What are the most critical findings?"',
+            '"What should I fix first?"',
+        ]
 
-    def test_the_ask_step_stays_last_so_no_third_or_lands_on_it(self, tmp_path):
-        # This is what makes two examples safe: render_next_steps appends "or"
-        # to every entry BUT the last, and a second example under the old
-        # ordering put a third conjunction in the same line.
+    def test_the_ask_step_marks_the_questions_as_examples(self, tmp_path):
+        # Without a closing line a stacked pair reads as the menu — the failure
+        # the old inline "e.g." was carrying, which it can no longer carry once
+        # the questions sit on their own lines.
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
+        ask = next(l for l in lines if "ask me" in l)
+        assert ask.split("\n")[-1] == "… or anything else about the report"
+
+    def test_the_ask_step_stays_last(self, tmp_path):
+        # It is the only multi-line entry, so a bullet after it would be cut
+        # off from the top of the list by its example block.
         cfg = self._cfg(architect_review=True)
         (tmp_path / ".architect-review.md").write_text("x", encoding="utf-8")
         (tmp_path / ".architect-status.json").write_text('{"technical_defects": 3}', encoding="utf-8")
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), cfg)
 
-        assert "ask me about it" in lines[-1], "the ask step must stay last"
+        assert lines[-1].startswith("Or just ask me:"), "the ask step must stay last"
         assert any("architect review" in l for l in lines), "the architect entry still renders"
-
-        rendered = rcs.render_next_steps(lines)
-        ask_line = next(l for l in rendered if "ask me about it" in l)
-        assert not ask_line.rstrip().endswith("or")
-        assert ask_line.count(" or ") == 1, "only the one joining the two examples"
 
     def test_the_ask_examples_follow_the_findings(self, tmp_path):
         # On a clean run "What should I fix first?" asks about findings the run
@@ -673,14 +679,14 @@ class TestNextSteps:
         assert not any("ask-threat-model" in l for l in lines)
         assert any("review-threat-model" in l for l in lines)
 
-    def test_alternatives_after_the_first_read_on_from_or(self, tmp_path):
-        # render_next_steps prefixes every entry after the first with "or ", so
-        # "or Triage the findings" would be ungrammatical.
+    def test_every_alternative_is_a_self_contained_entry(self, tmp_path):
+        # Nothing joins the bullets any more, so no entry may be a lowercase
+        # fragment left over from reading on out of a trailing "or".
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), self._cfg())
         assert len(lines) > 1
-        for step in lines[1:]:
+        for step in lines:
             first_word = step.split()[0]
-            assert first_word[0].islower(), f"step must read on from 'or ': {step!r}"
+            assert first_word[0].isupper(), f"step must stand on its own: {step!r}"
 
     def test_baseline_notice_is_a_note_not_an_alternative(self, tmp_path):
         # "Future runs auto-detect this baseline" asks nothing of the reader; in
@@ -1694,21 +1700,20 @@ class TestRenderMisc:
         out = rcs.render_next_steps(["read", "ask"])
         assert out == [
             "",
-            "Next Steps — pick one, they are alternatives",
-            "  - read or",
+            "Next Steps",
+            "  - read",
             "  - ask",
         ]
 
-    def test_render_next_steps_joins_alternatives_with_a_trailing_or(self):
+    def test_render_next_steps_joins_alternatives_with_nothing(self):
         # A numbered 1-2-3 list reads as "do all of these, in this order".
         # Reading, triaging and asking are each a complete way to continue on
-        # their own, so they render as bullets. The conjunction falls where it
-        # would in speech: at the end of the entry it separates, never on the
-        # last one.
+        # their own, so they render as plain bullets. The trailing "or" that
+        # used to carry the choice cost every entry its capital and forced the
+        # conjunction onto the end of a quoted example question.
         out = rcs.render_next_steps(["read", "triage", "ask"])
-        assert out[2] == "  - read or"
-        assert out[3] == "  - triage or"
-        assert out[4] == "  - ask"
+        assert out[2:] == ["  - read", "  - triage", "  - ask"]
+        assert not any(line.rstrip().endswith(" or") for line in out)
 
     def test_render_next_steps_uses_bullets_not_numbers(self):
         # Numbers imply a sequence the reader is meant to work through; these
@@ -1716,22 +1721,16 @@ class TestRenderMisc:
         out = rcs.render_next_steps(["read", "triage", "ask"])
         assert not any(re.match(r"\s*\d+\.", line) for line in out)
 
-    def test_render_next_steps_indents_continuation_lines(self):
+    def test_render_next_steps_nests_continuation_lines_under_the_bullet(self):
+        # One level PAST the bullet text, so an example block hangs under its
+        # step as a group instead of aligning with it and reading as wrapped
+        # prose.
         out = rcs.render_next_steps(["read", "ask\nexample question"])
-        assert "  - ask" in out
-        assert "    example question" in out
+        assert out[3:] == ["  - ask", "      example question"]
 
-    def test_trailing_or_attaches_to_the_last_line_of_a_multiline_step(self):
-        # Otherwise the conjunction hides mid-block and the continuation line
-        # reads as if it belonged to the next alternative.
-        out = rcs.render_next_steps(["ask\nexample question", "read"])
-        assert out[2] == "  - ask"
-        assert out[3] == "    example question or"
-        assert out[4] == "  - read"
-
-    def test_render_next_steps_single_step_drops_the_pick_one_header(self):
-        out = rcs.render_next_steps(["read"])
-        assert out == ["", "Next Steps", "  - read"]
+    def test_render_next_steps_header_is_the_same_for_one_step_and_many(self):
+        assert rcs.render_next_steps(["read"]) == ["", "Next Steps", "  - read"]
+        assert rcs.render_next_steps(["read", "ask"])[1] == "Next Steps"
 
     def test_render_next_steps_renders_notes_below_the_alternatives(self):
         out = rcs.render_next_steps(["read", "ask"], ["Baseline established."])
@@ -1743,7 +1742,7 @@ class TestRenderMisc:
         # substitute for reading the report.
         out = rcs.render_next_steps(["read", "ask"], None, ["Upload the SARIF"])
         assert "Also" in out
-        assert out.index("Also") > out.index("  - read or")
+        assert out.index("Also") > out.index("  - read")
         assert out[-1] == "  - Upload the SARIF"
         assert not any(line.endswith(" or") for line in out[out.index("Also") :])
 
