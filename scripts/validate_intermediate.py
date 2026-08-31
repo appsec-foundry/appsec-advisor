@@ -1130,16 +1130,30 @@ def _check_export_trace_invariants(data: dict) -> list[str]:
     elif isinstance(provenance, dict):
         errors.append("requirements_provenance: requirements_compliance is missing")
 
-    for threat in threats:
-        fid = _finding_id(threat.get("id") or threat.get("t_id")) or "(unknown)"
-        for req_id in threat.get("violated_requirements") or []:
-            if isinstance(req_id, str) and req_id not in requirement_ids:
-                errors.append(f"threat {fid}: violated requirement {req_id!r} does not resolve")
-    for mitigation in mitigations:
-        mid = str(mitigation.get("id") or mitigation.get("m_id") or "").strip() or "(unknown)"
-        for req_id in mitigation.get("fulfills_requirements") or []:
-            if isinstance(req_id, str) and req_id not in requirement_ids:
-                errors.append(f"mitigation {mid}: fulfilled requirement {req_id!r} does not resolve")
+    # Only an actually populated compliance section can resolve a requirement
+    # reference. It is derived from the Stage-2 `.fragments/requirements-compliance.md`
+    # table, so `build_threat_model_yaml.build_requirements_compliance` returns
+    # None by design at Stage-1 finalize and omits the key — leaving this set
+    # empty. Checking references against an empty set then rejected all 116 of
+    # them on a run whose 30 distinct IDs were every one of them declared in
+    # `.requirements.yaml` (juice-shop 2026-08-30), and the abort was read as
+    # analyzers inventing IDs. Absent authority is "unknown", never "invalid";
+    # the catalog stays enforced in the producer, by
+    # `_filter_violated_requirements` on the threat side and by
+    # `annotate_requirements_and_blueprints` on the mitigation side, and
+    # post-Stage-2 the strict emitter requires the section to cover the whole
+    # catalog.
+    if requirement_ids:
+        for threat in threats:
+            fid = _finding_id(threat.get("id") or threat.get("t_id")) or "(unknown)"
+            for req_id in threat.get("violated_requirements") or []:
+                if isinstance(req_id, str) and req_id not in requirement_ids:
+                    errors.append(f"threat {fid}: violated requirement {req_id!r} does not resolve")
+        for mitigation in mitigations:
+            mid = str(mitigation.get("id") or mitigation.get("m_id") or "").strip() or "(unknown)"
+            for req_id in mitigation.get("fulfills_requirements") or []:
+                if isinstance(req_id, str) and req_id not in requirement_ids:
+                    errors.append(f"mitigation {mid}: fulfilled requirement {req_id!r} does not resolve")
 
     business = data.get("business_context_trace")
     if isinstance(business, dict):

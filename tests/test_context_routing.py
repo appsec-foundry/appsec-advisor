@@ -401,13 +401,31 @@ def test_effective_plan_answers_an_identical_re_read_and_rejects_a_changed_one(t
     assert len(repeated["actions"]) == 1
     assert len(repeated["deliveries"]) == len(plan["deliveries"])
 
-    # Same identity, different content: a real duplicate dispatch.
+    # Same identity, different content, and the recorded dispatch produced
+    # nothing: it never ran, so the re-derived action supersedes its row rather
+    # than ending the run. A boundary whose inputs accumulate reaches this
+    # legitimately — a second STRIDE wave gives `phase9-merge-review` more
+    # threats to review (juice-shop2 2026-08-17).
     conflicting = copy.deepcopy(action)
     conflicting["dispatch_jobs"][0]["unresolved_decision_keys"] = ["stride:S"]
-    with pytest.raises(routing.ContextRoutingError, match="different content"):
-        routing.action_already_issued(conflicting, output)
-    with pytest.raises(routing.ContextRoutingError, match="different content"):
-        _resolve(conflicting, output)
+    assert not (output / ".threat-modeling-context.md").exists()
+    assert routing.action_already_issued(conflicting, output) is False
+    superseded = _resolve(conflicting, output)
+    assert len(superseded["actions"]) == 1
+    assert superseded["actions"][0]["action_sha256"] != plan["actions"][0]["action_sha256"]
+    assert len({row["delivery_id"] for row in superseded["deliveries"]}) == len(superseded["deliveries"])
+
+    # Same identity, different content, but the outputs are on disk: the earlier
+    # producer returned, so this is the real duplicate the guard was built for —
+    # re-preparing would delete exactly what it protects.
+    (output / ".threat-modeling-context.md").write_text("produced", encoding="utf-8")
+    diverged = copy.deepcopy(conflicting)
+    diverged["dispatch_jobs"][0]["unresolved_decision_keys"] = ["stride:T"]
+    with pytest.raises(routing.ContextRoutingError, match="outputs were produced"):
+        routing.action_already_issued(diverged, output)
+    with pytest.raises(routing.ContextRoutingError, match="outputs were produced"):
+        _resolve(diverged, output)
+    (output / ".threat-modeling-context.md").unlink()
 
     retry = copy.deepcopy(action)
     retry["dispatch_jobs"][0]["job_id"] = "phase1-context:attempt-2"

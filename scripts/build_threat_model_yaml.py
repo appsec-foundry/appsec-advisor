@@ -1804,7 +1804,18 @@ def annotate_requirements_and_blueprints(
 
     with_reqs = with_bp = 0
     for m in mitigations:
-        fulfills = [str(r or "").strip() for r in (m.get("fulfills_requirements") or []) if str(r or "").strip()]
+        # Sidecar-authored IDs are catalog-filtered like the threat-side ones in
+        # `_filter_violated_requirements`. Derived IDs are already bounded by
+        # `known_ids`, so without this the sidecar was the one path by which an
+        # undeclared requirement could still reach `fulfills_requirements`, and
+        # the export-trace check no longer catches it at Stage-1 finalize, where
+        # no compliance section exists to resolve against. Filter only when a
+        # catalog was loaded, so a run without `.requirements.yaml` is unchanged.
+        fulfills = [
+            rid
+            for rid in (str(r or "").strip() for r in (m.get("fulfills_requirements") or []))
+            if rid and (not known_ids or rid in known_ids)
+        ]
         addressed = []
         for tid in m.get("threat_ids") or []:
             t = threats_by_id.get(str(tid or "").strip())

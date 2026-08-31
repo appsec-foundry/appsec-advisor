@@ -35,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from functools import cache
 from pathlib import Path
@@ -1360,6 +1361,26 @@ def _append_event(output_dir: Path, event: str, detail: str, level: str = "INFO"
 
 _FAILURE_MARKERS = ("FATAL", "INVALID", "ERROR", "Traceback")
 _EXIT_LEAD_RE = re.compile(r"^(.*?failed with exit -?\d+:)")
+# Values that differ per finding but not per failure class: quoted literals,
+# artifact ids, and bare numbers. Collapsing them lets N findings of one kind be
+# counted as one class (see `_finding_class`).
+_FINDING_NOISE_RE = re.compile(r"'[^']*'|\"[^\"]*\"|\b[A-Za-z]{1,5}-\d+\b|\b\d+\b")
+_BENIGN_TOKENS = ("WARN", "ADVISORY", "NOTE", "INFO", "DEBUG")
+
+
+def _is_benign_line(line: str) -> bool:
+    """True for a line whose own prefix declares it non-fatal.
+
+    Matched on the prefix token rather than the line start, because the
+    producers spell it `TRUST_BOUNDARY_WARN:` and `DATA_FLOW_WARN:` as often as
+    plain `WARNING:`.
+    """
+    return any(token in line.split(":", 1)[0].upper() for token in _BENIGN_TOKENS)
+
+
+def _finding_class(line: str) -> str:
+    """Collapse one finding to its class so N of a kind can be counted."""
+    return _FINDING_NOISE_RE.sub("·", line)
 
 
 def _abort_event_detail(reason: str) -> str:
@@ -1371,20 +1392,43 @@ def _abort_event_detail(reason: str) -> str:
     normal filtering and sent two readers down the wrong path. A multi-line
     detail also breaks the one-line-per-event log format, leaving every
     continuation line unparseable.
+
+    Two failure shapes defeated the marker-only rule that fixed the case above:
+
+    * **No marker at all.** Only some producers prefix a fault with `FATAL:`;
+      216 stderr sites report one as plain `<script>: <exception>`. With no
+      marker the first line was reported, so the 2026-07-31 trust-boundary abort
+      logged a `TRUST_BOUNDARY_WARN` about a rejected evidence path while the
+      real exception — the last line — never reached the log and the run has no
+      known cause to this day. Fall back to the last non-benign line instead.
+    * **N findings of one class.** Reporting one arbitrary exemplar of 116
+      identical `does not resolve` lines hides the very fact that *every*
+      reference failed, which is what separates a systematic defect from a few
+      bad values. The 2026-08-30 requirements abort was misdiagnosed as stray
+      analyzer IDs for exactly this reason. Count the classes and say `116×`.
     """
     lines = [line.strip() for line in str(reason).splitlines() if line.strip()]
     if not lines:
         return ""
     head = lines[0]
+    rest = lines[1:]
+    extra = f"  (+{len(rest)} more line(s))" if rest else ""
     # The last marker line, not the first: a validator prints its class
     # ("FATAL: schema validation failed") before the finding that caused it
     # ("INVALID: threats[18].title …"), and the finding is what a reader acts on.
-    salient = next((line for line in reversed(lines[1:]) if line.startswith(_FAILURE_MARKERS)), "")
-    extra = f"  (+{len(lines) - 1} more line(s))" if len(lines) > 1 else ""
-    if not salient:
+    failures = [line for line in rest if line.startswith(_FAILURE_MARKERS)]
+    if not failures:
+        failures = [line for line in rest if not _is_benign_line(line)]
+    if not failures:
         return f"{head}{extra}"
-    lead = _EXIT_LEAD_RE.match(head)
-    return f"{lead.group(1) if lead else head} {salient}{extra}"
+    lead_match = _EXIT_LEAD_RE.match(head)
+    lead = lead_match.group(1) if lead_match else head
+    classes = Counter(_finding_class(line) for line in failures)
+    dominant, count = classes.most_common(1)[0]
+    salient = next(line for line in reversed(failures) if _finding_class(line) == dominant)
+    if count > 1:
+        return f"{lead} {count}× {salient}{extra}"
+    return f"{lead} {failures[-1]}{extra}"
 
 
 def _run_script(
@@ -5214,12 +5258,69 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
     return _context_v2_after_triage(output_dir, cfg)
 
 
+def _canonicalize_triage_flag_types(output_dir: Path) -> list[str]:
+    """Repair `-`/`_` drift in the LLM-authored `flags[].type` before validation.
+
+    The triage validator agent rewrites `.triage-flags.json` including flags the
+    deterministic pass authored, and its instruction file spells the same token
+    two ways: `business_impact` in the normative JSON block, `business-impact` in
+    the prose one page earlier. The agent copied the prose spelling and the
+    schema enum rejected it, ending a completed Stage-1 run over one character
+    (juice-shop2 2026-08-18). Agent output is untrusted input, so canonicalise
+    the separator before validating rather than failing the whole run on it.
+
+    The accepted values come from the schema itself; a second hand-maintained
+    list here would be the same drift one layer down. Only separator spelling is
+    repaired — a value that is not a declared one after canonicalisation is left
+    untouched for the validator to reject.
+
+    Returns the repaired ``old -> new`` pairs, empty when nothing changed.
+    """
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+
+    path = output_dir / ".triage-flags.json"
+    schema_path = PLUGIN_ROOT / "schemas" / "triage-flags.schema.yaml"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        schema = yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
+    except (OSError, json.JSONDecodeError, yaml.YAMLError):
+        return []
+    declared = (
+        ((schema.get("properties") or {}).get("flags") or {}).get("items", {}).get("properties", {}).get("type", {})
+    ).get("enum")
+    if not isinstance(declared, list) or not isinstance(document, dict):
+        return []
+    by_canonical = {str(value).replace("-", "_").lower(): value for value in declared if isinstance(value, str)}
+    repaired: list[str] = []
+    for flag in document.get("flags") or []:
+        if not isinstance(flag, dict):
+            continue
+        current = flag.get("type")
+        if not isinstance(current, str) or current in by_canonical.values():
+            continue
+        replacement = by_canonical.get(current.replace("-", "_").lower())
+        if replacement is None:
+            continue
+        flag["type"] = replacement
+        repaired.append(f"{current} -> {replacement}")
+    if repaired:
+        atomic_write_json(path, document, sort_keys=True)
+    return repaired
+
+
 def _context_v2_after_triage(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     """Validate triage output and select optional qualitative synthesis."""
     _run_script(
         "validate_intermediate.py",
         ["threats_merged", str(output_dir / ".threats-merged.json")],
     )
+    repaired = _canonicalize_triage_flag_types(output_dir)
+    if repaired:
+        _append_event(
+            output_dir,
+            "CONTEXT_STRUCTURE_REPAIRED",
+            f"triage flag type spelling canonicalised: {', '.join(repaired)}",
+        )
     _run_script(
         "validate_intermediate.py",
         ["triage_flags", str(output_dir / ".triage-flags.json")],
@@ -5309,6 +5410,18 @@ def _context_v2_finalize(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any
         "validate_intermediate.py",
         ["threat_model_output", str(output_dir / "threat-model.yaml")],
     )
+    # The two emitters that feed the gate below run again here, as hard steps.
+    # `auto_emitter_pass.sh` is deliberately best-effort so a failed enrichment
+    # cannot destroy 25 minutes of Stage 1, and it guards every emitter with
+    # `|| true` — including these two, whose own comments there already say they
+    # supply this gate. A best-effort producer feeding a fail-closed consumer
+    # means a silently skipped hydration surfaces as content findings against
+    # the author instead of as the tooling failure it is: on the delivered
+    # juice-shop model the gate reports 96 INVALID lines without them and passes
+    # with them. Both are idempotent, so repeating them costs nothing and a
+    # second failure aborts naming the producer, which is the true fault.
+    _run_script("backfill_scanner_remediation.py", [str(output_dir)])
+    _run_script("hydrate_mitigation_details.py", [str(output_dir)])
     _run_script("validate_mitigation_quality.py", [str(output_dir)])
     _run_script(
         "assert_completeness.py",

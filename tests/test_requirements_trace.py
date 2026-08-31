@@ -286,6 +286,24 @@ class TestModelAndReportAgree:
         build_yaml.annotate_requirements_and_blueprints(threats, mitigations, tmp_path)
         assert mitigations[0]["fulfills_requirements"] == ["IV-001", "AC-002"]
 
+    def test_a_sidecar_cannot_smuggle_an_undeclared_requirement(self, tmp_path):
+        """The catalog decides on the mitigation side too.
+
+        Derived IDs are already bounded by the catalog, so a sidecar-authored
+        array was the one path by which an undeclared ID could reach
+        `fulfills_requirements` — the mirror of `_filter_violated_requirements`
+        on the threat side. It matters at Stage-1 finalize, where no compliance
+        section exists for the export-trace check to catch it against.
+        """
+        build_yaml = _load_module("build_threat_model_yaml", REPO_ROOT / "scripts" / "build_threat_model_yaml.py")
+        (tmp_path / ".requirements.yaml").write_text(yaml.safe_dump(CATALOG), encoding="utf-8")
+        threats = [{"id": "T-001", "violated_requirements": ["AC-002"], "mitigation_ids": ["M-001"]}]
+        mitigations = [
+            {"id": "M-001", "title": "Fix it", "threat_ids": ["T-001"], "fulfills_requirements": ["ORG-999", "IV-001"]}
+        ]
+        build_yaml.annotate_requirements_and_blueprints(threats, mitigations, tmp_path)
+        assert mitigations[0]["fulfills_requirements"] == ["IV-001", "AC-002"]
+
 
 class TestAnalystSlice:
     """The prescribed implementation has to reach the analyst that writes the

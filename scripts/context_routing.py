@@ -70,6 +70,41 @@ def _action_basis(action: dict[str, Any]) -> dict[str, Any]:
     return basis
 
 
+def _replay_would_destroy_output(action: dict[str, Any], output_root: Path) -> bool:
+    """True when re-preparing this dispatch would delete a produced artifact.
+
+    This is the harm the replay guard exists to prevent, stated directly, and it
+    separates the two ways one action identity can be resolved twice — which
+    comparing content hashes alone cannot tell apart:
+
+    * **Something is there to lose.** The earlier dispatch produced output, so
+      re-issuing means `_prepare_context_v2_dispatch_outputs` removes it and the
+      run silently loses a producer's work. That is a real duplicate dispatch.
+    * **Nothing is there to lose.** The recorded action never wrote anything, so
+      re-deriving destroys nothing. A boundary whose inputs accumulate reaches
+      this legitimately: a second STRIDE wave admitted after
+      `phase9-merge-review` was recorded gives the merger more threats to
+      review, which ended a run 57 minutes in with the merge dispatch not yet
+      executed (juice-shop2 2026-08-17).
+
+    Mirrors that function's own rule, including its protection of an output the
+    same action also declares as an input — preparation keeps those, so their
+    presence proves nothing about the dispatch having run.
+    """
+    protected = {
+        path
+        for job in action.get("dispatch_jobs", [])
+        for path in job.get("input_artifacts", [])
+        if isinstance(path, str)
+    }
+    return any(
+        (output_root / path).is_file()
+        for job in action.get("dispatch_jobs", [])
+        for path in job.get("output_artifacts", [])
+        if isinstance(path, str) and path and path not in protected
+    )
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -699,11 +734,19 @@ def action_already_issued(action: dict[str, Any], output_root: Path) -> bool:
     is re-reading its own row rather than dispatching a second time, so an
     identical action answers True and the caller skips the side effect.
 
-    A row carrying the same job identity but different content is a real
-    duplicate dispatch and still aborts: replaying it would hide the duplicate
-    and let dispatch preparation delete the artifact the first producer just
-    returned. Controller-owned retries therefore use a new attempt-qualified
-    job ID rather than replaying an existing action.
+    A row carrying the same job identity but different content is decided by
+    whether that dispatch has produced anything. Once its outputs exist it is a
+    real duplicate and still aborts: replaying it would hide the duplicate and
+    let dispatch preparation delete the artifact the first producer just
+    returned. Controller-owned retries therefore use a new attempt-qualified job
+    ID rather than replaying an existing action.
+
+    While those outputs are absent the recorded action never ran, so nothing can
+    be destroyed and re-deriving is not a duplicate at all — it is the normal
+    consequence of a boundary whose inputs grew, which ended a run 57 minutes in
+    (juice-shop2 2026-08-17). Such an action answers False and supersedes the
+    row; `resolve_action` drops the superseded rows when it records the
+    replacement.
     """
     plan_path, receipt_path = _plan_paths(output_root.resolve())
     if not plan_path.exists() and not receipt_path.exists():
@@ -727,10 +770,17 @@ def action_already_issued(action: dict[str, Any], output_root: Path) -> bool:
     action_sha = _sha256(_canonical_json_bytes(_action_basis(action)))
     if all(row.get("action_sha256") == action_sha for row in prior):
         return True
+    # Differing content is only a duplicate dispatch once the prior one has
+    # produced something. While its outputs are absent the recorded action never
+    # ran, nothing can be destroyed by re-issuing, and the re-derivation is the
+    # normal consequence of a boundary whose inputs grew — so it supersedes the
+    # record rather than ending the run. See `_replay_would_destroy_output`.
+    if not _replay_would_destroy_output(action, output_root.resolve()):
+        return False
     raise ContextRoutingError(
         "semantic dispatch was already issued with different content for job(s) "
         + ", ".join(job_ids)
-        + "; invoke the successor boundary instead of replaying it"
+        + " after its outputs were produced; invoke the successor boundary instead of replaying it"
     )
 
 
@@ -855,14 +905,24 @@ def resolve_action(
     prior = [row for row in plan["actions"] if row.get("action_id") == action_id]
     if prior:
         if any(row != action_record for row in prior):
-            raise ContextRoutingError(
-                "semantic dispatch action identity was already resolved with different content; "
-                "retries require a new attempt-qualified job ID"
-            )
-        # The recomputed action equals the recorded one, so its rows already
-        # describe this dispatch. Appending them again would double every
-        # delivery and bump the revision for a read.
-        return plan
+            # Mirrors the decision `action_already_issued` already made for the
+            # same action: while the recorded dispatch has produced no output it
+            # never ran, and the re-derived action replaces it instead of ending
+            # the run. Its rows are dropped first, so the plan keeps exactly one
+            # description per action identity and deliveries do not double.
+            if _replay_would_destroy_output(action, output_root.resolve()):
+                raise ContextRoutingError(
+                    "semantic dispatch action identity was already resolved with different content "
+                    "after its outputs were produced; retries require a new attempt-qualified job ID"
+                )
+            plan["actions"] = [row for row in plan["actions"] if row.get("action_id") != action_id]
+            plan["deliveries"] = [row for row in plan["deliveries"] if row.get("action_id") != action_id]
+            plan["diagnostics"] = [row for row in plan["diagnostics"] if row.get("action_id") != action_id]
+        else:
+            # The recomputed action equals the recorded one, so its rows already
+            # describe this dispatch. Appending them again would double every
+            # delivery and bump the revision for a read.
+            return plan
     action_receipts = {receipt["artifact_path"]: receipt for receipt in action.get("artifact_receipts", [])}
 
     deliveries: list[dict[str, Any]] = []

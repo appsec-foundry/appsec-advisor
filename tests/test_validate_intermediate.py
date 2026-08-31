@@ -1149,6 +1149,27 @@ def test_export_trace_cross_references_fail_closed():
     assert any("verification_complete does not match" in error for error in errors)
 
 
+def test_requirement_references_are_unresolved_not_invalid_without_a_compliance_section():
+    """Absent authority is "unknown", never "invalid".
+
+    `requirements_compliance` is parsed from the Stage-2 compliance fragment, so
+    the producer omits it at Stage-1 finalize by design. Resolving references
+    against the empty set that left behind rejected all 116 of them on a run
+    whose every ID was declared in the catalog, and the abort read as analyzers
+    inventing IDs (juice-shop 2026-08-30). The catalog stays enforced in the
+    producer; this check simply has nothing to resolve against yet.
+    """
+    data = {
+        "components": [{"id": "api"}],
+        "threats": [{"id": "T-001", "violated_requirements": ["AC-003"]}],
+        "mitigations": [{"id": "M-001", "fulfills_requirements": ["AC-003", "LM-001"]}],
+    }
+
+    errors = vi._check_export_trace_invariants(data)
+
+    assert not [error for error in errors if "does not resolve" in error]
+
+
 def test_export_trace_invariants_tolerate_schema_invalid_collection_items():
     data = {
         "threats": [{"id": "T-001", "violated_requirements": [{"bad": "id"}]}],
