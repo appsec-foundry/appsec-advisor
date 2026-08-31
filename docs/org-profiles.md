@@ -398,9 +398,9 @@ Without the profile flag anyone can still ask for a verdict at the call site
 with `/appsec-advisor:verify-baseline --enforce`.
 
 `enabled: false` turns the feature off: the banner drops its baseline line and
-all three baseline skills report that none is configured. Removing
-`install-baseline`, `verify-baseline` and `remove-baseline` through
-`skill_toggles` drops the commands as well.
+every baseline skill reports that none is configured. Removing
+`install-baseline`, `update-baseline`, `verify-baseline` and `remove-baseline`
+through `skill_toggles` drops the commands as well.
 
 An organization that mandates the baseline should disable `remove-baseline`
 that way, with a reason naming the policy. The stronger answer is Claude Code's

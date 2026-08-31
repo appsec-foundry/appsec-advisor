@@ -62,6 +62,8 @@ is the fallback when that URL cannot be reached. Existing instruction files are
 only appended to, never rewritten, and re-running is safe.
 
 Related: /appsec-advisor:verify-baseline — check what is loaded, changes nothing.
+         /appsec-advisor:update-baseline — refresh a copy that is already
+         installed, wherever it is loaded from.
 ```
 
 After printing, exit.

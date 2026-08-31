@@ -56,6 +56,7 @@ WHAT IS CHECKED
   different question and this command does not answer it.
 
 Related: /appsec-advisor:install-baseline — installs it.
+         /appsec-advisor:update-baseline — refreshes an installed copy.
          /appsec-advisor:remove-baseline — stops it loading again.
 ```
 

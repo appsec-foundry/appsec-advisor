@@ -78,6 +78,7 @@ A threat model finds what is already wrong. The secure-coding baseline is an ins
 
 ```text
 /appsec-advisor:install-baseline        this machine, or this repo
+/appsec-advisor:update-baseline         re-fetch the installed copy
 /appsec-advisor:verify-baseline         is it loaded; exits 1 if not
 /appsec-advisor:remove-baseline         stop it loading, keep the file
 ```

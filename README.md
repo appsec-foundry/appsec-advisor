@@ -173,7 +173,7 @@ If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml` or 
 
 | Tool | Use |
 |---|---|
-| Secure-coding baseline | Install, verify, or remove secure-coding instructions with `install-baseline`, `verify-baseline`, and `remove-baseline`. |
+| Secure-coding baseline | Install, update, verify, or remove secure-coding instructions with `install-baseline`, `update-baseline`, `verify-baseline`, and `remove-baseline`. |
 | [Security Coach](docs/dev-security-helper-usage.md#security-coach-hook) (*experimental*) | Add security guidance while writing security-sensitive code. |
 | [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Embed change review in Claude Code or an Agent SDK workflow. |
 | [verify-requirements](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*) | Review an interactive diff against the requirements catalog. |
