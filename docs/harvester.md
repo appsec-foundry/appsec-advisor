@@ -130,6 +130,26 @@ python3 scripts/harvest_requirements.py --format all
 
 The harvester never derives output paths, SpecDD ownership, or SpecDD modification permissions from crawled text. A generated `.sdd` file contains behavior and scenarios only; an operator decides where it belongs and what code it governs.
 
+### One file per blueprint
+
+By default a run writes a single catalog holding the requirements and every blueprint. `blueprint_split` additionally writes one file per blueprint, which keeps a blueprint reviewable and diffable on its own:
+
+```jsonc
+{
+  "output": "../data/appsec-requirements.yaml",
+  "blueprint_split": {
+    "enabled": true,
+    "output_dir": "../data/blueprints"
+  }
+}
+```
+
+Each file is a catalog in its own right: an empty `categories` list and exactly one entry under `blueprints`. It validates against the same schema and can be passed to `--requirements` alone. The catalog keeps all blueprints as before, so nothing an existing consumer reads changes.
+
+The file name comes from the blueprint ID, lowercased and reduced to `a–z`, `0–9`, and dashes, so `BP-API` becomes `blueprints/bp-api.yaml`. Because a blueprint ID is derived from a crawled URL, the name never reaches the filesystem verbatim, and IDs that collapse to the same name get a numeric suffix.
+
+`--blueprint-dir PATH` enables the split for a single run without editing the config. The run fails when a blueprint file would overwrite the catalog or one of the functional-spec exports.
+
 ## Configuration
 
 The crawler reads `scripts/harvest-config.json`. This is the minimum useful configuration:
@@ -182,6 +202,7 @@ When a blueprint mentions a harvested requirement ID, the output links the bluep
 | `--format yaml\|openspec\|specdd\|all` | Select an output; repeat the flag to combine individual formats |
 | `--openspec-output PATH` | Override `openspec.output` for one run |
 | `--specdd-output PATH` | Override `specdd.output` for one run |
+| `--blueprint-dir PATH` | Write one file per blueprint into `PATH` for one run |
 | `--token TOKEN` | Pass a bearer token directly; prefer `auth_header_env` in CI |
 
 See `scripts/harvest-config.example.json` for all fields.

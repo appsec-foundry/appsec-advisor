@@ -7,6 +7,11 @@
     "title": "ACME Application Specification",
     "purpose": "Defines observable application behavior harvested from ACME's functional requirement sources."
   },
+  "blueprint_split": {
+    "_note": "Optional. Writes one catalog-shaped YAML per blueprint in addition to the catalog above; the catalog itself keeps all blueprints.",
+    "enabled": false,
+    "output_dir": "../data/blueprints"
+  },
   "specdd": {
     "output": "../data/application-requirements.sdd",
     "name": "ACME Application Behavior",

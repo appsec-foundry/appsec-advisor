@@ -19,6 +19,7 @@ def _args(
     output_formats=None,
     openspec_output=None,
     specdd_output=None,
+    blueprint_dir=None,
 ):
     return SimpleNamespace(
         config=str(config) if config else None,
@@ -26,6 +27,7 @@ def _args(
         output_formats=output_formats,
         openspec_output=str(openspec_output) if openspec_output else None,
         specdd_output=str(specdd_output) if specdd_output else None,
+        blueprint_dir=str(blueprint_dir) if blueprint_dir else None,
         token=token,
         dry_run=dry_run,
         verbose=verbose,
@@ -581,6 +583,150 @@ def test_run_rejects_blueprint_functional_target_and_output_collisions(monkeypat
         == 1
     )
     assert "different paths" in capsys.readouterr().err
+
+
+def test_run_blueprint_split_writes_one_catalog_file_per_blueprint(monkeypatch, tmp_path):
+    catalog_output = tmp_path / "requirements.yaml"
+    split_dir = tmp_path / "blueprints"
+    config = _write_config(
+        tmp_path,
+        {
+            "description": "ACME requirements",
+            "url": "https://appsec.int.example.com",
+            "blueprint_split": {"enabled": True, "output_dir": "blueprints"},
+            "sources": [
+                {"id": "secure-coding", "type": "requirement", "crawl_url": "https://example.test/scg"},
+                {"id": "blueprints", "type": "blueprint", "crawl_url": "https://example.test/bp"},
+            ],
+        },
+    )
+
+    def fake_requirements(_session, _cfg, source, _verbose):
+        return [
+            {
+                "id": "SEC",
+                "source_id": source["id"],
+                "title": "Secure Coding",
+                "requirements": [
+                    {
+                        "id": "SEC-001",
+                        "url": "https://example.test/sec-001",
+                        "text": "The application MUST authenticate every request",
+                        "priority": "MUST",
+                    }
+                ],
+            }
+        ]
+
+    def fake_blueprints(_session, _cfg, _source, _verbose):
+        return [
+            {
+                "id": "BP-API",
+                "source_id": "blueprints",
+                "url": "https://example.test/bp/api",
+                "title": "API Blueprint",
+                "summary": "How to build an API",
+                "topics": ["api"],
+                "sections": [
+                    {
+                        "title": "Authentication",
+                        "url": "https://example.test/bp/api#auth",
+                        "content": "Follow SEC-001 for every endpoint.",
+                    }
+                ],
+            },
+            {
+                "id": "BP-FRONTEND",
+                "source_id": "blueprints",
+                "url": "https://example.test/bp/frontend",
+                "title": "Frontend Blueprint",
+                "summary": "How to build a frontend",
+                "topics": ["frontend"],
+            },
+        ]
+
+    monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(harvester, "harvest_requirements_source", fake_requirements)
+    monkeypatch.setattr(harvester, "harvest_blueprints_source", fake_blueprints)
+
+    assert harvester.run(_args(config=config, output=catalog_output)) == 0
+
+    # The catalog stays complete; the per-blueprint files are an addition.
+    catalog = harvester.yaml.safe_load(catalog_output.read_text(encoding="utf-8"))
+    assert [bp["id"] for bp in catalog["blueprints"]] == ["BP-API", "BP-FRONTEND"]
+    assert [category["id"] for category in catalog["categories"]] == ["SEC"]
+
+    assert sorted(path.name for path in split_dir.iterdir()) == ["bp-api.yaml", "bp-frontend.yaml"]
+    api = harvester.yaml.safe_load((split_dir / "bp-api.yaml").read_text(encoding="utf-8"))
+    assert api["categories"] == []
+    assert [bp["id"] for bp in api["blueprints"]] == ["BP-API"]
+    assert api["description"] == "ACME requirements"
+    # Cross-references resolved in the same run survive into the split file.
+    assert api["blueprints"][0]["sections"][0]["references"] == [
+        {"id": "SEC-001", "url": "https://example.test/sec-001"}
+    ]
+    # Each file is a catalog in its own right, so the shared schema accepts it.
+    assert harvester.rstate.validate_catalog((split_dir / "bp-api.yaml").read_bytes())[0] == []
+
+
+def test_blueprint_file_names_are_sanitized_and_unique():
+    assert harvester.blueprint_file_stem("BP-API_V2") == "bp-api-v2"
+    assert harvester.blueprint_file_stem("../../etc/passwd") == "etc-passwd"
+    assert harvester.blueprint_file_stem("...") == "blueprint"
+
+    split_dir = Path("/out/blueprints")
+    planned = harvester.plan_blueprint_files(
+        [{"id": "BP-API"}, {"id": "bp/api"}, {"id": "BP..API"}],
+        split_dir,
+    )
+    assert [path.name for path, _ in planned] == ["bp-api.yaml", "bp-api-2.yaml", "bp-api-3.yaml"]
+    assert all(path.parent == split_dir for path, _ in planned)
+
+
+def test_run_rejects_malformed_blueprint_split_and_path_clash(monkeypatch, tmp_path, capsys):
+    def config_with(split, **extra):
+        return _write_config(
+            tmp_path,
+            {
+                "blueprint_split": split,
+                "sources": [{"id": "bp", "type": "blueprint", "crawl_url": "https://example.test/bp"}],
+                **extra,
+            },
+        )
+
+    monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(harvester, "harvest_blueprints_source", lambda *args, **kwargs: [{"id": "BP-API"}])
+    monkeypatch.setattr(harvester.rstate, "validate_catalog", lambda _body: ([], []))
+
+    assert harvester.run(_args(config=config_with(["blueprints"]), output=tmp_path / "out.yaml")) == 1
+    assert "must be an object" in capsys.readouterr().err
+
+    assert harvester.run(_args(config=config_with({"enabled": True}), output=tmp_path / "out.yaml")) == 1
+    assert "non-empty 'output_dir'" in capsys.readouterr().err
+
+    # The split directory may not reuse the catalog's own file name.
+    clashing = config_with({"enabled": True, "output_dir": "."})
+    assert harvester.run(_args(config=clashing, output=tmp_path / "bp-api.yaml")) == 1
+    assert "would overwrite another requested output" in capsys.readouterr().err
+
+    # A disabled split leaves the run untouched.
+    assert harvester.run(_args(config=config_with({"enabled": False}), output=tmp_path / "out.yaml")) == 0
+
+
+def test_blueprint_dir_flag_enables_the_split_for_one_run(monkeypatch, tmp_path):
+    config = _write_config(
+        tmp_path,
+        {"sources": [{"id": "bp", "type": "blueprint", "crawl_url": "https://example.test/bp"}]},
+    )
+    monkeypatch.setattr(harvester, "build_session", lambda *args, **kwargs: object())
+    monkeypatch.setattr(harvester, "harvest_blueprints_source", lambda *args, **kwargs: [{"id": "BP-API"}])
+    monkeypatch.setattr(harvester.rstate, "validate_catalog", lambda _body: ([], []))
+
+    split_dir = tmp_path / "cli-blueprints"
+    result = harvester.run(_args(config=config, output=tmp_path / "out.yaml", blueprint_dir=split_dir))
+
+    assert result == 0
+    assert [path.name for path in split_dir.iterdir()] == ["bp-api.yaml"]
 
 
 # ---------------------------------------------------------------------------
@@ -1335,6 +1481,8 @@ def test_main_parses_cli_arguments_and_exits(monkeypatch, tmp_path):
             str(tmp_path / "out.openspec.md"),
             "--specdd-output",
             str(tmp_path / "out.sdd"),
+            "--blueprint-dir",
+            str(tmp_path / "blueprints"),
             "--token",
             "tok",
             "--dry-run",
@@ -1353,6 +1501,7 @@ def test_main_parses_cli_arguments_and_exits(monkeypatch, tmp_path):
     assert seen["args"].output_formats == ["openspec", "specdd"]
     assert seen["args"].openspec_output == str(tmp_path / "out.openspec.md")
     assert seen["args"].specdd_output == str(tmp_path / "out.sdd")
+    assert seen["args"].blueprint_dir == str(tmp_path / "blueprints")
     assert seen["args"].token == "tok"
     assert seen["args"].dry_run is True
     assert seen["args"].verbose is True
