@@ -13,17 +13,11 @@ description: >-
   the results.
 ---
 
-You print the command reference below. This skill is **read-only**: it reads
-plugin status once and otherwise does **not** scan, analyze, spawn agents, or
-write files. It works in any repository,
-including one without a threat model — the case where it matters most.
+You print the command reference below. This skill is **read-only**: it reads plugin status once and otherwise does **not** scan, analyze, spawn agents, or write files. It works in any repository, including one without a threat model — the case where it matters most.
 
-**Print it as a reference, not as prose.** Keep the command blocks and the
-one-line explanations; do not expand them into paragraphs, do not summarize the
-repository, and do not comment on findings.
+**Print the reference verbatim.** Its blocks are column-aligned and no line exceeds 72 columns, so nothing wraps in a terminal. Rewording an explanation, re-wrapping a line, or merging blocks is what makes the output look broken. Do not expand the one-line explanations into paragraphs, do not add headings, do not summarize the repository, and do not comment on findings.
 
-Print what is actually in effect, not what the plugin could do elsewhere. Read
-the state from one read-only call before printing:
+Print what is actually in effect, not what the plugin could do elsewhere. Read the state from one read-only call before printing:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" --repo-root <repo> --json
@@ -31,45 +25,36 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/appsec_status.py" --repo-root <repo> --json
 
 Adjust the reference with it:
 
-1. If `docs/security/threat-model.yaml` is missing, drop the *Ask about it* and
-   *Work through findings* sections — there is nothing to ask about yet.
-2. Drop the line of every skill named in `org_profile.disabled_skills` — the
-   package refuses it at runtime.
-3. When `org_profile.active` is true, replace the plugin-configuration line
-   under *Configuration* with one line naming the organization (`id`), the
-   active `preset`, and that scan defaults come from that profile.
-4. Under *Guidance while you code*, print the coach's real state and note from
-   `capsules.coach`. When the state is `not packaged`, drop the section — the
-   package does not ship the hook.
-5. In *More information*, print the URL from `banner.url` in the plugin's
-   `config.json` when one is set, otherwise the upstream URL shown below.
+1. If `docs/security/threat-model.yaml` is missing, drop the *Once a model exists* section — there is nothing to ask about or triage yet.
+2. Drop the line of every skill named in `org_profile.disabled_skills` — the package refuses it at runtime.
+3. When `org_profile.active` is true, replace the plugin-defaults sentence under *Files* with one sentence naming the organization (`id`), the active `preset`, and that scan defaults come from that profile.
+4. Under *Guidance while you code*, print the coach's real state and note from `capsules.coach`. When the state is `not packaged`, drop the section — the package does not ship the hook.
+5. On the last line, print the URL from `banner.url` in the plugin's `config.json` when one is set, otherwise the upstream URL shown below.
 
 ---
 
 # appsec-advisor
 
-## First threat model
+## Start here
+
+Scans this repository and writes the model to `docs/security/`. Without a flag it runs a full scan.
 
 ```text
-/appsec-advisor:create-threat-model              full scan, writes docs/security/
-/appsec-advisor:create-threat-model --quick      faster, less depth — good first look
-/appsec-advisor:create-threat-model --thorough   for a release review or audit
-/appsec-advisor:create-threat-model --help       every flag
+/appsec-advisor:create-threat-model
+
+  --quick                       faster, less depth; a first look
+  --thorough                    for a release review or audit
+  --full                        reassess, keep the report history
+  --rebuild                     clean slate, F-IDs may be reassigned
+  --repo <dir>                  scan a different repository
+  --output <dir>                write the model somewhere else
+  --requirements <url>          grade findings against your catalog
+  --help                        every flag
 ```
 
-Analyzing another repository:
+`<dir>` is a path; `<url>` is an HTTP(S) requirements catalog such as `https://appsec.int.example.com/appsec-requirements.yaml`.
 
-```text
-/appsec-advisor:create-threat-model --repo ../payment-service --output ./models/payment
-```
-
-Checking the findings against your security requirements catalog — no separate setup command, the flag is enough:
-
-```text
-/appsec-advisor:create-threat-model --requirements https://URL/appsec-requirements.yaml
-```
-
-## Ask about it
+## Once a model exists
 
 No command needed — ask in plain language:
 
@@ -80,49 +65,30 @@ does the model cover SSRF?
 welche kritischen findings gibt es?
 ```
 
-Answers come from the committed model and cite finding IDs. When the model does
-not contain the answer, you are told so.
+Answers come from the committed model and cite finding IDs. When the model does not contain the answer, you are told so.
 
 ```text
-/appsec-advisor:show-threat-model    the fixed summary block, on request
-```
-
-## Work through findings
-
-```text
-/appsec-advisor:review-threat-model    triage console, P1 before P2 before P3
-```
-
-## Keep it current
-
-```text
-/appsec-advisor:create-threat-model --full                reassess and preserve report history
-/appsec-advisor:create-threat-model --full --rebuild      clean slate, F-IDs may be reassigned
+/appsec-advisor:review-threat-model     triage console, P1 first
+/appsec-advisor:show-threat-model       the fixed summary block
 ```
 
 ## Secure coding, before the code exists
 
-A threat model finds what is already wrong. The secure-coding baseline is an
-instruction file the assistant loads before it writes anything, so the rules
-apply on every prompt — not only the ones that mention security.
+A threat model finds what is already wrong. The secure-coding baseline is an instruction file the assistant loads before it writes anything, so the rules apply on every prompt, not only the ones that mention security. It takes effect at the next session start, not the one it was installed in.
 
 ```text
-/appsec-advisor:install-baseline    menu: this machine, or this repository
-/appsec-advisor:verify-baseline     is it actually loaded? read-only, exits 1 if not
-/appsec-advisor:remove-baseline     stop it loading; keeps the file unless told otherwise
+/appsec-advisor:install-baseline        this machine, or this repo
+/appsec-advisor:verify-baseline         is it loaded; exits 1 if not
+/appsec-advisor:remove-baseline         stop it loading, keep the file
 ```
-
-It loads at the next session start, not the one it was installed in.
 
 ## Guidance while you code
 
-The coach is a prompt hook. When a prompt touches auth, crypto, injection,
-secrets or IaC, it adds the matching guidance — and the team's requirements
-when a catalog is configured — before the code is written.
+The coach is a prompt hook. When a prompt touches auth, crypto, injection, secrets or IaC, it adds the matching guidance — and the team's requirements when a catalog is configured — before the code is written.
 
 ```text
-APPSEC_COACH=1 claude ...     turn it on for one session
-APPSEC_COACH=0 claude ...     turn it off for one session
+APPSEC_COACH=1 claude ...       on for this session
+APPSEC_COACH=0 claude ...       off for this session
 ```
 
 <coach state and note from `capsules.coach`>
@@ -130,43 +96,31 @@ APPSEC_COACH=0 claude ...     turn it off for one session
 ## Everything else
 
 ```text
-/appsec-advisor:status                 is a scan running
-/appsec-advisor:threat-model-health    is the stored model consistent
-/appsec-advisor:security-score         a quick 0-100 scan score, no model needed
-/appsec-advisor:export-threat-model    PDF, HTML, SARIF
-/appsec-advisor:publish-threat-model   push the report to its destination
-/appsec-advisor:report-error           anonymized bundle after a failed run
+/appsec-advisor:status                  is a scan running
+/appsec-advisor:threat-model-health     is the stored model consistent
+/appsec-advisor:security-score          0-100 score, no model needed
+/appsec-advisor:export-threat-model     PDF, HTML, SARIF
+/appsec-advisor:publish-threat-model    push the report to its target
+/appsec-advisor:report-error            bundle after a failed run
 ```
 
 Typing `/appsec-advisor:` lists every skill with its description.
 
 ## Files
 
-```text
-docs/security/threat-model.md               the report
-docs/security/threat-model.yaml             the structured model every skill reads
-docs/security/threat-model-changelog.md     what changed between runs
-```
-
-## Configuration
-
-Optional files in the repository you scan, read when they exist. None of them
-can suppress a finding the code supports.
+A run writes the first group and reads the second when it exists. No input file can suppress a finding the code supports.
 
 ```text
-docs/business-context.md          critical flows, sensitive data, regulatory scope
-docs/known-threats.yaml           prior findings, re-checked on every run
-.appsec/trust-boundaries.yaml     deployment and tenancy intent
+docs/security/
+  threat-model.md               the report
+  threat-model.yaml             the model every skill reads
+  threat-model-changelog.md     what changed between runs
+
+docs/business-context.md        critical flows, sensitive data, scope
+docs/known-threats.yaml         prior findings, re-checked each run
+.appsec/trust-boundaries.yaml   deployment and tenancy intent
 ```
 
-```text
-APPSEC_BANNER=0     in the env block of ~/.claude/settings.json — turns the
-                    session banner off
-```
+Set `APPSEC_BANNER=0` in the `env` block of `~/.claude/settings.json` to turn the session banner off. Plugin defaults — pricing, logging, external context — live in `config.json` in the plugin directory, documented in `docs/configuration.md`.
 
-Plugin defaults — pricing, logging, external context: `config.json` in the
-plugin directory, documented in `docs/configuration.md`.
-
-## More information
-
-https://github.com/appsec-foundry/appsec-advisor
+More information: https://github.com/appsec-foundry/appsec-advisor

@@ -165,7 +165,7 @@ Run these commands in Claude Code:
 /appsec-advisor:create-threat-model --assessment-depth thorough
 
 # Fresh scan that may reassign finding IDs
-/appsec-advisor:create-threat-model --full --rebuild
+/appsec-advisor:create-threat-model --rebuild
 
 # Reassess while preserving report history
 /appsec-advisor:create-threat-model --full

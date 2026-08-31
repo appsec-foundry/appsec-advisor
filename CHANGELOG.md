@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A stage transition no longer replays the whole resolved configuration, so a long run accumulates less orchestrator context.
 - The completion summary's Next Steps now reads as self-contained alternatives, with the example questions stacked on their own lines and marked as examples rather than as the only two you can ask.
 - The bundled demonstration catalog now links to an organization's own requirement portal instead of to OWASP pages, so the demo shows the link shape a harvested catalog actually produces, and the placeholder hosts in the documentation all name the same fictional portal.
+- `/appsec-advisor:help` no longer wraps in a terminal: every line of the reference fits 72 columns, the explanations line up on one column per block, and the `create-threat-model` flags are listed under the command instead of repeated across full-width lines.
 
 ### Fixed
 
