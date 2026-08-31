@@ -96,6 +96,41 @@ def test_a_missing_baseline_is_reported_not_installed(repo: Path, home: Path, co
     assert not (repo / "CLAUDE.md").exists()
 
 
+def test_an_outdated_copy_is_refreshed_in_place(repo: Path, home: Path, config: dict, monkeypatch):
+    """The case the command exists for: same baseline, older text on disk.
+
+    An older version lands in its own bucket rather than under ``matches``, so
+    the partition has to read both or this update finds nothing to do.
+    """
+    target = repo / config["install_filename"]
+    target.write_text(BASELINE_TEXT.replace("test-1.0", "test-0.9"), encoding="utf-8")
+    (repo / "CLAUDE.md").write_text(f"@{config['install_filename']}\n", encoding="utf-8")
+    publish(monkeypatch, EDITED_TEXT)
+
+    steps, code = ub.update(repo, home, config)
+
+    assert code == 0
+    assert target.read_text(encoding="utf-8") == EDITED_TEXT
+    assert any("updated" in step for step in steps)
+
+
+def test_an_outdated_carrier_is_still_left_alone(repo: Path, home: Path, config: dict, monkeypatch):
+    """Ownership wins over staleness: a team's own file is not this command's."""
+    carrier = repo / "AGENTS.md"
+    carrier.write_text(
+        "# AGENTS.md\n\nTeam rules.\n\n" + BASELINE_TEXT.replace("test-1.0", "test-0.9"),
+        encoding="utf-8",
+    )
+    (repo / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
+    publish(monkeypatch, EDITED_TEXT)
+
+    steps, code = ub.update(repo, home, config)
+
+    assert code == 0
+    assert carrier.read_text(encoding="utf-8").startswith("# AGENTS.md")
+    assert any("left alone" in step for step in steps)
+
+
 def test_a_foreign_baseline_is_left_where_it_is(repo: Path, home: Path, config: dict):
     other = repo / config["install_filename"]
     other.write_text("# Other\n\n`baseline-id: other-9.9`\n", encoding="utf-8")
@@ -193,7 +228,10 @@ def test_a_reused_carrier_is_left_alone(repo: Path, home: Path, config: dict, mo
 
 
 def test_a_policy_deployment_is_not_this_command_s(config: dict):
-    result = {"matches": [{"id": "test-1.0", "scope": "policy", "file": "/etc/claude-code/CLAUDE.md"}]}
+    result = {
+        "matches": [{"id": "test-1.0", "scope": "policy", "file": "/etc/claude-code/CLAUDE.md"}],
+        "older": [],
+    }
 
     targets, notes = ub._partition(result, config)
 

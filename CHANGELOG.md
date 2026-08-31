@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A baseline that lags the configured one is now reported as outdated in its own right, with `/appsec-advisor:update-baseline` beside it, instead of sharing the wording of a foreign baseline nobody configured. Both still fail an enforcing check.
 - The final stage now polishes the report's wording instead of reviewing it a second time: it runs once on Sonnet, rewrites prose only, and reverts itself if a finding, rating, evidence locator, link or number would change. It reports what it rewrote.
 - A missing lockfile, an undigested base image, a missing workflow `permissions:` block and an unpinned action are now Medium instead of High.
 - Business context supplied with `--context` is now captured by the run itself, and a source that cannot be read stops the run instead of being dropped in silence.

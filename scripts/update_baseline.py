@@ -98,11 +98,16 @@ def owned(path: Path, config: dict) -> bool:
 
 
 def _partition(result: dict, config: dict) -> tuple[list[Path], list[str]]:
-    """Split the loaded baseline files into the ones to rewrite and notes."""
+    """Split the loaded baseline files into the ones to rewrite and notes.
+
+    Both the matching and the outdated files: an older version of the configured
+    baseline is the case this command exists for, and it lands in its own bucket
+    rather than under ``matches``.
+    """
     targets: list[Path] = []
     notes: list[str] = []
     seen: set[str] = set()
-    for match in result["matches"]:
+    for match in result["matches"] + result["older"]:
         path = Path(match["file"])
         key = bc._resolved_str(path)
         if key in seen:

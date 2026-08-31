@@ -83,6 +83,7 @@ CREATE = "/appsec-advisor:create-threat-model"
 STATUS = "/appsec-advisor:status"
 HELP = "/appsec-advisor:help"
 INSTALL_BASELINE = "/appsec-advisor:install-baseline"
+UPDATE_BASELINE = "/appsec-advisor:update-baseline"
 REBUILD = f"{CREATE} --full --rebuild"
 REFRESH = f"{CREATE} --full"
 
@@ -388,6 +389,20 @@ def _baseline_line(repo: Path | None) -> str:
             beside = f"also {found} in {where}" if where else f"also {found}"
         # No command: which of two rule sets to drop is a decision, not a repair.
         return _join(label, ids, scopes, beside)
+
+    if status == "outdated":
+        # The rules are loaded, just an older version of them. Naming install
+        # here would send the reader to pick a scope that is already picked; the
+        # file exists and only its text is behind, which is one command.
+        ids = ", ".join(sorted({m["id"] for m in result.get("older") or []}))
+        scopes = baseline_check.scope_text(result.get("scopes"))
+        behind = f"behind {result.get('expected_id') or '?'}"
+        # Install is the fallback, not the answer: it writes the scope's
+        # canonical path, which is a second file wherever the install reused a
+        # carrier. It is still better than naming no command at all in a build
+        # whose allowlist does not carry update-baseline.
+        command = _skill_command(UPDATE_BASELINE) or _skill_command(INSTALL_BASELINE)
+        return _join(label, ids, scopes, behind, command)
 
     if status == "newer":
         # The baseline moves on its own schedule, so a machine ahead of this

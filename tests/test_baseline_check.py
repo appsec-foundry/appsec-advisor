@@ -323,12 +323,29 @@ def test_a_newer_version_is_ahead_rather_than_wrong(repo: Path, home: Path):
     assert not bc.is_failing(result)
 
 
-def test_an_older_version_stays_drift(repo: Path, home: Path):
-    """Lagging rules are the case a refresh actually fixes."""
+def test_an_older_version_is_reported_as_outdated(repo: Path, home: Path):
+    """Lagging rules are the case a refresh actually fixes.
+
+    Separated from a foreign baseline so the reader is sent to the command that
+    applies. It stays a failing state: the rules this build names are not the
+    ones in context either way.
+    """
     config = {**CONFIG, "id": "test-2.0"}
     write(repo / "CLAUDE.md", BASELINE_TEXT)
     result = bc.check(repo=repo, home=home, config=config)
+    assert result["status"] == "outdated"
+    assert [item["id"] for item in result["older"]] == ["test-1.0"]
+    assert result["other"] == []
+    assert bc.is_failing(result)
+    assert "behind test-2.0" in bc.summary(result)
+
+
+def test_a_foreign_baseline_stays_foreign(repo: Path, home: Path):
+    """A different name is not a version behind — no command can resolve it."""
+    write(repo / "CLAUDE.md", BASELINE_TEXT.replace("test-1.0", "other-1.0"))
+    result = bc.check(repo=repo, home=home, config=CONFIG)
     assert result["status"] == "other"
+    assert result["older"] == []
     assert bc.is_failing(result)
 
 

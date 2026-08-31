@@ -395,6 +395,18 @@ def is_newer(found: str, expected: str) -> bool:
     return bool(left and right and left[0] == right[0] and left[1] > right[1])
 
 
+def is_older(found: str, expected: str) -> bool:
+    """True when ``found`` is an earlier version of the same baseline.
+
+    Separated from a foreign baseline because the two need opposite answers.
+    Lagging behind the configured rules is a refresh: one command replaces the
+    text in place and the reader is done. A baseline nobody here configured is a
+    decision about which rule set should apply, and no command can make it.
+    """
+    left, right = _version_key(found), _version_key(expected)
+    return bool(left and right and left[0] == right[0] and left[1] < right[1])
+
+
 # Reported narrowest-first: the scope a reader can act on locally is the more
 # useful one to name, and a policy deployment is the one they cannot change.
 _SCOPE_ORDER = {"project": 0, "user": 1, "policy": 2}
@@ -433,6 +445,7 @@ def check(
         "name": cfg["name"],
         "matches": [],
         "newer": [],
+        "older": [],
         "other": [],
         "present_unloaded": [],
         "scopes": [],
@@ -448,6 +461,8 @@ def check(
             bucket = "matches"
         elif is_newer(found, cfg["id"]):
             bucket = "newer"
+        elif is_older(found, cfg["id"]):
+            bucket = "older"
         else:
             bucket = "other"
         if item not in result[bucket]:
@@ -468,7 +483,9 @@ def check(
     # repository. Where those two spellings differ — a symlinked checkout, or
     # macOS, where /tmp is a link to /private/tmp — an already-imported
     # AGENTS.md would be listed a second time as if it were unwired.
-    loaded_files = {_resolved_str(item["file"]) for item in result["matches"] + result["newer"] + result["other"]}
+    loaded_files = {
+        _resolved_str(item["file"]) for item in result["matches"] + result["newer"] + result["older"] + result["other"]
+    }
     for path, tool in _unloaded_carriers(repo, cfg):
         if not path.is_file() or _resolved_str(path) in loaded_files:
             continue
@@ -483,6 +500,9 @@ def check(
     elif result["newer"]:
         result["status"] = "newer"
         result["scopes"] = sorted({m["scope"] for m in result["newer"]}, key=lambda s: _SCOPE_ORDER.get(s, 9))
+    elif result["older"]:
+        result["status"] = "outdated"
+        result["scopes"] = sorted({m["scope"] for m in result["older"]}, key=lambda s: _SCOPE_ORDER.get(s, 9))
     elif result["other"]:
         result["status"] = "other"
         result["scopes"] = sorted({m["scope"] for m in result["other"]}, key=lambda s: _SCOPE_ORDER.get(s, 9))
@@ -536,6 +556,12 @@ def summary(result: dict) -> str:
     carriers = sorted({Path(item["file"]).name for item in result.get("present_unloaded") or []})
     found_note = f" · on disk in {', '.join(carriers)}" if carriers else ""
 
+    if status == "outdated":
+        ids = sorted({m["id"] for m in result["older"]})
+        scopes = _scope_labels(result)
+        line = f"{name} {', '.join(ids)}" + (f" · {scopes}" if scopes else "")
+        return f"{line} · behind {result['expected_id']}"
+
     if status == "other":
         ids = sorted({m["id"] for m in result["other"]})
         return f"{name} {result['expected_id']} not loaded · found {', '.join(ids)}{found_note}"
@@ -545,13 +571,16 @@ def summary(result: dict) -> str:
 
 
 def is_failing(result: dict) -> bool:
-    """True for the states a gate should reject: no baseline, or a foreign one.
+    """True for the states a gate should reject: no baseline, a foreign one, or
+    an older version of the configured one.
 
-    A newer version of the configured baseline is not one of them. It is the
-    same rules, further along, and a build that rejected it would be demanding
-    a downgrade.
+    A newer version is not one of them. It is the same rules, further along, and
+    a build that rejected it would be demanding a downgrade. An older version is:
+    the rules this build names are not the ones in context, which is what the
+    gate exists to establish. Splitting ``outdated`` out of ``other`` changed how
+    that state is reported, not whether it passes.
     """
-    return result.get("status") in ("missing", "other")
+    return result.get("status") in ("missing", "other", "outdated")
 
 
 def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
@@ -566,6 +595,10 @@ def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
     elif status == "newer":
         lines.append(f"✓ {result['name']} is loaded, ahead of the {result['expected_id']} this build names.")
         lines.append("  Nothing to install — that would replace it with the older text.")
+    elif status == "outdated":
+        loaded = ", ".join(sorted({m["id"] for m in result["older"]}))
+        lines.append(f"✗ {result['name']} is loaded at {loaded}, behind the {result['expected_id']} this build names.")
+        lines.append("  Refresh it in place with /appsec-advisor:update-baseline")
     elif status == "other":
         lines.append(f"✗ {result['name']} ({result['expected_id']}) is NOT loaded.")
         lines.append("  A different baseline is in context — the configured rules are not.")
@@ -573,7 +606,7 @@ def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
         lines.append(f"✗ {result['name']} ({result['expected_id']}) is NOT loaded.")
 
     expected = result["expected_id"]
-    for record in result["matches"] + result["newer"] + result["other"]:
+    for record in result["matches"] + result["newer"] + result["older"] + result["other"]:
         mark = "✓" if is_match(record["id"], expected) or is_newer(record["id"], expected) else "!"
         scope = SCOPE_LABELS.get(record["scope"], record["scope"])
         via = "" if record["file"] == record["entry"] else f"\n      via {record['file']}"

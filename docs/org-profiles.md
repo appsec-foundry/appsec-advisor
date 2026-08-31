@@ -355,7 +355,11 @@ counts as installed and is reported with its suffix, so a reader can see the
 adaptation. A *newer* version of the same baseline counts as loaded and is
 reported as ahead of the id you declared — a baseline is published on its own
 schedule, and a machine that updated before your profile did is not broken. An
-older version, or a different baseline, stays visible as drift.
+*older* version is reported as behind, with `/appsec-advisor:update-baseline` to
+refresh it in place — the scope is already chosen, only the text lags. A
+different baseline stays visible as drift with no command beside it: which of
+two rule sets should apply is a decision, not a repair. Both fail an enforcing
+check, because in neither case are the rules you declared the ones in context.
 
 Declaring any source replaces the plugin's default baseline everywhere —
 banner, verify, and what install writes. The upstream URL and the upstream
