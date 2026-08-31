@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A hook firing from a subdirectory now writes to the run's own output directory instead of creating a stray one beside it, so budget state and hook events no longer split across trees the run never reads.
 - A run that ends without releasing its lock no longer blocks every later run against the same output directory: the watchdog stops refreshing the heartbeat once the run has been inactive for an hour, and clearing a lock now judges the holder by that heartbeat rather than by a process id that means nothing outside its own sandbox.
 - Transport Encryption is no longer rated from a plain-HTTP URL in a comment, so a bundled third-party file stops producing a cleartext-transport verdict.
 - An agent call the host answers asynchronously is recorded as launched instead of rejected, so a finished agent no longer holds turns and budget claims that skipped abuse-case verification.

@@ -179,15 +179,60 @@ def _is_tracing() -> bool:
 _TRACING = _is_tracing()
 
 
+def _existing_output_root(start: str) -> str | None:
+    """Nearest ancestor of ``start`` that is a checkout AND holds ``docs/security``.
+
+    Both signals are required because each alone picks the wrong directory.
+
+    ``.git`` alone walks to the filesystem root, so an unrelated or stray
+    checkout above captures every hook that fires outside a project — an empty
+    ``/tmp/.git``, which is a real thing to find on a shared box, is enough to
+    send events to ``/tmp/docs/security``. Writing outside the tree the run
+    belongs to is worse than the nesting this is here to fix.
+
+    ``docs/security`` alone is captured by the very stray directory this fixes.
+    A hook firing from ``<repo>/docs`` finds ``<repo>/docs/docs/security`` left
+    by an earlier run one candidate before it reaches the real one, so the bug
+    keeps its own artifact alive.
+
+    Together neither misfires: the stray nested directory sits under no
+    checkout of its own, and a checkout with no ``docs/security`` is not an
+    output root. Returns None on a first run, where nothing has been created
+    yet and the caller's cwd default is correct.
+    """
+    try:
+        path = Path(start).resolve()
+    except OSError:
+        return None
+    for candidate in (path, *path.parents):
+        try:
+            # ``.git`` is a FILE in a worktree or submodule checkout, so this
+            # has to be ``exists``, not ``is_dir``.
+            if (candidate / ".git").exists() and (candidate / "docs" / "security").is_dir():
+                return str(candidate)
+        except OSError:
+            return None
+    return None
+
+
 def _output_dir() -> str:
     """Resolve the appsec output directory.
 
     Preference order:
       1. OUTPUT_DIR environment variable (set by the skill dispatch).
-      2. cwd itself when it already ends in docs/security — prevents the
-         nested docs/security/docs/security/ path that appears when a hook
-         fires from a session whose cwd is already inside the output dir.
-      3. cwd + /docs/security (legacy default).
+      2. cwd itself when it already ends in docs/security — a hook firing from
+         a session whose cwd is already inside the output dir.
+      3. ``<nearest enclosing checkout that has one>/docs/security``.
+      4. cwd + /docs/security, for a first run with nothing to find yet.
+
+    Step 3 exists because a run's output directory does not move with the cwd,
+    and appending to the cwd made every subdirectory its own destination. Case
+    2 only ever caught the one cwd that was already the full output path; a
+    hook firing one level up, from ``<repo>/docs``, wrote a stray
+    ``<repo>/docs/docs/security``, and one from ``<repo>/routes`` a
+    ``<repo>/routes/docs/security``. Those writes succeed and go unread — the
+    run that owns the events looks in its own directory — so budget state and
+    hook events silently split across trees.
     """
     env = os.environ.get("OUTPUT_DIR")
     if env:
@@ -196,6 +241,9 @@ def _output_dir() -> str:
     norm = cwd.replace("\\", "/").rstrip("/")
     if norm.endswith("/docs/security") or norm == "docs/security":
         return cwd
+    root = _existing_output_root(cwd)
+    if root:
+        return os.path.join(root, "docs", "security")
     return os.path.join(cwd, "docs", "security")
 
 

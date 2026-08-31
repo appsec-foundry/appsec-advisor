@@ -534,6 +534,70 @@ class TestOutputDir:
         out = al._output_dir()
         assert out.endswith("docs/security") or out.endswith("docs\\security")
 
+    def test_subdirectory_resolves_to_the_existing_output_dir(self, al, monkeypatch, tmp_path):
+        # The run's output directory does not move with the cwd. Appending to
+        # the cwd made every subdirectory its own destination: a hook firing
+        # from <repo>/docs wrote a stray <repo>/docs/docs/security that the
+        # run owning the events never reads.
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "docs" / "security").mkdir(parents=True)
+        (tmp_path / "routes").mkdir()
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+
+        for sub in ("docs", "routes"):
+            monkeypatch.chdir(tmp_path / sub)
+            assert Path(al._output_dir()) == tmp_path.resolve() / "docs" / "security"
+
+    def test_cwd_inside_the_output_dir_still_wins(self, al, monkeypatch, tmp_path):
+        (tmp_path / ".git").mkdir()
+        ds = tmp_path / "docs" / "security"
+        ds.mkdir(parents=True)
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        monkeypatch.chdir(ds)
+        assert al._output_dir() == str(ds)
+
+    def test_a_checkout_without_an_output_dir_does_not_capture(self, al, monkeypatch, tmp_path):
+        # Anchoring on .git alone walks to the filesystem root, so a stray
+        # checkout above — an empty /tmp/.git is a real thing to find — would
+        # send hook events outside the tree they belong to.
+        (tmp_path / ".git").mkdir()
+        sub = tmp_path / "routes"
+        sub.mkdir()
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        monkeypatch.chdir(sub)
+        assert al._existing_output_root(str(sub)) is None
+        assert Path(al._output_dir()) == sub.resolve() / "docs" / "security"
+
+    def test_a_stray_nested_output_dir_does_not_capture(self, al, monkeypatch, tmp_path):
+        # The artifact of the very bug being fixed: an earlier run wrote
+        # <repo>/docs/docs/security, which sits one candidate before the real
+        # one for a hook firing from <repo>/docs. Requiring a checkout too is
+        # what stops the bug from keeping its own residue alive.
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "docs" / "security").mkdir(parents=True)
+        (tmp_path / "docs" / "docs" / "security").mkdir(parents=True)
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        monkeypatch.chdir(tmp_path / "docs")
+        assert Path(al._output_dir()) == tmp_path.resolve() / "docs" / "security"
+
+    def test_worktree_checkout_has_dot_git_as_a_file(self, al, monkeypatch, tmp_path):
+        (tmp_path / ".git").write_text("gitdir: /elsewhere/.git/worktrees/x\n")
+        (tmp_path / "docs" / "security").mkdir(parents=True)
+        sub = tmp_path / "routes"
+        sub.mkdir()
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        monkeypatch.chdir(sub)
+        assert Path(al._output_dir()) == tmp_path.resolve() / "docs" / "security"
+
+    def test_first_run_falls_back_to_the_cwd(self, al, monkeypatch, tmp_path):
+        # Stubbed rather than staged in a directory with no docs/security
+        # above it: the walk ends at the filesystem root, and anything in
+        # tmp_path's ancestry would decide the test instead of the code.
+        monkeypatch.delenv("OUTPUT_DIR", raising=False)
+        monkeypatch.setattr(al, "_existing_output_root", lambda _start: None)
+        monkeypatch.chdir(tmp_path)
+        assert Path(al._output_dir()) == tmp_path.resolve() / "docs" / "security"
+
 
 # ---------------------------------------------------------------------------
 # PostToolUse handler branches — Read / Grep / Glob / MultiEdit / Bash OK
