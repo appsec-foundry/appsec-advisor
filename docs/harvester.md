@@ -164,6 +164,8 @@ A source indexes its `crawl_url` and the child pages below it, so a source point
 
 The run fails before crawling when two sources claim the same file, or when a file would overwrite the catalog or a functional-spec export. A source that harvests nothing leaves its file untouched, so a failed crawl does not replace the last good one with an empty file.
 
+`examples/blueprints/api-hardening.yaml` and `examples/blueprints/llm-security.yaml` show that shape, and `examples/appsec-requirements-example.requirements.yaml` shows a catalog that carries only requirements. All three are split from the combined `examples/appsec-requirements-example.yaml` and each is accepted by `--requirements` on its own.
+
 ## Configuration
 
 The crawler reads `scripts/harvest-config.json`. This is the minimum useful configuration:

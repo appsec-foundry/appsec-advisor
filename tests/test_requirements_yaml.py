@@ -7,6 +7,9 @@ structure expected by the audit-security-requirements skill (SKILL.md Step 1c):
   categories[].requirements[].id, .text, .priority, .url
 
 Also validates the optional blueprints[] section and cross-references.
+
+The split examples beside it (a requirements-only catalog and one file per
+blueprint) must not drift from what this catalog publishes.
 """
 
 import re
@@ -14,9 +17,16 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+import requirements_state as rstate
 import yaml
 
-REQUIREMENTS_FILE = Path(__file__).parent.parent / "examples" / "appsec-requirements-example.yaml"
+EXAMPLES_DIR = Path(__file__).parent.parent / "examples"
+REQUIREMENTS_FILE = EXAMPLES_DIR / "appsec-requirements-example.yaml"
+REQUIREMENTS_ONLY_FILE = EXAMPLES_DIR / "appsec-requirements-example.requirements.yaml"
+BLUEPRINT_FILES = {
+    "BP-API-HARDENING": EXAMPLES_DIR / "blueprints" / "api-hardening.yaml",
+    "BP-LLM-SECURITY": EXAMPLES_DIR / "blueprints" / "llm-security.yaml",
+}
 
 VALID_PRIORITIES = {"MUST", "SHOULD", "MAY"}
 
@@ -365,3 +375,33 @@ class TestCrossReferences:
 
         strays = [(path, url) for path, url in links(data) if not url.startswith(CATALOG_HOST)]
         assert not strays, f"Link fields outside {CATALOG_HOST}: {strays}"
+
+
+# ---------------------------------------------------------------------------
+# Split examples
+# ---------------------------------------------------------------------------
+
+
+class TestSplitExamples:
+    """The split files model the harvester's per-source output: a catalog that
+    carries only requirements, and a catalog per blueprint with an empty
+    `categories` list. Each one is passed to `--requirements` on its own, so each
+    one must validate alone and must not drift from the combined catalog."""
+
+    def test_requirements_only_example_repeats_the_catalog_requirements(self, data):
+        split = yaml.safe_load(REQUIREMENTS_ONLY_FILE.read_text())
+        assert split["categories"] == data["categories"]
+        assert split["blueprints"] == []
+        assert [meta["id"] for meta in split["sources_meta"]] == ["owasp-informed-requirements"]
+
+    @pytest.mark.parametrize("blueprint_id", sorted(BLUEPRINT_FILES))
+    def test_blueprint_example_repeats_the_catalog_blueprint(self, data, blueprint_id):
+        split = yaml.safe_load(BLUEPRINT_FILES[blueprint_id].read_text())
+        published = {entry["id"]: entry for entry in data["blueprints"]}
+        assert split["categories"] == []
+        assert split["blueprints"] == [published[blueprint_id]]
+
+    @pytest.mark.parametrize("path", [REQUIREMENTS_ONLY_FILE, *BLUEPRINT_FILES.values()], ids=lambda p: p.name)
+    def test_split_example_validates_as_a_catalog_of_its_own(self, path):
+        errors, _ = rstate.validate_catalog(path.read_bytes())
+        assert errors == []

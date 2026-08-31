@@ -1,0 +1,62 @@
+generated: '2026-08-26T00:00:00Z'
+source: bundled-example
+description: Curated demonstration blueprint informed by OWASP Cheat Sheets, carrying one blueprint of examples/appsec-requirements-example.yaml in the per-source shape the harvester writes for a `catalog_file`. Its links model an internal catalog host and do not resolve, and its `references` point at requirement IDs published in the requirements catalog.
+url: https://appsec.int.example.com
+categories: []
+blueprints:
+- id: BP-API-HARDENING
+  source_id: owasp-informed-blueprints
+  url: https://appsec.int.example.com/blueprints/api-hardening
+  title: API Hardening
+  summary: |-
+    Guidance for hardening API configuration across different technology stacks.
+    Sections without technology boxes apply to all stacks.
+  topics:
+  - _waf
+  - _transport_encryption
+  - _disable_management_endpoints
+  - _rate_limiting
+  - _dependency_scanning
+  sections:
+  - title: 1. Deploy a WAF on Internet-Facing Applications
+    url: https://appsec.int.example.com/blueprints/api-hardening#_waf
+    content: Use a managed WAF or equivalent edge control when justified by the application's exposure and threat model, and keep application-layer controls authoritative.
+    references:
+    - id: HN-004
+      url: https://appsec.int.example.com/req/system-hardening#hn-004
+  - title: 2. Transport Encryption
+    url: https://appsec.int.example.com/blueprints/api-hardening#_transport_encryption
+    content: Handle all API communication using TLS 1.3; for service-to-service calls prefer mTLS.
+    references:
+    - id: DP-006
+      url: https://appsec.int.example.com/req/data-protection-cryptography#dp-006
+  - title: 3. Disable Management and Debug Endpoints
+    url: https://appsec.int.example.com/blueprints/api-hardening#_disable_management_endpoints
+    content: |-
+      Expose only essential public endpoints (e.g. /health, /info, /ready).
+      Serve all detailed or sensitive operational endpoints on an internal-only port or interface.
+      Prevent external exposure through ingress, routing, or load balancer configuration.
+      Use a dedicated management port that is not exposed via public ingress.
+    references:
+    - id: HN-002
+      url: https://appsec.int.example.com/req/system-hardening#hn-002
+  - title: 4. Rate Limiting
+    url: https://appsec.int.example.com/blueprints/api-hardening#_rate_limiting
+    content: |-
+      Prevent abuse (brute force, scraping) and protect availability by limiting excessive traffic.
+      Apply shared rate limiting at the edge and application layer by both client source and authenticated account or identifier.
+      Define endpoint-specific limits from capacity and abuse testing rather than copying universal example numbers.
+      Return HTTP 429 Too Many Requests on breach.
+    references:
+    - id: AC-003
+      url: https://appsec.int.example.com/req/authentication-access-control#ac-003
+  - title: 5. Implement Dependency and Code Scanning
+    url: https://appsec.int.example.com/blueprints/api-hardening#_dependency_scanning
+    content: |-
+      Integrate SCA tooling to detect vulnerable dependencies automatically on every build.
+      Run SAST on every pull request; do not merge code with unresolved high-severity findings.
+    references:
+    - id: SC-001
+      url: https://appsec.int.example.com/req/supply-chain-dependency-security#sc-001
+    - id: SC-006
+      url: https://appsec.int.example.com/req/supply-chain-dependency-security#sc-006

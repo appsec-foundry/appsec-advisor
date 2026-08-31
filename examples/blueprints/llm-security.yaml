@@ -1,0 +1,87 @@
+generated: '2026-08-26T00:00:00Z'
+source: bundled-example
+description: Curated demonstration blueprint informed by OWASP Cheat Sheets, carrying one blueprint of examples/appsec-requirements-example.yaml in the per-source shape the harvester writes for a `catalog_file`. Its links model an internal catalog host and do not resolve, and its `references` point at requirement IDs published in the requirements catalog.
+url: https://appsec.int.example.com
+categories: []
+blueprints:
+- id: BP-LLM-SECURITY
+  source_id: owasp-informed-blueprints
+  url: https://appsec.int.example.com/blueprints/llm-security
+  title: AI / LLM Application Security
+  summary: |-
+    Guidance for building secure applications that integrate Large Language Models.
+    Covers prompt injection defenses, output filtering, tool permission models, and cost control.
+  topics:
+  - _prompt_injection_defense
+  - _output_filtering
+  - _tool_permission_model
+  - _rag_security
+  - _cost_control
+  - _system_prompt_protection
+  sections:
+  - title: 1. Prompt Injection Defense
+    url: https://appsec.int.example.com/blueprints/llm-security#_prompt_injection_defense
+    content: |-
+      Treat user prompts, retrieved documents, files, tool results, and memory as untrusted content, including indirect instructions hidden in non-text input.
+      Separate untrusted content from operator instructions, but do not treat delimiters, sanitization, or the system prompt as a security boundary.
+      Constrain model capabilities and validate structured output with deterministic code.
+      Authorize every data retrieval and tool action outside the model with least privilege.
+      Require approval for high-impact actions and test direct, indirect, encoded, multilingual, and cross-modal injection attempts.
+    references:
+    - id: LLM-001
+      url: https://appsec.int.example.com/req/ai-llm-security#llm-001
+  - title: 2. Output Filtering & Validation
+    url: https://appsec.int.example.com/blueprints/llm-security#_output_filtering
+    content: |-
+      Authorize and minimize source data before it enters the model context; output filtering cannot repair unauthorized retrieval.
+      Treat model output as untrusted and validate it against a bounded schema and the destination's policy.
+      Apply contextual encoding before display and deterministic validation before any downstream API or tool call.
+      Never pass output directly to eval, a shell, query syntax, innerHTML, filesystem paths, or an authorization decision.
+      Record validation failures without storing prompts, outputs, credentials, or personal data unnecessarily.
+    references:
+    - id: LLM-002
+      url: https://appsec.int.example.com/req/ai-llm-security#llm-002
+    - id: LLM-005
+      url: https://appsec.int.example.com/req/ai-llm-security#llm-005
+  - title: 3. Tool Permission Model
+    url: https://appsec.int.example.com/blueprints/llm-security#_tool_permission_model
+    content: |-
+      Expose only tools required for the feature and give each tool a dedicated least-privileged identity.
+      Authorize every invocation server-side for the authenticated user, tenant, action, target resource, and bounded parameters.
+      Require a human to approve high-impact, external, destructive, or irreversible actions after the exact action and target are known.
+      Prevent cross-tenant state and memory reuse, cap invocations and iterations, and log the actor, tool, target, decision, and outcome without sensitive parameters.
+    references:
+    - id: LLM-006
+      url: https://appsec.int.example.com/req/ai-llm-security#llm-006
+  - title: 4. RAG & Vector Store Security
+    url: https://appsec.int.example.com/blueprints/llm-security#_rag_security
+    content: |-
+      Authenticate and authorize every source and updater, retain provenance and tenant ownership, and quarantine content that fails the ingestion policy.
+      Enforce the source document's authorization before retrieval so a user cannot retrieve embeddings for inaccessible content.
+      Isolate tenant indexes and caches, bound result counts, and rate-limit similarity search to reduce extraction and resource abuse.
+      Validate the embedding model identity, dimensions, content size, and update history before indexing.
+    references:
+    - id: LLM-004
+      url: https://appsec.int.example.com/req/ai-llm-security#llm-004
+    - id: LLM-008
+      url: https://appsec.int.example.com/req/ai-llm-security#llm-008
+  - title: 5. Cost Control & Rate Limiting
+    url: https://appsec.int.example.com/blueprints/llm-security#_cost_control
+    content: |-
+      Bound input bytes, output tokens, retrieval results, tool calls, agent iterations, concurrency, and wall-clock time.
+      Enforce shared quotas by authenticated tenant and user as well as client source.
+      Monitor and attribute consumption without logging prompt contents, and alert before approved budgets are exhausted.
+      Use graceful degradation and circuit breakers that stop expensive work without disabling authentication or authorization.
+    references:
+    - id: LLM-010
+      url: https://appsec.int.example.com/req/ai-llm-security#llm-010
+  - title: 6. System Prompt Protection
+    url: https://appsec.int.example.com/blueprints/llm-security#_system_prompt_protection
+    content: |-
+      Store prompts as reviewed configuration and avoid returning unnecessary internal configuration in normal responses or errors.
+      Never place credentials, personal data, tenant secrets, hidden authorization rules, or other security-sensitive values in a prompt.
+      Assume users can infer or extract prompt content and enforce authorization, policy, tool permissions, and output constraints outside the model.
+      Version and review prompt changes because they affect behavior, while keeping deterministic controls authoritative.
+    references:
+    - id: LLM-007
+      url: https://appsec.int.example.com/req/ai-llm-security#llm-007
