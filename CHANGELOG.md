@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A finished run now clears its transient files from the output directory again; a run that ended with QA unclean still keeps them for diagnosis.
 
 - The requirements harvester now takes the whole requirement section, recognises IDs written without brackets, and no longer duplicates entries.
+- The requirements harvester now writes every output format any configured source's `outputs` names by default, instead of silently dropping a source's file whenever `--format` was passed and didn't happen to include it.
 - Section 9 now says when abuse-case verification did not run instead of reporting that no abuse case was identified, and a quick run names the skipped verification in its scope banner.
 - A configured abuse-case release gate still ends the run, but now only after section 9 and the finding ranking are written, so the chain that failed the gate is on disk.
 

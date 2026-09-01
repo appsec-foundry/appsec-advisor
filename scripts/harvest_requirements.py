@@ -9,7 +9,9 @@ Usage:
 Options:
     --config PATH       Path to harvest-config.json (default: next to this script)
     --output PATH       Override the catalog YAML output path
-    --format FORMAT     Output yaml, openspec, specdd, or all (repeatable)
+    --format FORMAT     Restrict the run to yaml, openspec, specdd, or all
+                        (repeatable). Without it, a run produces every format
+                        any configured source's `outputs` names.
     --openspec-output PATH
                         Override the single-file OpenSpec output path
     --specdd-output PATH
@@ -1180,9 +1182,25 @@ def source_outputs(source: dict) -> set[str]:
     return outputs
 
 
-def requested_outputs(args: argparse.Namespace) -> set[str]:
-    """Translate repeatable CLI format names to internal output targets."""
-    formats = getattr(args, "output_formats", None) or ["yaml"]
+def requested_outputs(args: argparse.Namespace, sources: Optional[list[dict]] = None) -> set[str]:
+    """Translate CLI format selection to internal output targets.
+
+    Without an explicit --format, a run produces every format any configured
+    source's `outputs` names, so the config alone decides what gets written.
+    --format narrows a run to specific formats (e.g. to test one format, or a
+    CI job that only ever publishes one).
+    """
+    formats = getattr(args, "output_formats", None)
+    if not formats:
+        if not sources:
+            return {CATALOG_OUTPUT}
+        union: set[str] = set()
+        for source in sources:
+            try:
+                union |= source_outputs(source)
+            except ValueError:
+                continue  # reported with the source id where it is validated below
+        return union or {CATALOG_OUTPUT}
     if "all" in formats:
         return set(VALID_SOURCE_OUTPUTS)
     mapping = {"yaml": CATALOG_OUTPUT, "openspec": OPENSPEC_OUTPUT, "specdd": SPECDD_OUTPUT}
@@ -1424,25 +1442,6 @@ def run(args: argparse.Namespace) -> int:
     output_path: Path = (
         Path(args.output) if args.output else ((config_path.parent / cfg.get("output", "requirements.yaml")).resolve())
     )
-    requested = requested_outputs(args)
-    export_paths = {
-        kind: resolve_functional_output_path(kind, args, cfg, config_path, output_path)
-        for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT)
-        if kind in requested
-    }
-    paths = ([output_path] if CATALOG_OUTPUT in requested else []) + list(export_paths.values())
-    resolved_paths = [path.resolve() for path in paths]
-    if len(resolved_paths) != len(set(resolved_paths)):
-        print("Requested outputs must use different paths.", file=sys.stderr)
-        return 1
-
-    req_cfg: dict = cfg.get("request", {})
-    timeout: int = req_cfg.get("timeout_seconds", 15)
-    token: Optional[str] = args.token or os.environ.get(req_cfg.get("auth_header_env", "HARVEST_AUTH_TOKEN"))
-
-    use_proxy: bool = req_cfg.get("use_proxy", True)
-    verify_ssl = req_cfg.get("verify_ssl", True)
-    session = build_session(token, req_cfg.get("extra_headers", {}), timeout, use_proxy, verify_ssl)
 
     sources: list[dict] = cfg.get("sources", [])
     if not sources:
@@ -1499,6 +1498,26 @@ def run(args: argparse.Namespace) -> int:
     if not sources:
         print("No sources configured — nothing to do.", file=sys.stderr)
         return 1
+
+    requested = requested_outputs(args, sources)
+    export_paths = {
+        kind: resolve_functional_output_path(kind, args, cfg, config_path, output_path)
+        for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT)
+        if kind in requested
+    }
+    paths = ([output_path] if CATALOG_OUTPUT in requested else []) + list(export_paths.values())
+    resolved_paths = [path.resolve() for path in paths]
+    if len(resolved_paths) != len(set(resolved_paths)):
+        print("Requested outputs must use different paths.", file=sys.stderr)
+        return 1
+
+    req_cfg: dict = cfg.get("request", {})
+    timeout: int = req_cfg.get("timeout_seconds", 15)
+    token: Optional[str] = args.token or os.environ.get(req_cfg.get("auth_header_env", "HARVEST_AUTH_TOKEN"))
+
+    use_proxy: bool = req_cfg.get("use_proxy", True)
+    verify_ssl = req_cfg.get("verify_ssl", True)
+    session = build_session(token, req_cfg.get("extra_headers", {}), timeout, use_proxy, verify_ssl)
 
     selected_sources: list[dict] = []
     for source in sources:

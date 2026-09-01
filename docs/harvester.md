@@ -71,9 +71,11 @@ pip install -r scripts/requirements.txt
 # Dry-run first to verify reachability and parsing
 python3 scripts/harvest_requirements.py --dry-run --verbose
 
-# Write the catalog and both functional-spec formats
+# Write every output any source's `outputs` field names
 HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py
-HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py --format all
+
+# Or restrict a run to just the catalog, e.g. for a CI job that only publishes it
+HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py --format yaml
 ```
 
 The `output` setting controls the catalog destination and defaults to `data/appsec-requirements-fallback.yaml`. The `openspec.output` and `specdd.output` settings control the optional functional-spec files. The `sources_meta` block records the source page for each catalog section.
@@ -123,11 +125,16 @@ Selection is explicit rather than based on requirement wording. This keeps a sec
 }
 ```
 
-Run one or several formats:
+A plain run writes the catalog and both functional-spec files, since the config above declares sources for all three:
 
 ```bash
-python3 scripts/harvest_requirements.py --format openspec --format specdd
-python3 scripts/harvest_requirements.py --format all
+python3 scripts/harvest_requirements.py
+```
+
+Pass `--format` to narrow a run to specific outputs, for example to test one format on its own:
+
+```bash
+python3 scripts/harvest_requirements.py --format openspec
 ```
 
 The harvester never derives output paths, SpecDD ownership, or SpecDD modification permissions from crawled text. A generated `.sdd` file contains behavior and scenarios only; an operator decides where it belongs and what code it governs.
@@ -215,7 +222,7 @@ When a blueprint mentions a harvested requirement ID, the output links the bluep
 | `--req-only` / `--blueprint-only` | Debug one source type at a time |
 | `--config PATH` | Multiple environments (e.g. staging vs. prod requirements) |
 | `--output PATH` | Override the config's `output`; useful in CI |
-| `--format yaml\|openspec\|specdd\|all` | Select an output; repeat the flag to combine individual formats |
+| `--format yaml\|openspec\|specdd\|all` | Narrow a run to specific outputs; without it, every format any source's `outputs` names is written |
 | `--openspec-output PATH` | Override `openspec.output` for one run |
 | `--specdd-output PATH` | Override `specdd.output` for one run |
 | `--token TOKEN` | Pass a bearer token directly; prefer `auth_header_env` in CI |
@@ -278,7 +285,7 @@ The plugin caches the fetched catalog. An explicit `--requirements <url>` overri
 
 **Parser returns zero requirements.** Run with `--verbose` — the harvester prints every parser attempt per page. If all five strategies miss, either the ID shape doesn't match `PREFIX-PART[-PART…]` (e.g. pure numeric IDs like `REQ_001`) or the HTML is an SPA that needs JavaScript to render content (the harvester fetches static HTML only).
 
-**OpenSpec or SpecDD says no source targets the format.** Add that format to the `outputs` array of the functional requirement source. Catalog-only remains the default so secure-coding guidance is never exported as application behavior implicitly.
+**OpenSpec or SpecDD says no source targets the format.** Add that format to the `outputs` array of the functional requirement source. Catalog-only remains the default so secure-coding guidance is never exported as application behavior implicitly. If you passed `--format`, check it names a format some source actually declares — `--format` only narrows a run, it never adds a format a source doesn't already opt into.
 
 **A configured blueprint page is missing from the YAML.** The current harvester indexes the configured `crawl_url` itself and direct same-origin child links below that path. If a blueprint still does not appear, check the dry-run output for `Found N sub-page link(s)` and the blueprint count. Common causes are JavaScript-rendered content, links outside the configured base path, deeper nested pages that are not linked directly from `crawl_url`, or `max_pages` capping the discovered links before the page is reached. Fix by adding explicit `sources[]` entries for those pages or raising `max_pages`.
 
