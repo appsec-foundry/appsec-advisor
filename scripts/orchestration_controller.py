@@ -63,6 +63,7 @@ import detect_session_model  # noqa: E402
 import ensure_output_gitignore  # noqa: E402
 import merge_threats as merge_decision_contract  # noqa: E402
 import resolve_config  # noqa: E402
+import stamp_threat_model  # noqa: E402
 import stride_dispatch_waves  # noqa: E402
 import telemetry_consistency  # noqa: E402
 import validate_intermediate as intermediate_contract  # noqa: E402
@@ -6618,11 +6619,12 @@ def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
     (2026-07-15 juice-shop). Anchoring the stamp here, in the mandatory
     re-entrant ``next`` gate that reads the durable on-disk config, makes it
     deterministic: any run that reaches ``action=complete`` gets the stamped
-    copies regardless of compaction. Idempotent (re-stamps only when the
-    canonical report is newer than the stamped copy) and fail-safe (never
-    raises into ``next``'s JSON output). This gate fires before the skill's
-    post-summary cleanup, so ``.skill-config.json`` is still on disk; PDF/HTML
-    exported by the skill after this gate remain the trailing block's job.
+    copies regardless of compaction. Idempotent (it stamps only what is missing
+    or stale) and fail-safe (never raises into ``next``'s JSON output). This
+    gate fires before the skill's post-summary cleanup, so
+    ``.skill-config.json`` is still on disk; PDF and HTML are exported after
+    this gate and get their stamped copies from the completion summary, which
+    runs once more after the export.
     """
     slug = str(cfg.get("slug") or "").strip()
     if not slug:
@@ -6630,12 +6632,8 @@ def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
     md = output_dir / "threat-model.md"
     if not md.is_file():
         return
-    stamped = output_dir / f"threat-model-{slug}.md"
-    try:
-        if stamped.is_file() and stamped.stat().st_mtime >= md.stat().st_mtime:
-            return  # already stamped from the current report — nothing to do
-    except OSError:
-        pass
+    if stamp_threat_model.stamped_set_is_current(output_dir, slug):
+        return  # every deliverable already has a current stamped copy
     try:
         subprocess.run(
             [

@@ -66,6 +66,7 @@ from typing import Any, Optional
 
 import _severity_rollup  # sibling script — see extract_metrics()
 import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
+import stamp_threat_model  # sibling script — owns which deliverables get stamped
 from _atomic_io import atomic_write_text
 
 BANNER_WIDTH = 62
@@ -2237,9 +2238,13 @@ def _stamp_slug_if_configured(output_dir: Path) -> None:
     call, leaving the canonical report shipped with no stamped set (the
     2026-07-15 recurrence). This script is the ONE step that runs on every
     completion path — even a hand-invoked summary after compaction — so it is a
-    reliable second anchor. Idempotent (re-stamps only when the canonical report
-    is newer than the stamped copy) and fail-safe (never raises into the
-    summary output). Guarded on the durable ``.skill-config.json`` slug.
+    reliable second anchor. Idempotent (it stamps only what is missing or stale)
+    and fail-safe (never raises into the summary output). Guarded on the durable
+    ``.skill-config.json`` slug.
+
+    This is also the anchor that stamps PDF and HTML: the skill exports them
+    between the two completion-summary runs, so they exist by the time this runs
+    for the second time.
     """
     try:
         cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
@@ -2251,12 +2256,8 @@ def _stamp_slug_if_configured(output_dir: Path) -> None:
     md = output_dir / "threat-model.md"
     if not md.is_file():
         return
-    stamped = output_dir / f"threat-model-{slug}.md"
-    try:
-        if stamped.is_file() and stamped.stat().st_mtime >= md.stat().st_mtime:
-            return  # already stamped from the current report — nothing to do
-    except OSError:
-        pass
+    if stamp_threat_model.stamped_set_is_current(output_dir, slug):
+        return  # every deliverable already has a current stamped copy
     try:
         subprocess.run(
             [

@@ -2084,6 +2084,21 @@ class TestStampSlugBackstop:
         rcs._stamp_slug_if_configured(tmp_path)
         assert len(calls) == 1
 
+    def test_stamps_exports_written_after_the_first_summary_run(self, tmp_path: Path):
+        """PDF and HTML are exported between the skill's two summary runs. The
+        second run must stamp them; a check that only compared the stamped
+        Markdown reported "already done" and shipped them unstamped."""
+        self._seed(tmp_path, "my-slug")
+        rcs._stamp_slug_if_configured(tmp_path)
+        assert (tmp_path / "threat-model-my-slug.md").is_file()
+
+        (tmp_path / "threat-model.pdf").write_bytes(b"%PDF\n")
+        (tmp_path / "threat-model.html").write_text("<html></html>\n")
+        rcs._stamp_slug_if_configured(tmp_path)
+
+        assert (tmp_path / "threat-model-my-slug.pdf").is_file()
+        assert (tmp_path / "threat-model-my-slug.html").is_file()
+
     def test_never_raises_on_subprocess_error(self, tmp_path: Path, monkeypatch):
         self._seed(tmp_path, "my-slug")
 

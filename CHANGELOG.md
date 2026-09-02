@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The requirements harvester now writes every output format any configured source's `outputs` names by default, instead of silently dropping a source's file whenever `--format` was passed and didn't happen to include it.
 - Section 9 now says when abuse-case verification did not run instead of reporting that no abuse case was identified, and a quick run names the skipped verification in its scope banner.
 - A configured abuse-case release gate still ends the run, but now only after section 9 and the finding ranking are written, so the chain that failed the gate is on disk.
+- A run with `--slug` now stamps the PDF and HTML exports as well; because they are written after the first stamp, the copy set was shipped without them.
 
 ## 0.6.0-beta.1 (2026-08-23)
 

@@ -130,6 +130,36 @@ def test_same_slug_overwrites_previous_stamped_set(tmp_path):
     assert "rerun: true" in (tmp_path / "threat-model-repeat.yaml").read_text(encoding="utf-8")
 
 
+def test_deliverable_exported_after_a_stamp_is_stamped_on_the_next_run(tmp_path):
+    """PDF and HTML are exported between the two completion-summary runs, so the
+    second run has to stamp them — the first one ran before they existed."""
+    _seed_model(tmp_path)
+    assert _run("--output-dir", str(tmp_path), "--slug", "late").returncode == 0
+    assert not (tmp_path / "threat-model-late.pdf").exists()
+
+    (tmp_path / "threat-model.pdf").write_bytes(b"%PDF\n")
+    (tmp_path / "threat-model.html").write_text("<html></html>\n", encoding="utf-8")
+    r = _run("--output-dir", str(tmp_path), "--slug", "late")
+
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "threat-model-late.pdf").is_file()
+    assert (tmp_path / "threat-model-late.html").is_file()
+
+
+def test_unchanged_deliverables_are_not_rewritten(tmp_path):
+    """The stamp runs on every completion path; it must not rewrite the whole
+    set each time, only what changed."""
+    _seed_model(tmp_path, optional_outputs=True)
+    assert _run("--output-dir", str(tmp_path), "--slug", "again").returncode == 0
+    before = {p.name: p.stat().st_mtime_ns for p in tmp_path.iterdir()}
+
+    r = _run("--output-dir", str(tmp_path), "--slug", "again")
+
+    assert r.returncode == 0, r.stderr
+    assert {p.name: p.stat().st_mtime_ns for p in tmp_path.iterdir()} == before
+    assert "(unchanged)" in r.stdout
+
+
 def test_missing_figure_file_does_not_rewrite_reference(tmp_path):
     _seed_model(tmp_path, figure2=False)
     (tmp_path / "threat-model.md").write_text(
