@@ -25,7 +25,7 @@ at the bottom.
 
 ### 1. Bump the version
 
-Set the release version in `pyproject.toml` and `.claude-plugin/plugin.json`,
+Set the release version in `pyproject.toml`, `.claude-plugin/plugin.json`, and the README version badge,
 then promote the pending notes under `## Unreleased` into the dated matching
 `CHANGELOG.md` heading. Leave the `## Unreleased` heading itself in place, empty
 — `check_release_meta.py` requires it to exist *and* to be empty, so deleting it
@@ -124,18 +124,21 @@ stable `0.6.0`. The tags `v0.4.0-beta` and `v0.5.x-beta` predate this rule: ther
 `-beta` labelled the release line itself, which is why those lines have no stable
 release.
 
-The same version appears in four places, using PEP 440-equivalent spellings:
+The same version appears in five places, using PEP 440-equivalent spellings:
 
 | Where | Format | Example |
 |-------|--------|---------|
 | `pyproject.toml` | PEP 440 | `0.6.0b1` |
 | `.claude-plugin/plugin.json` | SemVer-style, PEP 440-equivalent | `0.6.0-beta.1` |
+| README version badge | plugin.json spelling, `-` escaped as `--` | `version-0.6.0--beta.1-orange.svg` |
 | Git tag | leading `v` | `v0.6.0-beta.1` |
 | `CHANGELOG.md` heading | version + date | `## 0.6.0-beta.1 (2026-08-22)` |
 
 `scripts/check_release_meta.py` normalizes these before comparing, so `0.6.0b1`
 and `0.6.0-beta.1` count as equal. It also rejects pending `Unreleased` content
 and validates the plugin's analysis-version compatibility declaration.
+
+The README badge is the exception: it must equal `plugin.json` at all times, not only at a release, so `tests/test_marketplace_manifest.py` checks it on every run of the suite rather than at the release boundary.
 
 ### The two gates
 

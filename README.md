@@ -1,11 +1,10 @@
 # appsec-advisor
 
-[![Version](https://img.shields.io/badge/version-0.5.1--beta-orange.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.6.0--beta.2-orange.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
-[![Threat modeling](https://img.shields.io/badge/threat%20modeling-code--derived-5A67D8)](https://github.com/appsec-foundry/appsec-advisor)
-[![Status](https://img.shields.io/badge/status-beta-orange)](#)
-[![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif-v2.1.0/sarif-v2.1.0.html)
+[![Threat modeling](https://img.shields.io/badge/threat%20modeling-code--derived-5A67D8)](docs/threat-modeler.md)
+[![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-blue.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 [![codecov](https://codecov.io/gh/appsec-foundry/appsec-advisor/graph/badge.svg)](https://codecov.io/gh/appsec-foundry/appsec-advisor)
 
 > ⚠️ **Beta — not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
