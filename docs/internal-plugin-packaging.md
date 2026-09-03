@@ -15,8 +15,8 @@ This is the shortest local loop. Run it in an empty working directory. No CI, no
 **1. Set the versions used below.**
 
 ```console
-$ APPSEC_ADVISOR_REF=v0.4.0-beta
-$ INTERNAL_VERSION=0.4.0-local
+$ APPSEC_ADVISOR_REF=v0.6.0-beta.1
+$ INTERNAL_VERSION=0.6.0-local
 ```
 
 Use a pinned tag or branch for `APPSEC_ADVISOR_REF`. Avoid `latest` for internal packaging because it makes builds harder to reproduce.
@@ -28,7 +28,7 @@ $ mkdir -p org-profile
 $ cat > org-profile/org-profile.yaml <<'YAML'
 api_version: appsec-advisor.org-profile/v2
 organization: { id: myorg, name: My Org, profile_version: "1" }
-compatibility: { core: ">=0.4 <0.6" }
+compatibility: { core: ">=0.6 <0.7" }
 default_preset: local-default
 presets:
   local-default:
@@ -120,7 +120,7 @@ $ cd acme-appsec-plugin
 $ git init
 $ mkdir -p org-profile/context org-profile/actors
 $ printf 'build/\ndist/\n' > .gitignore
-$ APPSEC_ADVISOR_REF=v0.4.0-beta
+$ APPSEC_ADVISOR_REF=v0.6.0-beta.1
 $ git submodule add https://github.com/appsec-foundry/appsec-advisor upstream/appsec-advisor
 $ git -C upstream/appsec-advisor checkout "$APPSEC_ADVISOR_REF"
 $ git add .gitignore .gitmodules upstream/appsec-advisor
@@ -129,11 +129,7 @@ $ git commit -m "Pin upstream appsec-advisor"
 
 Step 4 still adds either `.github/workflows/package.yml` or `.gitlab-ci.yml`.
 
-The example repos already use Option 1:
-
-- [GitHub Actions example](../examples/internal-packaging-github)
-- [GitLab CI example](../examples/internal-packaging-gitlab)
-- [Organization packaging template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) with an org profile, CI pipelines, and build scripts
+The [organization packaging template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) is a ready-made Option 1 repository. It ships an org profile, a package policy, GitHub and GitLab pipelines, and build scripts, and it tracks upstream releases. Use it instead of assembling the repository by hand unless you need a shape it does not cover.
 
 ## Step 2 - Write the org profile
 
@@ -148,7 +144,7 @@ organization:
   profile_version: "2026.05.1"
 
 compatibility:
-  core: ">=0.4 <0.6"
+  core: ">=0.6 <0.7"
 
 default_preset: ci-standard
 
@@ -317,7 +313,7 @@ Make sure `upstream/appsec-advisor/` exists. With Option 1 from Step 1, clone it
 
 ```console
 # Option 1 only: create the ignored upstream checkout.
-$ APPSEC_ADVISOR_REF=v0.4.0-beta
+$ APPSEC_ADVISOR_REF=v0.6.0-beta.1
 $ git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" https://github.com/appsec-foundry/appsec-advisor upstream/appsec-advisor
 ```
 
@@ -331,7 +327,7 @@ $ git submodule update --init --recursive
 Build the packaged plugin:
 
 ```console
-$ INTERNAL_VERSION=0.4.0-acme.20260517
+$ INTERNAL_VERSION=0.6.0-acme.20260903
 $ python3 upstream/appsec-advisor/scripts/package_internal_plugin.py \
   --source upstream/appsec-advisor \
   --org-profile org-profile \
@@ -359,7 +355,7 @@ from a clean checkout and treat either finding as a build failure.
 Use `--skip-archive` while editing locally:
 
 ```console
-$ INTERNAL_VERSION=0.4.0-dev
+$ INTERNAL_VERSION=0.6.0-dev
 $ python3 upstream/appsec-advisor/scripts/package_internal_plugin.py --source upstream/appsec-advisor --org-profile org-profile --name acme-appsec --version "$INTERNAL_VERSION" --skip-archive
 $ claude --plugin-dir build/acme-appsec
 ```
@@ -384,7 +380,7 @@ For Option 1, set these CI variables:
 | Variable | Required | Meaning |
 |---|---:|---|
 | `APPSEC_ADVISOR_URL` | yes | upstream or fork URL, for example `https://github.com/appsec-foundry/appsec-advisor.git` |
-| `APPSEC_ADVISOR_REF` | yes | pinned tag or branch, for example `v0.4.0-beta` |
+| `APPSEC_ADVISOR_REF` | yes | pinned tag or branch, for example `v0.6.0-beta.1` |
 | `INTERNAL_NAME` | no | plugin namespace, default `acme-appsec` |
 | `VERSION` | no | package version; defaults to a CI snapshot version |
 
@@ -437,7 +433,7 @@ jobs:
           elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=0.4.0-internal.${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+            echo "version=0.6.0-internal.${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Clone pinned upstream
@@ -472,7 +468,7 @@ jobs:
           retention-days: 30
 ```
 
-Runnable copy: [examples/internal-packaging-github/.github/workflows/package.yml](../examples/internal-packaging-github/.github/workflows/package.yml)
+The packaging template ships a maintained version of this pipeline in [`ci-templates/github/workflows/package.yml`](https://github.com/appsec-foundry/appsec-advisor-packaging-template/blob/main/ci-templates/github/workflows/package.yml). It adds lint, upstream drift, and release stages, and it pins the runner image and the Python dependencies.
 
 </details>
 
@@ -485,7 +481,7 @@ stages:
 
 variables:
   INTERNAL_NAME: "acme-appsec"
-  VERSION: "0.4.0-internal.${CI_COMMIT_SHORT_SHA}"
+  VERSION: "0.6.0-internal.${CI_COMMIT_SHORT_SHA}"
   PYTHONDONTWRITEBYTECODE: "1"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
@@ -516,7 +512,7 @@ package:
     expire_in: 30 days
 ```
 
-Runnable copy: [examples/internal-packaging-gitlab/.gitlab-ci.yml](../examples/internal-packaging-gitlab/.gitlab-ci.yml)
+The packaging template ships a maintained version of this pipeline in [`ci-templates/gitlab-ci.yml`](https://github.com/appsec-foundry/appsec-advisor-packaging-template/blob/main/ci-templates/gitlab-ci.yml). It adds lint, upstream drift, and release stages, and it pins the runner image and the Python dependencies.
 
 </details>
 
@@ -527,7 +523,7 @@ Publish `dist/*.tgz` through your normal internal artifact or software-distribut
 Developers install the approved artifact:
 
 ```console
-$ INTERNAL_VERSION=0.4.0-acme.20260517
+$ INTERNAL_VERSION=0.6.0-acme.20260903
 $ mkdir -p ~/.claude/plugins
 $ tar -xzf "acme-appsec-${INTERNAL_VERSION}.tgz" -C ~/.claude/plugins
 $ claude --plugin-dir ~/.claude/plugins/acme-appsec

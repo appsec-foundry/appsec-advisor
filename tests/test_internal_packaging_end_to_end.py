@@ -1,4 +1,4 @@
-"""Regression tests for the GitLab internal-packaging example."""
+"""End-to-end regression tests for the internal packaging build."""
 
 from __future__ import annotations
 
@@ -8,10 +8,8 @@ import subprocess
 import tarfile
 from pathlib import Path
 
-import yaml
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXAMPLE_ROOT = REPO_ROOT / "examples" / "internal-packaging-gitlab"
+PROFILE_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "org-profiles" / "acme"
 PACKAGER = REPO_ROOT / "scripts" / "package_internal_plugin.py"
 
 
@@ -21,7 +19,7 @@ def _write(path: Path, text: str) -> None:
 
 
 def test_upstream_packager_excludes_vcs_and_local_outputs(tmp_path: Path) -> None:
-    shutil.copytree(EXAMPLE_ROOT / "org-profile", tmp_path / "org-profile")
+    shutil.copytree(PROFILE_FIXTURE, tmp_path / "org-profile")
 
     upstream = tmp_path / "upstream" / "appsec-advisor"
     _write(
@@ -142,7 +140,7 @@ def test_upstream_packager_rejects_slashes_in_version(tmp_path: Path) -> None:
             "--source",
             str(tmp_path / "missing-source"),
             "--org-profile",
-            str(EXAMPLE_ROOT / "org-profile"),
+            str(PROFILE_FIXTURE),
             "--name",
             "acme-appsec",
             "--version",
@@ -159,7 +157,7 @@ def test_upstream_packager_rejects_slashes_in_version(tmp_path: Path) -> None:
 
 
 def test_package_policy_prunes_skills_and_hooks(tmp_path: Path) -> None:
-    shutil.copytree(EXAMPLE_ROOT / "org-profile", tmp_path / "org-profile")
+    shutil.copytree(PROFILE_FIXTURE, tmp_path / "org-profile")
     _write(
         tmp_path / "org-profile" / "package-policy.yaml",
         """
@@ -274,24 +272,3 @@ plugin_surface:
         "publish-threat-model",
     ]
     assert manifest["hooks"]["removed"] == ["security-coach"]
-
-
-def test_gitlab_ci_pins_ref_with_single_clone_then_smoke_tests() -> None:
-    pipeline = yaml.safe_load((EXAMPLE_ROOT / ".gitlab-ci.yml").read_text())
-    script_lines = pipeline["package"]["script"]
-    script = "\n".join(script_lines)
-
-    assert not (EXAMPLE_ROOT / "scripts" / "package.sh").exists()
-    assert pipeline["stages"] == ["package"]
-    assert pipeline["variables"]["VERSION"] == "0.4.0-internal.${CI_COMMIT_SHORT_SHA}"
-    assert "apt-get install -y -qq --no-install-recommends git" in "\n".join(pipeline["default"]["before_script"])
-    assert "rsync" not in script
-    assert "ripgrep" not in script
-    assert "tar -czf" not in script
-    # A single clone pins the ref via --branch; no separate fetch/checkout dance.
-    assert 'git clone --depth 1 --branch "$APPSEC_ADVISOR_REF" "$APPSEC_ADVISOR_URL" upstream/appsec-advisor' in script
-    assert "fetch --depth 1 origin" not in script
-    assert "checkout --detach FETCH_HEAD" not in script
-    assert "scripts/package_internal_plugin.py" in script
-    # The build is smoke-tested before publishing.
-    assert "scripts/smoke_test_package.py" in script
