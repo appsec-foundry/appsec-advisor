@@ -1,7 +1,7 @@
 # Run a2a0e355 — pipeline analysis
 
 Findings from analysing one full `create-threat-model` run and the plugin code
-behind it. **Untracked working note, not a decision record.** Written by a
+behind it. **Working note, not a decision record.** Written by a
 Claude Code session on 2026-08-29 against plugin `dev`.
 
 > **Read this as claims, not facts.** Every section names the command that

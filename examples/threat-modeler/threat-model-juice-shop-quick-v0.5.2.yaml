@@ -1503,7 +1503,7 @@ security_controls:
   effectiveness: Weak
   kind: mechanism
   assessment: Authentication middleware is present on many object-addressing routes but no ownership binding validates that
-    the authenticated user owns the refe**** (10 chars) object. Routes GET/PUT/DELETE /api/Recycles/:id, PUT /api/BasketItems/:id,
+    the authenticated user owns the referenced object. Routes GET/PUT/DELETE /api/Recycles/:id, PUT /api/BasketItems/:id,
     PUT /api/Feedbacks/:id at server.ts:388-433 carry authz=unknown despite authn=middleware_present.
   implementation: server.ts:388-433
   rule_id: ARCH-BOLA-001

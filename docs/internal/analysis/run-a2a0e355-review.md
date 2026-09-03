@@ -1,6 +1,6 @@
 # Run a2a0e355 — independent re-measurement
 
-Second opinion on `docs/internal/run-a2a0e355-analysis.md`. **Untracked working note, not a decision record.** Every number below was re-derived from the same run and transcript on 2026-08-29; nothing was carried over from the first analysis.
+Second opinion on `docs/internal/analysis/run-a2a0e355-analysis.md`. **Working note, not a decision record.** Every number below was re-derived from the same run and transcript on 2026-08-29; nothing was carried over from the first analysis.
 
 Method note: the first analysis measured transcript blocks as `len(json.dumps(block))`. That convention is reproduced here (it gives 330,749 B against its 342,886 B, and matches its per-category figures to within a percent), but raw text bytes and cl100k token counts are reported alongside, because the choice of unit turns out to matter for the headline claim.
 

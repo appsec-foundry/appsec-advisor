@@ -2,7 +2,7 @@
 
 Catches silent prompt bloat or accidental section deletion. Sized in chars/4
 as an approximate token count (matches the heuristic used in
-``docs/internal/runbooks/refactoring-plan.md``).
+``docs/internal/analysis/refactoring-plan.md``).
 
 To update bounds intentionally:
 

@@ -10,6 +10,8 @@ import json
 import sys
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
@@ -142,6 +144,44 @@ def test_word_shaped_value_does_not_corrupt_unrelated_prose(tmp_path: Path) -> N
     assert "threat(s) referenced in its Notes column" in text, "prose near a credential keyword was corrupted"
     assert "actions are referenced at mutable version tags" in text, "unrelated prose was corrupted"
     assert "api_key: referenced" not in text, "an assigned credential was left unmasked"
+
+
+def test_word_shaped_value_does_not_rewrite_structured_keys(tmp_path: Path) -> None:
+    """A word-shaped value must not rewrite a key of the machine-readable export.
+
+    The prose bound above protects sentences; the same replace also runs over
+    ``threat-model.yaml``, where a destroyed key breaks the output schema rather
+    than a sentence, and nothing revalidates the artifacts afterwards. Observed
+    in the shipped dvwa-standard-v0.5.2 sample, whose ``auth_required`` keys had
+    become ``auth_requ**** (8 chars)``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "config.yml").write_text("  secret: required\n", encoding="utf-8")
+
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "threat-model.yaml").write_text(
+        "attack_surface:\n"
+        "- entry_point: login.php\n"
+        "  auth_required: false\n"
+        "  notes: A password is required for the admin panel.\n"
+        "evidence:\n"
+        "  excerpt: 'db_password = required'\n",
+        encoding="utf-8",
+    )
+
+    rc = R.main(["--repo-root", str(repo), "--output-dir", str(out)])
+    assert rc == 0
+
+    text = (out / "threat-model.yaml").read_text(encoding="utf-8")
+    assert "auth_required: false" in text, "a schema key was rewritten"
+    assert "A password is required" in text, "artifact prose was corrupted"
+    assert "db_password = required" not in text, "an assigned credential was left unmasked"
+    assert "requ**** (8 chars)" in text, "the assigned credential was not masked in place"
+
+    parsed = yaml.safe_load(text)
+    assert parsed["attack_surface"][0]["auth_required"] is False
 
 
 def test_high_entropy_value_still_replaced_in_bare_prose(tmp_path: Path) -> None:

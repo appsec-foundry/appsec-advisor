@@ -128,7 +128,7 @@ If a criterion fails:
 
 - Before the default switch from haiku-economy to the quick default (= plugin-maintainer decision)
 - After every Sonnet/Haiku model update from Anthropic
-- After significant changes to the `agents/appsec-stride-analyzer.md` quick-profile section
+- After significant changes to the `agents/appsec-stride-analyzer-v2.md` quick-profile section
 - On bug reports "Haiku mode finds fewer threats"
 
 ## Automation as roadmap
