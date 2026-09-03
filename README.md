@@ -123,8 +123,9 @@ Updates preserve finding IDs. Review decisions are stored separately, and publis
 - The Management Summary states compliance and lists the failed requirements.
 - `/appsec-advisor:security-score` scores a repository from 0 to 100 using the scanners alone.
 - `/appsec-advisor:status` reports the versions, skills, profile, and config in effect; `--check-updates` checks whether they are current.
+- `/appsec-advisor:authnz-review` exports its findings as pentest tasks, with the discovered routes as the endpoint catalog.
 - Source scans flag LLM output that reaches rendering, interpreters, or privileged actions unchecked.
-- An organization profile can refresh the secure-coding baseline it vendors from its own source.
+- `/appsec-advisor:update-baseline` refreshes an installed secure-coding baseline where it is loaded from; an organization profile can vendor its own source for it.
 
 ## What's new in 0.6.0-beta.1
 

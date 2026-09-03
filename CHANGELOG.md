@@ -11,61 +11,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Findings now name the requirements they break, and mitigations quote the blueprint section that prescribes the fix. STRIDE analysis gets that blueprint while it works, so remediation follows the catalog.
+- Findings now name the requirements they break, and mitigations quote the blueprint section that prescribes the fix, which STRIDE analysis works from as well.
+- The Management Summary states compliance and lists the requirements that failed, and the requirements audit names the catalog it graded against and how old it is.
+- A blueprint source in the requirements harvester can write its blueprints into a catalog file of its own, named by `catalog_file`, and harvested catalogs name their source in a header comment and keep blueprint text one line per paragraph, list item and table row.
 - `threat-model.yaml` now preserves requirements provenance, verified abuse-case outcomes, and bounded business-context use, while Threat Dragon retains applicable traces as bounded text instead of dropping them.
-- The Management Summary states compliance and lists the requirements that failed.
-- The requirements audit says which catalog it uses and how old it is, then reports progress while it grades.
-- An organization package records which appsec-advisor revision it was built from.
-- `/appsec-advisor:status` shows the package, core and baseline versions with their origin, and `--check-updates` says whether baseline and core are still current.
-- `/appsec-advisor:status` also lists the shipped skills with their policy state, the organization profile and the config file in effect.
+- `/appsec-advisor:status` shows the package with the appsec-advisor revision it was built from, the core and baseline versions with their origin, the shipped skills with their policy state, and the organization profile and config file in effect; `--check-updates` says whether baseline and core are still current.
 - `/appsec-advisor:security-score` scores a repository from 0 to 100 using the scanners alone, without running a threat model.
 - Source scans now flag LLM output that reaches rendering, interpreters or privileged actions unchecked.
-- An organization profile can refresh the secure-coding baseline it vendors from its own source.
-- `/appsec-advisor:update-baseline` refreshes an installed secure-coding baseline where it is loaded from, and reports when the published one has moved to a new id.
+- `/appsec-advisor:update-baseline` refreshes an installed secure-coding baseline where it is loaded from and reports when the published one has moved to a new id, and an organization profile can vendor its own source for that refresh.
 - Headless runs can start Claude Code through a wrapper given by the environment.
 - Run Issues now reports a stage claiming more agent dispatches than the run spawned, a component whose findings all came from files the context routing never delivered, and a requirements assessment the YAML export does not carry.
 - `/appsec-advisor:authnz-review` accepts `--pentest-tasks`, `--pentest-format` and `--pentest-target`, defaulting them to the organization profile's outputs block, and exports its findings as pentest tasks with the discovered routes as the endpoint catalog.
-- A blueprint source in the requirements harvester can write its blueprints into a catalog file of its own, named by `catalog_file` in the source, next to the combined catalog. The bundled examples now show that split as well: a requirements-only catalog and a catalog per blueprint.
-- Harvested catalogs name their source in a header comment, and a blueprint section keeps one line per paragraph, list item and table row instead of running them together.
 
 ### Changed
 
-- A baseline that lags the configured one is now reported as outdated in its own right, with `/appsec-advisor:update-baseline` beside it, instead of sharing the wording of a foreign baseline nobody configured. Both still fail an enforcing check.
-- The final stage now polishes the report's wording instead of reviewing it a second time: it runs once on Sonnet, rewrites prose only, and reverts itself if a finding, rating, evidence locator, link or number would change. It reports what it rewrote.
+- A baseline that lags the configured one is now reported as outdated in its own right instead of sharing the wording of a foreign baseline nobody configured; both still fail an enforcing check.
+- The final stage now polishes the report's prose instead of reviewing it a second time, reverting itself if a finding, rating, evidence locator, link or number would change, and reporting what it rewrote.
 - A missing lockfile, an undigested base image, a missing workflow `permissions:` block and an unpinned action are now Medium instead of High.
-- Business context supplied with `--context` is now captured by the run itself, and a source that cannot be read stops the run instead of being dropped in silence.
-- The report's run statistics name the business-context file that was read and how many findings it applied to, and each of those findings records which declared fields apply to it.
-- A stage transition no longer replays the whole resolved configuration, so a long run accumulates less orchestrator context.
-- The completion summary's Next Steps now reads as self-contained alternatives, with the example questions stacked on their own lines and marked as examples rather than as the only two you can ask.
-- The bundled demonstration catalog now links to an organization's own requirement portal instead of to OWASP pages, so the demo shows the link shape a harvested catalog actually produces, and the placeholder hosts in the documentation all name the same fictional portal.
-- `/appsec-advisor:help` no longer wraps in a terminal: every line of the reference fits 72 columns, the explanations line up on one column per block, and the `create-threat-model` flags are listed under the command instead of repeated across full-width lines.
+- Business context supplied with `--context` is now captured by the run itself, a source that cannot be read stops the run instead of being dropped in silence, and the run statistics name the file that was read and how many findings it applied to.
+- The completion summary's Next Steps now reads as self-contained alternatives, with the example questions on their own lines and marked as examples.
+- `/appsec-advisor:help` no longer wraps in a terminal, and no longer documents `--incremental`, `--pr-mode`, `--resume`, `--dry-run`, `--max-wall-time` and `--max-cost`, which the runtime rejects before a run starts.
 
 ### Fixed
 
-- A hook firing from a subdirectory now writes to the run's own output directory instead of creating a stray one beside it, so budget state and hook events no longer split across trees the run never reads.
-- A run that ends without releasing its lock no longer blocks every later run against the same output directory: the watchdog stops refreshing the heartbeat once the run has been inactive for an hour, and clearing a lock now judges the holder by that heartbeat rather than by a process id that means nothing outside its own sandbox.
+- A hook firing from a subdirectory now writes to the run's own output directory instead of creating a stray one beside it.
+- A run that ends without releasing its lock no longer blocks later runs against the same output directory: the watchdog stops refreshing the heartbeat after an hour of inactivity, and clearing a lock judges the holder by that heartbeat.
 - Transport Encryption is no longer rated from a plain-HTTP URL in a comment, so a bundled third-party file stops producing a cleartext-transport verdict.
-- An agent call the host answers asynchronously is recorded as launched instead of rejected, so a finished agent no longer holds turns and budget claims that skipped abuse-case verification.
-- A subagent that ends its last turn on a tool call is no longer recorded as failed.
-- Stage 2 budgets its attempts per blocking cause, and the abort names the step that actually blocked.
-- Abuse-case verification suppressed by a budget claim now says so in its receipts.
-- A run with the requirements check switched off no longer fails its finished report on an empty catalog, nor reports a requirements disagreement from a stale cached count.
-- The abort latch no longer blocks the run diagnostician or unrelated agents.
-- Code references now use one balanced formatter across report sections and dependency ecosystems, so packages and complete snippets stay intact while surrounding prose remains outside code spans.
-- `--skip-context` now runs without business context, instead of only skipping the question while still reading `docs/business-context.md`.
-- A stored `docs/business-context.md` carrying a credential is now withheld from the analysis, the same way a supplied source is refused.
-- The help no longer documents `--incremental`, `--pr-mode`, `--resume`, `--dry-run`, `--max-wall-time` and `--max-cost`, which the runtime rejects before a run starts.
-- Business context supplied for one run no longer leaks into the next run in the same output directory.
-- Artifact receipts are verified against the exact emitted action before every dispatch instead of a mutable plan snapshot, and missing, malformed, or stale verification state now fails closed.
-- Run statistics now union exact dispatch events across overlapping and growing measurement windows instead of multiplying or permanently capping the stage count.
-- A declared business context that maps to no component is now reported as a run issue instead of passing unnoticed.
-- A finished run now clears its transient files from the output directory again; a run that ended with QA unclean still keeps them for diagnosis.
-
-- The requirements harvester now takes the whole requirement section, recognises IDs written without brackets, and no longer duplicates entries.
-- The requirements harvester now writes every output format any configured source's `outputs` names by default, instead of silently dropping a source's file whenever `--format` was passed and didn't happen to include it.
-- Section 9 now says when abuse-case verification did not run instead of reporting that no abuse case was identified, and a quick run names the skipped verification in its scope banner.
+- An agent call the host answers asynchronously is recorded as launched instead of rejected, and a subagent that ends its last turn on a tool call is no longer recorded as failed, so finished agents no longer hold turns and budget claims.
+- Abuse-case verification that did not run is now named as such: section 9 says so instead of reporting that no abuse case was identified, a quick run names the skipped verification in its scope banner, and a suppressing budget claim appears in the receipts.
 - A configured abuse-case release gate still ends the run, but now only after section 9 and the finding ranking are written, so the chain that failed the gate is on disk.
-- A run with `--slug` now stamps the PDF and HTML exports as well; because they are written after the first stamp, the copy set was shipped without them.
+- The Stage 2 abort now names the step that actually blocked.
+- A run with the requirements check switched off no longer fails its finished report on an empty catalog, nor reports a requirements disagreement from a stale cached count.
+- The requirements harvester now takes the whole requirement section, recognises IDs written without brackets, no longer duplicates entries, and writes every format a source's `outputs` names even when `--format` is passed.
+- Code references now use one balanced formatter across report sections and dependency ecosystems, so packages and complete snippets stay intact while surrounding prose remains outside code spans.
+- A stored `docs/business-context.md` carrying a credential is now withheld from the analysis, the same way a supplied source is refused.
+- `--skip-context` now runs without business context instead of still reading `docs/business-context.md`, context from one run no longer leaks into the next run in the same output directory, and a declared context that maps to no component is reported as a run issue.
+- Run statistics no longer multiply or cap the stage count when measurement windows overlap.
+- A finished run now clears its transient files from the output directory again; a run that ended with QA unclean still keeps them for diagnosis.
+- A run with `--slug` now stamps the PDF and HTML exports as well.
 
 ## 0.6.0-beta.1 (2026-08-23)
 
