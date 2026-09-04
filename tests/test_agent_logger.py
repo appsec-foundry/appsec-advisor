@@ -661,6 +661,56 @@ class TestContextV2LifecycleGuards:
         assert payload["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "authoritative RUN_ABORTED" in payload["hookSpecificOutput"]["permissionDecisionReason"]
 
+    def _abort_latch_decision(self, tmp_path, subagent_type: str) -> dict:
+        output = self._context_v2_output(tmp_path)
+        (output / ".scan-start-epoch").write_text("1\n", encoding="utf-8")
+        (output / ".agent-run.log").write_text(
+            "2026-08-14T12:43:31Z  [--------]  WARN   RUN_ABORTED  contract failure\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env.update({"OUTPUT_DIR": str(output), "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT)})
+        event = make_pre_tool_event("Agent", {"subagent_type": subagent_type})
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=json.dumps(event),
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env=env,
+        )
+        return json.loads(result.stdout or "{}")
+
+    def test_abort_latch_lets_the_run_diagnostician_through(self, tmp_path):
+        """The latch tells the reader to preserve the artifacts and diagnose.
+        Denying the diagnosis agent made its own advice impossible to follow.
+        """
+        payload = self._abort_latch_decision(tmp_path, "appsec-advisor:appsec-run-diagnostician")
+
+        assert payload.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+
+    def test_abort_latch_ignores_agents_outside_this_plugin(self, tmp_path):
+        """A general-purpose agent belongs to whatever else the operator is doing
+        and cannot continue a context-v2 run; denying it only removes tools.
+        """
+        payload = self._abort_latch_decision(tmp_path, "general-purpose")
+
+        assert payload.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+
+    def test_abort_latch_still_denies_a_pipeline_producer(self, tmp_path):
+        """Renderers, repair agents and analysts DO continue the run."""
+        for index, subtype in enumerate(
+            (
+                "appsec-advisor:appsec-threat-renderer",
+                "appsec-advisor:appsec-fragment-fixer",
+                "appsec-advisor:appsec-stride-analyzer-v2",
+            )
+        ):
+            case = tmp_path / f"case{index}"
+            case.mkdir()
+            payload = self._abort_latch_decision(case, subtype)
+            assert payload["hookSpecificOutput"]["permissionDecision"] == "deny", subtype
+
     def test_pretool_fails_closed_on_corrupt_persisted_run_config(self, tmp_path):
         output = tmp_path / "out"
         output.mkdir()
@@ -1057,7 +1107,26 @@ class TestSecretMaskingInLogOutput:
         assert "RealSecret123" not in log
 
     def test_bash_warn_masks_secret_in_response(self, tmp_path):
-        """Secrets in bash error responses must be masked in BASH_WARN log entries."""
+        """A secret on the reported diagnostic line must be masked, not dropped."""
+        event = make_post_tool_event(
+            "Bash",
+            inp={"command": "cat config.env"},
+            resp="Permission denied reading api_key='AIzaSyDk1234567890'",
+        )
+        rc, log = run_logger(event, tmp_path)
+        assert rc == 0
+        assert "BASH_WARN" in log
+        assert "AIzaSyDk1234567890" not in log
+        assert "****" in log
+
+    def test_bash_warn_never_leaks_a_secret_from_an_unreported_line(self, tmp_path):
+        """A secret elsewhere in the response must not reach the log either.
+
+        BASH_WARN reports the diagnostic line rather than the head of the raw
+        blob, so this secret is never selected in the first place. Masking is
+        what makes that safe rather than lucky — assert the outcome, since
+        which line gets picked is an implementation choice that may change.
+        """
         event = make_post_tool_event(
             "Bash",
             inp={"command": "cat config.env"},
@@ -1067,7 +1136,6 @@ class TestSecretMaskingInLogOutput:
         assert rc == 0
         assert "BASH_WARN" in log
         assert "AIzaSyDk1234567890" not in log
-        assert "****" in log
 
 
 # ===========================================================================

@@ -76,10 +76,36 @@ def test_identifiable_spec_mutations_require_approval(tool_name, tool_input):
         ("PowerShell", {"command": "Get-Content specs/requirements.md"}),
         ("mcp__filesystem__read_file", {"path": "specs/requirements.md"}),
         ("mcp__filesystem__write_file", {"path": "tests/result.txt", "content": "x"}),
+        ("Bash", {"command": f"cd {ROOT}\npython3 - <<'PY'\nprint(1)\nPY"}),
+        ("Bash", {"command": "cp tests/result.txt ."}),
+        ("Bash", {"command": f"cd {ROOT} && rm -rf .cache"}),
+        # The catalog is named as data here, not as an argument of the writer.
+        ("Bash", {"command": 'echo "commits that touch specs/requirements.md: 3"'}),
+        ("Bash", {"command": "awk '{ if (length($0)>100) c++ }' specs/requirements.md"}),
+        ("Bash", {"command": "cat > note.txt <<'PY'\nsee specs/requirements.md\nPY"}),
+        # A removal in one simple command does not reach a path named in another.
+        ("Bash", {"command": f"grep -rn foo {ROOT} && rm -rf .cache"}),
     ],
 )
 def test_non_mutating_or_out_of_scope_calls_are_unaffected(tool_name, tool_input):
     assert decision(tool_name, tool_input) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"rm -rf {ROOT}",
+        "rm -rf specs",
+        "git checkout -- specs",
+        'echo x > "specs/requirements.md"',
+        "cat draft.md | tee specs/requirements.md",
+        "grep -rn foo . ; rm -rf .",
+    ],
+)
+def test_writers_reaching_the_catalog_indirectly_require_approval(command):
+    result = decision("Bash", {"command": command})
+    assert result is not None
+    assert result["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
 def test_relative_write_from_specs_to_catalog_requires_approval():
@@ -155,7 +181,21 @@ def test_invalid_input_and_configuration_fail_closed(payload, args):
 
 def test_spec_guard_registration_and_decisions():
     settings = json.loads((ROOT / ".claude" / "settings.json").read_text())
-    assert settings["permissions"] == {"ask": ["Edit(/specs/requirements.md)"]}
+    assert settings["permissions"] == {
+        "ask": [
+            "Edit(specs/requirements.md)",
+        ],
+        # The guard cannot hold a rule an agent may rewrite. These files carry
+        # the rule itself, so they are denied rather than merely asked about.
+        # Only Edit(...) rules take part in file permission checks; they cover
+        # every file-editing tool and also reach shell writes through the
+        # sandbox, so a Write(...) twin would be inert.
+        "deny": [
+            "Edit(.claude/settings.json)",
+            "Edit(scripts/spec_guard.py)",
+            "Edit(scripts/requirements_hook.py)",
+        ],
+    }
     groups = settings["hooks"]["PreToolUse"]
     spec_groups = [
         group

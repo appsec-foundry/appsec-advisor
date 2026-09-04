@@ -773,3 +773,179 @@ def test_script_main_entrypoint(tmp_path):
     )
     assert out.returncode == 0
     assert (tmp_path / ".stage-stats.jsonl").is_file()
+
+
+# ---------------------------------------------------------------------------
+# Accumulation-id collisions must not discard a measurement
+#
+# The id names a dispatch *group*. A caller deriving it from role, agent, model
+# and wave start hands every dispatch in a wave the same one, so treating any
+# collision as a duplicate silently dropped 3 of 8 STRIDE dispatches on run
+# a2a0e355 — 37% of that stage's compute, reported as a routine skip with
+# exit 0.
+# ---------------------------------------------------------------------------
+
+_WAVE_ID = "stride_analyzer:appsec-advisor:appsec-stride-analyzer-v2:sonnet:2026-08-28T21:19:09Z"
+
+
+def _accumulate(tmp_path, duration_ms, tokens=50000, tool_uses=20, acc_id=_WAVE_ID):
+    return rec.main(
+        _argv(
+            tmp_path,
+            **{
+                "--variant": "stride_analyzer",
+                "--duration-ms": str(duration_ms),
+                "--tool-uses": str(tool_uses),
+                "--tokens": str(tokens),
+                "--accumulation-id": acc_id,
+            },
+        )
+        + ["--accumulate"]
+    )
+
+
+def _row(tmp_path):
+    lines = (tmp_path / ".stage-stats.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    return json.loads(lines[0])
+
+
+def test_a_reused_accumulation_id_keeps_every_distinct_measurement(tmp_path):
+    for ms in (775000, 1129000, 847000):
+        assert _accumulate(tmp_path, ms) == 0
+    row = _row(tmp_path)
+    assert row["duration_ms"] == 775000 + 1129000 + 847000
+    assert row["tool_uses"] == 60
+    assert row["recorded_dispatch_count"] == 3
+
+
+def test_an_identical_replay_is_still_dropped(tmp_path):
+    assert _accumulate(tmp_path, 847000) == 0
+    assert _accumulate(tmp_path, 847000) == 0
+    row = _row(tmp_path)
+    assert row["duration_ms"] == 847000, "a true replay must stay idempotent"
+    assert row["recorded_dispatch_count"] == 1
+
+
+def test_the_collision_is_reported_to_the_caller(tmp_path, capsys):
+    _accumulate(tmp_path, 775000)
+    capsys.readouterr()
+    _accumulate(tmp_path, 1129000)
+    out = capsys.readouterr().out
+    assert "reused for a different measurement" in out
+    assert "one id per dispatch group" in out
+
+
+def test_a_legacy_row_without_digests_stays_idempotent(tmp_path):
+    # Rows written before digests existed cannot distinguish replay from
+    # collision; keeping the old behaviour is the conservative branch.
+    _accumulate(tmp_path, 775000)
+    jsonl = tmp_path / ".stage-stats.jsonl"
+    row = json.loads(jsonl.read_text().strip())
+    row.pop("accumulation_digests", None)
+    jsonl.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    assert _accumulate(tmp_path, 1129000) == 0
+    assert _row(tmp_path)["duration_ms"] == 775000
+
+
+def test_distinct_ids_accumulate_as_before(tmp_path):
+    assert _accumulate(tmp_path, 100, acc_id="wave-1") == 0
+    assert _accumulate(tmp_path, 200, acc_id="wave-2") == 0
+    row = _row(tmp_path)
+    assert row["duration_ms"] == 300
+    assert sorted(row["accumulation_ids"]) == ["wave-1", "wave-2"]
+
+
+def test_full_log_dispatch_count_is_taken_not_added(tmp_path):
+    """A late --since-iso must not multiply the run's dispatch count.
+
+    Run a2a0e355: every STRIDE accumulate call captured its window after the
+    wave had already spawned, so each fell back to the whole log and
+    contributed all 8 spawns. The row ended up claiming 37 dispatches against
+    8 real AGENT_SPAWN events, and nothing in the run said so.
+    """
+    log = tmp_path / ".hook-events.log"
+    log.write_text(
+        "".join(
+            f"2026-08-28T21:19:{sec:02d}Z  [s]  INFO   AGENT_SPAWN  "
+            "appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n"
+            for sec in range(10, 18)
+        ),
+        encoding="utf-8",
+    )
+    for wave in range(5):
+        rec.main(
+            _acc(
+                tmp_path,
+                **{
+                    "--variant": "stride_analyzer",
+                    "--duration-ms": "600000",
+                    "--subagent-type": "appsec-advisor:appsec-stride-analyzer-v2",
+                    "--since-iso": "2026-08-28T21:34:49Z",
+                    "--accumulation-id": f"stride_analyzer:wave{wave}",
+                },
+            )
+        )
+    records = [json.loads(line) for line in (tmp_path / ".stage-stats.jsonl").read_text().splitlines() if line.strip()]
+    assert len(records) == 1
+    row = records[0]
+    assert row["dispatch_count"] == 8, "the whole-log count is the population, not a per-call addend"
+    assert row["duration_ms"] == 5 * 600000, "compute still accumulates across the five calls"
+    assert row["recorded_dispatch_count"] == 5
+
+
+def test_windowed_dispatch_counts_still_sum(tmp_path):
+    """Overlapping windows union the matching dispatch events exactly."""
+    log = tmp_path / ".hook-events.log"
+    log.write_text(
+        "2026-08-28T21:19:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n"
+        "2026-08-28T21:19:11Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n"
+        "2026-08-28T21:40:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n",
+        encoding="utf-8",
+    )
+    common = {
+        "--variant": "stride_analyzer",
+        "--duration-ms": "1000",
+        "--subagent-type": "appsec-advisor:appsec-stride-analyzer-v2",
+    }
+    rec.main(_acc(tmp_path, **{**common, "--since-iso": "2026-08-28T21:19:00Z", "--accumulation-id": "wave-1"}))
+    rec.main(_acc(tmp_path, **{**common, "--since-iso": "2026-08-28T21:40:00Z", "--accumulation-id": "wave-2"}))
+    records = [json.loads(line) for line in (tmp_path / ".stage-stats.jsonl").read_text().splitlines() if line.strip()]
+    assert len(records) == 1
+    # Wave 1's window opens before every spawn, so it sees all three; wave 2
+    # sees the late one again. The shared event must not be counted twice.
+    assert records[0]["dispatch_count"] == 3
+    assert "dispatch_count_ceiling" not in records[0]
+
+
+def test_a_whole_log_fallback_does_not_cap_future_dispatches(tmp_path):
+    """A later wave can grow the population after an early full-log fallback."""
+    log = tmp_path / ".hook-events.log"
+    log.write_text(
+        "2026-08-28T21:19:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n",
+        encoding="utf-8",
+    )
+    common = {
+        "--variant": "stride_analyzer",
+        "--duration-ms": "1000",
+        "--subagent-type": "appsec-advisor:appsec-stride-analyzer-v2",
+    }
+    rec.main(
+        _acc(
+            tmp_path,
+            **{**common, "--since-iso": "2026-08-28T21:30:00Z", "--accumulation-id": "wave-1"},
+        )
+    )
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write(
+            "2026-08-28T21:40:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-stride-analyzer-v2  model=sonnet\n"
+        )
+    rec.main(
+        _acc(
+            tmp_path,
+            **{**common, "--since-iso": "2026-08-28T21:40:00Z", "--accumulation-id": "wave-2"},
+        )
+    )
+    row = json.loads((tmp_path / ".stage-stats.jsonl").read_text(encoding="utf-8"))
+    assert row["dispatch_count"] == 2
+    assert len(row["dispatch_event_ids"]) == 2
+    assert "dispatch_count_ceiling" not in row

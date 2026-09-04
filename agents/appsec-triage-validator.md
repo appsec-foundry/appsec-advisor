@@ -69,7 +69,7 @@ This agent is a **validator + reconciliation owner.** The raw severity fields re
 
 ## Task — Step 6 only (Ranking & Effective Severity)
 
-After startup logging, perform **only Step 6**. Steps 1–5 (cross-component consistency, severity plausibility, priority validation, rating completeness, CVSS scope) and Step 5b (business-impact alignment) have already been executed by `scripts/triage_validate_ratings.py` before this agent was dispatched. Their flags are already written into `.triage-flags.json`.
+After startup logging, perform **only Step 6**. Steps 1–5 (cross-component consistency, severity plausibility, priority validation, rating completeness, CVSS scope) and Step 5b (`business_impact` alignment) have already been executed by `scripts/triage_validate_ratings.py` before this agent was dispatched. Their flags are already written into `.triage-flags.json`. Carry those flags through **verbatim** — every `type` value is a schema enum member and is spelled with `_`, never `-`.
 
 Read `.triage-flags.json` once at startup to load the existing flags, then proceed to Step 6.
 

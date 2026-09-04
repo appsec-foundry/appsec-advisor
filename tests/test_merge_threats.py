@@ -1754,6 +1754,23 @@ class TestSourceAuthFindingToThreat:
         assert weak_primitive["mechanism_id"] == "weak-cryptographic-primitives"
         assert homegrown["mechanism_id"] == "application-owned-cryptography"
 
+    def test_llm_output_checks_keep_the_llm_lens_and_sink_stride(self, mt):
+        sql = mt._source_auth_finding_to_threat(
+            {"check_id": "INJ-LLM-003", "cwe": ["CWE-89"], "file": "routes/chat.ts", "line": 9}
+        )
+        process = mt._source_auth_finding_to_threat(
+            {"check_id": "INJ-LLM-003", "cwe": ["CWE-78"], "file": "routes/chat.ts", "line": 10}
+        )
+        tool = mt._source_auth_finding_to_threat(
+            {"check_id": "AUTHZ-LLM-001", "cwe": ["CWE-862"], "file": "routes/chat.ts", "line": 11}
+        )
+
+        assert sql["stride"] == "Tampering"
+        assert process["stride"] == "Elevation of Privilege"
+        assert sql["owasp_llm_ids"] == process["owasp_llm_ids"] == ["LLM05"]
+        assert tool["stride"] == "Elevation of Privilege"
+        assert tool["owasp_llm_ids"] == ["LLM06"]
+
 
 class TestLoadSourceAuthFindings:
     def test_missing_file_empty(self, mt, tmp_path):

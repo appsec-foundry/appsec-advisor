@@ -136,7 +136,9 @@ DEPTH & MODEL
 TARGET & SCAN
   --repo <path>                Repository to analyze (default: current directory)
   --output <path>              Output directory (default: <repo>/docs/security)
-  --requirements [<url>]       Check tagged security requirements (e.g. [SEC-1])
+  --requirements [<url>]       Check the findings against a requirements
+                               catalog; without <url> the configured one is
+                               used. Tagging the code is not required.
   --no-requirements            Skip requirements check even if configured
                                Deprecated aliases: --with-requirements,
                                --ignore-requirements, --requirements-url <url>
@@ -145,32 +147,28 @@ TARGET & SCAN
                                interactive analysis asks for it instead).
                                Applies to a new or rebuilt analysis; refused
                                on a run that cannot read it
-  --skip-context               Run without business context and without the
-                               question
+  --skip-context               Run without business context: no question, and
+                               docs/business-context.md is left unread
 
-INCREMENTAL / CI
-  --incremental                Re-analyze only components changed since last run
+MODES
   --full                       Re-analyze everything; preserve changelog history
   --rebuild                    Wipe all prior output and start completely fresh
   --rerender                   Re-render the report + re-run QA from existing
                                fragments (no re-analysis); for fragment/render
                                changes, not code changes
-  --resume                     Continue from the last saved checkpoint
-  --base <ref>                 Git ref to diff against (default: prior scan commit)
-  --pr-mode                    Focused delta report for an MR/PR (implies --incremental)
 
-  Auto behavior (no mode flag): runs incremental when a prior model exists.
-    Asking for a deeper assessment depth than the prior run forces a full scan
-    (incremental cannot deepen carried-forward components). On a no-op rerun,
-    a newly requested PDF/HTML export that does not exist yet is still produced
-    without re-scanning. A changed critical / attack-surface file — security
-    primitive (auth/crypto/session/validation), new/changed route or interface
-    (endpoint/controller/GraphQL/schema), or architecture/model change
-    (middleware/gateway/adapter/ORM/model/migration) — prompts a recommendation
-    to re-run with --full.
+  --base <ref>                 Git ref the change summary diffs against
+                               (default: the prior scan commit)
+
+  These three modes are the supported ones. A run reassesses the whole
+  repository; reassess a changed repository with --full, which preserves
+  report history.
+
+  Rejected before any run state changes or any agent is dispatched:
+  --incremental, --pr-mode, --resume, --dry-run, --max-wall-time, --max-cost
+  and APPSEC_LIVE_PHASE=1.
 
   --no-qa                      Skip the Stage 3 QA reviewer (implied by quick)
-  --dry-run                    Run the full pipeline but write nothing to the repo
   --no-confirm / --yes         Skip interactive confirmation prompts
 
 CLEANUP
@@ -230,10 +228,6 @@ ADVANCED
                                Stage 1d on at any depth)
   --max-resumes <N>            Cap on Stage 1 auto-resume dispatches (default: 1;
                                0 disables resume)
-  --max-wall-time <DURATION>   Hard wall-time deadline; watchdog aborts the run
-                               when reached (e.g. 3600, 60m, 1h; default: none)
-  --max-cost <USD>             Hard cost cap in USD; watchdog aborts when
-                               cumulative cost exceeds this (e.g. 15.0; default: none)
 PIPELINE
   Stage 1   Analysis
               Phase 1    Recon scan (+ .recon-signals.json for Actor Layer)

@@ -52,12 +52,25 @@ EXPECTED_MAX_TURNS = {
     "appsec-recon-scanner": 36,
     "appsec-stride-analyzer-v2": 96,
     "appsec-triage-validator": 20,
-    "appsec-threat-merger": 12,
+    # 12 → 18 (2026-08-30): a thorough juice-shop run logged MAX_TURNS at 12/12,
+    # where the soft budget equalled the harness ceiling, so the merge decisions
+    # may have been cut off with no headroom to absorb a wider candidate set.
+    "appsec-threat-merger": 18,
     "appsec-threat-renderer": 80,
     "appsec-secarch-renderer": 60,
-    "appsec-ms-renderer": 32,
+    # 32 → 60 (2026-08-27): a standard-depth juice-shop run stopped this agent
+    # at 32/32 turns. It authors six fragments (verdict, critical attack tree,
+    # attack paths, anti-patterns, AI exposure, requirements compliance) against
+    # the secarch-renderer's one, yet carried the tighter of the two Stage-2
+    # ceilings. Matched to its sibling.
+    "appsec-ms-renderer": 60,
     "appsec-qa-reviewer": 200,
-    "appsec-architect-reviewer": 40,
+    # 40 → 100 (2026-08-30): 40 could never have sufficed — the agent's own
+    # budget table summed to 41 turns at thorough depth. Two reviews in one
+    # juice-shop run consumed 81 and 90 turns and each truncated at 40, and a
+    # resume costs a full context re-prefill (the pair read 21M cached tokens),
+    # so the higher ceiling is the cheaper of the two shapes.
+    "appsec-architect-reviewer": 30,
     "appsec-config-scanner": 15,  # Phase 2.5 dispatch (M3.5)
     "appsec-actor-discoverer": 15,  # Phase 2.7 actor discovery
     # 20 → 40 (2026-08-22): 8fbbd534 had taken this from 60 to 20 while
@@ -124,6 +137,11 @@ MIN_MAX_TURNS = {
     # 74846143 (2026-08-07): a live run consumed all 25 turns and skipped the
     # required Markdown validator.
     "appsec-recon-scanner": 36,
+    # 2026-08-30: the role stopped being a review. It no longer reads the report
+    # or the YAML — it reads one bounded projection and writes one plan, four
+    # tool calls in total — so the 90-turn floor a full review needed no longer
+    # describes this job. The first measured editorial run replaces this floor.
+    "appsec-architect-reviewer": 12,
 }
 
 # Agents that must NOT be user-invocable (must carry INTERNAL marker in body)
@@ -425,15 +443,15 @@ def test_focused_renderer_line_slices_match_their_owned_contracts():
     ms = (AGENTS_DIR / "appsec-ms-renderer.md").read_text(encoding="utf-8")
     secarch = (AGENTS_DIR / "appsec-secarch-renderer.md").read_text(encoding="utf-8")
 
-    assert "lines 143–375" in ms
+    assert "lines 143–377" in ms
     assert renderer_lines[142].startswith("### MS prose")
-    assert renderer_lines[373].startswith("Map findings to requirements")
-    assert renderer_lines[374] == ""
-    assert "lines 376–701" in secarch
-    assert renderer_lines[375].startswith("### `security-architecture.md` authoring")
-    assert renderer_lines[699] == "```"
-    assert renderer_lines[700] == ""
-    assert renderer_lines[701].startswith("## Completion")
+    assert renderer_lines[375].startswith("Finding severity does not determine compliance status")
+    assert renderer_lines[376] == ""
+    assert "lines 378–703" in secarch
+    assert renderer_lines[377].startswith("### `security-architecture.md` authoring")
+    assert renderer_lines[701] == "```"
+    assert renderer_lines[702] == ""
+    assert renderer_lines[703].startswith("## Completion")
 
     # The MS slice must actually carry the ms-verdict rules the MS renderer is
     # sent here for — an edit that lands one outside the bounds ships a rule no
@@ -1031,6 +1049,9 @@ PROSE_SAMPLES_FILE = AGENTS_DIR / "shared" / "prose-samples.md"
 
 AGENT_FILES_AUTHORING_PROSE = [
     AGENTS_DIR / "appsec-threat-renderer.md",
+    # The Stage-4 editorial pass rewrites prose that ships, so it edits toward
+    # the same anchor the authors write to rather than a second style of its own.
+    AGENTS_DIR / "appsec-architect-reviewer.md",
     AGENTS_DIR / "appsec-secarch-renderer.md",
     AGENTS_DIR / "appsec-ms-renderer.md",
     AGENTS_DIR / "appsec-stride-analyzer-v2.md",
@@ -1073,6 +1094,15 @@ class TestProseStyleAnchor:
             f"agents embed alongside prose-style.md. "
             f"See prose-style.md → 'Companion file' for the rationale."
         )
+
+    def test_inline_code_semantics_are_owned_at_production(self):
+        style = PROSE_STYLE_FILE.read_text(encoding="utf-8")
+        stride = (AGENTS_DIR / "appsec-stride-analyzer-v2.md").read_text(encoding="utf-8")
+        renderer = (AGENTS_DIR / "appsec-threat-renderer.md").read_text(encoding="utf-8")
+        assert "Producer ownership:" in style
+        assert "author these backticks in every Markdown-bearing prose field" in style
+        assert "Kernel preloads `shared/prose-style.md`" in stride
+        assert "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md" in renderer
 
     @pytest.mark.parametrize(
         "agent_file",

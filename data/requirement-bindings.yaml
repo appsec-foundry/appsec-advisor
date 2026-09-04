@@ -142,6 +142,21 @@ requirements:
       - tests/test_agent_definitions.py::test_cross_repo_mismatch_requires_target_evidence
       - tests/test_build_threat_modeling_context.py::test_supplied_reference_document_is_admitted_as_fenced_and_named_data
 
+  REQ-MOD-009:
+    applies_to:
+      - scripts/merge_threats.py
+      - scripts/_severity_rollup.py
+      - scripts/build_posture_verdict.py
+      - scripts/compose_threat_model.py
+      - schemas/stride.schema.yaml
+      - schemas/threats-merged.schema.yaml
+    decisions:
+      - FE-1
+      - WK-4
+    documents: []
+    coverage: advisory
+    guards: []
+
   REQ-ARC-001:
     applies_to:
       - data/architecture-coverage-rules.yaml
@@ -179,6 +194,7 @@ requirements:
   REQ-FLW-003:
     applies_to:
       - scripts/orchestration_controller.py
+      - scripts/context_routing.py
       - scripts/validate_intermediate.py
       - scripts/compose_threat_model.py
       - schemas/**
@@ -194,11 +210,21 @@ requirements:
       - tests/test_orchestration_controller.py::test_next_action_routes_to_stage1d_when_abuse_verification_never_ran
       - tests/test_compose_threat_model.py::test_schema_violation_raises
       - tests/test_compose_threat_model.py::test_cli_exit_1_on_missing_fragment
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_boundary_after_an_unverified_dispatch_rejects
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_changed_artifact_still_aborts_the_run
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_jointly_rewritten_plan_and_receipt_do_not_replace_the_emitted_expectation
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_missing_pending_marker_with_a_plan_aborts
+      - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_malformed_verification_marker_aborts
+      - tests/test_orchestration_controller.py::test_the_boundary_gate_is_reachable_from_the_command_line
 
   REQ-REQ-001:
     applies_to:
       - scripts/compose_threat_model.py
+      - scripts/build_threat_model_yaml.py
+      - scripts/emit_requirement_trace_to_model.py
+      - scripts/validate_intermediate.py
       - schemas/requirements-catalog.schema.yaml
+      - schemas/threat-model.output.schema.yaml
     decisions:
       - RQ-1
       - RQ-3
@@ -210,6 +236,11 @@ requirements:
       - tests/test_requirements_mapping.py::test_mapping_is_prefix_agnostic_for_requirement_ids
       - tests/test_requirements_mapping.py::test_legacy_requirement_id_is_honoured_and_unlinked_threats_excluded
       - tests/test_requirements_mapping.py::test_remediation_reference_ignored_without_requirements_yaml
+      - tests/test_requirements_mapping.py::test_cited_finding_opens_a_row_when_no_threat_declares_the_requirement
+      - tests/test_build_threat_model_yaml.py::test_strict_export_rejects_an_incomplete_assessment
+      - tests/test_requirements_trace.py::TestPostComposeRequirementsExport::test_complete_stage2_assessment_is_persisted_in_the_yaml
+      - tests/test_requirements_trace.py::TestPostComposeRequirementsExport::test_missing_stage2_assessment_fails_without_rewriting_yaml
+      - tests/test_validate_intermediate.py::test_requirements_compliance_schema_rejects_missing_buckets_and_unknown_status
 
   REQ-BIZ-001:
     applies_to:
@@ -248,7 +279,9 @@ requirements:
       - scripts/build_stride_dispatch_manifest.py
       - scripts/triage_validate_ratings.py
       - agents/appsec-control-analyst.md
+      - agents/appsec-stride-analyzer-v2.md
       - schemas/stride-component-business-context.schema.json
+      - schemas/threat-model.output.schema.yaml
     decisions:
       - RC-1
     documents:
@@ -260,6 +293,25 @@ requirements:
       - tests/test_build_threat_model_yaml.py::test_build_meta_records_which_file_the_context_digest_came_from
       - tests/test_dispatch_manifest.py::test_declared_business_assets_make_a_component_crown_jewel
       - tests/test_triage_validate_ratings.py::test_step5b_flags_low_impact_where_context_declares_assets
+      - tests/test_build_threat_model_yaml.py::test_declared_context_marks_the_findings_of_its_component
+      - tests/test_build_threat_model_yaml.py::test_business_context_basis_never_carries_the_business_prose
+
+  REQ-BIZ-004:
+    applies_to:
+      - scripts/orchestration_controller.py
+      - scripts/build_threat_modeling_context.py
+      - scripts/aggregate_run_issues.py
+      - scripts/compose_threat_model.py
+    decisions:
+      - RC-1
+    documents:
+      - docs/threat-modeler.md
+    coverage: direct
+    guards:
+      - tests/test_orchestration_controller.py::test_declared_context_that_cannot_be_captured_stops_the_run
+      - tests/test_aggregate_run_issues.py::test_declared_context_mapping_to_no_component_is_surfaced
+      - tests/test_compose_threat_model.py::test_run_statistics_disclose_the_business_context_source
+      - tests/test_build_threat_modeling_context.py::test_skip_context_excludes_the_repository_business_context
 
   REQ-RPT-001:
     applies_to:
@@ -300,9 +352,15 @@ requirements:
     applies_to:
       - agents/shared/prose-style.md
       - agents/shared/prose-samples.md
+      - scripts/_lib_manifest.py
+      - scripts/inline_code_formatter.py
+      - scripts/apply_prose_fixes.py
+      - scripts/compose_threat_model.py
+      - scripts/walkthrough_renderer.py
       - scripts/qa_checks.py
     decisions:
       - RA-4
+      - RN-5
     documents:
       - agents/shared/prose-style.md
     coverage: partial
@@ -311,6 +369,13 @@ requirements:
       - tests/test_reference_format.py::test_linkify_full_form_basename_and_backticked
       - tests/test_agent_definitions.py::TestProseStyleAnchor::test_prose_style_file_exists
       - tests/test_agent_definitions.py::TestProseStyleAnchor::test_prose_authoring_files_reference_anchor
+      - tests/test_inline_code_formatter.py::test_rule_6_code_matrix_formats_complete_tokens
+      - tests/test_inline_code_formatter.py::test_partial_authored_span_is_repaired_as_one_expression
+      - tests/test_inline_code_formatter.py::test_formatter_is_idempotent
+      - tests/test_inline_code_formatter.py::test_repository_vocabulary_uses_shared_parser_across_ecosystems
+      - tests/test_inline_code_formatter.py::test_structured_vocabulary_terminates_on_cycles
+      - tests/test_qa_checks_cov_band3.py::test_inline_code_format_scans_table_and_blockquote_but_skips_opaque_markdown
+      - tests/test_e2e_pipeline.py::test_composed_report_has_no_inline_code_residue
 
   REQ-RPT-005:
     applies_to:
@@ -326,6 +391,32 @@ requirements:
       - tests/test_validate_mitigation_quality.py::test_urgent_fix_requires_steps_and_verification
       - tests/test_validate_mitigation_quality.py::test_urgent_code_example_needs_a_source_location
       - tests/test_emit_finding_fix_mitigations.py::test_remediation_string_fallback_and_priority_rules
+
+  REQ-RPT-006:
+    applies_to:
+      - schemas/threat-model.output.schema.yaml
+      - scripts/build_threat_model_yaml.py
+      - scripts/render_abuse_cases.py
+      - scripts/emit_requirement_trace_to_model.py
+      - scripts/compose_threat_model.py
+      - scripts/export_threat_dragon.py
+      - scripts/validate_intermediate.py
+      - docs/threat-dragon-export.md
+    decisions:
+      - EXP-4
+      - EXP-5
+    documents:
+      - docs/threat-dragon-export.md
+      - docs/threat-modeler.md
+      - docs/internal/contracts/schema-invariants.md
+    coverage: direct
+    guards:
+      - tests/test_render_abuse_cases.py::test_main_persists_canonical_analysis_to_yaml
+      - tests/test_build_threat_model_yaml.py::test_initial_abuse_analysis_distinguishes_pending_and_skipped_runs
+      - tests/test_build_threat_model_yaml.py::test_business_context_trace_records_safe_provenance_without_prose
+      - tests/test_requirements_trace.py::TestPostComposeRequirementsExport::test_complete_stage2_assessment_persists_provenance
+      - tests/test_export_threat_dragon.py::test_traceability_is_folded_into_bounded_text
+      - tests/test_validate_intermediate.py::test_export_trace_cross_references_fail_closed
 
   REQ-USE-001:
     applies_to:
@@ -414,6 +505,20 @@ requirements:
     guards:
       - tests/test_resolve_actors.py::test_resolver_never_writes_actor_choices_back_to_repo
       - tests/test_build_threat_modeling_context.py::test_rejects_invalid_known_threats_before_context_publication
+
+  REQ-CFG-003:
+    applies_to:
+      - scripts/sync_baseline.py
+    decisions: []
+    documents:
+      - docs/org-profiles.md
+    coverage: direct
+    guards:
+      - tests/test_sync_baseline.py::test_same_id_rewrites_the_bundled_copy
+      - tests/test_sync_baseline.py::test_unreachable_source_does_not_touch_the_copy
+      - tests/test_sync_baseline.py::test_profile_same_id_rewrites_the_vendored_copy
+      - tests/test_sync_baseline.py::test_profile_accepted_id_moves_file_and_profile_together
+      - tests/test_sync_baseline.py::test_profile_new_id_stops_and_changes_nothing
 
   REQ-EVO-003:
     applies_to:

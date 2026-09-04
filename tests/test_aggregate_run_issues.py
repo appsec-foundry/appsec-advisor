@@ -19,6 +19,7 @@ These tests lock in the M3.2 fixes for the bugs surfaced during the
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -820,6 +821,36 @@ class TestSoftTurnBudgetCrossing:
     def test_zero_budget_is_not_treated_as_a_crossing(self):
         assert agg._soft_turn_budget_crossing("turns=5/0") is None
 
+    @staticmethod
+    def _by(source: str, detail: str) -> list[tuple[int, str]]:
+        """A MAX_TURNS line whose source column names the emitting agent."""
+        return [(1, f"2026-08-27T10:30:00Z  [--------]  INFO   {source}  MAX_TURNS   {detail}")]
+
+    def test_stride_crossing_reports_the_headroom_it_verified(self):
+        """A soft budget below the ceiling may say so — 31 against 96."""
+        (issue,) = agg._extract_errors([], self._by("stride-analyzer-v2", "turns=34/31  pct=109%"))
+        assert issue["evidence"]["harness_ceiling"] == 96
+        assert issue["evidence"]["at_harness_ceiling"] is False
+        assert "below the harness ceiling (96)" in issue["title"]
+
+    def test_crossing_at_the_ceiling_is_not_announced_as_headroom(self):
+        """Regression: an agent dispatched without a ``MAX_TURNS`` prompt
+        parameter is measured against its own frontmatter ``maxTurns``, so soft
+        budget and harness ceiling are the same number. Such a crossing means the
+        agent reached its real limit and its output may be truncated — it was
+        reported as "harness ceiling not reached" without anything being checked.
+        """
+        (issue,) = agg._extract_errors([], self._by("ms-renderer", "turns=61/60  pct=101%"))
+        assert issue["evidence"]["at_harness_ceiling"] is True
+        assert "output may be truncated" in issue["title"]
+        assert "not reached" not in issue["title"]
+
+    def test_unknown_agent_claims_nothing_about_the_ceiling(self):
+        """An unresolvable definition must not borrow the watchdog's default."""
+        (issue,) = agg._extract_errors([], self._by("not-a-real-agent", "turns=9/8  pct=112%"))
+        assert "harness_ceiling" not in issue["evidence"]
+        assert "ceiling" not in issue["title"]
+
 
 class TestSoftCrossingKeepsItsRecommender:
     """Splitting ``MAX_TURNS`` into a soft category decoupled it from
@@ -1524,3 +1555,220 @@ def test_canary_aggregates_multiple_reasons_once():
         "no_recommender_for_category",
     ]
     assert sorted(canaries[0]["evidence"]["affected_categories"]) == ["max_turns_subagent", "novel_category"]
+
+
+# ---------------------------------------------------------------------------
+# REQ-BIZ-004 — declared context that reached no component is surfaced
+# ---------------------------------------------------------------------------
+
+
+def _context_run(tmp_path, analyst: dict, *, skip: bool = False):
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "business-context.md").write_text("Handles payouts.\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    cfg = {"repo_root": str(repo), "output_dir": str(out)}
+    if skip:
+        cfg["skip_business_context"] = True
+    (out / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (out / ".stride-analyst-context.json").write_text(json.dumps(analyst), encoding="utf-8")
+    return out
+
+
+def test_declared_context_mapping_to_no_component_is_surfaced(tmp_path):
+    out = _context_run(tmp_path, {"api": {"interfaces": ["http"]}, "db": {}})
+
+    issues = agg._extract_business_context_reach(out)
+
+    assert len(issues) == 1
+    assert issues[0]["category"] == "business_context_unmapped"
+    assert issues[0]["severity"] == "warning"
+    assert "components_with_business_context=0 of 2" in issues[0]["evidence"]["raw_event"]
+
+
+def test_mapped_business_context_produces_no_issue(tmp_path):
+    out = _context_run(tmp_path, {"api": {"business_context": {"sensitive_assets": ["funds"]}}})
+
+    assert agg._extract_business_context_reach(out) == []
+
+
+def test_no_issue_when_the_run_declared_no_business_context(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(tmp_path), "output_dir": str(out)}), "utf-8")
+    (out / ".stride-analyst-context.json").write_text(json.dumps({"api": {}}), encoding="utf-8")
+
+    assert agg._extract_business_context_reach(out) == []
+
+
+def test_skipped_business_context_produces_no_issue(tmp_path):
+    out = _context_run(tmp_path, {"api": {}}, skip=True)
+
+    assert agg._extract_business_context_reach(out) == []
+
+
+class TestRoutingEffectiveness:
+    def _component(self, tmp_path, name, delivered, cited):
+        d = tmp_path / ".dispatch-context" / name
+        d.mkdir(parents=True)
+        (d / "evidence-bundle.json").write_text(
+            _json.dumps(
+                {"source_slices": [{"repository_id": "primary", "path": p} for p in delivered]},
+            ),
+            encoding="utf-8",
+        )
+        (tmp_path / f".stride-{name}.json").write_text(
+            _json.dumps(
+                {
+                    "component_id": name,
+                    "threats": [
+                        {"local_id": f"{name}-{i:03d}", "evidence": {"file": f, "line": 1}}
+                        for i, f in enumerate(cited, 1)
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_component_whose_findings_all_came_from_outside_the_bundle_is_reported(self, tmp_path):
+        # Run a2a0e355: database was routed data/datacreator.ts and cited
+        # nothing from it, every threat resting on files it found itself.
+        self._component(
+            tmp_path,
+            "database",
+            delivered=["data/datacreator.ts"],
+            cited=["lib/insecurity.ts", "models/user.ts", "models/index.ts"],
+        )
+        issues = agg._extract_routing_effectiveness(tmp_path)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "routing_effectiveness"
+        assert issues[0]["evidence"]["component_id"] == "database"
+        assert issues[0]["evidence"]["delivered_files"] == ["data/datacreator.ts"]
+
+    def test_one_citation_from_the_bundle_is_enough_to_stay_silent(self, tmp_path):
+        self._component(
+            tmp_path,
+            "web3-nft",
+            delivered=["routes/nft.ts"],
+            cited=["routes/nft.ts", "routes/wallet.ts", "lib/web3.ts"],
+        )
+        assert agg._extract_routing_effectiveness(tmp_path) == []
+
+    def test_component_without_threats_or_bundle_is_not_an_issue(self, tmp_path):
+        self._component(tmp_path, "empty", delivered=["a.ts"], cited=[])
+        assert agg._extract_routing_effectiveness(tmp_path) == []
+        assert agg._extract_routing_effectiveness(tmp_path / "nowhere") == []
+
+
+class TestDispatchCountConsistency:
+    def _write(self, tmp_path, rows, spawns):
+        (tmp_path / ".stage-stats.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        return [
+            (i, f"2026-08-28T21:19:{i:02d}Z  [s]  INFO   AGENT_SPAWN  {agent}  model=sonnet")
+            for i, agent in enumerate(spawns, 1)
+        ]
+
+    def test_row_claiming_more_dispatches_than_spawns_is_reported(self, tmp_path):
+        agent = "appsec-advisor:appsec-stride-analyzer-v2"
+        hook = self._write(
+            tmp_path,
+            [{"stage": 1, "variant": "stride_analyzer", "agent": agent, "dispatch_count": 37}],
+            [agent] * 8,
+        )
+        issues = agg._extract_dispatch_count_consistency(tmp_path, hook)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "dispatch_count_inconsistent"
+        assert issues[0]["evidence"]["dispatch_count"] == 37
+        assert issues[0]["evidence"]["observed_spawns"] == 8
+
+    def test_a_matching_row_is_silent(self, tmp_path):
+        agent = "appsec-advisor:appsec-abuse-case-verifier"
+        hook = self._write(
+            tmp_path,
+            [{"stage": 1, "variant": "abuse-verification", "agent": agent, "dispatch_count": 7}],
+            [agent] * 7,
+        )
+        assert agg._extract_dispatch_count_consistency(tmp_path, hook) == []
+
+    def test_agent_with_no_spawn_events_is_not_judged(self, tmp_path):
+        hook = self._write(
+            tmp_path,
+            [
+                {
+                    "stage": 2,
+                    "variant": "renderer",
+                    "agent": "appsec-advisor:appsec-threat-renderer",
+                    "dispatch_count": 3,
+                }
+            ],
+            ["appsec-advisor:appsec-recon-scanner"],
+        )
+        assert agg._extract_dispatch_count_consistency(tmp_path, hook) == []
+
+
+class TestRequirementsExportConsistency:
+    def _catalog(self, tmp_path, declared=True):
+        """A run that really has requirements carries BOTH artifacts: the
+        resolution AND a catalog that declares them.
+        """
+        body = (
+            "source: https://example.test/asr\ncategories:\n  - name: AuthN\n    requirements:\n      - id: R-1\n"
+            if declared
+            else "source: skipped\ncategories: []\nblueprints: []\n"
+        )
+        (tmp_path / ".requirements.yaml").write_text(body, encoding="utf-8")
+
+    def _resolution(self, tmp_path, count, *, source_kind="cli", disposition="fetched"):
+        (tmp_path / ".requirements-resolution.json").write_text(
+            _json.dumps({"source_kind": source_kind, "disposition": disposition, "count": count}), encoding="utf-8"
+        )
+
+    def test_export_without_the_assessment_is_reported(self, tmp_path):
+        # Run a2a0e355: 73 requirements assessed in the report, no
+        # requirements_compliance key in the export.
+        self._resolution(tmp_path, 73)
+        self._catalog(tmp_path)
+        (tmp_path / "threat-model.yaml").write_text("meta:\n  schema_version: 1\nthreats: []\n", encoding="utf-8")
+        issues = agg._extract_requirements_export_consistency(tmp_path)
+        assert len(issues) == 1
+        assert issues[0]["category"] == "requirements_export_inconsistent"
+        assert issues[0]["evidence"] == {
+            "log_file": "threat-model.yaml",
+            "log_line": 1,
+            "raw_event": issues[0]["evidence"]["raw_event"],
+            "declared": 73,
+            "exported": 0,
+        }
+
+    def test_a_complete_export_is_silent(self, tmp_path):
+        self._resolution(tmp_path, 73)
+        self._catalog(tmp_path)
+        (tmp_path / "threat-model.yaml").write_text(
+            "requirements_compliance:\n  total: 73\n  fail: 31\n", encoding="utf-8"
+        )
+        assert agg._extract_requirements_export_consistency(tmp_path) == []
+
+    def test_a_disabled_run_is_not_judged_on_a_stale_cached_count(self, tmp_path):
+        """The 2026-08-29 juice-shop shape: the check was OFF, but resolution
+        still carried `count: 63` from a catalog fetched months earlier. The
+        export correctly assessed nothing, and comparing the two invented a
+        disagreement on every requirements-free run that had ever fetched one.
+        """
+        self._resolution(tmp_path, 63, source_kind="disabled", disposition="skipped")
+        self._catalog(tmp_path, declared=False)
+        (tmp_path / "threat-model.yaml").write_text("meta:\n  schema_version: 1\nthreats: []\n", encoding="utf-8")
+
+        assert agg._extract_requirements_export_consistency(tmp_path) == []
+
+    def test_a_missing_catalog_is_not_judged_on_a_stale_count(self, tmp_path):
+        self._resolution(tmp_path, 63, source_kind="disabled", disposition="skipped")
+        (tmp_path / "threat-model.yaml").write_text("threats: []\n", encoding="utf-8")
+
+        assert agg._extract_requirements_export_consistency(tmp_path) == []
+
+    def test_a_run_without_requirements_is_not_judged(self, tmp_path):
+        assert agg._extract_requirements_export_consistency(tmp_path) == []
+        self._resolution(tmp_path, 0)
+        (tmp_path / "threat-model.yaml").write_text("threats: []\n", encoding="utf-8")
+        assert agg._extract_requirements_export_consistency(tmp_path) == []

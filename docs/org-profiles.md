@@ -128,7 +128,7 @@ compatibility:
 default_preset: ci-standard
 requirements:
   source:
-    requirements_yaml_url: "https://security.acme.example/appsec-requirements.yaml"
+    requirements_yaml_url: "https://appsec.int.example.com/appsec-requirements.yaml"
     label: "Acme AppSec Requirements"
     fail_mode: cache_fallback
   create_threat_model:
@@ -223,7 +223,7 @@ Overridden by `--fail-on`.
 ```yaml
 policy:
   disable_opus: true
-  url_allowlist: [security.acme.example, raw.githubusercontent.com]
+  url_allowlist: [appsec.int.example.com, raw.githubusercontent.com]
 ```
 
 `disable_opus` downgrades every Opus selection to Sonnet — a cost or compliance
@@ -266,13 +266,17 @@ customize the banner, and one turns it off:
 ```yaml
 banner:
   headline: "ACME AppSec Advisor"          # replaces the plugin name on the identity line
-  url: "https://git.acme.internal/appsec"  # printed by the help skill
+  url: "https://git.int.example.com/appsec"  # printed by the help skill
   enabled: true                            # false ships a build that opens silently
 ```
 
 `headline` is branding on the identity line only. Threat-model facts are always
 computed from the repository, so a configured headline can never claim a state
 that is not there.
+
+The same headline titles `/appsec-advisor:status`. Without one, a packaged build
+uses its own package name there, so the status header names your build rather
+than the upstream product.
 
 `url` is not printed in the banner; the `help` skill prints it under "More
 information". Point it at an internal repository or runbook.
@@ -297,7 +301,7 @@ the code with it.
 A secure-coding baseline is an instruction file the coding assistant loads
 before it writes code, so an organization's rules apply on every prompt rather
 than only on the ones that mention security. The plugin ships one — the
-[AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline),
+[AI Secure Coding Baseline](https://github.com/appsec-foundry/aiscb),
 id `aisec-0.1` — installs it with `/appsec-advisor:install-baseline`, and the session
 banner flags it when it is missing or mismatched.
 
@@ -307,7 +311,7 @@ Use the `baseline:` block to ship your own instead:
 baseline:
   id: acme-sec-1.0
   name: "ACME Secure Coding Baseline"
-  url: "https://security.acme.example/secure-coding-baseline.md"
+  url: "https://appsec.int.example.com/secure-coding-baseline.md"
   file: baselines/acme-sec.md          # offline fallback, inside the profile dir
 ```
 
@@ -321,7 +325,7 @@ Or point at a git repository, for a baseline that is not served as a raw file:
 baseline:
   id: acme-sec-1.0
   git:
-    url: "git@git.acme.internal:appsec/baseline.git"
+    url: "git@git.int.example.com:appsec/baseline.git"
     ref: main
     path: secure-coding-baseline.md
 ```
@@ -351,13 +355,33 @@ counts as installed and is reported with its suffix, so a reader can see the
 adaptation. A *newer* version of the same baseline counts as loaded and is
 reported as ahead of the id you declared — a baseline is published on its own
 schedule, and a machine that updated before your profile did is not broken. An
-older version, or a different baseline, stays visible as drift.
+*older* version is reported as behind, with `/appsec-advisor:update-baseline` to
+refresh it in place — the scope is already chosen, only the text lags. A
+different baseline stays visible as drift with no command beside it: which of
+two rule sets should apply is a decision, not a repair. Both fail an enforcing
+check, because in neither case are the rules you declared the ones in context.
 
 Declaring any source replaces the plugin's default baseline everywhere —
 banner, verify, and what install writes. The upstream URL and the upstream
 bundled copy both carry the upstream id, which your own id check would refuse,
 so packaging clears them rather than leaving a source that can only fail.
 Ship a `file:` if your users need to install without reaching your server.
+
+### Keeping the vendored copy current
+
+`file:` is a copy, so it is exactly as current as the last time somebody updated it. Nothing notices when it falls behind the `url` or `git` source beside it: the id still matches, packaging still passes, and an offline install serves rules you no longer publish.
+
+Refresh it from the source the same profile declares:
+
+```bash
+python3 <plugin>/scripts/sync_baseline.py --profile org-profile/org-profile.yaml [--dry-run]
+```
+
+The refresh fetches, refuses anything without a `baseline-id:` marker, writes the copy, and reports what changed. It never falls back to the copy it is refreshing, so an unreachable source is an error rather than a silent success. Run it with `--dry-run` on a schedule to be told about drift before you cut a package; run it without to commit the new text.
+
+When the published document declares a *different* id, the refresh stops and writes nothing: a version change is a decision, not a copy. `--accept-id <id>` then moves the file and the `id:` in your profile together, or neither. Where two lines in the profile could be that id, it refuses and asks you to make the edit by hand.
+
+The command talks to the network, so keep it out of your packaging build: `package_internal_plugin.py` copies the profile into a temporary build directory, where a refresh would be discarded, and a build must not fail because a host is down.
 
 ### Making it a gate
 
@@ -370,7 +394,7 @@ of your baseline never fails, because failing it would demand a downgrade.
 ```yaml
 baseline:
   id: acme-sec-1.0
-  url: "https://security.acme.example/secure-coding-baseline.md"
+  url: "https://appsec.int.example.com/secure-coding-baseline.md"
   enforce: true
 ```
 
@@ -378,9 +402,9 @@ Without the profile flag anyone can still ask for a verdict at the call site
 with `/appsec-advisor:verify-baseline --enforce`.
 
 `enabled: false` turns the feature off: the banner drops its baseline line and
-all three baseline skills report that none is configured. Removing
-`install-baseline`, `verify-baseline` and `remove-baseline` through
-`skill_toggles` drops the commands as well.
+every baseline skill reports that none is configured. Removing
+`install-baseline`, `update-baseline`, `verify-baseline` and `remove-baseline`
+through `skill_toggles` drops the commands as well.
 
 An organization that mandates the baseline should disable `remove-baseline`
 that way, with a reason naming the policy. The stronger answer is Claude Code's
@@ -602,22 +626,35 @@ it never overrides tool behaviour, gates, or severity.
 
 ## Status output
 
-`/appsec-advisor:status` adds an *Org Profile* section when a profile is active or merely configured:
+`/appsec-advisor:status` always prints an *Org Profile* section, so the absence of a profile is an answer too:
 
 ```
 Org Profile
 -----------
-  Status         active
-  Organization   acme
-  Version        2026.05.1
-  Path           /workspace/internal-appsec-advisor/org-profile/org-profile.yaml
-  Preset         ci-standard (base: standard)
-  Requirements   Acme AppSec Requirements
-  LLM context    organization, sso, platform
-  Disabled skills publish-threat-model
+  Status           active
+  Organization     Acme Corp (acme)
+  Version          2026.05.1
+  Path             /workspace/internal-appsec-advisor/org-profile/org-profile.yaml
+  Preset           ci-standard (base: standard)
+  Requirements     Acme AppSec Requirements
+  Org context      organization, sso, platform
+  Disabled skills  publish-threat-model
 ```
 
-Before the first run resolves the profile, the status is `configured (not yet resolved)`.
+Before the first run resolves the profile, the status is `configured (not yet resolved)`; without a
+profile it is `none configured`.
+
+The same command lists every skill the build ships with the state the gate enforces, so a disabled
+skill and one the package policy removed are both visible with the reason your profile gave:
+
+```
+Skills (24 installed · 1 disabled by org profile · 1 removed by package policy)
+------------------------------------------------------------------------------
+  create-threat-model   enabled
+  export-threat-model   disabled — Release job only.
+  acme-release-check    enabled  [organization]
+  publish-threat-model  removed by package policy
+```
 
 ## Examples
 
@@ -648,7 +685,7 @@ Ignore the packaged profile for one run:
 Override requirements for one run:
 
 ```
-/appsec-advisor:create-threat-model --requirements https://security.example.test/r.yaml
+/appsec-advisor:create-threat-model --requirements https://appsec.int.example.com/r.yaml
 /appsec-advisor:create-threat-model --no-requirements
 ```
 

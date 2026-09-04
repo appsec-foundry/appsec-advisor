@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -267,7 +268,11 @@ def main(argv: list[str] | None = None) -> int:
         result = scan(args.repo_root, args.checks, depth=args.assessment_depth, output=args.output)
         atomic_write_json(args.output, result, sort_keys=False)
     except (ConfigScanError, OSError) as exc:
-        parser.error(str(exc))
+        # Not `parser.error`: a scan or IO failure is not an argv error, and the
+        # usage block argparse prefixes displaces the reason in BASH_WARN
+        # excerpts, which anchor on `usage:`.
+        print(f"{parser.prog}: {exc}", file=sys.stderr)
+        return 2
     print(f"config-iac-scanner: {result['checks_run']} checks, {result['violations']} violations")
     return 0
 

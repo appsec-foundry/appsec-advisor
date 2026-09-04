@@ -4292,6 +4292,28 @@ _V2_STATUS_TOKENS = {
 }
 
 
+# `implementation` is meant to be the block's prose paragraph, but the control
+# analyst fills it with a file-reference list on most rows (16 of 20 controls,
+# juice-shop 2026-08-27). Emitting that verbatim put a bare `lib/insecurity.ts`
+# where a sentence belongs; the renderer then wrote its own paragraph naming the
+# same file directly below, because the scaffold is preserved and it had no
+# placeholder to fill. The reference shipped twice — 8 orphan lines and 2
+# comma-runs of up to eleven paths in one report. Route a reference list to the
+# narrative placeholder instead, which asks for exactly the missing sentence.
+#
+# Deliberately strict: a space anywhere makes it prose, so "Implemented in
+# lib/insecurity.ts" and "See routes/login.ts" pass through untouched. Callers
+# must keep using the raw field for suppression decisions — this only governs
+# whether the value is emitted AS the paragraph.
+_V2_FILE_REF_RE = re.compile(r"^\.?[\w.-]+(?:/[\w.-]+)*\.[A-Za-z]\w{0,9}(?::\d+(?:[-,]\d+)*)?$")
+
+
+def _v2_is_file_ref_list(text: str) -> bool:
+    """True when `text` is only comma-separated file references, not prose."""
+    parts = [p.strip() for p in text.split(",")]
+    return bool(parts) and all(p and _V2_FILE_REF_RE.fullmatch(p) for p in parts)
+
+
 def _v2_status_line(eff: str, note: str = "") -> str:
     """Build the per-sub-control `**Status:**` badge line for §6 H4 blocks.
 
@@ -4392,7 +4414,7 @@ def _emit_v2_grouped_control(
     )
     lines.append("")
     impl = (c.get("implementation") or "").strip()
-    if impl:
+    if impl and not _v2_is_file_ref_list(impl):
         lines.append(impl)
     else:
         lines.append(
@@ -4523,7 +4545,7 @@ def _emit_v2_subcontrol_block(
     )
     lines.append("")
     impl = (sub.get("implementation") or "").strip()
-    if impl:
+    if impl and not _v2_is_file_ref_list(impl):
         lines.append(impl)
     else:
         lines.append(
@@ -4725,9 +4747,10 @@ def _emit_v2_subcontrol_legacy(
         )
     )
     lines.append("")
-    if impl_text:
+    if impl_text and not _v2_is_file_ref_list(impl_text):
         # Stage 1 supplied an implementation paragraph — use it verbatim;
-        # the LLM does not need to author a placeholder.
+        # the LLM does not need to author a placeholder. A bare file-reference
+        # list is not that paragraph and falls through to the placeholder.
         lines.append(impl_text)
     else:
         lines.append(

@@ -44,7 +44,7 @@ Add an entry to each of these (paths and current line numbers in [`schema-invari
 | `_FRAGMENT_FILENAMES` in `validate_fragment.py` | `"cloud-posture": "cloud-posture.json"` — fragment id → on-disk filename |
 | `CONTRACT_SECTION_FRAGMENTS` in `qa_checks.py` | `"cloud_posture": ["cloud-posture"],` — section_id → repairable fragment ids |
 
-**Drift hazard:** these five maps overlap because each consumer reads only the slice it needs. Adding to four of the five is the classic silent breakage — the composer renders nothing for the section, or the QA repair plan can't ask the LLM to regenerate it. `scripts/check_fragment_registry.py` is the automated gate (see Phase A1 of `docs/internal/runbooks/refactoring-plan.md`); if present, it MUST stay green.
+**Drift hazard:** these five maps overlap because each consumer reads only the slice it needs. Adding to four of the five is the classic silent breakage — the composer renders nothing for the section, or the QA repair plan can't ask the LLM to regenerate it. `scripts/check_fragment_registry.py` is the automated gate (see Phase A1 of `docs/internal/analysis/refactoring-plan.md`); if present, it MUST stay green.
 
 ## 4. Render the section
 

@@ -101,6 +101,7 @@ def validate_state(state: object) -> dict[str, Any]:
             "analysis_depth",
             "max_turns",
             "launch_acknowledged_at",
+            "background_promoted",
             "finished_at",
             "failure_reason",
             "usage_recorded_at",
@@ -378,12 +379,25 @@ def acknowledge_background_call(output_dir: str | Path, call_id: str) -> list[Li
             return [LifecycleEvent("AGENT_LIFECYCLE_REJECTED", tombstone, "post_before_spawn")]
         if call.get("state") in _TERMINAL:
             return []
-        if not call.get("background"):
-            raise LifecycleError("foreground call cannot be acknowledged as background")
-        if call.get("launch_acknowledged_at"):
-            return []
-        call["launch_acknowledged_at"] = _now()
-        _write_state_unlocked(output_dir, state)
+        # The host decides asynchrony, not the dispatch flag. Claude Code >=2.x
+        # answers every Agent call with a launch-shaped result while the compact
+        # runtimes forbid `run_in_background`, so a call the caller hands us as
+        # a launch acknowledgement is still recorded `background: false`.
+        # Refusing it left the call `running` forever: on the 2026-08-29
+        # juice-shop run all 18 dispatches logged AGENT_LIFECYCLE_REJECTED, the
+        # budget watchdog then charged later agents' tool uses to the first
+        # leaked call until it reached BUDGET_CRITICAL, and that stale claim
+        # silently skipped abuse-case verification. Promote instead, which
+        # leaves SubagentStop as the single terminal boundary for an async call.
+        promoted = not call.get("background")
+        if promoted:
+            call["background"] = True
+            call["background_promoted"] = True
+        acknowledged = bool(call.get("launch_acknowledged_at"))
+        if not acknowledged:
+            call["launch_acknowledged_at"] = _now()
+        if promoted or not acknowledged:
+            _write_state_unlocked(output_dir, state)
     return []
 
 
@@ -581,11 +595,32 @@ def fail_all_running(output_dir: str | Path, reason: str) -> list[LifecycleEvent
     return events
 
 
-def is_current_claim(output_dir: str | Path, call: dict[str, Any]) -> bool:
-    """Return whether telemetry still belongs to a current authoritative claim."""
-    call_id = call.get("agent_call_id")
-    if not call_id or not any(row.get("agent_call_id") == call_id for row in running_calls(output_dir)):
-        return False
+def latest_call_for_component(output_dir: str | Path, component_id: str) -> dict[str, Any] | None:
+    """Return the most recently spawned call for a component, running or not.
+
+    Telemetry that arrives after a call returned still has exactly one owner.
+    Whether that owner is still authoritative is `claim_is_authoritative`'s
+    question, not this one's.
+    """
+    try:
+        with _locked(output_dir):
+            state = _read_state_unlocked(output_dir)
+    except (LifecycleError, OSError):
+        return None
+    calls = [dict(call) for call in state["calls"] if call.get("component_id") == component_id]
+    if not calls:
+        return None
+    return max(calls, key=lambda call: (call.get("spawned_at") or 0, call.get("attempt") or 0))
+
+
+def claim_is_authoritative(output_dir: str | Path, call: dict[str, Any]) -> bool:
+    """Return whether a call's action and attempt still own the current claim.
+
+    Liveness is deliberately not part of this: a call owns its attempt until the
+    wave moves on, and its final telemetry is legitimate after it returned.
+    `is_current_claim` adds the running requirement on top, for the live
+    metering paths that genuinely need it.
+    """
     action_id = call.get("action_id")
     if action_id:
         try:
@@ -611,6 +646,14 @@ def is_current_claim(output_dir: str | Path, call: dict[str, Any]) -> bool:
         except (OSError, json.JSONDecodeError, AttributeError):
             return False
     return True
+
+
+def is_current_claim(output_dir: str | Path, call: dict[str, Any]) -> bool:
+    """Return whether telemetry still belongs to a current authoritative claim."""
+    call_id = call.get("agent_call_id")
+    if not call_id or not any(row.get("agent_call_id") == call_id for row in running_calls(output_dir)):
+        return False
+    return claim_is_authoritative(output_dir, call)
 
 
 def event_detail(event: LifecycleEvent) -> str:

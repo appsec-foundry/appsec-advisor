@@ -11,9 +11,21 @@ pipeline (2026-06-28 e2e leak).
 This pass closes that gap. It scans the repository SOURCE for secret values —
 where they appear in a matchable assignment / token form, so ``secret_scan``
 yields the clean value — then replaces each exact value string everywhere it
-occurs in the output artifacts, prose included. Because it is an exact-string
-replacement of a value the source scanner already flagged AS a secret, it adds
-no false positives beyond the scanner's existing prose / code-identifier guards.
+occurs in the output artifacts, prose included.
+
+Two bounds keep a document-wide replacement from corrupting the report, because
+the pass rewrites every artifact and cannot be reviewed per occurrence:
+
+* The source walk skips prior assessment outputs. A previous run's artifacts are
+  this plugin's own prose ABOUT credentials, so harvesting them lets each run
+  poison the next. ``--output-dir`` is user-selectable and copies get arbitrary
+  names, so the static prefix list cannot carry this — detection is structural
+  (``scan_excludes.is_assessment_artifact``).
+* A value shaped like a natural-language word is replaced only where the
+  artifact itself shows credential context. The blanket replace assumed the
+  scanner never yields a false positive; when that premise broke, the ordinary
+  word "referenced" was destroyed in three unrelated sentences (juice-shop
+  2026-08-28). High-entropy values keep the unconditional replace.
 
 Conservative by design: only values >= 8 chars that are not already masked are
 redacted, and the source walk honours ``data/scan-excludes.yaml``.
@@ -26,13 +38,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import scan_excludes  # noqa: E402
-from secret_scan import _value_is_masked, scan_file, scan_text  # noqa: E402
+from secret_scan import (  # noqa: E402
+    _PROSE_VOWEL_RE,
+    _PROSE_WORD_RE,
+    CREDENTIAL_KEYWORDS,
+    _value_is_masked,
+    scan_file,
+    scan_text,
+)
 
 # Output artifacts a copied secret can reach. Globs are resolved under the
 # output dir; the data-pipeline sidecars are included because the secret enters
@@ -55,6 +75,55 @@ _ARTIFACT_GLOBS = (
 
 _MIN_VALUE_LEN = 8
 
+# A word-shaped value is only recognisable as a credential where it stands in
+# an ASSIGNMENT — a credential keyword, an operator, then the value. Proximity
+# to a credential keyword is not usable here: a threat model discusses
+# authentication on every page, so "…classified by authentication requirement.
+# Each row links to the threat(s) referenced…" puts a keyword within a clause
+# of ordinary prose. An assignment position cannot occur mid-sentence, so this
+# test cannot fire on prose at all.
+_CREDENTIAL_ASSIGNMENT_RE = re.compile(rf"(?i)(?:\b|_)(?:{CREDENTIAL_KEYWORDS})[\"']?\s*[=:]\s*[\"']?$")
+
+
+def _is_word_shaped(value: str) -> bool:
+    """Whether ``value`` is indistinguishable from an ordinary word.
+
+    Such a value cannot be replaced safely without looking at each occurrence:
+    it carries no token shape, so every sentence that happens to use the word
+    matches. Mirrors the scanner's own prose test, so the two agree on what
+    "looks like a word" means.
+    """
+    return bool(_PROSE_WORD_RE.match(value) and _PROSE_VOWEL_RE.search(value))
+
+
+def _replace_in_credential_context(text: str, value: str, mask: str) -> tuple[str, int]:
+    """Replace ``value`` only where it stands as an assigned credential.
+
+    A word-shaped value in running prose is just the word; there is no
+    discriminator that separates it from a leak, so this pass does not try and
+    covers the one position where the value IS identifiable instead. Bare-prose
+    occurrences of such a value are therefore left to the pattern masker, which
+    matches the same assignment form.
+    """
+    out: list[str] = []
+    count = 0
+    pos = 0
+    while True:
+        idx = text.find(value, pos)
+        if idx == -1:
+            break
+        # Bounded lookbehind: the operator and keyword sit immediately before
+        # the value, so a fixed slice is enough and keeps this linear.
+        out.append(text[pos:idx])
+        if _CREDENTIAL_ASSIGNMENT_RE.search(text[max(0, idx - 40) : idx]):
+            out.append(mask)
+            count += 1
+        else:
+            out.append(value)
+        pos = idx + len(value)
+    out.append(text[pos:])
+    return "".join(out), count
+
 
 def _masked(value: str) -> str:
     """First 4 chars + ``****`` — carries a masking marker (so the result can
@@ -74,6 +143,10 @@ def collect_source_secrets(repo_root: Path) -> dict[str, str]:
             continue
         rel = path.relative_to(repo_root).as_posix()
         if scan_excludes.is_excluded(rel, excludes):
+            continue
+        # A prior run's own output is not repository source. Structural, because
+        # the output directory is user-selectable and backups get any name.
+        if scan_excludes.is_assessment_artifact(rel, repo_root):
             continue
         try:
             if path.stat().st_size > cap:
@@ -108,9 +181,14 @@ def redact_artifacts(output_dir: Path, secrets: dict[str, str]) -> dict:
         new_text = text
         file_hits = 0
         for value, mask in secrets.items():
-            count = new_text.count(value)
-            if count:
+            if value not in new_text:
+                continue
+            if _is_word_shaped(value):
+                new_text, count = _replace_in_credential_context(new_text, value, mask)
+            else:
+                count = new_text.count(value)
                 new_text = new_text.replace(value, mask)
+            if count:
                 redacted[value] = redacted.get(value, 0) + count
                 file_hits += count
         if file_hits and new_text != text:

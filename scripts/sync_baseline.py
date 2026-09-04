@@ -26,6 +26,14 @@ an install has to find, and the README beside the bundled copy names the id it
 carries. Writing a newly published version into the file alone would leave both
 claiming the old one, so a changed id stops and asks. ``--accept-id`` then makes
 all three edits together, or none of them.
+
+Why an org profile is the same job
+----------------------------------
+An organization that ships its own baseline declares the identical three things
+in its profile — an id, a fetchable source, and a vendored copy — and its copy
+goes stale for the identical reason. ``--profile`` points the same sync at that
+profile instead of this repository. Only where the id is declared differs: the
+profile YAML rather than ``config.json`` and a README table.
 """
 
 from __future__ import annotations
@@ -34,12 +42,14 @@ import argparse
 import json
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import baseline_check as bc  # noqa: E402
 import install_baseline as ib  # noqa: E402
+import validate_org_profile as vop  # noqa: E402
 
 
 class SyncError(Exception):
@@ -79,6 +89,88 @@ def bundled_target(config: dict, plugin_root: Path) -> Path:
     if not target.is_relative_to(plugin_root.resolve()):
         raise SyncError(f"fallback_file must stay inside the plugin: {rel}")
     return target
+
+
+def load_profile_config(profile_path: Path) -> dict:
+    """Return the ``baseline`` block of an org profile.
+
+    The packager resolves this same block into the packaged ``config.json``, so
+    what is synced here is what an install will later fetch and check against.
+    """
+    import yaml
+
+    try:
+        with profile_path.open(encoding="utf-8") as fh:
+            profile = yaml.safe_load(fh)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise SyncError(f"cannot read {profile_path}: {exc}") from exc
+    block = profile.get("baseline") if isinstance(profile, dict) else None
+    if not isinstance(block, dict) or block.get("enabled") is False:
+        raise SyncError(f"{profile_path.name} configures no secure-coding baseline")
+    if not str(block.get("id") or "").strip():
+        raise SyncError("the profile declares no baseline id to sync against")
+    return block
+
+
+def profile_target(config: dict, profile_dir: Path) -> Path:
+    """Absolute path of the copy an org profile vendors."""
+    rel = str(config.get("file") or "").strip()
+    if not rel:
+        raise SyncError(
+            "the profile declares no baseline.file, so there is nothing to refresh — "
+            "a profile without a vendored copy also has no offline install path"
+        )
+    resolved, err = vop.resolve_under(profile_dir, rel)
+    if err or resolved is None:
+        raise SyncError(f"baseline.file: {err}")
+    return resolved
+
+
+@dataclass(frozen=True)
+class SyncTarget:
+    """What one sync refreshes, and where the id it carries is declared.
+
+    ``kind`` decides only how an accepted id change is written: the id lives in
+    ``config.json`` plus a README table here, and in the profile YAML there.
+    Everything else — fetching, comparing, refusing — is the same work.
+    """
+
+    kind: str
+    config: dict
+    root: Path
+    path: Path
+    declares_id: Path
+    gate_hint: str
+
+
+def release_target(plugin_root: Path) -> SyncTarget:
+    """The bundled fallback baseline of a plugin checkout."""
+    config = load_release_config(plugin_root)
+    return SyncTarget(
+        kind="plugin",
+        config=config,
+        root=plugin_root,
+        path=bundled_target(config, plugin_root),
+        declares_id=plugin_root / "config.json",
+        gate_hint="review the diff, then run `make check` — the id gate compares config.json with the bundled copy",
+    )
+
+
+def org_profile_target(profile_path: Path) -> SyncTarget:
+    """The baseline an org profile vendors beside its own configuration."""
+    profile_dir = profile_path.parent
+    config = load_profile_config(profile_path)
+    return SyncTarget(
+        kind="profile",
+        config=config,
+        root=profile_dir,
+        path=profile_target(config, profile_dir),
+        declares_id=profile_path,
+        gate_hint=(
+            f"review the diff, then validate the profile — validate_org_profile.py "
+            f"compares {profile_path.name} with the vendored copy"
+        ),
+    )
 
 
 def fetch_published(config: dict) -> tuple[str, str]:
@@ -128,31 +220,69 @@ def edit_readme_id(text: str, filename: str, old: str, new: str) -> str:
     return "".join(lines)
 
 
-def sync(
-    plugin_root: Path,
+def edit_profile_id(text: str, old: str, new: str) -> str:
+    """Return the org profile with its baseline id replaced.
+
+    Line-scoped and count-checked rather than clever: a profile may well carry
+    other ``id:`` keys, and guessing which one means the baseline would rewrite
+    the wrong block. Anything but exactly one line declaring the current id is
+    reported instead of edited.
+    """
+    pattern = re.compile(r"^(\s*id:\s*)(['\"]?)" + re.escape(old) + r"\2(\s*(?:#.*)?)$")
+    hits = [i for i, line in enumerate(text.splitlines()) if pattern.match(line)]
+    if len(hits) != 1:
+        raise SyncError(
+            f"expected exactly one line declaring id '{old}' in the profile, found {len(hits)} — "
+            f"set the id to '{new}' by hand and re-run"
+        )
+    lines = text.splitlines(keepends=True)
+    lines[hits[0]] = pattern.sub(lambda m: m.group(1) + m.group(2) + new + m.group(2) + m.group(3), lines[hits[0]])
+    return "".join(lines)
+
+
+def plan_id_change(target: SyncTarget, old: str, new: str) -> tuple[list[tuple[Path, str]], list[str]]:
+    """Return ``(edits, notes)`` for an accepted id change, writing nothing.
+
+    Every edit is computed before the first write, so a file that does not match
+    leaves the repository consistent instead of half-bumped.
+    """
+    if target.kind == "profile":
+        profile_text = edit_profile_id(target.declares_id.read_text(encoding="utf-8"), old, new)
+        return [(target.declares_id, profile_text)], []
+
+    config_text = edit_config_id(target.declares_id.read_text(encoding="utf-8"), old, new)
+    readme = target.path.parent / "README.md"
+    if not readme.is_file():
+        return (
+            [(target.declares_id, config_text)],
+            [f"! no README beside the bundled copy — record {new} wherever it is documented"],
+        )
+    readme_text = edit_readme_id(readme.read_text(encoding="utf-8"), target.path.name, old, new)
+    return [(target.declares_id, config_text), (readme, readme_text)], []
+
+
+def sync_target(
+    target: SyncTarget,
     *,
     dry_run: bool = False,
     accept_id: str | None = None,
 ) -> list[str]:
-    """Refresh the bundled copy and return the report lines."""
-    config = load_release_config(plugin_root)
-    expected = str(config["id"]).strip()
-    target = bundled_target(config, plugin_root)
-    text, origin = fetch_published(config)
+    """Refresh one vendored copy and return the report lines."""
+    expected = str(target.config["id"]).strip()
+    text, origin = fetch_published(target.config)
 
     found = bc.find_ids(text)
     if not found:
         raise SyncError(f"{origin} declares no baseline id — refusing to vendor it as security rules")
 
-    steps = [f"source:    {origin}", f"target:    {target.relative_to(plugin_root)}"]
-    readme = target.parent / "README.md"
+    steps = [f"source:    {origin}", f"target:    {target.path.relative_to(target.root)}"]
 
     if any(bc.is_match(candidate, expected) for candidate in found):
         steps.append(f"id:        {expected} (unchanged)")
-        if target.is_file() and target.read_text(encoding="utf-8") == text:
+        if target.path.is_file() and target.path.read_text(encoding="utf-8") == text:
             steps.append("unchanged: the bundled copy already matches the published text")
             return steps
-        steps.append(_write(target, text, dry_run=dry_run))
+        steps.append(_write(target.path, text, dry_run=dry_run))
         steps.append("installed copies are untouched — they refresh with `install-baseline --refresh`")
         return steps
 
@@ -161,30 +291,40 @@ def sync(
         raise VersionChange(
             f"{origin} publishes {published}, this build declares {expected}.\n"
             f"A version change is a decision, not a copy: re-run with ACCEPT_ID={published} "
-            f"to write the file, config.json and {readme.name} together."
+            f"to write the file and {target.declares_id.name} together."
         )
     if not any(bc.is_match(candidate, accept_id) for candidate in found):
         raise SyncError(f"{origin} declares {', '.join(found)}, not the accepted {accept_id}")
 
-    # Every edit is computed before anything is written, so a README that does
-    # not match leaves the repository consistent instead of half-bumped.
-    config_path = plugin_root / "config.json"
-    config_text = edit_config_id(config_path.read_text(encoding="utf-8"), expected, accept_id)
-    readme_text = (
-        edit_readme_id(readme.read_text(encoding="utf-8"), target.name, expected, accept_id)
-        if readme.is_file()
-        else None
-    )
+    edits, notes = plan_id_change(target, expected, accept_id)
 
     steps.append(f"id:        {expected} -> {accept_id}")
-    steps.append(_write(target, text, dry_run=dry_run))
-    steps.append(_write(config_path, config_text, dry_run=dry_run))
-    if readme_text is None:
-        steps.append(f"! no README beside the bundled copy — record {accept_id} wherever it is documented")
-    else:
-        steps.append(_write(readme, readme_text, dry_run=dry_run))
-    steps.append("review the diff, then run `make check` — the id gate compares config.json with the bundled copy")
+    steps.append(_write(target.path, text, dry_run=dry_run))
+    for path, edited in edits:
+        steps.append(_write(path, edited, dry_run=dry_run))
+    steps.extend(notes)
+    steps.append(target.gate_hint)
     return steps
+
+
+def sync(
+    plugin_root: Path,
+    *,
+    dry_run: bool = False,
+    accept_id: str | None = None,
+) -> list[str]:
+    """Refresh the bundled copy of a plugin checkout."""
+    return sync_target(release_target(plugin_root), dry_run=dry_run, accept_id=accept_id)
+
+
+def sync_profile(
+    profile_path: Path,
+    *,
+    dry_run: bool = False,
+    accept_id: str | None = None,
+) -> list[str]:
+    """Refresh the copy an org profile vendors."""
+    return sync_target(org_profile_target(profile_path), dry_run=dry_run, accept_id=accept_id)
 
 
 def _write(path: Path, text: str, *, dry_run: bool) -> str:
@@ -196,27 +336,40 @@ def _write(path: Path, text: str, *, dry_run: bool) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Refresh the bundled fallback baseline from its published source.",
+        description="Refresh a vendored fallback baseline from its published source.",
     )
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--plugin-root",
         default=str(Path(__file__).resolve().parent.parent),
         help="plugin root holding config.json (default: this repository)",
+    )
+    source.add_argument(
+        "--profile",
+        default=None,
+        help="org-profile.yaml whose own baseline.file is refreshed instead",
     )
     parser.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     parser.add_argument(
         "--accept-id",
         default=None,
-        help="accept a newly published baseline id and bump config.json and the README with it",
+        help="accept a newly published baseline id and bump the file declaring it along with the copy",
     )
     args = parser.parse_args(argv)
 
     try:
-        steps = sync(
-            Path(args.plugin_root).expanduser(),
-            dry_run=args.dry_run,
-            accept_id=(args.accept_id or None),
-        )
+        if args.profile:
+            steps = sync_profile(
+                Path(args.profile).expanduser().resolve(),
+                dry_run=args.dry_run,
+                accept_id=(args.accept_id or None),
+            )
+        else:
+            steps = sync(
+                Path(args.plugin_root).expanduser(),
+                dry_run=args.dry_run,
+                accept_id=(args.accept_id or None),
+            )
     except VersionChange as exc:
         print(f"ACTION NEEDED: {exc}", file=sys.stderr)
         return 3

@@ -17,12 +17,14 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 from typing import Any, Iterable
 
 import build_cross_repo_register
 import load_business_context
 import load_related_repos
+import secret_scan
 import yaml
 from _atomic_io import atomic_write_json, atomic_write_text
 from _url_guard import validate_target_url, validated_opener
@@ -54,13 +56,28 @@ def _contained_file(repo_root: Path, relative: str) -> Path | None:
 def _bounded_lines(path: Path | None, limit: int, *, tail: bool = False) -> str | None:
     if path is None:
         return None
+    # A repository file is arbitrary input. Reading it whole and truncating
+    # afterwards makes the limit cosmetic: `docs/business-context.md` has no
+    # capture-time size cap when a human wrote it by hand, and the changelog and
+    # SECURITY.md have none at all. Hold at most `limit` lines in memory.
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            if tail:
+                window: deque[str] = deque(maxlen=limit)
+                total = 0
+                for line in handle:
+                    window.append(line)
+                    total += 1
+                lines = [line.rstrip("\n") for line in window]
+                overflowed = total > limit
+            else:
+                lines = [line.rstrip("\n") for _, line in zip(range(limit), handle)]
+                overflowed = handle.readline() != ""
     except OSError:
         return None
-    selected = lines[-limit:] if tail else lines[:limit]
+    selected = lines
     rendered = "\n".join(selected).rstrip()
-    truncated = len(lines) > limit or len(rendered) > MAX_SOURCE_CHARS
+    truncated = overflowed or len(rendered) > MAX_SOURCE_CHARS
     if len(rendered) > MAX_SOURCE_CHARS:
         rendered = rendered[:MAX_SOURCE_CHARS].rstrip()
     suffix = "\n\n_(truncated)_" if truncated else ""
@@ -360,7 +377,7 @@ def _related_context(repo_root: Path, output_dir: Path) -> tuple[str, str]:
     return declared_status, "\n".join(rows)
 
 
-def build(repo_root: Path, output_dir: Path, plugin_root: Path) -> Path:
+def build(repo_root: Path, output_dir: Path, plugin_root: Path, *, skip_business_context: bool = False) -> Path:
     repo_root = repo_root.resolve(strict=True)
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -369,17 +386,45 @@ def build(repo_root: Path, output_dir: Path, plugin_root: Path) -> Path:
 
     repo_id = _repo_id(repo_root)
     external_status, external = _external_context(plugin_root, repo_id)
-    business_path = load_business_context.effective_source(repo_root, output_dir)
+    # `--skip-context` is a decision about this run's inputs, not only about the
+    # interactive question. Honouring it here is what makes the flag mean what
+    # it says: a repository that ships docs/business-context.md is analyzed
+    # without it.
+    business_path = None if skip_business_context else load_business_context.effective_source(repo_root, output_dir)
     business_source = (
         load_business_context.RUN_ONLY_NAME
         if business_path is not None and business_path.name == load_business_context.RUN_ONLY_NAME
         else load_business_context.REPO_RELATIVE
     )
-    business = _bounded_lines(business_path, 200) or "docs/business-context.md not present in this repository."
+    business = _bounded_lines(business_path, 200) or (
+        "Business context was skipped for this run (--skip-context)."
+        if skip_business_context
+        else "docs/business-context.md not present in this repository."
+    )
+    # `load_business_context` refuses a captured source that carries a credential,
+    # but a hand-written docs/business-context.md never passes through it. This
+    # artifact is on the cleanup NEVER list, so anything copied here stays in the
+    # output directory for good and travels with it when --output points outside
+    # the repository. Leave the block out rather than duplicate the secret.
+    business_secret_hits: list[str] = []
+    if business_path is not None:
+        business_secret_hits = [f"line {hit.line} ({hit.pattern})" for hit in secret_scan.scan_text(business)[:5]]
+        if business_secret_hits:
+            business = (
+                "Business context was withheld: it contains what looks like a credential at "
+                f"{', '.join(business_secret_hits)}. Remove it and run again."
+            )
     # The report names its context sources from this row, so it carries the
     # file that was actually read — a run-only source is not the repository
     # file and must not be cited as one.
-    business_status = f"found ({business_source})" if business_path is not None else "not found"
+    if skip_business_context:
+        business_status = "skipped (--skip-context)"
+    elif business_path is None:
+        business_status = "not found"
+    elif business_secret_hits:
+        business_status = f"withheld ({business_source}) — credential found"
+    else:
+        business_status = f"found ({business_source})"
     security_found = _first(
         repo_root,
         ("SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md", "docs/security/SECURITY.md"),
@@ -481,13 +526,23 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--plugin-root", type=Path, default=Path(__file__).resolve().parent.parent)
+    parser.add_argument(
+        "--skip-business-context",
+        action="store_true",
+        help="ignore any business context file for this run (--skip-context)",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        path = build(args.repo_root, args.output_dir, args.plugin_root.resolve())
+        path = build(
+            args.repo_root,
+            args.output_dir,
+            args.plugin_root.resolve(),
+            skip_business_context=args.skip_business_context,
+        )
     except (ContextBuildError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

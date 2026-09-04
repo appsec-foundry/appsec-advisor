@@ -413,7 +413,7 @@ def test_check_abuse_cases_resolver_load_failure(acme_profile, monkeypatch):
 
 
 def test_resolve_under_empty_path():
-    path, err = vop._resolve_under(FIXTURE_DIR, "")
+    path, err = vop.resolve_under(FIXTURE_DIR, "")
     assert path is None
     assert err == "path is empty"
 
@@ -427,7 +427,7 @@ def test_resolve_under_symlink_traversal(tmp_path):
     (real / "note.md").write_text("hi")
     link = profile_dir / "linkdir"
     link.symlink_to(real)
-    path, err = vop._resolve_under(profile_dir, "linkdir/note.md")
+    path, err = vop.resolve_under(profile_dir, "linkdir/note.md")
     assert path is None
     assert "symlink" in err
 

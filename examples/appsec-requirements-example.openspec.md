@@ -8,71 +8,71 @@ This example translates the observable, mandatory application behavior from `app
 
 ### Requirement: AC-003
 
-The application MUST rate-limit every externally reachable API endpoint.
+Login, registration, credential recovery, verification, token issuance, and other abuse-prone endpoints MUST apply bounded request sizes and rate limits by both account or identifier and client source using a control effective across application instances.
 
 **Category:** Authentication & Access Control
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Denial_of_Service_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/authentication-access-control#ac-003>
 
-#### Scenario: Repeated API requests are throttled
+#### Scenario: Repeated authentication attempts are throttled
 
-- **GIVEN** a client is sending requests to an externally reachable API endpoint
-- **WHEN** the client exceeds the permitted request rate
-- **THEN** the application MUST throttle further requests from that client
+- **GIVEN** repeated authentication attempts target one account from changing client sources
+- **WHEN** either the account or a client source exceeds its permitted rate
+- **THEN** the application MUST throttle the attempts across every application instance
 
 ### Requirement: AC-004
 
-The application MUST authenticate end users through a central identity provider using OIDC or SAML and mandatory MFA.
+Workforce and privileged users MUST authenticate through the organization-managed identity provider using OIDC authorization code with PKCE or SAML, and privileged access MUST require phishing-resistant MFA where supported. A parallel local password path requires a documented operational need.
 
 **Category:** Authentication & Access Control
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authentication_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/authentication-access-control#ac-004>
 
-#### Scenario: End user starts a session
+#### Scenario: Privileged workforce user starts a session
 
-- **GIVEN** an end user has no authenticated session
+- **GIVEN** a privileged workforce user has no authenticated session
 - **WHEN** the user signs in
-- **THEN** the application MUST authenticate the user through the central identity provider
-- **AND** the identity provider MUST require MFA
+- **THEN** the application MUST use the organization-managed identity provider
+- **AND** privileged access MUST require phishing-resistant MFA where supported
 
 ### Requirement: AC-006
 
-The application MUST authorize access to each requested resource against the authenticated identity.
+Every request for a protected object MUST authorize the authenticated identity against that object's owner, tenant, state, and requested action. User-supplied identifiers and token possession alone MUST NOT grant access.
 
 **Category:** Authentication & Access Control
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/authentication-access-control#ac-006>
 
-#### Scenario: User requests another user's resource
+#### Scenario: User requests a resource from another tenant
 
-- **GIVEN** an authenticated user does not own the requested resource and has no delegated access
+- **GIVEN** an authenticated user supplies the identifier of a resource owned by another tenant
 - **WHEN** the user requests that resource by its identifier
-- **THEN** the application MUST deny access
+- **THEN** the application MUST deny access regardless of token possession or identifier validity
 
 ### Requirement: EH-002
 
-The application MUST return generic error messages to clients and retain detailed diagnostics only in server-side logs.
+Client error responses MUST NOT expose stack traces, query text, internal paths, credentials, tokens, or raw exceptions. Diagnostic details MAY be recorded only in access-controlled server-side logs after sensitive values are removed.
 
 **Category:** Error Handling & Security Events
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/error-handling-security-events#eh-002>
 
 #### Scenario: Request processing fails unexpectedly
 
 - **WHEN** request processing raises an unexpected error
 - **THEN** the application MUST return a generic error response without internal details
-- **AND** the application MUST record the detailed diagnostic server-side
+- **AND** any retained diagnostic MUST be access-controlled and contain no sensitive values
 
 ### Requirement: WEB-001
 
-The application MUST protect session-authenticated state changes against cross-site request forgery and MUST NOT perform them through HTTP GET.
+Applications that use cookie-based or other ambient browser credentials MUST reject forged cross-site state-changing requests with a framework CSRF control, a session-bound token, or a validated same-origin signal. SameSite cookies provide defense in depth and state-changing actions MUST NOT use HTTP GET.
 
 **Category:** Web & Frontend Security
 
-**Source:** <https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html>
+**Source:** <https://appsec.int.example.com/req/web-frontend-security#web-001>
 
 #### Scenario: Cross-site state-changing request
 
 - **GIVEN** a user has an authenticated browser session
-- **WHEN** another site submits a state-changing request without valid CSRF proof
+- **WHEN** another site submits a state-changing request without a valid token or same-origin signal
 - **THEN** the application MUST reject the request

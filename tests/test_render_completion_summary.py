@@ -617,12 +617,58 @@ class TestNextSteps:
         return {"threats_by_sev": {"Critical": critical, "High": high, "Medium": 0, "Low": 0}}
 
     def test_always_line_1_present(self, tmp_path):
-        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
         assert "Management Summary" in lines[0]
-        ask = next(l for l in lines if "just ask" in l)
+        ask = next(l for l in lines if "ask me" in l)
         # A bare skill link does not tell the reader what to ask it.
         assert "What should I fix first?" in ask
-        assert "What are the most critical findings?" in ask
+
+    def test_the_ask_step_names_an_addressee(self, tmp_path):
+        # "just ask" said what to say without saying to whom, and the reader is
+        # looking at terminal output with no reason to assume the next prompt
+        # is the place.
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
+        assert any(l.startswith("Or just ask me:") for l in lines)
+
+    def test_the_ask_step_carries_two_examples_on_their_own_lines(self, tmp_path):
+        # One example reads as *the* question to ask rather than as an instance
+        # of a kind. Run together on the lead-in the second one trailed off the
+        # end of the longest line in the block; stacked they are equal offers.
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
+        ask = next(l for l in lines if "ask me" in l)
+        assert ask.count("?") == 2
+        assert [part for part in ask.split("\n") if part.endswith('?"')] == [
+            '"What are the most critical findings?"',
+            '"What should I fix first?"',
+        ]
+
+    def test_the_ask_step_marks_the_questions_as_examples(self, tmp_path):
+        # Without a closing line a stacked pair reads as the menu — the failure
+        # the old inline "e.g." was carrying, which it can no longer carry once
+        # the questions sit on their own lines.
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(high=1), self._cfg())
+        ask = next(l for l in lines if "ask me" in l)
+        assert ask.split("\n")[-1] == "… or anything else about the report"
+
+    def test_the_ask_step_stays_last(self, tmp_path):
+        # It is the only multi-line entry, so a bullet after it would be cut
+        # off from the top of the list by its example block.
+        cfg = self._cfg(architect_review=True)
+        (tmp_path / ".architect-review.md").write_text("x", encoding="utf-8")
+        (tmp_path / ".architect-status.json").write_text('{"technical_defects": 3}', encoding="utf-8")
+        lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), cfg)
+
+        assert lines[-1].startswith("Or just ask me:"), "the ask step must stay last"
+        assert any("architect review" in l for l in lines), "the architect entry still renders"
+
+    def test_the_ask_examples_follow_the_findings(self, tmp_path):
+        # On a clean run "What should I fix first?" asks about findings the run
+        # did not produce.
+        clean = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), self._cfg())
+        ask = next(l for l in clean if "ask me" in l)
+        assert "What did the scan cover?" in ask
+        assert "What was out of scope?" in ask
+        assert not any("fix first" in l for l in clean)
 
     def test_ask_step_does_not_name_the_skill_command(self, tmp_path):
         # ask-threat-model routes itself from any natural-language question
@@ -633,14 +679,14 @@ class TestNextSteps:
         assert not any("ask-threat-model" in l for l in lines)
         assert any("review-threat-model" in l for l in lines)
 
-    def test_alternatives_after_the_first_read_on_from_or(self, tmp_path):
-        # render_next_steps prefixes every entry after the first with "or ", so
-        # "or Triage the findings" would be ungrammatical.
+    def test_every_alternative_is_a_self_contained_entry(self, tmp_path):
+        # Nothing joins the bullets any more, so no entry may be a lowercase
+        # fragment left over from reading on out of a trailing "or".
         lines = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(critical=2), self._cfg())
         assert len(lines) > 1
-        for step in lines[1:]:
+        for step in lines:
             first_word = step.split()[0]
-            assert first_word[0].islower(), f"step must read on from 'or ': {step!r}"
+            assert first_word[0].isupper(), f"step must stand on its own: {step!r}"
 
     def test_baseline_notice_is_a_note_not_an_alternative(self, tmp_path):
         # "Future runs auto-detect this baseline" asks nothing of the reader; in
@@ -680,15 +726,25 @@ class TestNextSteps:
         )
         assert any("architect-review.md" in l for l in lines)
 
-    def test_sarif_hint_shown_when_file_exists(self, tmp_path):
+    def test_sarif_hint_is_a_follow_up_not_an_alternative(self, tmp_path):
+        # Uploading the SARIF is something a reader does as well as reading the
+        # report; chained into the alternatives it read as instead of.
         (tmp_path / "threat-model.sarif.json").write_text("{}")
-        lines = rcs.build_next_steps(
-            tmp_path,
-            tmp_path,
-            self._metrics(),
-            self._cfg(write_sarif=True),
-        )
-        assert any("sarif" in l.lower() for l in lines)
+        cfg = self._cfg(write_sarif=True)
+        steps = rcs.build_next_steps(tmp_path, tmp_path, self._metrics(), cfg)
+        follow_ups = rcs.build_follow_ups(tmp_path, self._metrics(), cfg)
+
+        assert not any("threat-model.sarif.json" in l for l in steps)
+        assert any("threat-model.sarif.json" in l for l in follow_ups)
+
+    def test_the_sarif_hint_names_a_tool_class_not_three_products(self, tmp_path):
+        # A reader has one SARIF consumer; the product list read as a menu.
+        (tmp_path / "threat-model.sarif.json").write_text("{}")
+        follow_ups = rcs.build_follow_ups(tmp_path, self._metrics(), self._cfg(write_sarif=True))
+        assert any("your SARIF consumer" in l for l in follow_ups)
+
+    def test_no_sarif_hint_without_the_file(self, tmp_path):
+        assert rcs.build_follow_ups(tmp_path, self._metrics(), self._cfg(write_sarif=True)) == []
 
     def test_requirements_are_not_a_generic_follow_up(self, tmp_path):
         lines = rcs.build_next_steps(
@@ -700,21 +756,26 @@ class TestNextSteps:
         assert not any("--requirements" in l for l in lines)
 
     def test_reasoning_hint_only_for_sonnet_with_findings(self, tmp_path):
-        sonnet_many = rcs.build_next_steps(
-            tmp_path,
+        sonnet_many = rcs.build_follow_ups(
             tmp_path,
             self._metrics(critical=2, high=2),
             self._cfg(reasoning_model="sonnet"),
         )
         assert any("--reasoning-model opus" in l for l in sonnet_many)
 
-        opus_cheap = rcs.build_next_steps(
-            tmp_path,
+        opus_cheap = rcs.build_follow_ups(
             tmp_path,
             self._metrics(critical=2, high=2),
             self._cfg(reasoning_model="opus-cheap"),
         )
         assert not any("--reasoning-model opus" in l for l in opus_cheap)
+
+        sonnet_few = rcs.build_follow_ups(
+            tmp_path,
+            self._metrics(critical=1),
+            self._cfg(reasoning_model="sonnet"),
+        )
+        assert sonnet_few == []
 
     def test_capped_at_five_items(self, tmp_path):
         (tmp_path / "package.json").write_text("{}")
@@ -1566,7 +1627,7 @@ class TestCompositionHealth:
     def test_render_none(self):
         assert rcs.render_composition_health(None) == []
 
-    def test_render_many_warnings_truncates(self):
+    def test_render_many_warnings_truncates(self, tmp_path: Path):
         health = {
             "status": "warned",
             "warning_count": 3,
@@ -1574,8 +1635,56 @@ class TestCompositionHealth:
             "section_retries": {},
             "auto_retries": 0,
         }
-        out = "\n".join(rcs.render_composition_health(health))
+        md = tmp_path / "threat-model.md"
+        md.write_text("## Appendix: Composition Notes\n", encoding="utf-8")
+        out = "\n".join(rcs.render_composition_health(health, md))
         assert "more in §Composition Notes" in out
+
+    def _health(self, n_warnings: int = 1) -> dict:
+        return {
+            "status": "warned",
+            "warning_count": n_warnings,
+            "warnings": [{"section": f"§{i}", "detail": "d" * 100} for i in range(n_warnings)],
+            "section_retries": {},
+            "auto_retries": 0,
+        }
+
+    def test_pointer_emitted_when_appendix_present(self, tmp_path: Path):
+        md = tmp_path / "threat-model.md"
+        md.write_text("intro\n\n## Appendix: Composition Notes\n\n- a warning\n", encoding="utf-8")
+        out = "\n".join(rcs.render_composition_health(self._health(), md))
+        assert "Composition Health" in out
+        assert "See `## Appendix: Composition Notes`" in out
+
+    def test_pointer_suppressed_when_appendix_absent(self, tmp_path: Path):
+        """The appendix renders on a threshold and a one-invocation lag the
+        summary does not share, so it is routinely absent while the summary has
+        warnings to report (juice-shop 2026-08-28). The health block must still
+        appear — it just must not send the reader to a section that is not
+        there.
+        """
+        md = tmp_path / "threat-model.md"
+        md.write_text("intro\n\n## Appendix: Run Statistics\n", encoding="utf-8")
+        out = "\n".join(rcs.render_composition_health(self._health(), md))
+        assert "Composition Health" in out
+        assert "Soft warning" in out
+        assert "Appendix: Composition Notes" not in out
+
+    def test_truncation_line_points_at_a_real_artifact_when_appendix_absent(self, tmp_path: Path):
+        md = tmp_path / "threat-model.md"
+        md.write_text("no appendix here\n", encoding="utf-8")
+        # 4 warnings: 2 render inline, so 2 remain unshown.
+        out = "\n".join(rcs.render_composition_health(self._health(4), md))
+        assert "2 more" in out, "the count of unshown warnings must survive"
+        assert "Composition Notes" not in out
+        assert ".compose-stats.json" in out
+
+    def test_pointer_suppressed_when_report_unknown(self, tmp_path: Path):
+        """No report path means the target cannot be confirmed. Fail closed:
+        an unverifiable cross-reference is the defect this guards against."""
+        out = "\n".join(rcs.render_composition_health(self._health()))
+        assert "Composition Health" in out
+        assert "Appendix: Composition Notes" not in out
 
 
 class TestRenderMisc:
@@ -1591,21 +1700,20 @@ class TestRenderMisc:
         out = rcs.render_next_steps(["read", "ask"])
         assert out == [
             "",
-            "Next Steps — pick one, they are alternatives",
-            "  - read or",
+            "Next Steps",
+            "  - read",
             "  - ask",
         ]
 
-    def test_render_next_steps_joins_alternatives_with_a_trailing_or(self):
+    def test_render_next_steps_joins_alternatives_with_nothing(self):
         # A numbered 1-2-3 list reads as "do all of these, in this order".
         # Reading, triaging and asking are each a complete way to continue on
-        # their own, so they render as bullets. The conjunction falls where it
-        # would in speech: at the end of the entry it separates, never on the
-        # last one.
+        # their own, so they render as plain bullets. The trailing "or" that
+        # used to carry the choice cost every entry its capital and forced the
+        # conjunction onto the end of a quoted example question.
         out = rcs.render_next_steps(["read", "triage", "ask"])
-        assert out[2] == "  - read or"
-        assert out[3] == "  - triage or"
-        assert out[4] == "  - ask"
+        assert out[2:] == ["  - read", "  - triage", "  - ask"]
+        assert not any(line.rstrip().endswith(" or") for line in out)
 
     def test_render_next_steps_uses_bullets_not_numbers(self):
         # Numbers imply a sequence the reader is meant to work through; these
@@ -1613,27 +1721,45 @@ class TestRenderMisc:
         out = rcs.render_next_steps(["read", "triage", "ask"])
         assert not any(re.match(r"\s*\d+\.", line) for line in out)
 
-    def test_render_next_steps_indents_continuation_lines(self):
+    def test_render_next_steps_nests_continuation_lines_under_the_bullet(self):
+        # One level PAST the bullet text, so an example block hangs under its
+        # step as a group instead of aligning with it and reading as wrapped
+        # prose.
         out = rcs.render_next_steps(["read", "ask\nexample question"])
-        assert "  - ask" in out
-        assert "    example question" in out
+        assert out[3:] == ["  - ask", "      example question"]
 
-    def test_trailing_or_attaches_to_the_last_line_of_a_multiline_step(self):
-        # Otherwise the conjunction hides mid-block and the continuation line
-        # reads as if it belonged to the next alternative.
-        out = rcs.render_next_steps(["ask\nexample question", "read"])
-        assert out[2] == "  - ask"
-        assert out[3] == "    example question or"
-        assert out[4] == "  - read"
-
-    def test_render_next_steps_single_step_drops_the_pick_one_header(self):
-        out = rcs.render_next_steps(["read"])
-        assert out == ["", "Next Steps", "  - read"]
+    def test_render_next_steps_header_is_the_same_for_one_step_and_many(self):
+        assert rcs.render_next_steps(["read"]) == ["", "Next Steps", "  - read"]
+        assert rcs.render_next_steps(["read", "ask"])[1] == "Next Steps"
 
     def test_render_next_steps_renders_notes_below_the_alternatives(self):
         out = rcs.render_next_steps(["read", "ask"], ["Baseline established."])
         assert out[-1] == "  Note: Baseline established."
         assert sum(1 for line in out if line.startswith("  - ")) == 2
+
+    def test_follow_ups_get_their_own_heading_and_no_or(self):
+        # Chained into the alternatives, "upload the SARIF" read as a
+        # substitute for reading the report.
+        out = rcs.render_next_steps(["read", "ask"], None, ["Upload the SARIF"])
+        assert "Also" in out
+        assert out.index("Also") > out.index("  - read")
+        assert out[-1] == "  - Upload the SARIF"
+        assert not any(line.endswith(" or") for line in out[out.index("Also") :])
+
+    def test_the_last_alternative_keeps_no_or_when_follow_ups_follow(self):
+        out = rcs.render_next_steps(["read", "ask"], None, ["Upload the SARIF"])
+        assert "  - ask" in out
+
+    def test_follow_ups_render_without_alternatives(self):
+        out = rcs.render_next_steps([], None, ["Upload the SARIF"])
+        assert out == ["", "Also", "  - Upload the SARIF"]
+
+    def test_follow_ups_indent_continuation_lines(self):
+        out = rcs.render_next_steps([], None, ["Upload the SARIF\nto your consumer"])
+        assert out[-2:] == ["  - Upload the SARIF", "    to your consumer"]
+
+    def test_nothing_at_all_renders_nothing(self):
+        assert rcs.render_next_steps([], None, []) == []
 
     def test_render_log_files(self, tmp_path: Path):
         (tmp_path / ".qa-status.json").write_text("{}")
@@ -1957,6 +2083,21 @@ class TestStampSlugBackstop:
         monkeypatch.setattr(rcs.subprocess, "run", lambda *a, **k: calls.append(a[0]) or None)
         rcs._stamp_slug_if_configured(tmp_path)
         assert len(calls) == 1
+
+    def test_stamps_exports_written_after_the_first_summary_run(self, tmp_path: Path):
+        """PDF and HTML are exported between the skill's two summary runs. The
+        second run must stamp them; a check that only compared the stamped
+        Markdown reported "already done" and shipped them unstamped."""
+        self._seed(tmp_path, "my-slug")
+        rcs._stamp_slug_if_configured(tmp_path)
+        assert (tmp_path / "threat-model-my-slug.md").is_file()
+
+        (tmp_path / "threat-model.pdf").write_bytes(b"%PDF\n")
+        (tmp_path / "threat-model.html").write_text("<html></html>\n")
+        rcs._stamp_slug_if_configured(tmp_path)
+
+        assert (tmp_path / "threat-model-my-slug.pdf").is_file()
+        assert (tmp_path / "threat-model-my-slug.html").is_file()
 
     def test_never_raises_on_subprocess_error(self, tmp_path: Path, monkeypatch):
         self._seed(tmp_path, "my-slug")

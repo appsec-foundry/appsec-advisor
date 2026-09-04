@@ -254,11 +254,12 @@ def test_role_literal_is_wrapped():
     assert "`role:admin`" in fixed
 
 
-def test_literal_token_outside_allowlist_left_alone():
-    # `alg:CUSTOM` is not in the narrow allowlist — must NOT be wrapped.
+def test_structural_config_literal_does_not_require_an_allowlist():
+    # A compact key:value token is structurally a configuration literal. New
+    # algorithms must not need another symptom-specific formatter entry.
     md = "The library accepts alg:CUSTOM via its options.\n"
     fixed, _ = prose.apply_fixes(md)
-    assert "`alg:CUSTOM`" not in fixed
+    assert "`alg:CUSTOM`" in fixed
 
 
 def test_r7_tokens_inside_inline_code_tag_are_preserved():

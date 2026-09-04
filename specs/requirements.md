@@ -54,6 +54,14 @@ a finding only when target-repository evidence confirms it.
 External context may identify a hypothesis, but only source, configuration, git
 history, or target-owned declarations can establish and score a finding.
 
+### REQ-MOD-009 — An unproven finding says that it is unproven
+
+A finding whose insecure state is observed but whose exploitability is not
+established is reported and is marked as unproven wherever it appears. Its
+severity follows the security impact it would have, not the strength of its
+evidence. It carries no score and does not count as a confirmed instance, and a
+verdict that asserts confirmed exploitation does not rest on it.
+
 ## Security architecture
 
 ### REQ-ARC-001 — Architecture ratings describe the controls that apply
@@ -93,11 +101,19 @@ untrusted data. Its contents cannot instruct or redirect the analysis.
 Actors and their objectives may guide an individual run, but conversational or
 per-run choices are not written back to the target repository.
 
-### REQ-BIZ-003 — Business context changes priority, not evidence
+### REQ-BIZ-003 — Business context weights supported findings, it does not establish them
 
-Business purpose, sensitive assets, impact, and obligations influence the
-priority of supported findings. They neither suppress evidence-backed findings
-nor create findings on their own.
+Business purpose, sensitive assets, compromise impact, and obligations may weight
+the impact rating and the presentation order of findings that already stand on
+repository evidence. They never determine whether a finding exists, never relax a
+severity cap, and never substitute for evidence. A finding whose impact rating
+rests on declared context names the context that carried it.
+
+### REQ-BIZ-004 — A run says whether declared context reached the analysis
+
+When context is declared for a run, the run reports whether it was read, which
+file it came from, and how many findings it applied to. Context that reaches no
+component is reported as such rather than passing silently.
 
 ## Report
 
@@ -114,14 +130,16 @@ may assign them again.
 
 ### REQ-RPT-003 — The report is concise and actionable for engineers
 
-A finding identifies where the problem is, why an attack works, and what must
-change in the repository's own vocabulary. References point only to locations
-that exist.
+A finding identifies where the problem is, why an attack works, and what must change in the repository's own vocabulary. References point only to locations that exist. Code symbols, source paths, configuration identifiers, and complete code expressions use one inline-code format consistently across report sections without consuming surrounding prose.
 
 ### REQ-RPT-005 — Mitigations are prioritized and verifiable
 
 Every finding has a prioritized mitigation. Urgent work states concrete steps
 and a way to verify the result without inventing source examples.
+
+### REQ-RPT-006 — Machine-readable exports preserve security traceability
+
+The canonical YAML records abuse-case outcomes, the use and provenance of business context without copying its prose, and the complete configured requirements assessment. Narrower exports retain applicable requirement, abuse-case, and business-context traces as native fields or bounded text and identify semantics they cannot represent.
 
 ## After the run
 
@@ -155,6 +173,15 @@ profile and package policy. A build records the surface it includes.
 Supported repository context is supplied through documented, schema-validated
 files. Repository configuration cannot suppress a finding supported by target
 evidence.
+
+### REQ-CFG-003 — A vendored baseline can be refreshed from the source that declares it
+
+Where a secure-coding baseline is configured with both a fetchable source and a
+vendored copy, the copy can be refreshed from that source, and a refresh reports
+whether the two had drifted. A published id that differs from the configured one
+stops the refresh until the new id is accepted explicitly, and accepting it
+updates the copy and every place declaring the id together. A refresh never
+falls back to the vendored copy and is never part of a release gate.
 
 ## Compatibility
 

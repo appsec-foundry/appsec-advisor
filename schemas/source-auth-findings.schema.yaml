@@ -99,7 +99,7 @@ $defs:
         type: string
         pattern: "^SAF-[0-9]{3,4}$"
       check_id:
-        # From the scanner rule catalogs (data/source-auth-checks.yaml):
+        # From the scanner rule catalogs or source-aware deterministic checks:
         # AUTHZ-NNN (authorization), AUTHN-NNN (credential lifecycle),
         # INJ-NNN (injection), MOBILE-NNN, each with an OPTIONAL uppercase
         # language segment (e.g. INJ-JAVA-003, AUTHZ-PHP-001, MOBILE-IOS-002),

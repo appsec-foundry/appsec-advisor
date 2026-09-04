@@ -32,6 +32,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import yaml
+from apply_prose_fixes import format_inline_code
 
 # ---------------------------------------------------------------------------
 # Constants — bound the output and pin contract-required strings.
@@ -935,111 +936,9 @@ def render_prerequisites(
     return out
 
 
-# Code-token formatters for attack-step prose. apply_prose_fixes (post-compose)
-# already backticks HTTP method+route, bare filenames, function calls and dotted
-# API tokens; these cover the gaps it cannot: inline `path/file.ext:line`
-# evidence refs, quoted injection payloads (`param="…"`), and UPPERCASE SQL
-# statements. SQL keywords are matched case-SENSITIVELY so English words
-# ("the attacker can update …", "users select …") are never mistaken for SQL.
-_STEP_FILELINE_RE = re.compile(r"(?<![`\w])([\w][\w./-]*\.[A-Za-z]{1,6}:\d+(?:-\d+)?)(?![`\w:])")
-_STEP_PAYLOAD_ASSIGN_RE = re.compile(r'(?<![`\w])([A-Za-z_]\w*="[^"]{0,100}")(?![`])')
-_STEP_SQL_RE = re.compile(
-    r"(?<![`\w])((?:UNION\s+)?(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b[^…`;,.]*?)"
-    r"(?=\s+(?:which|yielding|queries|query|attack|and the|to|extracts?|can|dumps?|"
-    r"returns?|exposes?|reveals?|enables?|allows?|succeeds?|payload|against|in the)\b"
-    r"|[…;,.]|$)"
-)
-# A matched SELECT/UPDATE/… span is only REAL SQL (worth backticking) when it
-# carries a structural SQL signal. Without this gate the regex wrapped prose
-# that merely opens with a SQL verb — "UNION SELECT payload (e.g" and
-# "SELECT from Users extracts all email addresses…" both shipped as code spans
-# (user report 2026-06).
-_STEP_SQL_SIGNAL_RE = re.compile(r"\b(FROM|WHERE|INTO|VALUES|SET|JOIN)\b|\*|--|,\s*\d", re.IGNORECASE)
-# Trailing-prose trim — cut a matched SQL span at the first prose connector so
-# "SELECT from Users extracts all …" backticks only "SELECT from Users".
-_STEP_SQL_PROSE_CUT_RE = re.compile(
-    r"\s+(?:which|yielding|queries|query|attack|and the|to|extracts?|can|dumps?|"
-    r"returns?|exposes?|reveals?|enables?|allows?|succeeds?|payload|against|in the)\b.*$",
-    re.IGNORECASE,
-)
-
-
-def _wrap_step_sql(m: re.Match[str]) -> str:
-    sql = m.group(1).strip()
-    sql = _STEP_SQL_PROSE_CUT_RE.sub("", sql).strip()
-    if sql and _STEP_SQL_SIGNAL_RE.search(sql):
-        return f"`{sql}`"
-    return m.group(0)
-
-
-# Code function call — a dotted member-call (`crypto.createHash('md5')`,
-# `vm.runInContext()`, `libxmljs2.parseXml()`) OR a simple empty-arg call
-# (`safeEval()`). Both are unambiguous code the LLM scenario routinely leaves
-# un-backticked. The callee word must abut the `(` (no space), so prose like
-# "gains access (admin)" never matches.
-_STEP_CALL_RE = re.compile(
-    r"(?<![`\w])("
-    r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+\([^()]{0,80}\)"  # dotted call
-    r"|[A-Za-z_]\w*\(\)"  # bare empty-arg call
-    r")(?!`)"
-)
-# `X`.member / `X`-NNN splits left behind when the LLM backticked only the
-# head of a dotted path or a file:line range. Merge the trailing continuation
-# back INTO the code span so the whole token is one consistent span.
-_STEP_DOTTED_MERGE_RE = re.compile(r"`([^`\n]+)`\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
-_STEP_RANGE_MERGE_RE = re.compile(r"`([^`\n]+:\d+)`-(\d+)\b")
-# `file:?` — the {line} template slot when the evidence line is unknown. The
-# `:?` placeholder is noise; collapse the span to the bare file.
-_STEP_UNKNOWN_LINE_RE = re.compile(r"`([\w./-]+):\?`")
-
-
 def _format_step_code(step: str) -> str:
-    """Normalise code formatting in one attack step.
-
-    Two passes: (1) backtick code tokens the downstream prose-fixer does not
-    cover (file:line, payload assignment, SQL, function calls), leaving
-    existing backtick spans untouched; (2) repair inconsistent LLM-authored
-    spans — merge split dotted-paths / file:line ranges back into one span
-    and drop the `:?` unknown-line placeholder. Idempotent."""
-    out: list[str] = []
-    for chunk in re.split(r"(`[^`\n]+`)", step):
-        if chunk.startswith("`"):
-            out.append(chunk)
-            continue
-        chunk = _STEP_FILELINE_RE.sub(r"`\1`", chunk)
-        chunk = _STEP_PAYLOAD_ASSIGN_RE.sub(r"`\1`", chunk)
-        chunk = _STEP_SQL_RE.sub(_wrap_step_sql, chunk)
-        # NOTE: the local call-wrapping pass (`_STEP_CALL_RE`) was retired
-        # 2026-07-19. It matched a dotted call anywhere, including one NESTED
-        # inside a larger un-backticked expression, and produced
-        # `pickle.loads(`base64.b64decode(payload.payload)`)` — the inner call
-        # formatted, the outer one bare. `apply_prose_fixes` carries an
-        # equivalent pass with an enclosing-expression guard
-        # (`_inside_bare_call`) that leaves such a token alone, and it runs via
-        # the delegation below. `_STEP_CALL_RE` is kept defined for callers
-        # that import it, but is no longer applied here.
-        out.append(chunk)
-    joined = "".join(out)
-    # Repair pass on the joined string (operates across the span boundaries).
-    joined = _STEP_DOTTED_MERGE_RE.sub(r"`\1.\2`", joined)
-    joined = _STEP_RANGE_MERGE_RE.sub(r"`\1-\2`", joined)
-    joined = _STEP_UNKNOWN_LINE_RE.sub(r"`\1`", joined)
-    # Delegate the remaining token classes to the document-wide formatter
-    # instead of re-implementing them here (2026-07-19). `apply_prose_fixes`
-    # already owns URLs, bare IPs, JSON payload literals, snake_case
-    # identifiers, whole call expressions, and the split-span repairs — and it
-    # runs over the composed document anyway. Calling it here keeps the §3
-    # FRAGMENT on disk identical to the final rendering, so a fragment-only
-    # re-render (`--rerender`, the Re-Render Loop) is not a downgrade.
-    # Optional import: the renderer stays usable standalone in a degraded
-    # environment where only this module was vendored.
-    try:  # pragma: no cover - exercised via the composed pipeline
-        from apply_prose_fixes import _wrap_line as _prose_wrap_line
-
-        joined = _prose_wrap_line(joined)[0]
-    except ImportError:
-        pass
-    return joined
+    """Apply the report-wide inline-code contract to one attack step."""
+    return format_inline_code(step)[0]
 
 
 # --- Step-quality filters (2026-07-19) --------------------------------------

@@ -1204,7 +1204,7 @@ def test_inline_code_format_backticked_ok(tmp_path):
     assert rep.ok == 1 and not rep.warnings
 
 
-def test_inline_code_format_skips_heading_table_fence_link(tmp_path):
+def test_inline_code_format_scans_table_and_blockquote_but_skips_opaque_markdown(tmp_path):
     md = _md(
         tmp_path,
         """\
@@ -1224,13 +1224,54 @@ def test_inline_code_format_skips_heading_table_fence_link(tmp_path):
         """,
     )
     rep = qa.check_inline_code_format(md)
-    assert rep.ok == 1 and not rep.warnings
+    assert len(rep.warnings) == 1
+    assert "routes/login.ts" in rep.warnings[0]
+    assert "line(s) [3, 12]" in rep.warnings[0]
 
 
-def test_inline_code_format_glob_exempt(tmp_path):
+def test_inline_code_format_flags_glob_from_the_shared_contract(tmp_path):
     md = _md(tmp_path, "Match routes/**.ts wildcard in prose.\n")
     rep = qa.check_inline_code_format(md)
-    assert rep.ok == 1 and not rep.warnings
+    assert any("routes/**.ts" in warning for warning in rep.warnings)
+
+
+def test_inline_code_format_detects_the_same_rule_6_categories(tmp_path):
+    md = _md(
+        tmp_path,
+        "Use vm.runInContext(safeEval()), SameSite=Strict, req.body.email, and routes/x.ts:4.\n",
+    )
+    rep = qa.check_inline_code_format(md)
+    warnings = "\n".join(rep.warnings)
+    for token in ("vm.runInContext(safeEval())", "SameSite=Strict", "req.body.email", "routes/x.ts:4"):
+        assert token in warnings
+
+
+def test_inline_code_format_uses_structured_yaml_vocabulary(tmp_path):
+    md = _md(tmp_path, "The finding uses custom-security-adapter here.\n")
+    (tmp_path / "threat-model.yaml").write_text(
+        "evidence:\n  snippet: custom-security-adapter\n",
+        encoding="utf-8",
+    )
+    rep = qa.check_inline_code_format(md)
+    assert any("custom-security-adapter" in warning for warning in rep.warnings)
+
+
+def test_inline_code_format_ignores_malformed_structured_vocabulary(tmp_path):
+    md = _md(tmp_path, "Ordinary prose remains readable.\n")
+    (tmp_path / "threat-model.yaml").write_text("evidence: [unterminated\n", encoding="utf-8")
+    rep = qa.check_inline_code_format(md)
+    assert rep.ok == 1
+    assert rep.warnings == []
+
+
+def test_inline_code_format_handles_recursive_structured_vocabulary(tmp_path):
+    md = _md(tmp_path, "The finding uses cyclic-security-adapter here.\n")
+    (tmp_path / "threat-model.yaml").write_text(
+        "evidence: &evidence\n  snippet: cyclic-security-adapter\n  related: *evidence\n",
+        encoding="utf-8",
+    )
+    rep = qa.check_inline_code_format(md)
+    assert any("cyclic-security-adapter" in warning for warning in rep.warnings)
 
 
 # ===========================================================================

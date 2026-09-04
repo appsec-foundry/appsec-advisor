@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fragment-registry drift linter (Phase A1 of docs/internal/runbooks/refactoring-plan.md).
+"""Fragment-registry drift linter (Phase A1 of docs/internal/analysis/refactoring-plan.md).
 
 Cross-checks the fragment ↔ schema ↔ section relation that is implicitly
 encoded across five Python maps + the YAML contract + the on-disk schema

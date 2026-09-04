@@ -179,15 +179,60 @@ def _is_tracing() -> bool:
 _TRACING = _is_tracing()
 
 
+def _existing_output_root(start: str) -> str | None:
+    """Nearest ancestor of ``start`` that is a checkout AND holds ``docs/security``.
+
+    Both signals are required because each alone picks the wrong directory.
+
+    ``.git`` alone walks to the filesystem root, so an unrelated or stray
+    checkout above captures every hook that fires outside a project — an empty
+    ``/tmp/.git``, which is a real thing to find on a shared box, is enough to
+    send events to ``/tmp/docs/security``. Writing outside the tree the run
+    belongs to is worse than the nesting this is here to fix.
+
+    ``docs/security`` alone is captured by the very stray directory this fixes.
+    A hook firing from ``<repo>/docs`` finds ``<repo>/docs/docs/security`` left
+    by an earlier run one candidate before it reaches the real one, so the bug
+    keeps its own artifact alive.
+
+    Together neither misfires: the stray nested directory sits under no
+    checkout of its own, and a checkout with no ``docs/security`` is not an
+    output root. Returns None on a first run, where nothing has been created
+    yet and the caller's cwd default is correct.
+    """
+    try:
+        path = Path(start).resolve()
+    except OSError:
+        return None
+    for candidate in (path, *path.parents):
+        try:
+            # ``.git`` is a FILE in a worktree or submodule checkout, so this
+            # has to be ``exists``, not ``is_dir``.
+            if (candidate / ".git").exists() and (candidate / "docs" / "security").is_dir():
+                return str(candidate)
+        except OSError:
+            return None
+    return None
+
+
 def _output_dir() -> str:
     """Resolve the appsec output directory.
 
     Preference order:
       1. OUTPUT_DIR environment variable (set by the skill dispatch).
-      2. cwd itself when it already ends in docs/security — prevents the
-         nested docs/security/docs/security/ path that appears when a hook
-         fires from a session whose cwd is already inside the output dir.
-      3. cwd + /docs/security (legacy default).
+      2. cwd itself when it already ends in docs/security — a hook firing from
+         a session whose cwd is already inside the output dir.
+      3. ``<nearest enclosing checkout that has one>/docs/security``.
+      4. cwd + /docs/security, for a first run with nothing to find yet.
+
+    Step 3 exists because a run's output directory does not move with the cwd,
+    and appending to the cwd made every subdirectory its own destination. Case
+    2 only ever caught the one cwd that was already the full output path; a
+    hook firing one level up, from ``<repo>/docs``, wrote a stray
+    ``<repo>/docs/docs/security``, and one from ``<repo>/routes`` a
+    ``<repo>/routes/docs/security``. Those writes succeed and go unread — the
+    run that owns the events looks in its own directory — so budget state and
+    hook events silently split across trees.
     """
     env = os.environ.get("OUTPUT_DIR")
     if env:
@@ -196,6 +241,9 @@ def _output_dir() -> str:
     norm = cwd.replace("\\", "/").rstrip("/")
     if norm.endswith("/docs/security") or norm == "docs/security":
         return cwd
+    root = _existing_output_root(cwd)
+    if root:
+        return os.path.join(root, "docs", "security")
     return os.path.join(cwd, "docs", "security")
 
 
@@ -215,6 +263,18 @@ def _trace_path() -> str:
 # on-disk checkpoint lies about the run state. We rewrite it to reflect the
 # abort so the next pre-flight treats it as cleanable without a 1-hour wait.
 _CLEAN_STOP_REASONS = {"end_turn", "stop_sequence"}
+
+# The subagent boundary needs its own vocabulary. `_CLEAN_STOP_REASONS` decides
+# whether the OUTER session ended cleanly, where a dangling `tool_use` really is
+# an interrupted run. A child that stops on `tool_use` merely ended its last
+# turn on a tool call, which is the normal shape for every write-first agent
+# contract in this plugin: the agent's final act is the Write or Bash call that
+# persists its artifact. Reusing the session set here marked completed children
+# failed — on the 2026-08-29 juice-shop run 8 of 18 agents, including a renderer
+# that had authored every fragment and a fixer whose own log recorded
+# `gate_exit 0`. Cut-offs are caught where the evidence actually lives: the
+# completion checkpoints and `assert_completeness.py`, not a stop reason.
+_CLEAN_SUBAGENT_STOP_REASONS = _CLEAN_STOP_REASONS | {"tool_use"}
 
 
 def mark_checkpoint_aborted_if_dirty(stop_reason: str, output_dir: str | Path | None = None) -> str | None:
@@ -945,6 +1005,41 @@ def _write(level: str, event: str, detail: str, sid: str = "", component: str | 
 def _clip(s, n: int = 120) -> str:
     s = str(s).replace("\n", " ").strip()
     return s[:n] + "…" if len(s) > n else s
+
+
+# Same shape as the BASH_WARN trigger: a tool speaking about itself at column 0.
+_DIAGNOSTIC_ANCHOR_RE = re.compile(r"(?m)^[ \t]*(?:usage:|\S*:\s*error:|\S+\.(?:py|sh):\s+\S)")
+
+
+def _diagnostic_excerpt(stderr_text: str, stdout_text: str, resp: object, error_kw=(), limit: int = 240) -> str:
+    """Return the line that explains a warning, not the head of a dict repr.
+
+    ``str(resp)`` starts ``{'stdout': "…``, so clipping it spends the budget on
+    a wrapper and cuts the message off mid-sentence. Run a2a0e355 lost the
+    reason for three ``cannot validate STRIDE logging depth`` warnings that way
+    — the log had recorded the warning and truncated its own evidence, leaving
+    the defect permanently undiagnosable. Prefer the diagnostic line itself,
+    and only fall back to the blob when nothing else is recognisable.
+    """
+    sources = [text for text in (stderr_text, stdout_text) if text]
+    for source in sources:
+        match = _DIAGNOSTIC_ANCHOR_RE.search(source)
+        if match:
+            return _clip(source[match.start() :].splitlines()[0].strip(), limit)
+    for source in sources:
+        for line in source.splitlines():
+            if any(kw in line.lower() for kw in error_kw):
+                # A traceback header announces a failure without naming it; the
+                # exception on the last line is the part worth keeping.
+                if line.strip().startswith("Traceback (most recent call last)"):
+                    tail = [row.strip() for row in source.splitlines() if row.strip()]
+                    return _clip(tail[-1], limit)
+                return _clip(line.strip(), limit)
+    for source in sources:
+        for line in source.splitlines():
+            if line.strip():
+                return _clip(line.strip(), limit)
+    return _clip(str(resp), limit)
 
 
 def _runtime_agent_id(value: object) -> str:
@@ -2167,6 +2262,28 @@ def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | No
     return None
 
 
+# Agents that cannot advance the pipeline: they only read a finished run and
+# write their own sidecar. The abort latch must let these through, or its own
+# advice — preserve the artifacts and diagnose — is impossible to follow, which
+# is what happened on 2026-08-29 when `/appsec-advisor:diagnose-run` and every
+# ad-hoc read-only agent were denied after the abort.
+_ABORT_LATCH_EXEMPT_AGENTS = frozenset({"appsec-advisor:appsec-run-diagnostician"})
+
+
+def _abort_latch_applies(event: hook_payload.HookEvent) -> bool:
+    """Whether the abort latch should deny this particular Agent dispatch.
+
+    Scoped to this plugin's own producer agents. A non-plugin agent belongs to
+    whatever else the operator is doing in the session and never continues a
+    context-v2 run, so denying it only removes the reader's tools without
+    protecting the aborted pipeline.
+    """
+    subtype = str(event.tool_input.get("subagent_type") or "")
+    if not subtype.startswith("appsec-advisor:"):
+        return False
+    return subtype not in _ABORT_LATCH_EXEMPT_AGENTS
+
+
 def _context_v2_terminal_abort_reason() -> str | None:
     """Reject a producer dispatch after a current-run context-v2 abort.
 
@@ -2177,6 +2294,10 @@ def _context_v2_terminal_abort_reason() -> str | None:
     diagnosing and the recovery skills, none of which advance the run. Denying
     those too is what made the abort message's own advice, to start a fresh
     rebuild, impossible to follow without deleting files by hand.
+
+    Which dispatches that intent covers is decided by
+    :func:`_abort_latch_applies`; this function only answers whether the run is
+    latched at all.
     """
     output_dir = Path(_output_dir())
     config_path = output_dir / ".skill-config.json"
@@ -2284,7 +2405,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     event = _hook_event(data, "PreToolUse", sid)
     tool = event.tool_name
 
-    if event.is_agent_call:
+    if event.is_agent_call and _abort_latch_applies(event):
         abort_reason = _context_v2_terminal_abort_reason()
         if abort_reason is not None:
             _emit_pretool_denial(abort_reason)
@@ -2777,7 +2898,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     if runtime_call is not None:
         try:
             if reason_known:
-                clean = reason in _CLEAN_STOP_REASONS
+                clean = reason in _CLEAN_SUBAGENT_STOP_REASONS
                 events = (
                     agent_lifecycle.finish_call(_output_dir(), runtime_call["agent_call_id"])
                     if clean
@@ -3041,6 +3162,11 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
         params = _agent_params(inp.get("prompt", "") or "")
         pairs = "  ".join(f"{k}={v}" for k, v in params.items())
 
+        # One decision, reused by every branch below: did this return merely
+        # acknowledge a launch, or did the child actually finish? The dispatch
+        # flag alone cannot answer that — see _is_async_launch.
+        launch_only = bool(bg) or _is_async_launch(resp)
+
         call_id = event.tool_use_id
         if not _call_has_usage(call_id):
             # The transcript answered nothing for this call, so the Agent return
@@ -3065,7 +3191,7 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
                 agent_lifecycle.bind_runtime_agent_id(_output_dir(), call_id, runtime_agent_id)
             if is_err:
                 events = agent_lifecycle.fail_call(_output_dir(), call_id, "agent_tool_error")
-            elif bg or _is_async_launch(resp):
+            elif launch_only:
                 # A launch acknowledgement is not a completion — the call stays
                 # running and terminates on SubagentStop. See _is_async_launch.
                 events = agent_lifecycle.acknowledge_background_call(_output_dir(), call_id)
@@ -3074,7 +3200,11 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
             agent_lifecycle.append_events(_output_dir(), events)
         except agent_lifecycle.LifecycleError as exc:
             _write("WARN ", "AGENT_LIFECYCLE_REJECTED", f"agent_call_id={call_id or '?'}  reason={exc}", sid)
-        if is_err or not bg:
+        # Retiring the budget here is only correct once the child has actually
+        # returned. For a launch acknowledgement it has not, so keying this on
+        # the input flag alone released ownership at dispatch and let the
+        # watchdog charge the parent's later tools to a child still running.
+        if is_err or not launch_only:
             try:
                 from budget_watchdog import close_call
 
@@ -3232,7 +3362,8 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
             is_warn = False
         if is_warn:
             cmd = _mask_secrets(_clip(cmd_str, 80))
-            _write("WARN ", "BASH_WARN", f"cmd={cmd}  resp={_mask_secrets(_clip(str(resp), 100))}{dur_tail}", sid)
+            excerpt = _diagnostic_excerpt(stderr_text, stdout_text, resp, ERROR_KW)
+            _write("WARN ", "BASH_WARN", f"cmd={cmd}  resp={_mask_secrets(excerpt)}{dur_tail}", sid)
         else:
             # BASH_OK closes the diagnostic gap: previously only WARN-Bash hit
             # the log, so any successful long-running script (compose_threat_model.py,

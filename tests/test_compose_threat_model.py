@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -46,6 +47,29 @@ qa = _load_module("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
 # The §1 exposure rating comes from this shared contract; the tests read the
 # scale from it rather than restating it.
 criticality = _load_module("_boundary_criticality", REPO_ROOT / "scripts" / "_boundary_criticality.py")
+
+
+def test_inline_code_vocabulary_ignores_model_selected_repository(tmp_path: Path, monkeypatch) -> None:
+    selected: list[Path] = []
+    monkeypatch.setattr(
+        compose._inline_code_formatter,
+        "repository_vocabulary",
+        lambda path: selected.append(path) or frozenset({"known-package"}),
+    )
+    ctx = SimpleNamespace(
+        output_dir=tmp_path,
+        yaml_data={"meta": {"repository_root": "/model-selected"}},
+    )
+
+    assert "known-package" not in compose._inline_code_vocabulary(ctx)
+    assert selected == []
+
+    (tmp_path / ".skill-config.json").write_text(
+        json.dumps({"repo_root": str(tmp_path / "trusted-repository")}),
+        encoding="utf-8",
+    )
+    assert "known-package" in compose._inline_code_vocabulary(ctx)
+    assert selected == [tmp_path / "trusted-repository"]
 
 
 def _prepare_output_dir(tmp_path: Path) -> Path:
@@ -2344,8 +2368,8 @@ def test_attack_tree_wide_still_single_block() -> None:
 def test_codify_inline_identifiers_no_mid_token_backticks() -> None:
     """Story-Card prose path wrapping must not split a path/extension mid-token.
 
-    Regression: `_CODE_FILE_RE` wraps the whole path, then `_CODE_DOTTED_RE`
-    used to re-match `component.html` INSIDE that fresh span, yielding
+    Regression: sequential token matchers used to re-match `component.html`
+    INSIDE a fresh path span, yielding
     `administration.` `component.html` `:26` (mid-token backticks). Each code
     matcher now runs only outside existing spans.
     """
@@ -2422,14 +2446,12 @@ def test_codify_inline_identifiers_does_not_overmatch_at_signs_or_plain_slashes(
     assert "`input/output`" not in compose._codify_inline_identifiers("an input/output boundary")
 
 
-def test_balance_code_spans_merges_partially_wrapped_expression() -> None:
+def test_canonical_formatter_merges_partially_wrapped_expression() -> None:
     """An arrow-function / multi-call expression the author only half-wrapped
     must render as ONE code span, not half-monospaced prose.
 
-    Regression (juice-shop 2026-06-24): the per-token matchers skip non-empty
-    paren calls + arrow functions, so `foo.forEach((x) => { `bar(x)` })` shipped
-    with only the inner call backticked. `_codify_inline_identifiers` now runs
-    `_balance_code_spans` as a final pass.
+    Regression (juice-shop 2026-06-24): the old per-token matchers skipped
+    non-empty calls and arrow functions, so only the inner call was formatted.
     """
     raw = (
         "◌ ambiguous - notifications.forEach((notification) => "
@@ -2444,16 +2466,20 @@ def test_balance_code_spans_merges_partially_wrapped_expression() -> None:
     assert compose._codify_inline_identifiers(out) == out
 
 
-def test_balance_code_spans_leaves_standalone_span_and_prose_untouched() -> None:
+def test_canonical_formatter_leaves_standalone_span_and_prose_untouched() -> None:
     """A balanced standalone span surrounded by prose must NOT absorb words."""
     # `socket.emit()` is whole; "call broadcasts" is prose → no merge.
-    assert compose._balance_code_spans("the `socket.emit()` call broadcasts") == "the `socket.emit()` call broadcasts"
+    assert (
+        compose._codify_inline_identifiers("the `socket.emit()` call broadcasts")
+        == "the `socket.emit()` call broadcasts"
+    )
     # file:line locator followed by prose → untouched.
     assert (
-        compose._balance_code_spans("`routes/foo.ts:9` defines the handler") == "`routes/foo.ts:9` defines the handler"
+        compose._codify_inline_identifiers("`routes/foo.ts:9` defines the handler")
+        == "`routes/foo.ts:9` defines the handler"
     )
     # no backticks at all → returned verbatim.
-    assert compose._balance_code_spans("plain prose, no code") == "plain prose, no code"
+    assert compose._codify_inline_identifiers("plain prose, no code") == "plain prose, no code"
 
 
 def test_curate_top_mitigations_floor_and_llm_order() -> None:
@@ -4799,6 +4825,48 @@ def test_softwrap_never_breaks_inside_backtick_span():
         assert seg.count("`") % 2 == 0
 
 
+def test_softwrap_exempts_requirements_compliance_table():
+    """§7b is fixed-layout HTML in the export; a 44-char break inserted here
+    survives verbatim as a mid-sentence line break in the HTML/PDF cell."""
+    md = (
+        "| Requirement | Status | Priority | Evidence |\n"
+        "|---|---|---|---|\n"
+        "| WEB-001: Reject forged cross-site state-changing requests | ❌ FAIL | MUST | "
+        "[F-019](#f-019): password-change action served as HTTP GET, accepting cross-origin "
+        "invocation without CSRF protection. |\n"
+    )
+    assert compose._softwrap_prose_table_cells(md, width=20) == md
+
+
+def test_requirements_assessment_table_is_sorted_by_status():
+    md = (
+        "## 7b. Requirements Compliance\n\n"
+        "| Requirement | Status | Priority | Evidence |\n"
+        "|---|---|---|---|\n"
+        "| WEB-001: A | ❓ UNVERIFIABLE | MUST | no runtime evidence |\n"
+        "| WEB-002: B | ✅ PASS | MUST | control present |\n"
+        "| WEB-003: C | ❌ FAIL | MUST | F-001 |\n"
+        "| WEB-004: D | ⚠️ PARTIAL | SHOULD | half done |\n"
+        "| WEB-005: E | ❌ FAIL | SHOULD | F-002 |\n"
+    )
+    out = compose._sort_requirements_assessment_table(md)
+    ids = [compose._split_md_table_row(line)[0][:7] for line in out.splitlines() if line.startswith("| WEB-")]
+    # Gaps first; catalog order preserved inside each status block (stable sort).
+    assert ids == ["WEB-003", "WEB-005", "WEB-004", "WEB-001", "WEB-002"]
+    assert compose._sort_requirements_assessment_table(out) == out  # idempotent
+
+
+def test_requirements_sort_leaves_the_traceability_table_alone():
+    """The appended traceability table is ordered by severity, not by status."""
+    md = (
+        "| Requirement | Status | Risk | Findings | Mitigations | Guidance |\n"
+        "|---|---|---|---|---|---|\n"
+        "| `AC-002` | ⚠️ PARTIAL | 🔴 Critical | [F-010](#f-010) | — | — |\n"
+        "| `AC-003` | ❌ FAIL | 🟡 Medium | [F-011](#f-011) | — | — |\n"
+    )
+    assert compose._sort_requirements_assessment_table(md) == md
+
+
 def test_softwrap_exempts_fixed_layout_trust_boundary_table():
     md = (
         "| ID | Boundary / crossing | Exposure | Kind / status | Assumption & verdict | Source | Linked findings |\n"
@@ -5267,6 +5335,74 @@ def test_verdict_export_resolves_reader_facing_ids(tmp_path: Path) -> None:
     assert export["bullets"][0]["verified_attack_path"] is True
     assert export["bullets"][1]["findings"] == ["F-050"]
     assert export["bullets"][1]["verified_attack_path"] is False
+
+
+def _abuse_placeholder_ctx(tmp_path: Path, cfg: dict | None, eval_context: dict) -> compose.RenderContext:
+    if cfg is not None:
+        (tmp_path / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    return compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={},
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+        eval_context=eval_context,
+    )
+
+
+def test_section9_placeholder_states_a_result_only_when_verification_ran(tmp_path: Path) -> None:
+    ctx = _abuse_placeholder_ctx(tmp_path, {"skip_abuse_case_verification": False}, {})
+    assert compose._abuse_cases_placeholder(ctx) == "_No abuse cases were identified or mandated for this assessment._"
+
+
+def test_section9_placeholder_says_verification_never_ran_when_skipped(tmp_path: Path) -> None:
+    # Quick depth skips Stage 1d by default; "none identified" would then assert
+    # a coverage result the run never produced.
+    ctx = _abuse_placeholder_ctx(
+        tmp_path,
+        {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (auto - quick depth)"},
+        {"skip_abuse_case_verification": True},
+    )
+    body = compose._abuse_cases_placeholder(ctx)
+    assert body.startswith("_Abuse-case verification did not run for this assessment (auto - quick depth).")
+    assert "identified" not in body
+
+
+def test_section9_handler_emits_the_skip_placeholder_under_the_heading(tmp_path: Path) -> None:
+    ctx = _abuse_placeholder_ctx(
+        tmp_path,
+        {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (--no-abuse-cases)"},
+        {},
+    )
+    out = compose._render_abuse_cases(ctx, compose._build_jinja_env(ctx), {"heading": "## 9. Abuse Cases"})
+    assert out.startswith("## 9. Abuse Cases\n\n_Abuse-case verification did not run")
+    assert "(--no-abuse-cases)" in out
+
+
+def test_quick_banner_names_skipped_abuse_case_verification(tmp_path: Path) -> None:
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [], "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"is_quick_depth": True, "skip_abuse_case_verification": True},
+    )
+    out = compose._render_quick_mode_notice(ctx, compose._build_jinja_env(ctx), {})
+    assert "No §9 abuse-case verification" in out
+
+
+def test_quick_banner_silent_when_abuse_case_verification_ran(tmp_path: Path) -> None:
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"components": [], "threats": []},
+        triage={},
+        fragments_dir=tmp_path,
+        eval_context={"is_quick_depth": True, "skip_abuse_case_verification": False},
+    )
+    out = compose._render_quick_mode_notice(ctx, compose._build_jinja_env(ctx), {})
+    assert "abuse-case verification" not in out
 
 
 def test_quick_banner_shows_n_of_m(tmp_path: Path) -> None:
@@ -5882,7 +6018,7 @@ def test_codify_leaves_prose_apostrophes_alone() -> None:
     assert compose._codify_inline_identifiers(raw) == raw
 
 
-def test_string_literal_is_code_rejects_single_keyword_slug() -> None:
+def test_canonical_literal_recognition_rejects_single_keyword_slug() -> None:
     """A quoted kebab-case slug/id that merely CONTAINS one SQL keyword as a
     hyphen-delimited word is NOT code — `\\bupdate\\b` fires inside
     "dependency-update-posture" (a `-` is a word boundary), which used to
@@ -5895,18 +6031,15 @@ def test_string_literal_is_code_rejects_single_keyword_slug() -> None:
         "select-list",
         "where-clause",
     ):
-        assert not compose._string_literal_is_code(slug), f"slug wrongly flagged as code: {slug!r}"
-    # Real multi-keyword SQL and 1-keyword-plus-operator fragments STILL count.
-    assert compose._string_literal_is_code("select id from users where x = 1")
-    assert compose._string_literal_is_code("o.owner_id = u.id where u.email = x")
-    assert compose._string_literal_is_code("q = 'a' + b")
+        quoted = f"'{slug}'"
+        assert compose._codify_inline_identifiers(quoted) == quoted
+    assert compose._codify_inline_identifiers("'select id from users where x = 1'").startswith("`")
 
 
 def test_html_anchor_id_not_backticked() -> None:
     """Regression (golden): an injected `<a id="…">` heading anchor whose slug
     contains a SQL keyword must survive the render passes un-backticked."""
     line = '<a id="dependency-update-posture"></a>'
-    assert compose._wrap_code_string_literals(line) == line
     assert compose._fold_code_strings_in_prose(line) == line
 
 
@@ -6373,3 +6506,53 @@ def test_exposure_and_kind_legends_define_their_vocabulary(tmp_path: Path) -> No
     for _surface, changes in compose._BOUNDARY_KIND_AXES.values():
         for change in changes:
             assert change in kind_legend, f"{change} can render in Kind but is not explained"
+
+
+# ---------------------------------------------------------------------------
+# REQ-BIZ-004 — the report names the business-context file it read
+# ---------------------------------------------------------------------------
+
+
+def _run_stats_ctx(tmp_path, yaml_data):
+    return compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data=yaml_data,
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+    )
+
+
+def test_run_statistics_disclose_the_business_context_source(tmp_path):
+    ctx = _run_stats_ctx(
+        tmp_path,
+        {
+            "meta": {"business_context_source": "docs/business-context.md"},
+            "threats": [
+                {"id": "T-001", "business_context_basis": ["sensitive_assets"]},
+                {"id": "T-002", "business_context_basis": ["impact_if_compromised"]},
+                {"id": "T-003"},
+            ],
+        },
+    )
+
+    out = compose._render_appendix_run_statistics(ctx, None, {})
+
+    assert "| Business context | `docs/business-context.md` — applies to 2 finding(s) |" in out
+
+
+def test_run_statistics_say_when_declared_context_reached_nothing(tmp_path):
+    ctx = _run_stats_ctx(
+        tmp_path,
+        {"meta": {"business_context_source": ".business-context-input.md"}, "threats": [{"id": "T-001"}]},
+    )
+
+    out = compose._render_appendix_run_statistics(ctx, None, {})
+
+    assert "| Business context | `.business-context-input.md` — mapped to no component |" in out
+
+
+def test_run_statistics_omit_the_row_without_declared_context(tmp_path):
+    out = compose._render_appendix_run_statistics(_run_stats_ctx(tmp_path, {"meta": {}, "threats": []}), None, {})
+
+    assert "Business context" not in out

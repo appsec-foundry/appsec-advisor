@@ -147,14 +147,12 @@ This section presents all mitigations in two tiers: prioritized (fix immediately
 <ONLY when CHECK_REQUIREMENTS=true. Omit this entire subsection otherwise.>
 
 **Baseline:** [<requirements source name or URL>](<url>)
+**Overall status:** <deterministically composed from the §7b rows>
 **Result:** <N> requirements assessed — <N_pass> PASS · <N_fail> FAIL · <N_antipattern> ANTI-PATTERN · <N_partial> PARTIAL · <N_na> N/A · <N_not_observable> NOT OBSERVABLE · <N_unverifiable> UNVERIFIABLE
 
-<Up to 3 bullets — architectural violations and ANTI-PATTERN findings only. The full list lives in Section 7b.
-Selection order: ❌ ANTI-PATTERN `MUST` first, then ❌ ANTI-PATTERN `SHOULD`, then ❌ FAIL with `architectural_violation=true` `MUST`, then ❌ FAIL with `architectural_violation=true` `SHOULD`, then ❌ FAIL `MUST` requirements when fewer than 3 architectural slots are filled.
-Each bullet format: "- **[REQ-ID](url) — <title>** `MUST/SHOULD`: <one sentence describing the systemic risk and its business impact>."
-When zero architectural violations or ANTI-PATTERN findings exist, omit all bullets (keep only Baseline + Result lines).>
+<The composer owns the Overall status, Result counts, and compact table. It derives all three from the complete §7b assessment table, lists up to six failed requirements (MUST first) by ID plus short title, and adds only explicitly mapped finding and mitigation links. Partial and unverified requirements stay in the counts and §7b. Do not hand-author or duplicate them.>
 
-→ *Full compliance details in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*
+→ *All <N> assessed requirements in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*
 
 ### Operational Strengths
 

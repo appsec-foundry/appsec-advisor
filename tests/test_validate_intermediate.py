@@ -1053,6 +1053,158 @@ def test_validate_threat_model_output_non_dict():
     assert not ok and errs == ["root must be a mapping"]
 
 
+def test_requirements_compliance_rejects_unreconciled_buckets_and_rows():
+    data = {
+        "requirements_compliance": {
+            "total": 2,
+            "pass": 2,
+            "fail": 1,
+            "partial": 0,
+            "unverifiable": 0,
+            "not_applicable": 0,
+            "requirements": [{"id": "AC-001"}, {"id": "AC-001"}, {"id": "AC-002"}],
+        }
+    }
+    errors = vi._check_requirements_compliance_invariants(data)
+    assert "requirements_compliance: status buckets must sum to total" in errors
+    assert "requirements_compliance: requirements row count must equal total" in errors
+    assert "requirements_compliance: requirement IDs must be unique" in errors
+
+
+def test_requirements_compliance_schema_rejects_missing_buckets_and_unknown_status():
+    data = {
+        "requirements_compliance": {
+            "total": 1,
+            "pass": 1,
+            "fail": 0,
+            "partial": 0,
+            "requirements": [
+                {
+                    "id": "AC-001",
+                    "status": "MAYBE",
+                    "priority": "MUST",
+                    "title": "Authorize access",
+                    "finding_ids": [],
+                }
+            ],
+        }
+    }
+    errors = vi._schema_errors("threat_model_output", data)
+    assert any("unverifiable" in error and "required" in error for error in errors)
+    assert any("MAYBE" in error and "not one of" in error for error in errors)
+
+
+def test_export_trace_cross_references_fail_closed():
+    data = {
+        "components": [{"id": "api"}],
+        "threats": [
+            {
+                "id": "T-001",
+                "violated_requirements": ["REQ-MISSING"],
+                "business_context_basis": ["sensitive_assets"],
+            }
+        ],
+        "mitigations": [{"id": "M-001", "fulfills_requirements": ["REQ-MISSING"]}],
+        "requirements_compliance": {
+            "total": 1,
+            "requirements": [{"id": "REQ-001", "finding_ids": ["F-999"]}],
+        },
+        "requirements_provenance": {"count": 2},
+        "business_context_trace": {
+            "status": "applied",
+            "source": None,
+            "sha256": None,
+            "fields_present": ["security_obligations"],
+            "component_coverage": [{"component_id": "missing", "fields": ["sensitive_assets"]}],
+            "applied_finding_count": 0,
+        },
+        "abuse_case_analysis": {
+            "status": "completed",
+            "cases": [
+                {
+                    "id": "AC-001",
+                    "matched_finding_ids": ["F-999"],
+                    "blocking_mitigation_ids": ["M-999"],
+                    "verification_complete": True,
+                    "unverified_steps": [],
+                    "steps": [
+                        {
+                            "step": 2,
+                            "finding_id": "F-001",
+                            "unverified": True,
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    errors = vi._check_export_trace_invariants(data)
+
+    assert any("finding_id 'F-999' does not resolve" in error for error in errors)
+    assert any("violated requirement 'REQ-MISSING' does not resolve" in error for error in errors)
+    assert any("fulfilled requirement 'REQ-MISSING' does not resolve" in error for error in errors)
+    assert any("fields_present must equal" in error for error in errors)
+    assert any("component_id 'missing' does not resolve" in error for error in errors)
+    assert any("verification_complete does not match" in error for error in errors)
+
+
+def test_requirement_references_are_unresolved_not_invalid_without_a_compliance_section():
+    """Absent authority is "unknown", never "invalid".
+
+    `requirements_compliance` is parsed from the Stage-2 compliance fragment, so
+    the producer omits it at Stage-1 finalize by design. Resolving references
+    against the empty set that left behind rejected all 116 of them on a run
+    whose every ID was declared in the catalog, and the abort read as analyzers
+    inventing IDs (juice-shop 2026-08-30). The catalog stays enforced in the
+    producer; this check simply has nothing to resolve against yet.
+    """
+    data = {
+        "components": [{"id": "api"}],
+        "threats": [{"id": "T-001", "violated_requirements": ["AC-003"]}],
+        "mitigations": [{"id": "M-001", "fulfills_requirements": ["AC-003", "LM-001"]}],
+    }
+
+    errors = vi._check_export_trace_invariants(data)
+
+    assert not [error for error in errors if "does not resolve" in error]
+
+
+def test_export_trace_invariants_tolerate_schema_invalid_collection_items():
+    data = {
+        "threats": [{"id": "T-001", "violated_requirements": [{"bad": "id"}]}],
+        "mitigations": [{"id": "M-001", "fulfills_requirements": [{"bad": "id"}]}],
+        "requirements_compliance": {
+            "total": 1,
+            "requirements": [{"id": "REQ-001", "finding_ids": [{"bad": "id"}]}],
+        },
+        "business_context_trace": {
+            "status": "not_configured",
+            "fields_present": [{"bad": "field"}],
+            "component_coverage": [],
+            "applied_finding_count": 0,
+        },
+        "abuse_case_analysis": {
+            "status": "completed",
+            "cases": [
+                {
+                    "id": "AC-001",
+                    "matched_finding_ids": [{"bad": "id"}],
+                    "blocking_mitigation_ids": [{"bad": "id"}],
+                    "verification_complete": True,
+                    "unverified_steps": [{"bad": "step"}],
+                    "steps": [{"step": {"bad": "step"}, "finding_id": {"bad": "id"}, "unverified": True}],
+                }
+            ],
+        },
+    }
+
+    errors = vi._check_export_trace_invariants(data)
+
+    assert isinstance(errors, list)
+    assert any("step numbers must be contiguous" in error for error in errors)
+
+
 # --- _check_finding_id_contiguity ------------------------------------------
 
 

@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://appsec-advisor/schemas/editorial-plan.schema.json",
+  "title": "Editorial Plan",
+  "description": "Structured output of the Stage-4 editorial pass. The pass never edits files: it emits this plan and scripts/apply_editorial_plan.py applies it deterministically, then scripts/check_editorial_diff.py verifies that only prose moved. One action rewrites one prose field or one verbatim block; every other byte of the model is out of reach by construction.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated",
+    "status",
+    "actions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Bumped only when the schema breaks backwards compatibility."
+    },
+    "generated": {
+      "type": "string",
+      "description": "ISO 8601 UTC timestamp written by the editorial pass."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "edits",
+        "no_change"
+      ],
+      "description": "`no_change` means the pass read the projection and found nothing worth rewriting. It requires an empty `actions` array."
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    }
+  },
+  "$defs": {
+    "action": {
+      "type": "object",
+      "required": [
+        "file",
+        "find",
+        "replace"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "enum": [
+            "threat-model.yaml",
+            ".fragments/security-architecture.md",
+            ".fragments/ms-verdict.json",
+            ".fragments/ms-anti-patterns.json"
+          ],
+          "description": "Path relative to $OUTPUT_DIR. The applier hard-rejects anything else; the six force-regenerated fragments are excluded because the next compose overwrites them."
+        },
+        "path": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\[[0-9]+\\]|\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+          "description": "Field address such as `threats[12].scenario` or `mitigations[3].steps[1]`. Required for the yaml and JSON targets, absent for the Markdown fragment, where an explicit `null` counts as absent: the projection addresses that block with `\"path\": null`, so copying the block's own key back is the natural reading, and the applier's own check already treats null and missing alike. Holding the schema stricter than the applier cost a whole pass — one null in one Markdown action rejected the plan, its 19 valid yaml actions included. The applier accepts only addresses on the editable allow-list in scripts/check_editorial_diff.py."
+        },
+        "find": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For a field address, the field's current value verbatim — it is the optimistic lock, and a mismatch rejects the action. For the Markdown fragment, a block that occurs exactly once."
+        },
+        "replace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The rewritten prose. Identifiers, links, code spans, paths, `file:line` locators and numbers must survive unchanged; check_editorial_diff.py reverts the run when they do not."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "One sentence, surfaced in the applier's log so a maintainer can audit the judgement."
+        }
+      }
+    }
+  }
+}

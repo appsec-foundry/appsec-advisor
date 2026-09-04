@@ -2,6 +2,8 @@
 
 Files and directories that `scripts/runtime_cleanup.py` always wipes from `$OUTPUT_DIR/` after a successful run (unless `--keep-runtime-files` / `KEEP_RUNTIME_FILES=true` is set).
 
+The pipeline invokes `--stage post-qa`, which carries this wave when QA came back clean. A run that ended with QA unclean keeps every artifact below, because that is what a diagnosis reads.
+
 Single source of truth: `scripts/runtime_cleanup.py` (`ALWAYS_FILES`, `ALWAYS_DIRS` constants). This file mirrors the same list and is pinned by `tests/test_runtime_cleanup.py::TestCleanupWhitelistDoc::test_filename_mentioned_in_docs` so the two cannot drift.
 
 Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental anchors (`.appsec-cache/baseline.json`) are **never** in this list.
@@ -44,11 +46,18 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .appsec-progress.json
 .skill-watchdog.tick
 .business-context-input.md
+.pending-dispatch.json
+.receipt-verification.json
 ```
 
 `.business-context-input.md` is business context the user supplied for one run
 without persisting it to `docs/business-context.md`. It is cleaned like any other
 run input so it cannot shape a later scan unnoticed.
+
+`.pending-dispatch.json` and `.receipt-verification.json` record which dispatch
+is waiting for its receipts to be re-hashed and which ones were. Both belong to
+one run's dispatch chain; carrying them forward would let a boundary pass on an
+earlier run's verification.
 
 ## Opt-outs
 

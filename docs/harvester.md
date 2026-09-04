@@ -25,7 +25,9 @@ The script crawls configured pages and writes the catalog. Publish that file at 
 
 ### 1. Test with the bundled catalog
 
-The bundled mock server lets you test the audit before connecting an internal catalog:
+The bundled mock server lets you test the audit before connecting an internal catalog. Its requirement text is a curated baseline informed by OWASP ASVS 5.0.0, the OWASP Top 10:2025, and the OWASP Cheat Sheets, rather than an official OWASP standard or a claim of complete coverage.
+
+Its links model an organization's own portal at `appsec.int.example.com`, with a requirement page per category, each requirement anchored on that page, and a page per blueprint. That is the shape `harvest_requirements.py` writes from your own sources. The links are placeholders and do not resolve.
 
 ```bash
 # Serve the bundled example requirements YAML on 127.0.0.1:4444
@@ -69,9 +71,11 @@ pip install -r scripts/requirements.txt
 # Dry-run first to verify reachability and parsing
 python3 scripts/harvest_requirements.py --dry-run --verbose
 
-# Write the catalog and both functional-spec formats
+# Write every output any source's `outputs` field names
 HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py
-HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py --format all
+
+# Or restrict a run to just the catalog, e.g. for a CI job that only publishes it
+HARVEST_AUTH_TOKEN=<token> python3 scripts/harvest_requirements.py --format yaml
 ```
 
 The `output` setting controls the catalog destination and defaults to `data/appsec-requirements-fallback.yaml`. The `openspec.output` and `specdd.output` settings control the optional functional-spec files. The `sources_meta` block records the source page for each catalog section.
@@ -84,7 +88,9 @@ The output follows [`schemas/requirements-catalog.schema.yaml`](../schemas/requi
 python3 scripts/requirements_state.py --validate data/appsec-requirements-fallback.yaml [--strict]
 ```
 
-OpenSpec and SpecDD exports are single files. The renderer checks their required section and scenario structure without adding either project's CLI as a runtime dependency. The repository carries matching examples at [`examples/appsec-requirements-example.openspec.md`](../examples/appsec-requirements-example.openspec.md) and [`examples/appsec-requirements-example.sdd`](../examples/appsec-requirements-example.sdd).
+Every written file opens with two comment lines naming the document and the page it was harvested from. A blueprint section keeps one line per paragraph, list item, and table row of the source page, so the section reads like the page it came from; a table row keeps its cells apart with an em dash, and a definition stays on the line of its term. Short lists such as `topics` and `references` stay on one line.
+
+OpenSpec and SpecDD exports are single files. The renderer checks their required section and scenario structure without adding either project's CLI as a runtime dependency. The repository carries matching examples at [`examples/appsec-requirements-example.openspec.md`](../examples/appsec-requirements-example.openspec.md) and [`examples/appsec-requirements-example.sdd`](../examples/appsec-requirements-example.sdd); their requirement statements are tested against the bundled YAML, while their concrete scenarios remain illustrative.
 
 ### Selecting functional requirements
 
@@ -106,27 +112,66 @@ Selection is explicit rather than based on requirement wording. This keeps a sec
     {
       "id": "application-behavior",
       "type": "requirement",
-      "crawl_url": "https://product.example.com/requirements",
+      "crawl_url": "https://product.int.example.com/requirements",
       "outputs": ["openspec", "specdd"]
     },
     {
       "id": "secure-coding-guidelines",
       "type": "requirement",
-      "crawl_url": "https://security.example.com/secure-coding",
+      "crawl_url": "https://appsec.int.example.com/secure-coding",
       "outputs": ["catalog"]
     }
   ]
 }
 ```
 
-Run one or several formats:
+A plain run writes the catalog and both functional-spec files, since the config above declares sources for all three:
 
 ```bash
-python3 scripts/harvest_requirements.py --format openspec --format specdd
-python3 scripts/harvest_requirements.py --format all
+python3 scripts/harvest_requirements.py
+```
+
+Pass `--format` to narrow a run to specific outputs, for example to test one format on its own:
+
+```bash
+python3 scripts/harvest_requirements.py --format openspec
 ```
 
 The harvester never derives output paths, SpecDD ownership, or SpecDD modification permissions from crawled text. A generated `.sdd` file contains behavior and scenarios only; an operator decides where it belongs and what code it governs.
+
+### One file per blueprint
+
+A run writes one catalog holding the requirements and every blueprint. A blueprint source can additionally write its own blueprints into a file of its own, which keeps a blueprint reviewable and diffable by itself:
+
+```jsonc
+{
+  "output": "../data/appsec-requirements.yaml",
+  "sources": [
+    {
+      "id": "spa-blueprint",
+      "type": "blueprint",
+      "crawl_url": "https://appsec.int.example.com/blueprints/spa",
+      "catalog_file": "../data/blueprints/spa.yaml"
+    },
+    {
+      "id": "api-blueprint",
+      "type": "blueprint",
+      "crawl_url": "https://appsec.int.example.com/blueprints/api",
+      "catalog_file": "../data/blueprints/api.yaml"
+    }
+  ]
+}
+```
+
+`catalog_file` is resolved next to the config file and belongs to blueprint sources only. Requirements have `output` and the functional-spec exports.
+
+Each file is a catalog in its own right: an empty `categories` list and the blueprints of that one source. It validates against the same schema and can be passed to `--requirements` alone. The main catalog keeps all blueprints, so nothing an existing consumer reads changes.
+
+A source indexes its `crawl_url` and the child pages below it, so a source pointed at an index page writes every blueprint under it into one file. Point a source at a single blueprint page to get one file per blueprint.
+
+The run fails before crawling when two sources claim the same file, or when a file would overwrite the catalog or a functional-spec export. A source that harvests nothing leaves its file untouched, so a failed crawl does not replace the last good one with an empty file.
+
+`examples/blueprints/api-hardening.yaml` and `examples/blueprints/llm-security.yaml` show that shape, and `examples/appsec-requirements-example.requirements.yaml` shows a catalog that carries only requirements. All three are split from the combined `examples/appsec-requirements-example.yaml` and each is accepted by `--requirements` on its own.
 
 ## Configuration
 
@@ -135,7 +180,7 @@ The crawler reads `scripts/harvest-config.json`. This is the minimum useful conf
 ```jsonc
 {
   "description": "ACME Corp AppSec requirements",
-  "url": "https://security.example.com",
+  "url": "https://appsec.int.example.com",
   "output": "../data/appsec-requirements-fallback.yaml",
 
   "request": {
@@ -150,14 +195,14 @@ The crawler reads `scripts/harvest-config.json`. This is the minimum useful conf
       "type": "requirement",
       "mode": "structured",
       "title": "Internal Security Requirements",
-      "crawl_url": "https://security.example.com/requirements"
+      "crawl_url": "https://appsec.int.example.com/requirements"
     },
     {
       "id": "api-blueprints",
       "type": "blueprint",
       "mode": "full",
       "title": "API Security Blueprints",
-      "crawl_url": "https://security.example.com/blueprints/api"
+      "crawl_url": "https://appsec.int.example.com/blueprints/api"
     }
   ]
 }
@@ -177,7 +222,7 @@ When a blueprint mentions a harvested requirement ID, the output links the bluep
 | `--req-only` / `--blueprint-only` | Debug one source type at a time |
 | `--config PATH` | Multiple environments (e.g. staging vs. prod requirements) |
 | `--output PATH` | Override the config's `output`; useful in CI |
-| `--format yaml\|openspec\|specdd\|all` | Select an output; repeat the flag to combine individual formats |
+| `--format yaml\|openspec\|specdd\|all` | Narrow a run to specific outputs; without it, every format any source's `outputs` names is written |
 | `--openspec-output PATH` | Override `openspec.output` for one run |
 | `--specdd-output PATH` | Override `specdd.output` for one run |
 | `--token TOKEN` | Pass a bearer token directly; prefer `auth_header_env` in CI |
@@ -240,12 +285,14 @@ The plugin caches the fetched catalog. An explicit `--requirements <url>` overri
 
 **Parser returns zero requirements.** Run with `--verbose` — the harvester prints every parser attempt per page. If all five strategies miss, either the ID shape doesn't match `PREFIX-PART[-PART…]` (e.g. pure numeric IDs like `REQ_001`) or the HTML is an SPA that needs JavaScript to render content (the harvester fetches static HTML only).
 
-**OpenSpec or SpecDD says no source targets the format.** Add that format to the `outputs` array of the functional requirement source. Catalog-only remains the default so secure-coding guidance is never exported as application behavior implicitly.
+**OpenSpec or SpecDD says no source targets the format.** Add that format to the `outputs` array of the functional requirement source. Catalog-only remains the default so secure-coding guidance is never exported as application behavior implicitly. If you passed `--format`, check it names a format some source actually declares — `--format` only narrows a run, it never adds a format a source doesn't already opt into.
 
 **A configured blueprint page is missing from the YAML.** The current harvester indexes the configured `crawl_url` itself and direct same-origin child links below that path. If a blueprint still does not appear, check the dry-run output for `Found N sub-page link(s)` and the blueprint count. Common causes are JavaScript-rendered content, links outside the configured base path, deeper nested pages that are not linked directly from `crawl_url`, or `max_pages` capping the discovered links before the page is reached. Fix by adding explicit `sources[]` entries for those pages or raising `max_pages`.
 
 **Auth token works interactively but fails in CI.** `HARVEST_AUTH_TOKEN` must be set as a CI secret *and* passed through in the job's `env:` block — secrets are not auto-exposed on recent GitHub / GitLab runners.
 
-**Mock server returns my old YAML after I ran the harvester.** The mock hardcodes `examples/appsec-requirements-example.yaml` as the `/requirements.yaml` payload. Either re-run the harvester with `--output examples/appsec-requirements-example.yaml`, or `ln -sf` the real output file to that location.
+**Mock server returns the bundled YAML after I ran the harvester.** The mock intentionally hardcodes `examples/appsec-requirements-example.yaml` as its demo payload and does not serve a harvested production catalog. To test a generated file without overwriting the bundled example, serve its containing directory on loopback with `python3 -m http.server 4445 --bind 127.0.0.1 --directory data` and pass the resulting URL explicitly with `--requirements`.
 
 **`--requirements` on the CLI is ignored.** The resolution order is: explicit `--requirements <url>` > config `requirements_yaml_url` (when `enabled: true`) > cache. If you passed `--no-requirements` earlier, it wins regardless.
+
+**`ModuleNotFoundError: requirements_state` outside this repository.** The harvester is not a single file. Running it from another repository or a CI job needs `scripts/requirements_state.py` in the same directory as `harvest_requirements.py`; it holds the catalog schema validation that runs over the written output. The module is standard library only, so no extra install is needed for it. The schema itself is read from `<script directory>/../schemas/requirements-catalog.schema.yaml`; copy that file along to keep full schema validation, otherwise a reduced structural check runs instead. Full validation also needs `jsonschema` on top of `scripts/requirements.txt`.

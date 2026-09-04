@@ -35,6 +35,19 @@ LOCK_FRESH_SECONDS = 300
 DEFAULT_MAX_TURNS = 250
 STATE_SCHEMA_VERSION = 2
 
+# A budget claim says an agent is near its turn ceiling *now*, and it is only
+# ever read to hold work back. So it must not outlive the agent it describes.
+# `SubagentStop` is the sole terminal boundary for a promoted async call, and
+# when the host never sends one the call stays `running` forever: on the
+# 2026-08-31 juice-shop run actor-discoverer's call leaked that way, its
+# BUDGET_CRITICAL marker still counted as active 53 minutes later, and it
+# silently suppressed abuse-case verification for the entire run — six
+# candidates shipped unverified. Bound the claim by how long its call has
+# claimed to be running. The asymmetry favours the bound: dropping a genuine
+# long-running claim only lets work proceed, while honouring a leaked one skips
+# a whole pipeline stage.
+LEAKED_CALL_SECONDS = 1800
+
 _MAXTURNS_RE = re.compile(r"^maxTurns:\s*(\d+)\s*$", re.MULTILINE)
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _COMPONENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,99}$")
@@ -496,6 +509,9 @@ def active_marker_entries(output_dir: str | Path, filename: str = CRITICAL_FLAG_
             if entry.get(key) is not None or call.get(key) is not None
         )
         if identity_matches and agent_lifecycle.is_current_claim(output_dir, call):
+            started = call.get("running_at") or call.get("spawned_at") or 0
+            if started and time.time() - started > LEAKED_CALL_SECONDS:
+                continue
             active.append(entry)
     return active
 

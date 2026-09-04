@@ -15,8 +15,8 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
      prepare-abuse --output-dir "$OUTPUT_DIR"
    ```
 
-3. For `dispatch_jobs[]`, call `verify-receipts` with all receipt paths and
-   SHA-256 pairs as the final filesystem action. Then launch every job as an
+3. Call `verify-receipts --action-id <context_plan.action_id>` as the final
+   filesystem action. Then launch every job as an
    `appsec-advisor:appsec-abuse-case-verifier` call, launching the wave
    in ONE message. Pass no `run_in_background`. Description:
    `Abuse case: <candidate_id> — <title>`; use the ID if its title is missing.
@@ -33,7 +33,9 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    JOB_ID=<dispatch_jobs[].job_id>
    ```
 
-   Use the job model alias; never replace a versioned ID with 4.6. Run
+   Use the job model alias — `dispatch_jobs[].model`, else
+   `dispatch_values.abuse_verifier_model_alias`; `MODEL_ID` keeps the operator
+   id, which the Agent tool rejects. Never replace a versioned ID with 4.6. Run
    one blocking waiter with every job's candidate id:
 
    ```bash
@@ -44,10 +46,11 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    The waiter's exit status is informational; step 4 owns the retry, so do not
    branch on it or repeat steps 2-3 yourself. Aggregate usage.
    Require concise status without reproducing evidence or artifact content.
-   `run_gate` needs no verifier. Abort or overflow is fatal and
-   must not silently drop candidates. The legacy shape lacks
-   `dispatch_jobs[]`; retain its foreground `candidates[]` fan-out and
-   `MATCH_RESULT_PATH=<OUTPUT_DIR>/.abuse-case-matches.json` alias.
+   Abort or overflow is fatal and must not silently drop candidates.
+   `dispatch_jobs[]` is the only dispatch authority: `run_gate` needs no
+   verifier — go to step 4 — even carrying `candidates[]`, which then stay
+   unverified for the reason in its receipts. Never rebuild a fan-out from
+   them; the guard rejects a verifier without `ACTION_ID`/`JOB_ID`.
 4. Run:
 
    ```bash

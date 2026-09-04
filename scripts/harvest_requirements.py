@@ -9,7 +9,9 @@ Usage:
 Options:
     --config PATH       Path to harvest-config.json (default: next to this script)
     --output PATH       Override the catalog YAML output path
-    --format FORMAT     Output yaml, openspec, specdd, or all (repeatable)
+    --format FORMAT     Restrict the run to yaml, openspec, specdd, or all
+                        (repeatable). Without it, a run produces every format
+                        any configured source's `outputs` names.
     --openspec-output PATH
                         Override the single-file OpenSpec output path
     --specdd-output PATH
@@ -23,9 +25,10 @@ Options:
 Configuration:
     The config file is a JSON document with a top-level `sources` array. Each
     source declares {id, type, title, crawl_url, mode, [max_pages],
-    [section_max_chars], [reference_url], [outputs]}. Existing sources default
-    to outputs=["catalog"]. Add "openspec" and/or "specdd" only to sources
-    that describe observable functional behavior.
+    [section_max_chars], [reference_url], [outputs], [catalog_file]}. Existing
+    sources default to outputs=["catalog"]. Add "openspec" and/or "specdd" only
+    to sources that describe observable functional behavior. A blueprint source
+    with `catalog_file` also writes its own blueprints into that file.
 
     For a full template, see harvest-config.example.json (copy it to
     harvest-config.json and edit). Key sections:
@@ -35,7 +38,7 @@ Configuration:
         - description / url / output — optional metadata + output path
 
 How discovery works (per source):
-    1. Fetch crawl_url (e.g. https://security.example.com/scg)
+    1. Fetch crawl_url (e.g. https://appsec.int.example.com/scg)
     2. Include the fetched crawl_url page itself in the pages to index
     3. Collect and fetch direct same-origin <a href> links that are children of
        the base path (linked pages are capped at max_pages; crawling is not recursive)
@@ -52,6 +55,7 @@ Authentication:
 """
 
 import argparse
+import copy
 import html as html_lib
 import json
 import os
@@ -63,7 +67,18 @@ from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import requirements_state as rstate  # noqa: E402
+try:
+    import requirements_state as rstate  # noqa: E402
+except ImportError:
+    # Copying this script alone into another repository or CI job is a common
+    # way to run the harvester. It needs its sibling module for the catalog
+    # schema validation that guards the written output.
+    print(
+        "Missing sibling module requirements_state.py — copy it next to "
+        f"{Path(__file__).name} ({Path(__file__).resolve().parent}).",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 try:
     import requests
@@ -97,13 +112,51 @@ CATEGORY_FROM_NUMERIC_ID = re.compile(r"^([A-Z][A-Z0-9]*-[A-Z0-9]+)-\d+$")
 # Generic uppercase ID prefix (PREFIX-…), used for badge recognition and ID sanity-checks.
 ID_PREFIX_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*-")
 
-# Antora/AsciiDoc format: <span class="badge">PREFIX-ID</span> with any uppercase prefix.
-# Some pages use Unicode non-breaking hyphen U+2011 (‑) instead of ASCII hyphen after the prefix.
-BADGE_ID_PATTERN = re.compile(r'class="badge"[^>]*>\s*[A-Z][A-Z0-9]*[-\u2011]', re.IGNORECASE)
 # Priority label span classes: must-label, should-label, may-label
 PRIORITY_LABEL_PATTERN = re.compile(r"(must|should|may)-label", re.IGNORECASE)
 # Any ID reference in free text — generic prefix, same shape as REQ_ID_PATTERN without brackets.
-REF_ID_PATTERN = re.compile(r"\b(" + _ID_BODY + r")\b")
+# Case-insensitive like REQ_ID_PATTERN: source pages often render a link's
+# visible text in title case (e.g. "SEC-Api-Exposure") even though the canonical ID is all caps.
+REF_ID_PATTERN = re.compile(r"\b(" + _ID_BODY + r")\b", re.IGNORECASE)
+
+# An element (table cell, <dt>) whose entire text is just the ID — no brackets
+# needed since the surrounding structure (its own cell/tag) is the delimiter.
+ID_ONLY_PATTERN = re.compile(r"^\s*(" + _ID_BODY + r")\s*$", re.IGNORECASE)
+# An ID at the very start of an element's text, followed by a clear separator
+# (colon, or a dash/em-dash surrounded by whitespace) before the requirement
+# text. Requires an explicit separator (not just a following word) to avoid
+# matching ordinary hyphenated terms such as "UTF-8 encoding" or "ISO-27001
+# certification".
+ID_LEADING_PATTERN = re.compile(r"^\s*(" + _ID_BODY + r")(?:\s*:\s*|\s+[-‐‑‒–—―]\s+)", re.IGNORECASE)
+
+
+def extract_id_and_text(raw: str, allow_unbracketed: bool = True) -> Optional[tuple[str, str]]:
+    """
+    Find a leading requirement ID in `raw` free text, in order of preference:
+      1. [PREFIX-ID] anywhere (bracket convention)
+      2. the entire (stripped) text is just PREFIX-ID (e.g. a table cell or <dt>)
+      3. PREFIX-ID at the very start, followed by ':' or a whitespace-bounded
+         dash/em-dash (e.g. "REQ-001: text", "REQ-002 - text")
+    Returns (id, remaining_text) or None if no convention matches. Set
+    `allow_unbracketed=False` to only accept the bracket convention — used for
+    contexts (code samples, hyperlink text) where an unbracketed "ID: text" or
+    "ID - text" shape is likely to be something else (an example HTTP header, a
+    link caption referencing another page) rather than a requirement definition.
+    """
+    m = REQ_ID_PATTERN.search(raw)
+    if m:
+        return m.group(1).upper(), (raw[: m.start()] + raw[m.end() :]).strip()
+    if not allow_unbracketed:
+        return None
+    stripped = raw.strip()
+    m = ID_ONLY_PATTERN.match(stripped)
+    if m:
+        return m.group(1).upper(), ""
+    m = ID_LEADING_PATTERN.match(stripped)
+    if m:
+        return m.group(1).upper(), stripped[m.end() :].strip()
+    return None
+
 
 CATALOG_OUTPUT = "catalog"
 OPENSPEC_OUTPUT = "openspec"
@@ -242,9 +295,9 @@ def crawl_index(
 
     pages: list[tuple[str, str]] = []
     for url in links:
-        html, _ = fetch(session, url, url)
+        html, page_final_url = fetch(session, url, url)
         if html is not None:
-            pages.append((url, html))
+            pages.append((page_final_url, html))
 
     return pages, (final_url, index_html)
 
@@ -263,6 +316,16 @@ def clean_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
     text = REQ_ID_PATTERN.sub("", text, count=1).strip(" .—:-")
     return text
+
+
+def as_req_id(text: str) -> str:
+    """Normalize text the way a rendered ID reads, for ID comparisons only.
+
+    Antora badges use a non-breaking hyphen and some sources write the first
+    separator as an underscore, so the visible ID differs from the canonical one
+    character by character.
+    """
+    return text.upper().replace("\u2011", "-").replace("_", "-")
 
 
 def deduplicate_text(text: str) -> str:
@@ -285,8 +348,51 @@ def deduplicate_text(text: str) -> str:
     return " ".join(seen)
 
 
+def section_content(parts: list[str], max_chars: int) -> str:
+    """Join the blocks of one section into readable text: one line per block.
+
+    A paragraph, list item, or table row of the source page stays a line of its
+    own, so the harvested section reads like the page it came from rather than
+    as one run-on paragraph. Blocks the source renders twice are dropped, as are
+    sentences repeated inside a block.
+    """
+    lines: list[str] = []
+    for part in parts:
+        line = deduplicate_text(part).strip()
+        if not line or (lines and line == lines[-1]):
+            continue
+        lines.append(line)
+    return "\n".join(lines)[:max_chars].rstrip()
+
+
+UNBRACKETED_EXCLUDED_TAGS = ("pre", "code", "a")
+
+
+def extract_id_from_element(tag) -> Optional[tuple[str, str]]:
+    """Extract a requirement definition while respecting semantic markup.
+
+    Bracketed IDs remain explicit in every context. Unbracketed ID-shaped text
+    inside code samples or links is a reference/example, including when an
+    outer element supplies the separator and description.
+    """
+    raw = element_text(tag)
+    bracketed = REQ_ID_PATTERN.search(raw) is not None
+    allow_unbracketed = tag.name not in UNBRACKETED_EXCLUDED_TAGS and tag.find_parent(UNBRACKETED_EXCLUDED_TAGS) is None
+    extracted = extract_id_and_text(raw, allow_unbracketed=allow_unbracketed)
+    if not extracted or bracketed:
+        return extracted
+
+    req_id, _ = extracted
+    for nested in tag.find_all(UNBRACKETED_EXCLUDED_TAGS):
+        nested_extracted = extract_id_and_text(nested.get_text())
+        if nested_extracted and nested_extracted[0] == req_id:
+            return None
+    return extracted
+
+
 def page_has_requirements(html: str) -> bool:
-    return bool(REQ_ID_PATTERN.search(html)) or bool(BADGE_ID_PATTERN.search(html))
+    """Return whether the page contains at least one extractable requirement."""
+    return bool(parse_requirements_from_page(html, ""))
 
 
 def parse_page_intro(html: str) -> str:
@@ -308,19 +414,25 @@ def parse_page_intro(html: str) -> str:
 
     intro_parts: list[str] = []
     for el in main.find_all(["p", "div", "blockquote"], recursive=True):
-        # Stop at the first element that contains a requirement ID
-        if REQ_ID_PATTERN.search(el.get_text()):
+        # Stop at the first element that contains an extractable requirement.
+        # This shares the parser's bracketed/unbracketed and markup semantics.
+        if extract_id_from_element(el):
             break
         # Skip elements that contain child block elements (likely containers)
         if el.find(["p", "ul", "ol", "table", "section"]):
             continue
-        text = re.sub(r"\s+", " ", el.get_text()).strip()
+        text = element_text(el)
         if len(text) > 40:  # ignore navigation snippets and short labels
             intro_parts.append(text)
         if len(intro_parts) >= 3:  # at most 3 intro paragraphs
             break
 
     return " ".join(intro_parts)
+
+
+# Direct children of an Antora <div class="sectionbody"> that carry requirement
+# text. Anything else there (anchors, scripts, navigation) is not content.
+SECTIONBODY_CONTENT_TAGS = ("div", "p", "details", "table", "dl", "ul", "ol", "pre", "blockquote")
 
 
 def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
@@ -368,32 +480,39 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
         if priority not in ("MUST", "SHOULD", "MAY"):
             priority = "MUST"
 
-        # Collect text paragraphs before <details>
+        # Collect every content block of the section body. Antora puts prose in
+        # <div>/<p>, tabular limits in a direct <table>, and rationale, examples
+        # or verification steps in a collapsible <details> — all of it belongs to
+        # the requirement.
         text_parts: list[str] = []
         for child in sectionbody.children:
-            if getattr(child, "name", None) == "details":
-                break
-            if getattr(child, "name", None) in ("div", "p"):
-                text = re.sub(r"\s+", " ", child.get_text()).strip()
-                if text and text.upper().replace("_", "-", 1) != req_id:
-                    text_parts.append(text)
+            if getattr(child, "name", None) not in SECTIONBODY_CONTENT_TAGS:
+                continue
+            if child.find("div", class_="sectionbody") is not None:
+                continue  # nested sub-section — parsed as its own requirement
+            text = block_text(child)
+            if text and as_req_id(text) != as_req_id(req_id):
+                if not text.endswith((".", ";", ":", "!", "?")):
+                    text += ";"  # keep an unpunctuated block apart from the next one
+                text_parts.append(text)
 
-        req_text = " ".join(text_parts).strip() or h2_title
+        req_text = deduplicate_text(" ".join(text_parts).strip())
         # Badge-only preamble (atomic-requirement pages): grab text from the following
-        # Summary sect1. Also trigger when req_text is just the requirement ID itself
-        # (h2_title was the badge).
-        req_text_normalized = req_text.upper().replace("\u2011", "-").replace("_", "-") if req_text else ""
-        if not req_text or req_text_normalized == req_id or req_text_normalized == req_id.replace("-", "\u2011"):
+        # Summary sect1 before falling back to a heading, which only names the
+        # requirement instead of stating it.
+        if not req_text or as_req_id(req_text) == as_req_id(req_id):
             preamble = sectionbody.parent
             for sibling in preamble.find_next_siblings("div", class_="sect1"):
                 sibling_h2 = sibling.find("h2")
                 if sibling_h2 and sibling_h2.get_text(strip=True).lower() in ("summary", "details"):
                     sibling_body = sibling.find("div", class_="sectionbody")
                     if sibling_body:
-                        req_text = re.sub(r"\s+", " ", sibling_body.get_text()).strip()
+                        req_text = element_text(sibling_body)
                     break
+        if not req_text:
+            req_text = h2_title
         # Last resort: if req_text is still empty or equals the ID, use the page <h1> title
-        if not req_text or req_text.upper().replace("\u2011", "-").replace("_", "-") == req_id:
+        if not req_text or as_req_id(req_text) == as_req_id(req_id):
             page_h1 = soup.find("h1")
             if page_h1:
                 req_text = PRIORITY_PATTERN.sub("", page_h1.get_text(strip=True), count=1).strip(" :")
@@ -412,10 +531,10 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
         if not ANCHOR_ID_PATTERN.match(tag_id):
             continue
         req_id = tag_id.upper()
-        text = clean_text(tag.get_text())
+        text = clean_text(element_text(tag))
         if not text:
             sib = tag.find_next_sibling(["p", "dd", "div", "span"])
-            text = clean_text(sib.get_text()) if sib else ""
+            text = clean_text(element_text(sib)) if sib else ""
         if text and req_id not in found:
             found[req_id] = {
                 "id": req_id,
@@ -424,16 +543,17 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                 "priority": detect_priority(text),
             }
 
-    # Strategy 2: definition list <dt>[PREFIX-XX-N]</dt><dd>text</dd>
+    # Strategy 2: definition list <dt>PREFIX-XX-N</dt><dd>text</dd>
+    # (with or without brackets, and with or without a "PREFIX-XX-N: text" separator)
     for dt in soup.find_all("dt"):
-        m = REQ_ID_PATTERN.search(dt.get_text())
-        if not m:
+        extracted = extract_id_and_text(element_text(dt))
+        if not extracted:
             continue
-        req_id = m.group(1).upper()
+        req_id, dt_remainder = extracted
         if req_id in found:
             continue
         dd = dt.find_next_sibling("dd")
-        text = clean_text(dd.get_text()) if dd else clean_text(dt.get_text())
+        text = clean_text(element_text(dd)) if dd else clean_text(dt_remainder)
         if text:
             anchor = req_id.lower()
             found[req_id] = {
@@ -443,21 +563,25 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                 "priority": detect_priority(text),
             }
 
-    # Strategy 3: any element whose text contains [PREFIX-XX-N]
+    # Strategy 3: any element whose text names PREFIX-XX-N (bracketed, or a bare
+    # ID at the start of the element followed by a separator, e.g. "REQ-001: text")
     for tag in soup.find_all(True):
-        raw = tag.get_text()
-        m = REQ_ID_PATTERN.search(raw)
-        if not m:
+        extracted = extract_id_from_element(tag)
+        if not extracted:
             continue
-        req_id = m.group(1).upper()
+        req_id, remainder = extracted
         if req_id in found:
             continue
-        # Skip containers whose children already matched
-        if tag.find(True) and REQ_ID_PATTERN.search(
-            " ".join(c.get_text() for c in tag.find_all(True, recursive=False))
-        ):
-            continue
-        text = clean_text(raw)
+        # Skip containers whose children already matched — but only when that
+        # child match is itself a usable requirement (non-empty text). A child
+        # that is just the bare ID (e.g. an <strong>ID</strong> wrapper with the
+        # separator and text as the parent's sibling text) cannot stand alone,
+        # so let this container win instead.
+        if tag.find(True):
+            child_extracted = extract_id_and_text(" ".join(c.get_text() for c in tag.find_all(True, recursive=False)))
+            if child_extracted and clean_text(child_extracted[1]):
+                continue
+        text = clean_text(remainder)
         if text:
             anchor = req_id.lower()
             found[req_id] = {
@@ -467,18 +591,18 @@ def parse_requirements_from_page(html: str, page_url: str) -> list[dict]:
                 "priority": detect_priority(text),
             }
 
-    # Strategy 4: table rows
+    # Strategy 4: table rows — ID cell (bracketed or bare) + text cell
     for row in soup.find_all("tr"):
         cells = row.find_all(["td", "th"])
         if len(cells) < 2:
             continue
-        m = REQ_ID_PATTERN.search(cells[0].get_text())
-        if not m:
+        extracted = extract_id_and_text(element_text(cells[0]))
+        if not extracted:
             continue
-        req_id = m.group(1).upper()
+        req_id, _ = extracted
         if req_id in found:
             continue
-        text = clean_text(cells[1].get_text())
+        text = clean_text(element_text(cells[1]))
         if text:
             anchor = req_id.lower()
             found[req_id] = {
@@ -579,6 +703,51 @@ def section_anchor(title: str) -> str:
     return re.sub(r"\s+", "-", slug.strip())
 
 
+# Tags whose text is collected as blueprint section content: prose blocks, table
+# rows (taken whole so a row's cells stay together) and definition lists. A tag of
+# one of these types nested inside another (e.g. <p> inside <li>, <code> inside
+# <pre>) is visited twice by find_all() — skip the nested one so its text
+# isn't captured twice.
+BLUEPRINT_CONTENT_TAGS = ("p", "li", "pre", "code", "blockquote", "tr", "dt", "dd")
+
+
+def element_text(el) -> str:
+    """Extract an element's text with a space inserted at tag boundaries.
+
+    Plain ``get_text(strip=True)`` strips each text fragment individually
+    before joining with an empty separator, so words on either side of an
+    inline tag (e.g. ``<strong>``) end up glued together. Use an explicit
+    separator and collapse the result to single spaces.
+    """
+    text = re.sub(r"\s+", " ", el.get_text(" ", strip=True)).strip()
+    # The inserted separator can leave a stray space where an inline tag
+    # boundary sits directly next to punctuation (e.g. "text : more" or "( x )").
+    text = re.sub(r"\s+([.,:;)])", r"\1", text)
+    text = re.sub(r"([(])\s+", r"\1", text)
+    return text
+
+
+# Elements that end one item of an enumeration. Their boundary carries meaning:
+# without it a table or list collapses into a run-on string ("15 min idle 8 h
+# absolute API token 60 min") in which no value can be attributed to its subject.
+ITEM_TAGS = ("li", "tr", "dd")
+
+
+def block_text(el) -> str:
+    """Extract a content block's text, keeping list, table and collapsible boundaries."""
+    if not el.find(ITEM_TAGS) and not el.find("summary"):
+        return element_text(el)
+    marked = copy.copy(el)  # bs4 copies deeply; the parsed document stays untouched
+    for item in marked.find_all(ITEM_TAGS):
+        item.append(";")
+    for label in marked.find_all("summary"):
+        label.append(":")  # a collapsible's summary titles the block it opens
+    text = element_text(marked)
+    text = re.sub(r"(?:\s*;)+", ";", text)
+    text = re.sub(r";(?=\S)", "; ", text)
+    return text.strip(" ;")
+
+
 def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section_chars: int = 500) -> dict:
     """
     Index a blueprint page.
@@ -589,7 +758,7 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
     soup = BeautifulSoup(html, "html.parser")
 
     h1 = soup.find("h1")
-    title = h1.get_text(strip=True) if h1 else (soup.title.get_text(strip=True) if soup.title else bp_url)
+    title = element_text(h1) if h1 else (soup.title.get_text(strip=True) if soup.title else bp_url)
 
     meta = soup.find("meta", {"name": re.compile(r"description", re.I)})
     meta_summary = meta.get("content", "").strip() if meta else ""
@@ -607,36 +776,53 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
     current_title: Optional[str] = None
     current_anchor: Optional[str] = None
     current_parts: list[str] = []
+    last_tag: Optional[str] = None
     heading_anchors: list[str] = []  # collected even in summary mode for topics
     # Paragraphs before the first heading (used when there are no sections)
     preamble_parts: list[str] = []
 
     if main:
-        for el in main.find_all(["h1", "h2", "h3", "p", "li", "pre", "code", "blockquote"], recursive=True):
+        for el in main.find_all(["h1", "h2", "h3", *BLUEPRINT_CONTENT_TAGS], recursive=True):
             if el.name == "h1":
                 continue
             if el.name in ("h2", "h3"):
-                heading_title = el.get_text(strip=True)
+                heading_title = element_text(el)
                 # Prefer explicit id attribute; fall back to slug derived from title
                 heading_id = el.get("id") or section_anchor(heading_title)
                 heading_anchors.append(heading_id)
                 if mode == "full":
-                    if current_title and current_parts:
-                        raw = " ".join(current_parts).strip()
+                    if current_title:
                         sections.append(
                             {
                                 "title": current_title,
                                 "anchor": current_anchor,
-                                "content": deduplicate_text(raw)[:max_section_chars],
+                                "content": section_content(current_parts, max_section_chars),
                             }
                         )
                     current_title = heading_title
                     current_anchor = heading_id
                     current_parts = []
+                last_tag = el.name
                 continue
-            text = el.get_text(strip=True)
+            if el.name in BLUEPRINT_CONTENT_TAGS and el.find_parent(BLUEPRINT_CONTENT_TAGS) is not None:
+                continue  # nested match (e.g. <p> inside <li>) — parent already captures this text
+            if el.name == "tr":
+                # Without a separator the cells glue into a run-on line in which
+                # no value can be attributed to its subject.
+                cells = [element_text(cell) for cell in el.find_all(["th", "td"], recursive=False)]
+                text = " — ".join(cell for cell in cells if cell)
+            else:
+                text = element_text(el)
             if not text:
                 continue
+            if el.name in ITEM_TAGS or el.name == "dt":
+                text = f"- {text}"  # a row, list item, or term stays one item
+            if el.name == "dd" and last_tag == "dt" and current_parts:
+                # A definition and its term are one item, not two lines.
+                current_parts[-1] = f"{current_parts[-1]} — {text.removeprefix('- ')}"
+                last_tag = el.name
+                continue
+            last_tag = el.name
             if not current_title:
                 # Before first heading: collect preamble, first meaningful sentence → summary
                 if len(text) > 30 and not summary:
@@ -647,24 +833,22 @@ def parse_blueprint_page(html: str, bp_url: str, mode: str = "full", max_section
             if mode == "full":
                 current_parts.append(text)
 
-        if mode == "full" and current_title and current_parts:
-            raw = " ".join(current_parts).strip()
+        if mode == "full" and current_title:
             sections.append(
                 {
                     "title": current_title,
                     "anchor": current_anchor,
-                    "content": deduplicate_text(raw)[:max_section_chars],
+                    "content": section_content(current_parts, max_section_chars),
                 }
             )
 
     # For flat pages with no section headings (e.g. CORS), collect preamble as one section
     if mode == "full" and not sections and preamble_parts:
-        all_preamble = (summary + " " + " ".join(preamble_parts)).strip()
         sections.append(
             {
                 "title": "Overview",
                 "anchor": "overview",
-                "content": deduplicate_text(all_preamble)[:max_section_chars],
+                "content": section_content([summary, *preamble_parts], max_section_chars),
             }
         )
 
@@ -693,15 +877,42 @@ class LiteralStr(str):
     pass
 
 
+class FlowList(list):
+    """A list the dumper keeps on one line, for short scalar or ID sequences."""
+
+
 def literal_representer(dumper, data):
     return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
 
 
+def flow_list_representer(dumper, data):
+    return dumper.represent_sequence("tag:yaml.org,2002:seq", data, flow_style=True)
+
+
 yaml.add_representer(LiteralStr, literal_representer)
+yaml.add_representer(FlowList, flow_list_representer)
 
 
 def wrap_long(text: str, threshold: int = 120) -> str:
-    return LiteralStr(text) if len(text) > threshold else text
+    """Give long or multi-line text a literal block, which keeps its lines readable."""
+    return LiteralStr(text) if "\n" in text or len(text) > threshold else text
+
+
+def comment_line(text: str) -> str:
+    """Fold text into one safe YAML comment line.
+
+    The text can come from a crawled page, so every newline is collapsed: a
+    comment that breaks into a second line would leave the comment and be read
+    as document content.
+    """
+    return re.sub(r"\s+", " ", str(text)).strip()[:200]
+
+
+def file_header(title: str, origin: str, generated: str) -> str:
+    """Name the document and its origin in comment lines above the YAML."""
+    lines = [f"# {comment_line(title)}"] if title else []
+    lines.append(f"# Harvested from {comment_line(origin)} on {generated}. Do not edit by hand.")
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -761,48 +972,60 @@ def harvest_requirements_source(
     # single page (no sub-pages), or the index page may also contain requirements.
     if index_page:
         idx_url, idx_html = index_page
-        if page_has_requirements(idx_html):
-            pages_with_html = [(idx_url, idx_html)] + pages_with_html
+        pages_with_html = [(idx_url, idx_html)] + pages_with_html
 
     pages_to_parse = [(url, html, url, mode) for url, html in pages_with_html]
 
     print(f"  Indexing: mode={mode}")
 
-    total_reqs = 0
+    # First-seen-wins across the whole source: a requirement ID that already surfaced
+    # under one category (e.g. its own atomic page) is dropped from any later category
+    # (e.g. a downstream aggregator page that re-lists the same ID with different text/URL),
+    # instead of silently duplicating the ID across categories in the final catalog.
+    seen_req_urls: dict[str, str] = {}
     for url, html, title_hint, effective_mode in pages_to_parse:
-        if not page_has_requirements(html):
-            print(f"  [SKIP] No requirement-ID tokens found: {url}")
-            continue
-
         reqs = parse_requirements_from_page(html, url)
         if not reqs:
-            print(f"  [WARN] Page matched but no requirements extracted: {url}", file=sys.stderr)
+            print(f"  [SKIP] No requirement-ID tokens found: {url}")
             continue
 
         ptitle = page_title(html, title_hint)
         intro = parse_page_intro(html) if effective_mode == "full" else ""
         cats = group_by_category(reqs, url, ptitle, mode=effective_mode, page_intro=intro)
-        total_reqs += len(reqs)
 
         for cat in cats:
             cat_id = cat["id"]
             cat["source_id"] = source_id
+
+            kept_reqs = []
+            for r in cat["requirements"]:
+                rid = r["id"]
+                if rid in seen_req_urls:
+                    print(
+                        f"  [WARN] {cat_id}: dropping duplicate requirement ID {rid} "
+                        f"(already harvested from {seen_req_urls[rid]}; this occurrence: {r['url']})",
+                        file=sys.stderr,
+                    )
+                    continue
+                seen_req_urls[rid] = r["url"]
+                kept_reqs.append(r)
+            cat["requirements"] = kept_reqs
+            if not cat["requirements"]:
+                continue
+
             if cat_id not in all_categories:
                 all_categories[cat_id] = cat
                 context_note = " + context" if effective_mode == "full" and cat.get("context") else ""
                 print(f"  [{cat_id}] {ptitle} — {len(cat['requirements'])} requirements{context_note}")
             else:
-                # Merge: add requirements not already present
-                existing_ids = {r["id"] for r in all_categories[cat_id]["requirements"]}
-                new_reqs = [r for r in cat["requirements"] if r["id"] not in existing_ids]
-                all_categories[cat_id]["requirements"].extend(new_reqs)
-                if new_reqs:
-                    print(f"  [{cat_id}] merged {len(new_reqs)} more requirements from {url}")
+                all_categories[cat_id]["requirements"].extend(cat["requirements"])
+                print(f"  [{cat_id}] merged {len(cat['requirements'])} more requirements from {url}")
 
         if verbose:
             for r in reqs:
                 print(f"      {r['id']} [{r['priority']}]: {r['text'][:80]}…")
 
+    total_reqs = sum(len(cat["requirements"]) for cat in all_categories.values())
     print(f"  → {total_reqs} requirements in {len(all_categories)} categories")
 
     # Sort requirements within each category (numeric first, then alphabetic)
@@ -846,9 +1069,17 @@ def harvest_blueprints_source(
     pages_with_html, index_page = crawl_index(session, crawl_url, source_id, max_pages)
     if index_page:
         idx_url, idx_html = index_page
-        pages_with_html = [(idx_url, idx_html)] + [
-            (url, html) for url, html in pages_with_html if url.rstrip("/") != idx_url.rstrip("/")
-        ]
+        # crawl_index retains final redirect URLs. Deduplicate page identity by
+        # that URL while preserving distinct pages that happen to share content.
+        seen_urls = {idx_url.rstrip("/")}
+        deduped_pages: list[tuple[str, str]] = []
+        for url, html in pages_with_html:
+            page_key = url.rstrip("/")
+            if page_key in seen_urls:
+                continue
+            seen_urls.add(page_key)
+            deduped_pages.append((url, html))
+        pages_with_html = [(idx_url, idx_html)] + deduped_pages
 
     print(f"  Indexing: mode={mode}" + (f", section_max_chars={max_section_chars}" if mode == "full" else ""))
 
@@ -871,10 +1102,10 @@ def harvest_blueprints_source(
         entry: dict = {
             "id": bp_id,
             "source_id": source_id,
-            "url": url,
             "title": parsed["title"],
+            "url": url,
             "summary": wrap_long(parsed["summary"]),
-            "topics": parsed["topics"],
+            "topics": FlowList(parsed["topics"]),
         }
         if mode == "full" and parsed.get("sections"):
             entry["sections"] = [
@@ -925,7 +1156,7 @@ def add_references_to_blueprints(blueprints: list[dict], req_url_map: dict) -> i
         for section in bp.get("sections", []):
             refs = resolve_references(section.get("content", ""), req_url_map)
             if refs:
-                section["references"] = refs
+                section["references"] = FlowList(refs)
                 total += len(refs)
     return total
 
@@ -951,9 +1182,25 @@ def source_outputs(source: dict) -> set[str]:
     return outputs
 
 
-def requested_outputs(args: argparse.Namespace) -> set[str]:
-    """Translate repeatable CLI format names to internal output targets."""
-    formats = getattr(args, "output_formats", None) or ["yaml"]
+def requested_outputs(args: argparse.Namespace, sources: Optional[list[dict]] = None) -> set[str]:
+    """Translate CLI format selection to internal output targets.
+
+    Without an explicit --format, a run produces every format any configured
+    source's `outputs` names, so the config alone decides what gets written.
+    --format narrows a run to specific formats (e.g. to test one format, or a
+    CI job that only ever publishes one).
+    """
+    formats = getattr(args, "output_formats", None)
+    if not formats:
+        if not sources:
+            return {CATALOG_OUTPUT}
+        union: set[str] = set()
+        for source in sources:
+            try:
+                union |= source_outputs(source)
+            except ValueError:
+                continue  # reported with the source id where it is validated below
+        return union or {CATALOG_OUTPUT}
     if "all" in formats:
         return set(VALID_SOURCE_OUTPUTS)
     mapping = {"yaml": CATALOG_OUTPUT, "openspec": OPENSPEC_OUTPUT, "specdd": SPECDD_OUTPUT}
@@ -1154,6 +1401,32 @@ def resolve_functional_output_path(
     return catalog_output_path.with_name(f"{catalog_output_path.stem}{suffix}")
 
 
+def resolve_source_catalog_files(sources: list[dict], config_path: Path) -> dict[str, Path]:
+    """Map every source that declares `catalog_file` onto its own catalog path.
+
+    The path comes from the operator's config and is resolved next to it. It is
+    reserved for blueprint sources: requirements reach the catalog and the
+    functional-spec exports, which carry their own output settings.
+    """
+    files: dict[str, Path] = {}
+    claimed: dict[Path, str] = {}
+    for source in sources:
+        configured = source.get("catalog_file")
+        if configured is None:
+            continue
+        source_id = str(source.get("id", "unknown"))
+        if not isinstance(configured, str) or not configured.strip():
+            raise ValueError(f"Source '{source_id}': catalog_file must be a non-empty path.")
+        if source.get("type", "requirement") != "blueprint":
+            raise ValueError(f"Source '{source_id}': catalog_file applies to blueprint sources only.")
+        path = (config_path.parent / configured).resolve()
+        if path in claimed:
+            raise ValueError(f"Source '{source_id}': catalog_file is already used by source '{claimed[path]}'.")
+        claimed[path] = source_id
+        files[source_id] = path
+    return files
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1169,25 +1442,6 @@ def run(args: argparse.Namespace) -> int:
     output_path: Path = (
         Path(args.output) if args.output else ((config_path.parent / cfg.get("output", "requirements.yaml")).resolve())
     )
-    requested = requested_outputs(args)
-    export_paths = {
-        kind: resolve_functional_output_path(kind, args, cfg, config_path, output_path)
-        for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT)
-        if kind in requested
-    }
-    paths = ([output_path] if CATALOG_OUTPUT in requested else []) + list(export_paths.values())
-    resolved_paths = [path.resolve() for path in paths]
-    if len(resolved_paths) != len(set(resolved_paths)):
-        print("Requested outputs must use different paths.", file=sys.stderr)
-        return 1
-
-    req_cfg: dict = cfg.get("request", {})
-    timeout: int = req_cfg.get("timeout_seconds", 15)
-    token: Optional[str] = args.token or os.environ.get(req_cfg.get("auth_header_env", "HARVEST_AUTH_TOKEN"))
-
-    use_proxy: bool = req_cfg.get("use_proxy", True)
-    verify_ssl = req_cfg.get("verify_ssl", True)
-    session = build_session(token, req_cfg.get("extra_headers", {}), timeout, use_proxy, verify_ssl)
 
     sources: list[dict] = cfg.get("sources", [])
     if not sources:
@@ -1245,6 +1499,26 @@ def run(args: argparse.Namespace) -> int:
         print("No sources configured — nothing to do.", file=sys.stderr)
         return 1
 
+    requested = requested_outputs(args, sources)
+    export_paths = {
+        kind: resolve_functional_output_path(kind, args, cfg, config_path, output_path)
+        for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT)
+        if kind in requested
+    }
+    paths = ([output_path] if CATALOG_OUTPUT in requested else []) + list(export_paths.values())
+    resolved_paths = [path.resolve() for path in paths]
+    if len(resolved_paths) != len(set(resolved_paths)):
+        print("Requested outputs must use different paths.", file=sys.stderr)
+        return 1
+
+    req_cfg: dict = cfg.get("request", {})
+    timeout: int = req_cfg.get("timeout_seconds", 15)
+    token: Optional[str] = args.token or os.environ.get(req_cfg.get("auth_header_env", "HARVEST_AUTH_TOKEN"))
+
+    use_proxy: bool = req_cfg.get("use_proxy", True)
+    verify_ssl = req_cfg.get("verify_ssl", True)
+    session = build_session(token, req_cfg.get("extra_headers", {}), timeout, use_proxy, verify_ssl)
+
     selected_sources: list[dict] = []
     for source in sources:
         source_id = source.get("id", "unknown")
@@ -1265,6 +1539,20 @@ def run(args: argparse.Namespace) -> int:
             "No sources target the selected format. Add the format to a functional requirement source's outputs array.",
             file=sys.stderr,
         )
+        return 1
+
+    try:
+        source_files = resolve_source_catalog_files(sources, config_path)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if CATALOG_OUTPUT not in requested:
+        # Blueprints only ever reach the catalog output; without it there is
+        # nothing to write per source.
+        source_files = {}
+    clash = next((path for path in source_files.values() if path in set(resolved_paths)), None)
+    if clash:
+        print(f"A source catalog_file would overwrite another requested output: {clash}", file=sys.stderr)
         return 1
 
     req_categories: list[dict] = []
@@ -1354,6 +1642,7 @@ def run(args: argparse.Namespace) -> int:
     )
 
     total_reqs = sum(len(c.get("requirements", [])) for c in req_categories)
+
     export_contents: dict[str, str] = {}
     export_counts: dict[str, int] = {}
     for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
@@ -1395,6 +1684,11 @@ def run(args: argparse.Namespace) -> int:
         print(f"  Categories:   {len(req_categories)}")
         print(f"  Requirements: {total_reqs}")
         print(f"  Blueprints:   {len(blueprints)}")
+        if source_files:
+            print(f"  Blueprint files: {len(source_files)}")
+            if args.verbose:
+                for source_id, path in source_files.items():
+                    print(f"      {source_id} → {path}")
         for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
             if kind in export_counts:
                 print(f"  {kind}: {export_counts[kind]} requirements")
@@ -1403,6 +1697,7 @@ def run(args: argparse.Namespace) -> int:
     if CATALOG_OUTPUT in requested:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with open(output_path, "w", encoding="utf-8") as f:
+            f.write(file_header(doc.get("description", ""), doc.get("url") or config_path.name, doc["generated"]))
             yaml.dump(doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120)
 
         print(f"\nWritten: {output_path}")
@@ -1425,6 +1720,38 @@ def run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+
+    if source_files:
+        header = {key: doc[key] for key in ("generated", "source", "description", "url") if key in doc}
+        meta_by_source = {meta["id"]: meta for meta in sources_meta}
+        for source_id, path in source_files.items():
+            entries = [entry for entry in blueprints if entry.get("source_id") == source_id]
+            if not entries:
+                # A failed crawl must not replace the last good file with an empty one.
+                print(f"\n[WARN] Source '{source_id}': no blueprint harvested — {path} not written", file=sys.stderr)
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            bp_doc = dict(header)
+            bp_doc.update({"categories": [], "blueprints": entries})
+            meta = meta_by_source.get(source_id, {})
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    file_header(
+                        meta.get("title") or entries[0].get("title", ""),
+                        meta.get("crawl_url") or entries[0].get("url", ""),
+                        doc["generated"],
+                    )
+                )
+                yaml.dump(bp_doc, f, allow_unicode=True, default_flow_style=False, sort_keys=False, width=120)
+            # Errors only: the content warnings are computed over `categories`,
+            # which a blueprint file leaves empty by design.
+            bp_errors, _ = rstate.validate_catalog(path.read_bytes())
+            if bp_errors:
+                for error in bp_errors[:6]:
+                    print(f"  ✗ schema error in {path.name}: {error}", file=sys.stderr)
+                return 2
+            print(f"\nWritten: {path}")
+            print(f"  Blueprints:   {len(entries)}")
 
     for kind in (OPENSPEC_OUTPUT, SPECDD_OUTPUT):
         if kind not in export_contents:

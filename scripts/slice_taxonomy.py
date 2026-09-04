@@ -105,8 +105,29 @@ COMPONENT_PROFILES = [
     {
         "name": "backend-api",
         "keywords": ["backend", "rest-api", "graphql", "gateway", "api-server", "service", "controller", "grpc", "bff"],
-        "th_ids": ["TH-01", "TH-02", "TH-03", "TH-05", "TH-06", "TH-08", "TH-12", "TH-16", "TH-17"],
-        "extra_cwes": ["CWE-89", "CWE-943", "CWE-918", "CWE-502", "CWE-284", "CWE-285", "CWE-862", "CWE-400"],
+        # TH-07 and TH-15 belong here, not only on the profiles that used to
+        # carry them. Accepting uploads is ordinary API surface (multer,
+        # MultipartFile, FileField), so path traversal and unrestricted upload
+        # are backend exposures — TH-07 sat only on `database`, which rarely
+        # handles files at all. CSRF is likewise defended server-side (token
+        # validation, origin checks, SameSite), so a state-changing endpoint
+        # under ambient credentials needs TH-15 in scope even when no frontend
+        # component is modeled. Without these the analyzer has no category to
+        # file such a finding under and reports none.
+        "th_ids": ["TH-01", "TH-02", "TH-03", "TH-05", "TH-06", "TH-07", "TH-08", "TH-12", "TH-15", "TH-16", "TH-17"],
+        "extra_cwes": [
+            "CWE-89",
+            "CWE-943",
+            "CWE-918",
+            "CWE-502",
+            "CWE-284",
+            "CWE-285",
+            "CWE-862",
+            "CWE-400",
+            "CWE-22",
+            "CWE-434",
+            "CWE-352",
+        ],
     },
     {
         "name": "database",
@@ -135,15 +156,30 @@ COMPONENT_PROFILES = [
 ]
 
 
-def detect_profile(component_type: str, component_id: str) -> dict | None:
-    """Return first matching profile or None for passthrough."""
+def detect_profiles(component_type: str, component_id: str) -> list[dict]:
+    """Return every matching profile, in ``COMPONENT_PROFILES`` order.
+
+    A component is routinely more than one thing at once — a backend that also
+    accepts file uploads, an admin surface that also serves a SPA. Matching only
+    the first profile silently drops the other's categories: a component named
+    ``api-backend`` matches ``backend`` and never picks up ``database``, whose
+    profile is the only carrier of TH-07 (Insecure File Handling, CWE-22/434).
+    The analyzer then has no category for a path-traversal or upload finding and
+    reports none. Callers union the ``th_ids`` and ``extra_cwes`` of the result.
+    """
     needle = (component_type + " " + component_id).lower()
     needle = re.sub(r"[^a-z0-9 _-]", " ", needle)
-    for profile in COMPONENT_PROFILES:
-        for kw in profile["keywords"]:
-            if kw in needle:
-                return profile
-    return None
+    return [p for p in COMPONENT_PROFILES if any(kw in needle for kw in p["keywords"])]
+
+
+def detect_profile(component_type: str, component_id: str) -> dict | None:
+    """Return first matching profile or None for passthrough.
+
+    Kept for callers that need a single label. Category slicing must use
+    :func:`detect_profiles` so no matching profile's categories are dropped.
+    """
+    matches = detect_profiles(component_type, component_id)
+    return matches[0] if matches else None
 
 
 # ---------------------------------------------------------------------------
@@ -249,15 +285,19 @@ def main() -> int:
 
     want = {t.strip().lower() for t in args.taxonomies.split(",")}
 
-    profile = detect_profile(args.component_type, component_id)
-    passthrough = profile is None
+    profiles = detect_profiles(args.component_type, component_id)
+    passthrough = not profiles
+    th_ids: set[str] | None = None
+    extra_cwes: set[str] = set()
     if passthrough:
         print(f"TAXONOMY_SLICE: {component_id} → passthrough (type '{args.component_type}' unrecognised)")
     else:
-        print(f"TAXONOMY_SLICE: {component_id} → {profile['name']} profile ({len(profile['th_ids'])} TH categories)")
-
-    th_ids = set(profile["th_ids"]) if profile else None
-    extra_cwes = set(profile.get("extra_cwes", [])) if profile else set()
+        # Union, not first-match: a component that matches several profiles is
+        # several things at once, and each profile's categories stay in scope.
+        th_ids = {th for p in profiles for th in p["th_ids"]}
+        extra_cwes = {cwe for p in profiles for cwe in p.get("extra_cwes", [])}
+        names = "+".join(p["name"] for p in profiles)
+        print(f"TAXONOMY_SLICE: {component_id} → {names} profile ({len(th_ids)} TH categories)")
 
     file_map = {
         "threats": "threat-category-taxonomy.yaml",

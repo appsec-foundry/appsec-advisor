@@ -12,10 +12,10 @@ mitigations.
 
 ALPHA — the mapping may change between releases. Threat Dragon's schema is
 much narrower than ours, so this export is lossy by construction: CWE,
-structured evidence and mitigation priority/effort have no field of their own
-and are folded into text, as does a referenced trust-boundary crossing;
-requirements traceability, abuse cases, actors and the boundary geometry have no
-counterpart at all and are dropped. Every threat keeps its `F-NNN` anchor in the
+structured evidence, mitigation priority/effort, requirements traceability,
+abuse-case links, business-context use, and referenced trust-boundary crossings
+have no field of their own and are folded into bounded text. Actors and boundary
+geometry still have no counterpart. Every threat keeps its `F-NNN` anchor in the
 title so a reader can walk back to `threat-model.md`.
 
 Best-effort by design: a thin or legacy-shaped yaml still produces a usable
@@ -133,6 +133,13 @@ SEVERITY_UNRATED = "TBD"
 STATUS_OPEN = "Open"
 STATUS_ACCEPTED = "Accepted"
 
+# New traceability text is deliberately bounded even though Threat Dragon's
+# schema does not cap these free-text fields. This prevents an imported catalog
+# or model from inflating a single diagram cell without hiding the omission.
+TRACE_ITEM_LIMIT = 12
+TRACE_CASE_LIMIT = 8
+TRACE_VALUE_LIMIT = 300
+
 
 def _default_tool_version() -> str:
     """Read the packaged plugin version; avoid a second release-version copy."""
@@ -151,6 +158,14 @@ DEFAULT_TOOL_VERSION = _default_tool_version()
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _trace_text(value: Any, limit: int = TRACE_VALUE_LIMIT) -> str:
+    """Collapse untrusted trace prose to one bounded line."""
+    compact = " ".join(_text(value).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 1)].rstrip() + "…"
 
 
 def _display_id(raw: str) -> str:
@@ -278,7 +293,123 @@ def _boundary_lines(threat: dict, boundary_facts: dict[str, dict]) -> list[str]:
     return lines
 
 
-def _threat_description(threat: dict, boundary_facts: dict[str, dict]) -> str:
+def _trace_context(data: dict) -> dict[str, Any]:
+    """Index the canonical trace sections once for deterministic text folding."""
+    compliance = data.get("requirements_compliance")
+    requirement_rows = (
+        [row for row in (compliance.get("requirements") or []) if isinstance(row, dict)]
+        if isinstance(compliance, dict)
+        else []
+    )
+    requirements = {str(row.get("id") or "").strip(): row for row in requirement_rows if row.get("id")}
+    requirements_by_finding: dict[str, list[str]] = {}
+    for req_id, row in requirements.items():
+        for fid in row.get("finding_ids") or []:
+            if isinstance(fid, str):
+                requirements_by_finding.setdefault(fid, []).append(req_id)
+
+    analysis = data.get("abuse_case_analysis")
+    cases = (
+        [row for row in (analysis.get("cases") or []) if isinstance(row, dict)] if isinstance(analysis, dict) else []
+    )
+    cases_by_finding: dict[str, list[dict]] = {}
+    for case in cases:
+        for fid in case.get("matched_finding_ids") or []:
+            if isinstance(fid, str):
+                cases_by_finding.setdefault(fid, []).append(case)
+
+    business = data.get("business_context_trace")
+    if not isinstance(business, dict):
+        business = {}
+    provenance = data.get("requirements_provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    return {
+        "requirements": requirements,
+        "requirements_by_finding": requirements_by_finding,
+        "requirements_total": compliance.get("total", len(requirement_rows)) if isinstance(compliance, dict) else 0,
+        "requirements_statuses": {
+            status: sum(row.get("status") == status for row in requirement_rows)
+            for status in ("PASS", "FAIL", "PARTIAL", "UNVERIFIABLE", "N/A")
+        },
+        "requirements_provenance": provenance,
+        "cases": cases,
+        "cases_by_finding": cases_by_finding,
+        "abuse_status": analysis.get("status") if isinstance(analysis, dict) else None,
+        "catalog_evaluated_count": len(analysis.get("catalog_evaluated") or []) if isinstance(analysis, dict) else 0,
+        "business": business,
+    }
+
+
+def _bounded_rows(rows: list[str], limit: int, noun: str) -> list[str]:
+    """Keep a bounded prefix and name the canonical location of omitted rows."""
+    if len(rows) <= limit:
+        return rows
+    return rows[:limit] + [f"- +{len(rows) - limit} more {noun} in threat-model.yaml"]
+
+
+def _requirement_ids_for_threat(threat: dict, trace: dict[str, Any]) -> list[str]:
+    fid = _display_id(_threat_id(threat))
+    req_ids: list[str] = []
+    for raw in list(threat.get("violated_requirements") or []) + list(trace["requirements_by_finding"].get(fid, [])):
+        req_id = str(raw).strip()
+        if req_id and req_id not in req_ids:
+            req_ids.append(req_id)
+    return req_ids
+
+
+def _requirement_trace_lines(threat: dict, trace: dict[str, Any]) -> list[str]:
+    req_ids = _requirement_ids_for_threat(threat, trace)
+    rows: list[str] = []
+    for req_id in req_ids:
+        requirement = trace["requirements"].get(req_id) or {}
+        display_id = _trace_text(req_id, 64)
+        status = _trace_text(requirement.get("status"), 32)
+        title = _trace_text(requirement.get("title"))
+        head = f"{display_id} [{status}]" if status else display_id
+        rows.append(f"- {head} — {title}" if title else f"- {head}")
+    return _bounded_rows(rows, TRACE_ITEM_LIMIT, "requirement links")
+
+
+def _abuse_case_trace_lines(threat: dict, trace: dict[str, Any]) -> list[str]:
+    fid = _display_id(_threat_id(threat))
+    rows: list[str] = []
+    for case in trace["cases_by_finding"].get(fid, []):
+        case_id = _trace_text(case.get("id"), 64)
+        title = _trace_text(case.get("title"))
+        verdict = _trace_text(case.get("chain_verdict"), 64).replace("_", " ")
+        complete = "verification complete" if case.get("verification_complete") else "verification incomplete"
+        matching_steps = [
+            f"{step.get('step')} ({_trace_text(step.get('verdict'), 32)})"
+            for step in case.get("steps") or []
+            if isinstance(step, dict) and step.get("finding_id") == fid
+        ]
+        qualifiers = ", ".join(part for part in (verdict, complete) if part)
+        line = f"- {case_id} [{qualifiers}]" if qualifiers else f"- {case_id}"
+        if title:
+            line += f" — {title}"
+        if matching_steps:
+            line += f"; matching steps {', '.join(matching_steps[:TRACE_ITEM_LIMIT])}"
+        rows.append(line)
+    return _bounded_rows(rows, TRACE_CASE_LIMIT, "abuse-case links")
+
+
+def _business_context_line(threat: dict, trace: dict[str, Any]) -> str:
+    basis = [str(field).replace("_", " ") for field in (threat.get("business_context_basis") or [])]
+    if not basis:
+        return ""
+    business = trace["business"]
+    parts = [f"applied fields: {', '.join(basis[:TRACE_ITEM_LIMIT])}"]
+    source = _trace_text(business.get("source"), 256)
+    if source:
+        parts.append(f"source: {source}")
+    digest = _text(business.get("sha256"))
+    if digest:
+        parts.append(f"sha256: {digest}")
+    return "; ".join(parts)
+
+
+def _threat_description(threat: dict, boundary_facts: dict[str, dict], trace: dict[str, Any]) -> str:
     """Fold everything Threat Dragon has no field for into the description.
     This is the only place the dropped detail survives, so keep it structured
     and greppable rather than prose."""
@@ -339,13 +470,25 @@ def _threat_description(threat: dict, boundary_facts: dict[str, dict]) -> str:
     if boundary_lines:
         blocks.append("Trust boundary crossings:\n" + "\n".join(boundary_lines))
 
+    requirement_lines = _requirement_trace_lines(threat, trace)
+    if requirement_lines:
+        blocks.append("Requirements trace:\n" + "\n".join(requirement_lines))
+
+    abuse_lines = _abuse_case_trace_lines(threat, trace)
+    if abuse_lines:
+        blocks.append("Abuse-case trace:\n" + "\n".join(abuse_lines))
+
+    business_line = _business_context_line(threat, trace)
+    if business_line:
+        blocks.append("Business-context trace:\n" + business_line)
+
     if fid:
         blocks.append(f"Full finding: threat-model.md#{fid.lower()} ({fid})")
 
     return "\n\n".join(blocks)
 
 
-def _mitigation_text(mitigations: list[dict]) -> str:
+def _mitigation_text(mitigations: list[dict], trace: dict[str, Any]) -> str:
     """Render linked mitigations into the single free-text field Threat Dragon
     offers. ThreatAtlas turns this into a Mitigation record verbatim."""
     blocks: list[str] = []
@@ -376,12 +519,56 @@ def _mitigation_text(mitigations: list[dict]) -> str:
             value = _text(mitigation.get(key))
             if value:
                 lines.append(f"{label}: {value}")
+        fulfilled = [str(req_id).strip() for req_id in (mitigation.get("fulfills_requirements") or []) if req_id]
+        if fulfilled:
+            req_rows = []
+            for req_id in fulfilled:
+                requirement = trace["requirements"].get(req_id) or {}
+                display_id = _trace_text(req_id, 64)
+                status = _trace_text(requirement.get("status"), 32)
+                title = _trace_text(requirement.get("title"))
+                head = f"{display_id} [{status}]" if status else display_id
+                req_rows.append(f"- {head} — {title}" if title else f"- {head}")
+            lines.append(
+                "Requirements fulfilled:\n" + "\n".join(_bounded_rows(req_rows, TRACE_ITEM_LIMIT, "requirements"))
+            )
+        blueprint = mitigation.get("blueprint")
+        if isinstance(blueprint, dict):
+            blueprint_head = " — ".join(
+                part
+                for part in (
+                    _trace_text(blueprint.get("id"), 64),
+                    _trace_text(blueprint.get("title")),
+                )
+                if part
+            )
+            grounded = blueprint.get("grounded")
+            if grounded is False:
+                blueprint_head += " [candidate; not grounded]"
+            blueprint_lines = [blueprint_head] if blueprint_head else []
+            section = _trace_text(blueprint.get("section"))
+            section_url = _trace_text(blueprint.get("section_url") or blueprint.get("url"), 512)
+            guidance = _trace_text(blueprint.get("guidance"))
+            if section:
+                blueprint_lines.append(f"Section: {section}")
+            if section_url:
+                blueprint_lines.append(f"Reference: {section_url}")
+            if guidance:
+                blueprint_lines.append(f"Guidance: {guidance}")
+            if blueprint_lines:
+                lines.append("Implementation blueprint:\n" + "\n".join(blueprint_lines))
         if lines:
             blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
 
-def _build_threat_cell(threat: dict, number: int, mitigations: list[dict], boundary_facts: dict[str, dict]) -> dict:
+def _build_threat_cell(
+    threat: dict,
+    number: int,
+    mitigations: list[dict],
+    boundary_facts: dict[str, dict],
+    trace: dict[str, Any],
+) -> dict:
     tid = _threat_id(threat)
     fid = _display_id(tid)
     title = _text(threat.get("title")) or fid or "Untitled threat"
@@ -393,8 +580,8 @@ def _build_threat_cell(threat: dict, number: int, mitigations: list[dict], bound
         "type": STRIDE_TO_TD.get(stride.lower(), stride or "Other"),
         "status": _status_for(mitigations),
         "severity": _severity_for(threat),
-        "description": _threat_description(threat, boundary_facts),
-        "mitigation": _mitigation_text(mitigations),
+        "description": _threat_description(threat, boundary_facts, trace),
+        "mitigation": _mitigation_text(mitigations, trace),
         "modelType": DIAGRAM_TYPE,
         "number": number,
     }
@@ -446,6 +633,7 @@ def build_threat_dragon(
     threats = [t for t in (data.get("threats") or []) if isinstance(t, dict)]
     mitigations = [m for m in (data.get("mitigations") or []) if isinstance(m, dict)]
     boundary_facts = _boundary_facts(data)
+    trace = _trace_context(data)
 
     # ── Nodes ──────────────────────────────────────────────────────────────
     nodes: list[dict] = []
@@ -524,7 +712,13 @@ def build_threat_dragon(
                 f"threat {_display_id(_threat_id(threat)) or '(no id)'} references unknown component "
                 f"{ref!r} — attached to the {node['data']['name']!r} element"
             )
-        cell = _build_threat_cell(threat, number, _linked_mitigations(threat, mitigations), boundary_facts)
+        cell = _build_threat_cell(
+            threat,
+            number,
+            _linked_mitigations(threat, mitigations),
+            boundary_facts,
+            trace,
+        )
         node["data"]["threats"].append(cell)
         node["data"]["hasOpenThreats"] = True
 
@@ -621,6 +815,62 @@ def build_threat_dragon(
             "references still travels in that threat's description"
         )
 
+    requirement_finding_links = sum(len(_requirement_ids_for_threat(threat, trace)) for threat in threats)
+    requirement_mitigation_links = sum(len(mitigation.get("fulfills_requirements") or []) for mitigation in mitigations)
+    abuse_finding_links = sum(len(cases) for cases in trace["cases_by_finding"].values())
+    business_finding_links = sum(bool(threat.get("business_context_basis")) for threat in threats)
+    if (
+        trace["requirements_total"]
+        or requirement_finding_links
+        or requirement_mitigation_links
+        or trace["requirements_provenance"]
+    ):
+        warnings.append(
+            "Threat Dragon has no native requirement fields — folded "
+            f"{requirement_finding_links} finding link(s) and {requirement_mitigation_links} mitigation link(s) "
+            f"into text; summarized {trace['requirements_total']} assessed requirement(s) and bounded provenance "
+            "at document level"
+        )
+    if trace["cases"] or trace["abuse_status"]:
+        warnings.append(
+            "Threat Dragon has no native abuse-case objects — folded "
+            f"{abuse_finding_links} finding link(s) from {len(trace['cases'])} case(s) into text; "
+            f"{trace['catalog_evaluated_count']} catalog evaluation row(s) and the complete step analysis remain "
+            "in threat-model.yaml and threat-model.md"
+        )
+    if business_finding_links or (trace["business"] and trace["business"].get("status") != "not_configured"):
+        warnings.append(
+            "Threat Dragon has no native business-context fields — folded "
+            f"{business_finding_links} finding trace(s) and bounded provenance into text; raw context prose is excluded"
+        )
+
+    requirement_status = (
+        ", ".join(f"{status} {count}" for status, count in trace["requirements_statuses"].items() if count) or "none"
+    )
+    provenance = trace["requirements_provenance"]
+    requirement_source = _trace_text(provenance.get("source_label") or provenance.get("source_kind"), 256)
+    requirement_hash = _text(provenance.get("catalog_sha256"))
+    requirement_provenance = ""
+    if requirement_source:
+        requirement_provenance += f", source {requirement_source}"
+    if requirement_hash:
+        requirement_provenance += f", sha256 {requirement_hash}"
+    business = trace["business"]
+    business_status = _trace_text(business.get("status"), 32) or "absent"
+    business_provenance = ""
+    business_source = _trace_text(business.get("source"), 256)
+    business_hash = _text(business.get("sha256"))
+    if business_source:
+        business_provenance += f", source {business_source}"
+    if business_hash:
+        business_provenance += f", sha256 {business_hash}"
+    trace_summary = (
+        f"Traceability retained in bounded text: requirements {trace['requirements_total']} "
+        f"({requirement_status}{requirement_provenance}); abuse cases {len(trace['cases'])} "
+        f"({trace['abuse_status'] or 'absent'}, {trace['catalog_evaluated_count']} catalog-only); "
+        f"business context {business_status}{business_provenance}. "
+    )
+
     title = diagram_title or project
     doc = {
         "version": TD_VERSION,
@@ -630,9 +880,9 @@ def build_threat_dragon(
             "description": (
                 f"Generated by appsec-advisor {tool_version} — ALPHA Threat Dragon export. "
                 "Lossy by design: CWE, evidence locations, referenced trust-boundary "
-                "crossings and mitigation detail are folded into text; requirements "
-                "traceability, abuse cases, actors and the boundary geometry have no "
-                "counterpart and are dropped. "
+                "crossings, mitigation detail, requirements, abuse-case links and business-context use "
+                "are folded into text; actors and boundary geometry have no counterpart. "
+                f"{trace_summary}"
                 "See threat-model.md for the authoritative report."
             ),
             "id": 0,

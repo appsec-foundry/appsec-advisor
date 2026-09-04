@@ -181,6 +181,10 @@ distinction is between **referring to code** (backticks required) and
 visual anchors that point at the source tree; un-backticked code tokens
 read as part of the narrative and slow comprehension.
 
+Format the complete balanced expression as one span. Never format only an inner call, member, argument, or suffix, and never pull adjacent narrative words into the span.
+
+Producer ownership: author these backticks in every Markdown-bearing prose field. Never rely on deterministic normalization to infer ambiguous code; it only repairs structurally clear omissions or names supported by repository or structured-artifact evidence.
+
 **Backtick required:**
 
 - Function or method calls including their parentheses: `eval()`,

@@ -1,7 +1,7 @@
 """Polyglot project-manifest readers for infobox enrichment.
 
 Extracted move-only from ``compose_threat_model.py`` (Phase A2 of
-``docs/internal/runbooks/refactoring-plan.md``). No behavior change — these functions are
+``docs/internal/analysis/refactoring-plan.md``). No behavior change — these functions are
 the same code at the same call signature, just relocated to keep
 ``compose_threat_model.py`` from sprawling further. All eight readers
 take a ``ctx`` whose only required attribute is ``output_dir: Path``

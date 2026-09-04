@@ -181,10 +181,46 @@ def test_credential_parameter_name_in_prose_not_flagged(secret_scan, raw):
 @pytest.mark.parametrize(
     "raw",
     [
+        # The 2026-08-28 juice-shop case: a credential keyword opening a JSON
+        # string scalar in a PRIOR RUN's artifact. The lead-in is `      "` —
+        # no English word — so the backward mid-sentence test failed and the
+        # next word of the sentence was harvested as a 10-char credential. It
+        # then nuked every literal "referenced" in the freshly rendered report.
+        '      "LLM_API_KEY: referenced in routes/chat.ts:111 via process.env — value at runtime only, not hardcoded"',
+        # Same shape, other lead-ins that carry prose but no preceding word.
+        "- API_KEY: referenced in the config loader, never hardcoded",
+        "// token: retrieved from the vault at startup and cached in memory",
+        "# password: supplied by the operator during first-run activation",
+        "  * secret: injected through the deployment pipeline at boot",
+    ],
+)
+def test_prose_after_non_alphabetic_lead_in_not_flagged(secret_scan, raw):
+    """A credential keyword may open a line behind a quote, bullet, or comment
+    marker and still be prose. The backward "a word precedes the keyword" test
+    cannot see that, so the forward sentence-continuation test has to decide.
+
+    Pure indentation stays excluded from this relief — ``  secret: changeme``
+    is a YAML key and must keep flagging (asserted below).
+    """
+    hits = [h for h in secret_scan.scan_text(raw) if h.pattern == "generic_credential_assignment"]
+    assert hits == [], f"prose after a non-alphabetic lead-in should not flag: {raw!r}, got {hits}"
+    masked, _ = secret_scan.mask_text(raw)
+    assert masked == raw, f"masker must leave prose intact: {raw!r} -> {masked!r}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
         "  secret: changeme",  # YAML key (indent, not mid-sentence) → flags
         "const secret = mypassword",  # code assignment with `=` → flags
         "Rotate the secret: hunter2longer",  # prose but value has a digit → flags
         "the secret: 'existing'",  # quoted value → flags
+        # Non-alphabetic lead-ins that are NOT prose: the value ends its line
+        # (a config value), carries a digit, or is quoted. The lead-in relief
+        # must not reach any of these.
+        "# password: hunter2longer",
+        "- api_key: 'quotedliteral'",
+        "// token: opaquetokenvalue",
         # The same URL-fragment prose as above, but carrying a real token.
         "An attacker replays #access_token=eyJhbGciOiJIUzI1NiJ9 captured from the log",
         # Alphabetic, mid-sentence, sentence continues — but longer than any

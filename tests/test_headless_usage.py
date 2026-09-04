@@ -294,17 +294,17 @@ class TestShellWiring:
     def test_output_format_is_pinned_to_json(self, body):
         """`text` carries no usage data at all. The result object is the only
         readout with total_cost_usd + modelUsage, so the format is not optional."""
-        assert 'CLAUDE_CMD="$CLAUDE_CMD --output-format json"' in body
+        assert 'set -- "$@" --output-format json' in body
         assert "--output-format $OUTPUT_FORMAT" not in body
 
     def test_stdout_is_captured_to_the_result_file(self, body):
         assert 'RESULT_CAPTURE="$RESULT_DIR/.headless-result.json"' in body
-        assert 'eval "$CLAUDE_CMD" < /dev/null > "$RESULT_CAPTURE" &' in body
+        assert '"$@" < /dev/null > "$RESULT_CAPTURE" &' in body
 
     def test_capture_redirect_keeps_claude_a_direct_child(self, body):
         """A pipe would make $! the reader's PID and break the
         `kill -SIG -$CLAUDE_PID` process-group escalation."""
-        assert 'eval "$CLAUDE_CMD" < /dev/null |' not in body
+        assert '"$@" < /dev/null |' not in body
 
     def test_non_result_stdout_is_passed_through(self, body):
         """Redirecting stdout must not cost diagnosability: anything the CLI

@@ -356,22 +356,24 @@ Each `attack_paths[]` entry must map to ≥1 Critical or High finding via `findi
 
 **Author only when `CHECK_REQUIREMENTS=true`** (the skill passes this flag when `--requirements <file>` was supplied). When this flag is absent, do NOT create this file — compose soft-skips §7b when the fragment is missing.
 
-Renders as §7b Requirements Compliance in the threat model. Read `.requirements.yaml` (path in `$REQUIREMENTS_FILE`) and `.threats-merged.json` to determine which requirements are PASS / PARTIAL / FAIL. Write a Markdown file with this structure:
+Renders as the complete §7b Requirements Compliance table and is also the canonical source for the compact compliance table and counts in the Management Summary. Read `.requirements.yaml` (path in `$REQUIREMENTS_FILE`) and repository evidence to assess every requirement exactly once. Write a Markdown file with this structure:
 
 ```markdown
 ## 7b. Requirements Compliance
 
-| Requirement | Status | Evidence |
-|-------------|--------|----------|
-| REQ-ID: <title> | ✅ PASS / ⚠️ PARTIAL / ❌ FAIL | <1-sentence evidence or gap description> |
+| Requirement | Status | Priority | Evidence |
+|-------------|--------|----------|----------|
+| REQ-ID: <title> | ✅ PASS / ⚠️ PARTIAL / ❌ FAIL / ❓ UNVERIFIABLE / ➖ N/A | MUST / SHOULD / MAY | <1-sentence positive evidence, gap, or applicability rationale> |
 ```
 
 Status rules:
-- **PASS**: no finding in `.threats-merged.json` maps to this requirement (or all mapped findings are Low)
-- **PARTIAL**: ≥1 Medium finding maps to this requirement
-- **FAIL**: ≥1 High or Critical finding maps to this requirement
+- **PASS**: concrete code or configuration evidence demonstrates that the requirement is satisfied.
+- **PARTIAL**: an implementation exists but is incomplete, inconsistent, or covers only part of the requirement.
+- **FAIL**: repository evidence contradicts the requirement or an applicable required control is demonstrably absent.
+- **UNVERIFIABLE**: static repository analysis cannot establish whether the requirement is satisfied.
+- **N/A**: repository evidence demonstrates that the requirement is outside the analyzed system's applicability scope.
 
-Map findings to requirements via the `requirement_ids[]` field in `.threats-merged.json` threats (populated by `emit_review_mitigations.py`). Add a short prose summary paragraph above the table (2-4 sentences naming the most important gaps). Do not enumerate every finding — the table is the evidence pointer; details live in §8.
+Finding severity does not determine compliance status, and the absence of a mapped finding is never sufficient evidence for PASS. Cite an `F-NNN` in the Evidence cell only when that finding directly evidences the requirement, using `violated_requirements[]` as the structured cross-check; never guess a mapping. Copy Priority from the catalog. Add a short prose summary paragraph above the table (2-4 sentences naming the most important gaps), but do not author summary counts because the composer derives them from the table. Do not enumerate every finding — the table is the evidence pointer; details live in §8.
 
 ### `security-architecture.md` authoring
 

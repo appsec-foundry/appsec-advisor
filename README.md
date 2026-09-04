@@ -1,10 +1,11 @@
 # appsec-advisor
 
-[![Version](https://img.shields.io/badge/version-0.5.1--beta-orange.svg)](#)
+[![Version](https://img.shields.io/badge/version-0.6.0--beta.2-orange.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
-[![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-green.svg)](https://docs.oasis-open.org/sarif/sarif-v2.1.0/sarif-v2.1.0.html)
-[![codecov](https://codecov.io/gh/matthiasrohr/appsec-advisor/graph/badge.svg)](https://codecov.io/gh/matthiasrohr/appsec-advisor)
+[![Threat modeling](https://img.shields.io/badge/threat%20modeling-code--derived-5A67D8)](docs/threat-modeler.md)
+[![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-blue.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
+[![codecov](https://codecov.io/gh/appsec-foundry/appsec-advisor/graph/badge.svg)](https://codecov.io/gh/appsec-foundry/appsec-advisor)
 
 > ⚠️ **Beta — not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
 
@@ -54,12 +55,28 @@ Requires [Claude Code](https://docs.claude.com/en/docs/claude-code), Python 3.10
 
 For most repositories, run the Claude Code session on Sonnet 4.6. The orchestration session remains active for the full assessment and therefore has the largest effect on cost. Agent models are routed separately: a standard scan uses Sonnet 5 for judgment and report authoring, while STRIDE discovery remains on Sonnet 4.6. Very large repositories may require a Sonnet 5 session for the larger context window. See [Model Selection](docs/model-selection.md).
 
-### 1. Start Claude Code in the target repository
+### 1. Install the plugin
 
-Clone the plugin once, then start Claude Code from the repository you want to assess:
+Add the marketplace and install the plugin. This installs the current release and needs no checkout:
 
 ```bash
-git clone https://github.com/matthiasrohr/appsec-advisor.git /path/to/appsec-advisor
+claude plugin marketplace add appsec-foundry/appsec-advisor
+claude plugin install appsec-advisor@appsec-foundry
+```
+
+Later releases arrive with `claude plugin update appsec-advisor`, which takes effect after a restart.
+
+Then start Claude Code from the repository you want to assess:
+
+```bash
+cd /path/to/repository-to-assess
+claude
+```
+
+To run the development branch instead of a release, clone the repository and start Claude Code with the checkout:
+
+```bash
+git clone --branch dev https://github.com/appsec-foundry/appsec-advisor.git /path/to/appsec-advisor
 cd /path/to/repository-to-assess
 claude --plugin-dir /path/to/appsec-advisor
 ```
@@ -100,14 +117,24 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
+## What's new in 0.6.0-beta.2
+
+- Findings name the requirements they break, and mitigations quote the blueprint section that prescribes the fix.
+- The Management Summary states compliance and lists the failed requirements.
+- `/appsec-advisor:security-score` scores a repository from 0 to 100 using the scanners alone.
+- `/appsec-advisor:status` reports the versions, skills, profile, and config in effect; `--check-updates` checks whether they are current.
+- `/appsec-advisor:authnz-review` exports its findings as pentest tasks, with the discovered routes as the endpoint catalog.
+- Source scans flag LLM output that reaches rendering, interpreters, or privileged actions unchecked.
+- `/appsec-advisor:update-baseline` refreshes an installed secure-coding baseline where it is loaded from; an organization profile can vendor its own source for it.
+
 ## What's new in 0.6.0-beta.1
 
-- Runs support only full, rebuild, and rerender. Incremental scans, resume, PR mode, `--max-cost`, and `--max-wall-time` are rejected before a run starts; reassess a changed repository with `--full`.
+- Runs support only full, rebuild, and rerender; reassess a changed repository with `--full`.
 - Threat analysis costs 39.8% less at quick depth and 26.8% less at thorough depth in reference runs.
 - Trust boundaries are assessed, drawn in the architecture diagram, and linked to findings that cross them.
-- `install-baseline` and `verify-baseline` put the bundled [AI Secure Coding Baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline) into Claude Code's instruction files and let CI verify it.
-- New and rebuilt scans can take business context interactively or through `--context`, giving named sensitive-asset components full-depth analysis.
-- `--formats threatdragon` exports Threat Dragon v2 JSON for Threat Dragon and OWASP ThreatAtlas. The export remains alpha and opt-in.
+- `install-baseline` and `verify-baseline` put the bundled [AI Secure Coding Baseline](https://github.com/appsec-foundry/aiscb) into Claude Code's instruction files and let CI verify it.
+- Scans can take business context interactively or through `--context`; named sensitive assets keep their component in scope, and the report says which file was read and how many findings it applied to.
+- `--formats threatdragon` exports alpha Threat Dragon v2 JSON for Threat Dragon and OWASP ThreatAtlas.
 - Organization profiles can include custom skills and baselines, configure the session banner, and disable individual skills.
 
 See the [full changelog](CHANGELOG.md) for all changes.
@@ -124,9 +151,9 @@ Run `/appsec-advisor:create-threat-model` to get:
 
 The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). If the repository contains an LLM or agentic application, it also checks the relevant [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) categories.
 
-**Example:** [Read a thorough assessment of OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.2.md) or browse [more examples](examples/threat-modeler/README.md).
+**Example:** [Read a thorough assessment of OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.md) or browse [more examples](examples/threat-modeler/README.md).
 
-![Threat Model Juice Shop Thorough](./examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.2.figure1.svg)
+![Threat Model Juice Shop Thorough](./examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.figure1.svg)
 
 Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) covers depth, focused scans, repository context, measured costs, and limits.
 
@@ -139,7 +166,7 @@ Assessments consume model tokens and usually take tens of minutes; thorough runs
 /appsec-advisor:audit-security-requirements
 
 # Use a catalog URL for this run
-/appsec-advisor:audit-security-requirements --requirements https://URL/appsec-requirements.yaml
+/appsec-advisor:audit-security-requirements --requirements https://appsec.int.example.com/appsec-requirements.yaml
 ```
 
 If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml` or use the [requirements harvester](docs/harvester.md). See the [Requirements Audit reference](docs/security-requirements-audit-skill.md) for setup and options.
@@ -148,7 +175,7 @@ If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml` or 
 
 | Tool | Use |
 |---|---|
-| Secure-coding baseline | Install, verify, or remove secure-coding instructions with `install-baseline`, `verify-baseline`, and `remove-baseline`. |
+| Secure-coding baseline | Install, update, verify, or remove secure-coding instructions with `install-baseline`, `update-baseline`, `verify-baseline`, and `remove-baseline`. |
 | [Security Coach](docs/dev-security-helper-usage.md#security-coach-hook) (*experimental*) | Add security guidance while writing security-sensitive code. |
 | [appsec-reviewer](docs/dev-security-helper-usage.md#appsec-reviewer-agent) (*experimental*) | Embed change review in Claude Code or an Agent SDK workflow. |
 | [verify-requirements](docs/dev-security-helper-usage.md#verify-requirements-skill) (*experimental*) | Review an interactive diff against the requirements catalog. |
@@ -168,7 +195,7 @@ Review the bundle before attaching it to a GitHub issue. The command excludes so
 
 ## Enterprise rollout
 
-AppSec and Platform teams can supply organization-specific requirements, defaults, guardrails, skills, hooks, and MCP servers. The [organization packaging template](https://github.com/matthiasrohr/appsec-advisor-packaging-template) keeps this configuration in a separate internal package built from a pinned upstream release. Core agent definitions remain upstream-owned.
+AppSec and Platform teams can supply organization-specific requirements, defaults, guardrails, skills, hooks, and MCP servers. The [organization packaging template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) keeps this configuration in a separate internal package built from a pinned upstream release. Core agent definitions remain upstream-owned.
 
 ![Example rollout from an upstream release to an Acme-branded plugin](docs/images/orgpackaging.svg)
 
@@ -198,8 +225,8 @@ The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `template
 
 ### Companion repositories
 
-- [appsec-advisor-packaging-template](https://github.com/matthiasrohr/appsec-advisor-packaging-template) builds organization-specific plugin packages from pinned upstream releases.
-- [ai-secure-coding-baseline](https://github.com/matthiasrohr/ai-secure-coding-baseline) contains the secure-coding rules bundled by the plugin.
+- [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) builds organization-specific plugin packages from pinned upstream releases.
+- [aiscb](https://github.com/appsec-foundry/aiscb) contains the secure-coding rules bundled by the plugin.
 
 ### Comparable tools
 

@@ -315,7 +315,7 @@ categories:
       - id: ACME-AUTH-01
         priority: MUST
         text: Passwords must be stored with Argon2id or bcrypt.
-        url: https://wiki.acme.internal/appsec/auth
+        url: https://appsec.int.example.com/auth
 ```
 
 Requirement IDs are organization-defined. No fixed prefix is required. For org-wide defaults, use [org-profiles.md](org-profiles.md).

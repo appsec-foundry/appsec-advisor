@@ -3,13 +3,13 @@
   "banner": {
     "enabled": true,
     "headline": null,
-    "url": "https://github.com/matthiasrohr/appsec-advisor"
+    "url": "https://github.com/appsec-foundry/appsec-advisor"
   },
   "baseline": {
     "enabled": true,
     "id": "aisec-0.1",
     "name": "AI Secure Coding Baseline",
-    "url": "https://raw.githubusercontent.com/matthiasrohr/ai-secure-coding-baseline/main/secure-coding-baseline.md",
+    "url": "https://raw.githubusercontent.com/appsec-foundry/aiscb/main/secure-coding-baseline.md",
     "fallback_file": "data/baselines/secure-coding-baseline.md",
     "install_filename": "secure-coding-baseline.md",
     "enforce": false

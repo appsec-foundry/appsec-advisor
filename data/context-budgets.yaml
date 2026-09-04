@@ -22,17 +22,25 @@ surfaces:
   thin_full_runtime:
     path: skills/create-threat-model/SKILL-full-runtime.md
     # Raised to cover routed evidence-verifier fields and the explicit
-    # cross-path Stage-3 safety-gate handoff. The ceiling retains only modest
-    # drift slack; it is not a licence to grow the runtime surface.
-    max_bytes: 13250
+    # cross-path Stage-3 safety-gate handoff. 13250 -> 15500 (2026-08-29): the
+    # file had reached 13226 bytes, 24 short of the ceiling, so the next edit
+    # would have failed the hard budget with no prior warning. The headroom
+    # guard now covers this surface and needs a band to warn in. This is not a
+    # licence to grow: the aggregate gates below measure real bytes and sit at
+    # 96% of thin_full_pre_stage2_max_bytes, so roughly a kilobyte is all the
+    # thin control surface can actually gain.
+    max_bytes: 15500
   thin_rerender_runtime:
     path: skills/create-threat-model/SKILL-rerender-runtime.md
     max_bytes: 10000
   thin_stage1_v2_runtime:
     # Carries the boundary loop and dispatch rules only, never a phase
     # algorithm. The headroom guard requires at least ten percent free.
+    # 6400 -> 6800 (2026-08-29): at 6400 the file sat 11 bytes under the
+    # headroom threshold while 651 bytes remained to the hard ceiling, so the
+    # guard blocked before it could warn. Same reasoning as thin_full_runtime.
     path: skills/create-threat-model/SKILL-thin-stage1-v2.md
-    max_bytes: 6400
+    max_bytes: 6800
   thin_stage1d_runtime:
     path: skills/create-threat-model/SKILL-thin-stage1d.md
     # 3400 -> 3600 (2026-08-21), matching thin_stage2_runtime. The waiter's
@@ -81,7 +89,17 @@ surfaces:
     max_bytes: 12000
   stride_analyzer_role:
     path: agents/appsec-stride-analyzer-v2.md
-    max_bytes: 12000
+    # 12000 -> 14500 (2026-08-30): carrying requirements and blueprint
+    # provenance into findings and mitigations grew the role to 12764 bytes,
+    # past the hard budget, with no band left for the ten-percent headroom
+    # guard. The eight sections are each 800-2200 bytes of distinct contract
+    # (ownership, admission, bounded reads, write-first, prior/actor/boundary
+    # handling, the six-category workflow, finding admission, output), so
+    # fitting 12000 meant cutting a third of one of them out of the most
+    # quality-critical prompt in the pipeline. Raised instead. This is not a
+    # licence to grow: the role ships once per STRIDE component, so a standard
+    # run pays every byte here seven times.
+    max_bytes: 14500
   stride_lens_llm:
     path: agents/shared/owasp-llm-top10.md
     max_bytes: 7000

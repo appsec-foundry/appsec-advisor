@@ -9,7 +9,7 @@ Read [`AGENTS.md`](AGENTS.md) before changing runtime behavior, schemas, prompts
 Open an issue before substantial changes so the approach can be agreed before implementation. Typos and small fixes can go directly to a pull request.
 
 1. Describe the problem and proposed behavior in an issue.
-2. Open a focused pull request and link the issue.
+2. Open a focused pull request against `dev` and link the issue.
 3. Run the relevant tests and lint checks.
 4. Complete the pull request template.
 

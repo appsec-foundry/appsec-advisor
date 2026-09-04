@@ -81,6 +81,8 @@ EXPECTED_WHITELIST_FILES = {
     ".arch-coverage-threats.json",
     ".producer-retries.json",
     ".business-context-input.md",
+    ".pending-dispatch.json",
+    ".receipt-verification.json",
 }
 EXPECTED_WHITELIST_DIRS = {
     ".progress",
@@ -717,3 +719,50 @@ class TestMainInProcess:
         assert code == 0
         printed = capsys.readouterr().out
         assert "preserved" in printed
+
+
+# ---------------------------------------------------------------------------
+# The always-cleanup wave must run at the stage the pipeline actually invokes
+# ---------------------------------------------------------------------------
+
+
+def _completed_run(tmp_path, qa_status: str):
+    """An output directory that passed the safety gates."""
+    (tmp_path / "threat-model.md").write_text("# stub\n", encoding="utf-8")
+    (tmp_path / ".qa-status.json").write_text(json.dumps({"status": qa_status}), encoding="utf-8")
+    (tmp_path / ".qa-repair-plan.json").write_text(json.dumps({"issue_count": 0}), encoding="utf-8")
+    (tmp_path / ".business-context-input.md").write_text("ctx\n", encoding="utf-8")
+    (tmp_path / ".route-inventory.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / ".dispatch-context").mkdir()
+    return tmp_path
+
+
+def test_post_qa_carries_the_always_wave_on_a_clean_run(tmp_path):
+    """`pre-qa` has no caller, so gating the always-wave on it alone left every
+    transient artifact in the output directory after every run."""
+    out = _completed_run(tmp_path, "pass")
+
+    rc.run_cleanup(out, stage="post-qa", keep_runtime_files=False, force=False)
+
+    assert not (out / ".business-context-input.md").exists()
+    assert not (out / ".route-inventory.json").exists()
+    assert not (out / ".dispatch-context").exists()
+
+
+def test_post_qa_keeps_the_always_wave_when_qa_was_not_clean(tmp_path):
+    """A run that ended unclean keeps the artifacts a diagnosis reads."""
+    out = _completed_run(tmp_path, "repair_required")
+
+    rc.run_cleanup(out, stage="post-qa", keep_runtime_files=False, force=False)
+
+    assert (out / ".business-context-input.md").exists()
+    assert (out / ".route-inventory.json").exists()
+    assert (out / ".dispatch-context").is_dir()
+
+
+def test_always_wave_is_not_scheduled_twice_at_stage_all(tmp_path):
+    out = _completed_run(tmp_path, "pass")
+
+    report = rc.run_cleanup(out, stage="all", keep_runtime_files=False, force=False)
+
+    assert len(report["removed"]) == len(set(report["removed"]))

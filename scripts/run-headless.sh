@@ -58,6 +58,7 @@
 #
 # Environment:
 #   ANTHROPIC_API_KEY       Anthropic API key (optional — uses subscription if unset)
+#   APPSEC_CLAUDE_EXECUTABLE  Claude CLI or wrapper executable (default: claude)
 #   CLAUDE_PLUGIN_DIR       Override plugin directory (default: auto-detected)
 # ──────────────────────────────────────────────────────────────────────
 set -eu
@@ -138,6 +139,8 @@ Skill selection:
 
 Environment:
   ANTHROPIC_API_KEY          Anthropic API key (optional — uses subscription auth if unset)
+  APPSEC_CLAUDE_EXECUTABLE   Claude CLI or wrapper executable (default: claude).
+                              The value is one executable, not a shell command.
   CLAUDE_PLUGIN_DIR          Override plugin directory (default: auto-detected)
   CI=true                    Enables CI mode (skips stale-lock wait, bumps caches,
                              adjusts defaults for non-interactive runners)
@@ -174,7 +177,17 @@ if [ -f "$CONFIG_FILE" ]; then
 fi
 
 # ── Verify prerequisites ────────────────────────────────────────────
-command -v claude >/dev/null 2>&1 || die "Claude Code CLI not found. Install it first: https://claude.ai/download"
+# An environment may need to launch Claude through a gateway or observability
+# wrapper. Accept one executable so callers can provide that integration
+# without turning configuration into a shell command. The command is invoked
+# through positional parameters below, never evaluated as shell source.
+CLAUDE_EXECUTABLE="${APPSEC_CLAUDE_EXECUTABLE:-claude}"
+if ! command -v "$CLAUDE_EXECUTABLE" >/dev/null 2>&1; then
+    if [ -n "${APPSEC_CLAUDE_EXECUTABLE:-}" ]; then
+        die "Configured Claude executable not found or not executable. APPSEC_CLAUDE_EXECUTABLE must name one executable."
+    fi
+    die "Claude Code CLI not found. Install it first: https://claude.ai/download"
+fi
 
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
     BILLING_MODE="api"
@@ -408,7 +421,7 @@ if [ "$BILLING_MODE" = "subscription" ]; then
         # still surfaces as a real error from `claude -p` downstream.
         info "Subscription auth via CLAUDE_CODE_OAUTH_TOKEN (non-interactive; skipping login preflight)"
     else
-        AUTH_JSON=$(claude auth status 2>/dev/null) || AUTH_JSON="{}"
+        AUTH_JSON=$("$CLAUDE_EXECUTABLE" auth status 2>/dev/null) || AUTH_JSON="{}"
         if ! echo "$AUTH_JSON" | grep -q '"loggedIn": true'; then
             die "Not authenticated for subscription billing.\n  • To use subscription: run 'claude auth login' (interactive) or set CLAUDE_CODE_OAUTH_TOKEN (CI / non-interactive)\n  • To use API billing:  export ANTHROPIC_API_KEY=<your-key>"
         fi
@@ -588,28 +601,31 @@ elif [ "$SKILL" = "audit-security-requirements" ]; then
 fi
 
 # ── Build claude CLI command ───────────────────────────────────────
-CLAUDE_CMD="claude -p \"$PROMPT\""
-CLAUDE_CMD="$CLAUDE_CMD --plugin-dir \"$PLUGIN_DIR\""
-CLAUDE_CMD="$CLAUDE_CMD --allowedTools \"Read,Write,Glob,Grep,Bash,Agent\""
-CLAUDE_CMD="$CLAUDE_CMD --permission-mode bypassPermissions"
+# POSIX sh has no arrays, so use its positional parameters as the command argv.
+# This preserves every argument boundary and keeps executable paths and prompt
+# content out of shell evaluation.
+set -- "$CLAUDE_EXECUTABLE" -p "$PROMPT"
+set -- "$@" --plugin-dir "$PLUGIN_DIR"
+set -- "$@" --allowedTools "Read,Write,Glob,Grep,Bash,Agent"
+set -- "$@" --permission-mode bypassPermissions
 # Always `json`, never `text`. The JSON result object is the only readout that
 # carries the run's authoritative token/cost accounting (total_cost_usd +
 # per-model modelUsage, sub-agents included) — see headless_usage.py. Its
 # `result` field holds exactly the text that `--output-format text` would have
 # printed, so nothing user-visible is lost; the wrapper re-emits it below.
-CLAUDE_CMD="$CLAUDE_CMD --output-format json"
-CLAUDE_CMD="$CLAUDE_CMD --no-session-persistence"
+set -- "$@" --output-format json
+set -- "$@" --no-session-persistence
 
 # Optional arguments
-[ -n "$MAX_BUDGET" ] && CLAUDE_CMD="$CLAUDE_CMD --max-budget-usd $MAX_BUDGET"
-[ -n "$MODEL" ]      && CLAUDE_CMD="$CLAUDE_CMD --model $MODEL"
-[ -n "$VERBOSE" ]    && CLAUDE_CMD="$CLAUDE_CMD $VERBOSE"
+[ -n "$MAX_BUDGET" ] && set -- "$@" --max-budget-usd "$MAX_BUDGET"
+[ -n "$MODEL" ]      && set -- "$@" --model "$MODEL"
+[ -n "$VERBOSE" ]    && set -- "$@" "$VERBOSE"
 
 # Wrap with timeout(1) when --max-duration is set; the skill would otherwise
 # need to self-police, which is not reliable in an LLM-driven orchestrator.
 if [ -n "$MAX_DURATION" ]; then
     if command -v timeout >/dev/null 2>&1; then
-        CLAUDE_CMD="timeout --preserve-status ${MAX_DURATION}s $CLAUDE_CMD"
+        set -- timeout --preserve-status "${MAX_DURATION}s" "$@"
     else
         warn "--max-duration requested but 'timeout' binary not available; ignoring"
     fi
@@ -941,9 +957,9 @@ trap 'cleanup_headless_runtime' EXIT
 
 set -m
 if [ -n "$RESULT_CAPTURE" ]; then
-    eval "$CLAUDE_CMD" < /dev/null > "$RESULT_CAPTURE" &
+    "$@" < /dev/null > "$RESULT_CAPTURE" &
 else
-    eval "$CLAUDE_CMD" < /dev/null &
+    "$@" < /dev/null &
 fi
 CLAUDE_PID=$!
 set +m

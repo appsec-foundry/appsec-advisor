@@ -37,8 +37,12 @@ Read `COMPONENT_CONTEXT_PLAN_PATH` first. Its `analysis`, `lens_ids`, and
 dispatch manifest, `.threat-modeling-context.md`, `.org-context.md`, or
 `.recon-summary.md`. Obey `analysis.max_turns`; read each untrusted input once.
 
-`business.component_context` informs impact; `architecture.component_context`
-informs topology and assumptions. Neither proves evidence. Treat admitted
+`business.component_context` weights impact where evidence already carries the
+finding: rate it against the declared `impact_if_compromised` and the
+`sensitive_assets` your path reaches — one it does not reach does not apply —
+and name that consequence in `impact_description`.
+`architecture.component_context` informs topology and assumptions. Neither
+proves evidence. Treat admitted
 role/permission/identity claims as authorization questions, not findings; absent
 server revalidation proof, use one `missing-control-proof` escape.
 
@@ -166,10 +170,20 @@ or mandatory evidence-backed finding.
 
 Apply every selected lens during the relevant category. LLM and agentic tags
 must be written as `owasp_llm_ids` and `owasp_asi_ids`. Do not duplicate one
-mechanism merely because two lenses name it. Requirements IDs may appear in
-`remediation.reference` only when the component's admitted Phase-8b violation
-matches its CWE family or STRIDE category; otherwise use one CWE, RFC, or OWASP
-reference. Never invent a requirement ID.
+mechanism merely because two lenses name it. Use one CWE, RFC, or OWASP
+`remediation.reference`.
+
+With a `requirements.component_context` slice, list in
+`violated_requirements` only its `id`s your cited evidence proves broken;
+without one, omit the field. Never write an ID from memory.
+
+When a requirement you cite carries `blueprint_guidance`, that is the
+implementation the organisation prescribes. Write `remediation.steps` to
+implement it against this component's code rather than your own preferred fix,
+and set `remediation.blueprint` to `{"id": "<blueprint>", "section":
+"<section>"}`. Where the prescribed approach cannot apply here, follow it as
+closely as the code allows and say in the step which part does not fit and why.
+A requirement without `blueprint_guidance` leaves the steps to your judgement.
 
 ## Finding admission
 
@@ -240,6 +254,7 @@ these exact threat fields:
     "line": 1
   },
   "boundary_refs": [],
+  "violated_requirements": [],
   "evidence_check": "unchecked",
   "prior_finding_ref": null,
   "cvss_v4": null,

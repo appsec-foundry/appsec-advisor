@@ -30,6 +30,13 @@ reviewed implementation work.
 
 ## Rules that always apply
 
+### Branch flow
+
+- Development happens on `dev`. Every branch starts from `dev`, and every pull request targets `dev`, whatever base a tool offers by default.
+- `main` carries releases only. It changes through two paths: a `dev` → `main` merge at a release, and a hotfix. Both end in a `v*` tag.
+- A hotfix branches from `main` and targets `main`, and is merged back into `dev` right after the tag so the next release keeps the fix.
+- Never commit to `main` directly, and never merge any other branch into it.
+
 ### Fix the source, not the symptom
 
 - Trace a behavior through its producer, contract, consumer, validation, tests,
@@ -60,6 +67,7 @@ reviewed implementation work.
 ### Keep the repository maintainable
 
 - Write code comments, docstrings, commits, and repository documents in English.
+- For new or substantively edited Markdown prose, follow `docs/internal/documentation-style.md`. Keep each prose paragraph, including prose in list items, on one source line; separate paragraphs with one blank line; and do not reflow untouched prose solely for formatting. Local contracts override the external style reference.
 - `CHANGELOG.md` contains one short sentence per user-visible change. Fold an
   unreleased feature and its fixes into one bullet, and omit internal machinery,
   ordinary refactors, test-only work, doc edits, and routine maintenance.
@@ -96,6 +104,7 @@ reviewed implementation work.
 | Permissions | `data/required-permissions.yaml` | `tests/test_check_permissions.py` |
 | Target-specific fixture data | `data/test-target-vocabulary.yaml` | `tests/test_check_target_specificity.py` |
 | Organization packaging | org-profile schema and invariants, decisions `EX-*` | packaging and smoke tests |
+| Plugin distribution | `.claude-plugin/marketplace.json`, README installation steps | `tests/test_marketplace_manifest.py` |
 | Secure-coding baseline | baseline scripts and `config.json` | baseline tests |
 | Run state and liveness | state scripts and status runbook | state and status tests |
 | Runtime cost and telemetry | cost model, logging standard, decisions `OR-*`, `MD-*` | cost, event-log, and hook tests |
@@ -106,8 +115,14 @@ reviewed implementation work.
 
 - Run the relevant subset from `CONTRIBUTING.md` → Targeted tests. If the
   repository is already red, capture a baseline and distinguish regressions.
-- Then run `make lint` and `make test`. Use `make check` when a change spans more
-  than one module or contract.
+- Match broader gates to the change's blast radius instead of running them by
+  default. Run `make lint` after changing Python in `scripts/`, `tests/`, or
+  `hooks/`. Run `make test` when a change affects shared runtime behavior or
+  cannot be covered confidently by targeted tests. Run `make check` for
+  cross-cutting changes that span multiple runtime modules or contracts and at
+  release boundaries. Documentation, examples, fixtures, and isolated tests do
+  not require the full suite when their applicable validators and targeted tests
+  pass.
 - Add a matching `tests/test_*.py` for each new `scripts/` module and cover core
   behavior and failure paths.
 - For heuristic or scanner changes, use application-agnostic signals, neutral

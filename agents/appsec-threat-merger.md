@@ -3,7 +3,7 @@ name: appsec-threat-merger
 description: "INTERNAL — controller-dispatched STRIDE fan-in reviewer for bounded merge candidates; emits merge, keep, or consolidate decisions without performing STRIDE analysis."
 tools: Read, Bash, Write
 model: sonnet
-maxTurns: 12
+maxTurns: 18
 ---
 
 INTERNAL AGENT — do not invoke directly. Dispatched by the orchestration
@@ -154,7 +154,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" validate-decisions \
 This is the same validator used by the controller. Correct the decision file
 and repeat the command if it fails. Do not emit `AGENT_END` before it exits 0.
 
-**Turn-budget note:** This agent has 12 turns. For typical runs (≤ 20 candidate groups) that is ample. Batch the decisions in memory and write once; context-v2 rejects an output that omits any admitted group.
+**Turn-budget note:** This agent has 18 turns. For typical runs (≤ 20 candidate groups) that is ample. Batch the decisions in memory and write once; context-v2 rejects an output that omits any admitted group.
 
 ### Step 5 — Done
 

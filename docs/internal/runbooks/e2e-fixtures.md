@@ -6,10 +6,10 @@ external oracle.
 
 By default the driver expects the shared sibling fixture-suite checkout. Clone
 it next to this repo if you don't have it yet
-([github.com/matthiasrohr/appsec-advisor-fixtures](https://github.com/matthiasrohr/appsec-advisor-fixtures)):
+([github.com/appsec-foundry/appsec-advisor-fixtures](https://github.com/appsec-foundry/appsec-advisor-fixtures)):
 
 ```bash
-git clone git@github.com:matthiasrohr/appsec-advisor-fixtures.git ../appsec-advisor-fixtures
+git clone git@github.com:appsec-foundry/appsec-advisor-fixtures.git ../appsec-advisor-fixtures
 ```
 
 Resulting layout:

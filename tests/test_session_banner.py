@@ -496,6 +496,57 @@ def test_a_declared_derivative_beside_the_baseline_is_not_a_foreign_one(tmp_path
     assert "also" not in line
 
 
+def test_an_outdated_baseline_points_at_update_rather_than_install(tmp_path):
+    """Lagging rules are a refresh, and the line has to say which command that is.
+
+    Install would send the reader to choose a scope that is already chosen. The
+    file exists and only its text is behind, so the update command is the one
+    that applies.
+    """
+    write_model(tmp_path)
+    (tmp_path / "CLAUDE.md").write_text("baseline-id: `aisec-0.0`\n", encoding="utf-8")
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line == (f"{BASELINE_NAME} · aisec-0.0 · this repo · behind aisec-0.1 · /appsec-advisor:update-baseline")
+    assert "install-baseline" not in line
+
+
+def test_an_outdated_baseline_falls_back_to_install_when_update_is_not_packaged(tmp_path, monkeypatch):
+    """A package built before update-baseline existed still names an action.
+
+    Install is the weaker answer — it writes the scope's canonical path, which is
+    a second file wherever the install reused a carrier — but naming no command
+    at all leaves the reader with a complaint and no way to act on it.
+    """
+    root = tmp_path / "plugin"
+    (root / "skills" / "install-baseline").mkdir(parents=True)
+    (root / "skills" / "install-baseline" / "SKILL.md").write_text("x", encoding="utf-8")
+    (root / "config.json").write_text(
+        json.dumps(
+            {
+                "baseline": {
+                    "enabled": True,
+                    "id": "aisec-0.1",
+                    "name": "Test Baseline",
+                    "install_filename": "secure-coding-baseline.md",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(root))
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "CLAUDE.md").write_text("baseline-id: `aisec-0.0`\n", encoding="utf-8")
+
+    line = session_banner._baseline_line(repo)
+
+    assert "behind aisec-0.1" in line
+    assert line.endswith("/appsec-advisor:install-baseline")
+
+
 def test_a_newer_baseline_is_reported_as_ahead_without_a_command(tmp_path):
     """The reader updated the rules before the plugin caught up — not a fault.
 

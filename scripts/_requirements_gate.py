@@ -26,6 +26,36 @@ def _empty(checked: bool = False, source: str = "") -> dict:
     return dict(_EMPTY, checked=checked, source=source)
 
 
+def catalog_declares_requirements(output_dir: Path) -> bool:
+    """Whether ``.requirements.yaml`` declares at least one requirement.
+
+    File presence proves nothing: a run with the check switched off still
+    writes ``fetch_requirements._SKIPPED_STUB`` (``source: skipped`` with empty
+    ``categories``), so a consumer gated on ``is_file()`` reads "no requirements
+    were ever requested" as "catalog configured". The post-compose emitter did
+    exactly that and failed the run *after* the report was already written — on
+    the 2026-08-29 juice-shop run, which had ``check_requirements=false``.
+
+    Unlike :func:`load_requirements`, the bundled OWASP baseline counts here:
+    this answers "is there anything to trace?", not "did the team integrate
+    their own catalog", and a baseline run does have requirements to trace.
+    """
+    try:
+        raw = (output_dir / ".requirements.yaml").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    try:
+        doc = yaml.load(raw, Loader=_YAML_LOADER) or {}
+    except yaml.YAMLError:
+        return False
+    if not isinstance(doc, dict):
+        return False
+    if str(doc.get("source") or "").strip().lower() == "skipped":
+        return False
+    cats = doc.get("categories") or []
+    return isinstance(cats, list) and bool(cats)
+
+
 def load_requirements(output_dir: Path, meta: dict) -> dict:
     """Gate + declared custom requirement IDs.
 

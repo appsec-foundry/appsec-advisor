@@ -695,13 +695,13 @@ Do a literal replace of `harvest-requirements.py` → `harvest_requirements.py` 
 Use `Edit` with `replace_all: true` on the string `harvest-requirements.py` in
 each file (the harness's Edit tool supports `replace_all`).
 
-**Do NOT** touch `docs/internal/runbooks/refactoring-plan.md` (lines 565, 573): those are historical
+**Do NOT** touch `docs/internal/analysis/refactoring-plan.md` (lines 565, 573): those are historical
 decision-log entries *about* the rename — leave them as the record of why.
 
 ### Verify
 - `ls scripts/harvest_requirements.py` → exists.
 - `grep -rn "harvest-requirements.py" README.md CONTRIBUTING.md docs/`
-  → should return **only** `docs/internal/runbooks/refactoring-plan.md` lines after the fix.
+  → should return **only** `docs/internal/analysis/refactoring-plan.md` lines after the fix.
 
 ---
 

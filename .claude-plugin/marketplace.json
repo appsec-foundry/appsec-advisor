@@ -1,0 +1,22 @@
+{
+  "name": "appsec-foundry",
+  "description": "AppSec Foundry plugins for application security work in Claude Code.",
+  "owner": {
+    "name": "AppSec Foundry",
+    "url": "https://github.com/appsec-foundry"
+  },
+  "plugins": [
+    {
+      "name": "appsec-advisor",
+      "source": {
+        "source": "github",
+        "repo": "appsec-foundry/appsec-advisor",
+        "ref": "main"
+      },
+      "description": "Code-derived STRIDE threat modeling. Derives the architecture model from the repository and produces Markdown reports, structured exports, SARIF, and PDFs.",
+      "homepage": "https://github.com/appsec-foundry/appsec-advisor",
+      "repository": "https://github.com/appsec-foundry/appsec-advisor",
+      "license": "Apache-2.0"
+    }
+  ]
+}

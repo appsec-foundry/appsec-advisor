@@ -180,6 +180,47 @@ def test_output_validates_against_schema(tmp_path: Path) -> None:
     jsonschema.validate(out, SCHEMA)
 
 
+def test_prior_run_output_is_not_scanned_as_source(tmp_path: Path, monkeypatch) -> None:
+    """A previous assessment stored under any name must not become evidence.
+
+    `is_excluded` only knows the fixed `docs/security/` prefix, so a renamed or
+    backed-up output directory used to be walked as ordinary source and its
+    verdicts cited as code findings.
+    """
+    monkeypatch.delenv("APPSEC_ARCH_INCLUDE_VENDOR", raising=False)
+    import scan_excludes as se
+
+    se._reset_cache_for_tests()
+
+    for name in ("docs/security-ab-legacy", "docs/security.v1-backup"):
+        stale = tmp_path / name
+        stale.mkdir(parents=True)
+        # On-disk signature of a finished run: the final Markdown/YAML pair.
+        (stale / "threat-model.md").write_text("# prior run\n", encoding="utf-8")
+        (stale / "threat-model.yaml").write_text("threats: []\n", encoding="utf-8")
+        (stale / "app.ts").write_text("const stale = 1;\n", encoding="utf-8")
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "app.ts").write_text("const real = 1;\n", encoding="utf-8")
+
+    assert acc._is_excluded("docs/security-ab-legacy/app.ts", tmp_path) is True
+    assert acc._is_excluded("docs/security.v1-backup/app.ts", tmp_path) is True
+    assert acc._is_excluded("src/app.ts", tmp_path) is False
+
+    walked = {str(p.relative_to(tmp_path)).replace("\\", "/") for p in acc._walk_sources(tmp_path)}
+    assert walked == {"src/app.ts"}
+    se._reset_cache_for_tests()
+
+
+def test_is_excluded_without_repo_root_keeps_previous_behaviour(monkeypatch) -> None:
+    monkeypatch.delenv("APPSEC_ARCH_INCLUDE_VENDOR", raising=False)
+    # The assessment-artifact check needs a repo root; omitting it must not
+    # raise and must not change how ordinary paths are classified.
+    assert acc._is_excluded("node_modules/pkg/index.js") is True
+    assert acc._is_excluded("src/app.ts") is False
+
+
 def test_io_helpers_exclude_vendor_override_and_load_json(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("APPSEC_ARCH_INCLUDE_VENDOR", raising=False)
     assert acc._is_excluded("node_modules/pkg/index.js") is True
@@ -359,6 +400,23 @@ def test_tls_localhost_http_is_not_finding(tmp_path: Path) -> None:
     out = _run_engine(tmp_path)
     v = _verdict(out, "ARCH-TLS-001")
     assert v["status"] in {"present", "partial"}
+
+
+def test_tls_http_url_in_a_comment_is_not_an_anti_pattern(tmp_path: Path) -> None:
+    """An `http://` URL in prose says nothing about TLS verification.
+
+    Vendored sources carry author and license comments with plain-HTTP URLs.
+    Rating Transport Encryption from one of those is what FE-2 forbids, and it
+    made every repository with a bundled third-party file report a High
+    cleartext-transport candidate.
+    """
+    (tmp_path / "OrbitControls.js").write_text(
+        "/**\n * @author mrdoob / http://mrdoob.com\n * @author alteredq / http://alteredqualia.com/\n */\n"
+    )
+    out = _run_engine(tmp_path)
+    v = _verdict(out, "ARCH-TLS-001")
+    assert v["status"] != "anti_pattern"
+    assert "ARCH-TLS-001" not in [c["rule_id"] for c in out["anti_pattern_candidates"]]
 
 
 # ---------------------------------------------------------------------------

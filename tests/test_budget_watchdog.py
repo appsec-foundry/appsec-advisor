@@ -569,3 +569,59 @@ def test_live_lock_owner_returns_none_when_indeterminate(env):
     assert bw._live_lock_owner(str(output_dir)) is None  # stale
     _write_lock(output_dir, "abcd1234-rest", fresh=True)
     assert bw._live_lock_owner(str(output_dir)) == "abcd1234"  # fresh owner
+
+
+def test_a_leaked_call_cannot_hold_a_budget_claim_forever(tmp_path: Path):
+    """The 2026-08-31 juice-shop run skipped abuse-case verification this way.
+
+    `SubagentStop` never arrived for actor-discoverer, so its call stayed
+    `running`; its BUDGET_CRITICAL marker still counted as active 53 minutes
+    later and suppressed verification for six candidates.
+    """
+    import time  # noqa: PLC0415
+
+    import agent_lifecycle  # noqa: PLC0415
+
+    call_id = "toolu_leak"
+    identity = {
+        "agent_call_id": call_id,
+        "session_id": "s1",
+        "agent": "actor-discoverer",
+        "agent_type": "appsec-advisor:appsec-actor-discoverer",
+        "model": "sonnet",
+        "description": "",
+        "background": True,
+        "action_id": "act1",
+        "job_id": "job1",
+    }
+    agent_lifecycle.register_call(tmp_path, identity)
+    (tmp_path / ".context-routing-plan.json").write_text(
+        json.dumps({"actions": [{"action_id": "act1", "job_ids": ["job1"]}]}), encoding="utf-8"
+    )
+    entry = {
+        "agent_call_id": call_id,
+        "sid": "s1",
+        "agent": "actor-discoverer",
+        "agent_type": "appsec-advisor:appsec-actor-discoverer",
+        "turns": 14,
+        "max": 15,
+        "pct": 0.933,
+        "action_id": "act1",
+        "job_id": "job1",
+    }
+    (tmp_path / bw.CRITICAL_FLAG_FILENAME).write_text(json.dumps([entry]), encoding="utf-8")
+
+    assert bw.has_active_critical_claim(tmp_path) is True
+
+    def _age(seconds: int) -> None:
+        path = agent_lifecycle.state_path(tmp_path)
+        state = json.loads(path.read_text(encoding="utf-8"))
+        for row in state["calls"]:
+            row["spawned_at"] = row["running_at"] = int(time.time()) - seconds
+        path.write_text(json.dumps(state), encoding="utf-8")
+
+    _age(bw.LEAKED_CALL_SECONDS - 60)
+    assert bw.has_active_critical_claim(tmp_path) is True, "a long but plausible run must keep its claim"
+
+    _age(bw.LEAKED_CALL_SECONDS + 60)
+    assert bw.has_active_critical_claim(tmp_path) is False, "a leaked call must not hold the claim"

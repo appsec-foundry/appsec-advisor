@@ -1,0 +1,390 @@
+generated: '2026-08-26T00:00:00Z'
+source: bundled-example
+description: Curated demonstration baseline informed by OWASP ASVS 5.0.0 and OWASP Top 10:2025, carrying the requirements of examples/appsec-requirements-example.yaml without its blueprints. It is not an official OWASP standard and must be tailored to the application's technology, data, threat model, and risk policy before operational use. Its links model an internal catalog host and do not resolve.
+url: https://appsec.int.example.com
+sources_meta:
+- id: owasp-informed-requirements
+  type: requirement
+  title: Curated OWASP-informed Demo Requirements
+  reference_url: https://appsec.int.example.com/req
+  reviewed_at: '2026-08-26T00:00:00Z'
+  items_count: 73
+  mode: curated
+categories:
+- id: CAT-WEB
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/web-frontend-security
+  title: Web & Frontend Security
+  context: Applies to applications that serve browser content or accept cross-origin browser requests. OWASP Top 10:2025 A01, A02, and A05 are the primary risk mappings.
+  requirements:
+  - id: WEB-001
+    url: https://appsec.int.example.com/req/web-frontend-security#web-001
+    text: Applications that use cookie-based or other ambient browser credentials MUST reject forged cross-site state-changing requests with a framework CSRF control, a session-bound token, or a validated same-origin signal. SameSite cookies provide defense in depth and state-changing actions MUST NOT use HTTP GET.
+    priority: MUST
+  - id: WEB-002
+    url: https://appsec.int.example.com/req/web-frontend-security#web-002
+    text: Authentication tokens, secrets, and sensitive personal data MUST NOT be stored in browser storage accessible to JavaScript. Session cookies MUST use HttpOnly, Secure, and an appropriate SameSite value.
+    priority: MUST
+  - id: WEB-003
+    url: https://appsec.int.example.com/req/web-frontend-security#web-003
+    text: When cross-origin browser access is required, CORS MUST emit only the methods and headers needed and return an Access-Control-Allow-Origin value only for an exact-match trusted origin. Credentialed responses MUST NOT use a wildcard origin, and CORS MUST NOT replace authentication, authorization, or CSRF protection.
+    priority: MUST
+  - id: WEB-004
+    url: https://appsec.int.example.com/req/web-frontend-security#web-004
+    text: Browser applications MUST send a tested Content-Security-Policy that restricts content to required sources, blocks object embedding, restricts framing, and avoids unsafe-inline and unsafe-eval unless a documented nonce- or hash-based migration is in progress.
+    priority: MUST
+  - id: WEB-005
+    url: https://appsec.int.example.com/req/web-frontend-security#web-005
+    text: Production browser applications served over HTTPS MUST send Strict-Transport-Security with a minimum max-age of one year. includeSubDomains and preload MUST be enabled only when every affected subdomain is HTTPS-ready and controlled by the organization.
+    priority: MUST
+  - id: WEB-006
+    url: https://appsec.int.example.com/req/web-frontend-security#web-006
+    text: Frontend dependencies SHOULD be actively maintained, version-locked, integrity-verified, and built with the framework's production safety checks enabled. Language- or framework-specific strict modes apply only when that technology supports them.
+    priority: SHOULD
+  - id: WEB-007
+    url: https://appsec.int.example.com/req/web-frontend-security#web-007
+    text: Untrusted data MUST be rendered with contextual output encoding or framework-native safe binding for the target HTML, attribute, URL, CSS, or JavaScript context. Unsafe DOM sinks such as raw innerHTML MUST NOT receive unsanitized content.
+    priority: MUST
+  - id: WEB-008
+    url: https://appsec.int.example.com/req/web-frontend-security#web-008
+    text: Browser responses MUST set X-Content-Type-Options, Referrer-Policy, an application-specific Permissions-Policy, and a framing restriction through CSP frame-ancestors or X-Frame-Options.
+    priority: MUST
+- id: CAT-EH
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/error-handling-security-events
+  title: Error Handling & Security Events
+  context: Applies to every application and service. Failures must preserve security invariants and expose no diagnostic internals to untrusted clients.
+  requirements:
+  - id: EH-001
+    url: https://appsec.int.example.com/req/error-handling-security-events#eh-001
+    text: Expected and unexpected errors MUST leave the application in a defined secure state, roll back incomplete security-sensitive operations, and fail closed when authorization or security context is missing or ambiguous.
+    priority: MUST
+  - id: EH-002
+    url: https://appsec.int.example.com/req/error-handling-security-events#eh-002
+    text: Client error responses MUST NOT expose stack traces, query text, internal paths, credentials, tokens, or raw exceptions. Diagnostic details MAY be recorded only in access-controlled server-side logs after sensitive values are removed.
+    priority: MUST
+  - id: EH-003
+    url: https://appsec.int.example.com/req/error-handling-security-events#eh-003
+    text: Authentication, registration, password-reset, and authorization failures MUST use non-enumerating responses and MUST NOT reveal whether an account, tenant, or protected resource exists.
+    priority: MUST
+- id: CAT-HN
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/system-hardening
+  title: System Hardening
+  context: Applies to production services and their operational endpoints. Network placement is defense in depth and never replaces authentication or authorization.
+  requirements:
+  - id: HN-001
+    url: https://appsec.int.example.com/req/system-hardening#hn-001
+    text: Production responses MUST remove unnecessary technology-disclosure headers and default banners. Required protocol headers MUST reveal no more product or version detail than operationally necessary.
+    priority: MUST
+  - id: HN-002
+    url: https://appsec.int.example.com/req/system-hardening#hn-002
+    text: Debug endpoints MUST be disabled in production. Required management endpoints MUST be authenticated and authorized, expose only necessary operations, and be isolated from public ingress on a dedicated interface, listener, or upstream route.
+    priority: MUST
+  - id: HN-003
+    url: https://appsec.int.example.com/req/system-hardening#hn-003
+    text: Production deployments MUST disable unused features, modules, sample applications, directory listings, and debug modes, and MUST contain no default, shared, or vendor-supplied working account.
+    priority: MUST
+  - id: HN-004
+    url: https://appsec.int.example.com/req/system-hardening#hn-004
+    text: High-exposure internet-facing applications SHOULD use a managed WAF or equivalent edge control when the threat model justifies it. This control MUST NOT replace application authentication, authorization, validation, or timely remediation.
+    priority: SHOULD
+- id: CAT-SD
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/secure-design-business-logic
+  title: Secure Design & Business Logic
+  context: Applies to systems with protected assets, privileged workflows, trust boundaries, or business rules whose abuse could cause material impact.
+  requirements:
+  - id: SD-001
+    url: https://appsec.int.example.com/req/secure-design-business-logic#sd-001
+    text: The system MUST maintain a threat model for protected assets, trust boundaries, entry points, privileged operations, and material abuse cases, and MUST review it when those elements change.
+    priority: MUST
+  - id: SD-002
+    url: https://appsec.int.example.com/req/secure-design-business-logic#sd-002
+    text: Security-sensitive business rules, including ownership, transaction limits, workflow ordering, and state transitions, MUST be enforced server-side and tested against representative bypass and replay attempts.
+    priority: MUST
+  - id: SD-003
+    url: https://appsec.int.example.com/req/secure-design-business-logic#sd-003
+    text: High-impact or irreversible operations MUST require an authenticated and authorized actor, an explicit confirmation or approval appropriate to the risk, replay protection where applicable, and an attributable audit event.
+    priority: MUST
+- id: CAT-AC
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/authentication-access-control
+  title: Authentication & Access Control
+  context: Applies to every protected action and resource. Authentication establishes identity; authorization independently binds that identity to the requested operation, tenant, and resource.
+  requirements:
+  - id: AC-001
+    url: https://appsec.int.example.com/req/authentication-access-control#ac-001
+    text: Service-to-service calls MUST authenticate the calling workload with a dedicated identity using an approved mechanism such as OAuth 2.0 client credentials with confidential-client authentication, private-key JWT, workload identity, or mTLS. Credentials and scopes MUST be unique and least-privileged per service.
+    priority: MUST
+  - id: AC-002
+    url: https://appsec.int.example.com/req/authentication-access-control#ac-002
+    text: Every protected operation MUST authorize the authenticated identity server-side using least privilege and deny by default. The policy MAY use roles, attributes, relationships, or capabilities, but MUST NOT rely on client-side checks.
+    priority: MUST
+  - id: AC-003
+    url: https://appsec.int.example.com/req/authentication-access-control#ac-003
+    text: Login, registration, credential recovery, verification, token issuance, and other abuse-prone endpoints MUST apply bounded request sizes and rate limits by both account or identifier and client source using a control effective across application instances.
+    priority: MUST
+  - id: AC-004
+    url: https://appsec.int.example.com/req/authentication-access-control#ac-004
+    text: Workforce and privileged users MUST authenticate through the organization-managed identity provider using OIDC authorization code with PKCE or SAML, and privileged access MUST require phishing-resistant MFA where supported. A parallel local password path requires a documented operational need.
+    priority: MUST
+  - id: AC-005
+    url: https://appsec.int.example.com/req/authentication-access-control#ac-005
+    text: Resource servers MUST validate every access token before use. JWT validation MUST verify the signature with an allowlisted algorithm and expected issuer, audience, and expiry; opaque tokens MUST use authoritative introspection or an equivalent server-side mechanism. Cached results MUST NOT outlive token validity or revocation policy.
+    priority: MUST
+  - id: AC-006
+    url: https://appsec.int.example.com/req/authentication-access-control#ac-006
+    text: Every request for a protected object MUST authorize the authenticated identity against that object's owner, tenant, state, and requested action. User-supplied identifiers and token possession alone MUST NOT grant access.
+    priority: MUST
+  - id: AC-007
+    url: https://appsec.int.example.com/req/authentication-access-control#ac-007
+    text: Stateful sessions MUST rotate their identifier after authentication and privilege changes, be invalidated server-side on logout and credential or MFA changes, and enforce documented idle and absolute expiration limits.
+    priority: MUST
+  - id: AC-008
+    url: https://appsec.int.example.com/req/authentication-access-control#ac-008
+    text: Authentication and recovery flows MUST issue one-time codes only through their addressed out-of-band channel, make them short-lived and single-use, and grant no full session or protected access before verification succeeds.
+    priority: MUST
+- id: CAT-IV
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/input-validation-data-handling
+  title: Input Validation & Data Handling
+  context: Applies at every boundary where data, files, URLs, serialized objects, or commands enter from an untrusted source.
+  requirements:
+  - id: IV-001
+    url: https://appsec.int.example.com/req/input-validation-data-handling#iv-001
+    text: At each trust boundary, external input MUST be validated for expected type, length, range, format, and allowed values before use. Security-sensitive structured requests MUST reject unknown or ambiguous fields.
+    priority: MUST
+  - id: IV-002
+    url: https://appsec.int.example.com/req/input-validation-data-handling#iv-002
+    text: When XML is accepted, parsers MUST disable external entity resolution, external DTD loading, and network access unless a documented use case enables an allowlisted resource through an isolated parser.
+    priority: MUST
+  - id: IV-003
+    url: https://appsec.int.example.com/req/input-validation-data-handling#iv-003
+    text: Untrusted data MUST use a safe, data-only parser with an explicit schema or type allowlist and MUST NOT be passed to a deserializer that can instantiate arbitrary or privileged types.
+    priority: MUST
+  - id: IV-004
+    url: https://appsec.int.example.com/req/input-validation-data-handling#iv-004
+    text: Database queries MUST bind untrusted values through parameterized queries, prepared statements, or safe ORM parameters. Untrusted values MUST NOT be concatenated into query syntax or identifiers.
+    priority: MUST
+  - id: IV-005
+    url: https://appsec.int.example.com/req/input-validation-data-handling#iv-005
+    text: File uploads MUST enforce size and count limits, verify content independently of the supplied name and media type, generate a server-controlled storage name, prevent path traversal and active-content execution, and store files outside executable or public paths unless explicitly required.
+    priority: MUST
+  - id: IV-006
+    url: https://appsec.int.example.com/req/input-validation-data-handling#iv-006
+    text: Input-driven work MUST enforce request and decompressed-size limits, field and collection bounds, nesting limits, processing timeouts, and pagination or result caps before expensive parsing or downstream work.
+    priority: MUST
+  - id: IV-007
+    url: https://appsec.int.example.com/req/input-validation-data-handling#iv-007
+    text: When untrusted input influences an outbound destination, the application MUST allowlist permitted schemes and destinations, resolve and validate the effective address, block loopback, link-local, private, metadata, and other forbidden networks, and revalidate or disable redirects.
+    priority: MUST
+  - id: IV-008
+    url: https://appsec.int.example.com/req/input-validation-data-handling#iv-008
+    text: Untrusted values MUST NOT select filesystem paths, commands, interpreters, or process options. Filesystem access MUST use canonical contained paths, and process execution MUST use a shell-free argument array with an allowlisted executable and bounded runtime.
+    priority: MUST
+- id: CAT-DP
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/data-protection-cryptography
+  title: Data Protection & Cryptography
+  context: Applies according to data classification and threat model. Cryptographic choices and retention periods must follow an approved organizational policy rather than an invented universal value.
+  requirements:
+  - id: DP-001
+    url: https://appsec.int.example.com/req/data-protection-cryptography#dp-001
+    text: Confidential data at rest MUST be protected with an organization-approved authenticated-encryption or platform storage mechanism, with keys separated from the protected data and access limited to the workload identities that require it.
+    priority: MUST
+  - id: DP-002
+    url: https://appsec.int.example.com/req/data-protection-cryptography#dp-002
+    text: Session, reset, activation, and other bearer tokens MUST be generated with a cryptographically secure random source and at least 128 bits of entropy. Cryptographic keys MUST use the algorithm-specific size and generation mechanism required by the approved cryptographic policy.
+    priority: MUST
+  - id: DP-003
+    url: https://appsec.int.example.com/req/data-protection-cryptography#dp-003
+    text: Credentials, bearer tokens, one-time codes, and other sensitive values MUST NOT appear in URLs or query parameters. They MUST use an appropriate protected header or request body over TLS and be excluded from logs and analytics.
+    priority: MUST
+  - id: DP-004
+    url: https://appsec.int.example.com/req/data-protection-cryptography#dp-004
+    text: When local passwords are required, the application MUST reject inputs above its documented UTF-8 byte limit before hashing and store passwords only with a maintained Argon2id, scrypt, bcrypt, or PBKDF2 implementation using approved parameters and unique salts.
+    priority: MUST
+  - id: DP-005
+    url: https://appsec.int.example.com/req/data-protection-cryptography#dp-005
+    text: Persistent credentials and cryptographic keys MUST come from external configuration or a managed secret store, remain stable until explicit rotation, be scoped to one workload and purpose, and be rotated on compromise and according to a documented lifecycle.
+    priority: MUST
+  - id: DP-006
+    url: https://appsec.int.example.com/req/data-protection-cryptography#dp-006
+    text: Traffic that leaves the machine MUST use TLS 1.2 or later with an approved configuration; TLS 1.3 SHOULD be preferred. Plain HTTP MAY be used only on loopback, and workload authentication such as mTLS MUST be added when the trust model requires it.
+    priority: MUST
+  - id: DP-007
+    url: https://appsec.int.example.com/req/data-protection-cryptography#dp-007
+    text: TLS clients MUST validate certificate chains and the expected service identity and MUST NOT expose a production switch that disables verification. Private trust anchors MUST be configured explicitly and scoped to their intended destinations.
+    priority: MUST
+  - id: DP-008
+    url: https://appsec.int.example.com/req/data-protection-cryptography#dp-008
+    text: Personal, confidential, and regulated data MUST have documented collection purpose, access policy, retention period, backup handling, and verifiable deletion behavior, and the application MUST retain no more data than those purposes require.
+    priority: MUST
+- id: CAT-SC
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/supply-chain-dependency-security
+  title: Supply Chain & Dependency Security
+  context: Applies to source, build, package, model, container, and deployment dependencies. Blocking thresholds and exceptions must be explicit, risk-based, time-bounded, and auditable.
+  requirements:
+  - id: SC-001
+    url: https://appsec.int.example.com/req/supply-chain-dependency-security#sc-001
+    text: CI MUST scan resolved direct and transitive dependencies against current vulnerability intelligence and block release for known-exploited or policy-defined critical or high findings. An exception MUST name an owner, compensating controls, justification, and expiry regardless of fix availability.
+    priority: MUST
+  - id: SC-002
+    url: https://appsec.int.example.com/req/supply-chain-dependency-security#sc-002
+    text: Production builds MUST resolve dependencies from a committed lockfile or equivalent immutable manifest, verify package integrity, and use frozen installation so floating ranges cannot change the deployed dependency graph.
+    priority: MUST
+  - id: SC-003
+    url: https://appsec.int.example.com/req/supply-chain-dependency-security#sc-003
+    text: Build systems MUST use an explicit allowlist of trusted registries and namespaces, authenticate private sources, and prevent dependency-confusion fallback from private package names to public registries.
+    priority: MUST
+  - id: SC-004
+    url: https://appsec.int.example.com/req/supply-chain-dependency-security#sc-004
+    text: Each production release SHOULD produce an SBOM from the resolved build graph, bind it to the released artifact, retain it with release evidence, and make it available to vulnerability-response owners.
+    priority: SHOULD
+  - id: SC-005
+    url: https://appsec.int.example.com/req/supply-chain-dependency-security#sc-005
+    text: Dependency changes SHOULD receive automated policy review during each build, and owners SHOULD remove unused packages and replace unmaintained dependencies within a documented remediation period.
+    priority: SHOULD
+  - id: SC-006
+    url: https://appsec.int.example.com/req/supply-chain-dependency-security#sc-006
+    text: CI MUST run applicable static security analysis on changed code and block policy-defined exploitable findings. Suppressions MUST identify the exact finding, rationale, approver, and expiry and MUST NOT disable the scanner or an entire rule class without review.
+    priority: MUST
+  - id: SC-007
+    url: https://appsec.int.example.com/req/supply-chain-dependency-security#sc-007
+    text: Release artifacts MUST be produced by an access-controlled build service from reviewed source, carry verifiable provenance and integrity metadata, and be promoted without rebuilding or accepting unsigned replacement artifacts.
+    priority: MUST
+- id: CAT-LM
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/security-logging-monitoring
+  title: Security Logging & Monitoring
+  context: Applies to production services and security-relevant control planes. Logs must support investigation without becoming a secondary store of secrets or unnecessary personal data.
+  requirements:
+  - id: LM-001
+    url: https://appsec.int.example.com/req/security-logging-monitoring#lm-001
+    text: Applications MUST record security-relevant events including authentication and authorization failures, privilege and identity changes, sensitive configuration changes, administrative actions, and security-control throttling with an attributable actor, target, time, action, and outcome.
+    priority: MUST
+  - id: LM-002
+    url: https://appsec.int.example.com/req/security-logging-monitoring#lm-002
+    text: Security events MUST use a structured, versioned format with a timestamp, correlation identifier, actor or workload identifier where lawful, target, action, outcome, and source component.
+    priority: MUST
+  - id: LM-003
+    url: https://appsec.int.example.com/req/security-logging-monitoring#lm-003
+    text: Production security events MUST be forwarded to an access-controlled centralized system that detects unauthorized modification or deletion and preserves events when an application instance is replaced or compromised.
+    priority: MUST
+  - id: LM-004
+    url: https://appsec.int.example.com/req/security-logging-monitoring#lm-004
+    text: Security logs SHOULD follow a documented retention and deletion policy derived from incident-response, legal, and privacy needs, with access restrictions and integrity protection throughout the retention period.
+    priority: SHOULD
+  - id: LM-005
+    url: https://appsec.int.example.com/req/security-logging-monitoring#lm-005
+    text: Alerting SHOULD cover defined high-confidence events such as repeated authentication failures, privilege changes, security-control disablement, unusual protected-data access, and log-pipeline failure, with a tested route to an accountable responder.
+    priority: SHOULD
+  - id: LM-006
+    url: https://appsec.int.example.com/req/security-logging-monitoring#lm-006
+    text: Logs MUST NOT contain passwords, bearer tokens, private keys, session identifiers, one-time codes, or complete payment credentials. Personal data MUST be minimized, masked where possible, and limited to a documented investigation purpose.
+    priority: MUST
+- id: CAT-IF
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/infrastructure-container-security
+  title: Infrastructure & Container Security
+  context: Applies only when the application builds or deploys containers, Kubernetes workloads, or infrastructure as code; otherwise these requirements are not applicable.
+  requirements:
+  - id: IF-001
+    url: https://appsec.int.example.com/req/infrastructure-container-security#if-001
+    text: Container images MUST be scanned before promotion and continuously re-evaluated against current vulnerability intelligence. Promotion MUST block known-exploited or policy-defined critical or high findings unless a time-bounded approved exception exists.
+    priority: MUST
+  - id: IF-002
+    url: https://appsec.int.example.com/req/infrastructure-container-security#if-002
+    text: Application containers MUST run as a non-root numeric identity, disallow privilege escalation, and be rejected by deployment policy when those properties are absent.
+    priority: MUST
+  - id: IF-003
+    url: https://appsec.int.example.com/req/infrastructure-container-security#if-003
+    text: Container root filesystems SHOULD be read-only, with explicitly declared, size-bounded writable mounts only for required runtime data and temporary files.
+    priority: SHOULD
+  - id: IF-004
+    url: https://appsec.int.example.com/req/infrastructure-container-security#if-004
+    text: Production containers MUST drop all Linux capabilities by default, add back only documented required capabilities, use a restrictive seccomp profile, and MUST NOT run privileged.
+    priority: MUST
+  - id: IF-005
+    url: https://appsec.int.example.com/req/infrastructure-container-security#if-005
+    text: Container workloads MUST use default-deny ingress and egress policy with explicit exceptions for documented service flows, DNS, telemetry, and required external destinations.
+    priority: MUST
+  - id: IF-006
+    url: https://appsec.int.example.com/req/infrastructure-container-security#if-006
+    text: Infrastructure-as-code MUST be validated in CI against an approved security policy and block policy-defined critical misconfigurations before deployment. Exceptions MUST be scoped, owned, justified, and time-bounded.
+    priority: MUST
+  - id: IF-007
+    url: https://appsec.int.example.com/req/infrastructure-container-security#if-007
+    text: Base images SHOULD be pinned by immutable digest and rebuilt automatically when an approved upstream image or required security update changes, within the remediation window defined by policy.
+    priority: SHOULD
+  - id: IF-008
+    url: https://appsec.int.example.com/req/infrastructure-container-security#if-008
+    text: Infrastructure changes MUST originate from version-controlled reviewed definitions and pass required approval and policy gates before an automated identity with least privilege applies them to production.
+    priority: MUST
+- id: CAT-LLM
+  source_id: owasp-informed-requirements
+  url: https://appsec.int.example.com/req/ai-llm-security
+  title: AI / LLM Security (OWASP LLM Top 10)
+  context: Applies only to features that send data to or act on output from an LLM, embedding model, vector store, or model-connected tool. Model output and retrieved content are always untrusted.
+  requirements:
+  - id: LLM-001
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-001
+    text: |-
+      Prompts, retrieved documents, files, tool results, memory, and model output MUST be treated as untrusted content and clearly separated from operator instructions.
+      The application MUST assume prompt injection cannot be eliminated by delimiters, sanitization, or system instructions and MUST limit impact with deterministic authorization, least privilege, constrained tools, validated outputs, and adversarial tests for direct and indirect injection.
+    priority: MUST
+  - id: LLM-002
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-002
+    text: |-
+      Before model invocation, the application MUST authorize and minimize every data item placed in the model context for the authenticated tenant and purpose.
+      Model output MUST be checked for policy-prohibited sensitive data before delivery, but pattern filtering MUST NOT replace source-data access control or tenant isolation.
+    priority: MUST
+  - id: LLM-003
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-003
+    text: |-
+      Model, adapter, tokenizer, dataset, prompt package, and LLM SDK versions MUST come from approved sources, be inventoried, pinned or immutably identified, and have integrity and provenance verified before deployment.
+    priority: SHOULD
+  - id: LLM-004
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-004
+    text: |-
+      RAG ingestion MUST authenticate and authorize the source, retain provenance and tenant ownership, reject or quarantine untrusted updates, and record attributable changes.
+      Retrieval MUST enforce the source document's access policy before content reaches the model context.
+    priority: SHOULD
+  - id: LLM-005
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-005
+    text: |-
+      Model output MUST be validated against a bounded schema and encoded for its destination before use.
+      It MUST NOT flow directly into eval, a shell, query syntax, HTML, filesystem paths, security decisions, or downstream actions; deterministic code must validate and mediate each sink.
+    priority: MUST
+  - id: LLM-006
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-006
+    text: |-
+      Each model-connected tool action MUST be authenticated and authorized server-side for the current user, tenant, resource, and operation using a least-privileged tool identity and bounded parameters.
+      High-impact, external, destructive, or irreversible actions MUST require an explicit human approval at the point where the exact action and target are known.
+    priority: MUST
+  - id: LLM-007
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-007
+    text: |-
+      System prompts MUST contain no credentials, personal data, tenant secrets, hidden authorization rules, or other information whose disclosure creates a security boundary failure.
+      Authorization and safety-critical behavior MUST be enforced outside the model because system-prompt confidentiality and instruction adherence cannot be relied upon.
+    priority: MUST
+  - id: LLM-008
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-008
+    text: |-
+      Vector and embedding stores MUST isolate tenants and enforce document-level authorization for queries and updates.
+      Similarity search MUST enforce bounded result counts and rate limits, and ingestion MUST validate model identity, dimensions, content size, and provenance.
+    priority: SHOULD
+  - id: LLM-009
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-009
+    text: |-
+      When model output can materially affect a person, security decision, financial action, or regulated process, the application MUST ground claims in authorized sources, surface provenance and uncertainty, and require deterministic validation or qualified human review before acting.
+    priority: SHOULD
+  - id: LLM-010
+    url: https://appsec.int.example.com/req/ai-llm-security#llm-010
+    text: |-
+      LLM features MUST bound input size, output tokens, requests per user and source, tool calls, retrieval results, agent iterations, wall-clock time, concurrency, and cost.
+      Shared enforcement, monitoring, quotas, and circuit breakers MUST prevent one tenant or workflow from exhausting service or budget.
+    priority: MUST
+blueprints: []

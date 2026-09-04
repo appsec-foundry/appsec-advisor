@@ -18,6 +18,7 @@ Commands:
     orchestration_controller.py context-v2-post-evidence --output-dir <path>
     orchestration_controller.py context-v2-post-triage --output-dir <path>
     orchestration_controller.py context-v2-finalize --output-dir <path>
+    orchestration_controller.py verify-receipts --output-dir <path> --action-id <id>
     orchestration_controller.py verify-receipts --output-dir <path> --receipt <path> <sha256> [...]
     orchestration_controller.py next --output-dir <path>
 """
@@ -34,6 +35,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from functools import cache
 from pathlib import Path
@@ -61,6 +63,7 @@ import detect_session_model  # noqa: E402
 import ensure_output_gitignore  # noqa: E402
 import merge_threats as merge_decision_contract  # noqa: E402
 import resolve_config  # noqa: E402
+import stamp_threat_model  # noqa: E402
 import stride_dispatch_waves  # noqa: E402
 import telemetry_consistency  # noqa: E402
 import validate_intermediate as intermediate_contract  # noqa: E402
@@ -78,6 +81,14 @@ THIN_STAGE3_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-th
 THIN_STAGE4_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-stage4.md"
 THIN_COMPLETION_RUNTIME = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-thin-completion.md"
 CONTEXT_V2_GENERATION = "context-v2"
+
+# The plan-bound dispatch awaiting receipt verification, and the record of the
+# verifications that happened. Together they make verify-receipts mandatory:
+# without them a skipped call left no trace and blocked nothing.
+PENDING_DISPATCH_NAME = ".pending-dispatch.json"
+RECEIPT_VERIFICATION_NAME = ".receipt-verification.json"
+PENDING_DISPATCH_SCHEMA = PLUGIN_ROOT / "schemas" / "pending-dispatch.schema.json"
+RECEIPT_VERIFICATION_SCHEMA = PLUGIN_ROOT / "schemas" / "receipt-verification.schema.json"
 
 MAX_ACTION_BYTES = 65_536
 MAX_STRIDE_ANALYST_CONTEXT_BYTES = 1_048_576
@@ -280,6 +291,11 @@ _FULL_INTERMEDIATE_NAMES = {
     ".budget-warning",
     ".trust-boundary-assessment-input.json",
     ".trust-boundary-candidates.json",
+    # Business context supplied for a previous run. `effective_source` gives the
+    # run-only file precedence over the repository's own, so a leftover would
+    # shadow `docs/business-context.md` and rate this run against a document
+    # nobody passed to it.
+    ".business-context-input.md",
 }
 _FULL_INTERMEDIATE_GLOBS = (".stride-*.json", ".merge-*.json")
 
@@ -426,6 +442,12 @@ _DISPATCH_KEYS = (
     "max_cost_usd",
 )
 _DISPATCH_EXTRA_KEYS = (
+    "abuse_verifier_model_alias",
+    "architect_model_alias",
+    "qa_content_model_alias",
+    "qa_routine_model_alias",
+    "renderer_model_alias",
+    "model_pins_dropped",
     "actor_discovery_model",
     "compat_label",
     "estimate_source",
@@ -907,10 +929,31 @@ def consume_artifact_receipt(output_root: Path, receipt: dict[str, Any]) -> byte
     return payload
 
 
-def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]]) -> dict[str, Any]:
-    """Re-hash one action's admitted inputs immediately before Agent dispatch."""
-    if not receipt_pairs:
-        raise CallError("receipt verification requires at least one artifact")
+def verify_receipt_hashes(
+    output_root: Path,
+    receipt_pairs: list[tuple[str, str]],
+    *,
+    action_id: str | None = None,
+) -> dict[str, Any]:
+    """Re-hash one action's admitted inputs immediately before Agent dispatch.
+
+    Two ways to name the inputs. ``action_id`` resolves them from the effective
+    plan, which recorded every one of them when it admitted them; the echoed
+    ``receipt_pairs`` form is what the thin runtimes used before that and stays
+    accepted. Either way the verification is recorded, and the next boundary
+    command refuses to advance a dispatch that carries no record — see
+    ``_require_receipt_verification``. Without that record the check was
+    optional in practice: skipping it left no trace anywhere in the run.
+    """
+    if bool(receipt_pairs) == bool(action_id):
+        raise CallError("receipt verification takes either --action-id or --receipt, not both or neither")
+    pending = _pending_dispatch(output_root)
+    if action_id is not None:
+        if pending is None:
+            raise CallError(f"no emitted dispatch is waiting for receipt verification: {action_id}")
+        if action_id != pending["action_id"]:
+            raise CallError(f"pending dispatch is {pending['action_id']!r}, not {action_id!r}")
+        receipt_pairs = [(row["artifact_path"], row["sha256"]) for row in pending["receipts"]]
     # A bound action names the effective context plan twice — once among its
     # artifact receipts, once as its plan reference — so a caller that passes
     # both is repeating one claim, not making a second one. Equal pairs fold
@@ -932,14 +975,191 @@ def verify_receipt_hashes(output_root: Path, receipt_pairs: list[tuple[str, str]
             raise ControllerError(f"cannot consume artifact {artifact_path!r}: {exc}") from exc
         if hashlib.sha256(payload).hexdigest() != expected_sha256:
             raise ControllerError(f"artifact changed after validation: {artifact_path}")
+    recorded = _record_receipt_verification(output_root, action_id, expected)
+    receipts = [f"Verified {len(expected)} artifact receipt(s) immediately before dispatch"]
+    if recorded:
+        receipts.append(f"Recorded the verification of {recorded}")
     return _validate_action(
         {
             "schema_version": 1,
             "action": "run_gate",
             "dispatch_values": {"output_dir": str(output_root.resolve())},
-            "receipts": [f"Verified {len(expected)} artifact receipt(s) immediately before dispatch"],
+            "receipts": receipts,
         }
     )
+
+
+def _validate_receipt_state(value: Any, schema_path: Path, label: str) -> dict[str, Any]:
+    """Validate one controller-owned receipt state document."""
+    if not isinstance(value, dict):
+        raise ControllerError(f"{label} must contain an object")
+    if Draft202012Validator is None:
+        raise ControllerError(f"cannot validate {label}: jsonschema dependency is unavailable")
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda item: list(item.path))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ControllerError(f"cannot load {label} schema: {exc}") from exc
+    if errors:
+        detail = "; ".join(error.message for error in errors[:5])
+        raise ControllerError(f"{label} schema validation failed: {detail}")
+    return value
+
+
+def _receipt_rows_sha256(rows: list[dict[str, str]]) -> str:
+    return hashlib.sha256(_canonical_json_bytes(rows)).hexdigest()
+
+
+def _open_receipt_verification(output_root: Path, action: dict[str, Any]) -> None:
+    """Persist the exact emitted action and receipt expectation fail-closed."""
+    action_id = (action.get("context_plan") or {}).get("action_id")
+    if not action_id:
+        return
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+
+    try:
+        context_routing.validate_action_plan_reference(action, output_root)
+        receipt_pairs = context_routing.receipts_for_action(output_root, str(action_id))
+    except context_routing.ContextRoutingError as exc:
+        raise ControllerError(f"cannot bind pending receipt verification: {exc}") from exc
+    expected = {path: sha256 for path, sha256 in receipt_pairs}
+    for receipt in action.get("artifact_receipts", []):
+        path = receipt.get("artifact_path")
+        sha256 = receipt.get("sha256")
+        if path and sha256 and expected.setdefault(path, sha256) != sha256:
+            raise ControllerError(f"emitted action holds conflicting receipt fingerprints for {path}")
+    reference = action["context_plan"]
+    receipt_path = str(reference["receipt_path"])
+    receipt_sha256 = str(reference["receipt_sha256"])
+    if expected.setdefault(receipt_path, receipt_sha256) != receipt_sha256:
+        raise ControllerError(f"emitted action holds conflicting receipt fingerprints for {receipt_path}")
+    rows = [{"artifact_path": path, "sha256": expected[path]} for path in sorted(expected)]
+    pending = _validate_receipt_state(
+        {
+            "schema_version": 1,
+            "action_id": str(action_id),
+            "action": action.get("action"),
+            "action_sha256": hashlib.sha256(_canonical_json_bytes(action)).hexdigest(),
+            "plan_sha256": str(reference["sha256"]),
+            "plan_receipt_sha256": receipt_sha256,
+            "emitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "receipts": rows,
+        },
+        PENDING_DISPATCH_SCHEMA,
+        "pending dispatch",
+    )
+    try:
+        atomic_write_json(output_root / PENDING_DISPATCH_NAME, pending, sort_keys=True)
+        (output_root / RECEIPT_VERIFICATION_NAME).unlink(missing_ok=True)
+    except OSError as exc:
+        raise ControllerError(f"cannot persist pending receipt verification: {exc}") from exc
+
+
+def _pending_dispatch(output_root: Path) -> dict[str, Any] | None:
+    """Return the plan-bound dispatch the controller emitted most recently."""
+    path = output_root / PENDING_DISPATCH_NAME
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ControllerError(f"cannot read pending dispatch state: {exc}") from exc
+    return _validate_receipt_state(data, PENDING_DISPATCH_SCHEMA, "pending dispatch")
+
+
+def _record_receipt_verification(
+    output_root: Path,
+    action_id: str | None,
+    verified: dict[str, str],
+) -> str | None:
+    """Record which dispatch this verification covers; return that action id.
+
+    The echoed form names no action, so it is matched against the pending
+    dispatch's own ledger: a call that verified everything the plan admitted
+    for that action satisfies it, whichever way it named the artefacts. A call
+    that verified something else records nothing and leaves the gate closed.
+    """
+    pending = _pending_dispatch(output_root)
+    if pending is None:
+        return None
+    pending_id = str(pending["action_id"])
+    admitted = {row["artifact_path"]: row["sha256"] for row in pending["receipts"]}
+    if action_id is not None and action_id != pending_id:
+        return None
+    if admitted != verified:
+        return None
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+
+    marker = output_root / RECEIPT_VERIFICATION_NAME
+    rows = pending["receipts"]
+    state = _validate_receipt_state(
+        {
+            "schema_version": 1,
+            "action_id": pending_id,
+            "action_sha256": pending["action_sha256"],
+            "plan_sha256": pending["plan_sha256"],
+            "plan_receipt_sha256": pending["plan_receipt_sha256"],
+            "receipts_sha256": _receipt_rows_sha256(rows),
+            "artifact_count": len(rows),
+            "verified_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+        RECEIPT_VERIFICATION_SCHEMA,
+        "receipt verification",
+    )
+    try:
+        atomic_write_json(marker, state, sort_keys=True)
+    except OSError as exc:
+        raise ControllerError(f"cannot persist receipt verification: {exc}") from exc
+    _append_event(output_root, "RECEIPTS_VERIFIED", f"action={pending_id} artifacts={len(rows)}")
+    return pending_id
+
+
+def _require_receipt_verification(output_root: Path) -> None:
+    """Refuse a boundary that follows an unverified dispatch.
+
+    ``verify-receipts`` is the TOCTOU guard between the moment the controller
+    hashed an artefact and the moment an agent reads it. It was instructed in
+    prose to an LLM orchestrator, wrote no state and gated nothing, so a run
+    that skipped it looked exactly like a run that did not — on run a2a0e355
+    neither the artefacts nor ``.agent-run.log`` recorded a single one of the
+    16 calls it happened to make.
+
+    A missing record is a statement about the call, not about the run: the
+    orchestrator verifies and repeats the same boundary, so this rejects (exit
+    3) rather than ending a run that is otherwise intact.
+    """
+    pending = _pending_dispatch(output_root)
+    if pending is None:
+        plan_files = (
+            output_root / context_routing.PLAN_NAME,
+            output_root / context_routing.PLAN_RECEIPT_NAME,
+        )
+        if any(path.exists() for path in plan_files):
+            raise ControllerError("effective context plan exists without pending dispatch verification state")
+        return
+    action_id = str(pending["action_id"])
+    marker = output_root / RECEIPT_VERIFICATION_NAME
+    if not marker.exists():
+        raise CallError(
+            f"dispatch {action_id} was not verified: call verify-receipts --output-dir "
+            f'"$OUTPUT_DIR" --action-id {action_id} before this boundary, then repeat it'
+        )
+    try:
+        state = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ControllerError(f"cannot read receipt verification state: {exc}") from exc
+    state = _validate_receipt_state(state, RECEIPT_VERIFICATION_SCHEMA, "receipt verification")
+    expected = {
+        "action_id": action_id,
+        "action_sha256": pending["action_sha256"],
+        "plan_sha256": pending["plan_sha256"],
+        "plan_receipt_sha256": pending["plan_receipt_sha256"],
+        "receipts_sha256": _receipt_rows_sha256(pending["receipts"]),
+        "artifact_count": len(pending["receipts"]),
+    }
+    if all(state.get(key) == value for key, value in expected.items()):
+        return
+    raise ControllerError(f"receipt verification state is stale for dispatch {action_id}")
 
 
 def _emit(action: dict[str, Any]) -> int:
@@ -979,6 +1199,7 @@ def _emit(action: dict[str, Any]) -> int:
                 event,
                 f"revision={plan['revision']} actions={len(plan['actions'])} deliveries={len(plan['deliveries'])}",
             )
+            _open_receipt_verification(Path(action["dispatch_values"]["output_dir"]), action)
     except ControllerError as exc:
         action = _failure_action(exc)
     print(json.dumps(action, indent=2, sort_keys=True))
@@ -1141,6 +1362,26 @@ def _append_event(output_dir: Path, event: str, detail: str, level: str = "INFO"
 
 _FAILURE_MARKERS = ("FATAL", "INVALID", "ERROR", "Traceback")
 _EXIT_LEAD_RE = re.compile(r"^(.*?failed with exit -?\d+:)")
+# Values that differ per finding but not per failure class: quoted literals,
+# artifact ids, and bare numbers. Collapsing them lets N findings of one kind be
+# counted as one class (see `_finding_class`).
+_FINDING_NOISE_RE = re.compile(r"'[^']*'|\"[^\"]*\"|\b[A-Za-z]{1,5}-\d+\b|\b\d+\b")
+_BENIGN_TOKENS = ("WARN", "ADVISORY", "NOTE", "INFO", "DEBUG")
+
+
+def _is_benign_line(line: str) -> bool:
+    """True for a line whose own prefix declares it non-fatal.
+
+    Matched on the prefix token rather than the line start, because the
+    producers spell it `TRUST_BOUNDARY_WARN:` and `DATA_FLOW_WARN:` as often as
+    plain `WARNING:`.
+    """
+    return any(token in line.split(":", 1)[0].upper() for token in _BENIGN_TOKENS)
+
+
+def _finding_class(line: str) -> str:
+    """Collapse one finding to its class so N of a kind can be counted."""
+    return _FINDING_NOISE_RE.sub("·", line)
 
 
 def _abort_event_detail(reason: str) -> str:
@@ -1152,20 +1393,43 @@ def _abort_event_detail(reason: str) -> str:
     normal filtering and sent two readers down the wrong path. A multi-line
     detail also breaks the one-line-per-event log format, leaving every
     continuation line unparseable.
+
+    Two failure shapes defeated the marker-only rule that fixed the case above:
+
+    * **No marker at all.** Only some producers prefix a fault with `FATAL:`;
+      216 stderr sites report one as plain `<script>: <exception>`. With no
+      marker the first line was reported, so the 2026-07-31 trust-boundary abort
+      logged a `TRUST_BOUNDARY_WARN` about a rejected evidence path while the
+      real exception — the last line — never reached the log and the run has no
+      known cause to this day. Fall back to the last non-benign line instead.
+    * **N findings of one class.** Reporting one arbitrary exemplar of 116
+      identical `does not resolve` lines hides the very fact that *every*
+      reference failed, which is what separates a systematic defect from a few
+      bad values. The 2026-08-30 requirements abort was misdiagnosed as stray
+      analyzer IDs for exactly this reason. Count the classes and say `116×`.
     """
     lines = [line.strip() for line in str(reason).splitlines() if line.strip()]
     if not lines:
         return ""
     head = lines[0]
+    rest = lines[1:]
+    extra = f"  (+{len(rest)} more line(s))" if rest else ""
     # The last marker line, not the first: a validator prints its class
     # ("FATAL: schema validation failed") before the finding that caused it
     # ("INVALID: threats[18].title …"), and the finding is what a reader acts on.
-    salient = next((line for line in reversed(lines[1:]) if line.startswith(_FAILURE_MARKERS)), "")
-    extra = f"  (+{len(lines) - 1} more line(s))" if len(lines) > 1 else ""
-    if not salient:
+    failures = [line for line in rest if line.startswith(_FAILURE_MARKERS)]
+    if not failures:
+        failures = [line for line in rest if not _is_benign_line(line)]
+    if not failures:
         return f"{head}{extra}"
-    lead = _EXIT_LEAD_RE.match(head)
-    return f"{lead.group(1) if lead else head} {salient}{extra}"
+    lead_match = _EXIT_LEAD_RE.match(head)
+    lead = lead_match.group(1) if lead_match else head
+    classes = Counter(_finding_class(line) for line in failures)
+    dominant, count = classes.most_common(1)[0]
+    salient = next(line for line in reversed(failures) if _finding_class(line) == dominant)
+    if count > 1:
+        return f"{lead} {count}× {salient}{extra}"
+    return f"{lead} {failures[-1]}{extra}"
 
 
 def _run_script(
@@ -1473,6 +1737,39 @@ def _fetch_requirements(cfg: dict[str, Any]) -> None:
     _run_script("fetch_requirements.py", args)
 
 
+def _capture_business_context(cfg: dict[str, Any], receipts: list[str]) -> None:
+    """Capture an operator-supplied ``--context`` source before Stage 1 reads it.
+
+    The document reaches the analysis only through
+    ``<output>/.business-context-input.md``, which ``build_threat_modeling_context.py``
+    picks up at the context-v2 entry. Leaving that capture to a prompt step made
+    the whole feature depend on an instruction being followed: a rejected URL, an
+    oversized file, a credential hit, or a skipped step produced a run that
+    analyzed as if no context had been passed, and said nothing.
+
+    A declared source is an explicit operator decision, so a failed capture stops
+    the run with the reason instead of degrading silently. The interactive
+    question stays in the skill; only the non-interactive capture moves here.
+    """
+    source = cfg.get("business_context_source")
+    if not source:
+        return
+    _run_script(
+        "load_business_context.py",
+        [
+            "--repo-root",
+            str(cfg["repo_root"]),
+            "--output-dir",
+            str(cfg["output_dir"]),
+            "--source",
+            str(source),
+            "--run-only",
+        ],
+    )
+    receipts.append("business context: captured for this run")
+    _append_event(Path(cfg["output_dir"]), "BUSINESS_CONTEXT_CAPTURED", "scope=run-only")
+
+
 def _session_context_advisory(output_dir: Path) -> str:
     """Return a session-scoped throughput/activity advisory, never occupancy."""
     session_id = (os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID") or "")[:8]
@@ -1606,6 +1903,75 @@ def _duration_estimate(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Config keys naming a model an agent is actually dispatched with. Deliberately
+# an allowlist, not a ``*_model`` suffix match: ``reasoning_model`` carries a
+# tier label (``sonnet-economy``), so a suffix rule mints a meaningless alias
+# for it — which is how the first cut of this function broke every action
+# against the ``dispatch_values`` property-name enum.
+_AGENT_MODEL_KEYS = (
+    "abuse_verifier_model",
+    "actor_discovery_model",
+    "architect_model",
+    "config_scanner_model",
+    "context_resolver_model",
+    "evidence_verifier_model",
+    "merger_model",
+    "orchestrator_model",
+    "qa_content_model",
+    "qa_routine_model",
+    "recon_scanner_model",
+    "renderer_model",
+    "stride_model",
+    "triage_model",
+)
+
+# The subset a thin runtime hands to the Agent tool straight out of
+# ``dispatch_values``: Stage 1d, 2, 3 and 4 dispatch from these keys by name.
+# Every context-v2 role is excluded on purpose — those already receive a
+# reduced ``dispatch_jobs[].model`` from ``_context_v2_job_metadata``, so an
+# alias here would be a second copy of an answer they already have, against a
+# ``maxProperties`` budget the transition payload is deliberately kept under.
+_DISPATCH_ALIAS_MODEL_KEYS = (
+    "abuse_verifier_model",
+    "architect_model",
+    "qa_content_model",
+    "qa_routine_model",
+    "renderer_model",
+)
+
+
+def _with_model_aliases(values: dict[str, Any]) -> dict[str, Any]:
+    """Add a dispatch-ready ``<role>_model_alias`` beside every ``<role>_model``.
+
+    ``*_model`` carries operator intent and stays untouched: on the headless
+    path an exact id like ``claude-sonnet-5`` is honoured, and rewriting it here
+    would throw that away. But the interactive Agent tool accepts only the
+    closed alias set, so the same field cannot serve both callers. Emitting the
+    reduction as its own key lets a thin runtime pass a value straight through
+    instead of converting it in prose — the step that was skipped at Stage 2 of
+    run a2a0e355, costing a rejected dispatch.
+
+    ``model_pins_dropped`` names the roles whose configured version pin the
+    alias set cannot express, so an inert knob is visible rather than silent.
+
+    Every key is emitted unconditionally — ``None`` for a role this run does
+    not staff, an empty string when no pin was dropped. A payload whose shape
+    depends on the config is one a consumer has to probe before reading, and
+    the dispatch-key drift guard could no longer state an exact set.
+    """
+    enriched = dict(values)
+    for key in _DISPATCH_ALIAS_MODEL_KEYS:
+        value = values.get(key)
+        enriched[f"{key}_alias"] = _bare_agent_model(value) if value is not None else None
+    dropped = [
+        f"{key}={values[key]}"
+        for key in _AGENT_MODEL_KEYS
+        if values.get(key) is not None and not _model_pin_is_expressible(values[key])
+    ]
+    enriched["model_pins_dropped"] = ", ".join(dropped)
+    return enriched
+
+
 def _dispatch_values_transition(cfg: dict[str, Any]) -> dict[str, Any]:
     """Config subset for a mid-run transition, not a binding point.
 
@@ -1630,7 +1996,70 @@ def _dispatch_values_transition(cfg: dict[str, Any]) -> dict[str, Any]:
     values["actor_discovery_model"] = (
         cfg.get("actor_discovery_model") or os.environ.get("APPSEC_ACTOR_DISCOVERY_MODEL") or "sonnet"
     )
-    return values
+    return _with_model_aliases(values)
+
+
+# What a Stage 1d/2/3/4 transition actually reads, beyond the model keys added
+# below. Derived from the thin runtimes, not guessed: the completion runtime
+# builds its argv as flag pairs from the ``write_*``/``check_requirements``/
+# ``architect_review`` switches, and a wrong argv aborts the run at its last
+# step, so those stay even though they are cheap booleans.
+# ``test_dispatch_values_stage.py`` re-derives this from the runtimes and fails
+# when one of them starts reading a key this set does not carry.
+_STAGE_TRANSITION_KEYS = (
+    "output_dir",
+    "repo_root",
+    "plugin_root",
+    "run_id",
+    "assessment_depth",
+    "qa_depth",
+    "skip_qa",
+    "max_repair_iterations",
+    "skip_abuse_case_verification",
+    "architect_review",
+    "check_requirements",
+    "keep_runtime_files",
+    "reasoning_model",
+    "write_yaml",
+    "write_sarif",
+    "write_pdf",
+    "write_html",
+    "write_pentest_tasks",
+    "write_threatdragon",
+    "pentest_format",
+    "pentest_target",
+    # No ``estimate_*``: those are computed for `prepare` from a separate
+    # estimate object, are not config, and only feed a banner string the session
+    # already bound. A missing one costs a number in one line of console text.
+    "skip_attack_paths_authoring",
+    "skip_attack_walkthroughs",
+    "diagram_depth",
+    "enrich_arch_fragments",
+)
+
+
+def _dispatch_values_stage(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Config subset for a stage transition, not a binding point.
+
+    Same reasoning as ``_dispatch_values_transition``, applied to the Stage
+    1d/2/3/4 boundaries it deliberately left out. Those kept re-sending the
+    whole resolved config: measured on run 91e1dd39, ``prepare-abuse``,
+    ``prepare-stage2`` and ``next`` replayed ~65 keys per call, none of which
+    changes after ``prepare`` binds them once (SKILL-full-runtime.md §3).
+
+    The Stage-1 form cannot be reused verbatim: it carries only
+    ``SEMANTIC_ROLE_MODEL_KEYS``, which excludes ``renderer_model`` and the
+    ``qa_*`` keys, so ``renderer_model_alias`` and friends would come back
+    ``None`` and Stage 2 and 3 would dispatch against a null model. This form
+    keeps exactly the dispatch alias keys those stages name.
+
+    Everything else stays available through ``config_path``, which every action
+    already returns.
+    """
+    keys = set(_STAGE_TRANSITION_KEYS) | set(_DISPATCH_ALIAS_MODEL_KEYS)
+    values = {key: cfg.get(key) for key in sorted(keys) if key in _DISPATCH_KEYS or key in cfg}
+    values["plugin_root"] = str(PLUGIN_ROOT)
+    return _with_model_aliases(values)
 
 
 def _dispatch_values(
@@ -1655,7 +2084,7 @@ def _dispatch_values(
         }
     )
     values.update(estimate or _duration_estimate(cfg))
-    return values
+    return _with_model_aliases(values)
 
 
 def _missing_permissions_action(cfg: dict[str, Any], repo_root: Path, output_dir: Path) -> dict[str, Any] | None:
@@ -1898,6 +2327,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
                 "--step=stage1-dispatch",
             ],
         )
+        _capture_business_context(cfg, receipts)
         _prepasses(cfg, receipts)
         _fetch_requirements(cfg)
     except (ControllerError, OSError) as exc:
@@ -2364,13 +2794,35 @@ def _context_v2_common(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Claude Agent's closed model vocabulary. The tool rejects anything else
+# outright (``InputValidationError``), so every value the orchestrator passes as
+# an Agent ``model`` has to come from this set — an operator id such as
+# ``claude-sonnet-5`` is not a member and never was.
+_AGENT_MODEL_ALIASES = ("opus", "haiku", "sonnet", "fable")
+
+
 def _bare_agent_model(value: Any) -> str:
     """Reduce an operator-selected model ID to Claude Agent's closed aliases."""
     lowered = str(value or "sonnet").lower()
-    for alias in ("opus", "haiku", "sonnet"):
+    for alias in _AGENT_MODEL_ALIASES:
         if alias in lowered:
             return alias
     return "sonnet"
+
+
+def _model_pin_is_expressible(value: Any) -> bool:
+    """Report whether an operator model id survives the reduction to an alias.
+
+    ``claude-sonnet-5`` and ``claude-sonnet-4-6`` both reduce to ``sonnet``:
+    the alias set has no way to name a Sonnet *version*, so a version pin is
+    silently dropped on every interactive dispatch. The resolver sets such pins
+    deliberately (``resolve_config.py`` triage/merger/renderer/abuse_verifier),
+    which is sound on the headless path and inert here. Saying so out loud is
+    the difference between a documented trade-off and a knob that quietly does
+    nothing.
+    """
+    text = str(value or "").strip().lower()
+    return not text or text in _AGENT_MODEL_ALIASES
 
 
 def _context_v2_job_metadata(cfg: dict[str, Any], role: str) -> dict[str, str]:
@@ -3442,6 +3894,15 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
         context_routing.reset_plan(output_dir)
     except context_routing.ContextRoutingError as exc:
         raise ControllerError(f"cannot reset context routing effective plan: {exc}") from exc
+    # An action id is derived from its job ids, which repeat across runs, so a
+    # marker left in a reused output directory would satisfy this run's gate
+    # with a verification that happened before it. The plan resets here; its
+    # verification record has to reset with it.
+    for stale in (output_dir / PENDING_DISPATCH_NAME, output_dir / RECEIPT_VERIFICATION_NAME):
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError as exc:
+            raise ControllerError(f"cannot reset receipt verification state: {exc}") from exc
     repo_root = Path(str(cfg.get("repo_root") or output_dir))
     receipts: list[str] = []
     structured: list[dict[str, Any]] = []
@@ -3522,6 +3983,7 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
                 str(output_dir),
                 "--plugin-root",
                 str(PLUGIN_ROOT),
+                *(["--skip-business-context"] if cfg.get("skip_business_context") else []),
             ],
         )
         context_path = output_dir / ".threat-modeling-context.md"
@@ -4192,6 +4654,17 @@ def _context_v2_stride_wave_action(
     jobs: list[dict[str, Any]] = []
     structured: list[dict[str, Any]] = []
     seen: set[str] = set()
+    # The same coverage test the completion aggregator applies, moved to the one
+    # moment it can still matter: reported at the end of a run it describes an
+    # analysis already written to the report; reported here it reaches the
+    # operator while the wave is still ahead of them. Advisory by design —
+    # routing this thin is a judgment the analyst is allowed to make — so a
+    # missing helper costs the advisory, never the dispatch.
+    thin_coverage: list[str] = []
+    try:
+        from aggregate_run_issues import evidence_coverage_shortfall as _coverage_shortfall  # noqa: PLC0415
+    except ImportError:
+        _coverage_shortfall = None
     for claimed_component in claimed_components:
         claimed_id = claimed_component.get("component_id") if isinstance(claimed_component, dict) else None
         component = by_id.get(claimed_id)
@@ -4215,6 +4688,17 @@ def _context_v2_stride_wave_action(
         slices = bundle.get("source_slices")
         if not isinstance(slices, list):
             raise ControllerError(f"stride-evidence-bundle-v1 has no source_slices for {component_id}")
+        if _coverage_shortfall is not None:
+            covered = len(
+                {
+                    row.get("path")
+                    for row in slices
+                    if isinstance(row, dict) and row.get("repository_id") == "primary" and row.get("path")
+                }
+            )
+            ratio = _coverage_shortfall(component.get("file_count"), covered)
+            if ratio is not None:
+                thin_coverage.append(f"{component_id} {covered}/{component.get('file_count')} ({ratio:.0%})")
         bundle_receipt = _validated_json_receipt(
             output_dir,
             bundle_path,
@@ -4440,7 +4924,8 @@ def _context_v2_stride_wave_action(
         "dispatch_jobs": jobs,
         "artifact_receipts": structured,
         "receipts": [
-            f"Context-v2 STRIDE wave admitted for {len(jobs)} component(s) after persisted attempt accounting"
+            f"Context-v2 STRIDE wave admitted for {len(jobs)} component(s) after persisted attempt accounting",
+            *([f"Thin evidence routing (advisory): {'; '.join(thin_coverage[:6])}"] if thin_coverage else []),
         ],
     }
     try:
@@ -4461,6 +4946,9 @@ def context_v2_prepare_stride(output_dir: Path) -> dict[str, Any]:
     _run_script("validate_fragment.py", ["security-controls", str(controls_path)])
     _normalize_context_v2_analyst_context(output_dir)
     _validate_context_v2_analyst_context(output_dir, repo_root=repo_root)
+    # Write the per-component requirements slice before the manifest indexes it.
+    # A no-op without a catalog, so runs without requirements are unaffected.
+    _run_script("build_requirements_contexts.py", ["--output-dir", str(output_dir)])
     build_args = [
         str(output_dir),
         "--depth",
@@ -4771,12 +5259,69 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
     return _context_v2_after_triage(output_dir, cfg)
 
 
+def _canonicalize_triage_flag_types(output_dir: Path) -> list[str]:
+    """Repair `-`/`_` drift in the LLM-authored `flags[].type` before validation.
+
+    The triage validator agent rewrites `.triage-flags.json` including flags the
+    deterministic pass authored, and its instruction file spells the same token
+    two ways: `business_impact` in the normative JSON block, `business-impact` in
+    the prose one page earlier. The agent copied the prose spelling and the
+    schema enum rejected it, ending a completed Stage-1 run over one character
+    (juice-shop2 2026-08-18). Agent output is untrusted input, so canonicalise
+    the separator before validating rather than failing the whole run on it.
+
+    The accepted values come from the schema itself; a second hand-maintained
+    list here would be the same drift one layer down. Only separator spelling is
+    repaired — a value that is not a declared one after canonicalisation is left
+    untouched for the validator to reject.
+
+    Returns the repaired ``old -> new`` pairs, empty when nothing changed.
+    """
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+
+    path = output_dir / ".triage-flags.json"
+    schema_path = PLUGIN_ROOT / "schemas" / "triage-flags.schema.yaml"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        schema = yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
+    except (OSError, json.JSONDecodeError, yaml.YAMLError):
+        return []
+    declared = (
+        ((schema.get("properties") or {}).get("flags") or {}).get("items", {}).get("properties", {}).get("type", {})
+    ).get("enum")
+    if not isinstance(declared, list) or not isinstance(document, dict):
+        return []
+    by_canonical = {str(value).replace("-", "_").lower(): value for value in declared if isinstance(value, str)}
+    repaired: list[str] = []
+    for flag in document.get("flags") or []:
+        if not isinstance(flag, dict):
+            continue
+        current = flag.get("type")
+        if not isinstance(current, str) or current in by_canonical.values():
+            continue
+        replacement = by_canonical.get(current.replace("-", "_").lower())
+        if replacement is None:
+            continue
+        flag["type"] = replacement
+        repaired.append(f"{current} -> {replacement}")
+    if repaired:
+        atomic_write_json(path, document, sort_keys=True)
+    return repaired
+
+
 def _context_v2_after_triage(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     """Validate triage output and select optional qualitative synthesis."""
     _run_script(
         "validate_intermediate.py",
         ["threats_merged", str(output_dir / ".threats-merged.json")],
     )
+    repaired = _canonicalize_triage_flag_types(output_dir)
+    if repaired:
+        _append_event(
+            output_dir,
+            "CONTEXT_STRUCTURE_REPAIRED",
+            f"triage flag type spelling canonicalised: {', '.join(repaired)}",
+        )
     _run_script(
         "validate_intermediate.py",
         ["triage_flags", str(output_dir / ".triage-flags.json")],
@@ -4866,6 +5411,18 @@ def _context_v2_finalize(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any
         "validate_intermediate.py",
         ["threat_model_output", str(output_dir / "threat-model.yaml")],
     )
+    # The two emitters that feed the gate below run again here, as hard steps.
+    # `auto_emitter_pass.sh` is deliberately best-effort so a failed enrichment
+    # cannot destroy 25 minutes of Stage 1, and it guards every emitter with
+    # `|| true` — including these two, whose own comments there already say they
+    # supply this gate. A best-effort producer feeding a fail-closed consumer
+    # means a silently skipped hydration surfaces as content findings against
+    # the author instead of as the tooling failure it is: on the delivered
+    # juice-shop model the gate reports 96 INVALID lines without them and passes
+    # with them. Both are idempotent, so repeating them costs nothing and a
+    # second failure aborts naming the producer, which is the true fault.
+    _run_script("backfill_scanner_remediation.py", [str(output_dir)])
+    _run_script("hydrate_mitigation_details.py", [str(output_dir)])
     _run_script("validate_mitigation_quality.py", [str(output_dir)])
     _run_script(
         "assert_completeness.py",
@@ -5276,7 +5833,7 @@ def _stage1d_route(output_dir: Path, cfg: dict[str, Any], retry_key: str) -> dic
             "stage": "stage1d",
             "instruction_file": str(THIN_STAGE1D_RUNTIME),
             "config_path": str(output_dir / ".skill-config.json"),
-            "dispatch_values": _dispatch_values(cfg),
+            "dispatch_values": _dispatch_values_stage(cfg),
             "receipts": [
                 "Stage 1d has not run for this report: load the returned Stage-1d runtime, "
                 "follow it, then repeat this transition"
@@ -5299,7 +5856,7 @@ def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dic
         "mode": cfg["mode"],
         "stage": "stage1d",
         "config_path": str(config_path),
-        "dispatch_values": _dispatch_values(cfg),
+        "dispatch_values": _dispatch_values_stage(cfg),
     }
     if cfg.get("skip_abuse_case_verification"):
         return {**common, "action": "run_gate", "receipts": ["Abuse verification disabled"]}
@@ -5345,6 +5902,20 @@ def prepare_abuse(output_dir: Path, restrict_to: list[str] | None = None) -> dic
         candidates = [item for item in candidates if item in allowed]
         receipts.append("retry restricted to: " + (", ".join(candidates) if candidates else "(none)"))
     if not candidates or budget_watchdog.has_active_critical_claim(output_dir):
+        # Say WHICH of the two reasons closed the gate. Both shapes look alike
+        # from outside — `run_gate` with a populated `candidates[]` and no
+        # `dispatch_jobs[]` — and an orchestrator that cannot tell "nothing to
+        # verify" from "verification suppressed by a budget claim" reads the
+        # second as a dispatchable legacy shape. On the 2026-08-29 juice-shop
+        # run that cost two hook-denied dispatches and left six candidates
+        # unverified with nothing in the receipts to explain why.
+        if candidates:
+            receipts.append(
+                f"verification suppressed by an active budget-critical claim; "
+                f"{len(candidates)} candidate(s) stay unverified — do NOT dispatch verifiers"
+            )
+        else:
+            receipts.append("no candidates to verify")
         return {**common, "action": "run_gate", "candidates": candidates, "receipts": receipts}
     projection_args = ["--output-dir", str(output_dir), "--repo-root", repo_root]
     for candidate in candidates:
@@ -5411,6 +5982,9 @@ def _abuse_candidate_titles(output_dir: Path, candidates: list[str]) -> dict[str
 
 
 _YAML_SCHEMA_EXIT = 5
+# abuse_case_gate.py returns this when a case's own `release_gate.fail_on` names
+# the final chain verdict. Fatal by contract (SKILL-thin-stage1d step 4).
+_ABUSE_GATE_EXIT = 2
 
 
 def _schema_failure_detail(message: str, limit: int = 700) -> str:
@@ -5535,7 +6109,6 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
                 + _schema_failure_detail(str(exc)),
                 exc.exit_code,
             ) from exc
-    _run_script("abuse_case_gate.py", ["--output-dir", str(output_dir)])
     if verdicts.is_file():
         _best_effort_script(
             output_dir,
@@ -5551,7 +6124,27 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
     ]
     if org_profile := str(cfg.get("org_profile_path") or ""):
         render_args += ["--org-profile", org_profile]
-    _best_effort_script(output_dir, "render_abuse_cases.py", render_args, receipts)
+    try:
+        _run_script("render_abuse_cases.py", render_args)
+    except ControllerError as exc:
+        raise ControllerError(
+            "abuse-case rendering could not persist a valid canonical analysis: " + str(exc),
+            exc.exit_code,
+        ) from exc
+    receipts.append("Canonical abuse-case analysis persisted")
+    # The configured release gate stays fatal, but it runs LAST: firing it before
+    # ranking and §9 rendering aborted the run while the chain that justifies the
+    # failure existed only as a raw verdict sidecar, and left threat-model.yaml
+    # carrying promoted findings at un-elevated severities. Rendering first costs
+    # nothing on the failing path and leaves the operator the evidence.
+    gate = _run_script("abuse_case_gate.py", ["--output-dir", str(output_dir)], acceptable=(0, _ABUSE_GATE_EXIT))
+    if gate.returncode == _ABUSE_GATE_EXIT:
+        detail = (gate.stderr or gate.stdout).strip()
+        _append_event(output_dir, "ABUSE_GATE_VIOLATION", detail.replace("\n", "; "), level="ERROR")
+        raise ControllerError(
+            f"abuse_case_gate.py failed with exit {_ABUSE_GATE_EXIT}: {detail}",
+            _ABUSE_GATE_EXIT,
+        )
     _append_event(output_dir, "ABUSE_FINALIZE_COMPLETE", "thin abuse-case finalization complete")
     return {
         "schema_version": 1,
@@ -5638,7 +6231,7 @@ def prepare_stage2(output_dir: Path) -> dict[str, Any]:
         "renderer_profile": renderer_profile,
         "instruction_file": str(THIN_STAGE2_RUNTIME),
         "config_path": str(config_path),
-        "dispatch_values": _dispatch_values(cfg),
+        "dispatch_values": _dispatch_values_stage(cfg),
         "receipts": [f"Stage-2 structural fragments prepared; renderer_profile={renderer_profile}", *receipts],
     }
 
@@ -5716,6 +6309,39 @@ def _fragment_repair_is_actionable(output_dir: Path) -> bool:
     except (OSError, ValueError):
         return False
     return isinstance(plan, dict) and bool(plan.get("actionable")) and bool(plan.get("actions"))
+
+
+# Stage-2 attempts are budgeted per blocking cause, not per transition. One
+# shared counter let unrelated causes spend each other's budget: on the
+# 2026-08-29 juice-shop run the first (normal) dispatch took slot 1, the
+# by-design fragment-repair pass took slot 2, and a failing post-compose
+# emitter then aborted with no budget left — reporting "render fragments
+# incomplete" while the fragments were complete and the report was on disk.
+_STAGE2_ATTEMPTS_PER_CAUSE = 2
+# Still bounded overall, so alternating causes cannot loop forever.
+_STAGE2_ATTEMPTS_TOTAL = 6
+
+
+def _stage2_attempt_counts(path: Path) -> dict[str, int]:
+    """Read the per-cause Stage-2 attempt ledger, tolerating the legacy scalar."""
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}
+    if isinstance(parsed, int) and not isinstance(parsed, bool):
+        # A run that started before the ledger wrote a bare integer total, which
+        # is itself valid JSON. Carry it as one unattributed cause so upgrading
+        # mid-flight cannot hand the run a fresh budget.
+        return {"unknown": parsed} if parsed > 0 else {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): int(value) for key, value in parsed.items() if isinstance(value, int) and value > 0}
 
 
 def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
@@ -5860,6 +6486,13 @@ def _compose_if_ready(output_dir: Path, repo_root: str) -> bool:
     # Carry the rendered verdict into the semantic model before cleanup reaps
     # `.fragments/`, so every consumer can state the assessment's conclusion.
     _run(str(SCRIPT_DIR / "emit_verdict_to_model.py"), str(output_dir))
+    # Same reason, same window: the §7b compliance assessment is the only
+    # source for some requirement→mitigation edges, and it exists only as a
+    # fragment. This is mandatory when a catalog is configured: publishing a
+    # report while silently leaving the machine-readable assessment incomplete
+    # is contract drift, not a best-effort enrichment failure.
+    if not _step("emit_requirement_trace_to_model.py", str(output_dir)):
+        return False
     _run(str(SCRIPT_DIR / "apply_prose_fixes.py"), str(md))
     _run(str(SCRIPT_DIR / "qa_checks.py"), "autofix", str(md), repo_root or str(output_dir))
     try:
@@ -5986,11 +6619,12 @@ def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
     (2026-07-15 juice-shop). Anchoring the stamp here, in the mandatory
     re-entrant ``next`` gate that reads the durable on-disk config, makes it
     deterministic: any run that reaches ``action=complete`` gets the stamped
-    copies regardless of compaction. Idempotent (re-stamps only when the
-    canonical report is newer than the stamped copy) and fail-safe (never
-    raises into ``next``'s JSON output). This gate fires before the skill's
-    post-summary cleanup, so ``.skill-config.json`` is still on disk; PDF/HTML
-    exported by the skill after this gate remain the trailing block's job.
+    copies regardless of compaction. Idempotent (it stamps only what is missing
+    or stale) and fail-safe (never raises into ``next``'s JSON output). This
+    gate fires before the skill's post-summary cleanup, so
+    ``.skill-config.json`` is still on disk; PDF and HTML are exported after
+    this gate and get their stamped copies from the completion summary, which
+    runs once more after the export.
     """
     slug = str(cfg.get("slug") or "").strip()
     if not slug:
@@ -5998,12 +6632,8 @@ def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
     md = output_dir / "threat-model.md"
     if not md.is_file():
         return
-    stamped = output_dir / f"threat-model-{slug}.md"
-    try:
-        if stamped.is_file() and stamped.stat().st_mtime >= md.stat().st_mtime:
-            return  # already stamped from the current report — nothing to do
-    except OSError:
-        pass
+    if stamp_threat_model.stamped_set_is_current(output_dir, slug):
+        return  # every deliverable already has a current stamped copy
     try:
         subprocess.run(
             [
@@ -6031,7 +6661,7 @@ def next_action(output_dir: Path) -> dict[str, Any]:
         "schema_version": 1,
         "mode": cfg["mode"],
         "config_path": str(config_path),
-        "dispatch_values": _dispatch_values(cfg),
+        "dispatch_values": _dispatch_values_stage(cfg),
     }
     if not (output_dir / "threat-model.yaml").is_file():
         return {
@@ -6059,32 +6689,40 @@ def next_action(output_dir: Path) -> dict[str, Any]:
         # Stage-2 agent when the fragments are genuinely missing.
         if not _compose_if_ready(output_dir, str(cfg.get("repo_root") or "")):
             retry_path = output_dir / ".inline-shortcut-retry-count"
-            try:
-                retry_count = int(retry_path.read_text(encoding="utf-8").strip())
-            except (OSError, ValueError):
-                retry_count = 0
-            if retry_count >= 2:
-                raise ControllerError(
-                    "Stage 2 could not produce the required render fragments after two retries; "
-                    f"inspect {output_dir / '.fragments'} and {output_dir / '.agent-run.log'}"
-                )
-            retry_count += 1
-            try:
-                retry_path.write_text(f"{retry_count}\n", encoding="utf-8")
-            except OSError as exc:
-                raise ControllerError(f"cannot persist Stage-2 retry counter: {exc}") from exc
-            # Name the step that actually blocked. "fragments incomplete" is
-            # reserved for the required-fragment existence check; any other
-            # blocker (a mitigation gate, a strict-compose failure) reports
-            # itself, so the operator is not sent to inspect a fragment set
-            # that was complete all along.
+            # Read the blocker BEFORE spending budget: the step that blocked
+            # decides which counter moves, so an unrelated later cause cannot
+            # inherit an exhausted one. "fragments incomplete" stays reserved
+            # for the required-fragment existence check; any other blocker
+            # reports itself, so the operator is never sent to inspect a
+            # fragment set that was complete all along.
             try:
                 blocked = json.loads((output_dir / ".compose-blocked.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 blocked = {}
-            step = str(blocked.get("step") or "") if isinstance(blocked, dict) else ""
+            if not isinstance(blocked, dict):
+                blocked = {}
+            step = str(blocked.get("step") or "")
+            cause = step or "unknown"
+            counts = _stage2_attempt_counts(retry_path)
+            attempt = counts.get(cause, 0) + 1
+            counts[cause] = attempt
+            total = sum(counts.values())
+            if attempt > _STAGE2_ATTEMPTS_PER_CAUSE or total > _STAGE2_ATTEMPTS_TOTAL:
+                detail = " ".join(str(blocked.get("detail") or "").split())[:400]
+                where = f" at {step}" if step else ""
+                raise ControllerError(
+                    f"Stage 2 could not complete{where} after {attempt} attempt(s) for this cause "
+                    f"({total} overall)"
+                    + (f": {detail}" if detail else "")
+                    + f"; inspect {output_dir / '.compose-blocked.json'} and {output_dir / '.agent-run.log'}"
+                )
+            try:
+                retry_path.write_text(json.dumps(counts, sort_keys=True) + "\n", encoding="utf-8")
+            except OSError as exc:
+                raise ControllerError(f"cannot persist Stage-2 attempt ledger: {exc}") from exc
+            budget = f"attempt {attempt}/{_STAGE2_ATTEMPTS_PER_CAUSE}"
             if step == "required-fragments":
-                receipt = f"Stage-2 render fragments incomplete; retry {retry_count}/2"
+                receipt = f"Stage-2 render fragments incomplete; {budget}"
             elif step == "validate_fragment.py" and _fragment_repair_is_actionable(output_dir):
                 # A schema violation in an authored fragment is a targeted edit,
                 # not a re-render: send the cheap fixer at the named fragment
@@ -6093,12 +6731,12 @@ def next_action(output_dir: Path) -> dict[str, Any]:
                     "Stage-2 fragment schema gate failed; dispatch "
                     "appsec-advisor:appsec-fragment-fixer with REPAIR_MODE=true and "
                     "REPAIR_PLAN_PATH=.pre-render-repair-plan.json, then re-run this transition; "
-                    f"retry {retry_count}/2 (see .compose-blocked.json)"
+                    f"{budget} (see .compose-blocked.json)"
                 )
             elif step:
-                receipt = f"Stage-2 compose blocked at {step}; retry {retry_count}/2 (see .compose-blocked.json)"
+                receipt = f"Stage-2 compose blocked at {step}; {budget} (see .compose-blocked.json)"
             else:
-                receipt = f"Stage-2 compose did not complete; retry {retry_count}/2"
+                receipt = f"Stage-2 compose did not complete; {budget}"
             return {
                 **common,
                 "action": "dispatch_agent",
@@ -6311,9 +6949,8 @@ def main(argv: list[str] | None = None) -> int:
     context_v2_finalize_parser.add_argument("--output-dir", required=True)
     verify_receipts_parser = sub.add_parser("verify-receipts")
     verify_receipts_parser.add_argument("--output-dir", required=True)
-    verify_receipts_parser.add_argument(
-        "--receipt", nargs=2, action="append", required=True, metavar=("PATH", "SHA256")
-    )
+    verify_receipts_parser.add_argument("--action-id")
+    verify_receipts_parser.add_argument("--receipt", nargs=2, action="append", metavar=("PATH", "SHA256"))
     clear_abort_parser = sub.add_parser("clear-abort")
     clear_abort_parser.add_argument("--output-dir", required=True)
     clear_abort_parser.add_argument("--reason", required=True)
@@ -6324,6 +6961,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command in _SEMANTIC_RETURN_COMMANDS:
             _check_returned_call_telemetry(Path(args.output_dir))
+            _require_receipt_verification(Path(args.output_dir))
         if args.command == "route":
             action = route(_split_remainder(args.arguments))
         elif args.command == "prepare":
@@ -6362,7 +7000,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "clear-abort":
             action = clear_abort(Path(args.output_dir), args.reason)
         elif args.command == "verify-receipts":
-            action = verify_receipt_hashes(Path(args.output_dir), [tuple(pair) for pair in args.receipt])
+            action = verify_receipt_hashes(
+                Path(args.output_dir),
+                [tuple(pair) for pair in args.receipt or []],
+                action_id=args.action_id,
+            )
         else:
             action = next_action(Path(args.output_dir))
     except (ControllerError, SystemExit, OSError) as exc:

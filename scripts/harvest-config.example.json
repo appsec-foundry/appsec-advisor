@@ -1,6 +1,6 @@
 {
   "description": "ACME Corp Application Security Requirements",
-  "url": "https://security.acme-corp.example.com",
+  "url": "https://appsec.int.example.com",
   "output": "../data/appsec-requirements-fallback.yaml",
   "openspec": {
     "output": "../data/application-requirements.openspec.md",
@@ -35,8 +35,8 @@
       "mode": "structured",
       "title": "Secure Coding Guidelines",
       "outputs": ["catalog"],
-      "crawl_url": "https://security.acme-corp.example.com/scg",
-      "reference_url": "https://security.acme-corp.example.com/scg"
+      "crawl_url": "https://appsec.int.example.com/scg",
+      "reference_url": "https://appsec.int.example.com/scg"
     },
     {
       "id": "secure-sdlc",
@@ -44,8 +44,8 @@
       "mode": "structured",
       "title": "Secure Software Development Lifecycle",
       "outputs": ["catalog"],
-      "crawl_url": "https://security.acme-corp.example.com/ssdlc",
-      "reference_url": "https://security.acme-corp.example.com/ssdlc"
+      "crawl_url": "https://appsec.int.example.com/ssdlc",
+      "reference_url": "https://appsec.int.example.com/ssdlc"
     },
     {
       "id": "application-behavior",
@@ -53,17 +53,28 @@
       "mode": "structured",
       "title": "Application Functional Requirements",
       "outputs": ["openspec", "specdd"],
-      "crawl_url": "https://product.acme-corp.example.com/requirements",
-      "reference_url": "https://product.acme-corp.example.com/requirements"
+      "crawl_url": "https://product.int.example.com/requirements",
+      "reference_url": "https://product.int.example.com/requirements"
     },
     {
-      "id": "appsec-blueprints",
+      "id": "spa-blueprint",
       "type": "blueprint",
       "mode": "full",
-      "title": "Application Security Blueprints",
+      "title": "SPA Security Blueprint",
       "outputs": ["catalog"],
-      "_note": "crawl_url is indexed itself, then direct same-origin child links under this path are indexed up to max_pages.",
-      "crawl_url": "https://security.acme-corp.example.com/blueprints",
+      "_note": "crawl_url is indexed itself, then direct same-origin child links under this path are indexed up to max_pages. Optional catalog_file writes this source's blueprints into their own catalog as well; the main catalog keeps them all.",
+      "crawl_url": "https://appsec.int.example.com/blueprints/spa",
+      "catalog_file": "../data/blueprints/spa.yaml",
+      "section_max_chars": 50000
+    },
+    {
+      "id": "api-blueprint",
+      "type": "blueprint",
+      "mode": "full",
+      "title": "API Security Blueprint",
+      "outputs": ["catalog"],
+      "crawl_url": "https://appsec.int.example.com/blueprints/api",
+      "catalog_file": "../data/blueprints/api.yaml",
       "section_max_chars": 50000
     }
   ]

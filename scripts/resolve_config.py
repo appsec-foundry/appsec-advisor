@@ -1127,11 +1127,16 @@ def resolve_architect_review(ns: argparse.Namespace, depth: str, dry_run: bool) 
         # No — the env var is about model choice, not enable/disable.
         return {"architect_review": False, "architect_model": None, "architect_label": f"disabled ({trigger})"}
 
-    # Model resolution — default opus when on; the flag overrides with a tier
-    # alias (sonnet|opus) OR an explicit version id (claude-sonnet-5, …), passed
+    # Model resolution — default sonnet; the flag overrides with a tier alias
+    # (sonnet|opus) OR an explicit version id (claude-sonnet-5, …), passed
     # through verbatim — same contract as the APPSEC_ARCHITECT_MODEL env var
     # below. --no-opus still clamps any Opus id to Sonnet in apply_opus_ban().
-    model = ns.architect_model or "opus"
+    #
+    # Opus was the default while Stage 4 was an architect review reasoning over
+    # the whole report. The stage now rewrites prose from a bounded projection
+    # and judges nothing, which is Sonnet work: the measured Opus review cost
+    # 431k tokens, a fifth of its run, for four fragment edits.
+    model = ns.architect_model or "sonnet"
     if os.environ.get("APPSEC_ARCHITECT_MODEL"):
         model = os.environ["APPSEC_ARCHITECT_MODEL"]
 
@@ -1803,15 +1808,20 @@ def build_parser() -> argparse.ArgumentParser:
         dest="no_cheap_stride",
         help="Full STRIDE depth on every selected component, including the provably-internal tail and ci-cd.",
     )
-    # Architect
-    p.add_argument("--architect-review", action="store_true")
-    p.add_argument("--no-architect-review", action="store_true")
+    # Stage 4 — editorial pass over the report's wording. Auto-on at thorough.
+    p.add_argument(
+        "--architect-review",
+        action="store_true",
+        help="Run the Stage-4 editorial pass at any depth. It rewrites report "
+        "prose for clarity and changes no finding, rating, evidence or link.",
+    )
+    p.add_argument("--no-architect-review", action="store_true", help="Skip the Stage-4 editorial pass.")
     p.add_argument(
         "--architect-model",
         default=None,
         metavar="MODEL",
         help="Tier alias (sonnet|opus) or explicit version id for the "
-        "architect reviewer. --no-opus clamps any Opus id to Sonnet.",
+        "Stage-4 editorial pass. Default sonnet; --no-opus clamps any Opus id to Sonnet.",
     )
     # Architecture-fragment enrichment (M3.3 / D2). On by default at standard
     # and thorough; off at quick since 2026-05.

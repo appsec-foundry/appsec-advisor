@@ -129,6 +129,8 @@ def _load_module(name: str, path: Path):
 
 compose = _load_module("compose_threat_model", SCRIPTS / "compose_threat_model.py")
 qa_checks = _load_module("qa_checks", SCRIPTS / "qa_checks.py")
+apply_prose_fixes = _load_module("apply_prose_fixes", SCRIPTS / "apply_prose_fixes.py")
+inline_code_formatter = _load_module("inline_code_formatter", SCRIPTS / "inline_code_formatter.py")
 
 # Reuse the canonical SARIF validator that test_export_sarif.py uses, rather
 # than re-implementing structural checks here (single source of truth).
@@ -655,6 +657,19 @@ def test_compose_matches_golden(e2e_run: Path) -> None:
     assert rendered == golden.read_text(encoding="utf-8"), (
         f"rendered threat-model.md != golden. If intentional, regenerate: {_REGEN_HINT}"
     )
+
+
+def test_composed_report_has_no_inline_code_residue(e2e_run: Path) -> None:
+    rendered, warnings = compose.render(CONTRACT, e2e_run)
+    assert warnings == []
+    md = e2e_run / "threat-model.md"
+    md.write_text(rendered, encoding="utf-8")
+    known = inline_code_formatter.repository_vocabulary(SYNTHETIC_REPO)
+    second_pass, changes = apply_prose_fixes.apply_code_formatting(rendered, known)
+    report = qa_checks.check_inline_code_format(md, SYNTHETIC_REPO)
+    assert changes == 0
+    assert second_pass == rendered
+    assert report.warnings == []
 
 
 def test_export_sarif_matches_golden(e2e_run: Path) -> None:

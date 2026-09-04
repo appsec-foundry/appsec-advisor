@@ -25,7 +25,7 @@ An assessment generates an architecture and security report from repository evid
 **Default outputs**
 
 - `threat-model.md` — report for engineers, architects, and security reviewers.
-- `threat-model.yaml` — structured model used by automation and the exports.
+- `threat-model.yaml` — canonical structured model used by automation and exports, including requirements assessment and provenance, verified abuse-case outcomes, and bounded business-context provenance without the source prose.
 
 **Optional outputs**
 
@@ -102,9 +102,9 @@ Decisions are stored separately from the generated model and survive reassessmen
 
 ## Example report: OWASP Juice Shop
 
-The [OWASP Juice Shop example](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.2.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
+The [OWASP Juice Shop example](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
 
-![Threat Model Juice Shop Thorough](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.2.figure1.svg)
+![Threat Model Juice Shop Thorough](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.figure1.svg)
 
 ## What it checks
 
@@ -165,7 +165,7 @@ Run these commands in Claude Code:
 /appsec-advisor:create-threat-model --assessment-depth thorough
 
 # Fresh scan that may reassign finding IDs
-/appsec-advisor:create-threat-model --full --rebuild
+/appsec-advisor:create-threat-model --rebuild
 
 # Reassess while preserving report history
 /appsec-advisor:create-threat-model --full
@@ -189,7 +189,7 @@ Full and rebuild scans keep every selected component in scope. By default, STRID
 Use `--requirements` to include an AppSec requirements catalog. See the [harvester guide](harvester.md) for creating one.
 
 ```text
-/appsec-advisor:create-threat-model --requirements https://URL/appsec-requirements.yaml
+/appsec-advisor:create-threat-model --requirements https://appsec.int.example.com/appsec-requirements.yaml
 ```
 
 Once `requirements_yaml_url` is configured, later runs use the catalog without the flag.
@@ -221,13 +221,13 @@ Thorough increases both component coverage and per-component analysis depth.
 
 ### Measured cost by depth
 
-The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session on 0.5.2-dev. Results vary with repository, cache state, and model routing.
+The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session on 0.5.2-dev. The linked thorough sample is a later 0.6.0-beta.2 run and is shown for report structure, not for the cost figure beside it. Results vary with repository, cache state, and model routing.
 
 | Mode | Best fit | Review depth | Measured API cost and time |
 |---|---|---|---|
 | **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; no abuse-case validation or final model-based QA | $15.06 and 97 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick-v0.5.2.md)) |
 | **Standard** *(default)* | Normal security reviews | Full analysis, abuse-case validation, and QA | $25.39 and 124 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.2.md)) |
-| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $35.15 and about 138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.5.2.md)) |
+| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $35.15 and about 138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.md)) |
 
 The standard run included one STRIDE retry. Cost follows the number and complexity of analyzed components more closely than raw repository size.
 
@@ -304,9 +304,11 @@ Applicable policy, contractual, legal, or regulatory duties.
 Conditions you assume rather than enforce in code.
 ```
 
-Partial answers are fine. Named sensitive assets keep their components in standard scope and protect them from ceiling drops. They do not by themselves disable cheap STRIDE. When technical ranking scores are equal, mapped compromise impact, sensitive assets, or obligations place affected findings and mitigations first. This tie-breaker does not change severity or mitigation priority.
+Partial answers are fine. Named sensitive assets keep their components in standard scope and protect them from ceiling drops. They do not by themselves disable cheap STRIDE. Declared compromise impact and the sensitive assets an attack path actually reaches weight the impact rating of a finding the repository evidence already supports; they never create a finding, raise likelihood, or relax a severity cap. When technical ranking scores are equal, mapped compromise impact, sensitive assets, or obligations place affected findings and mitigations first.
 
-On a fresh interactive run, you can paste this context or provide a raw Markdown or plain-text URL. The URL is checked before it is fetched, and content containing a credential is refused. Use `--skip-context` if you do not want the question. A headless run accepts `--context <url|path>` for that run only; it never writes `docs/business-context.md`.
+The report's run statistics name the file the context came from and how many findings it applied to, and each of those findings records which declared fields apply. A declared context that maps to no component is reported as a run issue.
+
+On a fresh interactive run, you can paste this context or provide a raw Markdown or plain-text URL. The URL is checked before it is fetched, and content containing a credential is refused. `--skip-context` runs without business context at all: no question, and a stored `docs/business-context.md` is left unread. A stored file carrying what looks like a credential is withheld from the analysis and reported instead, the same way a supplied source is refused. A headless run accepts `--context <url|path>` for that run only; it never writes `docs/business-context.md`. The run captures that source itself before the analysis starts, so a URL the policy rejects, an oversized file, or a source carrying a credential stops the run with the reason instead of scanning as if nothing had been passed.
 
 Changing persistent context does not re-rate an existing model automatically. Run `--full` to apply it to every finding. Keep actor definitions, abuse cases, trust boundaries, threat ratings, and claimed controls out of this file; they have separate inputs or require repository evidence.
 
@@ -403,6 +405,7 @@ Agents read the repository and make the security judgments. Python checks their 
 | `/appsec-advisor:publish-threat-model` | Make selected report files trackable after publication checks. |
 | `/appsec-advisor:export-threat-model` | Export an existing model without another analysis. |
 | `/appsec-advisor:threat-model-health` | Check whether the model is fresh, stale, missing, or blocked. |
+| `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without a threat model. |
 | `/appsec-advisor:clean-run-state` | Remove stale state after an interrupted run. |
 | `/appsec-advisor:fix-run-issues` | Apply safe fixes or show repair guidance for the previous run. |
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |

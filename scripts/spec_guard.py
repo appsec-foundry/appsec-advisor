@@ -7,13 +7,18 @@ file writes, recognizable shell writes, and recognizable MCP mutations.
 
 The protected file or directory is required through ``--protected-path`` so the
 hook registration owns the protected surface. Reads and recognized read-only
-shell calls are left alone. Writer detection is conservative: prompting for a
-command that could mutate the protected path is preferable to silently missing
-the mutation.
+shell calls are left alone. A shell command asks only where a writer and the
+protected path meet in the same simple command: an operator who is prompted for
+a command that changes nothing stops reading the prompt.
 
-Malformed relevant input and internal resolution failures fail closed. The hook
-cannot infer an opaque program's hidden writes; project instructions and diff
-review remain necessary for those calls.
+The prompt therefore misses two classes of write. A path that reaches a writer
+only through a variable or a command substitution is invisible to a pattern,
+and an interpreted script that opens the catalog from a heredoc or a quoted
+program is read as the data it is. Native writes, redirections, and tree
+removals — the ways an agent actually edits a file — remain covered, and
+project instructions and diff review cover the rest.
+
+Malformed relevant input and internal resolution failures fail closed.
 """
 
 from __future__ import annotations
@@ -52,6 +57,26 @@ SHELL_WRITES = re.compile(
     re.VERBOSE,
 )
 
+# A writer that can take out a whole tree without naming the protected file.
+# Only these justify matching a directory above the protected path; every other
+# writer in SHELL_WRITES creates or replaces the target it names, so an ancestor
+# match there is noise rather than coverage.
+TREE_WRITES = re.compile(
+    r"""
+      \b (?: rm | rmdir | mv | rsync | unzip | truncate ) \b
+    | \b dd \b [^\n|;&]* \b of \s* =
+    | \b git \s+ (?: checkout | restore | apply | rm | mv | clean | clone ) \b
+    | \b tar \b [^\n|;&]* \s (?: -[A-Za-z]*x[A-Za-z]* | --extract ) \b
+    | \b find \b [^\n|;&]* \s -delete \b
+    """,
+    re.VERBOSE,
+)
+
+POWERSHELL_TREE_WRITES = re.compile(
+    r"\b (?: Clear-Content | Move-Item | Remove-Item | Rename-Item ) \b",
+    re.IGNORECASE | re.VERBOSE,
+)
+
 POWERSHELL_WRITES = re.compile(
     r"""
       \b (?:
@@ -62,6 +87,19 @@ POWERSHELL_WRITES = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+# A heredoc body, kept from its introducing `<<TAG` marker so the marker still
+# reads as a writer while the body it feeds reads as data.
+HEREDOC_BODY = re.compile(
+    r"(?P<marker><<-?\s*['\"]?(?P<tag>[A-Za-z_]\w*)['\"]?)(?P<body>.*?)^\s*(?P=tag)\s*$",
+    re.MULTILINE | re.DOTALL,
+)
+
+# Quoted text containing whitespace: prose, a script, or an expression. A
+# quoted path stays a single word and is deliberately not matched here.
+QUOTED_DATA = re.compile(r"'[^']*\s[^']*'|\"[^\"]*\s[^\"]*\"", re.DOTALL)
+
+SEGMENT_SEPARATORS = re.compile(r"\|\||&&|[;&|\n]")
 
 MCP_MUTATION = re.compile(
     r"(?:^|_)(?:append|apply|copy|create|delete|edit|mkdir|move|patch|remove|rename|"
@@ -186,8 +224,14 @@ def path_candidates(command: str, cwd: Path, protected_path: Path) -> Iterator[s
         words = shlex.split(expanded, comments=False)
     except ValueError:
         words = expanded.split()
+    previous = ""
     for word in words:
         cleaned = word.strip("'\"`,;()[]{}<>")
+        was_location = previous == "cd"
+        previous = cleaned
+        # `cd` names where the command runs, never what it writes to.
+        if was_location:
+            continue
         if cleaned:
             yield cleaned
         if "=" in cleaned:
@@ -198,18 +242,36 @@ def path_candidates(command: str, cwd: Path, protected_path: Path) -> Iterator[s
     yield from (match.group(0) for match in pattern.finditer(expanded))
 
 
+def shell_segments(command: str) -> list[str]:
+    """Return the simple commands that can carry a writer and its arguments.
+
+    Heredoc bodies and quoted text containing whitespace are data a command
+    reads, prints, or interprets, not shell syntax: a path mentioned there is
+    not an argument of the writer beside it. Both are removed before the
+    command is split, so a writer only ever matches the paths in its own
+    segment.
+    """
+    skeleton = HEREDOC_BODY.sub(lambda match: match.group("marker"), command)
+    skeleton = QUOTED_DATA.sub("''", skeleton)
+    return [segment for segment in SEGMENT_SEPARATORS.split(skeleton) if segment.strip()]
+
+
 def shell_targets(command: str, cwd: Path, tool_name: str, protected_path: Path) -> list[str]:
     """Return protected paths named by a recognizable shell writer."""
-    writes = SHELL_WRITES.search(command)
-    if tool_name == "PowerShell":
-        writes = writes or POWERSHELL_WRITES.search(command)
-    if not writes:
-        return []
-    targets = {
-        candidate
-        for candidate in path_candidates(command, cwd, protected_path)
-        if touches_protected(candidate, protected_path, cwd, include_ancestors=True)
-    }
+    targets: set[str] = set()
+    for segment in shell_segments(command):
+        writes = SHELL_WRITES.search(segment)
+        tree = TREE_WRITES.search(segment)
+        if tool_name == "PowerShell":
+            writes = writes or POWERSHELL_WRITES.search(segment)
+            tree = tree or POWERSHELL_TREE_WRITES.search(segment)
+        if not writes:
+            continue
+        targets.update(
+            candidate
+            for candidate in path_candidates(segment, cwd, protected_path)
+            if touches_protected(candidate, protected_path, cwd, include_ancestors=bool(tree))
+        )
     return sorted(targets)
 
 

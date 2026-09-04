@@ -1066,6 +1066,154 @@ def _check_triage_flags_version(data: dict) -> list[str]:
     return []
 
 
+def _check_requirements_compliance_invariants(data: dict) -> list[str]:
+    """Reconcile §7b counters and rows beyond what JSON Schema can express."""
+    compliance = data.get("requirements_compliance")
+    if not isinstance(compliance, dict):
+        return []
+    total = compliance.get("total")
+    rows = compliance.get("requirements")
+    bucket_names = ("pass", "fail", "partial", "unverifiable", "not_applicable")
+    if not isinstance(total, int) or not isinstance(rows, list):
+        return []  # Shape errors are reported by the schema validator.
+    errors: list[str] = []
+    bucket_values = [compliance.get(name) for name in bucket_names]
+    if all(isinstance(value, int) for value in bucket_values) and sum(bucket_values) != total:
+        errors.append("requirements_compliance: status buckets must sum to total")
+    if len(rows) != total:
+        errors.append("requirements_compliance: requirements row count must equal total")
+    ids = [row.get("id") for row in rows if isinstance(row, dict)]
+    if len(ids) != len(set(ids)):
+        errors.append("requirements_compliance: requirement IDs must be unique")
+    return errors
+
+
+def _finding_id(raw_id: Any) -> str:
+    """Return the report-facing finding id for a canonical threat id."""
+    if not isinstance(raw_id, str):
+        return ""
+    value = raw_id.strip().upper()
+    if value.startswith("T-"):
+        return "F-" + value[2:]
+    return value
+
+
+def _check_export_trace_invariants(data: dict) -> list[str]:
+    """Validate cross-field references and trace summaries in the final export."""
+    errors: list[str] = []
+    threats = [row for row in (data.get("threats") or []) if isinstance(row, dict)]
+    mitigations = [row for row in (data.get("mitigations") or []) if isinstance(row, dict)]
+    components = [row for row in (data.get("components") or []) if isinstance(row, dict)]
+    finding_ids = {_finding_id(row.get("id") or row.get("t_id")) for row in threats}
+    finding_ids.discard("")
+    mitigation_ids = {str(row.get("id") or row.get("m_id") or "").strip().upper() for row in mitigations}
+    mitigation_ids.discard("")
+    component_ids = {str(row.get("id") or "").strip() for row in components}
+    component_ids.discard("")
+
+    compliance = data.get("requirements_compliance")
+    provenance = data.get("requirements_provenance")
+    requirement_ids: set[str] = set()
+    if isinstance(compliance, dict):
+        requirement_rows = [row for row in (compliance.get("requirements") or []) if isinstance(row, dict)]
+        requirement_ids = {str(row.get("id") or "").strip() for row in requirement_rows}
+        requirement_ids.discard("")
+        if not isinstance(provenance, dict):
+            errors.append("requirements_provenance: required when requirements_compliance is present")
+        elif provenance.get("count") != compliance.get("total"):
+            errors.append("requirements_provenance.count must equal requirements_compliance.total")
+        for row in requirement_rows:
+            req_id = str(row.get("id") or "").strip() or "(unknown)"
+            for fid in row.get("finding_ids") or []:
+                if isinstance(fid, str) and fid not in finding_ids:
+                    errors.append(f"requirements_compliance {req_id}: finding_id {fid!r} does not resolve")
+    elif isinstance(provenance, dict):
+        errors.append("requirements_provenance: requirements_compliance is missing")
+
+    # Only an actually populated compliance section can resolve a requirement
+    # reference. It is derived from the Stage-2 `.fragments/requirements-compliance.md`
+    # table, so `build_threat_model_yaml.build_requirements_compliance` returns
+    # None by design at Stage-1 finalize and omits the key — leaving this set
+    # empty. Checking references against an empty set then rejected all 116 of
+    # them on a run whose 30 distinct IDs were every one of them declared in
+    # `.requirements.yaml` (juice-shop 2026-08-30), and the abort was read as
+    # analyzers inventing IDs. Absent authority is "unknown", never "invalid";
+    # the catalog stays enforced in the producer, by
+    # `_filter_violated_requirements` on the threat side and by
+    # `annotate_requirements_and_blueprints` on the mitigation side, and
+    # post-Stage-2 the strict emitter requires the section to cover the whole
+    # catalog.
+    if requirement_ids:
+        for threat in threats:
+            fid = _finding_id(threat.get("id") or threat.get("t_id")) or "(unknown)"
+            for req_id in threat.get("violated_requirements") or []:
+                if isinstance(req_id, str) and req_id not in requirement_ids:
+                    errors.append(f"threat {fid}: violated requirement {req_id!r} does not resolve")
+        for mitigation in mitigations:
+            mid = str(mitigation.get("id") or mitigation.get("m_id") or "").strip() or "(unknown)"
+            for req_id in mitigation.get("fulfills_requirements") or []:
+                if isinstance(req_id, str) and req_id not in requirement_ids:
+                    errors.append(f"mitigation {mid}: fulfilled requirement {req_id!r} does not resolve")
+
+    business = data.get("business_context_trace")
+    if isinstance(business, dict):
+        status = business.get("status")
+        coverage = [row for row in (business.get("component_coverage") or []) if isinstance(row, dict)]
+        covered_fields = {field for row in coverage for field in (row.get("fields") or []) if isinstance(field, str)}
+        fields_present = {field for field in (business.get("fields_present") or []) if isinstance(field, str)}
+        if fields_present != covered_fields:
+            errors.append("business_context_trace.fields_present must equal component_coverage field union")
+        for row in coverage:
+            component_id = str(row.get("component_id") or "").strip()
+            if component_id not in component_ids:
+                errors.append(f"business_context_trace: component_id {component_id!r} does not resolve")
+        applied_count = sum(bool(row.get("business_context_basis")) for row in threats)
+        if business.get("applied_finding_count") != applied_count:
+            errors.append("business_context_trace.applied_finding_count does not match threats with context basis")
+        if status == "applied":
+            if not business.get("source") or not business.get("sha256"):
+                errors.append("business_context_trace: applied status requires source and sha256")
+        elif coverage or business.get("fields_present") or business.get("applied_finding_count"):
+            errors.append("business_context_trace: non-applied status must not claim coverage or findings")
+
+    analysis = data.get("abuse_case_analysis")
+    if isinstance(analysis, dict):
+        cases = [row for row in (analysis.get("cases") or []) if isinstance(row, dict)]
+        if analysis.get("status") != "completed" and cases:
+            errors.append("abuse_case_analysis: non-completed status must not contain cases")
+        for case in cases:
+            case_id = str(case.get("id") or "").strip() or "(unknown)"
+            steps = [row for row in (case.get("steps") or []) if isinstance(row, dict)]
+            step_numbers = [row.get("step") for row in steps]
+            if step_numbers != list(range(1, len(steps) + 1)):
+                errors.append(f"abuse_case_analysis {case_id}: step numbers must be contiguous from 1")
+            step_findings = {row.get("finding_id") for row in steps if isinstance(row.get("finding_id"), str)}
+            matched_findings = {fid for fid in (case.get("matched_finding_ids") or []) if isinstance(fid, str)}
+            if step_findings != matched_findings:
+                errors.append(f"abuse_case_analysis {case_id}: matched finding ids must equal step finding ids")
+            for fid in matched_findings:
+                if fid not in finding_ids:
+                    errors.append(f"abuse_case_analysis {case_id}: finding_id {fid!r} does not resolve")
+            for mid in case.get("blocking_mitigation_ids") or []:
+                if isinstance(mid, str) and mid not in mitigation_ids:
+                    errors.append(f"abuse_case_analysis {case_id}: mitigation_id {mid!r} does not resolve")
+            unverified_steps = {
+                row.get("step")
+                for row in steps
+                if row.get("unverified") and isinstance(row.get("step"), int) and not isinstance(row.get("step"), bool)
+            }
+            declared_unverified = {
+                step
+                for step in (case.get("unverified_steps") or [])
+                if isinstance(step, int) and not isinstance(step, bool)
+            }
+            if unverified_steps != declared_unverified:
+                errors.append(f"abuse_case_analysis {case_id}: unverified_steps do not match step flags")
+            if case.get("verification_complete") != (not unverified_steps):
+                errors.append(f"abuse_case_analysis {case_id}: verification_complete does not match step flags")
+    return errors
+
+
 def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     """Validate the final `$OUTPUT_DIR/threat-model.yaml` export.
 
@@ -1087,6 +1235,8 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     errors.extend(_check_threat_hypotheses_invariants(data))
     errors.extend(_check_boundary_refs(data))
     errors.extend(_check_final_boundary_links(data))
+    errors.extend(_check_requirements_compliance_invariants(data))
+    errors.extend(_check_export_trace_invariants(data))
     advisories: list[str] = []
     # Detect F-NNN numbering gaps. A gap (e.g. F-001..F-013, F-015..) means
     # the threat-analyst dropped a finding without reflowing the IDs, leaving

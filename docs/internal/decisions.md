@@ -171,6 +171,7 @@ Removing an entry means listing it here in the same change.
 | RN-1 | The render path is a mutation sequence and its order is load-bearing: `compose_threat_model.py --strict`, then `apply_prose_fixes.py`, then `qa_checks.py autofix` | — *(guard not located)* | `docs/internal/contracts/orchestration-actions.md` |
 | RN-2 | A normalization pass is idempotent; running it twice changes nothing, or a re-render invents differences | `test_apply_fixes_is_idempotent_for_core_rewrites`, `test_autofix_is_idempotent_on_paths`, `test_r7_full_pipeline_is_idempotent` | `scripts/apply_prose_fixes.py`, `scripts/qa_checks.py` |
 | RN-4 | The deterministic emitters run in a fixed sequence | `test_emitter_sequence_preserved_in_order` | `scripts/auto_emitter_pass.sh` |
+| RN-5 | One source-preserving recognizer owns inline-code token boundaries for composition, walkthroughs, normalization, autofix, and QA; it formats a complete balanced expression or leaves it unchanged | `tests/test_inline_code_formatter.py`, `tests/test_qa_checks_cov_band3.py::test_inline_code_format_scans_table_and_blockquote_but_skips_opaque_markdown` | `scripts/inline_code_formatter.py` |
 
 ## Report and artifacts
 
@@ -203,6 +204,9 @@ Removing an entry means listing it here in the same change.
 | RQ-3 | A threat not linked to a requirement is excluded from the mapping, never guessed into it | `test_legacy_requirement_id_is_honoured_and_unlinked_threats_excluded` | `docs/internal/contracts/schema-invariants.md` |
 | RQ-4 | Without a requirements source, no remediation reference is invented | `test_remediation_reference_ignored_without_requirements_yaml` | `docs/internal/contracts/schema-invariants.md` |
 | RQ-5 | The trace runs both ways — mitigations declare what they fulfil | `test_reverse_fulfills_requirements_adds_measure` | `docs/internal/contracts/schema-invariants.md` |
+| RQ-6 | The report's requirement list is a filtered view of the model's, never a different set — one derivation in `requirements_trace`, the §7b status filter applied only at render | `test_the_yaml_derivation_covers_every_threat_side_source`, `test_sidecar_authored_requirements_are_extended_not_replaced` | `scripts/requirements_trace.py`; `scripts/emit_requirement_trace_to_model.py` |
+| RQ-7 | A blueprint is selected by fit to the mitigation, and a selection with no shared wording is marked ungrounded rather than presented as governing | `test_the_chosen_blueprint_scores_at_least_as_high_as_every_alternative`, `test_a_selection_with_no_shared_wording_reports_itself_ungrounded` | `scripts/requirements_trace.py::select_blueprint` |
+| RQ-8 | Blueprint guidance reaches the STRIDE analyst that writes the remediation steps, not only the renderer that prints them | `test_each_requirement_carries_the_section_that_prescribes_it` | `scripts/build_requirements_contexts.py`; `agents/appsec-stride-analyzer-v2.md` |
 
 ## Incremental runs
 
@@ -220,6 +224,7 @@ Removing an entry means listing it here in the same change.
 | EXP-2 | Emitted values stay inside Threat Dragon's own vocabulary; the envelope is v2 | `test_envelope_is_threat_dragon_v2` | `docs/threat-dragon-export.md`; see `docs/internal/analysis/analysis-threatatlas-export-format-2026-07-30.md` |
 | EXP-3 | Component tiers map to fixed DFD shapes rather than to whatever the renderer prefers | `test_tier_maps_to_dfd_shape` | `docs/threat-dragon-export.md` |
 | EXP-4 | `threat-model.md` stays authoritative and SARIF stays the scanner export; a deliberately lossy export never becomes the source of truth | — *(no guard written)* | `docs/threat-dragon-export.md` |
+| EXP-5 | Canonical YAML retains abuse-case, business-context, and requirements traceability; narrower exports use their native fields or bounded text instead of inventing duplicate findings | `test_main_persists_canonical_analysis_to_yaml`, `test_traceability_is_folded_into_bounded_text` | `docs/threat-dragon-export.md`; `docs/internal/contracts/schema-invariants.md` |
 
 ## Repository trust
 

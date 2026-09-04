@@ -3085,3 +3085,246 @@ def test_already_valid_cwe_is_returned_byte_identical(raw):
     """
     assert re.match(r"^CWE-\d+$", raw), "fixture must already satisfy the schema"
     assert b._normalize_cwe(raw) == raw
+
+
+# ---------------------------------------------------------------------------
+# REQ-BIZ-003 — a finding names the declared context that weights it
+# ---------------------------------------------------------------------------
+
+
+def _analyst_context(tmp_path: Path, payload: dict) -> Path:
+    (tmp_path / ".stride-analyst-context.json").write_text(json.dumps(payload), encoding="utf-8")
+    return tmp_path
+
+
+def test_declared_context_marks_the_findings_of_its_component(tmp_path):
+    """Only components the analyst mapped material context onto are marked, and
+    only the three fields the ranking tie-break also treats as material."""
+    _analyst_context(
+        tmp_path,
+        {
+            "payments-svc": {
+                "business_context": {
+                    "impact_if_compromised": "Loss of customer funds.",
+                    "sensitive_assets": ["settlement balances"],
+                }
+            },
+            # business_purpose is descriptive, not material: no mark.
+            "docs-site": {"business_context": {"business_purpose": "Publishes marketing pages."}},
+        },
+    )
+    threats = [
+        {"id": "T-001", "component": "payments-svc"},
+        {"id": "T-002", "component": "docs-site"},
+        {"id": "T-003", "component": "unmapped-svc"},
+    ]
+
+    marked = b._apply_business_context_basis(threats, tmp_path, {})
+
+    assert marked == 1
+    assert threats[0]["business_context_basis"] == ["impact_if_compromised", "sensitive_assets"]
+    assert "business_context_basis" not in threats[1]
+    assert "business_context_basis" not in threats[2]
+
+
+def test_business_context_basis_never_carries_the_business_prose(tmp_path):
+    """The delivered model records which fields applied, never what they said."""
+    secret_prose = "Settles payouts for merchant ACME under contract 4711."
+    _analyst_context(
+        tmp_path,
+        {"payments-svc": {"business_context": {"impact_if_compromised": secret_prose}}},
+    )
+    threats = [{"id": "T-001", "component": "payments-svc"}]
+
+    b._apply_business_context_basis(threats, tmp_path, {})
+
+    assert threats[0]["business_context_basis"] == ["impact_if_compromised"]
+    assert secret_prose not in json.dumps(threats)
+
+
+def test_business_context_trace_records_safe_provenance_without_prose(tmp_path):
+    repo, output = _business_meta(tmp_path)
+    secret_prose = "Settles confidential merchant balances under contract 4711."
+    (output / ".business-context-input.md").write_text(secret_prose, encoding="utf-8")
+    _analyst_context(
+        output,
+        {
+            "payments-svc": {
+                "business_context": {
+                    "business_purpose": "Pays merchants.",
+                    "impact_if_compromised": secret_prose,
+                    "sensitive_assets": ["settlement balances"],
+                }
+            }
+        },
+    )
+
+    trace = b.build_business_context_trace({"output_dir": str(output)}, repo, 3)
+
+    assert trace == {
+        "status": "applied",
+        "source_kind": "run_only",
+        "source": ".business-context-input.md",
+        "sha256": trace["sha256"],
+        "fields_present": ["business_purpose", "impact_if_compromised", "sensitive_assets"],
+        "component_coverage": [
+            {
+                "component_id": "payments-svc",
+                "fields": ["business_purpose", "impact_if_compromised", "sensitive_assets"],
+            }
+        ],
+        "applied_finding_count": 3,
+    }
+    assert len(trace["sha256"]) == 64
+    assert secret_prose not in json.dumps(trace)
+
+
+def test_business_context_trace_distinguishes_skipped_and_absent(tmp_path):
+    repo, output = _business_meta(tmp_path)
+    skipped = b.build_business_context_trace({"output_dir": str(output), "skip_business_context": True}, repo, 7)
+    absent = b.build_business_context_trace({"output_dir": str(output)}, repo, 0)
+
+    assert skipped["status"] == "skipped"
+    assert skipped["applied_finding_count"] == 0
+    assert absent["status"] == "not_configured"
+
+
+def test_initial_abuse_analysis_distinguishes_pending_and_skipped_runs():
+    pending = b.build_initial_abuse_case_analysis({"skip_abuse_case_verification": False})
+    skipped = b.build_initial_abuse_case_analysis(
+        {"skip_abuse_case_verification": True, "abuse_case_label": "skipped (--no-abuse-cases)"}
+    )
+
+    assert pending == {
+        "status": "not_run",
+        "reason": "abuse-case verification has not completed",
+        "cases": [],
+        "catalog_evaluated": [],
+    }
+    assert skipped == {
+        "status": "skipped",
+        "reason": "skipped (--no-abuse-cases)",
+        "cases": [],
+        "catalog_evaluated": [],
+    }
+
+
+def test_skip_context_leaves_every_finding_unmarked(tmp_path):
+    _analyst_context(tmp_path, {"payments-svc": {"business_context": {"sensitive_assets": ["funds"]}}})
+    threats = [{"id": "T-001", "component": "payments-svc"}]
+
+    assert b._apply_business_context_basis(threats, tmp_path, {"skip_business_context": True}) == 0
+    assert "business_context_basis" not in threats[0]
+
+
+def test_meta_reports_no_business_context_when_the_run_skipped_it(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "business-context.md").write_text("Handles payouts.\n", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    cfg = {"output_dir": str(out), "skip_business_context": True}
+
+    assert b._business_context_digest(cfg, repo) is None
+    assert b._business_context_source(cfg, repo) is None
+
+
+# ---------------------------------------------------------------------------
+# requirements_compliance export
+#
+# The Markdown report carried the full §7b table while the YAML carried
+# nothing, so a consumer of the export saw no requirements dimension at all and
+# render_completion_summary.py reported "0 checked" for a run that had assessed
+# 73 of them (run a2a0e355).
+# ---------------------------------------------------------------------------
+
+_CATALOG = """\
+categories:
+- id: CAT-WEB
+  requirements:
+  - {id: WEB-001, priority: MUST, text: CSRF prevention}
+  - {id: WEB-002, priority: MUST, text: No tokens in JS-accessible storage}
+  - {id: AC-002, priority: SHOULD, text: Server-side authorization}
+  - {id: IV-004, priority: MUST, text: Parameterized queries}
+  - {id: DP-005, priority: MUST, text: Secret management}
+"""
+
+_FRAGMENT = """\
+| Requirement | Status | Priority | Evidence |
+| --- | --- | --- | --- |
+| `WEB-001`: CSRF prevention | ❌ FAIL | MUST | F-018 shows a GET password change |
+| `WEB-002`: No tokens in JS storage | ⚠️ PARTIAL | MUST | F-029 localStorage token |
+| `AC-002`: Server-side authorization | ✅ PASS | SHOULD | guard enforced server-side |
+| `IV-004`: Parameterized queries | ❓ UNVERIFIABLE | MUST | no query layer observed |
+| `DP-005`: Secret management | ➖ N/A | MUST | no secrets in scope |
+"""
+
+
+def _requirements_run(tmp_path: Path, *, catalog=_CATALOG, fragment=_FRAGMENT) -> Path:
+    if catalog is not None:
+        (tmp_path / ".requirements.yaml").write_text(catalog, encoding="utf-8")
+    if fragment is not None:
+        (tmp_path / ".fragments").mkdir(exist_ok=True)
+        (tmp_path / ".fragments" / "requirements-compliance.md").write_text(fragment, encoding="utf-8")
+    return tmp_path
+
+
+def test_requirements_compliance_counts_every_status(tmp_path):
+    out = b.build_requirements_compliance(_requirements_run(tmp_path))
+    assert out["total"] == 5
+    assert out["fail"] == 1
+    assert out["partial"] == 1
+    assert out["pass"] == 1
+    assert out["unverifiable"] == 1
+    assert out["not_applicable"] == 1
+
+
+def test_the_status_buckets_reconcile_with_the_total(tmp_path):
+    # The rule the control-effectiveness line learned the hard way: a breakdown
+    # that does not add up to its own total is worse than no breakdown.
+    out = b.build_requirements_compliance(_requirements_run(tmp_path))
+    buckets = out["pass"] + out["fail"] + out["partial"] + out["unverifiable"] + out["not_applicable"]
+    assert buckets == out["total"]
+
+
+def test_each_requirement_is_exported_with_its_findings(tmp_path):
+    out = b.build_requirements_compliance(_requirements_run(tmp_path))
+    rows = {r["id"]: r for r in out["requirements"]}
+    assert len(rows) == 5
+    assert rows["WEB-001"]["status"] == "FAIL"
+    assert rows["WEB-001"]["priority"] == "MUST"
+    assert rows["WEB-001"]["finding_ids"] == ["F-018"]
+    assert rows["DP-005"]["status"] == "N/A"
+
+
+def test_a_run_without_a_catalog_omits_the_key(tmp_path):
+    # Absent, not empty: an empty object would read as "assessed nothing".
+    assert b.build_requirements_compliance(_requirements_run(tmp_path, catalog=None)) is None
+
+
+def test_a_catalog_without_an_assessment_omits_the_key(tmp_path):
+    assert b.build_requirements_compliance(_requirements_run(tmp_path, fragment=None)) is None
+
+
+def test_strict_export_rejects_a_catalog_without_an_assessment(tmp_path):
+    with pytest.raises(b.RequirementsComplianceError, match="no Stage-2 compliance assessment"):
+        b.build_requirements_compliance(_requirements_run(tmp_path, fragment=None), strict=True)
+
+
+def test_strict_export_rejects_an_incomplete_assessment(tmp_path):
+    fragment = _FRAGMENT.replace("| `DP-005`: Secret management | ➖ N/A | MUST | no secrets in scope |\n", "")
+    with pytest.raises(b.RequirementsComplianceError, match="missing DP-005"):
+        b.build_requirements_compliance(_requirements_run(tmp_path, fragment=fragment), strict=True)
+
+
+def test_strict_export_rejects_a_malformed_catalog(tmp_path):
+    with pytest.raises(b.RequirementsComplianceError, match="catalog is invalid"):
+        b.build_requirements_compliance(_requirements_run(tmp_path, catalog="categories: nope"), strict=True)
+
+
+def test_an_id_outside_the_catalog_is_not_exported(tmp_path):
+    # The configured catalog is authoritative; the table is LLM-authored.
+    fragment = _FRAGMENT + "| `ZZZ-999`: invented | ❌ FAIL | MUST | made up |\n"
+    out = b.build_requirements_compliance(_requirements_run(tmp_path, fragment=fragment))
+    assert "ZZZ-999" not in {r["id"] for r in out["requirements"]}
+    assert out["total"] == 5

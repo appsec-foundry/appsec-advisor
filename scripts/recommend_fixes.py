@@ -684,6 +684,108 @@ def _recommend_component_evidence_coverage(issue: dict, output_dir: Path) -> dic
     }
 
 
+def _recommend_routing_effectiveness(issue: dict, output_dir: Path) -> dict:
+    """No finding for this component rested on a file routing delivered."""
+    ev = issue.get("evidence", {})
+    delivered = ev.get("delivered_files") or []
+    cited = ev.get("cited_files") or []
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "medium",
+        "risk_level": "low",
+        "summary": (f"{ev.get('component_id', '?')} produced its findings from files the routing did not deliver."),
+        "rationale": (
+            "The analyzer read past its bundle and found the evidence itself, so this is not a "
+            "gap in the findings. It does say the routing spent its budget on the wrong files "
+            "for this component: nothing it delivered was cited, and everything cited came from "
+            "elsewhere. Delivered: "
+            + (", ".join(map(str, delivered[:5])) or "(none)")
+            + ". Cited: "
+            + (", ".join(map(str, cited[:5])) or "(none)")
+            + "."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ev.get("log_file", ".dispatch-context"),
+                "details": (
+                    "Compare the cited files against the component's focus paths. Files the "
+                    "analyzer had to find itself belong in the focus list; delivered files no "
+                    "finding cites are candidates to drop."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
+def _recommend_dispatch_count_inconsistent(issue: dict, output_dir: Path) -> dict:
+    """A stage row claims more dispatches than the run spawned."""
+    ev = issue.get("evidence", {})
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": (
+            f"Run statistics for {ev.get('agent', '?')} claim {ev.get('dispatch_count', '?')} "
+            f"dispatch(es) against {ev.get('observed_spawns', '?')} spawn event(s)."
+        ),
+        "rationale": (
+            "dispatch_count is derived from AGENT_SPAWN and summed across accumulate calls, so "
+            "it cannot exceed the spawn events in the hook log. A count above them means a "
+            "measurement window opened after its agents had started and the derivation fell "
+            "back to the whole log. The cost and duration figures for that stage are affected; "
+            "the analysis is not."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".stage-stats.jsonl",
+                "details": (
+                    "Check that the stage captured --since-iso before dispatching. The recorded "
+                    "run cannot be corrected after the fact; read that stage's dispatch count "
+                    "from .hook-events.log instead."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
+def _recommend_requirements_export_inconsistent(issue: dict, output_dir: Path) -> dict:
+    """The report assessed requirements the structured export does not carry."""
+    ev = issue.get("evidence", {})
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "medium",
+        "summary": (
+            f"The catalog declared {ev.get('declared', '?')} requirement(s); threat-model.yaml "
+            f"exports {ev.get('exported', '?')} as assessed."
+        ),
+        "rationale": (
+            "Consumers of the export — a CI gate, a dashboard, the completion summary — read "
+            "their requirement counts from this key. Where it disagrees with the catalog the "
+            "run was given, they report a requirements dimension the report does not have."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": "threat-model.yaml",
+                "details": (
+                    "Re-run build_threat_model_yaml.py against this output directory and read "
+                    "its stderr: the compliance export is skipped rather than failed when its "
+                    "parser cannot read the rendered assessment."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_default(issue: dict, output_dir: Path) -> dict:
     """Fallback for unknown categories."""
     return {
@@ -711,8 +813,52 @@ def _recommend_default(issue: dict, output_dir: Path) -> dict:
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+
+def _recommend_business_context_unmapped(issue: dict, output_dir: Path) -> dict:
+    """Declared business context that the control analyst mapped to no component.
+
+    Nothing is broken in the pipeline: the document was read and fenced, the
+    analyst simply found no component the facts apply to. That is either a
+    document written about the product rather than about what the code contains,
+    or a component inventory whose names the document never touches. Both are
+    the operator's call, so this proposes reading, never editing.
+    """
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": (
+            "Business context was declared for this run but applies to no component, "
+            "so it changed neither scope nor any finding."
+        ),
+        "rationale": (
+            "The control analyst projects declared facts onto component IDs; only a "
+            "mapped component reaches STRIDE, crown-jewel selection, and the ranking "
+            "tie-break. An unmapped context usually describes the product in terms the "
+            "component inventory does not use — name the concrete services, data "
+            "stores, and assets instead."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": "docs/business-context.md",
+                "details": (
+                    "Compare the wording with the component names in .components.json "
+                    "and state the sensitive assets and compromise impact per service."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
+    "business_context_unmapped": _recommend_business_context_unmapped,
     "component_evidence_coverage": _recommend_component_evidence_coverage,
+    "routing_effectiveness": _recommend_routing_effectiveness,
+    "dispatch_count_inconsistent": _recommend_dispatch_count_inconsistent,
+    "requirements_export_inconsistent": _recommend_requirements_export_inconsistent,
     "max_turns_subagent": _recommend_max_turns_subagent,
     # A soft budget crossing is the same finding at warning severity — the
     # aggregator splits the category so the run stops reporting an error for a

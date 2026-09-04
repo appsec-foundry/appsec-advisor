@@ -356,6 +356,121 @@ def test_description_folds_in_the_fields_threat_dragon_cannot_hold():
     assert "threat-model.md#f-001" in description
 
 
+def test_traceability_is_folded_into_bounded_text():
+    model = _model(
+        threats=[
+            {
+                **_model()["threats"][0],
+                "violated_requirements": ["REQ-001"],
+                "business_context_basis": ["sensitive_assets", "security_obligations"],
+            }
+        ],
+        mitigations=[
+            {
+                **_model()["mitigations"][0],
+                "fulfills_requirements": ["REQ-001"],
+                "blueprint": {
+                    "id": "BP-001",
+                    "title": "Parameterized query standard",
+                    "section": "Database access",
+                    "section_url": "https://example.invalid/blueprint#database",
+                    "guidance": "Use prepared statements for every untrusted value.",
+                    "grounded": True,
+                },
+            }
+        ],
+        requirements_compliance={
+            "total": 1,
+            "pass": 0,
+            "fail": 1,
+            "partial": 0,
+            "unverifiable": 0,
+            "not_applicable": 0,
+            "requirements": [
+                {
+                    "id": "REQ-001",
+                    "status": "FAIL",
+                    "priority": "MUST",
+                    "title": "Use parameterized database queries",
+                    "finding_ids": ["F-001"],
+                }
+            ],
+        },
+        requirements_provenance={
+            "source_kind": "org-profile",
+            "source_label": "Engineering baseline",
+            "catalog_sha256": "b" * 64,
+        },
+        abuse_case_analysis={
+            "status": "completed",
+            "reason": None,
+            "cases": [
+                {
+                    "id": "AC-001",
+                    "title": "Extract the product catalog",
+                    "chain_verdict": "fully_viable",
+                    "verification_complete": True,
+                    "matched_finding_ids": ["F-001"],
+                    "steps": [{"step": 2, "verdict": "confirmed", "finding_id": "F-001"}],
+                }
+            ],
+            "catalog_evaluated": [],
+        },
+        business_context_trace={
+            "status": "applied",
+            "source_kind": "repository",
+            "source": "docs/business-context.md",
+            "sha256": "a" * 64,
+            "fields_present": ["sensitive_assets", "security_obligations"],
+            "component_coverage": [],
+            "applied_finding_count": 1,
+        },
+    )
+
+    doc, warnings = etd.build_threat_dragon(model)
+
+    assert len(_all_threats(doc)) == 1, "traceability must not become duplicate synthetic threats"
+    threat = _all_threats(doc)[0]
+    assert "REQ-001 [FAIL] — Use parameterized database queries" in threat["description"]
+    assert "AC-001 [fully viable, verification complete]" in threat["description"]
+    assert "matching steps 2 (confirmed)" in threat["description"]
+    assert "applied fields: sensitive assets, security obligations" in threat["description"]
+    assert "docs/business-context.md" in threat["description"]
+    assert "Requirements fulfilled:\n- REQ-001 [FAIL]" in threat["mitigation"]
+    assert "Implementation blueprint:\nBP-001 — Parameterized query standard" in threat["mitigation"]
+    assert "requirements 1 (FAIL 1, source Engineering baseline" in doc["summary"]["description"]
+    assert "sha256 " + "b" * 64 in doc["summary"]["description"]
+    assert any("1 finding link(s)" in warning and "requirement" in warning for warning in warnings)
+    assert any("1 case(s)" in warning for warning in warnings)
+    assert any("1 finding trace(s)" in warning for warning in warnings)
+
+
+def test_requirement_trace_text_reports_bounded_omissions():
+    requirements = [
+        {
+            "id": f"REQ-{index:03d}",
+            "status": "FAIL",
+            "title": "x" * 500,
+            "finding_ids": ["F-001"],
+        }
+        for index in range(1, etd.TRACE_ITEM_LIMIT + 3)
+    ]
+    doc, _ = etd.build_threat_dragon(
+        _model(
+            requirements_compliance={
+                "total": len(requirements),
+                "requirements": requirements,
+            }
+        )
+    )
+
+    description = _all_threats(doc)[0]["description"]
+    assert f"REQ-{etd.TRACE_ITEM_LIMIT:03d}" in description
+    assert f"REQ-{etd.TRACE_ITEM_LIMIT + 1:03d}" not in description
+    assert "+2 more requirement links in threat-model.yaml" in description
+    assert "x" * (etd.TRACE_VALUE_LIMIT + 1) not in description
+
+
 def test_evidence_summary_heads_the_evidence_block():
     """The prose naming the concrete evidence is a separate field from
     `scenario` and is where the file references get their meaning."""

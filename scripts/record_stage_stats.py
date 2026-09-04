@@ -60,6 +60,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -123,8 +124,11 @@ def _derive_dispatch_stats(
 ) -> dict | None:
     """Parse ``.hook-events.log`` and derive multi-dispatch wall stats.
 
-    Returns ``{"dispatch_count": int, "wall_secs_observed": int}`` or
-    ``None`` when the log is missing or no matching events were found.
+    Returns ``dispatch_count``, ``wall_secs_observed``, and stable
+    ``dispatch_event_ids`` or ``None`` when the log is missing or no matching
+    events were found. Event identities let accumulating calls union
+    overlapping or growing log windows instead of guessing with a permanent
+    count ceiling.
 
     Events earlier than ``since_iso`` are skipped (string compare on the
     ISO timestamps is correct because the format is fixed-width and
@@ -140,6 +144,7 @@ def _derive_dispatch_stats(
     if not log_path.is_file():
         return None
     spawn_times: dict[str, str] = {}
+    spawn_event_ids: set[str] = set()
     terminal_times: dict[str, str] = {}
     legacy_spawn_times: list[str] = []
     legacy_terminal_times: list[str] = []
@@ -149,7 +154,7 @@ def _derive_dispatch_stats(
 
     try:
         with log_path.open(encoding="utf-8", errors="replace") as fh:
-            for raw in fh:
+            for line_number, raw in enumerate(fh, start=1):
                 parsed = parse_line(raw)
                 legacy_match = _match_hook_event(raw) if parsed is None else None
                 if parsed is None and legacy_match is None:
@@ -165,6 +170,7 @@ def _derive_dispatch_stats(
                     call_id = call_id_match.group(1)
                     if event == "AGENT_SPAWN":
                         spawn_times.setdefault(call_id, ts)
+                        spawn_event_ids.add(f"call:{call_id}")
                     elif event in {"AGENT_DONE", "AGENT_FAILED"} and call_id in spawn_times:
                         terminal_times[call_id] = ts
                     continue
@@ -173,6 +179,8 @@ def _derive_dispatch_stats(
                     continue
                 if event == "AGENT_SPAWN":
                     legacy_spawn_times.append(ts)
+                    digest = hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
+                    spawn_event_ids.add(f"line:{line_number}:{digest}")
                 elif event in {"AGENT_INVOKE", "SCAN_COMPLETE"}:
                     legacy_terminal_times.append(ts)
     except OSError:
@@ -189,7 +197,11 @@ def _derive_dispatch_stats(
     except ValueError:
         return None
     wall_secs = max(0, int((t1 - t0).total_seconds()))
-    return {"dispatch_count": len(all_spawns), "wall_secs_observed": wall_secs}
+    return {
+        "dispatch_count": len(spawn_event_ids),
+        "dispatch_event_ids": sorted(spawn_event_ids),
+        "wall_secs_observed": wall_secs,
+    }
 
 
 def _existing_stage_keys(path: Path) -> set[tuple[int, str]]:
@@ -249,20 +261,53 @@ def _read_all_records(path: Path) -> list[dict]:
     return out
 
 
+def _compute_digest(record: dict) -> str:
+    """Fingerprint the compute a record reports.
+
+    An accumulation id names a dispatch *group*, so two different groups can
+    share one when the caller derives it from coarse parts (role, agent, model,
+    wave start). Comparing the measurement as well as the id separates the case
+    the idempotency guard exists for — the identical call, replayed — from a
+    genuinely different measurement that merely collides. Only the first may be
+    dropped.
+    """
+    parts = "|".join(str(int(record.get(field) or 0)) for field in ("duration_ms", "tool_uses", "tokens"))
+    return hashlib.sha256(parts.encode("utf-8")).hexdigest()[:16]
+
+
 def _merge_accumulate(existing: dict, incoming: dict) -> dict:
     """Sum compute fields from ``incoming`` into ``existing`` (in place).
 
     Additive: duration_ms / tool_uses / tokens are summed (correct semantics
     for "net agent compute" — concurrent sub-agents bill additively even
-    though their wall-time overlaps). dispatch_count is summed because each
-    accumulate call describes a non-overlapping dispatch group; wall time is
-    merged by max() so the widest observed window wins. Callers can provide an
+    though their wall-time overlaps). Dispatch event identities are unioned,
+    so overlapping windows do not double count and a later window can still
+    add events after an earlier whole-log fallback. Wall time is merged by
+    max() so the widest observed window wins. Callers can provide an
     accumulation id to make replay of the same group idempotent.
     """
     for f in ("duration_ms", "tool_uses", "tokens"):
         existing[f] = int(existing.get(f) or 0) + int(incoming.get(f) or 0)
     if incoming.get("dispatch_count") is not None:
-        existing["dispatch_count"] = int(existing.get("dispatch_count") or 0) + int(incoming.get("dispatch_count") or 0)
+        incoming_count = int(incoming.get("dispatch_count") or 0)
+        incoming_ids = set(incoming.get("dispatch_event_ids") or [])
+        existing_ids = set(existing.get("dispatch_event_ids") or [])
+        if incoming_ids and existing_ids:
+            combined_ids = existing_ids | incoming_ids
+            existing["dispatch_event_ids"] = sorted(combined_ids)
+            existing["dispatch_count"] = len(combined_ids)
+        elif incoming_ids:
+            prior_count = int(existing.get("dispatch_count") or 0)
+            existing["dispatch_event_ids"] = sorted(incoming_ids)
+            if incoming.get("dispatch_count_scope") == "full_log":
+                existing["dispatch_count"] = max(prior_count, len(incoming_ids))
+            else:
+                existing["dispatch_count"] = prior_count + len(incoming_ids)
+        elif incoming.get("dispatch_count_scope") == "full_log":
+            existing["dispatch_count"] = max(int(existing.get("dispatch_count") or 0), incoming_count)
+        else:
+            existing["dispatch_count"] = int(existing.get("dispatch_count") or 0) + incoming_count
+        existing.pop("dispatch_count_ceiling", None)
     if incoming.get("wall_secs_observed") is not None:
         existing["wall_secs_observed"] = max(
             int(existing.get("wall_secs_observed") or 0),
@@ -273,6 +318,11 @@ def _merge_accumulate(existing: dict, incoming: dict) -> dict:
             *existing.get("accumulation_ids", []),
             *[value for value in incoming["accumulation_ids"] if value not in existing.get("accumulation_ids", [])],
         ]
+    if incoming.get("accumulation_digests"):
+        existing["accumulation_digests"] = {
+            **(existing.get("accumulation_digests") or {}),
+            **incoming["accumulation_digests"],
+        }
     existing["recorded_dispatch_count"] = int(existing.get("recorded_dispatch_count") or 1) + 1
     existing["recorded_at"] = incoming.get("recorded_at") or existing.get("recorded_at")
     # Carry forward a name/model only if the existing row lacks one.
@@ -431,6 +481,7 @@ def main(argv: list[str]) -> int:
         record["variant"] = args.variant
     if args.accumulation_id:
         record["accumulation_ids"] = [args.accumulation_id]
+        record["accumulation_digests"] = {args.accumulation_id: _compute_digest(record)}
     if inconsistency:
         record["_inconsistency"] = inconsistency
 
@@ -456,6 +507,9 @@ def main(argv: list[str]) -> int:
             # right after its own dispatches returned.
             derived = _derive_dispatch_stats(hook_log, args.subagent_type, "")
             if derived is not None:
+                # Mark the scope so an accumulating merge takes this count
+                # instead of adding it — see _merge_accumulate.
+                derived["dispatch_count_scope"] = "full_log"
                 sys.stderr.write(
                     f"warn: --since-iso {args.since_iso} matched no dispatch of "
                     f"{args.subagent_type}; derived from the full log instead "
@@ -475,8 +529,22 @@ def main(argv: list[str]) -> int:
         for rec in all_records:
             if (rec.get("stage"), rec.get("variant") or "") == variant_key:
                 if args.accumulation_id and args.accumulation_id in (rec.get("accumulation_ids") or []):
-                    print(f"stage {args.stage} accumulation {args.accumulation_id!r} already recorded — skipping")
-                    return 0
+                    # Drop only a true replay. A caller that derives the id from
+                    # role/agent/model/wave-start gives every dispatch in a wave
+                    # the same one, so treating any collision as a duplicate
+                    # silently discarded 3 of 8 STRIDE dispatches on run
+                    # a2a0e355 — 37% of that stage's compute, reported as a
+                    # routine skip with exit 0. A differing measurement is data,
+                    # not a repeat, and is accumulated.
+                    seen = (rec.get("accumulation_digests") or {}).get(args.accumulation_id)
+                    incoming_digest = _compute_digest(record)
+                    if seen is None or seen == incoming_digest:
+                        print(f"stage {args.stage} accumulation {args.accumulation_id!r} already recorded — skipping")
+                        return 0
+                    print(
+                        f"stage {args.stage} accumulation id {args.accumulation_id!r} reused for a different "
+                        "measurement — accumulating both (derive one id per dispatch group, not per dispatch)"
+                    )
                 _merge_accumulate(rec, record)
                 merged = True
                 break

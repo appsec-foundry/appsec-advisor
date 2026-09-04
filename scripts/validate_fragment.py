@@ -242,6 +242,121 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
     return errors
 
 
+def fragment_invariant_errors(
+    fragment_type: str,
+    data: Any,
+    *,
+    context: Any | None = None,
+) -> list[str]:
+    """Relational invariants JSON Schema cannot express.
+
+    These rules relate two arrays of one fragment to each other, or a fragment
+    to the companion input the authoring agent already holds. JSON Schema has no
+    vocabulary for either, so before this function existed they lived privately
+    inside the deterministic consumer — which meant the authoring agent's own
+    mandated self-check passed on a file the gate then rejected, aborting a
+    multi-agent run after the expensive stages had already been paid for. That
+    is what happened to `.trust-boundary-candidates.json` on 2026-08-29: the
+    disposition for one signal named a candidate that did not itself declare
+    coverage of it, `validate_fragment` printed VALIDATE_OK, and the run died at
+    `prepare_trust_boundary_context.promote_candidates`.
+
+    So the invariants live here, next to `repository_path_errors`, and both the
+    self-check and the gate call this one function. An agent can therefore never
+    be surprised by a rule the gate enforces, and a new rule becomes visible to
+    the agent the moment it is added.
+
+    `context` is the companion artifact the rules need — for trust-boundary
+    candidates the assessment input the agent reads as `ASSESSMENT_INPUT_PATH`.
+    Rules that need it are skipped when it is absent, so the intra-fragment
+    rules still work for a caller that has only the fragment.
+
+    Returns plain-text errors, never raises: the caller decides between abort,
+    repair and report.
+    """
+    if fragment_type == "trust-boundary-candidates":
+        return _trust_boundary_candidate_errors(data, context)
+    return []
+
+
+def _trust_boundary_candidate_errors(data: Any, context: Any | None) -> list[str]:
+    """Relational rules for `.trust-boundary-candidates.json`.
+
+    Mirrors the checks `promote_candidates` used to run inline, in the same
+    order and with the same wording, so a message a caller or test matches on
+    does not change. Unlike the original it collects every violation instead of
+    raising on the first, which lets an agent fix them in one correction turn
+    rather than one per dispatch.
+    """
+    errors: list[str] = []
+    if not isinstance(data, dict):
+        return errors
+    candidates = data.get("candidates") or []
+    dispositions = data.get("dispositions") or []
+
+    candidate_by_key = {row["candidate_key"]: row for row in candidates}
+    if len(candidate_by_key) != len(candidates):
+        errors.append("candidate keys must be unique")
+    disposition_by_signal = {row["signal_id"]: row for row in dispositions}
+    if len(disposition_by_signal) != len(dispositions):
+        errors.append("every signal must have exactly one disposition")
+
+    # Cross-artifact rules. The agent holds this input too, so it can run them
+    # itself; a caller without it still gets everything below.
+    signal_by_id: dict[str, Any] = {}
+    component_ids: set[str] = set()
+    flow_ids: set[str] = set()
+    have_context = isinstance(context, dict) and all(
+        isinstance(context.get(key), list) for key in ("components", "data_flows", "signals")
+    )
+    if have_context:
+        component_ids = {row["id"] for row in context["components"]}
+        flow_ids = {row["id"] for row in context["data_flows"]}
+        signal_by_id = {row["id"]: row for row in context["signals"]}
+        mandatory = {sid for sid, row in signal_by_id.items() if row.get("mandatory")}
+        if set(disposition_by_signal) != mandatory:
+            missing = sorted(mandatory - set(disposition_by_signal))
+            extra = sorted(set(disposition_by_signal) - mandatory)
+            errors.append(f"signal disposition mismatch (missing={missing}, extra={extra})")
+
+    allowed_endpoints = component_ids | {"external"}
+    referenced_candidates: set[str] = set()
+    for candidate in candidates:
+        key = candidate["candidate_key"]
+        covered_signals = set(candidate.get("covered_signal_ids") or [])
+        covered_flows = set(candidate.get("covered_flow_ids") or [])
+        if have_context and (candidate["from"] not in allowed_endpoints or candidate["to"] not in allowed_endpoints):
+            errors.append(f"{key} references an unknown component endpoint")
+        if not covered_signals and not covered_flows:
+            errors.append(f"{key} covers no deterministic signal or data flow")
+        if have_context and not covered_signals <= set(signal_by_id):
+            errors.append(f"{key} references an unknown signal")
+        if have_context and not covered_flows <= flow_ids:
+            errors.append(f"{key} references an unknown data flow")
+    for signal_id, disposition in disposition_by_signal.items():
+        keys = disposition.get("candidate_keys") or []
+        if disposition["disposition"] == "boundary" and not keys:
+            errors.append(f"{signal_id} boundary disposition has no candidate")
+        if disposition["disposition"] != "boundary" and keys:
+            errors.append(f"{signal_id} non-boundary disposition references candidates")
+        for key in keys:
+            candidate = candidate_by_key.get(key)
+            if candidate is None:
+                errors.append(f"{signal_id} references unknown candidate {key}")
+                continue
+            # The rule that killed the 2026-08-29 run. `candidate_keys` is what
+            # feeds the coverage rows, so a candidate named there must agree
+            # that it covers the signal — otherwise the coverage report credits
+            # a boundary that never claimed it.
+            if signal_id not in (candidate.get("covered_signal_ids") or []):
+                errors.append(f"{key} does not declare coverage of {signal_id}")
+            referenced_candidates.add(key)
+    unreferenced = set(candidate_by_key) - referenced_candidates
+    if unreferenced:
+        errors.append(f"candidates are not referenced by a boundary disposition: {sorted(unreferenced)}")
+    return errors
+
+
 # Template engines that render on the SERVER. The browser receives their
 # output, never the engine, so a component built on one belongs to the
 # application tier. Deliberately excludes anything that also runs client-side
@@ -335,7 +450,13 @@ def _load_fragment(path: Path) -> object:
         )
 
 
-def validate(fragment_type: str, path: Path, *, repo_root: Path | None = None) -> int:
+def validate(
+    fragment_type: str,
+    path: Path,
+    *,
+    repo_root: Path | None = None,
+    context_path: Path | None = None,
+) -> int:
     schema = _load_schema(fragment_type)
     data = _load_fragment(path)
     try:
@@ -353,6 +474,16 @@ def validate(fragment_type: str, path: Path, *, repo_root: Path | None = None) -
             for error in errors:
                 print(f"VALIDATE_FAILED: {path.name} ({fragment_type}) — {error}", file=sys.stderr)
             return 1
+    # Unconditional, unlike the repository checks above: these rules need no
+    # repository, and three of the five agents that self-validate omit
+    # --repo-root. Gating them on it would leave exactly those agents — the
+    # trust-boundary analyst among them — unable to see what the gate enforces.
+    context = _load_fragment(context_path) if context_path is not None else None
+    errors = fragment_invariant_errors(fragment_type, data, context=context)
+    if errors:
+        for error in errors:
+            print(f"VALIDATE_FAILED: {path.name} ({fragment_type}) — {error}", file=sys.stderr)
+        return 1
     print(f"VALIDATE_OK: {path.name} matches {fragment_type}")
     return 0
 
@@ -661,8 +792,20 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Also validate repository-backed component paths or data-flow evidence.",
     )
+    legacy.add_argument(
+        "--context",
+        type=Path,
+        help="Companion input artifact the relational rules need "
+        "(trust-boundary-candidates: .trust-boundary-assessment-input.json). "
+        "Without it the cross-artifact rules are skipped.",
+    )
     largs = legacy.parse_args(args)
-    return validate(largs.fragment_type, largs.path, repo_root=largs.repo_root)
+    return validate(
+        largs.fragment_type,
+        largs.path,
+        repo_root=largs.repo_root,
+        context_path=largs.context,
+    )
 
 
 if __name__ == "__main__":

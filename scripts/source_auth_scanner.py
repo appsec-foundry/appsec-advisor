@@ -7,6 +7,13 @@ matching source file in the repository and emits findings to
 counter-pattern-aware verdict so that legitimate ownership-checked code is
 NOT flagged.
 
+The same pre-pass also performs a conservative, bounded data-flow check for
+direct LLM-output handling. It follows variables assigned from common model
+SDK calls and emits only when those values visibly reach a structured-data,
+browser-rendering, interpreter, resource, or action sink without the matching
+local guard. Multi-file, reflective, or otherwise ambiguous flows remain for
+the LLM05/LLM06 STRIDE lens instead of being promoted speculatively.
+
 Counter-pattern scopes:
     line    — only the matched line is searched
     window  — match_line .. match_line + counter_window  (inclusive)
@@ -469,6 +476,860 @@ def _source_type_for(file_rel: str) -> str:
     return "nodejs_source"
 
 
+# ---------------------------------------------------------------------------
+# Direct LLM-output flow checks
+# ---------------------------------------------------------------------------
+
+# These checks intentionally live in code rather than the single-regex catalog:
+# their evidence requires a source assignment, bounded propagation, a concrete
+# sink, and a sink-specific counter-signal. A regex-only row cannot preserve
+# that producer → consumer relationship without either missing ordinary
+# variable indirection or turning every generic ``response`` variable into a
+# false positive.
+_LLM_OUTPUT_CHECK_IDS = frozenset(
+    {
+        "INJ-LLM-001",  # structured output consumed without validation
+        "INJ-LLM-002",  # model output rendered as active browser content
+        "INJ-LLM-003",  # model output passed to SQL/shell/code execution
+        "INJ-LLM-004",  # model output selects a URL or filesystem path
+        "AUTHZ-LLM-001",  # model output selects an object or tool without authz
+    }
+)
+_LLM_OUTPUT_EXTS = frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py"})
+_LLM_OUTPUT_EXCLUDE_GLOBS = [
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/test/**",
+    "**/tests/**",
+    "**/__tests__/**",
+    "**/__mocks__/**",
+    "**/fixtures/**",
+]
+
+_LLM_SURFACE_RE = re.compile(
+    r"(?i)(\bopenai\b|\banthropic\b|\blangchain\b|\bllama[_-]?index\b|\bollama\b|"
+    r"\bbedrock\b|google\.genai|google\.generativeai|GenerativeModel|ChatCompletion|"
+    r"chat\.completions|responses\.(?:create|parse|stream)|messages\.create|"
+    r"\b(?:llm|language_model|chat_model)\b|streamText\s*\(|generateText\s*\()"
+)
+_STRONG_LLM_CALL_RE = re.compile(
+    r"(?i)(chat\.completions\.(?:create|parse|stream)\s*\(|responses\.(?:create|parse|stream)\s*\(|"
+    r"messages\.create\s*\(|generateContent\s*\(|generate_content\s*\(|InvokeModel\s*\(|"
+    r"\bconverse\s*\(|streamText\s*\(|generateText\s*\()"
+)
+_GENERIC_LLM_CALL_RE = re.compile(
+    r"(?i)\b(?:llm|model|chat_model|language_model|agent)\s*\.\s*"
+    r"(?:invoke|ainvoke|predict|complete|generate|chat|stream)\s*\("
+)
+_RAW_STRUCTURED_PARSE_RE = re.compile(r"(?i)(?:JSON\.parse|json\.loads)\s*\(")
+_HTML_SINK_RE = re.compile(
+    r"(?i)(\.innerHTML\s*=|\.outerHTML\s*=|insertAdjacentHTML\s*\(|document\.write\s*\(|"
+    r"dangerouslySetInnerHTML|bypassSecurityTrustHtml\s*\(|\bv-html\b|\{@html\b)"
+)
+_HTML_SANITIZER_RE = re.compile(
+    r"(?i)(DOMPurify\.sanitize|sanitizeHtml|sanitize_html|escapeHtml|html\.escape|bleach\.clean)\s*\("
+)
+_CODE_EXEC_RE = re.compile(
+    r"(?i)(?<![\w.])eval\s*\(|new\s+Function\s*\(|"
+    r"vm\.runIn(?:New|This)?Context\s*\("
+)
+_PYTHON_CODE_EXEC_RE = re.compile(r"(?i)(?<![\w.])(?:exec|compile)\s*\(")
+_PROCESS_EXEC_RE = re.compile(
+    r"(?i)(?:child_process\.)?(?:exec|execSync|execFile|spawn)\s*\(|"
+    r"os\.(?:system|popen)\s*\(|subprocess\.(?:run|call|Popen|check_output|check_call)\s*\("
+)
+_INTERPRETER_ARGV_RE = re.compile(
+    r"(?i)['\"](?:[^'\"]*/)?(?:ba|da|z)?sh(?:\.exe)?['\"]|"
+    r"['\"](?:[^'\"]*/)?(?:cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|python[0-9.]*(?:\.exe)?|"
+    r"node(?:\.exe)?|ruby(?:\.exe)?|perl(?:\.exe)?)['\"]"
+)
+_INTERPRETER_CODE_FLAG_RE = re.compile(r"(?i)['\"](?:-c|-e|/c|-command|/command)['\"]")
+_SQL_EXEC_RE = re.compile(
+    r"(?i)\b(?:db|database|sql|cursor|sequelize|connection|pool|queryRunner)\w*\s*\.\s*"
+    r"(?:query|execute|exec|raw)\s*\("
+)
+_URL_SINK_RE = re.compile(
+    r"(?i)\b(?:fetch|urlopen|openConnection|requests\.(?:get|post|put|patch|delete|request)|"
+    r"axios(?:\.(?:get|post|put|patch|delete|request))?|got(?:\.(?:get|post))?|"
+    r"http\.(?:get|request)|https\.(?:get|request))\s*\("
+)
+_PATH_SINK_RE = re.compile(
+    r"(?i)\b(?:fs\.(?:readFile|readFileSync|writeFile|writeFileSync|createReadStream|createWriteStream|"
+    r"readdir|unlink|rm|rename)|res\.(?:sendFile|download))\s*\("
+)
+_PYTHON_PATH_SINK_RE = re.compile(r"(?i)(?<![\w.])(?:open|Path)\s*\(")
+_OBJECT_SINK_RE = re.compile(
+    r"(?i)\.(?:findByPk|findById|findUnique|findFirst|findOne|update|destroy|delete|deleteOne|"
+    r"updateOne|remove)\s*\("
+)
+_TOOL_SINK_RE = re.compile(
+    r"(?i)(?:\b(?:execute|invoke|call|run|dispatch)[_-]?(?:tool|action)\s*\(|"
+    r"\btools?\s*\[[^\]]+\]\s*\()"
+)
+
+_SCHEMA_VALIDATOR_RE = re.compile(
+    r"(?i)(?:\b(?:\w*(?:schema|validator)\w*|zod|joi|yup|ajv|typeAdapter)\s*\.\s*"
+    r"(?:parse|validateAsync|validate_json)\s*\(|"
+    r"\b(?:jsonschema\.validate|model_validate|model_validate_json)\s*\()"
+)
+_NAMED_SCHEMA_CALL_RE = re.compile(
+    r"(?i)\b(?P<name>(?:[A-Z][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*(?:schema|validator)[A-Za-z0-9_]*))"
+    r"\s*\.\s*(?:parse|validateAsync|validate_json|model_validate|model_validate_json)\s*\("
+)
+_JSONSCHEMA_SCHEMA_NAME_RE = re.compile(
+    r"(?i)\bjsonschema\.validate\s*\(\s*(?:instance\s*=\s*)?[^,]+,\s*"
+    r"(?:schema\s*=\s*)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+)
+_SCHEMA_TYPE_CONSTRAINT_RE = re.compile(
+    r"(?i)(z\.(?:string|number|boolean|date|object)\s*\(|['\"]type['\"]\s*:|"
+    r":\s*(?:str|int|float|bool)\b|\bField\s*\()"
+)
+_SCHEMA_RANGE_OR_FORMAT_RE = re.compile(
+    r"(?i)(\.(?:min|max|gte|lte|positive|nonnegative|uuid|regex)\s*\(|"
+    r"\b(?:minimum|maximum|minLength|maxLength|pattern|format)\b|\b(?:ge|le|gt|lt)\s*=)"
+)
+_SCHEMA_CLOSED_RE = re.compile(r"(?i)(\.strict\s*\(|additionalProperties['\"]?\s*:\s*false|extra\s*=\s*['\"]forbid)")
+_SCHEMA_ALLOWLIST_RE = re.compile(r"(?i)(z\.enum\s*\(|\bLiteral\s*\[|\boneOf\b|['\"]enum['\"]\s*:)")
+_MANUAL_TYPE_RE = re.compile(
+    r"(?i)(typeof\b|isinstance\s*\(|Number\.is(?:Integer|Finite)\s*\(|\.is_(?:string|number|integer)\s*\()"
+)
+_MANUAL_RANGE_RE = re.compile(r"(?i)(?:<=|>=|<|>|\bmin(?:imum)?\b|\bmax(?:imum)?\b|\bge\b|\ble\b)")
+_MANUAL_ALLOWLIST_RE = re.compile(
+    r"(?i)(?:allowed\w*\s*\.(?:includes|has)\s*\(|\b\w+\s+in\s+allowed\w*|"
+    r"allowlist|whitelist|\benum\b|\bLiteral\s*\[)"
+)
+_URL_GUARD_RE = re.compile(r"(?i)(assertAllowedUrl|validateOutboundUrl|ssrfGuard|assertPublicHttpUrl)")
+_PATH_GUARD_RE = re.compile(
+    r"(?i)(assertContainedPath|resolveContainedPath|safeJoin|"
+    r"startsWith\s*\(\s*(?:base|root)|commonpath\s*\()"
+)
+_AUTHZ_GUARD_RE = re.compile(
+    r"(?i)(authorize|assertAuthorized|requirePermission|assertPermission|requireRole|"
+    r"requireOwnership|assertOwnership|ensureOwnership)"
+)
+_BROAD_AUTHZ_GATE_RE = re.compile(
+    r"(?i)(?:requireRole|requirePermission|assertAuthorized|ensureAdmin|requireAdmin)\s*\([^\n]*(?:"
+    r"currentUser|current_user|req\.user|principal|identity)"
+)
+_INLINE_OWNERSHIP_RE = re.compile(
+    r"(?i)(?:ownerId|owner_id|tenantId|tenant_id)\s*:\s*"
+    r"(?:req\.user|currentUser|current_user|principal|identity)(?:\.[A-Za-z_][A-Za-z0-9_]*)?"
+)
+_TOOL_ALLOWLIST_RE = re.compile(
+    r"(?i)(?:(?:allowedTools?|toolAllowlist|tool_allowlist|allowedActions?|actionAllowlist|"
+    r"action_allowlist)\s*\.\s*(?:includes|has)\s*\(|"
+    r"assertAllowed(?:Tool|Action)|validate(?:Tool|Action))"
+)
+
+
+def _assignment(line: str) -> tuple[list[str], str] | None:
+    """Return direct assignment targets and RHS for common source syntaxes."""
+    destructured = re.search(r"^\s*(?:const|let|var)\s*\{(?P<targets>[^}]+)\}\s*=\s*(?P<rhs>.*)", line)
+    if destructured:
+        targets = []
+        for item in destructured.group("targets").split(","):
+            candidate = item.split(":")[-1].strip().split("=")[0].strip()
+            if re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*", candidate):
+                targets.append(candidate)
+        return (targets, destructured.group("rhs")) if targets else None
+
+    scalar = re.search(
+        r"^\s*(?:(?:const|let|var|final|String|Object|Map(?:<[^>]+>)?|dict|str|int|float|bool)\s+)?"
+        r"(?P<target>\$?[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*)"
+        r"(?:\s*:\s*[^=]+)?\s*(?:=|:=)\s*(?P<rhs>.*)",
+        line,
+    )
+    if not scalar:
+        return None
+    return [scalar.group("target")], scalar.group("rhs")
+
+
+def _loop_target(line: str) -> tuple[str, str] | None:
+    match = re.search(
+        r"(?i)^\s*(?:for\s*\(\s*(?:const|let|var)\s+|for\s+)(?P<target>[A-Za-z_$][A-Za-z0-9_$]*)"
+        r"\s+(?:of|in)\s+(?P<rhs>.+?)(?:\)|:)?\s*\{?\s*$",
+        line,
+    )
+    return (match.group("target"), match.group("rhs")) if match else None
+
+
+def _refs_in(text: str, refs: set[str]) -> set[str]:
+    hits: set[str] = set()
+    for ref in refs:
+        if re.search(rf"(?<![A-Za-z0-9_$]){re.escape(ref)}(?![A-Za-z0-9_$])", text):
+            hits.add(ref)
+    return hits
+
+
+def _call_first_argument(statement: str, call_match: re.Match[str]) -> str:
+    """Extract a call's first argument without executing or fully parsing code."""
+    start = call_match.end()
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    out: list[str] = []
+    for ch in statement[start:]:
+        if escaped:
+            out.append(ch)
+            escaped = False
+            continue
+        if ch == "\\" and quote:
+            out.append(ch)
+            escaped = True
+            continue
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in {'"', "'", "`"}:
+            quote = ch
+            out.append(ch)
+            continue
+        if ch in "([{":
+            depth += 1
+            out.append(ch)
+            continue
+        if ch in ")]}":
+            if depth == 0:
+                break
+            depth -= 1
+            out.append(ch)
+            continue
+        if ch == "," and depth == 0:
+            break
+        out.append(ch)
+    return "".join(out).strip()
+
+
+def _call_arguments(statement: str, call_match: re.Match[str]) -> list[str]:
+    """Extract bounded top-level call arguments for sinks with multiple locators."""
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    current: list[str] = []
+    arguments: list[str] = []
+    for ch in statement[call_match.end() :]:
+        if escaped:
+            current.append(ch)
+            escaped = False
+            continue
+        if ch == "\\" and quote:
+            current.append(ch)
+            escaped = True
+            continue
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in {'"', "'", "`"}:
+            quote = ch
+            current.append(ch)
+        elif ch in "([{":
+            depth += 1
+            current.append(ch)
+        elif ch in ")]}":
+            if depth == 0:
+                if current or arguments:
+                    arguments.append("".join(current).strip())
+                break
+            depth -= 1
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            arguments.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+    return arguments
+
+
+def _call_match_consumes_direct_output(statement: str, call_match: re.Match[str]) -> bool:
+    """Return whether the matched call encloses a direct model invocation."""
+    matched = call_match.group(0)
+    relative_open = matched.find("(")
+    if relative_open >= 0:
+        open_idx = call_match.start() + relative_open
+    else:
+        suffix = statement[call_match.end() :]
+        opening = re.match(r"\s*\(", suffix)
+        if not opening:
+            return False
+        open_idx = call_match.end() + opening.end() - 1
+
+    depth = 1
+    quote: str | None = None
+    escaped = False
+    body: list[str] = []
+    for ch in statement[open_idx + 1 :]:
+        if escaped:
+            body.append(ch)
+            escaped = False
+            continue
+        if ch == "\\" and quote:
+            body.append(ch)
+            escaped = True
+            continue
+        if quote:
+            body.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in {'"', "'", "`"}:
+            quote = ch
+            body.append(ch)
+        elif ch == "(":
+            depth += 1
+            body.append(ch)
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                break
+            body.append(ch)
+        else:
+            body.append(ch)
+    return _direct_llm_call("".join(body), has_surface=True)
+
+
+def _guard_wraps_direct_output(scope: str, guard_re: re.Pattern[str]) -> bool:
+    return any(_call_match_consumes_direct_output(scope, match) for match in guard_re.finditer(scope))
+
+
+def _forward_statement(lines: list[str], idx: int, limit: int = 6) -> str:
+    """Join a bounded forward window for ordinary multi-line call/JSX forms."""
+    collected: list[str] = []
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    for raw in lines[idx : min(len(lines), idx + limit)]:
+        collected.append(raw)
+        for ch in raw:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\" and quote:
+                escaped = True
+                continue
+            if quote:
+                if ch == quote:
+                    quote = None
+                continue
+            if ch in {'"', "'", "`"}:
+                quote = ch
+            elif ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth = max(0, depth - 1)
+        stripped = raw.rstrip()
+        if depth == 0 and not stripped.endswith(("=", ",", "(", "{", "[")):
+            break
+    return "\n".join(collected)
+
+
+def _direct_llm_call(text: str, has_surface: bool) -> bool:
+    return bool(_STRONG_LLM_CALL_RE.search(text) or (has_surface and _GENERIC_LLM_CALL_RE.search(text)))
+
+
+def _html_sanitizes_refs(text: str, refs: set[str]) -> bool:
+    for sanitizer in _HTML_SANITIZER_RE.finditer(text):
+        if _refs_in(_call_first_argument(text, sanitizer), refs):
+            return True
+    return False
+
+
+def _definition_scope(lines: list[str], start: int, limit: int = 24) -> str:
+    """Return one bounded schema definition without borrowing nearby constraints."""
+    first = lines[start]
+    if re.match(r"^\s*class\s+", first):
+        base_indent = len(first) - len(first.lstrip())
+        end = start + 1
+        while end < min(len(lines), start + limit):
+            candidate = lines[end]
+            if candidate.strip() and len(candidate) - len(candidate.lstrip()) <= base_indent:
+                break
+            end += 1
+        return "\n".join(lines[start:end])
+
+    collected: list[str] = []
+    depth = 0
+    saw_delimiter = False
+    quote: str | None = None
+    escaped = False
+    for raw in lines[start : min(len(lines), start + limit)]:
+        collected.append(raw)
+        for ch in raw:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\" and quote:
+                escaped = True
+                continue
+            if quote:
+                if ch == quote:
+                    quote = None
+                continue
+            if ch in {'"', "'", "`"}:
+                quote = ch
+            elif ch in "([{":
+                saw_delimiter = True
+                depth += 1
+            elif ch in ")]}":
+                depth = max(0, depth - 1)
+        if saw_delimiter and depth == 0:
+            break
+        if not saw_delimiter and raw.rstrip().endswith(";"):
+            break
+    return "\n".join(collected)
+
+
+def _complete_schema_definition(lines: list[str], validator_name: str | None) -> bool:
+    if validator_name:
+        escaped_name = re.escape(validator_name)
+        definition_re = re.compile(
+            rf"^\s*(?:(?:const|let|var|final)\s+)?{escaped_name}(?:\s*:[^=]+)?\s*=|"
+            rf"^\s*class\s+{escaped_name}(?:\s*\([^)]*\))?\s*:",
+            re.IGNORECASE,
+        )
+        starts = [idx for idx, line in enumerate(lines) if definition_re.search(line)]
+        scope = _definition_scope(lines, starts[0]) if starts else ""
+    else:
+        scope = "\n".join(lines)
+    return bool(
+        scope
+        and _SCHEMA_TYPE_CONSTRAINT_RE.search(scope)
+        and _SCHEMA_RANGE_OR_FORMAT_RE.search(scope)
+        and _SCHEMA_CLOSED_RE.search(scope)
+        and _SCHEMA_ALLOWLIST_RE.search(scope)
+    )
+
+
+def _schema_name_from_validation(line: str) -> str | None:
+    jsonschema = _JSONSCHEMA_SCHEMA_NAME_RE.search(line)
+    if jsonschema:
+        return jsonschema.group("name")
+    named = _NAMED_SCHEMA_CALL_RE.search(line)
+    return named.group("name") if named else None
+
+
+def _structured_validation_present(lines: list[str], idx: int, refs: set[str], parse_statement: str) -> bool:
+    validator_name = _schema_name_from_validation(parse_statement)
+    if validator_name and _complete_schema_definition(lines, validator_name):
+        return True
+
+    manual_type = False
+    manual_range = False
+    manual_allowlist = False
+    first_following_line = idx + len(parse_statement.splitlines())
+    for pos in range(first_following_line, min(len(lines), idx + 20)):
+        line = lines[pos]
+        if not _refs_in(line, refs):
+            continue
+        validator = _SCHEMA_VALIDATOR_RE.search(line)
+        if validator:
+            validator_name = _schema_name_from_validation(line)
+            if validator_name and _complete_schema_definition(lines, validator_name):
+                return True
+            continue
+        type_hit = bool(_MANUAL_TYPE_RE.search(line))
+        range_hit = bool(_MANUAL_RANGE_RE.search(line))
+        allowlist_hit = bool(_MANUAL_ALLOWLIST_RE.search(line))
+        if type_hit or range_hit or allowlist_hit:
+            manual_type = manual_type or type_hit
+            manual_range = manual_range or range_hit
+            manual_allowlist = manual_allowlist or allowlist_hit
+            if manual_type and manual_range and manual_allowlist:
+                return True
+            continue
+        # The first non-validation use makes a later check too late.
+        return False
+    return manual_type and manual_range and manual_allowlist
+
+
+def _guard_consumes_refs(scope: str, guard_re: re.Pattern[str], refs: set[str]) -> bool:
+    return any(guard_re.search(line) and _refs_in(line, refs) for line in scope.splitlines())
+
+
+def _authz_guard_present(scope: str, selected_argument: str, refs: set[str], direct_output: bool) -> bool:
+    """Require authorization tied to the selected value or an explicit caller gate."""
+    tied_guard = _guard_consumes_refs(scope, _AUTHZ_GUARD_RE, refs) if refs else False
+    direct_guard = direct_output and _guard_wraps_direct_output(selected_argument, _AUTHZ_GUARD_RE)
+    inline_owner_filter = bool(refs and _INLINE_OWNERSHIP_RE.search(selected_argument))
+    return tied_guard or direct_guard or inline_owner_filter or bool(_BROAD_AUTHZ_GATE_RE.search(scope))
+
+
+def _html_sink_payload(statement: str, sink_match: re.Match[str]) -> str:
+    matched = sink_match.group(0).rstrip()
+    if matched.endswith("("):
+        return _call_first_argument(statement, sink_match)
+    if matched.endswith("="):
+        return statement[sink_match.end() :].split(";", 1)[0]
+    return statement[sink_match.end() :]
+
+
+def _selected_sink_refs(statement: str, sink_match: re.Match[str], refs: set[str], *, is_tool: bool) -> set[str]:
+    matched = sink_match.group(0)
+    if is_tool and "[" in matched:
+        selector = matched.split("[", 1)[1].rsplit("]", 1)[0]
+    else:
+        selector = _call_first_argument(statement, sink_match)
+    return _refs_in(selector, refs)
+
+
+def _python_fixed_argv(statement: str, process_match: re.Match[str], first_arg: str) -> bool:
+    """Recognize a literal executable in a shell-free subprocess argv list."""
+    if not process_match.group(0).lower().startswith("subprocess."):
+        return False
+    if re.search(r"(?i)\bshell\s*=\s*True\b", statement):
+        return False
+    literal_first_item = re.compile(
+        r"""^\s*[\[(]\s*(?:r|u|b|br|rb)?(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")\s*(?:,|[\])])""",
+        re.IGNORECASE,
+    )
+    return bool(literal_first_item.match(first_arg))
+
+
+def _fixed_interpreter_executes_model_output(statement: str, refs: set[str], direct_output: bool) -> bool:
+    return bool(
+        (refs or direct_output)
+        and _INTERPRETER_ARGV_RE.search(statement)
+        and _INTERPRETER_CODE_FLAG_RE.search(statement)
+    )
+
+
+def _resource_sink_argument(statement: str, sink_match: re.Match[str]) -> str:
+    """Select the URL/path-bearing arguments for known multi-argument sinks."""
+    arguments = _call_arguments(statement, sink_match)
+    sink = sink_match.group(0).lower()
+    if "requests.request" in sink:
+        named_url = next((arg for arg in arguments if re.match(r"(?i)^\s*url\s*=", arg)), None)
+        if named_url is not None:
+            return named_url
+        return arguments[1] if len(arguments) > 1 else ""
+    if "fs.rename" in sink:
+        return "\n".join(arguments[:2])
+    return arguments[0] if arguments else ""
+
+
+def _guard_scope_before(lines: list[str], idx: int, column: int, before: int = 14) -> str:
+    prior = lines[max(0, idx - before) : idx]
+    return "\n".join([*prior, lines[idx][:column]])
+
+
+def _structured_output_consumed(lines: list[str], idx: int, targets: list[str]) -> bool:
+    if not targets:
+        return bool(re.search(r"(?i)\b(return|yield|send|json)\b", lines[idx]))
+    scope = "\n".join(lines[idx + 1 : min(len(lines), idx + 40)])
+    return bool(_refs_in(scope, set(targets)))
+
+
+def _llm_finding(
+    *,
+    check_id: str,
+    file_rel: str,
+    line_idx: int,
+    lines: list[str],
+    title: str,
+    scenario: str,
+    severity: str,
+    cwe: str,
+    finding_type: str,
+    remediation: str,
+) -> Finding:
+    return Finding(
+        local_id="",
+        check_id=check_id,
+        finding_type_id=finding_type,
+        source_type=_source_type_for(file_rel),
+        file=file_rel,
+        line=line_idx + 1,
+        evidence_snippet=_evidence_snippet(lines, line_idx),
+        title=f"{title} ({file_rel}:{line_idx + 1})",
+        scenario=scenario,
+        severity=severity,
+        cwe=[cwe],
+        recommended_mitigation_title=remediation,
+        breach_vector="Internet User",
+    )
+
+
+def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
+    """Emit high-confidence findings for direct model-output-to-sink flows."""
+    if file_abs.suffix.lower() not in _LLM_OUTPUT_EXTS:
+        return []
+    if _matches_any_glob(file_rel, _LLM_OUTPUT_EXCLUDE_GLOBS):
+        return []
+    try:
+        if file_abs.stat().st_size > _MAX_FILE_BYTES:
+            return []
+        text = file_abs.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    if not text or not _LLM_SURFACE_RE.search(text):
+        return []
+
+    lines = text.splitlines()
+    tainted: set[str] = set()
+    html_sanitized: set[str] = set()
+    findings: list[Finding] = []
+    emitted: set[tuple[str, int]] = set()
+
+    def emit_once(finding: Finding) -> None:
+        key = (finding.check_id, finding.line)
+        if key not in emitted:
+            emitted.add(key)
+            findings.append(finding)
+
+    for idx, line in enumerate(lines):
+        statement = _forward_statement(lines, idx)
+        assignment = _assignment(line)
+        if assignment:
+            targets, rhs = assignment
+            continuation = "\n".join(statement.splitlines()[1:])
+            rhs_scope = "\n".join(part for part in (rhs, continuation) if part)
+            rhs_refs = _refs_in(rhs_scope, tainted)
+            rhs_has_direct_output = _direct_llm_call(rhs_scope, has_surface=True)
+            rhs_is_tainted = bool(rhs_refs or rhs_has_direct_output)
+            for target in targets:
+                if rhs_is_tainted:
+                    tainted.add(target)
+                    sanitizes_refs = bool(rhs_refs and _html_sanitizes_refs(rhs_scope, rhs_refs))
+                    sanitizes_direct = rhs_has_direct_output and _guard_wraps_direct_output(
+                        rhs_scope, _HTML_SANITIZER_RE
+                    )
+                    if sanitizes_refs or sanitizes_direct:
+                        html_sanitized.add(target)
+                    else:
+                        html_sanitized.discard(target)
+                else:
+                    tainted.discard(target)
+                    html_sanitized.discard(target)
+
+            if _RAW_STRUCTURED_PARSE_RE.search(rhs_scope) and (rhs_refs or rhs_has_direct_output):
+                structured_refs = set(targets) | rhs_refs
+                if _structured_output_consumed(lines, idx, targets) and not _structured_validation_present(
+                    lines, idx, structured_refs, rhs_scope
+                ):
+                    emit_once(
+                        _llm_finding(
+                            check_id="INJ-LLM-001",
+                            file_rel=file_rel,
+                            line_idx=idx,
+                            lines=lines,
+                            title="Improper LLM Output Validation",
+                            scenario=(
+                                "Model-generated JSON is parsed and subsequently consumed without a schema or complete "
+                                "type, range, and allowlist checks. Prompt-influenced fields can therefore select "
+                                "unexpected identifiers, enum values, or numeric bounds."
+                            ),
+                            severity="Medium",
+                            cwe="CWE-20",
+                            finding_type="",
+                            remediation=(
+                                "Validate parsed model output with a closed schema that rejects unknown fields and "
+                                "enforces types, enum allowlists, identifier formats, and numeric ranges before use."
+                            ),
+                        )
+                    )
+
+        loop = _loop_target(line)
+        if loop and _refs_in(loop[1], tainted):
+            tainted.add(loop[0])
+            html_sanitized.discard(loop[0])
+
+        statement_refs = _refs_in(statement, tainted)
+        statement_has_direct_output = _direct_llm_call(statement, has_surface=True)
+        if not statement_refs and not statement_has_direct_output:
+            continue
+
+        html_match = _HTML_SINK_RE.search(line)
+        if html_match:
+            html_payload = _html_sink_payload(statement, html_match)
+            sink_refs = _refs_in(html_payload, tainted)
+            unsafe_refs = sink_refs - html_sanitized
+            direct_html = _direct_llm_call(html_payload, has_surface=True)
+            unsafe_direct_html = direct_html and not _guard_wraps_direct_output(html_payload, _HTML_SANITIZER_RE)
+            if (unsafe_refs and not _html_sanitizes_refs(html_payload, unsafe_refs)) or unsafe_direct_html:
+                emit_once(
+                    _llm_finding(
+                        check_id="INJ-LLM-002",
+                        file_rel=file_rel,
+                        line_idx=idx,
+                        lines=lines,
+                        title="Cross-Site Scripting from LLM Output",
+                        scenario=(
+                            "Model-controlled text is inserted into an active HTML context without contextual encoding "
+                            "or a sanitizer applied to that value, allowing model output to become executable markup."
+                        ),
+                        severity="High",
+                        cwe="CWE-79",
+                        finding_type="FT-011",
+                        remediation=(
+                            "Render model text through framework escaping or sanitize it for the exact HTML context "
+                            "immediately before the sink; keep raw HTML disabled for Markdown output."
+                        ),
+                    )
+                )
+
+        execution_kind: tuple[str, str, str, str] | None = None
+        code_match = _CODE_EXEC_RE.search(line)
+        if code_match is None and file_abs.suffix.lower() == ".py":
+            code_match = _PYTHON_CODE_EXEC_RE.search(line)
+        if code_match:
+            first_arg = _call_first_argument(statement, code_match)
+            if _refs_in(first_arg, tainted) or _direct_llm_call(first_arg, has_surface=True):
+                execution_kind = ("code", "CWE-94", "FT-020", "Critical")
+        else:
+            process_match = _PROCESS_EXEC_RE.search(line)
+            if process_match:
+                first_arg = _call_first_argument(statement, process_match)
+                first_arg_is_model_output = bool(
+                    _refs_in(first_arg, tainted) or _direct_llm_call(first_arg, has_surface=True)
+                )
+                shell_enabled = bool(re.search(r"(?i)\bshell\s*[:=]\s*true\b", statement))
+                shell_receives_model_output = shell_enabled and bool(statement_refs or statement_has_direct_output)
+                interpreter_receives_model_output = _fixed_interpreter_executes_model_output(
+                    statement, statement_refs, statement_has_direct_output
+                )
+                safe_python_argv = _python_fixed_argv(statement, process_match, first_arg)
+                if interpreter_receives_model_output or (
+                    (first_arg_is_model_output or shell_receives_model_output) and not safe_python_argv
+                ):
+                    execution_kind = ("process", "CWE-78", "FT-003", "Critical")
+            if execution_kind is None:
+                sql_match = _SQL_EXEC_RE.search(line)
+                if sql_match:
+                    first_arg = _call_first_argument(statement, sql_match)
+                    if _refs_in(first_arg, tainted) or _direct_llm_call(first_arg, has_surface=True):
+                        execution_kind = ("SQL", "CWE-89", "FT-001", "High")
+        if execution_kind is not None:
+            kind, cwe, finding_type, severity = execution_kind
+            emit_once(
+                _llm_finding(
+                    check_id="INJ-LLM-003",
+                    file_rel=file_rel,
+                    line_idx=idx,
+                    lines=lines,
+                    title={
+                        "code": "Code Injection from LLM Output",
+                        "process": "Command Injection from LLM Output",
+                        "SQL": "SQL Injection from LLM Output",
+                    }[kind],
+                    scenario=(
+                        f"Model-controlled output reaches a {kind} interpreter as executable structure rather than "
+                        "data. Prompt injection or a compromised model response can therefore alter the operation "
+                        "that the application executes."
+                    ),
+                    severity=severity,
+                    cwe=cwe,
+                    finding_type=finding_type,
+                    remediation=(
+                        "Do not execute model output directly. Use fixed operations with bound parameters or a "
+                        "shell-free fixed executable, and mediate any model-selected action through a strict allowlist."
+                    ),
+                )
+            )
+
+        resource_sinks = [
+            (_URL_SINK_RE, "outbound URL", "CWE-918", "FT-070", _URL_GUARD_RE),
+            (_PATH_SINK_RE, "filesystem path", "CWE-22", "FT-060", _PATH_GUARD_RE),
+        ]
+        if file_abs.suffix.lower() == ".py":
+            resource_sinks.append((_PYTHON_PATH_SINK_RE, "filesystem path", "CWE-22", "FT-060", _PATH_GUARD_RE))
+        for sink_re, resource_kind, cwe, finding_type, guard_re in resource_sinks:
+            sink_match = sink_re.search(line)
+            if not sink_match:
+                continue
+            resource_argument = _resource_sink_argument(statement, sink_match)
+            resource_refs = _refs_in(resource_argument, tainted)
+            direct_resource = _direct_llm_call(resource_argument, has_surface=True)
+            if not resource_refs and not direct_resource:
+                continue
+            scope = "\n".join([_guard_scope_before(lines, idx, sink_match.start()), resource_argument])
+            guarded_refs = resource_refs and _guard_consumes_refs(scope, guard_re, resource_refs)
+            guarded_direct = direct_resource and _guard_wraps_direct_output(resource_argument, guard_re)
+            if guarded_refs or guarded_direct:
+                continue
+            emit_once(
+                _llm_finding(
+                    check_id="INJ-LLM-004",
+                    file_rel=file_rel,
+                    line_idx=idx,
+                    lines=lines,
+                    title=(
+                        "Server-Side Request Forgery from LLM Output"
+                        if cwe == "CWE-918"
+                        else "Path Traversal from LLM Output"
+                    ),
+                    scenario=(
+                        f"A model-generated value selects an {resource_kind} without a visible destination/containment "
+                        "allowlist. Prompt-influenced output can therefore reach resources outside the caller's "
+                        "intended scope."
+                    ),
+                    severity="High",
+                    cwe=cwe,
+                    finding_type=finding_type,
+                    remediation=(
+                        "Validate the model-selected resource with a strict allowlist and canonical containment or "
+                        "destination checks before access; do not treat model output as a trusted locator."
+                    ),
+                )
+            )
+
+        object_match = _OBJECT_SINK_RE.search(line)
+        tool_match = _TOOL_SINK_RE.search(line)
+        selected_match = tool_match or object_match
+        if selected_match:
+            is_tool = tool_match is not None
+            selected_argument = (
+                selected_match.group(0).split("[", 1)[1].rsplit("]", 1)[0]
+                if is_tool and "[" in selected_match.group(0)
+                else _call_first_argument(statement, selected_match)
+            )
+            scope = "\n".join([_guard_scope_before(lines, idx, selected_match.start()), selected_argument])
+            selected_refs = _selected_sink_refs(statement, selected_match, tainted, is_tool=is_tool)
+            direct_selection = _direct_llm_call(selected_argument, has_surface=True)
+            if not selected_refs and not direct_selection:
+                continue
+            has_authz = _authz_guard_present(scope, selected_argument, selected_refs, direct_selection)
+            has_allowlist = (
+                bool(
+                    (selected_refs and _guard_consumes_refs(scope, _TOOL_ALLOWLIST_RE, selected_refs))
+                    or (direct_selection and _guard_wraps_direct_output(selected_argument, _TOOL_ALLOWLIST_RE))
+                )
+                if is_tool
+                else True
+            )
+            if not (has_authz and has_allowlist):
+                target_kind = "tool/action" if is_tool else "object identifier"
+                emit_once(
+                    _llm_finding(
+                        check_id="AUTHZ-LLM-001",
+                        file_rel=file_rel,
+                        line_idx=idx,
+                        lines=lines,
+                        title=(
+                            "Missing Authorization for LLM-Selected Action"
+                            if is_tool
+                            else "Missing Authorization for LLM-Selected Object"
+                        ),
+                        scenario=(
+                            f"A model-generated {target_kind} reaches a protected operation without both a server-side "
+                            "authorization/ownership decision and, for dynamic actions, a fixed allowlist. The model can "
+                            "therefore direct application authority at a resource the caller may not control."
+                        ),
+                        severity="High",
+                        cwe="CWE-862",
+                        finding_type="FT-042",
+                        remediation=(
+                            "Resolve the model-selected value through an allowlisted server-side mapping, then authorize "
+                            "the authenticated caller against the concrete tool, action, object, owner, and tenant."
+                        ),
+                    )
+                )
+
+    return findings
+
+
 def _title_with_location(check: Check, file: str, line: int) -> str:
     # Mirrors the "<weakness class> — <file[:line]>" convention used by the
     # plugin's threat titles (see feedback_threat_model_finding_titles.md).
@@ -534,7 +1395,14 @@ def scan_repo(repo_root: Path, checks: list[Check]) -> list[Finding]:
             continue
         if _is_universally_excluded(rel):
             continue
-        findings.extend(scan_file(path, rel, checks))
+        catalog_findings = scan_file(path, rel, checks)
+        llm_findings = _scan_llm_output_file(path, rel)
+        # Prefer the source-aware LLM finding when a broad catalog rule matched
+        # the same sink and CWE. Both rows describe one affected statement and
+        # mechanism; keeping both would violate the per-instance finding model.
+        specific = {(f.line, tuple(f.cwe)) for f in llm_findings}
+        findings.extend(f for f in catalog_findings if (f.line, tuple(f.cwe)) not in specific)
+        findings.extend(llm_findings)
     # Assign sequential local IDs (SAF-001, SAF-002, …) deterministically by
     # (file, line, check_id).
     findings.sort(key=lambda f: (f.file, f.line, f.check_id))

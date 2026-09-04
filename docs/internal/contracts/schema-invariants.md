@@ -225,3 +225,17 @@ the action, manifest, component-plan, projection, effective-plan, and binding
 schemas. `tests/test_schemas.py` is the cross-schema drift gate; a future shared
 definition may replace the repetitions only when every validator resolves it
 locally and fail-closed without network access.
+
+## §4i. Requirements compliance export invariant
+
+When `.requirements.yaml` is configured, strict Stage-2 composition must assess every catalog requirement exactly once before publication completes. `emit_requirement_trace_to_model.py` is the post-compose producer for both `requirements_compliance` and the completed mitigation requirement trace; missing, malformed, incomplete, or schema-invalid input blocks the compose tail without rewriting `threat-model.yaml`.
+
+The exported status vocabulary is `PASS`, `FAIL`, `PARTIAL`, `UNVERIFIABLE`, and `N/A`; `ANTI-PATTERN` normalizes to `FAIL` and `NOT OBSERVABLE` normalizes to `UNVERIFIABLE`. The five counters must sum to `total`, the row count must equal `total`, requirement IDs must be unique, and row priority comes from the configured catalog rather than the LLM-authored table. `schemas/threat-model.output.schema.yaml` owns the row shape and `validate_intermediate.py` owns the cross-field reconciliation.
+
+## §4j. Export traceability invariant
+
+`threat-model.yaml` is the canonical machine-readable trace. New runs persist an explicit `business_context_trace` even when context was skipped or absent, a complete `abuse_case_analysis` after the deterministic verifier fold, and `requirements_provenance` whenever a catalog was assessed. These blocks carry bounded semantic values and hashes, never raw business-context prose or rendering tokens.
+
+Every finding, mitigation, requirement, and abuse-case reference inside those blocks must resolve against the same YAML document. `validate_intermediate.py` owns this reconciliation, and a producer that adds or changes canonical trace data validates the updated document before replacing the last valid model.
+
+Threat Dragon has no native structures for these dimensions. Its exporter attaches applicable trace to the existing finding and mitigation text fields and reports counted omissions; it never creates a second threat merely to represent an abuse chain or requirement.

@@ -98,6 +98,9 @@ Safety gates — skip entire cleanup when any of these hold:
 Invocation:
 
   python3 runtime_cleanup.py <OUTPUT_DIR> [--stage all|pre-qa|post-qa|post-architect]
+                                          # the pipeline invokes post-qa (and
+                                          # post-architect); post-qa carries the
+                                          # always-cleanup wave on a clean run
                                           [--keep-runtime-files]
                                           [--keep-run-issues]              # deferred plugin diagnosis
                                           [--force]                        # bypass safety gates
@@ -188,6 +191,12 @@ ALWAYS_FILES = [
     # Business context the user supplied for this run without persisting it.
     # Keeping it would silently shape the next scan (see load_business_context.py).
     ".business-context-input.md",
+    # Receipt-verification bookkeeping: which dispatch is waiting to be
+    # verified, and which ones were. Both are scoped to the dispatch chain of
+    # one run — carrying them forward would let a later run's boundary pass on
+    # an earlier run's verification.
+    ".pending-dispatch.json",
+    ".receipt-verification.json",
 ]
 ALWAYS_DIRS = [
     ".progress",
@@ -413,13 +422,26 @@ def run_cleanup(
     # --- resolve which paths are in scope for this stage --------------------
     files: list[str] = []
     dirs: list[str] = []
+    always_scheduled = False
     if stage in {"all", "pre-qa"}:
         files.extend(ALWAYS_FILES)
         dirs.extend(ALWAYS_DIRS)
+        always_scheduled = True
     if stage in {"all", "post-qa"}:
         qa_status_ok = _status_file_is_pass(output_dir / ".qa-status.json")
         qa_plan_ok = _repair_plan_is_empty(output_dir / ".qa-repair-plan.json")
         if qa_status_ok and qa_plan_ok:
+            # The always-cleanup wave belongs to a finished run, and `post-qa` is
+            # the only stage the pipeline invokes — nothing calls `pre-qa`, so
+            # gating this wave on that stage alone left every transient artifact
+            # behind in the output directory for good. Running it here honours
+            # what the whitelist contract already promises ("after a successful
+            # run") while a run that did not finish cleanly keeps the artifacts
+            # a diagnosis needs.
+            if not always_scheduled:
+                files.extend(ALWAYS_FILES)
+                dirs.extend(ALWAYS_DIRS)
+                always_scheduled = True
             files.extend(POST_QA_FILES_IF_PASS)
             dirs.extend(POST_QA_DIRS)
         else:

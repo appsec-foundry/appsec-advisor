@@ -1,0 +1,81 @@
+# security-score-indicators.yaml — indicator vocabulary for the quick score
+# (scripts/security_score.py).
+#
+# The score groups its rows by the aspect a reader assesses, not by the control
+# catalog's domains: "where does this repository handle output badly" rather
+# than "which control domain does the rule belong to".
+#
+# Both inputs are routed through the same mapping:
+#   * architecture-coverage rules, by the `cwe` of the rule in
+#     data/architecture-coverage-rules.yaml
+#   * scanner findings, by the `cwe` on the finding
+#
+# Resolution order per item, first match wins:
+#   1. `config_checks` — a config/IaC check id listed on an indicator
+#   2. `iac_types` — the config/IaC family of the check
+#   3. `cwes` — an explicit CWE listed on an indicator
+#   4. `weakness_classes` — the class scripts/weakness_classifier.py derives
+#      from the CWE (the same classes data/posture-rubric.yaml maps)
+#   5. `scanners` — the scanner that produced a finding, for findings whose CWE
+#      maps nowhere (config/IaC misconfiguration is hardening by construction)
+#   6. `default` below
+#
+# Config/IaC checks are routed by check and family BEFORE their CWE, because a
+# CI check's CWE describes the CI weakness. Routed by CWE, a missing workflow
+# `permissions:` block (CWE-862) lands next to broken object authorization in
+# the application, and container-image signing lands under authentication.
+#
+# A CWE may appear on one indicator only. Extend additively; renaming an `id`
+# breaks the JSON contract of `--json` consumers.
+
+version: 1
+default: other
+
+indicators:
+  - id: input-validation
+    label: Input Validation
+    cwes: [CWE-20]
+
+  - id: output-handling
+    label: Output Handling
+    weakness_classes: [injection]
+
+  - id: frontend-security
+    label: Frontend Security
+    weakness_classes: [output_xss_csp]
+    cwes: [CWE-942]
+
+  - id: access-control
+    label: Access Control
+    weakness_classes: [missing_authz]
+    cwes: [CWE-284]
+
+  - id: authentication
+    label: Authentication & Session
+    weakness_classes: [broken_auth]
+
+  - id: secrets-crypto
+    label: Secrets & Cryptography
+    weakness_classes: [secret_management, weak_crypto]
+
+  - id: hardening
+    label: Hardening & Configuration
+    weakness_classes: [server_side_exposure, dos]
+    cwes: [CWE-319, CWE-1004]
+    iac_types: [Dockerfile, github_workflow, docker_compose, agent_config, agent_automation]
+    scanners: [config-iac]
+
+  - id: supply-chain
+    label: Dependencies & Supply Chain
+    weakness_classes: [outdated_deps]
+    iac_types: [dependabot, renovate, npm_config]
+    # Pinning, signing, SBOM and lockfile checks live in families that are
+    # otherwise hardening.
+    config_checks: [IAC-001, IAC-005, IAC-011, IAC-040, IAC-041]
+
+  - id: data-exposure
+    label: Data Exposure
+    weakness_classes: [sensitive_disclosure]
+
+  - id: other
+    label: Other

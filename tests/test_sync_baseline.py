@@ -13,6 +13,9 @@ a half-bumped repository would ship a copy the id gate rejects.
 *Non-destructive edits.* ``config.json`` is edited in place, not re-serialised,
 so unrelated fields keep their formatting.
 
+The same three properties are checked again for an org profile, which vendors its
+own baseline beside its own configuration.
+
 The network is never touched: every case stubs the fetch.
 """
 
@@ -229,6 +232,144 @@ def test_main_reports_an_error_without_a_traceback(plugin: Path, serves, capsys)
     serves(None)
     assert sb.main(["--plugin-root", str(plugin)]) == 2
     assert capsys.readouterr().err.startswith("ERROR:")
+
+
+# ---------- org profiles ---------------------------------------------------
+#
+# An org profile declares the same three things — id, fetchable source, vendored
+# copy — so it goes stale the same way. Only the file declaring the id differs.
+
+ORG_PUBLISHED = "# Acme Rules\n\n`baseline-id: acme-1.0`\n\n- Do the secure thing.\n"
+ORG_VENDORED = "# Acme Rules\n\n`baseline-id: acme-1.0`\n\n- Do the older thing.\n"
+
+PROFILE_YAML = """# Acme org profile — comments must survive an id bump.
+version: 1
+baseline:
+  enabled: true
+  id: acme-1.0
+  name: Acme Secure Coding
+  url: https://example.invalid/acme.md
+  file: baselines/acme.md
+presets:
+  standard:
+    id: unrelated-key
+"""
+
+
+@pytest.fixture
+def profile(tmp_path: Path) -> Path:
+    """Return the path of an org-profile.yaml with a vendored baseline beside it."""
+    root = tmp_path / "org-profile"
+    (root / "baselines").mkdir(parents=True)
+    (root / "baselines" / "acme.md").write_text(ORG_VENDORED, encoding="utf-8")
+    path = root / "org-profile.yaml"
+    path.write_text(PROFILE_YAML, encoding="utf-8")
+    return path
+
+
+def vendored(profile: Path) -> str:
+    return (profile.parent / "baselines" / "acme.md").read_text(encoding="utf-8")
+
+
+def profile_id(profile: Path) -> str:
+    import yaml
+
+    return yaml.safe_load(profile.read_text(encoding="utf-8"))["baseline"]["id"]
+
+
+def test_profile_same_id_rewrites_the_vendored_copy(profile: Path, serves):
+    serves(ORG_PUBLISHED)
+    steps = sb.sync_profile(profile)
+    assert vendored(profile) == ORG_PUBLISHED
+    assert profile_id(profile) == "acme-1.0"
+    assert any("wrote" in step for step in steps)
+
+
+def test_profile_identical_text_writes_nothing(profile: Path, serves):
+    (profile.parent / "baselines" / "acme.md").write_text(ORG_PUBLISHED, encoding="utf-8")
+    serves(ORG_PUBLISHED)
+    steps = sb.sync_profile(profile)
+    assert not any("wrote" in step for step in steps)
+
+
+def test_profile_derivative_id_counts_as_the_same_version(profile: Path, serves):
+    derived = ORG_PUBLISHED.replace("acme-1.0", "acme-1.0+team")
+    serves(derived)
+    sb.sync_profile(profile)
+    assert vendored(profile) == derived
+    assert profile_id(profile) == "acme-1.0"
+
+
+def test_profile_new_id_stops_and_changes_nothing(profile: Path, serves):
+    serves(ORG_PUBLISHED.replace("acme-1.0", "acme-2.0"))
+    with pytest.raises(sb.VersionChange):
+        sb.sync_profile(profile)
+    assert vendored(profile) == ORG_VENDORED
+    assert profile_id(profile) == "acme-1.0"
+
+
+def test_profile_accepted_id_moves_file_and_profile_together(profile: Path, serves):
+    published = ORG_PUBLISHED.replace("acme-1.0", "acme-2.0")
+    serves(published)
+    sb.sync_profile(profile, accept_id="acme-2.0")
+    assert vendored(profile) == published
+    assert profile_id(profile) == "acme-2.0"
+    text = profile.read_text(encoding="utf-8")
+    assert text.startswith("# Acme org profile")
+    # Only the baseline id moves; an unrelated `id:` key stays where it was.
+    assert "id: unrelated-key" in text
+
+
+def test_profile_with_an_ambiguous_id_line_is_refused(profile: Path, serves):
+    """Two lines could be the baseline id, so neither is rewritten."""
+    profile.write_text(PROFILE_YAML.replace("id: unrelated-key", "id: acme-1.0"), encoding="utf-8")
+    serves(ORG_PUBLISHED.replace("acme-1.0", "acme-2.0"))
+    with pytest.raises(sb.SyncError):
+        sb.sync_profile(profile, accept_id="acme-2.0")
+    assert vendored(profile) == ORG_VENDORED
+    assert profile_id(profile) == "acme-1.0"
+
+
+def test_profile_file_outside_the_profile_directory_is_refused(profile: Path, serves):
+    profile.write_text(PROFILE_YAML.replace("file: baselines/acme.md", "file: ../escaped.md"), encoding="utf-8")
+    serves(ORG_PUBLISHED)
+    with pytest.raises(sb.SyncError):
+        sb.sync_profile(profile)
+
+
+def test_profile_without_a_vendored_copy_is_refused(profile: Path, serves):
+    profile.write_text(PROFILE_YAML.replace("  file: baselines/acme.md\n", ""), encoding="utf-8")
+    serves(ORG_PUBLISHED)
+    with pytest.raises(sb.SyncError) as excinfo:
+        sb.sync_profile(profile)
+    assert "baseline.file" in str(excinfo.value)
+
+
+def test_profile_without_a_source_is_refused(profile: Path, serves):
+    profile.write_text(PROFILE_YAML.replace("  url: https://example.invalid/acme.md\n", ""), encoding="utf-8")
+    serves(ORG_PUBLISHED)
+    with pytest.raises(sb.SyncError):
+        sb.sync_profile(profile)
+    assert vendored(profile) == ORG_VENDORED
+
+
+def test_profile_without_a_baseline_block_is_refused(profile: Path, serves):
+    profile.write_text("version: 1\n", encoding="utf-8")
+    serves(ORG_PUBLISHED)
+    with pytest.raises(sb.SyncError):
+        sb.sync_profile(profile)
+
+
+def test_main_syncs_a_profile(profile: Path, serves, capsys):
+    serves(ORG_PUBLISHED)
+    assert sb.main(["--profile", str(profile)]) == 0
+    assert vendored(profile) == ORG_PUBLISHED
+    assert "source:" in capsys.readouterr().out
+
+
+def test_main_refuses_both_sources_at_once(profile: Path, plugin: Path):
+    with pytest.raises(SystemExit):
+        sb.main(["--profile", str(profile), "--plugin-root", str(plugin)])
 
 
 # ---------- this repository ------------------------------------------------

@@ -17,6 +17,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "render_abuse_cases.py"
+VALID_MODEL = REPO_ROOT / "tests" / "fixtures" / "schema" / "threat-model.valid.yaml"
 
 # The sidecar (.fragments/abuse-cases.json) is an internal machine-readable
 # artefact — not a compose-loaded fragment — so its shape is pinned here rather
@@ -81,20 +82,53 @@ def test_stale_matcher_identity_does_not_render_dead_finding_link():
 
 _THREAT_MODEL = {
     "threats": [
-        {"t_id": "T-010", "title": "Persistent XSS via bypassSecurityTrustHtml", "risk": "High"},
-        {"t_id": "T-046", "title": "Refresh token in localStorage", "risk": "Medium"},
-        {"t_id": "T-001", "title": "SQL injection in search", "risk": "Critical"},
-        {"t_id": "T-002", "title": "Mass assignment on role", "risk": "High"},
+        {"id": "T-010", "title": "Persistent Cross-Site Scripting", "risk": "High"},
+        {"id": "T-046", "title": "Refresh Token in Browser Storage", "risk": "Medium"},
+        {"id": "T-001", "title": "SQL Injection in Search", "risk": "Critical"},
+        {"id": "T-002", "title": "Mass Assignment on Role", "risk": "High"},
     ],
     "mitigations": [
-        {"m_id": "M-007", "title": "Replace bypassSecurityTrustHtml", "priority": "P1", "threat_ids": ["T-010"]},
-        {"m_id": "M-009", "title": "HttpOnly session cookie", "priority": "P1", "threat_ids": ["T-046"]},
+        {"id": "M-007", "title": "Replace unsafe HTML rendering", "priority": "P1", "threat_ids": ["T-010"]},
+        {"id": "M-009", "title": "Use an HttpOnly session cookie", "priority": "P1", "threat_ids": ["T-046"]},
     ],
 }
 
 
+def _write_valid_threat_model(path: Path) -> None:
+    model = yaml.safe_load(VALID_MODEL.read_text(encoding="utf-8"))
+    model["threats"] = []
+    stride_by_id = {
+        "T-010": "Tampering",
+        "T-046": "Information Disclosure",
+        "T-001": "Tampering",
+        "T-002": "Elevation of Privilege",
+    }
+    for threat in _THREAT_MODEL["threats"]:
+        model["threats"].append(
+            {
+                **threat,
+                "component": "C-01",
+                "stride": stride_by_id[threat["id"]],
+                "scenario": f"Repository evidence confirms {threat['title'].lower()} in the profile flow.",
+                "likelihood": threat["risk"],
+                "impact": threat["risk"],
+                "evidence": [{"file": "src/profile/handler.ts", "line": 10}],
+                "mitigation_ids": [
+                    mitigation["id"]
+                    for mitigation in _THREAT_MODEL["mitigations"]
+                    if threat["id"] in mitigation["threat_ids"]
+                ],
+            }
+        )
+    model["mitigations"] = _THREAT_MODEL["mitigations"]
+    model["components"][0]["threat_ids"] = [threat["id"] for threat in model["threats"]]
+    model["security_controls"][0]["linked_threats"] = [threat["id"] for threat in model["threats"]]
+    model["trust_boundaries"][0]["adjacent_finding_ids"] = [threat["id"] for threat in model["threats"]]
+    path.write_text(yaml.safe_dump(model, sort_keys=False), encoding="utf-8")
+
+
 def _setup(tmp_path: Path, verdicts: dict) -> Path:
-    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(_THREAT_MODEL))
+    _write_valid_threat_model(tmp_path / "threat-model.yaml")
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts))
     return tmp_path
 
@@ -462,13 +496,52 @@ def test_main_preserves_fragment_when_verdicts_exist_but_all_not_applicable(tmp_
             }
         )
     )
-    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(_THREAT_MODEL))
+    _write_valid_threat_model(tmp_path / "threat-model.yaml")
 
     rc = rac.main(["--output-dir", str(tmp_path)])
     assert rc == 0
     assert (frag_dir / "abuse-cases.md").exists(), (
         "main() must not delete abuse-cases.md when .abuse-case-verdicts.json is present"
     )
+
+
+def test_main_persists_canonical_analysis_to_yaml(tmp_path: Path):
+    _setup(tmp_path, _FULLY_VIABLE)
+
+    assert rac.main(["--output-dir", str(tmp_path)]) == 0
+
+    analysis = yaml.safe_load((tmp_path / "threat-model.yaml").read_text(encoding="utf-8"))["abuse_case_analysis"]
+    assert analysis["status"] == "completed"
+    case = analysis["cases"][0]
+    assert case["id"] == "AC-T-001"
+    assert case["chain_verdict"] == "fully_viable"
+    assert case["verification_complete"] is False
+    assert case["unverified_steps"] == [3]
+    assert case["matched_finding_ids"] == ["F-010", "F-046"]
+    assert case["blocking_mitigation_ids"] == ["M-007", "M-009"]
+    assert case["steps"][0] == {
+        "step": 1,
+        "outcome": case["steps"][0]["outcome"],
+        "verdict": "confirmed",
+        "finding_id": "F-010",
+        "evidence": {"file": "about.component.ts", "line": 119},
+        "controls_found": [],
+        "unverified": False,
+    }
+    assert "rows" not in case and "status_icon" not in json.dumps(case)
+
+
+def test_canonical_persistence_does_not_follow_pending_symlink(tmp_path: Path):
+    _setup(tmp_path, _FULLY_VIABLE)
+    victim = tmp_path / "unrelated.txt"
+    victim.write_text("preserve me", encoding="utf-8")
+    pending = tmp_path / ".threat-model.yaml.abuse.pending"
+    pending.symlink_to(victim)
+
+    assert rac.main(["--output-dir", str(tmp_path)]) == 0
+
+    assert victim.read_text(encoding="utf-8") == "preserve me"
+    assert not pending.exists()
 
 
 # ─── changelog enrichment with abuse cases (added 2026-06-13) ───────────────

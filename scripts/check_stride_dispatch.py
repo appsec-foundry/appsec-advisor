@@ -81,9 +81,8 @@ Timing
 ------
 Run from the skill's **Phase-10b precondition gate** (after Stage 1
 returns, before Stage 2). ``.progress/`` lives in ``runtime_cleanup.py``'s
-``ALWAYS_DIRS`` and is only reaped at the ``pre-qa`` stage, which runs
-after this gate — so the per-component progress files are still on disk
-when this script runs.
+``ALWAYS_DIRS``, which is reaped at the end of a clean run — so the
+per-component progress files are still on disk when this script runs.
 
 Usage
 -----

@@ -66,6 +66,7 @@ from typing import Any, Optional
 
 import _severity_rollup  # sibling script — see extract_metrics()
 import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
+import stamp_threat_model  # sibling script — owns which deliverables get stamped
 from _atomic_io import atomic_write_text
 
 BANNER_WIDTH = 62
@@ -831,26 +832,36 @@ def build_next_steps(
     metrics: dict,
     cfg: dict,
 ) -> list[str]:
-    """Apply the conditional rules from SKILL.md → "Next Steps block".
+    """Build the Next Steps block: what the reader can do with the report.
+
+    This function is the rule set, not a copy of one. The block used to be
+    specified in SKILL.md, which no longer carries a "Next Steps block"
+    section — the runtime is compact and the summary is deterministic, so the
+    conditions live here with the code that applies them.
 
     Returns a capped 5-item list of MUTUALLY ALTERNATIVE actions: read the
     report, *or* triage it, *or* ask it a question. None of them requires the
-    one before, so `render_next_steps` joins them with "or" — which is also why
-    every entry must be an action the reader can actually take. Anything purely
-    informational belongs in `build_run_notes`, not here.
+    one before, which is also why every entry must be an action the reader can
+    actually take. Anything purely informational belongs in `build_run_notes`,
+    not here.
+
+    An action that ADDS to reading the report rather than replacing it belongs
+    in `build_follow_ups`. Uploading the SARIF and re-running deeper used to sit
+    in this list, where they read as a choice against reading the report —
+    which is not a choice anyone makes.
 
     Entry 0 is the report step and stays first (it is the one most readers
-    want). Because the renderer ends every entry but the last with a trailing
-    "or", the following entry must read on from it — start entries after the
-    first with a lowercase verb ("triage the findings…", not "Triage…").
+    want), and the ask step stays last — it is the open-ended fallback, and it
+    is the only multi-line entry, so anything after it would be separated from
+    the first bullet by its example block. Each entry is a self-contained
+    imperative and starts capitalised; the list carries no conjunctions, so
+    nothing has to read on from the entry above it.
 
     A step may carry `\\n`-separated continuation lines; the renderer indents
-    them under the step.
+    them one level under the step.
     """
     lines: list[str] = []
     sev = metrics["threats_by_sev"]
-    critical = sev.get("Critical", 0)
-    high = sev.get("High", 0)
 
     # One short line: path plus where to start reading. The register slice used
     # to be appended here ('…then Section 8 "Findings Register" for Critical
@@ -862,18 +873,17 @@ def build_next_steps(
     # that turns them into a prioritised, owned remediation plan. Runs later and
     # independently of this pipeline, so it fits any follow-up session.
     if sum(sev.values()):
-        lines.append("triage the findings via /appsec-advisor:review-threat-model")
+        lines.append("Triage the findings — /appsec-advisor:review-threat-model")
 
     # Asking is the non-mutating default exploration path and must stay visible
-    # rather than sink into an easy-to-miss footer. Show the questions, NOT
+    # rather than sink into an easy-to-miss footer. Show the question, NOT
     # `/appsec-advisor:ask-threat-model`: that skill routes itself from any
     # natural-language query about the model ("the default surface for every
     # natural-language query", its own description), so naming the command
     # implies a step the reader does not have to take. The question IS the
     # invocation. review-threat-model is the opposite case — a triage console
     # with modes that has to be started — so it keeps its command.
-    lines.append('just ask — e.g. "What are the most critical findings?" or "What should I fix first?"')
-
+    #
     # Architect review — only surface the dot-file when it contains actionable defects.
     # Advisory-only reviews (technical_defects=0, no repair plan) are internal
     # artefacts; everything important is already in threat-model.md.
@@ -889,20 +899,72 @@ def build_next_steps(
             except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 pass
         if _arch_has_defects:
-            lines.append(f"read the architect review — {output_dir}/.architect-review.md")
+            lines.append(f"Read the architect review — {output_dir}/.architect-review.md")
 
-    # SARIF uploaded.
-    if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
-        lines.append("upload threat-model.sarif.json to GitHub Advanced Security / SonarQube / DefectDojo")
-
-    # Sonnet-only run with significant Critical/High.
-    if cfg.get("reasoning_model") == "sonnet" and (critical + high) >= 3:
-        lines.append(
-            "re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)"
+    # Name the addressee anyway. "just ask" said what to say without saying to
+    # whom, and the reader is looking at terminal output with no reason to
+    # assume the next prompt is the place.
+    #
+    # The examples get one line each rather than being joined into the lead-in.
+    # Run together ('ask me about it — e.g. "…?" or "…?"') the second question
+    # trailed off the end of the longest line in the block and read as an
+    # afterthought; stacked under the lead-in they are two visibly equal
+    # offers. Two of them, because one reads as *the* question to ask rather
+    # than as an instance of a kind.
+    #
+    # The closing line is what keeps them examples. Without it a reader takes a
+    # stacked pair as the menu — precisely the failure the "e.g." was carrying
+    # before, and it cannot carry it from inside the lead-in once the questions
+    # sit on their own lines.
+    #
+    # This entry stays LAST: it is the only multi-line step, so a bullet after
+    # it would be cut off from the top of the list by the example block. Last
+    # among a handful of bullets is still in view, and it is where the
+    # open-ended fallback belongs anyway.
+    #
+    # The examples follow the findings, and lead with orientation before action,
+    # mirroring the two entries above (read it, then triage it). On a clean run
+    # "What should I fix first?" asks about findings the run did not produce.
+    examples = (
+        ("What are the most critical findings?", "What should I fix first?")
+        if sum(sev.values())
+        else ("What did the scan cover?", "What was out of scope?")
+    )
+    lines.append(
+        "\n".join(
+            ["Or just ask me:"] + [f'"{question}"' for question in examples] + ["… or anything else about the report"]
         )
+    )
 
     # Cap at 5.
     return lines[:5]
+
+
+def build_follow_ups(output_dir: Path, metrics: dict, cfg: dict) -> list[str]:
+    """Actions that ADD to reading the report rather than replacing it.
+
+    Kept apart from `build_next_steps` because the renderer joins that list
+    with "or". Uploading the SARIF is something a reader does as well as
+    reading the report, not instead of it, and a re-run is a decision taken
+    after reading rather than in place of it.
+
+    Authored as sentences that stand on their own — nothing precedes them to
+    read on from, so they start with an uppercase verb.
+    """
+    out: list[str] = []
+    sev = metrics["threats_by_sev"]
+
+    # Name the file and the class of tool, not three products: a reader has one
+    # SARIF consumer and the list read as a menu to choose from.
+    if cfg.get("write_sarif") and (output_dir / "threat-model.sarif.json").is_file():
+        out.append("Upload threat-model.sarif.json to your SARIF consumer (code scanning, SonarQube, DefectDojo)")
+
+    # Sonnet-only run with significant Critical/High.
+    if cfg.get("reasoning_model") == "sonnet" and (sev.get("Critical", 0) + sev.get("High", 0)) >= 3:
+        out.append(
+            "Re-run with --reasoning-model opus for deeper STRIDE analysis (~5× cost, typically +15-25% finding depth)"
+        )
+    return out
 
 
 def build_run_notes(output_dir: Path, cfg: dict) -> list[str]:
@@ -1578,12 +1640,41 @@ def render_report_integrity(output_dir: Path) -> list[str]:
     return out
 
 
-def render_composition_health(health: Optional[dict]) -> list[str]:
+_COMPOSITION_NOTES_HEADING = "## Appendix: Composition Notes"
+
+
+def _has_composition_notes(report_md: Optional[Path]) -> bool:
+    """Whether the composed report actually carries the Composition Notes
+    appendix.
+
+    The appendix and this block are gated independently and cannot be assumed
+    to agree: the appendix needs ``warning_count >= 2`` while this block shows
+    from one warning, and its gate reads ``.compose-stats.json`` from the
+    PREVIOUS invocation by design (compose writes the current run's stats only
+    after the document is rendered). So the appendix is routinely absent while
+    there are warnings to report. Confirm it rather than infer it, and treat an
+    unknown or unreadable report as absent — an unverifiable cross-reference is
+    exactly the defect this guards against.
+    """
+    if report_md is None:
+        return False
+    try:
+        return _COMPOSITION_NOTES_HEADING in Path(report_md).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def render_composition_health(health: Optional[dict], report_md: Optional[Path] = None) -> list[str]:
     """Render the conditional Composition Health block. Returns an empty
     list when health is None (clean run) so the caller can extend
-    unconditionally."""
+    unconditionally.
+
+    ``report_md`` is the composed ``threat-model.md``; it decides whether the
+    block may point at the Composition Notes appendix.
+    """
     if not health:
         return []
+    has_appendix = _has_composition_notes(report_md)
     lines: list[str] = []
     lines.append("  -- Composition Health -------------------------------------")
     n_warn = health["warning_count"]
@@ -1615,42 +1706,65 @@ def render_composition_health(health: Optional[dict]) -> list[str]:
                 det = det[:87] + "…"
             lines.append(f"  Soft warning        : {sec} — {det}")
         if len(health["warnings"]) > 2:
-            lines.append(f"                        ({len(health['warnings']) - 2} more in §Composition Notes appendix)")
+            rest = len(health["warnings"]) - 2
+            where = "§Composition Notes appendix" if has_appendix else ".compose-stats.json"
+            lines.append(f"                        ({rest} more in {where})")
 
     if n_auto:
         lines.append(
             f"  Auto-retries        : {n_auto} inline-shortcut recovery cycle{'s' if n_auto != 1 else ''} (succeeded)"
         )
 
-    lines.append("  See `## Appendix: Composition Notes` in threat-model.md for the full picture.")
+    if has_appendix:
+        lines.append(f"  See `{_COMPOSITION_NOTES_HEADING}` in threat-model.md for the full picture.")
     lines.append("")
     return lines
 
 
-def render_next_steps(next_steps: list[str], notes: Optional[list[str]] = None) -> list[str]:
-    """Bullet the steps and join them with "or" — they are alternatives.
+def render_next_steps(
+    next_steps: list[str],
+    notes: Optional[list[str]] = None,
+    follow_ups: Optional[list[str]] = None,
+) -> list[str]:
+    """Bullet the steps — they are alternatives, not a sequence.
 
     A numbered 1-2-3 list reads as "do all three, in this order". Reading the
     report, triaging it, and asking it a question are none of that: each is a
     complete way to continue on its own. Bullets carry no sequence, so the list
-    no longer implies one; a trailing "or" on every entry but the last carries
-    the choice, the way it falls in a spoken sentence. Entries after the first
-    are authored lowercase so they read on from it (`build_next_steps`).
+    implies none.
 
-    The "or" attaches to the entry's LAST physical line, so a step with
-    continuation lines still ends on the conjunction rather than hiding it
-    mid-block.
+    Nothing joins the entries. A trailing "or" on every bullet but the last
+    used to carry the choice the way it falls in speech, but it forced every
+    entry to be a lowercase fragment reading on from the one above, and once
+    the ask step grew an example block the conjunction had to hang off the end
+    of a quoted question. Self-contained capitalised entries under a heading
+    are already read as alternatives; the word was doing less than it cost.
+
+    Continuation lines indent one level PAST the bullet text, so a step's
+    example block hangs under it as a nested group instead of aligning with the
+    bullet text and reading as wrapped prose.
+
+    `follow_ups` are additive actions (`build_follow_ups`) under their own
+    heading, because listing them among the alternatives offered "upload the
+    SARIF" as a substitute for reading the report. They render even when the
+    alternatives list is empty, and keep the flat continuation indent — none of
+    them carries a nested block.
     """
-    if not next_steps:
+    if not next_steps and not follow_ups:
         return []
-    lines = ["", "Next Steps" + (" — pick one, they are alternatives" if len(next_steps) > 1 else "")]
-    last = len(next_steps) - 1
-    for i, step in enumerate(next_steps):
-        head, *rest = str(step).split("\n")
-        block = [f"  - {head}"] + [f"    {cont}" for cont in rest]
-        if i != last:
-            block[-1] += " or"
-        lines.extend(block)
+    lines: list[str] = []
+    if next_steps:
+        lines.extend(["", "Next Steps"])
+        for step in next_steps:
+            head, *rest = str(step).split("\n")
+            lines.append(f"  - {head}")
+            lines.extend(f"      {cont}" for cont in rest)
+    if follow_ups:
+        lines.extend(["", "Also"])
+        for follow_up in follow_ups:
+            head, *rest = str(follow_up).split("\n")
+            lines.append(f"  - {head}")
+            lines.extend(f"    {cont}" for cont in rest)
     for note in notes or []:
         lines.append("")
         lines.append(f"  Note: {note}")
@@ -1837,6 +1951,7 @@ def render_summary(
     stats = extract_run_statistics(output_dir, yaml_data)
     cost = extract_costs(output_dir, plugin_root)
     next_steps = build_next_steps(output_dir, repo_root, metrics, cfg)
+    follow_ups = build_follow_ups(output_dir, metrics, cfg)
     run_notes = build_run_notes(output_dir, cfg)
 
     lines: list[str] = []
@@ -1868,13 +1983,13 @@ def render_summary(
     # skill-level auto-retry loop fired. On a clean run the section is
     # skipped entirely (no extra noise in the canonical output).
     health = extract_composition_health(output_dir)
-    lines.extend(render_composition_health(health))
+    lines.extend(render_composition_health(health, Path(output_dir) / "threat-model.md"))
     # M2.15 — Sprint 7 observability. Conditional block: rendered only when
     # .run-issues.json reports issues. On a clean run the section is
     # omitted entirely (no extra noise).
     run_issues = extract_run_issues(output_dir)
     lines.extend(render_run_issues(run_issues, plugin_dev=cfg.get("plugin_dev", False)))
-    lines.extend(render_next_steps(next_steps, run_notes))
+    lines.extend(render_next_steps(next_steps, run_notes, follow_ups))
     lines.extend(render_security_notice(output_dir))
     lines.extend(render_run_statistics(stats, cost, verbose=cfg.get("verbose", False)))
     lines.extend(render_log_files(output_dir))
@@ -2121,9 +2236,13 @@ def _stamp_slug_if_configured(output_dir: Path) -> None:
     call, leaving the canonical report shipped with no stamped set (the
     2026-07-15 recurrence). This script is the ONE step that runs on every
     completion path — even a hand-invoked summary after compaction — so it is a
-    reliable second anchor. Idempotent (re-stamps only when the canonical report
-    is newer than the stamped copy) and fail-safe (never raises into the
-    summary output). Guarded on the durable ``.skill-config.json`` slug.
+    reliable second anchor. Idempotent (it stamps only what is missing or stale)
+    and fail-safe (never raises into the summary output). Guarded on the durable
+    ``.skill-config.json`` slug.
+
+    This is also the anchor that stamps PDF and HTML: the skill exports them
+    between the two completion-summary runs, so they exist by the time this runs
+    for the second time.
     """
     try:
         cfg = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8"))
@@ -2135,12 +2254,8 @@ def _stamp_slug_if_configured(output_dir: Path) -> None:
     md = output_dir / "threat-model.md"
     if not md.is_file():
         return
-    stamped = output_dir / f"threat-model-{slug}.md"
-    try:
-        if stamped.is_file() and stamped.stat().st_mtime >= md.stat().st_mtime:
-            return  # already stamped from the current report — nothing to do
-    except OSError:
-        pass
+    if stamp_threat_model.stamped_set_is_current(output_dir, slug):
+        return  # every deliverable already has a current stamped copy
     try:
         subprocess.run(
             [

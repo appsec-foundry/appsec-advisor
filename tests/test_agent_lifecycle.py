@@ -502,3 +502,63 @@ class TestParallelForegroundWaveSurvives:
         assert states["c0"] == "failed", "a genuine re-dispatch of the same job must supersede"
         assert states["c1"] == "running", "a sibling job must not be collateral"
         assert states["c2"] == "running"
+
+
+def test_async_launch_ack_promotes_a_foreground_call_instead_of_leaking_it(tmp_path: Path) -> None:
+    """Claude Code >=2.x answers every Agent call with a launch-shaped result,
+    while the compact runtimes forbid `run_in_background`. Refusing that
+    acknowledgement left the call `running` forever, which is how a finished
+    agent kept a BUDGET_CRITICAL claim alive and silently suppressed a later
+    stage. The host's async return is authoritative: promote, never raise.
+    """
+    lifecycle.register_call(tmp_path, _identity("toolu_async", background=False))
+
+    events = lifecycle.acknowledge_background_call(tmp_path, "toolu_async")
+
+    assert events == []
+    call = _running(tmp_path, "toolu_async")
+    assert call["background"] is True
+    assert call["background_promoted"] is True
+    assert call["launch_acknowledged_at"] > 0
+    # Promotion must survive the round trip, or the next reader re-promotes and
+    # the state file disagrees with what was logged.
+    assert _running(tmp_path, "toolu_async")["background"] is True
+
+    # SubagentStop stays the single terminal boundary for an async call.
+    assert [event.event for event in lifecycle.finish_call(tmp_path, "toolu_async")] == ["AGENT_DONE"]
+    assert not lifecycle.running_calls(tmp_path)
+
+
+def test_promoted_async_call_stops_holding_a_budget_claim(tmp_path: Path) -> None:
+    """The concrete 2026-08-29 failure: a leaked `running` call keeps its
+    critical claim current, and `has_active_critical_claim` then suppresses
+    abuse-case verification long after the agent finished.
+    """
+    claim = _seed_claim(tmp_path)
+    lifecycle.register_call(tmp_path, _identity("toolu_leak", background=False, **claim))
+    lifecycle.acknowledge_background_call(tmp_path, "toolu_leak")
+
+    call = _running(tmp_path, "toolu_leak")
+    assert lifecycle.is_current_claim(tmp_path, call) is True
+
+    lifecycle.finish_call(tmp_path, "toolu_leak")
+
+    assert lifecycle.is_current_claim(tmp_path, call) is False
+    assert budget.has_active_critical_claim(tmp_path) is False
+
+
+def test_repeated_launch_acks_are_idempotent(tmp_path: Path) -> None:
+    lifecycle.register_call(tmp_path, _identity("toolu_twice", background=False))
+    lifecycle.acknowledge_background_call(tmp_path, "toolu_twice")
+    first = _running(tmp_path, "toolu_twice")["launch_acknowledged_at"]
+
+    assert lifecycle.acknowledge_background_call(tmp_path, "toolu_twice") == []
+    assert _running(tmp_path, "toolu_twice")["launch_acknowledged_at"] == first
+
+
+def test_launch_ack_never_revives_a_terminal_call(tmp_path: Path) -> None:
+    lifecycle.register_call(tmp_path, _identity("toolu_done", background=False))
+    lifecycle.finish_call(tmp_path, "toolu_done")
+
+    assert lifecycle.acknowledge_background_call(tmp_path, "toolu_done") == []
+    assert not lifecycle.running_calls(tmp_path)

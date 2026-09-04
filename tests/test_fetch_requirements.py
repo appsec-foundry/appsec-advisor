@@ -323,6 +323,55 @@ def test_fresh_cache_skips_network(tmp_path):
     assert "SEC-CACHED" in (tmp_path / ".requirements.yaml").read_text()
 
 
+def test_explicit_source_freshness_describes_loaded_catalog_not_stale_cache(tmp_path):
+    """An explicitly passed catalog must report its OWN age.
+
+    Regression: freshness was taken from the cache sidecar's ``fetched_at`` even
+    when ``--requirements`` loaded a different, current catalog. Since an
+    explicit source is fail_closed and therefore never cached, that sidecar
+    keeps pointing at an unrelated older document — so a one-day-old baseline
+    was reported as months stale, and the emitted summary contradicted its own
+    ``fetched_at`` field.
+    """
+    source = tmp_path / "src.yaml"
+    source.write_text(
+        f"generated: '{_iso_days_ago(1)}'\ncategories:\n  - id: SEC-CURRENT\n",
+        encoding="utf-8",
+    )
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("categories:\n  - id: SEC-ANCIENT\n", encoding="utf-8")
+    _sidecar(cache, "https://old/source", _iso_days_ago(82))
+
+    r = _run(tmp_path, "--requirements", str(source), "--cache-path", str(cache))
+
+    assert r.returncode == 0
+    assert "SEC-CURRENT" in (tmp_path / ".requirements.yaml").read_text()
+    fresh = json.loads((tmp_path / ".requirements-resolution.json").read_text())["freshness"]
+    assert fresh["age_days"] == 1  # the loaded catalog, not the 82-day-old cache
+    assert fresh["fresh"] is True
+    assert fresh["stale"] is False
+
+
+def test_explicit_source_without_generated_reports_unknown_age(tmp_path):
+    """A catalog carrying no ``generated`` yields an unknown verdict.
+
+    It must not silently inherit the cache sidecar's age, which describes a
+    different document.
+    """
+    source = tmp_path / "src.yaml"
+    source.write_text("categories:\n  - id: SEC-UNDATED\n", encoding="utf-8")
+    cache = tmp_path / "cache.yaml"
+    cache.write_text("categories:\n  - id: SEC-ANCIENT\n", encoding="utf-8")
+    _sidecar(cache, "https://old/source", _iso_days_ago(82))
+
+    r = _run(tmp_path, "--requirements", str(source), "--cache-path", str(cache))
+
+    assert r.returncode == 0
+    fresh = json.loads((tmp_path / ".requirements-resolution.json").read_text())["freshness"]
+    assert fresh["known"] is False
+    assert fresh["age_days"] is None
+
+
 def test_update_forces_refetch_over_fresh_cache(tmp_path):
     source = tmp_path / "src.yaml"
     source.write_text("categories:\n  - id: SEC-SOURCE\n", encoding="utf-8")

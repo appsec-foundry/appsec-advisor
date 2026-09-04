@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+## 0.6.0-beta.2 (2026-09-04)
+
+### Added
+
+- Findings now name the requirements they break, and mitigations quote the blueprint section that prescribes the fix.
+- The Management Summary states compliance and lists the failed requirements, and the requirements audit names the catalog it graded against and how old it is.
+- A blueprint source can write its blueprints into a catalog file of its own, named by `catalog_file`.
+- `threat-model.yaml` now keeps requirements provenance, verified abuse-case outcomes and business-context use, and the Threat Dragon export keeps applicable traces instead of dropping them.
+- `/appsec-advisor:status` shows the installed package, the core and baseline versions, the shipped skills and the organization profile in effect; `--check-updates` says whether baseline and core are still current.
+- `/appsec-advisor:security-score` scores a repository from 0 to 100 using the scanners alone, without running a threat model.
+- Source scans now flag LLM output that reaches rendering, interpreters or privileged actions unchecked.
+- `/appsec-advisor:update-baseline` refreshes an installed secure-coding baseline in place and reports when the published one has a new id; an organization profile can point it at its own source.
+- Headless runs can start Claude Code through a wrapper given by the environment.
+- Run Issues now reports a stage claiming more agent dispatches than the run spawned, a component analysed only from files the context routing never delivered, and a requirements assessment missing from the YAML export.
+- `/appsec-advisor:authnz-review` can export its findings as pentest tasks with `--pentest-tasks`, `--pentest-format` and `--pentest-target`, defaulting to the organization profile.
+
+### Changed
+
+- A baseline that lags the configured one is now reported as outdated rather than foreign; both still fail an enforcing check.
+- The final stage now polishes the report's prose instead of reviewing it a second time, reverting any rewrite that would change a finding, rating, evidence locator, link or number.
+- A missing lockfile, an undigested base image, a missing workflow `permissions:` block and an unpinned action are now Medium instead of High.
+- Business context supplied with `--context` is now recorded with the run and named in the run statistics, and a source that cannot be read stops the run instead of being dropped in silence.
+- The completion summary's Next Steps now reads as self-contained alternatives, with the example questions on their own lines.
+- `/appsec-advisor:help` no longer wraps in a terminal, and no longer documents options the runtime rejects before a run starts.
+
+### Fixed
+
+- A hook firing from a subdirectory now writes to the run's own output directory instead of creating a stray one beside it.
+- A run that ends without releasing its lock no longer blocks later runs against the same output directory.
+- A plain-HTTP URL in a comment no longer produces a cleartext-transport verdict for a bundled third-party file.
+- An agent call the host answers asynchronously, and a subagent that ends its last turn on a tool call, are no longer recorded as failed and no longer hold turns and budget claims.
+- Abuse-case verification that did not run is now named as such in section 9, in a quick run's scope banner and in the receipts, instead of being reported as no abuse case identified.
+- A configured abuse-case release gate now ends the run only after section 9 and the finding ranking are written, so the chain that failed the gate is on disk.
+- The Stage 2 abort now names the step that actually blocked.
+- A run with the requirements check switched off no longer fails its finished report on an empty catalog, nor reports a disagreement from a stale count.
+- The requirements harvester now takes the whole requirement section, recognises IDs written without brackets, no longer duplicates entries, and writes every format a source declares.
+- Code references now use one formatter across report sections and dependency ecosystems, so packages and complete snippets stay intact.
+- A stored `docs/business-context.md` carrying a credential is now withheld from the analysis, the same way a supplied source is refused.
+- `--skip-context` now runs without business context, context from one run no longer leaks into the next run in the same output directory, and a declared context that maps to no component is reported as a run issue.
+- Run statistics no longer multiply or cap the stage count when measurement windows overlap.
+- A finished run now clears its transient files again; a run that ended with QA unclean keeps them for diagnosis.
+- A run with `--slug` now stamps the PDF and HTML exports as well.
+
 ## 0.6.0-beta.1 (2026-08-23)
 
 From this release a `-beta.N` suffix marks the Nth pre-release of the version in
@@ -19,7 +62,7 @@ labelled the release line itself.
 
 - A scan now reports the sandbox, approval, hook and tool-trust posture set by a repository's committed coding-agent configuration for Claude Code, Codex, Copilot, Gemini CLI and Kiro.
 - The requirements harvester can emit selected functional requirements as single-file OpenSpec and SpecDD specifications.
-- New and rebuilt analyses can collect optional business context interactively or through `--context`, use it to give named sensitive-asset components full-depth analysis and break ranking ties, or bypass collection with `--skip-context`.
+- New and rebuilt analyses can collect optional business context interactively or through `--context`, use it to keep named sensitive-asset components in scope and to weight finding impact and order, or leave it out with `--skip-context`.
 - LLM analysis now checks prompt-only behavioural limits, action auditability, permitted data classes, and approval gates, with organization policy supplied through `llm_policy`. See `docs/org-profiles.md`.
 - Threat models can now be exported as alpha OWASP Threat Dragon v2 JSON for Threat Dragon and ThreatAtlas with `--formats threatdragon` or `create-threat-model --threatdragon`. See `docs/threat-dragon-export.md`.
 - Trust boundaries now have stable IDs, can be declared in the repository, link to findings, and appear in the Markdown, YAML, query, and SARIF output.

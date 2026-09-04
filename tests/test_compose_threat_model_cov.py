@@ -954,13 +954,12 @@ class TestCodifyInlineIdentifiers:
         assert out == s
 
 
-class TestCodeTokenIsEmbedded:
-    def test_member_access_embedded(self):
-        # token preceded by '.' is embedded
-        assert compose._code_token_is_embedded(".reverse()", 1, 10) is True
+class TestCompleteCodeTokenFormatting:
+    def test_member_call_is_not_split(self):
+        assert compose._codify_inline_identifiers("use value.reverse() here") == "use `value.reverse()` here"
 
-    def test_standalone_not_embedded(self):
-        assert compose._code_token_is_embedded("a reverse() b", 2, 11) is False
+    def test_standalone_call_is_formatted(self):
+        assert compose._codify_inline_identifiers("a reverse() call") == "a `reverse()` call"
 
 
 # ---------------------------------------------------------------------------
@@ -2253,6 +2252,7 @@ class TestNormaliseRequirementStatus:
         assert compose._normalise_requirement_status("PASS ✅") == "PASS"
         assert compose._normalise_requirement_status("N/A") == "N/A"
         assert compose._normalise_requirement_status("Not Observable") == "NOT OBSERVABLE"
+        assert compose._normalise_requirement_status("NOT_APPLICABLE") == "NOT APPLICABLE"
         assert compose._normalise_requirement_status("") == ""
 
 
@@ -2442,12 +2442,18 @@ class TestRenderRequirementsComplianceMs:
         ctx = _mk_ctx(tmp_path, yaml_data={"threats": []})
         frag = ctx.output_dir / ".fragments" / "requirements-compliance.md"
         frag.write_text(
-            "Assessed from the [OWASP ASVS](https://asvs) baseline.\n**Summary:** 3 PASS / 1 FAIL\n",
+            "Assessed from the [OWASP ASVS](https://asvs) baseline.\n\n"
+            "**Summary:** stale counts\n\n"
+            "| Requirement | Status | Priority | Evidence |\n"
+            "|---|---|---|---|\n"
+            "| SEC-AUTH-1 | FAIL | MUST | Missing guard |\n"
+            "| SEC-LOG-1 | PASS | SHOULD | Audit sink configured |\n",
             encoding="utf-8",
         )
         out = compose._render_requirements_compliance_ms(ctx)
         assert "OWASP ASVS" in out
-        assert "3 PASS / 1 FAIL" in out
+        assert "2 requirements assessed — 1 PASS · 1 FAIL" in out
+        assert "stale counts" not in out
 
 
 # ---------------------------------------------------------------------------

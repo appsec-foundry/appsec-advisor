@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "component_inventory_fingerprint": "sha256:a74124ea2b30f30fa574c65b20b86400102b44c1ad484b9ffc053ca3269425be",
+  "assessment_input_fingerprint": "sha256:6a1c536b01a2da661efb4e6edda1cf365717db3176fe844d6a0a872f3608d1bd",
+  "candidates": [
+    {
+      "candidate_key": "candidate-1",
+      "name": "Internet \u2192 Express API: security.isAuthorized() expressJwt",
+      "from": "external",
+      "to": "express-backend",
+      "kind": "network",
+      "enforcement_point": "security.isAuthorized() expressJwt per-route middleware",
+      "assumption": "Every state-changing route is registered behind security.isAuthorized() before handlers execute.",
+      "evidence": [
+        {
+          "file": "server.ts",
+          "line": 26
+        },
+        {
+          "file": "server.ts",
+          "line": 356
+        },
+        {
+          "file": "routes/fileUpload.ts",
+          "line": 1
+        }
+      ],
+      "confidence": "confirmed",
+      "covered_signal_ids": [
+        "signal-external-ingress-external-to-express-backend"
+      ],
+      "covered_flow_ids": [],
+      "assumption_legs": [
+        {
+          "leg": "validation",
+          "condition": "Every request body and path parameter is schema-checked before it reaches business logic."
+        },
+        {
+          "leg": "authentication",
+          "condition": "Every state-changing route is registered behind security.isAuthorized() expressJwt middleware."
+        },
+        {
+          "leg": "authorization",
+          "condition": "Every object reference is checked against the authenticated subject before access."
+        }
+      ]
+    },
+    {
+      "candidate_key": "candidate-2",
+      "name": "Express \u2192 JWT Auth: security.isAuthorized() RSA verification",
+      "from": "express-backend",
+      "to": "auth-session",
+      "kind": "process",
+      "enforcement_point": "security.isAuthorized() expressJwt with RSA public key",
+      "assumption": "A token is accepted only if it is signed with the RSA private key that only the server holds.",
+      "evidence": [
+        {
+          "file": "lib/insecurity.ts",
+          "line": 52
+        },
+        {
+          "file": "server.ts",
+          "line": 356
+        }
+      ],
+      "confidence": "confirmed",
+      "covered_signal_ids": [
+        "signal-external-ingress-external-to-auth-session"
+      ],
+      "covered_flow_ids": [],
+      "assumption_legs": [
+        {
+          "leg": "authentication",
+          "condition": "A token is accepted only if it is signed with the RSA private key that only the server holds."
+        }
+      ]
+    }
+  ],
+  "dispositions": [
+    {
+      "signal_id": "signal-external-ingress-external-to-auth-session",
+      "disposition": "boundary",
+      "candidate_keys": [
+        "candidate-2"
+      ],
+      "rationale": "auth-session has no independent listener; external requests reach it only through the express-backend HTTP ingress (candidate-1), then through the in-process JWT verification interface (candidate-2)."
+    },
+    {
+      "signal_id": "signal-external-ingress-external-to-express-backend",
+      "disposition": "boundary",
+      "candidate_keys": [
+        "candidate-1"
+      ],
+      "rationale": "Express HTTP listener at port 3000 is the confirmed network ingress; per-route isAuthorized() expressJwt middleware is the enforcement control."
+    }
+  ]
+}

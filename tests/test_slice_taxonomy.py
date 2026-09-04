@@ -51,6 +51,62 @@ class TestDetectProfile:
 
 
 # ---------------------------------------------------------------------------
+# detect_profiles — union matching
+# ---------------------------------------------------------------------------
+class TestDetectProfiles:
+    def test_returns_every_match_in_profile_order(self):
+        ps = st.detect_profiles("backend service", "postgres-db")
+        assert [p["name"] for p in ps] == ["backend-api", "database"]
+
+    def test_unknown_returns_empty_list(self):
+        assert st.detect_profiles("totally-unknown-thing", "qqq") == []
+
+    def test_detect_profile_stays_consistent_with_first_element(self):
+        for ctype, cid in [("backend service", "postgres-db"), ("frontend", "web-spa"), ("zzz", "qqq")]:
+            ps = st.detect_profiles(ctype, cid)
+            assert st.detect_profile(ctype, cid) == (ps[0] if ps else None)
+
+    def test_union_keeps_categories_of_every_matched_profile(self):
+        # A multi-role component must not lose the categories of the profiles
+        # that matched after the first one.
+        ps = st.detect_profiles("backend service", "postgres-db")
+        union = {th for p in ps for th in p["th_ids"]}
+        for p in ps:
+            assert set(p["th_ids"]) <= union
+
+
+class TestBackendApiProfileScope:
+    """Categories a server-side component must keep in scope.
+
+    Regression guard: TH-07 once lived only on `database`, so an API component
+    had no category for path traversal or unrestricted upload and produced no
+    such finding even with the vulnerable code in its evidence.
+    """
+
+    @staticmethod
+    def _backend():
+        return next(p for p in st.COMPONENT_PROFILES if p["name"] == "backend-api")
+
+    @pytest.mark.parametrize("th_id", ["TH-07", "TH-15"])
+    def test_backend_carries_category(self, th_id):
+        assert th_id in self._backend()["th_ids"]
+
+    @pytest.mark.parametrize("cwe", ["CWE-22", "CWE-434", "CWE-352"])
+    def test_backend_carries_cwe(self, cwe):
+        assert cwe in self._backend()["extra_cwes"]
+
+    def test_plain_api_component_gets_them_without_a_second_profile(self):
+        # The common case: nothing in the name hints at a database or frontend,
+        # so union matching alone would not supply these categories.
+        ps = st.detect_profiles("service", "payment-api")
+        assert [p["name"] for p in ps] == ["backend-api"]
+        th = {t for p in ps for t in p["th_ids"]}
+        cwes = {c for p in ps for c in p.get("extra_cwes", [])}
+        assert {"TH-07", "TH-15"} <= th
+        assert {"CWE-22", "CWE-434"} <= cwes
+
+
+# ---------------------------------------------------------------------------
 # slice_threat_categories
 # ---------------------------------------------------------------------------
 class TestSliceThreatCategories:

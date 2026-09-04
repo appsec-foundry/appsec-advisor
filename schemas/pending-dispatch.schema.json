@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "schemas/pending-dispatch.schema.json",
+  "title": "Pending plan-bound dispatch verification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "action_id",
+    "action",
+    "action_sha256",
+    "plan_sha256",
+    "plan_receipt_sha256",
+    "emitted_at",
+    "receipts"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "action_id": {"type": "string", "pattern": "^[a-z0-9_-]+:[a-f0-9]{16}$"},
+    "action": {"enum": ["dispatch_agent", "dispatch_parallel"]},
+    "action_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "plan_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "plan_receipt_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "emitted_at": {"type": "string", "format": "date-time"},
+    "receipts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["artifact_path", "sha256"],
+        "properties": {
+          "artifact_path": {"type": "string", "minLength": 1, "maxLength": 500},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }
+      }
+    }
+  }
+}

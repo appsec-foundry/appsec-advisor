@@ -471,7 +471,7 @@ Information assets and the classification level that drives the Confidentiality 
 
 ## 5. Attack Surface
 
-Network-reachable entry points classified by authentication requirement. Each row links to the threat(s) refe**** (10 chars) in its **Notes** column. The **Risk** column reflects the highest-severity linked finding. Entry points with no linked finding are still listed when they sit on a sensitive surface (authentication, registration, management) or look like a missing-auth/authz suspect - marked **⚑ Review** in Notes.
+Network-reachable entry points classified by authentication requirement. Each row links to the threat(s) referenced in its **Notes** column. The **Risk** column reflects the highest-severity linked finding. Entry points with no linked finding are still listed when they sit on a sensitive surface (authentication, registration, management) or look like a missing-auth/authz suspect - marked **⚑ Review** in Notes.
 
 ### 5.1 Unauthenticated Entry Points (54)
 

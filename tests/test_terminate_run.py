@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 SCRIPTS = Path(__file__).parent.parent / "scripts"
@@ -105,12 +106,30 @@ def test_a_completed_checkpoint_is_never_reopened(tmp_path: Path) -> None:
 
 def test_a_live_foreign_lock_is_left_alone(tmp_path: Path) -> None:
     """Two runs sharing an output directory: releasing a lock whose holder is
-    alive would hand both of them the same run state."""
+    alive would hand both of them the same run state.
+
+    Liveness is the heartbeat, not the PID — under a sandbox the stored PID
+    comes from the holder's own namespace and says nothing about this host.
+    """
     _run_dir(tmp_path)
-    (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n1\n", encoding="utf-8")
+    (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n{int(time.time())}\n", encoding="utf-8")
     steps = terminate_run.terminate(tmp_path, "interrupt", "Ctrl-C", "", str(tmp_path))
     assert "lock held-by-other" in steps
     assert (tmp_path / ".appsec-lock").is_file()
+
+
+def test_a_foreign_lock_with_a_dead_heartbeat_is_reaped(tmp_path: Path) -> None:
+    """A live PID no longer protects a lock whose heartbeat stopped.
+
+    The 2026-08-30 juice-shop2 lock stored PID 10 — the watchdog's sandbox
+    namespace PID, unrelated to any host process. Deciding on that number let
+    acquisition and release disagree about the same file.
+    """
+    _run_dir(tmp_path)
+    (tmp_path / ".appsec-lock").write_text(f"{os.getpid()}\n1\n", encoding="utf-8")
+    steps = terminate_run.terminate(tmp_path, "interrupt", "Ctrl-C", "", str(tmp_path))
+    assert "lock released" in steps
+    assert not (tmp_path / ".appsec-lock").is_file()
 
 
 def test_our_own_live_lock_is_released_by_run_id(tmp_path: Path) -> None:
@@ -125,9 +144,13 @@ def test_release_lock_reports_each_outcome(tmp_path: Path) -> None:
     assert acquire_lock.release_lock(lock) == "absent"
     lock.write_text("999999\n1\n", encoding="utf-8")
     assert acquire_lock.release_lock(lock) == "released"
-    lock.write_text(f"{os.getpid()}\n1\n", encoding="utf-8")
+    # Fresh heartbeat, so the lock is somebody's live run.
+    lock.write_text(f"{os.getpid()}\n{int(time.time())}\n", encoding="utf-8")
     assert acquire_lock.release_lock(lock) == "held-by-other"
     assert acquire_lock.release_lock(lock, "other-run") == "held-by-other"
+    # Our own live lock is ours to release, by run id.
+    lock.write_text(f"{os.getpid()}\n{int(time.time())}\nrun-42\n", encoding="utf-8")
+    assert acquire_lock.release_lock(lock, "run-42") == "released"
 
 
 def test_a_missing_run_directory_is_not_an_error(tmp_path: Path, capsys) -> None:

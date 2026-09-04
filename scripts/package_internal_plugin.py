@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 UPSTREAM_NAMESPACE = "appsec-advisor"
@@ -180,14 +181,75 @@ def overlay_org_profile(org_profile: Path, build: Path) -> None:
     shutil.copytree(org_profile, target)
 
 
-def patch_plugin_json(build: Path, name: str, version: str, description: str | None) -> None:
+def _git(source: Path, *cmd: str) -> str:
+    """Read-only git output from the source checkout, or empty when unavailable."""
+    try:
+        result = subprocess.run(["git", *cmd], capture_output=True, text=True, timeout=10, cwd=source, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def core_provenance(source: Path, version: str) -> dict:
+    """Which upstream revision this package was built from.
+
+    The build tree carries no ``.git``, so a packaged install can no longer read
+    its own origin: without these fields ``status`` shows the organization's
+    version number and nothing about the appsec-advisor underneath it. Every
+    field is best-effort — a source tree that is not a git checkout records the
+    core version alone rather than failing the build.
+    """
+    provenance = {"appsec_advisor_core_version": version}
+    ref = _git(source, "rev-parse", "--abbrev-ref", "HEAD")
+    if ref == "HEAD":  # detached: name the tag when one points here
+        ref = _git(source, "describe", "--tags", "--exact-match") or "detached"
+    commit = _git(source, "rev-parse", "HEAD")
+    committed_at = _git(source, "log", "-1", "--format=%cI")
+    if ref:
+        provenance["appsec_advisor_core_ref"] = ref
+    if commit:
+        provenance["appsec_advisor_core_commit"] = commit
+    if committed_at:
+        provenance["appsec_advisor_core_committed_at"] = committed_at
+    if _git(source, "status", "--porcelain"):
+        provenance["appsec_advisor_core_dirty"] = True
+    provenance["appsec_advisor_packaged_at"] = (
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
+    return provenance
+
+
+def upstream_url_from_git(source: Path) -> str | None:
+    """The source checkout's origin remote as an https URL, when it has one.
+
+    Used when the caller passed no ``--upstream-url``: the packaged build is the
+    only place a reader can still see where the code came from, and an origin
+    remote answers that as well as the flag does. An SSH remote is rewritten to
+    its https form; anything else is dropped rather than guessed at.
+    """
+    remote = _git(source, "remote", "get-url", "origin")
+    if not remote:
+        return None
+    match = re.match(r"^(?:git\+)?ssh://git@([^/]+)/(.+?)(?:\.git)?/?$", remote) or re.match(
+        r"^git@([^:]+):(.+?)(?:\.git)?/?$", remote
+    )
+    if match:
+        return f"https://{match.group(1)}/{match.group(2)}"
+    if remote.startswith("https://"):
+        return remote.removesuffix(".git")
+    return None
+
+
+def patch_plugin_json(build: Path, name: str, version: str, description: str | None, source: Path) -> None:
     plugin_path = build / ".claude-plugin" / "plugin.json"
     data = json.loads(plugin_path.read_text(encoding="utf-8"))
+    core_version = data.get("version", "")
     data["name"] = name
     data["version"] = version
     data["description"] = (
         description if description is not None else f"Internal packaged build of appsec-advisor for {name}."
     )
+    data.update(core_provenance(source, core_version))
     plugin_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -1134,14 +1196,15 @@ def main(argv: list[str] | None = None) -> int:
     remove_stale_archive(args.name, args.version, dist_dir)
 
     print(f"==> Packaging {args.name} {args.version}", flush=True)
+    upstream_url = args.upstream_url or upstream_url_from_git(source)
     copy_source(source, build)
     overlay_org_profile(org_profile, build)
-    patch_plugin_json(build, args.name, args.version, args.description)
+    patch_plugin_json(build, args.name, args.version, args.description, source)
     patch_config(build, args.info_url)
-    apply_package_surface_policy(build, package_policy, package_policy_path, args.upstream_url)
+    apply_package_surface_policy(build, package_policy, package_policy_path, upstream_url)
     surface_manifest = json.loads((build / SURFACE_MANIFEST).read_text(encoding="utf-8"))
     readme_path = Path(args.readme) if args.readme else None
-    write_readme(build, args.name, surface_manifest, args.upstream_url, readme_path)
+    write_readme(build, args.name, surface_manifest, upstream_url, readme_path)
     rewrite_namespace(build, args.name)
     check_namespace_leaks(build)
 

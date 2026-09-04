@@ -40,7 +40,15 @@ Excerpt from a `--demo` run against [OWASP Juice Shop](https://owasp.org/www-pro
 Requirements Source
   Catalog  : OWASP baseline  ⚠ DEMO — not your organization's requirements
   Loaded   : packaged example examples/appsec-requirements-example.yaml
-  Count    : 64 requirements
+  Count    : 64 requirements in 9 categories
+
+Scope (grading 64 of 64 requirements)
+  Access Control                          11  (9 MUST · 2 SHOULD)
+  Frontend Security                        8  (6 MUST · 2 SHOULD)
+  …
+
+  [10/64] Access Control · ✅1 ⚠️2 ❌6 ❓1
+  [20/64] Frontend Security → Hardening · ✅2 ❌7 ➖1
 
 Results · OWASP Juice Shop · 64 requirements
 
@@ -101,7 +109,7 @@ The audit needs a requirements catalog in YAML format.
 
 ## Where the catalog comes from
 
-The startup banner shows the selected catalog, source, fetch date, requirement count, and freshness. Sources are selected in this order:
+The startup banner shows the selected catalog, source, fetch date, requirement count, freshness, and which categories are in scope for this run. It is printed before grading starts; a progress line follows every batch of up to ten requirements. Sources are selected in this order:
 
 | # | Source | Notes |
 |---|--------|-------|

@@ -1794,7 +1794,7 @@ security_controls:
   rule_id: null
   assessment: 'The trust boundary assumption for the CI/CD pipeline (tb-3) is inferred rather than confirmed: maintainer approval
     for external contributor workflows and GITHUB_TOKEN permission scoping are stated as assumptions. No permissions block
-    is visible in the refe**** (10 chars) ci.yml evidence. If the GITHUB_TOKEN has default broad scopes and no approve-before-secret
+    is visible in the referenced ci.yml evidence. If the GITHUB_TOKEN has default broad scopes and no approve-before-secret
     gate is configured, external PRs can access repository secrets.'
   implementation: '.github/workflows/ci.yml — GITHUB_TOKEN; assumption confidence: inferred'
 - domain: Operations Runtime and Supply Chain Controls

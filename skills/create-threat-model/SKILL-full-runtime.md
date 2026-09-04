@@ -96,8 +96,12 @@ Never binding — the prompt exists so the user chooses.
 
 ### 2b. Business context
 
-Skip when `skip_business_context` is true, or `APPSEC_HEADLESS=1` with an empty
-`business_context_source`. Otherwise bind both (§3), read
+This step is the interactive question only. A `business_context_source` was
+already captured by the controller pre-flight, and a capture that failed stopped
+the run there — nothing is left to do here.
+
+Skip when `skip_business_context` is true, when `business_context_source` is
+non-empty, or when `APPSEC_HEADLESS=1`. Otherwise bind both (§3), read
 `<base-dir>/modes/business-context.md`, follow it, then emit the run plan.
 
 ## 3. Bind compact state

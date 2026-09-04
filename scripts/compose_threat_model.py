@@ -61,12 +61,15 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import _ms_component_refs
 import _safe_cond
 import _severity_rollup
+import apply_prose_fixes as _prose_formatter
+import inline_code_formatter as _inline_code_formatter
 import jinja2
+import requirements_trace
 import yaml
 from _atomic_io import atomic_write_text
 from _boundary_criticality import exposure_of, rating_of, tier_of
@@ -2237,6 +2240,11 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
         lines.append("> - **No §3 Attack Walkthroughs** (entirely skipped at `--quick`)")
     else:
         lines.append("> - **§3 Attack Walkthroughs** limited to Critical findings")
+    # Quick drops the Stage-1d verifier fan-out by default, so §9 carries no
+    # chain verdict. Name the reduction here for the same reason §3 names its
+    # own: an unrun analysis must not read as a clean result.
+    if ctx.eval_context.get("skip_abuse_case_verification"):
+        lines.append("> - **No §9 abuse-case verification** (skipped at `--quick`; re-run with `--abuse-cases`)")
     # Incremental depth-downgrade transparency: prior threats re-injected by the
     # reconciler (build_threat_model_yaml.reconcile_incremental_threats) because
     # this shallower quick run could not re-confirm them. Surface the count once
@@ -6814,24 +6822,39 @@ def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonom
     return "\n".join(out) + "\n"
 
 
+def _abuse_case_document(ctx: RenderContext) -> dict:
+    """Read canonical abuse analysis, with the transient sidecar as a legacy fallback."""
+    analysis = ctx.yaml_data.get("abuse_case_analysis")
+    if isinstance(analysis, dict):
+        cases = analysis.get("cases")
+        if isinstance(cases, list):
+            return {
+                "abuse_cases": cases,
+                "catalog_evaluated": analysis.get("catalog_evaluated") or [],
+            }
+    path = ctx.fragments_dir / "abuse-cases.json"
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
 def _build_ms_abuse_chain_line(ctx: RenderContext) -> str:
     """One deterministic line for the MS `Security Posture & Top Threats`
     section that surfaces the verified abuse-case chains and links §9.
 
-    Read from the `.fragments/abuse-cases.json` sidecar produced by
-    `render_abuse_cases.py` (chain verdicts are computed deterministically from
-    per-step verification — never rated here). Only the ACTIONABLE verdicts
+    Read from canonical YAML, falling back to the transient
+    `.fragments/abuse-cases.json` sidecar for an in-flight or legacy run (chain
+    verdicts are computed deterministically from per-step verification — never
+    rated here). Only the ACTIONABLE verdicts
     (fully viable / partially blocked) are surfaced so the exec summary points
     at the chains that actually compose findings into an end-to-end exploit.
     Returns '' when no such chain exists (line omitted). The verdict block
     above must stay brief and ID-free (feedback_threat_model_verdict_brevity),
     so the abuse linkage lives here, alongside the other §-cross-references.
     """
-    path = ctx.fragments_dir / "abuse-cases.json"
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
+    doc = _abuse_case_document(ctx)
     cases = doc.get("abuse_cases") or []
     viable = [c for c in cases if c.get("chain_verdict") == "fully_viable"]
     partial = [c for c in cases if c.get("chain_verdict") == "partially_blocked"]
@@ -6856,7 +6879,8 @@ def _build_ms_abuse_chain_line(ctx: RenderContext) -> str:
 
 def _verified_chain_map(ctx: RenderContext) -> dict[str, list[str]]:
     """Map each finding id (canonical F-NNN) → the fully-viable abuse-case
-    chain(s) it participates in, read from `.fragments/abuse-cases.json`.
+    chain(s) it participates in, preferring canonical YAML over the transient
+    `.fragments/abuse-cases.json` compatibility sidecar.
 
     Only ``fully_viable`` chains qualify — the code-verified, end-to-end
     exploitable paths (``partially_blocked`` / ``inconclusive`` are excluded,
@@ -6865,11 +6889,7 @@ def _verified_chain_map(ctx: RenderContext) -> dict[str, list[str]]:
     that proves the path end-to-end. Returns {} when the sidecar is missing
     (quick depth / ``--no-abuse-cases``) or holds no viable chain.
     """
-    path = ctx.fragments_dir / "abuse-cases.json"
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
+    doc = _abuse_case_document(ctx)
     fmap: dict[str, list[str]] = {}
     for c in doc.get("abuse_cases") or []:
         if c.get("chain_verdict") != "fully_viable":
@@ -8310,9 +8330,40 @@ def _render_operational_strengths(ctx: RenderContext, env: jinja2.Environment, s
     )
 
 
+def _requirement_catalog_entries(ctx: RenderContext) -> dict[str, dict[str, str]]:
+    """Requirement metadata keyed by ID from ``.requirements.yaml``.
+
+    The compliance parser, Management Summary, and traceability renderer all
+    use this one catalog view so requirement links and priorities cannot drift.
+    Malformed or missing catalogs degrade to an empty map; the fragment parser
+    can still recognise IDs written in its table.
+    """
+    path = ctx.output_dir / ".requirements.yaml"
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for cat in data.get("categories", []) or []:
+        if not isinstance(cat, dict):
+            continue
+        for req in cat.get("requirements", []) or []:
+            if not isinstance(req, dict):
+                continue
+            rid = (req.get("id") or "").strip()
+            if rid and rid not in out:
+                out[rid] = {
+                    "url": (req.get("url") or "").strip(),
+                    "priority": (req.get("priority") or "").strip().upper(),
+                    "text": (req.get("text") or "").strip(),
+                }
+    return out
+
+
 def _known_requirement_ids(ctx: RenderContext) -> dict[str, str]:
-    """Map of requirement ID → source URL declared in ``.requirements.yaml``
-    (``categories[].requirements[].id`` / ``.url``).
+    """Map of requirement ID → source URL declared in ``.requirements.yaml``.
 
     Used to recognise a requirement that a STRIDE analyzer parked in a threat's
     ``remediation.reference`` (e.g. ``[SEC-AUTH-1](url)``) rather than in the
@@ -8322,24 +8373,7 @@ def _known_requirement_ids(ctx: RenderContext) -> dict[str, str]:
     degrades to the array-only behaviour (and the unit tests, which use a bare
     tmp dir, see no change).
     """
-    path = ctx.output_dir / ".requirements.yaml"
-    if not path.is_file():
-        return {}
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
-    out: dict[str, str] = {}
-    for cat in data.get("categories", []) or []:
-        if not isinstance(cat, dict):
-            continue
-        for req in cat.get("requirements", []) or []:
-            if not isinstance(req, dict):
-                continue
-            rid = (req.get("id") or "").strip()
-            if rid and rid not in out:
-                out[rid] = (req.get("url") or "").strip()
-    return out
+    return {rid: item.get("url", "") for rid, item in _requirement_catalog_entries(ctx).items()}
 
 
 _REQ_VIOLATION_STATUSES = frozenset({"FAIL", "PARTIAL", "ANTI-PATTERN"})
@@ -8350,6 +8384,7 @@ _REQ_HEADER_TOKENS = frozenset({"id", "requirement", "requirement id"})
 def _normalise_requirement_status(raw: Any) -> str:
     """Return a stable compliance status token from a §7b table cell."""
     text = re.sub(r"<[^>]+>", " ", str(raw or ""))
+    text = re.sub(r"\bNOT_APPLICABLE\b", "NOT APPLICABLE", text, flags=re.IGNORECASE)
     text = re.sub(r"[*_`]", "", text).upper()
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
@@ -8391,6 +8426,25 @@ def _extract_requirement_id_from_cell(cell: str, known_ids: set[str]) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _requirement_title_from_cell(cell: str, rid: str) -> str:
+    """Extract the requirement's short title from a §7b Requirement cell.
+
+    Phase 8b writes the cell as ``<ID>: <short title>`` (also seen with an
+    em-dash or a linked/backticked ID). The title is the only reader-facing
+    wording of the requirement the report carries — the catalog holds the full
+    normative sentence, which is too long for a table cell — so the compact
+    Management-Summary table sources it from here. Returns "" when the cell
+    carries nothing but the ID.
+    """
+    text = re.sub(r"<br\s*/?>", " ", cell or "", flags=re.IGNORECASE)
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)  # drop link targets, keep text
+    text = re.sub(r"[*_`]", "", text)
+    if rid:
+        text = re.sub(r"(?<![\w-])" + re.escape(rid) + r"(?![\w-])", " ", text)
+    text = re.sub(r"^[\s:—–-]+", "", text)
+    return re.sub(r"\s+", " ", text).strip().rstrip(".")
+
+
 def _split_md_table_row(line: str) -> list[str]:
     """Split a simple Markdown table row into cells.
 
@@ -8425,6 +8479,79 @@ def _split_md_table_row(line: str) -> list[str]:
     return cells
 
 
+def _requirements_compliance_rows(ctx: RenderContext) -> list[dict[str, Any]]:
+    """Parse the full §7b table into one canonical compliance evaluation.
+
+    Each declared requirement contributes at most one row. The structured rows
+    are the sole source for Management-Summary counts and its compact table;
+    the original Markdown remains the detailed §7b presentation. This parser
+    never infers a status or a requirement-to-finding edge.
+    """
+    catalog = _requirement_catalog_entries(ctx)
+    known_ids = set(catalog)
+    frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
+    if not frag_path.is_file():
+        return []
+    try:
+        lines = frag_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    header: list[str] | None = None
+    req_idx = status_idx = -1
+    priority_idx = -1
+    evidence_indexes: list[int] = []
+    for line in lines:
+        cells = _split_md_table_row(line)
+        if not cells:
+            continue
+        lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
+        if any(c in _REQ_HEADER_TOKENS for c in lowered) and "status" in lowered:
+            header = lowered
+            req_idx = next((i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS), -1)
+            status_idx = header.index("status")
+            priority_idx = next((i for i, c in enumerate(header) if c in {"priority", "obligation"}), -1)
+            evidence_indexes = [
+                i for i, c in enumerate(header) if c in {"evidence", "linked threats", "linked findings", "findings"}
+            ]
+            continue
+        if header is None or all(re.fullmatch(r":?-{3,}:?", c.strip()) for c in cells):
+            continue
+        if req_idx < 0 or status_idx < 0 or len(cells) <= max(req_idx, status_idx):
+            continue
+        rid = _extract_requirement_id_from_cell(cells[req_idx], known_ids)
+        status = _normalise_requirement_status(cells[status_idx])
+        if not rid or rid in seen or status not in (_REQ_VIOLATION_STATUSES | _REQ_NON_VIOLATION_STATUSES):
+            continue
+        # The configured catalog is authoritative. This table is LLM-authored,
+        # and `_extract_requirement_id_from_cell` falls back to catalog-blind
+        # regexes, so an ID the catalog never declared can otherwise reach §7b,
+        # §8 `Violates:` and §10 `Fulfills Requirements:` as though the
+        # organisation had required it. Drop it — but only when a catalog was
+        # actually loaded, so the org-specific-ID fallback still works for runs
+        # with no `.requirements.yaml`.
+        if known_ids and rid not in known_ids:
+            continue
+        evidence = " ".join(cells[i].strip() for i in evidence_indexes if i < len(cells) and cells[i].strip())
+        priority = cells[priority_idx].strip().upper() if priority_idx >= 0 and priority_idx < len(cells) else ""
+        if not priority:
+            priority = catalog.get(rid, {}).get("priority", "")
+        rows.append(
+            {
+                "req_id": rid,
+                "status": "N/A" if status in {"NA", "NOT APPLICABLE"} else status,
+                "priority": re.sub(r"[*_`]", "", priority).strip(),
+                "title": _requirement_title_from_cell(cells[req_idx], rid),
+                "evidence": evidence,
+                "finding_ids": _extract_finding_ids_from_cell(evidence),
+            }
+        )
+        seen.add(rid)
+    return rows
+
+
 def _requirements_status_map(ctx: RenderContext) -> dict[str, str]:
     """Requirement ID -> PASS/FAIL/PARTIAL/N/A status from authoritative outputs.
 
@@ -8435,41 +8562,7 @@ def _requirements_status_map(ctx: RenderContext) -> dict[str, str]:
     Requirements lines. `.phase-8b-violations.json`, when present, supplements
     the map but never overrides an explicit full-table status.
     """
-    known_ids = set(_known_requirement_ids(ctx))
-    out: dict[str, str] = {}
-
-    frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
-    if frag_path.is_file():
-        try:
-            lines = frag_path.read_text(encoding="utf-8").splitlines()
-        except Exception:
-            lines = []
-        header: list[str] | None = None
-        req_idx = status_idx = -1
-        for line in lines:
-            cells = _split_md_table_row(line)
-            if not cells:
-                continue
-            lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
-            if any(c in _REQ_HEADER_TOKENS for c in lowered) and "status" in lowered:
-                header = lowered
-                req_idx = next(
-                    (i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS),
-                    -1,
-                )
-                status_idx = header.index("status")
-                continue
-            if header is None:
-                continue
-            # Markdown delimiter row.
-            if all(re.fullmatch(r":?-{3,}:?", c.strip()) for c in cells):
-                continue
-            if req_idx < 0 or status_idx < 0 or len(cells) <= max(req_idx, status_idx):
-                continue
-            rid = _extract_requirement_id_from_cell(cells[req_idx], known_ids)
-            status = _normalise_requirement_status(cells[status_idx])
-            if rid and status and (status in _REQ_VIOLATION_STATUSES or status in _REQ_NON_VIOLATION_STATUSES):
-                out.setdefault(rid, status)
+    out = {row["req_id"]: row["status"] for row in _requirements_compliance_rows(ctx)}
 
     phase8b = ctx.output_dir / ".phase-8b-violations.json"
     if phase8b.is_file():
@@ -8499,50 +8592,31 @@ def _extract_finding_ids_from_cell(cell: str) -> list[str]:
 
 def _requirements_evidence_findings_map(ctx: RenderContext) -> dict[str, list[str]]:
     """Requirement ID -> finding IDs explicitly cited by the §7b compliance row."""
-    known_ids = set(_known_requirement_ids(ctx))
-    out: dict[str, list[str]] = {}
-    frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
-    if not frag_path.is_file():
-        return out
-    try:
-        lines = frag_path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return out
+    return {row["req_id"]: row["finding_ids"] for row in _requirements_compliance_rows(ctx) if row["finding_ids"]}
 
-    header: list[str] | None = None
-    req_idx = -1
-    evidence_indexes: list[int] = []
-    for line in lines:
-        cells = _split_md_table_row(line)
-        if not cells:
-            continue
-        lowered = [re.sub(r"[*_`]", "", c).strip().lower() for c in cells]
-        if any(c in _REQ_HEADER_TOKENS for c in lowered) and "status" in lowered:
-            header = lowered
-            req_idx = next((i for i, c in enumerate(header) if c in _REQ_HEADER_TOKENS), -1)
-            evidence_indexes = [
-                i for i, c in enumerate(header) if c in {"evidence", "linked threats", "linked findings", "findings"}
-            ]
-            continue
-        if header is None:
-            continue
-        if all(re.fullmatch(r":?-{3,}:?", c.strip()) for c in cells):
-            continue
-        if req_idx < 0 or len(cells) <= req_idx:
-            continue
-        rid = _extract_requirement_id_from_cell(cells[req_idx], known_ids)
-        if not rid:
-            continue
-        fids: list[str] = []
-        for idx in evidence_indexes:
-            if len(cells) <= idx:
-                continue
-            for fid in _extract_finding_ids_from_cell(cells[idx]):
-                if fid not in fids:
-                    fids.append(fid)
-        if fids:
-            out.setdefault(rid, fids)
+
+def _findings_evidence_requirements_map(ctx: RenderContext) -> dict[str, list[str]]:
+    """Finding ID (`F-NNN`) -> requirement IDs, inverted from the §7b rows.
+
+    Until the analyzers populate `violated_requirements` themselves, the §7b
+    assessment's own evidence citations are the only requirement<->finding edge
+    a run produces, and they point one way only. Inverting them lets §8 and §9
+    state which requirement a finding breaks instead of confining that link to
+    the traceability table, where the reader has to join it by hand.
+    """
+    out: dict[str, list[str]] = {}
+    for rid, fids in _requirements_evidence_findings_map(ctx).items():
+        for fid in fids:
+            key = (fid or "").strip().upper()
+            if key and rid not in out.setdefault(key, []):
+                out[key].append(rid)
     return out
+
+
+def _visible_finding_id(tid: str) -> str:
+    """Normalise a `T-NNN`/`F-NNN` reference to the visible `F-NNN` form."""
+    m = re.match(r"^[TF]-(\d+)$", (tid or "").strip().upper())
+    return f"F-{m.group(1)}" if m else ""
 
 
 def _requirement_is_traceable_violation(rid: str, status_map: dict[str, str]) -> bool:
@@ -8562,6 +8636,28 @@ def _format_requirement_link(rid: str, known_ids: dict[str, str]) -> str:
     return f"[`{rid}`]({url})" if url else f"`{rid}`"
 
 
+# A table row whose first cell is a requirement link (the two compliance
+# tables). Matches both forms `_format_requirement_link` emits; the ID shape —
+# dash-separated uppercase segments — keeps a code-span path cell in an
+# unrelated table from matching.
+_REQ_ROW_PREFIX_RE = re.compile(r"^\|\s*(?:\[`|`)[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+`")
+
+
+_BLUEPRINT_MAX_SECTIONS = requirements_trace.MAX_SECTIONS_RENDERED
+_BLUEPRINT_MAX_PER_MITIGATION = requirements_trace.MAX_BLUEPRINTS_RENDERED
+
+
+def _requirement_blueprint_sections(ctx: RenderContext) -> dict[str, list[requirements_trace.BlueprintSection]]:
+    """Requirement ID → the blueprint sections that prescribe how to satisfy it.
+
+    Delegates to `requirements_trace`, which owns the catalog shape and the
+    excerpt rule so the §10 block, the structured model, and the analyst slice
+    quote the same text. Returns ``{}`` when the catalog is absent or carries
+    no blueprints.
+    """
+    return requirements_trace.sections_by_requirement(requirements_trace.load_catalog(ctx.output_dir))
+
+
 def _requirement_blueprints(ctx: RenderContext) -> dict[str, str]:
     """Map requirement ID → a rendered blueprint cell, derived deterministically
     from the requirements↔blueprint cross-reference in ``.requirements.yaml``.
@@ -8575,72 +8671,66 @@ def _requirement_blueprints(ctx: RenderContext) -> dict[str, str]:
     ``[{bp.id}]({section.url}) — {section.title}`` so §8 ``Violated:`` and the
     §7b/§MS table render identically whether the link came from the LLM or here.
     Returns ``{}`` when the file is absent/unparseable or carries no blueprints.
+
+    This is a *per-requirement* view and deliberately keeps catalog order: the
+    §7b row answers "what does the catalog prescribe for this requirement",
+    with no mitigation to rank against. The §10 block answers "what does the
+    catalog prescribe for this fix" and therefore ranks
+    (`requirements_trace.select_blueprint`). The two can name different
+    sections of the same blueprint; that is the difference in question, not
+    drift.
     """
-    path = ctx.output_dir / ".requirements.yaml"
-    if not path.is_file():
-        return {}
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
     out: dict[str, str] = {}
-    for bp in data.get("blueprints", []) or []:
-        if not isinstance(bp, dict):
+    for rid, sections in _requirement_blueprint_sections(ctx).items():
+        if not sections:
             continue
-        bid = (bp.get("id") or "").strip()
-        if not bid:
-            continue
-        for sec in bp.get("sections", []) or []:
-            if not isinstance(sec, dict):
-                continue
-            url = (sec.get("url") or bp.get("url") or "").strip()
-            title = (sec.get("title") or "").strip()
-            for ref in sec.get("references", []) or []:
-                rid = (ref.get("id") or "").strip() if isinstance(ref, dict) else ""
-                if rid and rid not in out:
-                    out[rid] = f"[{bid}]({url})" + (f" — {title}" if title else "")
+        sec = sections[0]
+        out[rid] = f"[{sec.blueprint_id}]({sec.url})" + (f" — {sec.title}" if sec.title else "")
     return out
 
 
 def _requirement_ids_for_threat(t: dict[str, Any], known_ids: dict[str, str] | set[str]) -> list[str]:
-    """Requirement IDs a threat evidences — order-preserving, de-duplicated.
+    """Requirement IDs a threat evidences — see `requirements_trace`.
 
-    Sources, in order: the canonical ``violated_requirements[]`` array, the
-    legacy singular ``requirement_id``, and — when ``known_ids`` is non-empty —
-    any declared requirement ID found in ``remediation.reference``, whether the
-    analyzer wrote it bracketed (``[ID]`` / ``[ID](url)``) or bare (``IF-002``).
-    This closes the field-name split: STRIDE analyzers write a matched
-    requirement into ``remediation.reference`` instead of the array, so the
-    finding shows in §8 (``Violated:``) but was invisible to the §7b/§MS table.
-    Matching against the declared-ID set keeps this prefix-agnostic and ignores
-    OWASP/CWE references (they are not declared requirement IDs).
+    Thin delegation: `build_threat_model_yaml.py` derives
+    ``mitigations[].fulfills_requirements`` from the same rule, and the two
+    surfaces disagreed for a quarter of a run's mitigations while each had its
+    own copy.
     """
-    out: list[str] = []
+    return requirements_trace.requirement_ids_for_threat(t, known_ids)
 
-    def _add(rid: Any) -> None:
-        s = (rid or "").strip()
-        if s and s not in out:
-            out.append(s)
 
-    for rid in t.get("violated_requirements") or []:
-        _add(rid)
-    if t.get("requirement_id"):
-        _add(t["requirement_id"])
-    if known_ids:
-        rem = t.get("remediation") if isinstance(t.get("remediation"), dict) else {}
-        ref = rem.get("reference") if isinstance(rem, dict) else None
-        if isinstance(ref, str) and ref:
-            # Bracketed tokens first (preserves reference order for `[ID](url)`).
-            for tok in re.findall(r"\[([^\]]+)\]", ref):
-                if tok.strip() in known_ids:
-                    _add(tok)
-            # Bare IDs: analyzers sometimes write `IF-002` without the brackets
-            # the matcher above keys on. Recover any declared ID that appears as
-            # a standalone token. Only IDs in known_ids match, so CWE/OWASP refs
-            # never do; the word-boundary guard avoids partial hits (IF-0021).
-            for kid in known_ids:
-                if kid not in out and re.search(r"(?<![\w-])" + re.escape(kid) + r"(?![\w-])", ref):
-                    _add(kid)
+def mitigation_requirement_ids(
+    mitigation: dict[str, Any],
+    threats_by_id: dict[str, dict[str, Any]],
+    known_req_ids: dict[str, str],
+    evidence_reqs: dict[str, list[str]],
+) -> list[str]:
+    """Every requirement ID a mitigation fulfils — membership, not the view.
+
+    Four sources, unioned in order: the structured model's own
+    ``fulfills_requirements`` (written at Stage 1 by
+    ``build_threat_model_yaml.annotate_requirements_and_blueprints``), the
+    addressed threats' declared IDs, and the §7b assessment's evidence
+    citations. That last source only exists once Stage 2 has authored the
+    fragment, which is why ``emit_requirement_trace_to_model.py`` carries the
+    result back into the YAML after compose — otherwise the report names
+    requirements the structured model has never heard of.
+
+    The §10 block renders a filtered VIEW of this list: only requirements the
+    §7b table marked FAIL / PARTIAL / ANTI-PATTERN
+    (`_requirement_is_traceable_violation`). The filter is applied by the
+    caller, never here, so the two consumers cannot disagree on membership.
+    """
+    out = [str(r or "").strip() for r in (mitigation.get("fulfills_requirements") or []) if str(r or "").strip()]
+    for tid in mitigation.get("addresses") or mitigation.get("threat_ids") or []:
+        threat = threats_by_id.get((tid or "").strip().upper()) or {}
+        for rid in _requirement_ids_for_threat(threat, known_req_ids):
+            if rid not in out:
+                out.append(rid)
+        for rid in evidence_reqs.get(_visible_finding_id(tid), []):
+            if rid not in out:
+                out.append(rid)
     return out
 
 
@@ -8657,8 +8747,12 @@ def _build_requirements_mapping_rows(ctx: RenderContext) -> list[dict[str, Any]]
     via the reverse link `mitigation.fulfills_requirements` so a mitigation that
     declares the requirement is included even if no threat lists it.
 
+    A requirement whose §7b compliance row cites findings gets a row even when
+    no threat declared it, because that citation is an explicit assessment-
+    authored edge (see the `evidence_fids` block below).
+
     Rows are sorted critical → low, then by requirement ID. Returns [] when no
-    requirement-linked threat exists (e.g. all requirements PASS).
+    requirement is linked to a finding at all (e.g. all requirements PASS).
     """
     threats = list((ctx.yaml_data or {}).get("threats", []) or [])
     known_ids = _known_requirement_ids(ctx)
@@ -8733,10 +8827,28 @@ def _build_requirements_mapping_rows(ctx: RenderContext) -> list[dict[str, Any]]
     # stale semantic matches where a threat kept an old `violated_requirements`
     # value even though the compliance table links the requirement to a different
     # finding. If the row cites no findings, fall back to the threat-derived edge.
+    #
+    # The citation also OPENS a row when no threat declared the requirement at
+    # all: STRIDE analyzers frequently leave `violated_requirements` empty, and
+    # the §7b row then carried the only explicit edge. Dropping it rendered a
+    # violated requirement with an empty Findings cell, which reads as "nothing
+    # was found here" — the opposite of its status (juice-shop 2026-08-27: all
+    # 36 FAIL rows cited findings, zero traceability rows were produced).
     for rid, fids in evidence_fids.items():
-        slot = by_req.get(rid)
-        if not slot or not _requirement_is_traceable_violation(rid, status_map):
+        if not _requirement_is_traceable_violation(rid, status_map):
             continue
+        slot = by_req.get(rid)
+        if slot is None:
+            slot = by_req.setdefault(
+                rid,
+                {
+                    "req_id": rid,
+                    "status": status_map.get(rid, ""),
+                    "findings": [],
+                    "measures": [],
+                    "blueprint": "",
+                },
+            )
         findings: list[tuple[str, str]] = []
         measures: list[str] = []
         for fid in fids:
@@ -8817,7 +8929,7 @@ def _render_requirements_mapping_table(
 ) -> str:
     """Render the requirement→finding→mitigation rows as a Markdown table.
 
-    Columns: Requirement · Status · Risk · Findings · Maßnahmen · Guidance. Finding
+    Columns: Requirement · Status · Risk · Findings · Mitigations · Guidance. Finding
     cells link to §8 (`#f-nnn`); mitigation cells link to §9 (`#m-nnn`). The
     requirement ID links to its source URL from `.requirements.yaml` when known.
     Returns "" for an empty row set.
@@ -8827,8 +8939,8 @@ def _render_requirements_mapping_table(
     shown = rows[:limit] if limit else rows
     known_ids = _known_requirement_ids(ctx)
     lines = [
-        "| Requirement | Status | Risk | Findings | Maßnahmen | Guidance |",
-        "|-------------|--------|------|----------|-----------|----------|",
+        "| Requirement | Status | Risk | Findings | Mitigations | Guidance |",
+        "|-------------|--------|------|----------|-------------|----------|",
     ]
     for r in shown:
         risk_word = (r.get("risk_word") or "").strip()
@@ -8944,6 +9056,64 @@ def _render_requirements_scope_note(ctx: RenderContext) -> str:
     return "\n".join(lines) + "\n"
 
 
+_REQ_TABLE_STATUS_ORDER = {
+    "ANTI-PATTERN": 0,
+    "FAIL": 1,
+    "PARTIAL": 2,
+    "UNVERIFIABLE": 3,
+    "NOT OBSERVABLE": 4,
+    "PASS": 5,
+    "N/A": 6,
+}
+
+
+def _sort_requirements_assessment_table(md: str) -> str:
+    """Order the §7b assessment table by status, gaps first.
+
+    Phase 8b writes the rows in catalog order, so a reader looking for what
+    failed scrolls past every row static analysis could not verify. Sorting is
+    stable, so the catalog's category grouping survives inside each status
+    block, and no row is dropped or rewritten. Idempotent.
+    """
+    lines = md.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        cells = [re.sub(r"[*_`]", "", c).strip().lower() for c in _split_md_table_row(lines[i])]
+        is_header = (
+            len(cells) >= 3
+            and any(c in _REQ_HEADER_TOKENS for c in cells)
+            and "status" in cells
+            # `evidence` distinguishes the assessment table from the
+            # deterministic traceability table appended below it, which is
+            # ordered by severity and must keep that order.
+            and "evidence" in cells
+            and i + 1 < len(lines)
+            and all(re.fullmatch(r":?-{3,}:?", c.strip()) for c in _split_md_table_row(lines[i + 1]))
+        )
+        if not is_header:
+            out.append(lines[i])
+            i += 1
+            continue
+        status_idx = cells.index("status")
+        body_start = i + 2
+        end = body_start
+        while end < len(lines) and _split_md_table_row(lines[end]):
+            end += 1
+        body = lines[body_start:end]
+
+        def _rank(row: str) -> int:
+            row_cells = _split_md_table_row(row)
+            if len(row_cells) <= status_idx:
+                return 99
+            return _REQ_TABLE_STATUS_ORDER.get(_normalise_requirement_status(row_cells[status_idx]), 98)
+
+        out.extend(lines[i:body_start])
+        out.extend(sorted(body, key=_rank))
+        i = end
+    return "\n".join(out)
+
+
 def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """§7b — inline the LLM compliance narrative (status/priority/evidence,
     which the yaml does not carry) then append a deterministic Requirements
@@ -8957,7 +9127,7 @@ def _render_requirements_compliance(ctx: RenderContext, env: jinja2.Environment,
     rows = _build_requirements_mapping_rows(ctx)
     table = _render_requirements_mapping_table(ctx, rows)
     try:
-        body = _render_markdown_fragment(ctx, "requirements_compliance", section)
+        body = _sort_requirements_assessment_table(_render_markdown_fragment(ctx, "requirements_compliance", section))
     except FragmentError:
         if not table:
             raise  # no fragment AND no mapping → genuinely nothing to show
@@ -9093,22 +9263,128 @@ def _carried_provenance(output_dir: Path) -> dict | None:
         return None
 
 
+_REQ_MS_TITLE_MAX = 72
+
+
+def _shorten_requirement_title(title: str, limit: int = _REQ_MS_TITLE_MAX) -> str:
+    """Trim a requirement title to `limit` chars at a word boundary."""
+    text = (title or "").strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(",;:")
+    return f"{cut or text[:limit]}…"
+
+
+def _render_requirements_compliance_ms_table(
+    ctx: RenderContext,
+    compliance_rows: list[dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> tuple[str, str]:
+    """Render the failed requirements for the Management Summary.
+
+    Returns ``(caption, table)``; both are "" when nothing failed. Scope is the
+    violated statuses only, MUST first — PARTIAL rows and the rows static
+    analysis could not verify stay in the Result counts and §7b, because a
+    Management Summary that lists six arbitrary open rows out of dozens reads
+    as a sample rather than as the top of the list (user 2026-08-27).
+
+    Each row names the requirement in words, not by ID alone: an ID plus two
+    dashes is unreadable without opening §7b, which is the point of a summary.
+    """
+    priority_rank = {"MUST": 0, "SHOULD": 1, "MAY": 2}
+    failed = [row for row in compliance_rows if row.get("status") in {"FAIL", "ANTI-PATTERN"}]
+    partial = [row for row in compliance_rows if row.get("status") == "PARTIAL"]
+    rows = [row for row in failed if row.get("priority") == "MUST"]
+    noun, verdict = "MUST-level requirement", "not met"
+    if not rows:
+        rows, noun = failed, "Requirement"
+    if not rows:
+        rows, noun, verdict = partial, "Requirement", "only partially met"
+    if not rows:
+        return "", ""
+    rows.sort(key=lambda row: (priority_rank.get(row.get("priority", ""), 99), row.get("req_id", "")))
+
+    known_ids = _known_requirement_ids(ctx)
+    traceability = {row["req_id"]: row for row in _build_requirements_mapping_rows(ctx)}
+    lines = [
+        "| Requirement | Findings | Mitigations |",
+        "|-------------|----------|-------------|",
+    ]
+
+    def _find_chip(fid: str) -> str:
+        emoji = ctx.severity_emoji(ctx.severity_for_ref(fid))
+        return f"{emoji} [{fid}](#{fid.lower()})" if emoji else f"[{fid}](#{fid.lower()})"
+
+    for row in rows[:limit]:
+        trace = traceability.get(row["req_id"], {})
+        findings = trace.get("findings", [])
+        measures = trace.get("measures", [])
+        # Ids stay bare: the requirement title owns the row's meaning, and the
+        # glyph carries severity/priority. `_is_bare_finding_ref_line` keeps the
+        # global title-suffix passes off these cells.
+        finding_cell = ", ".join(_find_chip(fid) for fid, _ in findings) or "—"
+        mitigation_cell = (
+            ", ".join(f"{_measure_prio_prefix(ctx, mid)}[{mid}](#{mid.lower()})" for mid in measures) or "—"
+        )
+        req_cell = _format_requirement_link(row["req_id"], known_ids)
+        title = _shorten_requirement_title(row.get("title", ""))
+        if title:
+            req_cell = f"{req_cell} — {title}"
+        lines.append(f"| {req_cell} | {finding_cell} | {mitigation_cell} |")
+    shown = min(limit, len(rows))
+    count = f"showing {shown} of {len(rows)}" if len(rows) > shown else str(len(rows))
+    plural = "" if len(rows) == 1 else "s"
+    caption = f"**{noun}{plural} {verdict} ({count}):**"
+    return caption, "\n".join(lines)
+
+
+def _requirements_compliance_result(rows: list[dict[str, Any]]) -> tuple[str, str]:
+    """Return deterministic overall status and count line for compliance rows."""
+    counts = {
+        status: 0 for status in ("PASS", "FAIL", "ANTI-PATTERN", "PARTIAL", "N/A", "NOT OBSERVABLE", "UNVERIFIABLE")
+    }
+    for row in rows:
+        status = row.get("status", "")
+        if status in counts:
+            counts[status] += 1
+    if counts["FAIL"] or counts["ANTI-PATTERN"]:
+        overall = "❌ Action required"
+    elif counts["PARTIAL"]:
+        overall = "⚠️ Partially compliant"
+    elif counts["UNVERIFIABLE"] or counts["NOT OBSERVABLE"]:
+        overall = "❓ Verification required"
+    else:
+        overall = "✅ Passed"
+    result = (
+        f"{len(rows)} requirements assessed — {counts['PASS']} PASS · {counts['FAIL']} FAIL · "
+        f"{counts['ANTI-PATTERN']} ANTI-PATTERN · {counts['PARTIAL']} PARTIAL · {counts['N/A']} N/A · "
+        f"{counts['NOT OBSERVABLE']} NOT OBSERVABLE · {counts['UNVERIFIABLE']} UNVERIFIABLE"
+    )
+    return overall, result
+
+
+def _requirements_compliance_is_complete(ctx: RenderContext, rows: list[dict[str, Any]]) -> bool:
+    """Return whether the parsed assessment covers the configured catalog."""
+    if not rows:
+        return False
+    catalog_ids = set(_requirement_catalog_entries(ctx))
+    if not catalog_ids:
+        return True
+    row_ids = [row.get("req_id", "") for row in rows]
+    return len(row_ids) == len(catalog_ids) and set(row_ids) == catalog_ids
+
+
 def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
-    """Derive the ### Requirements Compliance MS subsection.
+    """Derive the Management-Summary compliance view from the full §7b table.
 
-    Extracts the baseline link + PASS/FAIL/ANTI-PATTERN/PARTIAL summary line
-    from the fragment when available, then appends a deterministic compact
-    traceability table built from threat-model.yaml.
-
-    Falls back gracefully when the fragment has been cleaned up (post-QA
-    runtime_cleanup removes .fragments/): the baseline is derived from
-    .requirements.yaml directly and the deterministic table from yaml threats.
-    Returns empty string only when requirements checking was not enabled at all
-    (no .requirements.yaml and no rows).
+    The parsed §7b rows are the single source for both deterministic counts and
+    the compact open-requirements table. Threat-model.yaml contributes only
+    explicit finding and mitigation links; it never supplies or changes a
+    compliance status.
     """
     frag_path = ctx.output_dir / ".fragments" / "requirements-compliance.md"
     baseline = ""
-    result_line = ""
 
     if frag_path.is_file():
         text = frag_path.read_text(encoding="utf-8")
@@ -9122,9 +9398,6 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
         else:
             baseline_m2 = re.search(r"from the ([^\n]+?) baseline", text)
             baseline = baseline_m2.group(1).strip() if baseline_m2 else ""
-        # --- Summary line from fragment ---
-        summary_m = re.search(r"\*\*Summary:\*\*\s*(.+?)(?:\n|$)", text)
-        result_line = summary_m.group(1).strip() if summary_m else ""
 
     # Derive baseline from .requirements.yaml when fragment is absent or baseline empty.
     if not baseline:
@@ -9144,29 +9417,44 @@ def _render_requirements_compliance_ms(ctx: RenderContext) -> str:
         if not baseline:
             baseline = "configured baseline"
 
-    # Deterministic compact traceability table (FAIL/PARTIAL/ANTI-PATTERN only,
-    # highest-risk first, capped) built from threat-model.yaml.
-    rows = _build_requirements_mapping_rows(ctx)
+    compliance_rows = _requirements_compliance_rows(ctx)
+    traceability_rows = _build_requirements_mapping_rows(ctx)
 
-    # When the fragment is gone AND no rows exist in yaml, nothing to show.
-    if not frag_path.is_file() and not rows:
+    # When the fragment is gone AND no traceability remains, nothing to show.
+    if not frag_path.is_file() and not traceability_rows:
         return ""
 
     # --- Compose the subsection ---
     lines: list[str] = ["### Requirements Compliance", ""]
     lines.append(f"**Baseline:** {baseline}")
-    if result_line:
-        lines.append(f"**Result:** {result_line}")
+    assessment_complete = _requirements_compliance_is_complete(ctx, compliance_rows)
+    if assessment_complete:
+        overall, result = _requirements_compliance_result(compliance_rows)
+        lines.append(f"**Overall status:** {overall}")
+        lines.append(f"**Result:** {result}")
+    elif compliance_rows:
+        _, result = _requirements_compliance_result(compliance_rows)
+        expected = len(_requirement_catalog_entries(ctx))
+        coverage = f"{len(compliance_rows)} of {expected}" if expected else str(len(compliance_rows))
+        lines.append("**Overall status:** ❓ Assessment incomplete")
+        lines.append(f"**Result:** {coverage} requirements assessed; partial counts: {result.split('—', 1)[1].strip()}")
+    else:
+        lines.append("**Overall status:** ❓ Assessment unavailable")
+        lines.append(
+            "**Result:** Compliance totals are unavailable because no complete §7b assessment table was produced."
+        )
     lines.append("")
 
-    table = _render_requirements_mapping_table(ctx, rows, limit=6)
+    caption, table = _render_requirements_compliance_ms_table(ctx, compliance_rows, limit=6)
     if table:
-        lines.append("**Failed or partial requirements → findings & mitigations:**")
+        lines.append(caption)
         lines.append("")
         lines.append(table)
         lines.append("")
 
-    lines.append("→ *Full compliance details in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*")
+    total = len(compliance_rows)
+    scope = f"all {total} assessed requirements" if total else "the full assessment"
+    lines.append(f"→ *{scope.capitalize()} in [Section 7b — Requirements Compliance](#7b-requirements-compliance).*")
     return "\n".join(lines)
 
 
@@ -11020,7 +11308,11 @@ def _table_col_role(header: str) -> str:
         )
     ):
         return "desc"
-    if any(tok in h for tok in ("finding", "threat", "addresses", "mitigat", "covers", "linked")):
+    # "guidance" is the §7b blueprint column: a link plus a short section title,
+    # not prose. Classed as prose it fell to the 44-char soft-wrap, which broke
+    # section titles mid-phrase ("3.3. Step 3:<br/>Method-Level Authorization")
+    # so one entry read as two.
+    if any(tok in h for tok in ("finding", "threat", "addresses", "mitigat", "covers", "linked", "guidance")):
         return "links"
     return "default"
 
@@ -11100,6 +11392,14 @@ _FIXED_LAYOUT_TABLE_HEADERS = frozenset(
         # and 4-col (with Mitigates) forms become fixed-layout HTML.
         ("Strength", "What's in Place", "Effectiveness"),
         ("Strength", "What's in Place", "Effectiveness", "Mitigates"),
+        # §7b Requirements Compliance (2026-08-27): both prose columns were
+        # broken at 44 chars while the Evidence cell still held a bare `T-NNN`,
+        # so the finding link the QA autofix built afterwards ended up wrapped
+        # mid-sentence in the HTML/PDF.
+        ("Requirement", "Status", "Priority", "Evidence"),
+        # Management-Summary compliance table — its Requirement cell carries the
+        # requirement's short title, which the 44-char break split mid-phrase.
+        ("Requirement", "Findings", "Mitigations"),
     }
 )
 
@@ -11641,19 +11941,65 @@ def _reference_link_title(url: str) -> str:
     return f"{source}: {label}"
 
 
+_REF_LINK_RE = re.compile(r"\[([^\]]*)\]\((https?://[^)\s]+)\)")
+_CWE_URL_RE = re.compile(r"^https?://cwe\.mitre\.org/data/definitions/(\d+)\.html$", re.IGNORECASE)
+# A URL repeated after the link, optionally backticked, behind `:` or a dash.
+_REF_ECHOED_URL_RE = re.compile(r"^\s*[:–—-]\s*`?(https?://[^\s`]+)`?\s*$")
+# Free text that ends in a bare URL and carries no link at all.
+_REF_TEXT_THEN_URL_RE = re.compile(r"^(?P<title>.*?)\s*[:–—-]\s*`?(?P<url>https?://[^\s`]+)`?\s*$")
+
+
 def _normalize_reference(ref: str) -> str:
-    """Render a mitigation ``reference`` value as a consistent, titled Markdown
-    link. Handles the two shapes the analyst ships raw: a bare ``CWE-NNN`` and a
-    bare URL. Idempotent for values already containing a Markdown link; passes
-    free-text through (linkifying any embedded bare CWEs)."""
+    """Render a mitigation ``reference`` value as ONE shape: ``[title](url)``.
+
+    ``check_reference_format`` states the contract — "must be a titled Markdown
+    link, never a bare CWE-NNN and never a naked URL" — and names this function
+    as the producer, but the old passthrough on ``"](" in ref`` handed back
+    every shape the analyst happened to ship. Four survived into one report
+    (juice-shop 2026-08-27, 44 cards): the canonical link (18), the link with
+    its own URL echoed behind a colon (18) or a dash (5), and plain text with a
+    trailing URL and no link at all (3). The echo then reached the prose fixer
+    as a bare URL and came back backticked, so the line rendered the same
+    address twice, once as a link and once as code.
+
+    So: keep the link, drop an echo of its own target, build a link when text
+    and URL arrive unlinked, and route every cwe.mitre.org target through
+    `_cwe_reference_link` — a bare CWE URL otherwise picked up the generic
+    host-derived title (`cwe.mitre.org: 798`) while the same CWE arriving as an
+    id rendered `CWE-798: Use of Hard-coded Credentials`. Free text with no URL
+    is still passed through with its bare CWEs linkified.
+    """
     ref = (ref or "").strip()
-    if not ref or "](" in ref:  # empty, or already a Markdown link
+    if not ref:
         return ref
+
+    link = _REF_LINK_RE.search(ref)
+    if link:
+        url = link.group(2)
+        tail = ref[link.end() :]
+        head = ref[: link.start()].strip()
+        echoed = _REF_ECHOED_URL_RE.match(tail)
+        # Only collapse when the tail repeats THIS link's target; a different
+        # URL is a second reference and stays visible.
+        if head or not (not tail.strip() or (echoed and echoed.group(1) == url)):
+            return _linkify_bare_cwes(ref)
+        cwe = _CWE_URL_RE.match(url)
+        return _cwe_reference_link(cwe.group(1)) if cwe else f"[{link.group(1)}]({url})"
+
     m = re.fullmatch(r"CWE-(\d+)", ref, re.IGNORECASE)
     if m:
         return _cwe_reference_link(m.group(1))
     if re.fullmatch(r"https?://\S+", ref):
-        return f"[{_reference_link_title(ref)}]({ref})"
+        cwe = _CWE_URL_RE.match(ref)
+        return _cwe_reference_link(cwe.group(1)) if cwe else f"[{_reference_link_title(ref)}]({ref})"
+    unlinked = _REF_TEXT_THEN_URL_RE.match(ref)
+    if unlinked:
+        url = unlinked.group("url")
+        title = unlinked.group("title").strip().rstrip(":-–— ")
+        cwe = _CWE_URL_RE.match(url)
+        if cwe:
+            return _cwe_reference_link(cwe.group(1))
+        return f"[{title or _reference_link_title(url)}]({url})"
     return _linkify_bare_cwes(ref)
 
 
@@ -12331,19 +12677,59 @@ def _linkify_bare_finding_refs(ctx: RenderContext, md: str) -> str:
     return "".join(out_chunks)
 
 
-def _fold_code_strings_in_prose(md: str) -> str:
-    """Fold a whole code-signal quoted string literal (a SQL query, a
-    concatenated expression) into ONE backtick span, across all prose.
+_BARE_REQ_ID_RE = re.compile(r"(?<![\w/#-])([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)(?![\w-])")
 
-    Runs BEFORE ``_escape_dot_tld_identifiers`` so that pass — which would
-    otherwise mistake a column ref like ``u.id`` for the Indonesia ``.id``
-    ccTLD and backtick it mid-string — sees the literal as an already-masked
-    span and leaves its interior alone. Without this, the stray inner backtick
-    then defeats the whole-literal fold and the per-token matchers half-backtick
-    the query (``on `o.owner_id` = `u.id` where `u.email` = …``). Skips fenced
-    blocks and heading lines; idempotent."""
-    if not md:
+# Like `_PROSE_MASK_RE`, but whole `<a>` / `<code>` ELEMENTS are opaque, not
+# just their tags. The compliance tables reach this pass as HTML, where an ID
+# already carries a link as `<a href="…"><code>AC-002</code></a>`; masking only
+# the tags would leave the inner text exposed and nest a markdown link inside
+# the anchor. Element alternatives precede the generic tag so they win.
+_REQ_PROSE_MASK_RE = re.compile(
+    r"`[^`]+`|\[[^\]]*\]\([^)]*\)|<a\b[^>]*>.*?</a>|<code\b[^>]*>.*?</code>|<[^>]+>",
+    re.DOTALL,
+)
+
+
+def _linkify_bare_requirement_refs(ctx: RenderContext, md: str) -> str:
+    """Linkify requirement IDs the LLM wrote as plain text, using the URL the
+    catalog declares for each.
+
+    The §7b narrative names requirements in table cells and prose ("the most
+    critical gaps are in access control (AC-002, AC-005)") without linking any
+    of them — 84 such mentions in the juice-shop 2026-08-28 run — while §10
+    links the same IDs through `_format_requirement_link`. Same catalog, same
+    reader, two treatments. This closes that, deterministically, rather than
+    asking the fragment author to remember.
+
+    Only IDs the catalog actually declares a URL for are touched, so an
+    unrelated uppercase token (``CWE-79``, ``RS256``, ``P1``) is left alone.
+    Mirrors `_linkify_bare_finding_refs`: fenced blocks, headings, code spans,
+    existing links and HTML tags are all passthrough, which also makes it
+    idempotent — the ID inside an emitted ``[`ID`](url)`` sits in a backtick
+    span the mask skips on a second run."""
+    known = _known_requirement_ids(ctx)
+    urls = {rid: u for rid, u in known.items() if (u or "").strip()}
+    if not urls:
         return md
+
+    def _rewrite_run(run: str) -> str:
+        return _BARE_REQ_ID_RE.sub(
+            lambda m: _format_requirement_link(m.group(1), urls) if m.group(1) in urls else m.group(0),
+            run,
+        )
+
+    def _process_line(line: str) -> str:
+        out: list[str] = []
+        pos = 0
+        for mm in _REQ_PROSE_MASK_RE.finditer(line):
+            if mm.start() > pos:
+                out.append(_rewrite_run(line[pos : mm.start()]))
+            out.append(mm.group(0))  # opaque span — passthrough
+            pos = mm.end()
+        if pos < len(line):
+            out.append(_rewrite_run(line[pos:]))
+        return "".join(out)
+
     out_chunks: list[str] = []
     for chunk in re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL):
         if chunk.startswith("```"):
@@ -12351,14 +12737,23 @@ def _fold_code_strings_in_prose(md: str) -> str:
             continue
         lines = chunk.split("\n")
         for i, line in enumerate(lines):
-            if re.match(r"^\s{0,3}#{1,6}\s", line):
-                continue  # heading
-            lines[i] = _wrap_code_string_literals(line)
+            if re.match(r"^\s{0,3}#{1,6}\s", line) or '<a id="' in line:
+                continue  # headings + anchor-declaration rows untouched
+            lines[i] = _process_line(line)
         out_chunks.append("\n".join(lines))
     return "".join(out_chunks)
 
 
-def _codify_inline_code_in_prose(md: str) -> str:
+def _fold_code_strings_in_prose(md: str) -> str:
+    """Protect complete code expressions before dotted-brand escaping.
+
+    This compatibility entry point delegates to the report-wide recognizer;
+    it no longer carries a separate SQL/string pattern engine.
+    """
+    return _prose_formatter.apply_code_formatting(md)[0]
+
+
+def _codify_inline_code_in_prose(md: str, known_tokens: Iterable[str] = ()) -> str:
     """Backtick un-marked inline code (member access, calls, dotted refs, file
     paths, UPPER_SNAKE env/secret names) across ALL prose — the §3 walkthrough
     steps and §8/§10 Issue/Evidence/Fix/How cards are LLM-authored and backtick
@@ -12366,20 +12761,20 @@ def _codify_inline_code_in_prose(md: str) -> str:
     span-masking ``_codify_inline_identifiers`` so existing backtick spans,
     markdown links, and HTML tags are never touched; only adds the missing
     monospacing. Skips fenced code blocks and heading lines. Idempotent."""
-    if not md:
-        return md
-    out_chunks: list[str] = []
-    for chunk in re.split(r"(```[^\n]*\n.*?\n```)", md, flags=re.DOTALL):
-        if chunk.startswith("```"):
-            out_chunks.append(chunk)
-            continue
-        lines = chunk.split("\n")
-        for i, line in enumerate(lines):
-            if re.match(r"^\s{0,3}#{1,6}\s", line):
-                continue  # heading
-            lines[i] = _codify_inline_identifiers(line)
-        out_chunks.append("\n".join(lines))
-    return "".join(out_chunks)
+    return _prose_formatter.apply_code_formatting(md, known_tokens)[0]
+
+
+def _inline_code_vocabulary(ctx: RenderContext) -> frozenset[str]:
+    """Return code semantics without letting model output select read paths."""
+
+    tokens = set(_inline_code_formatter.structured_vocabulary(ctx.yaml_data))
+    # The structured model is untrusted and may contain meta.repository_root.
+    # Only the orchestrator-owned run configuration may select the repository
+    # whose bounded manifests supplement ambiguous package names.
+    repo_root_raw = _read_skill_config(ctx.output_dir).get("repo_root")
+    if isinstance(repo_root_raw, str) and repo_root_raw:
+        tokens.update(_inline_code_formatter.repository_vocabulary(Path(repo_root_raw)))
+    return frozenset(tokens)
 
 
 _FINDING_DOT_REF_RE = re.compile(
@@ -12487,6 +12882,12 @@ def _is_bare_finding_ref_line(line: str) -> bool:
     if "full detail in" in line and "#8-findings-register" in line:
         return True
     if '<a id="tb-' in line:
+        return True
+    # Requirements compliance / traceability row — opens with the requirement
+    # link `[`REQ-ID`](https://…)` that `_format_requirement_link` emits. The
+    # requirement names the row; appending every finding and mitigation title
+    # after it turns a compact status table into a wall of repeated titles.
+    if _REQ_ROW_PREFIX_RE.match(line):
         return True
     return False
 
@@ -12801,6 +13202,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
         | Generated            | <ISO8601> |
         | Mode                 | <full/incremental/rebuild> |
         | Assessment depth     | <quick/standard/thorough> |
+        | Business context     | `<file>` — applies to <N> finding(s)   (conditional — only when declared) |
         | Plugin version       | <semver> (analysis v<N>) |
         | Orchestrator model   | <model-id> |
         | Repository           | <path> |
@@ -12920,6 +13322,15 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
             f"| STRIDE per-category cap | {stride_cap} threat(s) per category "
             f"per component (Critical-safe; `--stride-cap`) |"
         )
+    # Declared business context, disclosed the same way as the STRIDE cap: a
+    # reader cannot otherwise tell whether a supplied document reached this
+    # model, or which file it came from. The finding count is what makes the
+    # row falsifiable — a declared context that mapped to nothing says so.
+    bc_source = meta.get("business_context_source")
+    if bc_source:
+        bc_findings = sum(1 for t in (ctx.yaml_data.get("threats") or []) if t.get("business_context_basis"))
+        bc_reach = f"applies to {bc_findings} finding(s)" if bc_findings else "mapped to no component"
+        lines.append(f"| Business context | `{bc_source}` — {bc_reach} |")
     plugin_cell = f"{plugin_v}" + (f" (analysis v{analysis_v})" if analysis_v else "")
     lines.append(f"| Plugin version | {plugin_cell or '—'} |")
     lines.append(f"| Orchestrator model | {orch_model} |")
@@ -14048,162 +14459,6 @@ def _fix_action_lead(cwe_norm: str) -> str:
 # keys as code. Conservative — only wraps tokens that look strongly like
 # code references (file extensions, function-call shape, env-var case)
 # and never doubles existing backticks.
-_CODE_FILE_RE = re.compile(
-    r"(?<![`/\w])"  # not already in backticks or inside a path
-    # `(?<!\\)` immediately before the extension-dot: a backslash there means
-    # `_escape_dot_tld_identifiers` already deliberately escaped this token as
-    # a known brand name (`Node\.js`) — do not re-match it as a fake ".js file"
-    # and re-wrap it in backticks, which leaks the backslash in the rendered
-    # code span (juice-shop 2026-07-02). Genuine paths (`bar.ts`) are unaffected
-    # since the char right before their extension-dot is never a backslash.
-    r"([A-Za-z_][A-Za-z0-9_./\\-]*(?<!\\)\.(?:ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|"
-    r"yml|yaml|json|xml|toml|ini|env|sh|sql|html|css|scss|md|conf)"
-    r"(?::\d+(?:-\d+)?)?)"  # optional :line[-end]
-    r"(?![`\w.])"
-)
-_CODE_CALL_RE = re.compile(
-    r"(?<![`\w])"
-    r"([A-Za-z_][A-Za-z0-9_]*"
-    r"(?:\.[A-Za-z_][A-Za-z0-9_]*)+\(\))"  # foo.bar() / a.b.c()
-    r"(?![`\w])"
-)
-_CODE_BARE_CALL_RE = re.compile(
-    r"(?<![`\w])"
-    r"([A-Za-z_][A-Za-z0-9_]{2,}\(\))"  # plain identifier()
-    r"(?![`\w])"
-)
-_CODE_DOTTED_RE = re.compile(
-    r"(?<![`\w/])"
-    r"([a-z][a-zA-Z0-9_]*"
-    # Inner segments may start uppercase so member chains ending in a
-    # class/constant resolve fully: req.body.UserId, secrets.GITHUB_TOKEN,
-    # process.env.LLM_API_KEY. They must start with a LETTER (not `_`) so a
-    # markdown italic close — `… stay valid._` → `valid` + `._` — is never
-    # mistaken for a dotted member. First segment stays lowercase-anchored so
-    # prose like "U.S." is never wrapped.
-    r"(?:\.[A-Za-z][a-zA-Z0-9_]*){1,3})"
-    # Reject a continuation (`.word`, `(`, word char, backtick) but ALLOW a
-    # trailing sentence period (`.` + space/end) so `… req.user.id.` matches.
-    r"(?![`\w(]|\.\w)"
-)
-# UPPER_SNAKE environment / secret identifiers — GITHUB_TOKEN, NODE_ENV,
-# ORG_ADMIN_TOKEN, LLM_API_KEY. Requires ≥1 underscore so prose acronyms
-# (XSS, CSRF, SQL) are never wrapped. A leading `secrets.`/`process.env.`
-# member is handled by _CODE_DOTTED_RE; this catches the bare token.
-_CODE_ENV_RE = re.compile(r"(?<![`\w.])([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)(?![`\w])")
-# Scoped npm package names — `@ai-sdk/openai-compatible`, `@nestjs/common`.
-# The §1 trust-boundary cell rendered `@ai-sdk/openai-compatible` as plain prose
-# right next to a correctly monospaced `LLM_API_KEY` and `routes/chat.ts`
-# (user 2026-07-31): no other matcher covers a `@scope/name` with no extension
-# and no call parens. Deliberately narrow so ordinary prose cannot match:
-#   * the `@` must open the token (nothing word-like, `.`, `@` or `-` before it),
-#     so an email local part — `admin@juice-sh.op`, `a@b/c` — never matches;
-#   * a `/` separator is REQUIRED, so a bare `@mention` stays prose;
-#   * both halves are npm-legal lowercase (`a-z0-9._-`) and must start
-#     alphanumeric, so `@ Scope / Name` and `word/word` cannot match.
-_CODE_SCOPED_PKG_RE = re.compile(r"(?<![\w.@-])(@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*)(?![`\w/])")
-
-
-# --- Fail-closed guards for the two AMBIGUOUS matchers -------------------
-# `_CODE_FILE_RE` (`Stem.js`) and `_CODE_DOTTED_RE` (`word.word`) match token
-# *shapes* that also occur in product names (`Node.js`, `socket.io`,
-# `Fastify.js`) and prose abbreviations (`e.g`, `i.e`). Wrapping those in
-# backticks reads as a spurious code reference. The old defence subtracted a
-# hand-maintained brand allowlist (`_DOT_TLD_KNOWN_NAMES`) — fail-open: any
-# un-listed library (`engine.io`, `Fastify.js`) leaked. Instead require
-# POSITIVE evidence the token is real code before wrapping; unknown-but-code-
-# shaped prose stays prose.
-#
-# JS-ecosystem extensions whose `Stem.ext` form collides with library naming.
-# `.ts`/`.tsx` are deliberately EXCLUDED — a bare Capitalised `App.tsx` is far
-# more likely a real component file than a product name, and TS-named brands
-# are rare. Brands overwhelmingly use `.js`.
-_BRAND_RISK_EXT = frozenset({"js", "jsx", "mjs", "cjs"})
-# Dotted-token last-segments that mark a PRODUCT / DOMAIN, not a method call:
-# `socket.io`, `engine.io`, `evil.com`, `foo.dev`. A real API call ends in a
-# method name (`socket.emit`, `restTemplate.getForObject`) whose last segment
-# is none of these.
-_DOTTED_NONCODE_SUFFIX = frozenset({"io", "js", "net", "org", "com", "dev", "ai", "co", "gg", "app", "xyz"})
-# …unless a known code head precedes it (defensive; `req.io` etc. are code).
-_DOTTED_CODE_HEADS = frozenset({"req", "res", "ctx", "this", "self", "process", "window", "document", "console"})
-
-
-def _file_token_is_product_name(token: str) -> bool:
-    """True when a ``_CODE_FILE_RE`` match is almost certainly a product name,
-    not a file reference: a JS-ecosystem extension on a single Capitalised
-    stem, with no path separator and no ``:line`` locator. Real file references
-    in these reports carry a path (``routes/login.ts``) or a locator
-    (``OrderLookupDao.java:22``); bare ``Fastify.js`` / ``Node.js`` do not."""
-    if "/" in token or "\\" in token or ":" in token:
-        return False  # has a path or a :line -> a real reference
-    stem, _, rest = token.partition(".")
-    ext = rest.rsplit(".", 1)[-1].lower()
-    if ext not in _BRAND_RISK_EXT:
-        return False
-    # Single Capitalised word stem == product-shaped (Node, Vue, Fastify, Hapi).
-    return bool(re.fullmatch(r"[A-Z][A-Za-z0-9]*", stem))
-
-
-def _dotted_token_is_code(token: str) -> bool:
-    """False for the two dotted shapes that are NOT code: prose abbreviations
-    (``e.g``, ``i.e``, ``a.m`` — any single-letter segment) and product /
-    domain names (``socket.io``, ``engine.io``, ``evil.com`` — a product/TLD
-    last segment with no known code head). Everything else — real method calls
-    (``socket.emit``, ``restTemplate.getForObject``) and member chains
-    (``req.body.email``) — stays code."""
-    segs = token.lower().split(".")
-    if all(len(s) == 1 for s in segs):
-        return False  # abbreviation: e.g / i.e / a.m / a.k.a
-    if segs[-1] in _DOTTED_NONCODE_SUFFIX and segs[0] not in _DOTTED_CODE_HEADS:
-        return False  # product / domain: socket.io, evil.com
-    return True
-
-
-# A quoted string literal that is really CODE (a SQL query, a concatenated
-# expression) — wrap the WHOLE literal as one span so the per-token matchers
-# never reach inside it and half-backtick a column ref (`o.owner_id`) while
-# leaving the surrounding query as prose. The code-signal gate keeps ordinary
-# prose apostrophes ("the attacker's request") out: they carry no SQL keyword
-# and no `=`+operator combination.
-_SQL_KW_RE = re.compile(
-    r"\b(select|insert|update|delete|drop|union|from|where|join|values|"
-    r"create|alter|exec)\b",
-    re.I,
-)
-# Escape-aware so a Java/JS literal ending in a backslash-escaped quote
-# (`'… = \''`) is captured whole instead of cut at the inner `\'`.
-_CODE_STRING_RE = re.compile(r"(?<!`)('(?:[^'\n`\\]|\\.){6,240}'|\"(?:[^\"\n`\\]|\\.){6,240}\")(?!`)")
-
-
-def _string_literal_is_code(inner: str) -> bool:
-    # A real SQL statement co-occurs ≥2 distinct keywords (SELECT…FROM,
-    # …JOIN…WHERE). A kebab-case slug / CSS class that merely CONTAINS one
-    # keyword as a hyphen-delimited word is NOT code — `-` is a `\b` boundary,
-    # so `\bupdate\b` fires spuriously inside an anchor id like
-    # "dependency-update-posture" (and "create-account", "data-from-source"),
-    # which then backtick-wrapped the whole `<a id="…">` and broke the anchor.
-    kw = len({m.group(1).lower() for m in _SQL_KW_RE.finditer(inner)})
-    if kw >= 2:
-        return True
-    # An assignment / concatenation expression — or a single-keyword query
-    # fragment that also carries a query operator (`… where x = …`).
-    return "=" in inner and ("+" in inner or "(" in inner or ";" in inner or kw >= 1)
-
-
-def _wrap_code_string_literals(text: str) -> str:
-    """Backtick a whole quoted string literal when it is unambiguously code."""
-
-    def _repl(m: re.Match[str]) -> str:
-        span = m.group(1)
-        if not _string_literal_is_code(span[1:-1]):
-            return span
-        return f"`{span}`"
-
-    return _CODE_STRING_RE.sub(_repl, text)
-
-
-_CODE_SPAN_MASK_RE = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
-
 # A finding/mitigation title carries its evidence pointer as a TRAILING
 # parenthetical locator — `(routes/api/Users)`, `(updateProductReviews.ts:18)`,
 # `(package.json:7)`, `(Dockerfile)`. The LLM backticks it inconsistently, so the
@@ -14253,60 +14508,6 @@ def _strip_label_code(label: str) -> str:
     return label.replace("`", "") if label else label
 
 
-def _code_token_is_embedded(seg: str, ms: int, me: int) -> bool:
-    """True when the matched code token sits INSIDE a larger un-backticked
-    expression / string literal / hyphenated word, where wrapping just this
-    inner token produces broken partial formatting — e.g.
-    ``btoa(...split('').`reverse()`.join(''))`` or ``admin@juice-`sh.op```.
-    Such tokens stay plain prose (2026-06-02 user request — Story Card Issue
-    code must not be half-backticked). Standalone tokens (space / paren-in-
-    prose boundaries) are unaffected.
-    """
-    before = seg[ms - 1] if ms > 0 else " "
-    after = seg[me] if me < len(seg) else " "
-    # Preceded by a member-access dot, identifier underscore, or a hyphen that
-    # joins it into a larger word/domain → it is a fragment, not a standalone.
-    if before in "._-":
-        return True
-    # Wrapped in matching quotes → it is a string-literal fragment.
-    if before in "'\"" and after in "'\"":
-        return True
-    return False
-
-
-def _sub_outside_spans(pattern: re.Pattern[str], s: str, reject: Callable[[str], bool] | None = None) -> str:
-    """Wrap `pattern` group(1) in backticks, but ONLY in the parts of `s`
-    that are not already inside a backtick span / link target / HTML tag /
-    entity. Prevents a later code matcher from re-wrapping a token inside a
-    span an earlier matcher just created. Tokens that `_code_token_is_embedded`
-    flags as mid-expression are left untouched (no partial backticking).
-
-    ``reject`` is an optional fail-closed guard: when it returns True for a
-    matched token, the token is left as prose (used to keep product names and
-    prose abbreviations out of the ambiguous file / dotted matchers)."""
-
-    def _wrap_seg(seg: str) -> str:
-        def _repl(mm: re.Match[str]) -> str:
-            if _code_token_is_embedded(seg, mm.start(1), mm.end(1)):
-                return mm.group(0)
-            if reject is not None and reject(mm.group(1)):
-                return mm.group(0)
-            return f"`{mm.group(1)}`"
-
-        return pattern.sub(_repl, seg)
-
-    out: list[str] = []
-    pos = 0
-    for m in _CODE_SPAN_MASK_RE.finditer(s):
-        if m.start() > pos:
-            out.append(_wrap_seg(s[pos : m.start()]))
-        out.append(m.group(0))
-        pos = m.end()
-    if pos < len(s):
-        out.append(_wrap_seg(s[pos:]))
-    return "".join(out)
-
-
 def _codify_inline_identifiers(text: str) -> str:
     """Wrap unmarked code identifiers (file paths, calls, dotted refs)
     in `backticks` so Story Card prose renders them as inline code.
@@ -14314,170 +14515,7 @@ def _codify_inline_identifiers(text: str) -> str:
     Skips text inside existing backticks and existing Markdown link
     targets so we never double-wrap or break links.
     """
-    if not text:
-        return text
-
-    # Tokenise: keep already-quoted segments (backtick-spans and
-    # parenthesised link targets) opaque, wrap only the prose runs in
-    # between. This avoids double-wrapping `` `foo` `` → `` ``foo`` ``
-    # and never edits a Markdown URL like `(https://example.com)`.
-    parts: list[str] = []
-    pos = 0
-    span_re = re.compile(r"`[^`]+`|\]\([^)]+\)|<[^>]+>|&#\d+;")
-    for m in span_re.finditer(text):
-        if m.start() > pos:
-            parts.append(text[pos : m.start()])  # prose run
-            parts.append("\x00")  # marker
-        parts.append(m.group(0))  # passthrough span
-        pos = m.end()
-    if pos < len(text):
-        parts.append(text[pos:])
-        parts.append("\x00")
-
-    out_parts: list[str] = []
-    for p in parts:
-        if p == "\x00":
-            continue
-        if p.startswith("`") or p.startswith("](") or p.startswith("<") or p.startswith("&#"):
-            out_parts.append(p)
-            continue
-        # Apply the four code matchers in priority order, but each one ONLY
-        # outside spans already wrapped by an earlier matcher in this same
-        # run. Without this, `_CODE_FILE_RE` wraps a full path
-        # (`frontend/…/administration.component.html:26`) and then
-        # `_CODE_DOTTED_RE` re-matches `component.html` INSIDE that fresh span,
-        # producing mid-token backticks (`administration.`component.html`:26`).
-        # The outer span mask only knows about backticks present before this
-        # run; spans created here must be protected too.
-        run = p
-        # First fold whole code-signal string literals into one span so no
-        # per-token matcher reaches inside a SQL query / concatenated
-        # expression and half-backticks a column ref.
-        run = _wrap_code_string_literals(run)
-        # Two matchers are ambiguous and run fail-closed (positive-evidence
-        # guard); the other three shapes are unambiguously code.
-        # Scoped packages run BEFORE the file matcher: `@scope/name.js` would
-        # otherwise be half-wrapped as a `name.js` "file" inside the package name.
-        run = _sub_outside_spans(_CODE_SCOPED_PKG_RE, run)
-        run = _sub_outside_spans(_CODE_FILE_RE, run, reject=_file_token_is_product_name)
-        run = _sub_outside_spans(_CODE_CALL_RE, run)
-        run = _sub_outside_spans(_CODE_BARE_CALL_RE, run)
-        run = _sub_outside_spans(_CODE_DOTTED_RE, run, reject=lambda t: not _dotted_token_is_code(t))
-        run = _sub_outside_spans(_CODE_ENV_RE, run)
-        out_parts.append(run)
-    # Final pass: absorb un-backticked code that FLANKS an inline span the
-    # author only partially wrapped (e.g. `foo.forEach((x) => { `bar(x)` })`).
-    # The per-token matchers above deliberately skip non-empty-paren calls and
-    # arrow functions, so a multi-statement expression would otherwise render
-    # half-monospaced (juice-shop 2026-06-24 user report). `_balance_code_spans`
-    # merges the whole balanced expression into one span.
-    return _balance_code_spans("".join(out_parts))
-
-
-_BRACKET_OPENERS = {"(": ")", "[": "]", "{": "}"}
-_BRACKET_CLOSERS = {")": "(", "]": "[", "}": "{"}
-# A flank between an inline span and the surrounding expression may carry only
-# code-shaped characters; a natural-language word (≥2 letters, space-bounded on
-# both sides and not glued to `.`/`(`/etc.) blocks the merge.
-_FLANK_CODE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") | set(
-    ".(){}[]_$@/\\:'\"=>,;+-*%&|!? \t"
-)
-_FLANK_WORD_RE = re.compile(r"[A-Za-z][A-Za-z]+")
-_FLANK_CALL_HEAD_RE = re.compile(r"[A-Za-z_$][\w$.]*\(")
-
-
-def _flank_is_standalone_word(text: str, start: int, end: int) -> bool:
-    """True when ``text[start:end]`` is an alphabetic word bounded by non-glue
-    context on BOTH sides — i.e. prose, not a code identifier attached to
-    ``.`` / ``(`` / ``)`` / ``_`` etc."""
-    glue = set(".(){}[]_$@/\\:")
-    before = text[start - 1] if start > 0 else " "
-    after = text[end] if end < len(text) else " "
-    return before not in glue and after not in glue
-
-
-def _flank_balance(s: str) -> int:
-    """Net unclosed-opener depth of ``s`` (positive = more openers), ignoring
-    brackets inside single/double quotes."""
-    depth = 0
-    quote = None
-    for ch in s:
-        if quote:
-            if ch == quote:
-                quote = None
-            continue
-        if ch in "'\"":
-            quote = ch
-        elif ch in _BRACKET_OPENERS:
-            depth += 1
-        elif ch in _BRACKET_CLOSERS:
-            depth -= 1
-    return depth
-
-
-def _flank_boundary_left(text: str, end: int) -> int:
-    """Leftmost index of the contiguous code flank ending at ``end`` (exclusive):
-    walk left over code-shaped chars, then cut to just after the last standalone
-    prose word so a sentence prefix is never swallowed."""
-    i = end
-    while i > 0 and text[i - 1] in _FLANK_CODE_CHARS:
-        i -= 1
-    cut = i
-    for m in _FLANK_WORD_RE.finditer(text, i, end):
-        if _flank_is_standalone_word(text, m.start(), m.end()):
-            cut = m.end()
-    while cut < end and text[cut] in " \t-:":
-        cut += 1
-    return cut
-
-
-def _flank_boundary_right(text: str, start: int) -> int:
-    """Exclusive end index of the contiguous code flank beginning at ``start``:
-    walk right over code-shaped chars, then cut before the first standalone
-    prose word so trailing narration is never swallowed."""
-    i = start
-    n = len(text)
-    while i < n and text[i] in _FLANK_CODE_CHARS:
-        i += 1
-    end = i
-    for m in _FLANK_WORD_RE.finditer(text, start, end):
-        if _flank_is_standalone_word(text, m.start(), m.end()):
-            cut = m.start()
-            while cut > start and text[cut - 1] in " \t":
-                cut -= 1
-            return cut
-    return end
-
-
-def _balance_code_spans(text: str) -> str:
-    """Absorb un-backticked code FLANKING an inline ``code`` span into one span
-    when the author only partially wrapped a single bracketed expression — e.g.
-    ``foo.forEach((x) => { `bar(x)` })`` → ``` `foo.forEach((x) => { bar(x) })` ```.
-
-    Conservative + idempotent: fires only when the left flank opens brackets
-    (and carries a call/arrow head) that the right flank closes around the span,
-    so balanced standalone spans and ordinary prose are left untouched.
-    """
-    if text.count("`") < 2:
-        return text
-    spans = [(m.start(), m.end()) for m in re.finditer(r"`[^`]+`", text)]
-    # Right-to-left so earlier indices stay valid as we splice.
-    for a, b in reversed(spans):
-        left_start = _flank_boundary_left(text, a)
-        right_end = _flank_boundary_right(text, b)
-        left = text[left_start:a]
-        right = text[b:right_end]
-        ld = _flank_balance(left)
-        rd = _flank_balance(right)
-        # Partial-wrap signature: left opens net brackets, right closes exactly
-        # those, and the left flank is real code (a call/arrow head), not prose.
-        if ld <= 0 or (ld + rd) != 0 or not _FLANK_CALL_HEAD_RE.search(left):
-            continue
-        inner = text[a + 1 : b - 1]
-        merged = "`" + left.rstrip() + (" " if left.endswith(" ") else "") + inner + right.rstrip() + "`"
-        trail = right[len(right.rstrip()) :]
-        text = text[:left_start] + merged + trail + text[right_end:]
-    return text
+    return _inline_code_formatter.format_inline_code(text)[0]
 
 
 # OWASP Top 10:2025 category → canonical deep-link (mirrors
@@ -14506,6 +14544,9 @@ def _build_threat_card(
     ctx: RenderContext,
     fid_to_walkthrough: dict[str, tuple[str, str]] | None = None,
     attack_taxonomy: dict | None = None,
+    requirement_catalog: dict[str, dict[str, str]] | None = None,
+    evidence_requirements: dict[str, list[str]] | None = None,
+    requirement_status: dict[str, str] | None = None,
 ) -> str:
     """Build the Story Card for the §8 ``Finding`` cell.
 
@@ -15225,7 +15266,38 @@ def _build_threat_card(
     # CommonMark / Pandoc / weasyprint (the PDF path) — soft breaks there
     # collapse adjacent lines into one paragraph. Blank lines render correctly
     # in GFM, Pandoc and weasyprint alike.
+    # Requirements this finding breaks. The analyzers do not populate
+    # violated_requirements yet, so the §7b assessment's own evidence citations
+    # are folded in as a fourth source — without them the three structured
+    # sources are empty and the line never renders at all.
+    violated_card = ""
+    if requirement_catalog:
+        _rids = list(_requirement_ids_for_threat(t, requirement_catalog))
+        _fid = _visible_finding_id(t.get("t_id") or t.get("id") or "")
+        for _rid in (evidence_requirements or {}).get(_fid, []):
+            if _rid not in _rids:
+                _rids.append(_rid)
+        # Same filter §10 applies: a §7b row cites its evidence finding for
+        # PASS rows too, where the finding *evidences* the requirement rather
+        # than breaking it. Reading that edge as "violates" only holds for
+        # FAIL/PARTIAL/ANTI-PATTERN.
+        _urls = {_k: (_v.get("url") or "") for _k, _v in requirement_catalog.items()}
+        _parts = []
+        for _rid in _rids:
+            if not _requirement_is_traceable_violation(_rid, requirement_status or {}):
+                continue
+            _meta = requirement_catalog.get(_rid) or {}
+            _label = _format_requirement_link(_rid, _urls)
+            if _meta.get("priority"):
+                _label += f" ({_meta['priority']})"
+            _text = _shorten_requirement_title(_meta.get("text", ""))
+            _parts.append(f"{_label} — {_text}" if _text else _label)
+        if _parts:
+            violated_card = "**Violates:** " + " · ".join(_parts)
+
     fields = [meta_line]
+    if violated_card:
+        fields.append(violated_card)
     if weakness_card:
         fields.append(weakness_card)
     if boundary_card:
@@ -16798,6 +16870,13 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
         if (t.get("evidence_check") or "").strip().lower() == "carried-unverified-shallower-depth":
             has_carried_unverified = True
 
+    # Requirement views for the per-card `Violates:` line — resolved once here
+    # because both helpers re-read their source file on every call.
+    _req_on = bool(ctx.eval_context.get("check_requirements"))
+    _card_req_catalog = _requirement_catalog_entries(ctx) if _req_on else {}
+    _card_ev_reqs = _findings_evidence_requirements_map(ctx) if _req_on else {}
+    _card_req_status = _requirements_status_map(ctx) if _req_on else {}
+
     # Group by severity (desc) and emit a card per finding under a tier header.
     by_sev: dict[str, list[dict]] = {}
     for t in all_threats_sorted:
@@ -16829,6 +16908,9 @@ def _render_threat_register(ctx: RenderContext, env: jinja2.Environment, section
                     ctx,
                     fid_to_walkthrough=fid_to_walkthrough,
                     attack_taxonomy=attack_tax,
+                    requirement_catalog=_card_req_catalog,
+                    evidence_requirements=_card_ev_reqs,
+                    requirement_status=_card_req_status,
                 )
             )
             lines.append("")
@@ -16870,64 +16952,21 @@ def sev_label_strict(sev_key: str) -> str:
 # Inline-code helpers for §9 Mitigation prose (M-NNN how / verification).
 # ---------------------------------------------------------------------------
 
-# Pattern → matches code-shaped tokens that should be wrapped in backticks
-# in mitigation `how` / `why` / `verification` / `steps[]` text.
-#
-# Conservative on purpose: each alternative has at least one unambiguous
-# code marker (parens, slashes, `.ext`, `--flag`, `@version`, HTTP method
-# literal, `process.env.X`). False positives prefer "leave alone" over
-# "wrap a normal word as code".
-# A single argument token: non-period/whitespace chunk, optionally
-# followed by `.<chunk>` (file extension etc.). Excludes the
-# sentence-final period that's followed by whitespace + uppercase.
-# Used by all command-with-args alternates below.
-# Local helper:  ARG = r"[^\s,;.]+(?:\.[^\s,;.]+)*"
-_INLINE_CODE_PATTERNS: list[str] = [
-    # Shell command + at least one argument. Argument tokens may include
-    # `.` (filenames) and `/` (paths) but stop at sentence-final
-    # punctuation (period+space, comma+space, etc.).
-    r"(?:^|(?<=[\s(]))"  # start-of-line OR after whitespace/open-paren
-    r"(?:npm (?:install|run|test|audit) [^\s,;.]+(?:\.[^\s,;.]+)*(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
-    r"|openssl [a-z]+(?:\s+-[a-zA-Z]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)?){1,4}"
-    r"|grep -[a-zA-Z]+ [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
-    r"|curl -[a-zA-Z]+ [^\s]+"
-    r"|git [a-z]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
-    r"|python3 [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*"
-    r"|node [^\s]+(?:\s+[^\s,;.]+(?:\.[^\s,;.]+)*)*)",
-    # HTTP method + path: `POST /rest/user/login`, `GET /api/Users`.
-    r"\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /[A-Za-z0-9_/\-{}.:?=&]+",
-    # File path with extension, optionally followed by :line or :line-line:
-    # `lib/insecurity.ts:23`, `frontend/src/app.module.ts`, `routes/x.ts:20-25`.
-    # The range branch `(?:-\d+)?` keeps `file.ts:20-25` a single wrapped token —
-    # without it the `\b` after `:20` splits the span, leaving `-25` un-backticked.
-    r"\b[A-Za-z_][A-Za-z0-9_./\-]*\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|toml|md|html|css|scss)(?::\d+(?:-\d+)?)?\b",
-    # JS/TS expressions:
-    #   `bcrypt.hash(password, 12)`, `crypto.createHash('md5')`,
-    #   `process.env.JWT_PRIVATE_KEY`,
-    #   `sanitizer.bypassSecurityTrustHtml(html)`, `models.sequelize.query()`,
-    #   `DomSanitizer.sanitize(SecurityContext.HTML, html)`,
-    #   `rateLimit({ windowMs: 15, max: 10 })` (function call without dot).
-    r"\b(?:process\.env\.[A-Z_][A-Z0-9_]*"
-    r"|(?:[a-zA-Z_][a-zA-Z0-9_]*\.)+[a-zA-Z_][a-zA-Z0-9_]*\([^()\n]{0,200}\)"
-    r"|[a-zA-Z_][a-zA-Z0-9_]{2,}\((?:\{[^{}\n]{0,200}\}|[^()\n]{0,200})\))",
-    # Bare camelCase identifiers (no dot/paren), e.g. `safeEval`, `imageUrl`,
-    # `bypassSecurityTrustHtml`, `isRedirectAllowed`, `multi`. A lowercase start
-    # with an internal uppercase is a code identifier — prose words almost never
-    # carry a mid-word capital, so this stays code-only in §9 How/Why/steps.
-    r"\b[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*\b",
-    # Bare route / directory paths: `/ftp/`, `/support/logs/`, `/rest/user`.
-    # The leading whitespace/paren lookbehind keeps prose `and/or`, `TLS/SSL`,
-    # `input/output` out (no space before the slash there).
-    r"(?<=[\s(])/[A-Za-z][A-Za-z0-9_\-]*(?:/[A-Za-z0-9_\-{}:.]+)*/?",
-    # Config object literal carrying a key:value, e.g. `{ noent: true }`,
-    # `{ multi: true }`, `{ windowMs: 900000 }`.
-    r"\{[^{}\n]{0,80}:[^{}\n]{0,80}\}",
-    # Long npm package@version: `express-jwt@0.1.3`, `@types/bcrypt`.
-    r"@[a-z][a-z0-9-]*/[a-z][a-z0-9-]*"  # scoped package
-    r"|\b[a-z][a-z0-9-]*@\d+(?:\.\d+){0,2}(?:[\-+][a-zA-Z0-9.]+)?\b",
-]
 
-_INLINE_CODE_RE = re.compile("|".join(_INLINE_CODE_PATTERNS))
+# Mitigation prose delegates to the report-wide recognizer. This local helper
+# remains only as a stable renderer entry point for existing callers.
+def _norm_step(text: object) -> str:
+    """Normalise a remediation line for duplicate comparison.
+
+    Collapses whitespace, casefolds, and drops trailing punctuation so a step
+    is recognised as a restatement of `how` when the two differ only in how
+    the emitter happened to terminate the sentence. Deliberately no deeper
+    fuzzing: this decides whether a line is DROPPED, so a near-miss must fail
+    closed and keep the step.
+    """
+    if not isinstance(text, str):
+        return ""
+    return " ".join(text.split()).casefold().rstrip(".;: ")
 
 
 def _wrap_inline_code(text: str) -> str:
@@ -16935,51 +16974,7 @@ def _wrap_inline_code(text: str) -> str:
     fenced/inline code regions verbatim. Idempotent — running this twice
     produces the same output (already-wrapped tokens are skipped).
     """
-    if not text:
-        return text
-
-    # Tokenize into "kept-verbatim" chunks (existing backticks, fenced code)
-    # and "scannable" chunks. Only the scannable chunks go through the regex
-    # so that already-wrapped code stays unchanged.
-    chunks: list[tuple[str, str]] = []  # (kind, content); kind ∈ {keep, scan}
-    cursor = 0
-    skip_re = re.compile(r"`[^`\n]+`|```[\s\S]*?```", re.MULTILINE)
-    for m in skip_re.finditer(text):
-        if m.start() > cursor:
-            chunks.append(("scan", text[cursor : m.start()]))
-        chunks.append(("keep", m.group(0)))
-        cursor = m.end()
-    if cursor < len(text):
-        chunks.append(("scan", text[cursor:]))
-
-    def _wrap_one(mm: re.Match[str]) -> str:
-        token = mm.group(0)
-        # Push trailing sentence-end punctuation BACK out of the code span
-        # so prose punctuation stays visible. `.` is excluded only when it
-        # isn't required for a file extension (we keep `.ts` / `.js` etc.).
-        trailing = ""
-        while token and token[-1] in ".,;:!?":
-            # Keep `.<ext>` inside the wrap when the wrap is exactly that.
-            ch = token[-1]
-            if ch == "." and re.search(
-                r"\.(?:ts|tsx|js|jsx|py|rb|go|rs|java|sh|json|yaml|yml|"
-                r"toml|md|html|css|scss)$",
-                token[:-1] + ch,
-            ):
-                break
-            trailing = ch + trailing
-            token = token[:-1]
-        if not token:
-            return mm.group(0)
-        return f"`{token}`{trailing}"
-
-    out: list[str] = []
-    for kind, content in chunks:
-        if kind == "keep":
-            out.append(content)
-            continue
-        out.append(_INLINE_CODE_RE.sub(_wrap_one, content))
-    return "".join(out)
+    return _inline_code_formatter.format_inline_code(text)[0]
 
 
 def _load_sibling_module(name: str):
@@ -17050,6 +17045,26 @@ def _heal_abuse_cases_fragment(ctx: RenderContext) -> str:
     return md.strip()
 
 
+def _abuse_cases_placeholder(ctx: RenderContext) -> str:
+    """Return the §9 body used when no abuse-case evaluation exists on disk.
+
+    Two states share that empty fragment and they mean opposite things. Stage 1d
+    ran and matched nothing — the "none identified" line is then correct. Or
+    Stage 1d never ran (`--no-abuse-cases`, or the quick-depth default in
+    `resolve_config.resolve_abuse_case_verification`) — claiming "none
+    identified" would then assert a coverage result the run never produced.
+    """
+    skipped = bool(ctx.eval_context.get("skip_abuse_case_verification")) or bool(
+        _read_skill_config(ctx.output_dir).get("skip_abuse_case_verification")
+    )
+    if not skipped:
+        return "_No abuse cases were identified or mandated for this assessment._"
+    label = str(_read_skill_config(ctx.output_dir).get("abuse_case_label") or "").strip()
+    reason = label.removeprefix("skipped").strip().strip("()").strip()[:60]
+    suffix = f" ({reason})" if reason else ""
+    return f"_Abuse-case verification did not run for this assessment{suffix}. No abuse-case scenario was evaluated._"
+
+
 def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     """Render §9 Abuse Cases.
 
@@ -17077,7 +17092,7 @@ def _render_abuse_cases(ctx: RenderContext, env: jinja2.Environment, section: di
     if not md:
         md = _heal_abuse_cases_fragment(ctx)
     if not md:
-        return f"{heading}\n\n_No abuse cases were identified or mandated for this assessment._\n"
+        return f"{heading}\n\n{_abuse_cases_placeholder(ctx)}\n"
     first = next((ln.strip() for ln in md.splitlines() if ln.strip()), "")
     if first != heading:
         raise FragmentError(
@@ -17215,6 +17230,9 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
     _known_req_ids = _known_requirement_ids(ctx) if _req_enabled else {}
     _req_status_map = _requirements_status_map(ctx) if _req_enabled else {}
     _req_blueprints = _requirement_blueprints(ctx) if _req_enabled else {}
+    _req_bp_sections = _requirement_blueprint_sections(ctx) if _req_enabled else {}
+    _req_catalog = _requirement_catalog_entries(ctx) if _req_enabled else {}
+    _ev_reqs = _findings_evidence_requirements_map(ctx) if _req_enabled else {}
     _threats_by_id = {
         (t.get("t_id") or t.get("id") or "").strip().upper(): t for t in (ctx.yaml_data.get("threats") or [])
     }
@@ -17348,42 +17366,116 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                     lines.append(f"- [{key}](https://cwe.mitre.org/data/definitions/{num}.html){suffix}")
                 lines.append("")
 
-            # Fulfills Requirements + Blueprint guidance — only when
-            # requirements are loaded. The §10 block template places both after
-            # Prevents CWEs and before Priority. mitigations[] carries neither
-            # field, so derive from the addressed threats here: this produces
-            # the lines the QA reviewer demands but the renderer previously
-            # dropped, and surfaces blueprint guidance that was otherwise
-            # confined to the §7b traceability cell.
+            # Requirements at stake + the blueprint pointer — only when
+            # requirements are loaded. mitigations[] carries neither field, so
+            # both are derived from the addressed threats here. The
+            # requirements list sits after Prevents CWEs; the blueprint is
+            # emitted further down, with the references.
+            # Set when a blueprint applies; emitted with the references below.
+            _blueprint_ref = ""
             if _req_enabled:
                 _addr = m.get("addresses") or m.get("threat_ids") or []
                 _fulfilled: list[str] = []
                 _bp_cell = ""
+                _rids = mitigation_requirement_ids(m, _threats_by_id, _known_req_ids, _ev_reqs)
                 for _tid in _addr:
                     _tt = _threats_by_id.get((_tid or "").strip().upper()) or {}
-                    for _rid in _requirement_ids_for_threat(_tt, _known_req_ids):
-                        if not _requirement_is_traceable_violation(_rid, _req_status_map):
-                            continue
-                        if _rid not in _fulfilled:
-                            _fulfilled.append(_rid)
                     if not _bp_cell:
                         _rem = _tt.get("remediation") if isinstance(_tt.get("remediation"), dict) else {}
                         _bp_cell = _format_blueprint_cell(_rem.get("blueprint")) if _rem else ""
+                for _rid in _rids:
+                    if _requirement_is_traceable_violation(_rid, _req_status_map) and _rid not in _fulfilled:
+                        _fulfilled.append(_rid)
                 if not _bp_cell:
                     for _rid in _fulfilled:
                         if _req_blueprints.get(_rid):
                             _bp_cell = _req_blueprints[_rid]
                             break
                 if _fulfilled:
-                    lines.append("**Fulfills Requirements:**")
+                    # NOT "Fulfills Requirements". The set is inherited whole
+                    # from the addressed threats' `violated_requirements`
+                    # (build_threat_model_yaml.annotate_requirements_and_blueprints),
+                    # and nothing checks that THIS mitigation closes each entry.
+                    # Sound as the requirements the finding puts at stake;
+                    # unsound as a fulfilment claim. With one requirement the
+                    # two readings coincide, but where a threat breaks several,
+                    # a single fix rarely closes them all — juice-shop
+                    # 2026-08-28 asserted that moving a key into a secret store
+                    # fulfilled a resource-server token-validation requirement.
+                    # Narrowing per mitigation needs a judgement no code here
+                    # makes, so state what the data supports.
+                    lines.append("**Requirements at stake:**")
                     lines.append("")
                     for _rid in _fulfilled:
-                        _u = _known_req_ids.get(_rid, "")
-                        lines.append(f"- [{_rid}]({_u})" if _u else f"- `{_rid}`")
+                        _rmeta = _req_catalog.get(_rid) or {}
+                        _lbl = _format_requirement_link(_rid, _known_req_ids)
+                        if _rmeta.get("priority"):
+                            _lbl += f" ({_rmeta['priority']})"
+                        _rtxt = _shorten_requirement_title(_rmeta.get("text", ""))
+                        lines.append(f"- {_lbl} — {_rtxt}" if _rtxt else f"- {_lbl}")
                     lines.append("")
-                if _bp_cell:
-                    lines.append(f"**Blueprint guidance:** {_bp_cell}")
-                    lines.append("")
+
+                # What the organisation prescribes for those requirements — not
+                # just a pointer to where it is written. The blueprint is picked
+                # by fit to this mitigation, not by which fulfilled requirement
+                # the list happens to start with: an allowlist-the-request-body
+                # fix must surface the catalog's unexpected-field section, not
+                # an authorization one that shares a requirement with it.
+                _rank_ctx = requirements_trace.RankContext(
+                    primary=str(m.get("title") or ""),
+                    # The scenario carries the concrete wording the title
+                    # abbreviates ("resource", "ownership"), which is what
+                    # separates a resource-level from a method-level section.
+                    secondary=" ".join(
+                        f"{_at.get('title') or ''} {_at.get('scenario') or ''}"
+                        for _at in (_threats_by_id.get((_a or "").strip().upper()) or {} for _a in _addr)
+                    ),
+                )
+                # The blueprint belongs with the references, not above the fix.
+                # It used to render as its own block of catalog excerpts topped
+                # by "where the implementation steps below differ, this
+                # blueprint governs" — a precedence claim the selection cannot
+                # support. `select_blueprint` ranks by content-word overlap
+                # against the mitigation title, and `is_grounded` is satisfied
+                # by ONE shared word, so the claim was made on 34 of 37
+                # mitigations in the juice-shop 2026-08-28 run while only 7
+                # carried a blueprint the analyst had actually chosen. The other
+                # 30 were compose-time guesses: a CI action-pinning fix was told
+                # that a browser Subresource-Integrity section governed it.
+                #
+                # The analyst already receives `blueprint_guidance` in its
+                # requirement context and is instructed to write the steps
+                # against it (agents/appsec-stride-analyzer-v2.md), so the
+                # prescription reaches the reader through `**How:**`, expressed
+                # against this codebase. What is left for the report is the
+                # pointer — placed before the general reference so the
+                # organisation's own guidance is the first link offered.
+                _bp = requirements_trace.select_blueprint(_req_bp_sections, _fulfilled, _rank_ctx)
+                if _bp is not None:
+                    _head = (
+                        f"[{_bp.blueprint_id}]({_bp.blueprint_url})" if _bp.blueprint_url else f"`{_bp.blueprint_id}`"
+                    )
+                    if _bp.blueprint_title:
+                        _head += f" — {_bp.blueprint_title}"
+                    # Name the matched sections and link each to its OWN page.
+                    # A blueprint routinely cites several sources — 36 of the 68
+                    # sections in the juice-shop catalog resolve somewhere other
+                    # than the blueprint's own URL — so dropping the section link
+                    # sends the reader to the wrong page for half of them. The
+                    # section CONTENT stays out: it is what the analyst already
+                    # worked into `**How:**`, and repeating it here is what made
+                    # this a competing instruction block.
+                    _secs = [
+                        f"[{_sec.title}]({_sec.url})" if _sec.url else f"{_sec.title}"
+                        for _sec in _bp.sections[:_BLUEPRINT_MAX_SECTIONS]
+                        if _sec.title
+                    ]
+                    if _secs:
+                        _head += " · " + " · ".join(_secs)
+                    _by = ", ".join(_format_requirement_link(_r, _known_req_ids) for _r in _bp.requirement_ids)
+                    _blueprint_ref = f"{_head} (for {_by})" if _by else _head
+                elif _bp_cell:
+                    _blueprint_ref = _bp_cell
 
             # M3.13 — consolidate Priority + Effort + File on ONE line.
             # The standalone Severity row is REMOVED (severity is now shown
@@ -17601,9 +17693,25 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
                 # ORDERED list (1. 2. 3.) so the implied execution order is
                 # explicit (2026-05-29 user request). A bullet list reads as an
                 # unordered set; remediation is a procedure.
+                # A step that merely restates `how` is not a second action —
+                # it ships the same sentence twice under one card, once as the
+                # paragraph and once as item 1. `_remediation_how` already
+                # guards this for finding-derived cards (M-038, 2026-07-02),
+                # but scanner cards resolve `how` and `steps[0]` from the SAME
+                # check `remediation:` string through two independent emitters
+                # (`_resolve_remediation` and `backfill_scanner_remediation`),
+                # so the per-emitter guard never sees them. Drop it here, at
+                # the single point every source funnels through — 5 of 55
+                # cards on juice-shop 2026-08-27 (M-032/33/34/49/51, all
+                # `config_check_id`). The quality gate counts `steps` in the
+                # data, not this rendering, so suppressing a duplicate line
+                # cannot push a card under its minimum.
+                _how_key = _norm_step(how)
                 _step_n = 0
                 for step in steps:
                     s = (step or "").strip() if isinstance(step, str) else ""
+                    if s and _norm_step(s) == _how_key:
+                        continue
                     if s:
                         # Inline-code-fence single-quotes that surround
                         # short identifiers so list items survive markdown
@@ -17687,6 +17795,11 @@ def _render_mitigation_register(ctx: RenderContext, env: jinja2.Environment, sec
             # Use the harvested fallback reference when the mitigation
             # entry itself has none (mitigation_reference was set by the
             # threats[].remediation fallback above).
+            # The organisation's own guidance ranks above the general cheat
+            # sheet, so it is offered first.
+            if _blueprint_ref:
+                lines.append(f"**Blueprint:** {_blueprint_ref}")
+                lines.append("")
             ref = _normalize_reference(m.get("reference") or mitigation_reference or "")
             if ref:
                 lines.append(f"**Reference:** {ref}")
@@ -18187,6 +18300,10 @@ def render(
             "has_authored_walkthroughs": _has_authored_walkthroughs,
             "skip_attack_paths_authoring": bool(_read_skill_config(output_dir).get("skip_attack_paths_authoring")),
             "skip_qa": bool(_read_skill_config(output_dir).get("skip_qa")),
+            # Stage 1d ran no matcher and no verifier (explicit --no-abuse-cases,
+            # or the quick-depth default). §9 must then say so instead of
+            # rendering its "none identified" placeholder over an unassessed area.
+            "skip_abuse_case_verification": bool(_read_skill_config(output_dir).get("skip_abuse_case_verification")),
             # 13-section schema_v2 — the only supported §7 contract.
             "security_schema": _resolve_security_schema(output_dir),
         },
@@ -18489,13 +18606,20 @@ def render(
     # component-scoped `auth-001`) BEFORE the dot retrofit so the new links get
     # their severity glyph too.
     rendered = _apply_outside_changelog(rendered, lambda s: _linkify_bare_finding_refs(ctx, s))
+    # Same treatment for requirement IDs, against the URL the catalog declares.
+    rendered = _apply_outside_changelog(rendered, lambda s: _linkify_bare_requirement_refs(ctx, s))
     rendered = _apply_outside_changelog(
         rendered,
         lambda s: _prepend_mitigation_prio_circles(ctx, _prepend_finding_severity_dots(ctx, s)),
     )
     # Backtick inline code the LLM left un-marked across all prose (after the
     # ref/dot passes so it never wraps a freshly-built link's anchor).
-    rendered = _apply_outside_changelog(rendered, _codify_inline_code_in_prose)
+    # Evidence-led vocabulary supplements syntax-shaped candidates with
+    # ambiguous dependency names declared by the target repository. Manifest
+    # reads are bounded and contained by the canonical formatter; invalid or
+    # absent repository context simply contributes no names.
+    code_tokens = _inline_code_vocabulary(ctx)
+    rendered = _apply_outside_changelog(rendered, lambda text: _codify_inline_code_in_prose(text, code_tokens))
     # Final, authoritative locator normalisation — runs AFTER every section
     # render, fragment injection, and T→F bridge, so any reference-trailing
     # `(path/file:line)` (incl. §3/§9 and MS leaderboard cells produced past the

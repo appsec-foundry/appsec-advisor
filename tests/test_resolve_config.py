@@ -571,7 +571,9 @@ class TestResolveArchitectReview:
         ns = rc.build_parser().parse_args([])
         out = rc.resolve_architect_review(ns, "thorough", dry_run=False)
         assert out["architect_review"] is True
-        assert out["architect_model"] == "opus"
+        # Stage 4 rewrites prose from a bounded projection and judges nothing,
+        # so the default came off Opus (2026-08-30).
+        assert out["architect_model"] == "sonnet"
         assert "auto-thorough" in out["architect_label"]
 
     def test_explicit_on(self):
@@ -1334,7 +1336,7 @@ class TestIntegrationScenarios:
         monkeypatch.chdir(tmp_path)
         cfg = rc.resolve(["--assessment-depth", "thorough"], REPO_ROOT)
         assert cfg["architect_review"] is True
-        assert cfg["architect_model"] == "opus"
+        assert cfg["architect_model"] == "sonnet"
 
     def test_deprecated_with_requirements_alias(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

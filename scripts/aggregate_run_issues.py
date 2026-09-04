@@ -50,6 +50,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import stride_outputs  # noqa: E402
 from _path_guard import run_path_arg  # noqa: E402
 
 # Phase budgets — single source of truth in data/phase-budgets.yaml. Loaded
@@ -62,6 +63,14 @@ try:
     import phase_budgets  # type: ignore  # noqa: E402
 except Exception:  # pragma: no cover
     phase_budgets = None  # type: ignore[assignment]
+
+# Harness ceilings — read from the same agent definitions the watchdog parses,
+# so a soft-budget crossing can be told apart from an agent that ran into its
+# actual ``maxTurns`` limit.
+try:
+    import budget_watchdog  # type: ignore  # noqa: E402
+except Exception:  # pragma: no cover
+    budget_watchdog = None  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -604,16 +613,32 @@ def _extract_phase_durations(agent_log: list[tuple[int, str]]) -> list[dict]:
 _SOFT_TURN_CROSSING_RE = re.compile(r"\bturns=(?P<used>\d+)/(?P<budget>\d+)")
 
 
-def _soft_turn_budget_crossing(detail: str) -> dict[str, int] | None:
+def _agent_turn_ceiling(agent: str) -> int | None:
+    """Resolve an agent's frontmatter ``maxTurns``, or ``None`` when unknown.
+
+    ``budget_watchdog.get_max_turns`` never fails — it returns its module default
+    for an agent whose definition it cannot read. That sentinel says nothing about
+    the real ceiling, so it is reported as unknown here rather than compared.
+    """
+    if budget_watchdog is None or not agent or agent == "?":
+        return None
+    try:
+        ceiling = budget_watchdog.get_max_turns(agent)
+    except Exception:  # pragma: no cover — never let reporting break aggregation
+        return None
+    if ceiling == getattr(budget_watchdog, "DEFAULT_MAX_TURNS", None):
+        return None
+    return ceiling
+
+
+def _soft_turn_budget_crossing(detail: str, ceiling: int | None = None) -> dict[str, int] | None:
     """Classify a ``MAX_TURNS`` detail payload as a soft budget crossing.
 
     Two producers emit this event name with opposite meanings. ``budget_watchdog``
-    fires while the agent is *still running*, against the per-component soft budget
-    from ``build_stride_dispatch_manifest`` (``turns=34/31  pct=109%``); the harness
-    ceiling in the agent definition is far higher (96 for stride-analyzer-v2), so
-    nothing is killed and the artifact is written normally. ``agent_logger`` fires
-    on the Stop hook with ``reason=max_turns`` — the real kill — and carries the
-    fixed literal ``Agent terminated — maxTurns limit reached`` with no counters.
+    fires while the agent is *still running*, against the soft budget it was given;
+    ``agent_logger`` fires on the Stop hook with ``reason=max_turns`` — the real
+    kill — carrying the fixed literal ``Agent terminated — maxTurns limit reached``
+    with no counters.
 
     Reporting both as ``error`` made the 2026-08-23 insecure-large-spring-app run
     announce "1 error" for a component whose STRIDE output was complete and merged.
@@ -622,6 +647,14 @@ def _soft_turn_budget_crossing(detail: str) -> dict[str, int] | None:
     on their own. Return the counters so the budget can be calibrated from data
     instead of guessed; return ``None`` for the hard kill so ``error`` keeps a real
     trigger.
+
+    ``at_ceiling`` records whether the soft budget had any headroom left. It only
+    does for agents dispatched with an explicit ``MAX_TURNS`` prompt parameter —
+    STRIDE analysers run 31 against a ceiling of 96. An agent dispatched without
+    one falls back to its own frontmatter ``maxTurns``, making soft budget and
+    harness ceiling the same number, so a crossing there means the agent reached
+    its actual limit and its output may be truncated. Both cases used to be
+    announced as "harness ceiling not reached" without anything being checked.
     """
     if "terminated" in detail.lower():
         return None
@@ -634,7 +667,11 @@ def _soft_turn_budget_crossing(detail: str) -> dict[str, int] | None:
         return None
     # Truncate, matching how ``budget_watchdog`` renders the same ratio, so the
     # issue and the raw log line do not disagree by a point.
-    return {"used": used, "budget": budget, "pct": int(used * 100 / budget)}
+    out = {"used": used, "budget": budget, "pct": int(used * 100 / budget)}
+    if ceiling is not None:
+        out["ceiling"] = ceiling
+        out["at_ceiling"] = int(budget >= ceiling)
+    return out
 
 
 def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, str]]) -> list[dict]:
@@ -664,20 +701,32 @@ def _extract_errors(hook_log: list[tuple[int, str]], agent_log: list[tuple[int, 
                 title = f"{event}: {_clip(ev['detail'], 80)}"
                 extra: dict = {}
                 if event == "MAX_TURNS":
-                    soft = _soft_turn_budget_crossing(ev["detail"])
+                    agent = _emitting_agent(ev)
+                    soft = _soft_turn_budget_crossing(ev["detail"], _agent_turn_ceiling(agent))
                     if soft:
                         category = "turn_budget_exceeded"
                         severity = "warning"
+                        if soft.get("at_ceiling"):
+                            outcome = (
+                                f"soft budget equals the harness ceiling ({soft['ceiling']}) — "
+                                "output may be truncated; raise maxTurns"
+                            )
+                        elif "ceiling" in soft:
+                            outcome = f"below the harness ceiling ({soft['ceiling']}), output kept"
+                        else:
+                            outcome = "output kept"
                         title = (
-                            f"Soft turn budget exceeded: {_emitting_agent(ev)} used "
-                            f"{soft['used']} of {soft['budget']} budgeted turns ({soft['pct']}%) — "
-                            "harness ceiling not reached, output kept"
+                            f"Soft turn budget exceeded: {agent} used "
+                            f"{soft['used']} of {soft['budget']} budgeted turns ({soft['pct']}%) — {outcome}"
                         )
                         extra = {
                             "turns_used": soft["used"],
                             "turns_budgeted": soft["budget"],
                             "pct_of_budget": soft["pct"],
                         }
+                        if "ceiling" in soft:
+                            extra["harness_ceiling"] = soft["ceiling"]
+                            extra["at_harness_ceiling"] = bool(soft["at_ceiling"])
                 issues.append(
                     {
                         "category": category,
@@ -895,6 +944,26 @@ _EVIDENCE_COVERAGE_MIN_FILES = 5
 _EVIDENCE_COVERAGE_FLOOR = 0.25
 
 
+def evidence_coverage_shortfall(file_count: object, covered: int) -> float | None:
+    """Return the coverage ratio when it sits below the floor, else ``None``.
+
+    Shared with the controller, which applies the same test at STRIDE-dispatch
+    time — the only moment the answer can still change anything. Keeping the
+    threshold in one place is the point: two copies would drift, and a run
+    would then warn at the end about a shortfall the dispatch gate had cleared.
+
+    ``covered`` counts distinct primary-repository files carrying evidence.
+    Trivially small components are exempt: a low ratio there says nothing.
+    """
+    if not isinstance(file_count, int) or isinstance(file_count, bool):
+        return None
+    if file_count < _EVIDENCE_COVERAGE_MIN_FILES:
+        return None
+    if covered >= file_count * _EVIDENCE_COVERAGE_FLOOR:
+        return None
+    return covered / file_count
+
+
 def _extract_component_evidence_coverage(output_dir: Path) -> list[dict]:
     """Report components whose analyzer saw evidence for few of their files.
 
@@ -923,8 +992,6 @@ def _extract_component_evidence_coverage(output_dir: Path) -> list[dict]:
         except (OSError, json.JSONDecodeError):
             continue
         file_count = (plan.get("analysis") or {}).get("file_count")
-        if not isinstance(file_count, int) or file_count < _EVIDENCE_COVERAGE_MIN_FILES:
-            continue
         slices = bundle.get("source_slices")
         if not isinstance(slices, list):
             continue
@@ -935,7 +1002,7 @@ def _extract_component_evidence_coverage(output_dir: Path) -> list[dict]:
                 if isinstance(row, dict) and row.get("repository_id") == "primary" and row.get("path")
             }
         )
-        if covered >= file_count * _EVIDENCE_COVERAGE_FLOOR:
+        if evidence_coverage_shortfall(file_count, covered) is None:
             continue
         component_id = str(plan.get("component_id") or component_dir.name)
         dropped = sorted(
@@ -964,6 +1031,207 @@ def _extract_component_evidence_coverage(output_dir: Path) -> list[dict]:
             }
         )
     return issues
+
+
+def _extract_routing_effectiveness(output_dir: Path) -> list[dict]:
+    """Report components whose findings did not come from the routed evidence.
+
+    ``component_evidence_coverage`` measures what routing *delivered*. This
+    measures what the analyzer actually *used*: each threat in
+    ``.stride-<component>.json`` names the file its evidence came from, and
+    that file either was in the component's delivered bundle or was not.
+
+    On run a2a0e355, 13 of the 31 distinct cited files across eight components
+    had never been delivered, and for ``database`` the figure was 3 of 3 — its
+    one delivered file is cited by nothing. A bundle nothing cites is routing
+    that did no work, and the run reported none of it.
+
+    A file can inform an analyzer without being cited, so this is a warning
+    about the routing, never about the findings. It fires only when a component
+    produced threats and none of their evidence came from its bundle, which is
+    the unambiguous case.
+    """
+    issues: list[dict] = []
+    root = output_dir / ".dispatch-context"
+    if not root.is_dir():
+        return issues
+    for stride_path in stride_outputs.stride_output_files(output_dir):
+        component_id = stride_outputs.component_id(stride_path)
+        bundle_path = root / component_id / "evidence-bundle.json"
+        if not bundle_path.is_file():
+            continue
+        try:
+            threats = json.loads(stride_path.read_text(encoding="utf-8")).get("threats")
+            bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(threats, list) or not threats:
+            continue
+        delivered = {
+            str(row.get("path")).lstrip("./")
+            for row in bundle.get("source_slices") or []
+            if isinstance(row, dict) and row.get("repository_id") == "primary" and row.get("path")
+        }
+        if not delivered:
+            continue
+        cited = {
+            str((threat.get("evidence") or {}).get("file")).split(":")[0].lstrip("./")
+            for threat in threats
+            if isinstance(threat, dict) and isinstance(threat.get("evidence"), dict)
+        }
+        cited.discard("None")
+        cited.discard("")
+        if not cited or cited & delivered:
+            continue
+        detail = (
+            f"{component_id}: none of the {len(cited)} file(s) its {len(threats)} threat(s) cite "
+            f"came from the {len(delivered)} file(s) routing delivered"
+        )
+        issues.append(
+            {
+                "category": "routing_effectiveness",
+                "severity": "warning",
+                "title": detail,
+                "evidence": {
+                    "log_file": f".dispatch-context/{component_id}/evidence-bundle.json",
+                    "log_line": 1,
+                    "raw_event": detail,
+                    "component_id": component_id,
+                    "delivered_files": sorted(delivered)[:20],
+                    "cited_files": sorted(cited)[:20],
+                },
+            }
+        )
+    return issues
+
+
+def _extract_dispatch_count_consistency(output_dir: Path, hook_log: list[tuple[int, str]]) -> list[dict]:
+    """Report a stage row claiming more dispatches than the run ever spawned.
+
+    ``dispatch_count`` is derived from ``AGENT_SPAWN`` and summed across
+    accumulate calls, so a value above the number of spawn events for that
+    agent in the whole hook log cannot describe anything that happened. On run
+    a2a0e355 the STRIDE row claimed 37 against 8, because every accumulate call
+    fell back to deriving from the whole log and the fallback was summed.
+
+    ``record_stage_stats`` no longer sums a whole-log derivation, so this is
+    the reconciliation that says whether that holds — an exact comparison
+    between two artefacts the run already writes, with no threshold to tune.
+    """
+    issues: list[dict] = []
+    stats_path = output_dir / ".stage-stats.jsonl"
+    if not stats_path.is_file():
+        return issues
+    spawns: dict[str, int] = {}
+    for _, line in hook_log:
+        if "AGENT_SPAWN" not in line:
+            continue
+        match = re.search(r"(appsec-advisor:[A-Za-z0-9_-]+)", line)
+        if match:
+            spawns[match.group(1)] = spawns.get(match.group(1), 0) + 1
+    if not spawns:
+        return issues
+    try:
+        rows = [json.loads(line) for line in stats_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return issues
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        agent = str(row.get("agent") or "")
+        claimed = row.get("dispatch_count")
+        observed = spawns.get(agent)
+        if observed is None or not isinstance(claimed, int) or claimed <= observed:
+            continue
+        detail = (
+            f"stage {row.get('stage')} {row.get('variant') or row.get('name')}: dispatch_count "
+            f"{claimed} exceeds the {observed} AGENT_SPAWN event(s) recorded for {agent}"
+        )
+        issues.append(
+            {
+                "category": "dispatch_count_inconsistent",
+                "severity": "warning",
+                "title": detail,
+                "evidence": {
+                    "log_file": ".stage-stats.jsonl",
+                    "log_line": 1,
+                    "raw_event": detail,
+                    "agent": agent,
+                    "dispatch_count": claimed,
+                    "observed_spawns": observed,
+                },
+            }
+        )
+    return issues
+
+
+def _extract_requirements_export_consistency(output_dir: Path) -> list[dict]:
+    """Report a requirements assessment the structured export does not carry.
+
+    The catalog resolution records how many requirements the run was given;
+    ``threat-model.yaml`` records how many the export says were assessed. On
+    run a2a0e355 the report carried all 73 and the export carried no
+    ``requirements_compliance`` key at all, so the completion summary said
+    ``0 checked`` and any consumer reading the export saw a run with no
+    requirements dimension. Nothing compared the two.
+
+    Both numbers are structured and already on disk, so this is an exact
+    comparison rather than a reading of the rendered table.
+
+    ``count`` alone is not the declared figure. A run that switched the check
+    OFF still resolves against the cached catalog and keeps its stale count —
+    ``source_kind: disabled``, ``disposition: skipped``, ``count: 63`` on the
+    2026-08-29 juice-shop run, fetched months earlier. Comparing that to an
+    export which correctly carries nothing reported a disagreement on every
+    requirements-free run that had ever fetched a catalog. What the catalog on
+    disk declares decides whether there is anything to compare at all.
+    """
+    resolution_path = output_dir / ".requirements-resolution.json"
+    if not resolution_path.is_file():
+        return []
+    try:
+        resolution = json.loads(resolution_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    declared = resolution.get("count")
+    if not isinstance(declared, int) or declared <= 0:
+        return []
+    # Deferred like the yaml import below, so the aggregator stays importable
+    # in an environment without the parser.
+    import _requirements_gate  # noqa: PLC0415
+
+    if not _requirements_gate.catalog_declares_requirements(output_dir):
+        return []
+    export_path = output_dir / "threat-model.yaml"
+    if not export_path.is_file():
+        return []
+    try:
+        import yaml  # noqa: PLC0415 - deferred so the aggregator stays importable without it
+
+        export = yaml.safe_load(export_path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 - a malformed export is not this check's finding
+        return []
+    exported = ((export.get("requirements_compliance") or {}) if isinstance(export, dict) else {}).get("total") or 0
+    if exported == declared:
+        return []
+    detail = (
+        f"requirements: the catalog declared {declared} but threat-model.yaml exports "
+        f"{exported} assessed — the report and the export disagree"
+    )
+    return [
+        {
+            "category": "requirements_export_inconsistent",
+            "severity": "warning",
+            "title": detail,
+            "evidence": {
+                "log_file": "threat-model.yaml",
+                "log_line": 1,
+                "raw_event": detail,
+                "declared": declared,
+                "exported": exported,
+            },
+        }
+    ]
 
 
 def _extract_perf_anomalies(
@@ -1247,6 +1515,59 @@ def _extract_recovery_events(output_dir: Path) -> list[dict]:
             pass
 
     return issues
+
+
+def _extract_business_context_reach(output_dir: Path) -> list[dict]:
+    """Report declared business context that reached no component.
+
+    The document only affects the run through the per-component projection the
+    control analyst writes into `.stride-analyst-context.json`. A context that
+    maps to nothing is indistinguishable from no context at all in every later
+    artifact, so the run has to say so — otherwise the operator reads a model
+    that silently ignored the input they supplied.
+    """
+    cfg_path = output_dir / ".skill-config.json"
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(cfg, dict) or cfg.get("skip_business_context"):
+        return []
+
+    repo_root = Path(str(cfg.get("repo_root") or ""))
+    declared = (output_dir / ".business-context-input.md").is_file() or (
+        bool(str(repo_root)) and (repo_root / "docs" / "business-context.md").is_file()
+    )
+    if not declared:
+        return []
+
+    try:
+        analyst = json.loads((output_dir / ".stride-analyst-context.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(analyst, dict):
+        return []
+
+    mapped = sum(
+        1
+        for entry in analyst.values()
+        if isinstance(entry, dict) and isinstance(entry.get("business_context"), dict) and entry["business_context"]
+    )
+    if mapped:
+        return []
+    return [
+        {
+            "category": "business_context_unmapped",
+            "severity": "warning",
+            "title": "Business context was declared but mapped to no component — it did not affect this analysis",
+            "evidence": {
+                "log_file": ".stride-analyst-context.json",
+                "log_line": 1,
+                "raw_event": f"components_with_business_context=0 of {len(analyst)}",
+                "outcome": "context_ignored",
+            },
+        }
+    ]
 
 
 def _extract_render_integrity(output_dir: Path) -> list[dict]:
@@ -1824,10 +2145,14 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_trust_boundary_diagnostics(output_dir))
     issues.extend(_extract_trust_boundary_coverage(output_dir))
     issues.extend(_extract_component_evidence_coverage(output_dir))
+    issues.extend(_extract_routing_effectiveness(output_dir))
+    issues.extend(_extract_dispatch_count_consistency(output_dir, hook_log))
+    issues.extend(_extract_requirements_export_consistency(output_dir))
     issues.extend(_extract_budget_events(agent_log))
     issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))
     issues.extend(_extract_recovery_events(output_dir))
+    issues.extend(_extract_business_context_reach(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))

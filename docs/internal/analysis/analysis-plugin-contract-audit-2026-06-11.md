@@ -194,7 +194,7 @@ silently, twice over.
 ## MR — Responsibilities & Maintainability
 
 ### [MR-1] Harvester rename breaks 4 user-facing docs (High)
-- Real: `scripts/harvest_requirements.py` (commit 3033e8e). Stale: README.md:217, CONTRIBUTING.md:110+:127, docs/harvester.md:9/22/75/78, docs/security-requirements-audit-skill.md:61 — all `harvest-requirements.py`. Irony: docs/internal/runbooks/refactoring-plan.md:573 rejected the rename "because it breaks callers". → sweep-replace in the 4 docs (or a compat wrapper).
+- Real: `scripts/harvest_requirements.py` (commit 3033e8e). Stale: README.md:217, CONTRIBUTING.md:110+:127, docs/harvester.md:9/22/75/78, docs/security-requirements-audit-skill.md:61 — all `harvest-requirements.py`. Irony: docs/internal/analysis/refactoring-plan.md:573 rejected the rename "because it breaks callers". → sweep-replace in the 4 docs (or a compat wrapper).
 
 ### [MR-2] validate_finding_refs.py + apply_finding_refs_repair.py wired to nothing (Med)
 - They only reference each other (grep over agents/skills/scripts/tests/hooks/Makefile: nothing); a complete validate→repair→apply pipeline with no caller silently drifts from the renderer contract. → wire into the QA/repair loop or remove (owner decision).

@@ -44,6 +44,8 @@ INVOCATIONS: dict[str, list[str]] = {
     "skill_watchdog.py": [],
     "runtime_cleanup.py": [],
     "stall_notice.py": [],
+    "render_editorial_receipt.py": [],
+    "render_qa_receipt.py": [],
 }
 
 _POSITIONAL_OUTPUT_DIR = re.compile(r"""add_argument\(\s*["']output_dir["']""")

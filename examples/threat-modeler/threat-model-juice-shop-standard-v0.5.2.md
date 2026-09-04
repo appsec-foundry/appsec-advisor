@@ -817,7 +817,7 @@ Information assets and the classification level that drives the Confidentiality 
 
 ## 5. Attack Surface
 
-Network-reachable entry points classified by authentication requirement. Each row links to the threat(s) refe**** (10 chars) in its **Notes** column. The **Risk** column reflects the highest-severity linked finding. Entry points with no linked finding are still listed when they sit on a sensitive surface (authentication, registration, management) or look like a missing-auth/authz suspect - marked **⚑ Review** in Notes.
+Network-reachable entry points classified by authentication requirement. Each row links to the threat(s) referenced in its **Notes** column. The **Risk** column reflects the highest-severity linked finding. Entry points with no linked finding are still listed when they sit on a sensitive surface (authentication, registration, management) or look like a missing-auth/authz suspect - marked **⚑ Review** in Notes.
 
 ### 5.1 Unauthenticated Entry Points (55)
 
@@ -1656,7 +1656,7 @@ Automated software composition analysis (SCA) cross-references the resolved depe
 
 Transitive dependency vulnerabilities are invisible without an SCA step in CI:
 
-- No `npm audit`, Snyk, OSV-Scanner, or Dependabot security-alert step runs in any CI workflow; neither `package.json` nor `package-lock.json` is cross-refe**** (10 chars) against a CVE database on each build.
+- No `npm audit`, Snyk, OSV-Scanner, or Dependabot security-alert step runs in any CI workflow; neither `package.json` nor `package-lock.json` is cross-referenced against a CVE database on each build.
 - `codeql-analysis.yml` performs JavaScript/TypeScript static analysis but does not evaluate the dependency graph against known vulnerability databases.
 - Without a SCA baseline, the security review cannot distinguish between a clean dependency set and one containing known critical CVEs in transitive packages.
 

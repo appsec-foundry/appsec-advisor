@@ -62,7 +62,9 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
 import load_business_context  # noqa: E402
+import requirements_trace  # noqa: E402
 import secret_scan  # noqa: E402
+import triage_compute_ranking  # noqa: E402
 from _atomic_io import atomic_write_text  # noqa: E402
 from _boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from _boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
@@ -129,6 +131,151 @@ def _validate_and_publish_yaml(
         return result
     os.replace(pending_path, out_path)
     return result
+
+
+class RequirementsComplianceError(RuntimeError):
+    """The configured requirements assessment cannot be exported safely."""
+
+
+def build_requirements_compliance(output_dir: Path, *, strict: bool = False) -> dict | None:
+    """Export the §7b compliance assessment into the machine-readable YAML.
+
+    The Markdown report carried the full requirement table while the YAML
+    carried nothing, so every consumer reading the export — a CI gate, a
+    dashboard — saw a run with no requirements dimension at all, and
+    ``render_completion_summary.py``, which takes its counts from this key,
+    reported ``0 checked`` on a run that had assessed 73 of them.
+
+    Rows come from ``compose_threat_model``'s parser rather than a second one
+    written here: that parser is catalog-authoritative and drops IDs the
+    configured catalog never declared, and two parsers over one LLM-authored
+    table would drift into disagreeing about the same report. The import is
+    deferred so the export gains no heavyweight dependency for a key that is
+    absent whenever no catalog was configured.
+
+    Returns ``None`` when the run had no catalog. Before Stage 2, the default
+    non-strict mode also returns ``None`` when the assessment does not exist
+    yet. The post-compose emitter uses ``strict=True`` and refuses a missing,
+    malformed, or incomplete assessment instead of publishing a partial
+    machine-readable contract.
+    """
+    catalog_path = output_dir / ".requirements.yaml"
+    if not catalog_path.is_file():
+        return None
+    if strict:
+        import requirements_state  # noqa: PLC0415
+
+        try:
+            catalog_errors, _ = requirements_state.validate_catalog(catalog_path.read_bytes())
+        except OSError as exc:
+            raise RequirementsComplianceError(f"cannot read configured requirements catalog: {exc}") from exc
+        if catalog_errors:
+            raise RequirementsComplianceError(
+                "configured requirements catalog is invalid: " + "; ".join(catalog_errors[:5])
+            )
+    try:
+        import types  # noqa: PLC0415
+
+        import compose_threat_model  # noqa: PLC0415
+
+        ctx = types.SimpleNamespace(output_dir=output_dir)
+        catalog = compose_threat_model._requirement_catalog_entries(ctx)
+        rows = compose_threat_model._requirements_compliance_rows(ctx)
+    except Exception as exc:
+        if strict:
+            raise RequirementsComplianceError(f"cannot parse requirements compliance: {exc}") from exc
+        sys.stderr.write(f"  requirements compliance export skipped: {exc}\n")
+        return None
+    if not catalog:
+        if strict:
+            raise RequirementsComplianceError("configured requirements catalog contains no valid requirements")
+        return None
+    if not rows:
+        if strict:
+            raise RequirementsComplianceError("configured requirements catalog has no Stage-2 compliance assessment")
+        return None
+    catalog_ids = set(catalog)
+    row_ids = {str(row.get("req_id") or "") for row in rows}
+    if strict and row_ids != catalog_ids:
+        missing = sorted(catalog_ids - row_ids)
+        extra = sorted(row_ids - catalog_ids)
+        details = []
+        if missing:
+            details.append("missing " + ", ".join(missing))
+        if extra:
+            details.append("undeclared " + ", ".join(extra))
+        raise RequirementsComplianceError(
+            "requirements compliance does not cover the configured catalog: " + "; ".join(details)
+        )
+
+    status_map = {
+        "ANTI-PATTERN": "FAIL",
+        "NOT OBSERVABLE": "UNVERIFIABLE",
+        "NA": "N/A",
+        "NOT APPLICABLE": "N/A",
+    }
+    normalized_rows = []
+    for row in rows:
+        rid = str(row.get("req_id") or "")
+        status = status_map.get(
+            str(row.get("status") or "").strip().upper(), str(row.get("status") or "").strip().upper()
+        )
+        normalized_rows.append(
+            {
+                "id": rid,
+                "status": status,
+                "priority": catalog.get(rid, {}).get("priority") or None,
+                "title": row.get("title") or catalog.get(rid, {}).get("text") or None,
+                "finding_ids": row.get("finding_ids") or [],
+            }
+        )
+    counts: dict[str, int] = {}
+    for row in normalized_rows:
+        key = str(row["status"]).strip().lower().replace("/", "_").replace(" ", "_")
+        if key:
+            counts[key] = counts.get(key, 0) + 1
+    return {
+        "total": len(normalized_rows),
+        "pass": counts.get("pass", 0),
+        "fail": counts.get("fail", 0),
+        "partial": counts.get("partial", 0),
+        "unverifiable": counts.get("unverifiable", 0),
+        "not_applicable": counts.get("n_a", 0),
+        "requirements": normalized_rows,
+    }
+
+
+def build_requirements_provenance(output_dir: Path, compliance: dict[str, Any]) -> dict[str, Any]:
+    """Build safe provenance for the exact catalog represented by compliance."""
+    catalog_path = output_dir / ".requirements.yaml"
+    body = catalog_path.read_bytes()
+    resolution = _load_json(output_dir / ".requirements-resolution.json")
+    if not isinstance(resolution, dict):
+        resolution = {}
+    freshness = resolution.get("freshness") if isinstance(resolution.get("freshness"), dict) else {}
+    age = freshness.get("age_days")
+    if not isinstance(age, int) or isinstance(age, bool) or age < 0:
+        age = None
+
+    def _bounded(value: Any, limit: int) -> str | None:
+        text = str(value or "").strip()
+        return text[:limit] if text else None
+
+    label = resolution.get("label") or resolution.get("description")
+    return {
+        "source_kind": _bounded(resolution.get("source_kind"), 64),
+        "source_label": _bounded(label, 256),
+        "disposition": _bounded(resolution.get("disposition"), 64),
+        "catalog_sha256": hashlib.sha256(body).hexdigest(),
+        "fetched_at": _bounded(resolution.get("fetched_at"), 64),
+        "generated": _bounded(resolution.get("generated"), 64),
+        "freshness": {
+            "known": bool(freshness.get("known")),
+            "stale": bool(freshness.get("stale", not freshness.get("known"))),
+            "age_days": age,
+        },
+        "count": int(compliance["total"]),
+    }
 
 
 def _read_recon_project(recon_path: Path) -> str | None:
@@ -806,9 +953,35 @@ def _output_mode(skill_cfg: dict) -> str:
     return "incremental" if str(skill_cfg.get("mode") or "full").lower() == "incremental" else "full"
 
 
+def _apply_business_context_basis(threats: list[dict], output_dir: Path, skill_cfg: dict) -> int:
+    """Record on each finding which declared context fields apply to its component.
+
+    Everything downstream of the STRIDE analyzers — the report, the exports, the
+    follow-on tools — reads this file and nothing else, so without this the run
+    cannot say whether the supplied document reached a given finding. The value
+    carries field names only, never the business prose: the document stays out of
+    the delivered model, and the record stays deterministic.
+
+    Same three material fields the ranking tie-break uses, from the same
+    validated projection, so a finding cannot be marked here and unmarked there.
+    Returns how many findings were marked."""
+    if skill_cfg.get("skip_business_context"):
+        return 0
+    basis_by_component = triage_compute_ranking._business_context_basis_by_component(output_dir)
+    if not basis_by_component:
+        return 0
+    marked = 0
+    for threat in threats:
+        basis = triage_compute_ranking._finding_business_context_basis(threat, basis_by_component)
+        if basis:
+            threat["business_context_basis"] = list(basis)
+            marked += 1
+    return marked
+
+
 def _business_context_digest(skill_cfg: dict, repo_root: Path) -> str | None:
     output_dir = skill_cfg.get("output_dir")
-    if not output_dir:
+    if not output_dir or skill_cfg.get("skip_business_context"):
         return None
     return load_business_context.context_digest(repo_root, Path(output_dir))
 
@@ -820,7 +993,7 @@ def _business_context_source(skill_cfg: dict, repo_root: Path) -> str | None:
     say later whether the context was edited or was never stored. The name can.
     """
     output_dir = skill_cfg.get("output_dir")
-    if not output_dir:
+    if not output_dir or skill_cfg.get("skip_business_context"):
         return None
     path = load_business_context.effective_source(repo_root, Path(output_dir))
     if path is None:
@@ -829,6 +1002,87 @@ def _business_context_source(skill_cfg: dict, repo_root: Path) -> str | None:
     if path.name == load_business_context.RUN_ONLY_NAME:
         return load_business_context.RUN_ONLY_NAME
     return load_business_context.REPO_RELATIVE
+
+
+_BUSINESS_CONTEXT_TRACE_FIELDS = (
+    "business_purpose",
+    "impact_if_compromised",
+    "sensitive_assets",
+    "security_obligations",
+    "security_assumptions",
+)
+
+
+def _business_context_component_coverage(output_dir: Path) -> list[dict[str, Any]]:
+    """Return bounded field-level coverage without copying context values."""
+    raw = _load_json(output_dir / ".stride-analyst-context.json")
+    if not isinstance(raw, dict):
+        return []
+    rows: list[dict[str, Any]] = []
+    for component_id in sorted(raw):
+        entry = raw.get(component_id)
+        business = entry.get("business_context") if isinstance(entry, dict) else None
+        if not isinstance(component_id, str) or not isinstance(business, dict):
+            continue
+        fields: list[str] = []
+        for field in _BUSINESS_CONTEXT_TRACE_FIELDS:
+            value = business.get(field)
+            if isinstance(value, str) and value.strip():
+                fields.append(field)
+            elif isinstance(value, list) and any(isinstance(item, str) and item.strip() for item in value):
+                fields.append(field)
+        if fields:
+            rows.append({"component_id": component_id, "fields": fields})
+    return rows
+
+
+def build_business_context_trace(skill_cfg: dict, repo_root: Path, applied_finding_count: int) -> dict[str, Any]:
+    """Build the durable, non-prose trace of business-context use."""
+    if skill_cfg.get("skip_business_context"):
+        return {
+            "status": "skipped",
+            "source_kind": None,
+            "source": None,
+            "sha256": None,
+            "fields_present": [],
+            "component_coverage": [],
+            "applied_finding_count": 0,
+        }
+    source = _business_context_source(skill_cfg, repo_root)
+    digest = _business_context_digest(skill_cfg, repo_root)
+    if source is None:
+        return {
+            "status": "not_configured",
+            "source_kind": None,
+            "source": None,
+            "sha256": None,
+            "fields_present": [],
+            "component_coverage": [],
+            "applied_finding_count": 0,
+        }
+    output_dir = Path(skill_cfg["output_dir"])
+    coverage = _business_context_component_coverage(output_dir)
+    present = [field for field in _BUSINESS_CONTEXT_TRACE_FIELDS if any(field in row["fields"] for row in coverage)]
+    return {
+        "status": "applied",
+        "source_kind": "run_only" if source == load_business_context.RUN_ONLY_NAME else "repository",
+        "source": source,
+        "sha256": digest,
+        "fields_present": present,
+        "component_coverage": coverage,
+        "applied_finding_count": applied_finding_count,
+    }
+
+
+def build_initial_abuse_case_analysis(skill_cfg: dict) -> dict[str, Any]:
+    """Record an honest pre-Stage-1d state for every run, including skips."""
+    if skill_cfg.get("skip_abuse_case_verification"):
+        reason = str(skill_cfg.get("abuse_case_label") or "verification disabled for this run").strip()[:256]
+        status = "skipped"
+    else:
+        reason = "abuse-case verification has not completed"
+        status = "not_run"
+    return {"status": status, "reason": reason, "cases": [], "catalog_evaluated": []}
 
 
 def build_meta(
@@ -1357,6 +1611,49 @@ def _remediation_how_text(t: dict) -> str:
     return str(rem.get("how") or "").strip()
 
 
+def _filter_violated_requirements(threats: list[dict], output_dir: Path) -> set[str]:
+    """Drop analyzer-declared requirement IDs the configured catalog lacks.
+
+    Requirements stay optional: with no readable `.requirements.yaml` nothing is
+    filtered, so a run without a catalog keeps whatever the analyzers wrote.
+    Returns the set of dropped IDs for reporting.
+    """
+    catalog_path = Path(output_dir) / ".requirements.yaml"
+    if not catalog_path.is_file():
+        return set()
+    try:
+        catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return set()
+    known = {
+        str(r.get("id") or "").strip()
+        for c in catalog.get("categories") or []
+        if isinstance(c, dict)
+        for r in c.get("requirements") or []
+        if isinstance(r, dict) and str(r.get("id") or "").strip()
+    }
+    if not known:
+        return set()
+    dropped: set[str] = set()
+    for t in threats:
+        declared = t.get("violated_requirements")
+        if not declared:
+            continue
+        kept = []
+        for rid in declared:
+            rid = str(rid or "").strip()
+            if rid in known:
+                if rid not in kept:
+                    kept.append(rid)
+            elif rid:
+                dropped.add(rid)
+        if kept:
+            t["violated_requirements"] = kept
+        else:
+            t.pop("violated_requirements", None)
+    return dropped
+
+
 def build_mitigations(threats: list[dict]) -> list[dict]:
     """Derive yaml.mitigations[] from threats' mitigation_ids + remediation.
 
@@ -1472,6 +1769,96 @@ def build_mitigations(threats: list[dict]) -> list[dict]:
         m["priority"] = sev_to_pri.get(m["severity"], "P3")
 
     return sorted(by_mid.values(), key=lambda m: m["id"])
+
+
+def annotate_requirements_and_blueprints(
+    threats: list[dict], mitigations: list[dict], output_dir: Path
+) -> tuple[int, int]:
+    """Write ``fulfills_requirements`` and ``blueprint`` onto each mitigation.
+
+    A mitigation satisfies whatever its addressed threats break, so the reverse
+    link is derivable and needs no second author (decision RQ-5). Both fields
+    are derived here, from the shared rules in ``requirements_trace``:
+
+    * ``fulfills_requirements`` uses the same three threat-side sources the
+      report renders from. Deriving it from ``violated_requirements`` alone
+      left the structured model and the rendered §10 block naming disjoint
+      requirement sets for the same mitigation, because analyzers routinely
+      park a matched requirement in ``remediation.reference`` instead.
+    * ``blueprint`` records which catalog blueprint prescribes the fix. Without
+      it the blueprint integration existed only in the Markdown, invisible to
+      the SARIF export, the review and query skills, and to any later run
+      checking whether the prescribed design was adopted.
+
+    Runs after mitigation overrides and control dedup so it sees the final
+    mitigation set. Sidecar-authored ``fulfills_requirements`` values are kept
+    and extended, never replaced. A run without a requirements catalog gets
+    neither field, exactly as before.
+
+    Returns ``(mitigations_with_requirements, mitigations_with_blueprint)``.
+    """
+    catalog = requirements_trace.load_catalog(output_dir)
+    known_ids = requirements_trace.catalog_requirement_ids(catalog)
+    by_requirement = requirements_trace.sections_by_requirement(catalog)
+    threats_by_id = {str(t.get("id") or "").strip(): t for t in threats}
+
+    with_reqs = with_bp = 0
+    for m in mitigations:
+        # Sidecar-authored IDs are catalog-filtered like the threat-side ones in
+        # `_filter_violated_requirements`. Derived IDs are already bounded by
+        # `known_ids`, so without this the sidecar was the one path by which an
+        # undeclared requirement could still reach `fulfills_requirements`, and
+        # the export-trace check no longer catches it at Stage-1 finalize, where
+        # no compliance section exists to resolve against. Filter only when a
+        # catalog was loaded, so a run without `.requirements.yaml` is unchanged.
+        fulfills = [
+            rid
+            for rid in (str(r or "").strip() for r in (m.get("fulfills_requirements") or []))
+            if rid and (not known_ids or rid in known_ids)
+        ]
+        addressed = []
+        for tid in m.get("threat_ids") or []:
+            t = threats_by_id.get(str(tid or "").strip())
+            if not t:
+                continue
+            addressed.append(t)
+            for rid in requirements_trace.requirement_ids_for_threat(t, known_ids):
+                if rid not in fulfills:
+                    fulfills.append(rid)
+        if fulfills:
+            m["fulfills_requirements"] = fulfills
+            with_reqs += 1
+
+        if not by_requirement:
+            continue
+        selected = requirements_trace.select_blueprint(
+            by_requirement,
+            fulfills,
+            requirements_trace.RankContext(
+                primary=str(m.get("title") or ""),
+                secondary=" ".join(f"{t.get('title') or ''} {t.get('scenario') or ''}" for t in addressed),
+            ),
+        )
+        if selected is None:
+            continue
+        top = selected.sections[0] if selected.sections else None
+        m["blueprint"] = {
+            "id": selected.blueprint_id,
+            "title": selected.blueprint_title,
+            "url": selected.blueprint_url,
+            "section": top.title if top else "",
+            # The section's own page, not the blueprint's: one blueprint cites
+            # several sources, so these differ for most sections.
+            "section_url": top.url if top else "",
+            "guidance": top.content if top else "",
+            "prescribed_by": list(selected.requirement_ids),
+            # False when no candidate section shares a content word with the
+            # mitigation: the pick is then catalog order, and a consumer must
+            # not present it as governing guidance.
+            "grounded": selected.is_grounded,
+        }
+        with_bp += 1
+    return with_reqs, with_bp
 
 
 def prune_dangling_mitigation_threat_ids(threats: list[dict], mitigations: list[dict]) -> tuple[list[dict], list[str]]:
@@ -1755,7 +2142,16 @@ def apply_mitigation_overrides(baseline: list[dict], sidecar: dict | None) -> tu
         baseline by ID or threat_ids. Authored, non-empty values win;
         otherwise the baseline value is kept.
         """
-        for field in ("title", "description", "reference", "remediation", "how", "how_code", "verification"):
+        for field in (
+            "title",
+            "description",
+            "reference",
+            "remediation",
+            "how",
+            "how_code",
+            "verification",
+            "fulfills_requirements",
+        ):
             val = add.get(field)
             if isinstance(val, str):
                 val = val.strip()
@@ -1807,6 +2203,7 @@ def apply_mitigation_overrides(baseline: list[dict], sidecar: dict | None) -> tu
             **({"description": add["description"]} if add.get("description") else {}),
             **({"reference": add["reference"]} if add.get("reference") else {}),
             **({"remediation": add["remediation"]} if "remediation" in add else {}),
+            **({"fulfills_requirements": add["fulfills_requirements"]} if add.get("fulfills_requirements") else {}),
         }
         added += 1
 
@@ -2532,6 +2929,18 @@ def main() -> int:
     for w in threat_warnings:
         sys.stderr.write(f"  {w}\n")
 
+    marked = _apply_business_context_basis(threats, od, skill_cfg)
+    if marked:
+        sys.stderr.write(f"  business context applies to {marked} finding(s)\n")
+
+    # The configured catalog decides what the organisation requires. An analyzer
+    # ID the catalog never declared is dropped here, before it can reach
+    # threats[], the derived mitigations[].fulfills_requirements, or any
+    # consumer that reads the YAML instead of the report.
+    dropped = _filter_violated_requirements(threats, od)
+    if dropped:
+        sys.stderr.write(f"  dropped {len(dropped)} undeclared requirement id(s): {', '.join(sorted(dropped)[:8])}\n")
+
     components = (sidecar_components or {}).get("components") or _carry_forward(
         prior_yaml, "components", ".components.json"
     )
@@ -2598,6 +3007,12 @@ def main() -> int:
     # set (incl. override splits/additions) and converges the threat links
     # before threat_ids/changelog derivation below.
     threats, mitigations = dedupe_mitigation_controls(threats, mitigations)
+    # Requirement and blueprint annotation runs on the final mitigation set, so
+    # an override split or a control dedup cannot leave a survivor carrying a
+    # merged partner's traceability.
+    _req_n, _bp_n = annotate_requirements_and_blueprints(threats, mitigations, od)
+    if _req_n or _bp_n:
+        sys.stderr.write(f"  requirements: {_req_n} mitigation(s) fulfil requirements, {_bp_n} carry a blueprint\n")
     for w in mit_warnings:
         sys.stderr.write(f"  {w}\n")
 
@@ -2733,6 +3148,8 @@ def main() -> int:
     doc: dict[str, Any] = {
         "meta": meta,
         "changelog": changelog,
+        "business_context_trace": build_business_context_trace(skill_cfg, repo_root, marked),
+        "abuse_case_analysis": build_initial_abuse_case_analysis(skill_cfg),
         "components": components,
         "data_flows": data_flows,
         "assets": assets,
@@ -2745,6 +3162,10 @@ def main() -> int:
     }
     if tier_rcs:
         doc["tier_root_causes"] = tier_rcs
+    requirements_compliance = build_requirements_compliance(od)
+    if requirements_compliance:
+        doc["requirements_compliance"] = requirements_compliance
+        doc["requirements_provenance"] = build_requirements_provenance(od, requirements_compliance)
     if cross_repo:
         doc["cross_repo_dependencies"] = (
             cross_repo if isinstance(cross_repo, list) else cross_repo.get("dependencies", [])

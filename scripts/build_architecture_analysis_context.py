@@ -22,6 +22,15 @@ MAX_UNSUPPORTED_ROUTE_FILES = 64
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _STATE_CHANGING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
+# A recon line naming a concrete file — optionally with a line number — is the
+# kind the downstream analyst can act on and verify. Everything else is prose
+# that merely describes the same ground.
+_SOURCE_REFERENCE_RE = re.compile(
+    r"[A-Za-z0-9_./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|java|kt|rb|php|cs|rs|swift|scala|sql|sh|"
+    r"yml|yaml|json|toml|ini|conf|tf|env|xml|gradle|properties|dockerfile)(?::\d+)?",
+    re.IGNORECASE,
+)
+
 
 class ContextProjectionError(ValueError):
     """Raised when a source artifact cannot produce a safe bounded projection."""
@@ -36,6 +45,27 @@ def _bounded_line(value: str) -> str:
     if len(compact) <= MAX_RECON_LINE_CHARS:
         return compact
     return compact[: MAX_RECON_LINE_CHARS - 1].rstrip() + "…"
+
+
+def _select_body_lines(body_lines: list[str], budget: int) -> list[str]:
+    """Keep the ``budget`` most informative lines, in their original order.
+
+    The cap used to take the first N lines, so whether a concrete finding
+    survived depended only on where the scanner happened to write it. Measured
+    on a full run, that discarded half of the lines naming a real file — the
+    ones the architecture analyst can actually act on — while keeping prose
+    that merely restates the section heading. Prefer lines carrying a source
+    reference, then fill the rest in document order, so the same budget carries
+    materially more evidence and the kept text still reads in sequence.
+    """
+    if budget <= 0:
+        return []
+    if len(body_lines) <= budget:
+        return list(body_lines)
+    indexed = list(enumerate(body_lines))
+    ranked = sorted(indexed, key=lambda pair: (0 if _SOURCE_REFERENCE_RE.search(pair[1]) else 1, pair[0]))
+    chosen = sorted(index for index, _ in ranked[:budget])
+    return [body_lines[index] for index in chosen]
 
 
 def project_recon_summary(payload: bytes) -> dict[str, Any]:
@@ -70,7 +100,7 @@ def project_recon_summary(payload: bytes) -> dict[str, Any]:
         level = section["level"]
         per_section_cap = 4 if level == 1 else (8 if level == 2 else 3)
         available = max(0, MAX_RECON_RETAINED_LINES - retained_total)
-        kept = section["source_body_lines"][: min(per_section_cap, available)]
+        kept = _select_body_lines(section["source_body_lines"], min(per_section_cap, available))
         retained_total += len(kept)
         projected.append(
             {
