@@ -1,6 +1,6 @@
 # appsec-advisor
 
-[![Version](https://img.shields.io/badge/version-0.6.0--beta.2-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0--beta.3-orange.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![Threat modeling](https://img.shields.io/badge/threat%20modeling-code--derived-5A67D8)](docs/threat-modeler.md)

@@ -1,6 +1,6 @@
 {
   "name": "appsec-advisor",
-  "version": "0.6.0-beta.2",
+  "version": "0.6.0-beta.3",
   "analysis_version": 5,
   "compatible_analysis_versions": [1, 2, 3, 4, 5],
   "description": "Code-derived threat modeling plugin: the architecture model is derived from the repository, not maintained by hand. Provides AppSec-focused agents and skills for threat modeling, STRIDE analysis, dependency scanning, QA review, and security context resolution.",
