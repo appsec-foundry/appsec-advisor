@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+## 0.6.0-beta.2 (2026-09-04)
+
 ### Added
 
 - Findings now name the requirements they break, and mitigations quote the blueprint section that prescribes the fix.
