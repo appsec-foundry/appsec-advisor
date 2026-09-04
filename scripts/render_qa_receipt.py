@@ -71,9 +71,7 @@ def _plan_summary(plan: Any) -> dict:
     actions = plan.get("actions") or []
     if not isinstance(actions, list):
         return {}
-    severities = Counter(
-        str(a.get("severity") or "unclassified") for a in actions if isinstance(a, dict)
-    )
+    severities = Counter(str(a.get("severity") or "unclassified") for a in actions if isinstance(a, dict))
     return {
         "status": str(plan.get("status") or "unknown"),
         "action_count": len(actions),

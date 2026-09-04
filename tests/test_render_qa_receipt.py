@@ -37,7 +37,9 @@ def _write(output_dir: Path, name: str, payload: dict) -> None:
 
 
 def _clean_pass(output_dir: Path) -> None:
-    _write(output_dir, receipt.STATUS_NAME, {"status": "pass", "source": "deterministic-pre-agent", "qa_skipped": False})
+    _write(
+        output_dir, receipt.STATUS_NAME, {"status": "pass", "source": "deterministic-pre-agent", "qa_skipped": False}
+    )
     _write(output_dir, receipt.SECRET_SCAN_NAME, {"check": "unmasked_secrets", "ok": 1, "issue_count": 0})
 
 
@@ -82,9 +84,7 @@ def test_a_dispatched_reviewer_and_its_repairs_reach_the_console(
     assert "Repaired: 2 iteration(s)" in out
 
 
-def test_a_residual_repair_plan_is_broken_down_by_severity(
-    output_dir: Path, capsys: pytest.CaptureFixture
-) -> None:
+def test_a_residual_repair_plan_is_broken_down_by_severity(output_dir: Path, capsys: pytest.CaptureFixture) -> None:
     _clean_pass(output_dir)
     _write(
         output_dir,
@@ -127,9 +127,7 @@ def test_cosmetic_advisories_are_surfaced_and_capped(output_dir: Path, capsys: p
     assert f"… 2 more in {receipt.STATUS_NAME}" in out
 
 
-def test_a_skipped_qa_path_is_not_reported_as_a_clean_gate(
-    output_dir: Path, capsys: pytest.CaptureFixture
-) -> None:
+def test_a_skipped_qa_path_is_not_reported_as_a_clean_gate(output_dir: Path, capsys: pytest.CaptureFixture) -> None:
     _write(output_dir, receipt.STATUS_NAME, {"status": "pass", "source": "secret-gate-only", "qa_skipped": True})
     _write(output_dir, receipt.SECRET_SCAN_NAME, {"issue_count": 0})
 
@@ -198,9 +196,7 @@ def test_unparseable_inputs_do_not_crash(output_dir: Path) -> None:
     assert receipt.main([str(output_dir), "--no-print"]) == 0
 
 
-def test_an_unreported_gate_exit_does_not_invent_an_outcome(
-    output_dir: Path, capsys: pytest.CaptureFixture
-) -> None:
+def test_an_unreported_gate_exit_does_not_invent_an_outcome(output_dir: Path, capsys: pytest.CaptureFixture) -> None:
     _write(output_dir, receipt.STATUS_NAME, {"status": "pass", "source": "qa-reviewer"})
     _write(output_dir, receipt.SECRET_SCAN_NAME, {"issue_count": 0})
 

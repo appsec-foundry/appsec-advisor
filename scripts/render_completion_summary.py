@@ -932,9 +932,7 @@ def build_next_steps(
     )
     lines.append(
         "\n".join(
-            ["Or just ask me:"]
-            + [f'"{question}"' for question in examples]
-            + ["… or anything else about the report"]
+            ["Or just ask me:"] + [f'"{question}"' for question in examples] + ["… or anything else about the report"]
         )
     )
 
