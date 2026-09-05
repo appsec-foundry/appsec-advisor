@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The secret masker no longer rewrites the line following a credential keyword that ends a line, so an entry point such as `GET /api/audit?token=` no longer corrupts the threat model into a document the run then aborts on.
 - A headless run blocked by another run's lock now stops with its exit code instead of printing an interactive menu into the log, and no longer aborts the running assessment it was blocked by.
 - Interrupting an unattended headless run now actually stops it: the signal reaches Claude without a terminal, the run releases its own lock instead of blocking the next attempt for five minutes, and the printed recovery command offers `--rerender` when Stage 1 had already finished.
 - `--full` and `--rebuild` no longer discard a completed Stage 1 without asking, and the `--force` needed to discard it on purpose now reaches the skill.

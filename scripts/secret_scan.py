@@ -103,10 +103,22 @@ _PATTERNS: list[_Pattern] = [
             # Only ``_`` is admitted. Dropping ``\b`` outright would also match
             # a keyword ending any word, re-opening the false-positive class the
             # guards below exist for: a heading like ``## OAuth: Configuration``
-            # would be masked as a secret. A two-line k8s ``name:``/``value:``
-            # pair remains out of reach of this single-line pattern.
+            # would be masked as a secret.
+            #
+            # The operator padding is ``[ \t]*`` and not ``\s*`` because an
+            # assignment is a single-line construct: the keyword, the operator
+            # and the value stand on one line. ``\s*`` crossed the line break,
+            # so a line ENDING in the operator captured the next line's first
+            # token as its value — an entry point ``GET /api/audit?token=``
+            # followed by ``  protocol: HTTP`` masked the YAML KEY into
+            # ``  **** (8 chars): HTTP``, and the unparseable threat-model.yaml
+            # aborted the run at the controller gate (2026-09-05
+            # insecure-python-app). Structured artifacts are rewritten by this
+            # masker, so a match that spans lines destroys their shape. A
+            # two-line k8s ``name:``/``value:`` pair is out of reach by the same
+            # rule, as is a secret placed on the line below its key.
             r"(?:\b|(?<=_))(?P<kw>" + CREDENTIAL_KEYWORDS + r")"
-            r"\s*(?P<op>[=:])\s*"
+            r"[ \t]*(?P<op>[=:])[ \t]*"
             # The value charset must cover password punctuation. It previously
             # stopped at the first character outside [A-Za-z0-9_\-+/=.], so a
             # credential like ``'J6aVjTgOpRs@?5l!…'`` matched only its 11-char
@@ -680,17 +692,51 @@ def mask_structure(node: Any) -> tuple[Any, list[str]]:
     return masked_node, list(seen.keys())
 
 
+_STRUCTURED_SUFFIXES = frozenset({".yaml", ".yml", ".json"})
+
+
+def _mask_structured_text(text: str, suffix: str) -> tuple[str, list[str]]:
+    """Mask a serialized YAML/JSON document through its decoded form.
+
+    Routes ``mask_file`` to mask_structure() so the rule that docstring states
+    is enforced at the choke point instead of asked of every caller. The YAML
+    dump options match ``build_threat_model_yaml``, so re-serializing the
+    canonical model reproduces its own formatting.
+
+    An undecodable document is returned untouched: blind text masking is what
+    corrupts a structured artifact, and a leak that survives here is still
+    caught by the unmasked_secrets gate, which fails the run closed."""
+    import json
+
+    import yaml
+
+    try:
+        doc = json.loads(text) if suffix == ".json" else yaml.safe_load(text)
+    except (ValueError, yaml.YAMLError):
+        return text, []
+    masked_doc, applied = mask_structure(doc)
+    if not applied:
+        return text, []
+    if suffix == ".json":
+        return json.dumps(masked_doc, indent=2, ensure_ascii=False) + "\n", applied
+    return yaml.safe_dump(masked_doc, sort_keys=False, allow_unicode=True, default_flow_style=False, width=120), applied
+
+
 def mask_file(path: Path) -> list[str]:
     """Mask secrets in ``path`` in place. Returns the applied pattern names
     (empty list when nothing changed). Best-effort: unreadable files no-op.
 
-    Text-level: correct for markdown and HTML. For YAML/JSON use
-    mask_structure() on the decoded document instead — see its docstring."""
+    Text-level for markdown and HTML; YAML and JSON are decoded and masked with
+    mask_structure() instead — see its docstring for why serialized documents
+    cannot be masked as text."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    masked, applied = mask_text(text)
+    if path.suffix.lower() in _STRUCTURED_SUFFIXES:
+        masked, applied = _mask_structured_text(text, path.suffix.lower())
+    else:
+        masked, applied = mask_text(text)
     if applied and masked != text:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(masked, encoding="utf-8")

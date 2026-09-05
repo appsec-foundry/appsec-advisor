@@ -82,7 +82,10 @@ _MIN_VALUE_LEN = 8
 # Each row links to the threat(s) referenced…" puts a keyword within a clause
 # of ordinary prose. An assignment position cannot occur mid-sentence, so this
 # test cannot fire on prose at all.
-_CREDENTIAL_ASSIGNMENT_RE = re.compile(rf"(?i)(?:\b|_)(?:{CREDENTIAL_KEYWORDS})[\"']?\s*[=:]\s*[\"']?$")
+# ``[ \t]*`` rather than ``\s*`` for the same reason as the scanner's twin
+# pattern: an assignment does not span a line break, and a keyword sitting at
+# the end of one line would otherwise claim the next line's first token.
+_CREDENTIAL_ASSIGNMENT_RE = re.compile(rf"(?i)(?:\b|_)(?:{CREDENTIAL_KEYWORDS})[\"']?[ \t]*[=:][ \t]*[\"']?$")
 
 
 def _is_word_shaped(value: str) -> bool:

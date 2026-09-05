@@ -784,3 +784,99 @@ def test_masker_preserves_demo_payloads(secret_scan):
     assert masked == walkthrough, f"masker rewrote a demo payload: {masked}"
     assert applied == []
     assert secret_scan.scan_text(masked) == []
+
+
+# ----------------------------------------------------------------------------
+# An assignment is a single-line construct
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # 2026-09-05 insecure-python-app: an entry point ending in a query
+        # parameter name put the operator at end of line, and `\s*` reached
+        # across the break to claim the next line's YAML KEY as the value. The
+        # canonical model stopped parsing and the run aborted at the controller
+        # gate after 1h11m.
+        "- entry_point: GET /api/legacy-admin/audit?token=\n  protocol: HTTP\n",
+        # The same shape the pattern always claimed to exclude.
+        "- name: DB_PASSWORD\n  value: hunter2longer\n",
+        # Markdown: a keyword ending a line must not consume the next bullet.
+        "The handler reads `X_AUTH_TOKEN=`\n- verifies the signature\n",
+    ],
+)
+def test_operator_at_end_of_line_does_not_claim_the_next_line(secret_scan, raw):
+    """A keyword, its operator and its value stand on ONE line. Matching across
+    the break rewrites whatever follows — in a serialized document that is the
+    next key, and the document stops parsing."""
+    masked, applied = secret_scan.mask_text(raw)
+    assert applied == [], f"matched across a line break: {applied}"
+    assert masked == raw
+    assert secret_scan.scan_text(raw) == []
+
+
+def test_single_line_assignments_are_still_masked(secret_scan):
+    """Precision twin: narrowing the padding must not cost a real detection."""
+    for raw in (
+        'password = "hunter2longer"',
+        "api_key:   sk_abcdef1234",
+        "SECRET\t=\thunter2longer",
+        "MYSQL_ROOT_PASSWORD=Sup3rS3cret",
+        "GET /api/audit?token=abcdef123456 returns rows",
+    ):
+        masked, applied = secret_scan.mask_text(raw)
+        assert applied, f"real credential no longer masked: {raw}"
+        assert masked != raw
+        assert secret_scan.scan_text(masked) == []
+
+
+# ----------------------------------------------------------------------------
+# mask_file routes serialized documents through mask_structure
+# ----------------------------------------------------------------------------
+
+
+def test_mask_file_keeps_yaml_parseable(secret_scan, tmp_path):
+    """mask_structure's docstring forbids text-masking a serialized document;
+    mask_file enforces that rather than asking each caller to remember it. An
+    unquoted `**** (N chars)` at the head of a plain YAML scalar is an alias
+    indicator, so the text-level twin produces an unparseable model."""
+    import yaml
+
+    p = tmp_path / "threat-model.yaml"
+    p.write_text("api_key: aB3xK9mQ7zR2pL5w\nprotocol: HTTP\n")
+    assert secret_scan.mask_file(p)
+    doc = yaml.safe_load(p.read_text())
+    assert doc["protocol"] == "HTTP", "a mapping key must survive masking"
+    assert "aB3xK9mQ7zR2pL5w" not in p.read_text()
+    assert secret_scan.scan_file(p) == [], "the gate must go green on the masked file"
+
+
+def test_mask_file_keeps_json_parseable(secret_scan, tmp_path):
+    import json
+
+    p = tmp_path / "threat-model.sarif.json"
+    p.write_text(json.dumps({"cfg": {"password": "hunter2longer"}}, indent=2))
+    assert secret_scan.mask_file(p)
+    assert json.loads(p.read_text())["cfg"]["password"] != "hunter2longer"
+    assert secret_scan.scan_file(p) == []
+
+
+def test_mask_file_leaves_an_undecodable_document_alone(secret_scan, tmp_path):
+    """Blind text masking is what corrupts a structured artifact, so an
+    undecodable one is not masked at all. The leak still fails the run closed at
+    the unmasked_secrets gate."""
+    p = tmp_path / "broken.yaml"
+    raw = "key: [unclosed\npassword: hunter2longer\n"
+    p.write_text(raw)
+    assert secret_scan.mask_file(p) == []
+    assert p.read_text() == raw
+    assert secret_scan.scan_file(p), "the gate still has to see the leak"
+
+
+def test_mask_file_still_masks_markdown_as_text(secret_scan, tmp_path):
+    p = tmp_path / "threat-model.md"
+    p.write_text("Config uses `password = hunter2longer` in prod.\n")
+    assert secret_scan.mask_file(p) == ["generic_credential_assignment"]
+    assert "hunter2longer" not in p.read_text()
+    assert secret_scan.scan_file(p) == []

@@ -460,6 +460,7 @@ requirements:
       - scripts/redact_known_secrets.py
     decisions:
       - TR-8
+      - TR-9
     documents:
       - README.md
     coverage: direct
