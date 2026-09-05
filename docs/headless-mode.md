@@ -117,10 +117,7 @@ Headless limits are enforced outside the model runtime:
   --max-budget 10
 ```
 
-`--max-duration` uses the host `timeout` command. `--max-budget` applies to API
-billing. An interrupted or capped assessment is not resumable; start a new
-`--full` or `--rebuild` run. Completed component artifacts may remain for
-diagnosis, but they are never silently admitted as a legacy continuation.
+`--max-duration` uses the host `timeout` command. `--max-budget` applies to API billing. An interrupted or capped assessment is not resumable mid-analysis. One boundary is recoverable: a run that stopped after Stage 1 but before the report leaves validated Stage-1 artifacts, and `--rerender` turns them into a report without analyzing the source again. The run prints the command that applies to what it left behind. `--full` and `--rebuild` refuse to discard those artifacts until you repeat the invocation with `--force`. Anything earlier than that boundary starts again with `--full` or `--rebuild`; partial component artifacts may remain for diagnosis, but they are never silently admitted as a legacy continuation.
 
 ## Scheduled CI example
 
@@ -199,6 +196,7 @@ cleanup, and fail-closed report gate in every supported assessment mode.
 | `--clean-cache` | Delete transient cache state and exit. |
 | `--clean-all` | Delete the selected output directory contents after confirmation and exit. |
 | `--dry-run` with cleanup | Preview deterministic cleanup without writing. |
+| `--force` | Skip the `--clean-all` confirmation; with `--full` or `--rebuild`, discard a completed Stage 1 instead of rendering it. |
 | `--verbose` | Stream detailed runtime events. |
 | `--quiet` | Suppress live progress. |
 
@@ -211,10 +209,7 @@ old producer or orchestration path.
 
 ## Exit behavior and diagnosis
 
-An exit code of `0` means the requested supported operation completed and the
-required report artifact exists. Invalid configuration, unsupported modes,
-missing rerender inputs, trust-preflight findings, validation failures, secret
-gate failures, and incomplete reports exit non-zero.
+An exit code of `0` means the requested supported operation completed and the required report artifact exists. Invalid configuration, unsupported modes, missing rerender inputs, a run that declined to discard a completed Stage 1, trust-preflight findings, validation failures, secret gate failures, and incomplete reports exit non-zero. A declined run analyzes nothing, so it never reports success even when an earlier report is still on disk.
 
 Use these deterministic status tools against the selected output directory:
 
@@ -225,6 +220,4 @@ python3 scripts/render_completion_summary.py \
   --issues-only --output-dir /path/to/output --repo-root /path/to/repository
 ```
 
-After an interrupted run, inspect the reported issue and start a new `--full`
-or `--rebuild` assessment. Do not copy checkpoint files into a new run or set a
-compatibility environment variable; neither is an admitted runtime path.
+After an interrupted run, inspect the reported issue, then use the recovery command the run printed: `--rerender` when Stage 1 had finished, otherwise a new `--full` or `--rebuild` assessment. Do not copy checkpoint files into a new run or set a compatibility environment variable; neither is an admitted runtime path.

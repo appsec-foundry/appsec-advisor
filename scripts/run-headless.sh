@@ -39,7 +39,9 @@
 #   --max-budget <usd>      Stop when estimated cost exceeds this amount
 #   --clean-cache           Delete cache & transient files (keeps the model); exits
 #   --clean-all             Delete everything in <output-dir> (with confirmation); exits
-#   --force                 Skip confirmation for --clean-all (auto in CI)
+#   --force                 Skip confirmation for --clean-all (auto in CI), and
+#                           with --full/--rebuild discard a completed Stage 1
+#                           the run would otherwise offer to render
 #   --model <model>         Override the session model (default: claude-sonnet-4-6, economy)
 #   --reasoning-model <t>   Reasoning tier for STRIDE/triage/merger: opus,
 #                           opus-cheap, sonnet, sonnet-economy
@@ -114,7 +116,10 @@ Options:
                              the threat model and audit logs. Exits without running.
   --clean-all                Delete everything in \$OUTPUT_DIR (interactive confirm
                              unless --force / CI=true). Exits without running.
-  --force                    Skip the interactive confirmation for --clean-all
+  --force                    Skip the interactive confirmation for --clean-all.
+                             With --full or --rebuild it also discards a
+                             completed Stage 1 that the run would otherwise
+                             offer to render with --rerender.
   --model <model>            Override the session model (default: claude-sonnet-4-6, economy)
   --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
                              opus, opus-cheap, sonnet, sonnet-economy
@@ -325,7 +330,15 @@ while [ $# -gt 0 ]; do
         --clean-all)
             CLEAN_MODE="all"; shift ;;
         --force)
-            CLEAN_FORCE=1; shift ;;
+            # Two consumers, one flag: it skips the --clean-all confirmation
+            # here, and it is the skill-only override the controller demands
+            # when a completed Stage 1 is about to be discarded ("repeat
+            # --rebuild --force"). Swallowing it made that instruction
+            # unreachable headless — the abort recommended a flag that never
+            # left this parser. Cleanup mode exits long before dispatch, so
+            # forwarding it costs nothing there.
+            CLEAN_FORCE=1
+            SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --requirements)
             # --requirements [<src>] — enable requirements, optionally from an
             # http(s):// URL or a local file path. Consume the next token as the
@@ -643,6 +656,17 @@ export APPSEC_HEADLESS=1
 # `timeout ${MAX_DURATION}s` wrapper above, so headless callers that care about
 # a wall-clock cap must pass --max-duration (CI always does).
 export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
+# Run identity, minted HERE rather than inside the Claude session. The lock is
+# released by run id: `acquire_lock.release_lock` refuses a lock whose
+# heartbeat is still fresh unless the caller names the run that holds it, and a
+# killed run's last heartbeat is always fresh. Without a run id this wrapper
+# knows to be its own, the terminator below reported `held-by-other` and left
+# the lock behind, so a retry inside the stale window hit LOCK_BLOCKED — with
+# `lock_prompt_needed=false` under APPSEC_HEADLESS, that is a dead stop. The
+# controller prefers this value when it takes the lock, so the id in the lock
+# file and the id the terminator passes are the same string. A concurrent run
+# in the same output directory writes a different id and is still protected.
+export APPSEC_RUN_ID="run-$(date +%s)-$$"
 [ "$NO_QA" = "1" ]         && export APPSEC_SKIP_QA=1
 [ "$CI_MODE" = "1" ]       && export APPSEC_CI_MODE=1
 [ -n "$FAIL_ON" ]          && export APPSEC_FAIL_ON="$FAIL_ON"
@@ -863,18 +887,18 @@ discard_capture_if_consumed() {
 # trap cleanup still runs and we can surface the real exit code.
 set +e
 
-# Run claude in its OWN process group and wait on it, rather than as a
-# blocking foreground command. Two reasons:
+# Run claude in its OWN session and wait on it, rather than as a blocking
+# foreground command. Two reasons:
 #   1. As a foreground child, terminal Ctrl-C reaches claude but bash *defers*
 #      its own INT trap until the child returns — so the parent can never
 #      escalate (a second/third Ctrl-C does nothing). Backgrounding + `wait`
 #      lets the trap fire immediately.
-#   2. `set -m` puts claude in its own process group (PGID == $!), so the
-#      terminal does NOT auto-deliver SIGINT to it; we forward signals
-#      explicitly via the trap. That gives us full control over escalation
-#      (graceful INT → TERM → KILL) and lets us signal the whole claude tree
-#      with `kill -<sig> -$CLAUDE_PID`.
-# stdin is redirected from /dev/null so the backgrounded group never blocks
+#   2. The child leads its own process group (PGID == $!), so the terminal
+#      does NOT auto-deliver SIGINT to it; we forward signals explicitly via
+#      the trap. That gives us full control over escalation (graceful
+#      INT → TERM → KILL) and lets us signal the whole claude tree with
+#      `kill -<sig> -$CLAUDE_PID`.
+# stdin is redirected from /dev/null so the backgrounded session never blocks
 # on a terminal read (SIGTTIN).
 CLAUDE_PID=""
 SIGINT_COUNT=0
@@ -927,26 +951,42 @@ on_terminate() {
     start_escalation_watchdog
 }
 
-# Print a paste-ready re-run command, choosing --resume vs --rebuild from what
-# the resume-guard actually allows (an interrupt before Stage-1 checkpoints
-# cannot resume → point at --rebuild instead). Reused by both the Ctrl-C abort
-# path and the non-zero-exit failure path so the hint is never only on one.
+# Print a paste-ready re-run command, choosing --rerender vs --rebuild from
+# what the run left on disk. A run killed between the Stage-1 gate and the
+# report keeps `phase=10b status=completed need_render=true` — Stage 1 is the
+# expensive part, it is validated, and --rerender turns it into a report
+# without re-analyzing anything. Recommending --rebuild there threw that away,
+# and the controller refuses --rebuild on exactly that checkpoint, so the hint
+# also walked into an abort. Reused by both the Ctrl-C abort path and the
+# non-zero-exit failure path so the hint is never only on one.
 print_recovery_hint() {
     _rh_dir="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
     if [ "$SKILL" != "create-threat-model" ]; then
-        warn "Check intermediate files or run with --resume to continue."
+        warn "Check the intermediate files in $_rh_dir; this run cannot be continued."
         return
     fi
     _rerun_cmd() {  # $1 = mode flag to append
         _cmd="$0"
         for _a in $ORIG_ARGS; do
             case "$_a" in
-                --resume|--full|--rebuild|--rerender|--incremental) ;;
+                --resume|--full|--rebuild|--rerender|--incremental|--force) ;;
                 *) _cmd="$_cmd $_a" ;;
             esac
         done
         printf '%s %s\n' "$_cmd" "$1"
     }
+    # Same three tokens the controller's own need-render guard reads, matched
+    # independently so their order in the checkpoint line stays irrelevant.
+    _rh_cp="$_rh_dir/.appsec-checkpoint"
+    if [ -f "$_rh_cp" ] \
+            && grep -q 'phase=10b' "$_rh_cp" \
+            && grep -q 'status=completed' "$_rh_cp" \
+            && grep -q 'need_render=true' "$_rh_cp"; then
+        warn "Stage 1 finished before the run stopped — render it instead of re-analyzing:"
+        printf '    %s\n' "$(_rerun_cmd --rerender)"
+        printf '    %s   (discards the validated Stage-1 artifacts)\n' "$(_rerun_cmd '--rebuild --force')"
+        return
+    fi
     warn "This runtime does not resume incomplete analysis — start fresh:"
     printf '    %s\n' "$(_rerun_cmd --rebuild)"
 }
@@ -955,14 +995,38 @@ print_recovery_hint() {
 # forward or escalate first, but once the wrapper exits no live marker remains.
 trap 'cleanup_headless_runtime' EXIT
 
-set -m
+# Start claude in its own session so PID == PGID == SID and a single
+# negative-PID signal reaches the whole tree. `set -m` did this only when a
+# controlling terminal was present; under nohup, systemd, cron or a CI runner
+# it failed with "can't access tty", left the child in this shell's process
+# group, and every `kill -<sig> -$CLAUDE_PID` below then addressed a process
+# group that does not exist — the interrupt was reported as forwarded and the
+# whole escalation ladder was a silent no-op. The launcher also restores the
+# SIGINT/SIGQUIT dispositions the shell marks ignored for asynchronous
+# children, which would otherwise swallow the forwarded interrupt. python3 is
+# already a hard prerequisite of this wrapper. `setsid` is the primitive, not
+# the binary, so this behaves the same on Linux and macOS; a process that is
+# already a group leader keeps its own group instead.
+# Mirrors scripts/run-interruptible.sh; keep the two in sync.
+SESSION_LAUNCHER='
+import os
+import signal
+import sys
+
+for name in ("SIGINT", "SIGQUIT", "SIGTERM", "SIGHUP"):
+    signal.signal(getattr(signal, name), signal.SIG_DFL)
+try:
+    os.setsid()
+except OSError:
+    os.setpgrp()
+os.execvp(sys.argv[1], sys.argv[1:])
+'
 if [ -n "$RESULT_CAPTURE" ]; then
-    "$@" < /dev/null > "$RESULT_CAPTURE" &
+    python3 -c "$SESSION_LAUNCHER" "$@" < /dev/null > "$RESULT_CAPTURE" &
 else
-    "$@" < /dev/null &
+    python3 -c "$SESSION_LAUNCHER" "$@" < /dev/null &
 fi
 CLAUDE_PID=$!
-set +m
 
 trap 'on_interrupt' INT
 trap 'on_terminate' TERM HUP
@@ -1024,6 +1088,7 @@ if [ "$SIGINT_COUNT" -gt 0 ]; then
     python3 "$PLUGIN_DIR/scripts/terminate_run.py" \
         --output-dir "${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}" \
         --outcome interrupt --reason "operator interrupt (exit $EXIT_CODE)" \
+        --run-id "$APPSEC_RUN_ID" \
         --repo-root "${REPO_PATH:-.}" --depth "${ASSESSMENT_DEPTH:-standard}" \
         >/dev/null 2>&1 || true
     echo ""
@@ -1156,7 +1221,8 @@ else
         # A controller abort already wrote its own verdict; that one stands.
         python3 "$PLUGIN_DIR/scripts/terminate_run.py" \
             --output-dir "$RESULT_DIR" --outcome failure \
-            --reason "wrapper exit $EXIT_CODE" --repo-root "${REPO_PATH:-.}" \
+            --reason "wrapper exit $EXIT_CODE" --run-id "$APPSEC_RUN_ID" \
+            --repo-root "${REPO_PATH:-.}" \
             --depth "${ASSESSMENT_DEPTH:-standard}" >/dev/null 2>&1 || true
         python3 "$PLUGIN_DIR/scripts/render_completion_summary.py" \
             --issues-only --output-dir "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \

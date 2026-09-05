@@ -1630,12 +1630,19 @@ def _checkpoint_needs_render(output_dir: Path) -> bool:
     return fields.get("phase") == "10b" and fields.get("status") == "completed" and fields.get("need_render") == "true"
 
 
-def _need_render_recovery_reason(output_dir: Path) -> str:
-    """Describe the supported single-runtime recovery."""
+def _need_render_recovery_reason(mode: str) -> str:
+    """Describe the supported single-runtime recovery.
+
+    ``mode`` names the invocation that would have wiped the checkpoint, so the
+    discard instruction repeats what the operator actually typed. Both full and
+    rebuild reach here: their cleanup lists both remove the Stage-1 artifacts,
+    and a run killed between the Stage-1 gate and the report is the one case
+    where those artifacts are complete, validated, and worth a render.
+    """
     return (
         "Stage 1 is complete (phase=10b need_render=true), but --resume is not supported. "
         "Use --rerender to render the validated Stage-1 artifacts, or repeat "
-        "--rebuild --force to discard them and start again."
+        f"--{mode} --force to discard them and start again."
     )
 
 
@@ -2149,6 +2156,23 @@ def _rerender_missing_artifacts(output_dir: Path) -> list[str]:
     return missing
 
 
+def _run_id_for_this_run() -> str:
+    """Return the stable per-run token written into the lock file.
+
+    ``APPSEC_RUN_ID`` comes first because a caller that outlives the Claude
+    session — ``scripts/run-headless.sh`` — needs to know the id in advance:
+    it is the only thing that lets it release its own lock after killing the
+    session, and ``acquire_lock.release_lock`` refuses a lock whose heartbeat
+    is still fresh unless the caller names the run holding it.
+    """
+    return (
+        os.environ.get("APPSEC_RUN_ID")
+        or os.environ.get("CLAUDE_CODE_SESSION_ID")
+        or os.environ.get("CLAUDE_SESSION_ID")
+        or f"run-{int(time.time())}-{os.getpid()}"
+    ).strip()
+
+
 def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
     """Prepare the compact rerender path without touching Stage-1 artifacts."""
     output_dir = Path(cfg["output_dir"]).resolve()
@@ -2174,11 +2198,7 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
             "exit_code": 2,
         }
 
-    cfg["run_id"] = (
-        os.environ.get("CLAUDE_CODE_SESSION_ID")
-        or os.environ.get("CLAUDE_SESSION_ID")
-        or f"run-{int(time.time())}-{os.getpid()}"
-    )
+    cfg["run_id"] = _run_id_for_this_run()
     try:
         _run_script("check_state.py", [str(output_dir), "--auto-clean"])
         lock = _run_script(
@@ -2246,11 +2266,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     # Stable per-run token so a Stage-1 agent's own lock acquisition can
     # re-acquire this controller-held lock re-entrantly instead of
     # false-blocking on it.
-    cfg["run_id"] = (
-        os.environ.get("CLAUDE_CODE_SESSION_ID")
-        or os.environ.get("CLAUDE_SESSION_ID")
-        or f"run-{int(time.time())}-{os.getpid()}"
-    )
+    cfg["run_id"] = _run_id_for_this_run()
     output_dir.mkdir(parents=True, exist_ok=True)
     existing_names = {path.name for path in output_dir.iterdir()}
     if cfg["mode"] == "rebuild":
@@ -2271,13 +2287,17 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             for name in existing_names
         )
 
-    if cfg["mode"] == "rebuild" and _checkpoint_needs_render(output_dir) and not force:
+    if cfg["mode"] in {"full", "rebuild"} and _checkpoint_needs_render(output_dir) and not force:
         return {
             "schema_version": 1,
             "action": "abort",
-            "mode": "rebuild",
-            "reason": _need_render_recovery_reason(output_dir),
-            "exit_code": 0,
+            "mode": cfg["mode"],
+            "reason": _need_render_recovery_reason(cfg["mode"]),
+            # Non-zero like every other abort that analyzes nothing. At 0 this
+            # declined run looked green to CI whenever an earlier run had left
+            # a threat-model.md behind: the wrapper's artifact gate only asks
+            # whether a report exists, and the stale one does.
+            "exit_code": 2,
         }
 
     receipts: list[str] = []

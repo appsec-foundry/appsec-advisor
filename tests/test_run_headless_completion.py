@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -380,6 +382,192 @@ def test_headless_exit_clears_live_tool_markers() -> None:
     assert body.index(cleanup) < body.index("# If the run was interrupted by Ctrl-C")
     assert "cleanup_headless_runtime()" in body
     assert "trap 'cleanup_headless_runtime' EXIT INT TERM HUP" in body
-    assert "trap 'cleanup_headless_runtime' EXIT\n\nset -m" in body
+    assert "trap 'cleanup_headless_runtime' EXIT\n\n# Start claude in its own session" in body
     terminal_block = body[body.index("# PreToolUse markers are live-state") :]
     assert terminal_block.index("cleanup_live_tool_markers") < terminal_block.index("cleanup_tails")
+
+
+# ── Abort and recovery ──────────────────────────────────────────────────
+# 2026-09-05: the escalation ladder was verified only from an interactive
+# terminal. Without a controlling terminal `set -m` fails ("can't access tty"),
+# the child keeps the wrapper's process group, and every
+# `kill -<sig> -$CLAUDE_PID` addresses a process group that does not exist —
+# the wrapper printed "forwarding SIGINT to claude" while nothing was
+# forwarded, and the watchdog's `kill -0 -$PID` guard exited before escalating.
+# That is the shape of every unattended caller: nohup, systemd, cron, CI.
+
+
+def test_claude_is_launched_into_its_own_session() -> None:
+    """PID == PGID == SID, established without needing a tty."""
+    body = _body()
+    assert "os.setsid()" in body, "claude must lead its own session"
+    assert "set -m\n" not in body, "job control needs a tty and silently no-ops without one"
+    # The shell marks SIGINT/SIGQUIT ignored for asynchronous children; a child
+    # that inherits that disposition swallows the forwarded interrupt.
+    assert "signal.signal(getattr(signal, name), signal.SIG_DFL)" in body
+    assert "os.execvp(sys.argv[1], sys.argv[1:])" in body, "the launcher must keep $! == claude"
+
+
+def _stub_claude(path: Path, sleep_seconds: int, marker: Path) -> Path:
+    """A claude stand-in that answers the auth preflight, then runs long.
+
+    It takes the run lock the way the controller's `prepare` does — under the
+    run id the wrapper minted — and heartbeats it once, so the lock the
+    terminator meets afterwards looks exactly like a killed run's: fresh.
+    """
+    lock = str(ROOT / "scripts" / "acquire_lock.py")
+    path.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then\n'
+        "  printf '{\"loggedIn\": true}\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        f'python3 "{lock}" "$OUTPUT_DIR/.appsec-lock" "--run-id=$APPSEC_RUN_ID" >/dev/null\n'
+        f'python3 "{lock}" "$OUTPUT_DIR/.appsec-lock" --heartbeat --phase=8 >/dev/null\n'
+        f"sleep {sleep_seconds}\n"
+        f'printf "survived\\n" > "{marker}"\n',
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
+def _headless_env(stub: Path) -> dict[str, str]:
+    env = dict(os.environ)
+    env["APPSEC_CLAUDE_EXECUTABLE"] = str(stub)
+    env["CLAUDE_PLUGIN_DIR"] = str(ROOT)
+    env.pop("ANTHROPIC_API_KEY", None)
+    env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+    return env
+
+
+def test_an_interrupt_without_a_controlling_terminal_tears_the_run_down(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    output.mkdir()
+    (output / ".agent-run.log").write_text(
+        "2026-09-05T10:00:00Z  [--------]  INFO   threat-analyst  ASSESSMENT_START  x\n",
+        encoding="utf-8",
+    )
+    (output / ".appsec-checkpoint").write_text("phase=8 status=dispatching\n", encoding="utf-8")
+    survived = tmp_path / "survived"
+    stub = _stub_claude(tmp_path / "claude", 60, survived)
+
+    proc = subprocess.Popen(
+        [
+            str(SCRIPT),
+            "--repo",
+            str(repo),
+            "--output",
+            str(output),
+            "--full",
+            "--trust-mode",
+            "trusted",
+            "--quiet",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        env=_headless_env(stub),
+        # No controlling terminal — the unattended shape this guards.
+        start_new_session=True,
+    )
+    lock = output / ".appsec-lock"
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and not lock.exists():
+        time.sleep(0.2)
+    time.sleep(1)  # let the wrapper install its traps
+    assert lock.is_file(), "the stub never took the lock — the rest of this test proves nothing"
+    os.kill(proc.pid, signal.SIGINT)
+
+    try:
+        rc = proc.communicate(timeout=20)
+    except subprocess.TimeoutExpired:  # pragma: no cover - failure path
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        proc.communicate()
+        pytest.fail("the interrupt never reached claude — the wrapper kept waiting")
+
+    stdout = rc[0]
+    assert not survived.exists(), "claude survived the interrupt"
+    assert "Run aborted by user" in stdout
+    assert "can't access tty" not in stdout
+    # One terminal state: the terminator closed the checkpoint the run left
+    # open and released the lock. A retained lock blocks the next attempt for
+    # the whole heartbeat-stale window, and headless cannot answer the
+    # take-over question.
+    assert "status=aborted" in (output / ".appsec-checkpoint").read_text(encoding="utf-8")
+    assert not lock.exists(), "the interrupted run left its lock behind"
+
+
+def test_the_wrapper_mints_the_run_id_the_lock_release_needs() -> None:
+    """A killed run's last heartbeat is always fresh, so the terminator can
+    only release the lock if it can name the run that holds it. The wrapper
+    mints that id itself — the Claude session that would otherwise own it is
+    already gone when the lock has to go."""
+    body = _body()
+    assert 'export APPSEC_RUN_ID="run-$(date +%s)-$$"' in body
+    launch = body.index("SESSION_LAUNCHER=")
+    assert body.index("export APPSEC_RUN_ID") < launch, "the id must exist before the run takes the lock"
+    # Both non-clean exit classes hand it to the terminator.
+    assert body.count('--run-id "$APPSEC_RUN_ID"') == 2
+
+
+def test_the_skill_force_flag_reaches_the_prompt(tmp_path: Path) -> None:
+    """`--force` is the override the controller demands before a completed
+    Stage 1 is discarded. The parser used to swallow it for --clean-all only,
+    so the abort recommended a flag that never left this wrapper."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    marker = tmp_path / "launcher-args"
+    launcher = tmp_path / "claude-arg-dump"
+    launcher.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then\n'
+        "  printf '{\"loggedIn\": true}\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        'printf "%s\\n" "$@" > "$CLAUDE_LAUNCH_MARKER"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    env = _headless_env(launcher)
+    env["CLAUDE_LAUNCH_MARKER"] = str(marker)
+
+    subprocess.run(
+        [
+            str(SCRIPT),
+            "--repo",
+            str(repo),
+            "--output",
+            str(tmp_path / "out"),
+            "--rebuild",
+            "--force",
+            "--trust-mode",
+            "trusted",
+            "--quiet",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+
+    prompt = marker.read_text(encoding="utf-8").splitlines()[1]
+    assert "--rebuild" in prompt
+    assert "--force" in prompt, "the skill-only override never reached the skill"
+
+
+def test_the_recovery_hint_offers_rerender_after_a_completed_stage_one() -> None:
+    """Stage 1 is the expensive part. A run killed between the Stage-1 gate and
+    the report leaves it validated on disk, and --rerender turns it into a
+    report without re-analyzing anything — while --rebuild is refused by the
+    controller on exactly that checkpoint."""
+    body = _body()
+    hint = body[body.index("print_recovery_hint() {") : body.index("# Every mode, including --quiet")]
+    for token in ("phase=10b", "status=completed", "need_render=true"):
+        assert token in hint, "the hint must read the same checkpoint tokens as the controller"
+    assert "--rerender" in hint
+    assert "--rebuild --force" in hint, "the discard path must carry the override the controller requires"
+    assert "--resume" not in hint.replace("--resume|--full", ""), "--resume is rejected by this wrapper"

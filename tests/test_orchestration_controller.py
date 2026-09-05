@@ -364,7 +364,51 @@ def test_rebuild_need_render_recommends_supported_recovery_before_wipe(monkeypat
     assert "--resume is not supported" in action["reason"]
     assert "--rerender" in action["reason"]
     assert "--rebuild --force" in action["reason"]
+    assert action["exit_code"] != 0
     assert (output / "threat-model.yaml").exists()
+
+
+def test_full_need_render_recommends_the_render_before_the_wipe(monkeypatch, tmp_path):
+    """`--full` clears the same Stage-1 artifacts `--rebuild` does, so the
+    guard that offers the render has to cover it. It did not, and `--full` is
+    both the default recovery advice and the auto-selected mode on a depth
+    increase — the completed Stage 1 was discarded without a word."""
+    cfg = _cfg(tmp_path, "full")
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    (output / ".appsec-checkpoint").write_text(
+        "phase=10b status=completed need_render=true runtime_generation=context-v2\n",
+        encoding="utf-8",
+    )
+    (output / ".stride-api.json").write_text("{}", encoding="utf-8")
+    (output / ".fragments").mkdir()
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+
+    action = controller.prepare(["--full"])
+
+    assert action["action"] == "abort"
+    assert action["mode"] == "full"
+    assert "--rerender" in action["reason"]
+    assert "--full --force" in action["reason"], "the discard hint must name the mode that was typed"
+    # A run that analyzed nothing must not read as green: the wrapper's
+    # artifact gate only asks whether a report exists, and a prior run's
+    # threat-model.md sits happily beside a newer Stage-1 checkpoint.
+    assert action["exit_code"] != 0
+    assert (output / ".stride-api.json").exists()
+    assert (output / ".fragments").is_dir()
+
+
+def test_the_lock_run_id_can_be_set_by_the_caller(monkeypatch):
+    """The wrapper outlives the Claude session and has to release the lock
+    after killing it. `release_lock` refuses a lock whose heartbeat is still
+    fresh unless the caller names the holding run, so the caller must be able
+    to decide the id before the run takes the lock."""
+    monkeypatch.setenv("APPSEC_RUN_ID", "run-from-the-wrapper")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-id")
+    assert controller._run_id_for_this_run() == "run-from-the-wrapper"
+
+    monkeypatch.delenv("APPSEC_RUN_ID")
+    assert controller._run_id_for_this_run() == "session-id"
 
 
 def test_rebuild_cleanup_preserves_audit_logs(monkeypatch, tmp_path):
