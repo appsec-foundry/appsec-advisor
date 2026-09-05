@@ -39,11 +39,7 @@ depends on emits `HOOK_PAYLOAD_UNEXPECTED` instead of degrading silently.
 
 SubagentStop takes stop reason and usage from the host's child-specific
 `agent_transcript_path`; the common `transcript_path` names the parent session.
-A headless session persists no transcript, so neither answers there: an
-undeterminable stop reason emits `AGENT_OUTCOME_DEFERRED` and leaves the
-outcome to the Agent `PostToolUse` rather than recording a failure, and per-call
-usage comes from that return's `usage` block and `totalToolUseCount`. The turn
-budget retires either way — the child has stopped.
+A headless session persists no transcript, so neither answers there. `SubagentStop` and the Agent `PostToolUse` then hand the outcome over once, in whichever order they arrive: the first to find the question unanswerable emits `AGENT_OUTCOME_DEFERRED` rather than recording a failure, and the second terminalizes as `AGENT_DONE` with `reason=outcome_unobserved`. A host whose Agent return is a launch acknowledgement sends it at dispatch, so `SubagentStop` is the second event and closes the call there; a host that answers on completion carries per-call usage in that return's `usage` block and `totalToolUseCount`. No call may end a run in `running`. The turn budget retires at the stop either way, and a stopped call owns no further turns even before its outcome is settled.
 | Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
 
 `AGENT_DONE` and `AGENT_FAILED` are the only terminal outcome of a call. A

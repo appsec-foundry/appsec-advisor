@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--full` and `--rebuild` no longer discard a completed Stage 1 without asking, and the `--force` needed to discard it on purpose now reaches the skill.
 - The headless progress view no longer prints phase banners twice, shows how many STRIDE components have finished during the long parallel phase, and drops the internal call ids that pushed the readable part of each line off the screen.
 - A headless run no longer reports its working agents as failed, finishes the assessment minutes after it started, or prints the completion summary twice; budget warnings raised by the run are no longer dropped, and an agent that does fail says what happened instead of naming an internal state.
+- On hosts that answer an Agent call with a launch acknowledgement, a finished agent is now recorded as finished: the run no longer reports a telemetry mismatch at every dispatch, and turn-budget warnings keep working for the rest of the run instead of stopping after the first agent.
 
 ### Added
 

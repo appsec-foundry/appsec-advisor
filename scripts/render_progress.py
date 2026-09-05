@@ -111,6 +111,7 @@ _REASON_PROSE = {
     "agent_tool_error": "the Agent tool returned an error",
     "terminal_before_spawn": "its end arrived before its start (hook events out of order)",
     "post_before_spawn": "its result arrived before its start (hook events out of order)",
+    "outcome_unobserved": "it stopped, but this host reported no result for it",
 }
 
 

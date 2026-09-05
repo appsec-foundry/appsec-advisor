@@ -10,6 +10,14 @@ The controller ledger and persisted wave claim remain authoritative.  The
 registry is used only to attribute lifecycle, usage, and budget telemetry; a
 call is current only while it is running and, for a STRIDE attempt, while its
 component and attempt still match the controller-owned active claim.
+
+Two host events can close a call: its ``SubagentStop`` and its Agent
+``PostToolUse``.  Which of them *can* answer depends on the host, so neither may
+assume the other will: they hand the outcome over once, in whichever order they
+arrive (``note_child_stop``, ``acknowledge_background_call``).  A call that
+leaves ``running`` only at the run's terminal cleanup is a leak, not a late
+answer — ``unique_running_call`` then attributes the parent's own tool uses to a
+finished child and re-opens the turn counter its stop retired.
 """
 
 from __future__ import annotations
@@ -36,6 +44,11 @@ MAX_CALLS = 128
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _COMPONENT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,99}$")
 _TERMINAL = frozenset({"done", "failed"})
+
+#: Reason on a terminal event whose outcome no surface reported. The call ended
+#: — that much the stop proves — but neither the child transcript nor the Agent
+#: return said how, so the event must not read as verified success.
+OUTCOME_UNOBSERVED = "outcome_unobserved"
 
 
 class LifecycleError(RuntimeError):
@@ -102,6 +115,7 @@ def validate_state(state: object) -> dict[str, Any]:
             "max_turns",
             "launch_acknowledged_at",
             "background_promoted",
+            "stopped_at",
             "finished_at",
             "failure_reason",
             "usage_recorded_at",
@@ -117,7 +131,7 @@ def validate_state(state: object) -> dict[str, Any]:
             raise LifecycleError("agent lifecycle state is invalid")
         if not isinstance(call.get("background"), bool):
             raise LifecycleError("agent lifecycle background flag is invalid")
-        for key in ("spawned_at", "running_at", "finished_at", "usage_recorded_at"):
+        for key in ("spawned_at", "running_at", "stopped_at", "finished_at", "usage_recorded_at"):
             if key in call and (isinstance(call[key], bool) or not isinstance(call[key], int) or call[key] < 0):
                 raise LifecycleError(f"agent lifecycle {key} is invalid")
         attempt = call.get("attempt")
@@ -339,19 +353,53 @@ def _terminal_transition(
             return []
         call["state"] = "done" if success else "failed"
         call["finished_at"] = _now()
-        if reason:
+        if reason and not success:
             call["failure_reason"] = _bounded(reason, 512)
         _write_state_unlocked(output_dir, state)
         event = "AGENT_DONE" if success else "AGENT_FAILED"
         return [LifecycleEvent(event, dict(call), reason)]
 
 
-def finish_call(output_dir: str | Path, call_id: str) -> list[LifecycleEvent]:
-    return _terminal_transition(output_dir, call_id, success=True)
+def finish_call(output_dir: str | Path, call_id: str, reason: str = "") -> list[LifecycleEvent]:
+    """Terminalize one call as done. ``reason`` qualifies *how* that was decided.
+
+    A successful outcome is not the same as an observed one. When the child's
+    return carries no outcome the call still has to leave ``running``, and the
+    reason on the event is what keeps the log from reading as verified success.
+    It is never persisted as ``failure_reason``.
+    """
+    return _terminal_transition(output_dir, call_id, success=True, reason=reason)
 
 
 def fail_call(output_dir: str | Path, call_id: str, reason: str) -> list[LifecycleEvent]:
     return _terminal_transition(output_dir, call_id, success=False, reason=reason)
+
+
+def note_child_stop(output_dir: str | Path, call_id: str) -> bool:
+    """Record that a call's child has stopped without saying how it ended.
+
+    Two events can settle an Agent call: its ``SubagentStop`` and its Agent
+    ``PostToolUse``. Either may arrive unable to answer on its own — a headless
+    session writes no child transcript, and a host that answers the Agent call
+    with a launch acknowledgement returns no outcome — and each used to hand the
+    question to the other. On Claude Code 2.1.261 both are unable and the launch
+    acknowledgement arrives *first*, so the deferral pointed at an event that had
+    already passed: on the 2026-09-05 insecure-python-app run every dispatch
+    stayed ``running`` for the whole run.
+
+    So the two hand over once, in whichever order they arrive: this records the
+    stop, and returns whether the Agent return has already been seen. True means
+    nobody else will answer and the caller must terminalize now.
+    """
+    with _locked(output_dir):
+        state = _read_state_unlocked(output_dir)
+        call = next((row for row in state["calls"] if row.get("agent_call_id") == call_id), None)
+        if call is None or call.get("state") in _TERMINAL:
+            return False
+        if not call.get("stopped_at"):
+            call["stopped_at"] = _now()
+            _write_state_unlocked(output_dir, state)
+        return bool(call.get("launch_acknowledged_at"))
 
 
 def acknowledge_background_call(output_dir: str | Path, call_id: str) -> list[LifecycleEvent]:
@@ -398,6 +446,12 @@ def acknowledge_background_call(output_dir: str | Path, call_id: str) -> list[Li
             call["launch_acknowledged_at"] = _now()
         if promoted or not acknowledged:
             _write_state_unlocked(output_dir, state)
+        # The other half of the handover in `note_child_stop`: the child already
+        # stopped without an outcome, so this acknowledgement is the last event
+        # the call will get. Terminalize rather than wait for nothing.
+        settle = bool(call.get("stopped_at"))
+    if settle:
+        return finish_call(output_dir, call_id, OUTCOME_UNOBSERVED)
     return []
 
 
@@ -414,7 +468,14 @@ def running_calls(output_dir: str | Path, session_id: str | None = None) -> list
 
 
 def unique_running_call(output_dir: str | Path, session_id: str) -> dict[str, Any] | None:
-    calls = running_calls(output_dir, session_id)
+    """The single call a tool use in this session can be charged to.
+
+    A call whose child has stopped is excluded even before its outcome is
+    settled: the turns that follow the stop are the parent's, and charging them
+    to the finished child is what re-opened a budget entry `close_call` had just
+    retired.
+    """
+    calls = [call for call in running_calls(output_dir, session_id) if not call.get("stopped_at")]
     return calls[0] if len(calls) == 1 else None
 
 
@@ -651,7 +712,16 @@ def claim_is_authoritative(output_dir: str | Path, call: dict[str, Any]) -> bool
 def is_current_claim(output_dir: str | Path, call: dict[str, Any]) -> bool:
     """Return whether telemetry still belongs to a current authoritative claim."""
     call_id = call.get("agent_call_id")
-    if not call_id or not any(row.get("agent_call_id") == call_id for row in running_calls(output_dir)):
+    live = next((row for row in running_calls(output_dir) if row.get("agent_call_id") == call_id), None)
+    # A stopped child owns no further turns, whether or not its outcome is
+    # settled yet. Without this the window between `SubagentStop` and the Agent
+    # return re-creates the counter that stop had retired.
+    #
+    # This belongs here and not in `claim_is_authoritative`: an analyzer's last
+    # STRIDE progress write routinely lands after its stop and must still be
+    # attributed (see `write_stride_progress._owning_call`). Turn ownership and
+    # attempt ownership end at different moments (`authoritative_call`).
+    if not call_id or live is None or live.get("stopped_at"):
         return False
     return claim_is_authoritative(output_dir, call)
 

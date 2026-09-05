@@ -12,7 +12,9 @@ Triggered by: PreToolUse, PostToolUse, SubagentStart, Stop, SubagentStop
 Events logged:
   AGENT_SPAWN   — any Agent tool call is about to start (PreToolUse, all depths)
   AGENT_RUNNING — the admitted Agent call is running under its tool_use_id
-  AGENT_DONE    — one foreground return or validated background join succeeded
+  AGENT_DONE    — one foreground return or validated background join succeeded,
+                  or, with reason=outcome_unobserved, one call whose child
+                  stopped while no surface reported how it ended
   AGENT_FAILED  — one call failed, expired, was superseded, or was terminally cleaned
   AGENT_USAGE   — SubagentStop usage bound through agent_id to the Agent call
   CONTEXT_READY — context resolver wrote .threat-modeling-context.md (size)
@@ -2917,15 +2919,29 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
             else:
                 # The child has stopped — that is what this event proves — but
                 # how it ended is unknown. Recording a failure here turned every
-                # completed headless call into `AGENT_FAILED`. Leave the outcome
-                # to the Agent PostToolUse, which knows whether the tool call
-                # succeeded; terminal cleanup still fails it if none arrives.
-                _write(
-                    "INFO ",
-                    "AGENT_OUTCOME_DEFERRED",
-                    f"agent_call_id={runtime_call['agent_call_id']}  reason=stop_reason_unavailable",
-                    sid,
-                )
+                # completed headless call into `AGENT_FAILED`, so the outcome
+                # goes to the Agent PostToolUse, which knows whether the tool
+                # call succeeded. Only when that return has already arrived and
+                # was a launch acknowledgement is there nobody left to ask, and
+                # then this event terminalizes instead of deferring to a past
+                # one. See `agent_lifecycle.note_child_stop`.
+                settle_here = agent_lifecycle.note_child_stop(_output_dir(), runtime_call["agent_call_id"])
+                if settle_here:
+                    agent_lifecycle.append_events(
+                        _output_dir(),
+                        agent_lifecycle.finish_call(
+                            _output_dir(),
+                            runtime_call["agent_call_id"],
+                            agent_lifecycle.OUTCOME_UNOBSERVED,
+                        ),
+                    )
+                else:
+                    _write(
+                        "INFO ",
+                        "AGENT_OUTCOME_DEFERRED",
+                        f"agent_call_id={runtime_call['agent_call_id']}  reason=stop_reason_unavailable",
+                        sid,
+                    )
             # The budget retires either way: the child is no longer running, so
             # later parent tools must not be charged to it.
             from budget_watchdog import close_call

@@ -149,10 +149,27 @@ class Run:
 
     def call(self, call_id: str, agent_id: str, agent_type: str, job_id: str, **child) -> None:
         """The full happy sequence for one Agent call."""
-        self.spawn(call_id, agent_type, job_id)
+        self.dispatch(call_id, agent_id, agent_type, job_id)
         self.deliver("SubagentStart", agent_id=agent_id, agent_type=agent_type)
         self.stop(agent_id, agent_type, **child)
-        self.post(call_id, agent_type, job_id, agent_id)
+        self.settle(call_id, agent_id, agent_type, job_id)
+
+    def dispatch(self, call_id: str, agent_id: str, agent_type: str, job_id: str, background: bool = False) -> None:
+        """Start one call the way *this* host starts it.
+
+        When the Agent return is a launch acknowledgement it arrives at dispatch,
+        not on completion. Replaying the completion ordering against such a host
+        tests a sequence it never produces — and hides that nothing after the
+        acknowledgement carries an outcome.
+        """
+        self.spawn(call_id, agent_type, job_id, background=background)
+        if not self.return_carries_usage:
+            self.post(call_id, agent_type, job_id, agent_id)
+
+    def settle(self, call_id: str, agent_id: str, agent_type: str, job_id: str) -> None:
+        """Deliver the Agent return, for the hosts that send one on completion."""
+        if self.return_carries_usage:
+            self.post(call_id, agent_type, job_id, agent_id)
 
     def spawn(self, call_id: str, agent_type: str, job_id: str, background: bool = False, claimed: bool = True) -> None:
         if claimed:
@@ -205,6 +222,26 @@ class Run:
             },
         )
 
+    def parent_tool(self, call_id: str, tool_name: str = "Bash") -> None:
+        """One ordinary orchestrator tool call, the kind that follows a dispatch."""
+        self.deliver(
+            "PostToolUse",
+            tool_name=tool_name,
+            tool_use_id=call_id,
+            tool_input={"command": "echo appsec"},
+            tool_response={"stdout": "appsec", "stderr": "", "interrupted": False},
+        )
+
+    @property
+    def return_carries_usage(self) -> bool:
+        """Whether this host answers the Agent call with a completion or a launch.
+
+        The two shapes differ in what can settle a call, so a case that depends
+        on the answer says which shape it is asserting instead of pinning one
+        host's behaviour for all of them.
+        """
+        return "usage" in self.events["PostToolUse"]["tool_response"]
+
     @property
     def log(self) -> str:
         return (self.tmp_path / ".hook-events.log").read_text(encoding="utf-8")
@@ -249,14 +286,14 @@ def test_two_sequential_roles_keep_their_usage_apart(run: Run) -> None:
 def test_a_parallel_wave_terminalizes_every_job_once(run: Run) -> None:
     jobs = [(f"toolu_{i}", f"agent_{i}", f"stride:c{i}:attempt-1") for i in range(3)]
     agent_type = "appsec-advisor:appsec-stride-analyzer-v2"
-    for call_id, _, job_id in jobs:
-        run.spawn(call_id, agent_type, job_id, background=True)
+    for call_id, agent_id, job_id in jobs:
+        run.dispatch(call_id, agent_id, agent_type, job_id, background=True)
     for _, agent_id, _ in jobs:
         run.deliver("SubagentStart", agent_id=agent_id, agent_type=agent_type)
     for _, agent_id, _ in jobs:
         run.stop(agent_id, agent_type)
     for call_id, agent_id, job_id in jobs:
-        run.post(call_id, agent_type, job_id, agent_id)
+        run.settle(call_id, agent_id, agent_type, job_id)
 
     assert len(run.calls()) == 3
     assert {call["state"] for call in run.calls()} == {"done"}
@@ -345,15 +382,59 @@ def test_a_stop_without_a_transcript_defers_the_outcome(run: Run) -> None:
     # tools must not be charged to it.
     assert run.budget_calls() == {}
 
-    # The Agent PostToolUse knows whether the tool call succeeded, and carries
-    # the per-call usage the absent transcript could not.
     run.post("toolu_a", agent_type, "phase2-recon", "agent_a")
     call = run.calls()[0]
+    # Whatever the return carries, the deferral is discharged by it. A call that
+    # is still running here is the leak this deferral caused for a whole run.
     assert call["state"] == "done"
-    assert call["usage"]["output_tokens"] == 8369
-    assert call["usage"]["cache_read_input_tokens"] == 897511
-    assert call["usage"]["tool_uses"] == 31
-    assert "AGENT_RETURN_FIELDS" not in run.log
+    assert run.budget_calls() == {}
+    if run.return_carries_usage:
+        # The Agent PostToolUse knows whether the tool call succeeded, and
+        # carries the per-call usage the absent transcript could not.
+        assert call["usage"]["output_tokens"] == 8369
+        assert call["usage"]["cache_read_input_tokens"] == 897511
+        assert call["usage"]["tool_uses"] == 31
+        assert "AGENT_RETURN_FIELDS" not in run.log
+    else:
+        # A launch acknowledgement answers neither question, and no later
+        # per-call source exists. It is still the last event this call gets, so
+        # it terminalizes here and the event says the outcome was never seen.
+        assert not call.get("usage")
+        assert f"reason={lifecycle.OUTCOME_UNOBSERVED}" in run.log
+        assert "AGENT_RETURN_FIELDS" in run.log
+
+
+def test_a_launch_acknowledgement_before_the_stop_still_terminalizes(run: Run) -> None:
+    """The ordering Claude Code 2.1.261 produces: the Agent call returns at
+    dispatch, so the return `SubagentStop` deferred to has already happened and
+    carried no outcome. Deferring to it left every dispatch of the 2026-09-05
+    insecure-python-app run `running` for the rest of the run, which reported a
+    `lifecycle_not_terminal` mismatch at every semantic boundary."""
+    agent_type = "appsec-advisor:appsec-recon-scanner"
+    run.spawn("toolu_a", agent_type, "phase2-recon")
+    run.post("toolu_a", agent_type, "phase2-recon", "agent_a")
+    run.deliver("SubagentStart", agent_id="agent_a", agent_type=agent_type)
+    run.stop_without_transcript("agent_a", agent_type)
+
+    assert run.calls()[0]["state"] == "done"
+    assert run.budget_calls() == {}
+    assert "AGENT_FAILED" not in run.log
+
+
+def test_a_stopped_child_does_not_own_the_parents_later_turns(run: Run) -> None:
+    """`SubagentStop` retires the turn counter; the parent's next tool call must
+    not re-create it. While a stopped call stayed `running`, the watchdog
+    resolved it as the session's one running call and charged the orchestrator's
+    own tools to the finished child, re-opening the entry the stop had just
+    removed — the `budget_not_retired` half of the same leak."""
+    agent_type = "appsec-advisor:appsec-recon-scanner"
+    run.spawn("toolu_a", agent_type, "phase2-recon")
+    run.deliver("SubagentStart", agent_id="agent_a", agent_type=agent_type)
+    run.stop_without_transcript("agent_a", agent_type)
+    assert run.budget_calls() == {}
+
+    run.parent_tool("toolu_parent_bash")
+    assert run.budget_calls() == {}
 
 
 def test_an_agent_return_without_usage_records_its_shape_instead(run: Run) -> None:
