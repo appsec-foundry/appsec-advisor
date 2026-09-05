@@ -1100,6 +1100,26 @@ fi
 
 # ── Parse duration and files from log ──────────────────────────────
 RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+
+# ── Foreign output directory (the lock was refused) ────────────────
+# `acquire_lock.lock_held_by_live_other_run` is the rule a run that was refused
+# the lock asks before writing anything into a directory that is not its own.
+# The terminator asks it; nothing below did. A LOCK_BLOCKED run therefore read
+# the HOLDER's artifacts as its own: it ran the compose backstop inside a
+# mid-flight directory, reported the holder's not-yet-composed report as its
+# own fail-closed failure, and printed a fresh-run command that collides again
+# on the next attempt (2026-09-05 insecure-python-app). This run produced
+# nothing and owns nothing here, so it stops before touching any of it.
+if python3 -c "import sys;sys.path.insert(0,sys.argv[1]);import acquire_lock,pathlib;sys.exit(0 if acquire_lock.lock_held_by_live_other_run(pathlib.Path(sys.argv[2])/'.appsec-lock',sys.argv[3]) else 1)" \
+        "$PLUGIN_DIR/scripts" "$RESULT_DIR" "$APPSEC_RUN_ID" 2>/dev/null; then
+    warn "$RESULT_DIR is held by another assessment — this run made no changes there."
+    warn "Wait for it to finish, or scan into a different --output directory."
+    echo ""
+    print_usage_summary
+    discard_capture_if_consumed
+    exit "$EXIT_CODE"
+fi
+
 ASSESSMENT_DURATION=""
 LOG_FILE="$RESULT_DIR/.hook-events.log"
 if [ -f "$LOG_FILE" ]; then

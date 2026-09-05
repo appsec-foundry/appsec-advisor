@@ -571,3 +571,47 @@ def test_the_recovery_hint_offers_rerender_after_a_completed_stage_one() -> None
     assert "--rerender" in hint
     assert "--rebuild --force" in hint, "the discard path must carry the override the controller requires"
     assert "--resume" not in hint.replace("--resume|--full", ""), "--resume is rejected by this wrapper"
+
+
+def test_a_blocked_run_touches_nothing_in_the_holders_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run refused the lock owns nothing in the output directory.
+
+    `acquire_lock.lock_held_by_live_other_run` states the rule; the terminator
+    already asked it and the post-run artifact handling did not. A LOCK_BLOCKED
+    run then composed into the holder's mid-flight directory, called the
+    holder's not-yet-composed report its own fail-closed failure, and told the
+    operator to start fresh with a command that collides again.
+    """
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    output.mkdir()
+    # The holder's state: a live lock naming a different run, and a yaml with no
+    # composed report — the shape that arms the compose backstop.
+    now = int(time.time())
+    (output / ".appsec-lock").write_text(f"999999\n{now}\nrun-holder-1\nacquired={now}\n", encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta:\n  schema_version: 1\n", encoding="utf-8")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    claude = bin_dir / "claude"
+    claude.write_text("#!/bin/sh\nprintf 'LOCK_BLOCKED: held\\n'\nexit 1\n", encoding="utf-8")
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    result = subprocess.run(
+        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--rebuild"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    combined = result.stdout + result.stderr
+
+    assert not (output / ".compose-blocked.json").exists(), "composed into the holder's directory"
+    assert not (output / "threat-model.md").exists(), "composed into the holder's directory"
+    assert "fail-closed" not in combined, "reported the holder's missing report as its own failure"
+    assert "does not resume incomplete analysis" not in combined, "offered a hint for a run it never made"
+    assert "held by another assessment" in combined, "the operator is not told why the run stopped"
