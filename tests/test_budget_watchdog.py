@@ -516,25 +516,71 @@ def _drive_to_critical(output_dir: Path, sid: str) -> None:
         bw.tally_and_check(sid, "appsec-test-agent", str(output_dir))
 
 
-def test_foreign_session_under_live_lock_does_not_write_flag(env):
+@pytest.fixture
+def run_identity(monkeypatch):
+    """Declare which run the calling process belongs to.
+
+    The suite runs inside a Claude Code session, so CLAUDE_CODE_SESSION_ID is
+    set ambiently; ownership tests that left it in place would assert against
+    whichever session happened to run them.
+    """
+
+    def _set(environment: dict) -> None:
+        for name in ("APPSEC_RUN_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in environment.items():
+            monkeypatch.setenv(name, value)
+
+    return _set
+
+
+def test_foreign_session_under_live_lock_does_not_write_flag(env, run_identity):
     """The exact juice-shop failure: a dev session (sid 9617b066) sharing the
     run's OUTPUT_DIR crosses budget while the run (6f373f38) owns a live lock.
     Its exhaustion must NOT raise the shared .budget-critical flag."""
     output_dir, _ = env
+    run_identity({})
     _write_lock(output_dir, "6f373f38-cfbf-4d9e-8792-8e7631897d8f", fresh=True)
     _drive_to_critical(output_dir, "9617b066")
     assert not (output_dir / bw.CRITICAL_FLAG_FILENAME).exists()
     assert not (output_dir / bw.WARN_FLAG_FILENAME).exists()
 
 
-def test_owning_session_under_live_lock_writes_flag(env):
+def test_owning_session_under_live_lock_writes_flag(env, run_identity):
     """The run's own session (sid == lock run-id[:8]) still trips the flag."""
     output_dir, _ = env
+    run_identity({})
     _write_lock(output_dir, "6f373f38-cfbf-4d9e-8792-8e7631897d8f", fresh=True)
     _drive_to_critical(output_dir, "6f373f38")
     flag = output_dir / bw.CRITICAL_FLAG_FILENAME
     assert flag.is_file()
     assert any(e["sid"] == "6f373f38" for e in json.loads(flag.read_text()))
+
+
+def test_owning_headless_run_under_live_lock_writes_flag(env, run_identity):
+    """`run-headless.sh` names the run, so the lock holds no session id at all.
+
+    Comparing that token against the payload session dropped every flag the run
+    itself raised, which retires turn-exhaustion detection for the whole run.
+    """
+    output_dir, _ = env
+    run_id = "run-1788592678-3277507"
+    run_identity({"APPSEC_RUN_ID": run_id})
+    _write_lock(output_dir, run_id, fresh=True)
+    _drive_to_critical(output_dir, "6b851f4b")
+    flag = output_dir / bw.CRITICAL_FLAG_FILENAME
+    assert flag.is_file()
+    assert any(e["sid"] == "6b851f4b" for e in json.loads(flag.read_text()))
+
+
+def test_a_second_headless_run_sharing_output_dir_stays_foreign(env, run_identity):
+    """Naming runs must not weaken the cross-session guard it repairs."""
+    output_dir, _ = env
+    run_identity({"APPSEC_RUN_ID": "run-1788599999-9999"})
+    _write_lock(output_dir, "run-1788592678-3277507", fresh=True)
+    _drive_to_critical(output_dir, "6b851f4b")
+    assert not (output_dir / bw.CRITICAL_FLAG_FILENAME).exists()
+    assert not (output_dir / bw.WARN_FLAG_FILENAME).exists()
 
 
 def test_fail_open_when_no_lock(env):
@@ -568,7 +614,9 @@ def test_live_lock_owner_returns_none_when_indeterminate(env):
     _write_lock(output_dir, "abcd1234-rest", fresh=False)
     assert bw._live_lock_owner(str(output_dir)) is None  # stale
     _write_lock(output_dir, "abcd1234-rest", fresh=True)
-    assert bw._live_lock_owner(str(output_dir)) == "abcd1234"  # fresh owner
+    # The run id is returned whole. Truncating it to a session-id prefix here
+    # was the reason a `run-<epoch>-<pid>` owner could never match its own run.
+    assert bw._live_lock_owner(str(output_dir)) == "abcd1234-rest"
 
 
 def test_a_leaked_call_cannot_hold_a_budget_claim_forever(tmp_path: Path):

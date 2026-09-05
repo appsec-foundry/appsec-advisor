@@ -12,12 +12,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parent.parent / "scripts" / "agent_logger.py"
 PLUGIN_ROOT = Path(__file__).parent.parent
 
 # Import internals for direct unit testing
 PLUGIN_SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(PLUGIN_SCRIPTS))
+import agent_lifecycle  # noqa: E402
 from agent_logger import (  # noqa: E402
     _agent_model,
     _clip,
@@ -33,12 +36,29 @@ from agent_logger import (  # noqa: E402
 # ---------------------------------------------------------------------------
 
 
-def run_logger(event: dict, cwd: Path, plugin_root: Path = PLUGIN_ROOT) -> tuple[int, str]:
-    """Run the logger with the given event dict. Returns (returncode, log_content)."""
+# Variables that name the run a hook belongs to. The suite runs inside a Claude
+# Code session, so CLAUDE_CODE_SESSION_ID is set ambiently; a test that let it
+# through would assert against whichever session happened to run it.
+RUN_IDENTITY_VARS = ("APPSEC_RUN_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
+
+
+def run_logger(
+    event: dict,
+    cwd: Path,
+    plugin_root: Path = PLUGIN_ROOT,
+    extra_env: dict | None = None,
+) -> tuple[int, str]:
+    """Run the logger with the given event dict. Returns (returncode, log_content).
+
+    `extra_env` is how a test declares which run the hook belongs to.
+    """
     log_dir = cwd / "docs" / "security"
     log_file = log_dir / ".hook-events.log"
 
     env = os.environ.copy()
+    for name in RUN_IDENTITY_VARS:
+        env.pop(name, None)
+    env.update(extra_env or {})
     env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
 
     result = subprocess.run(
@@ -1466,21 +1486,69 @@ class TestAssessmentSummary:
         assert "SESSION_STOP" in log
         assert "ASSESSMENT_SUMMARY" not in log
 
-    def test_stop_during_owned_run_does_not_emit_summary(self, tmp_path):
-        """A nested Stop sharing the parent SID is not assessment completion."""
+    @pytest.mark.parametrize(
+        "lock_owner, run_env",
+        [
+            # Interactive: the controller had no APPSEC_RUN_ID, so the lock
+            # carries the session id.
+            ("runowner-full-session-id", {"CLAUDE_CODE_SESSION_ID": "runowner-full-session-id"}),
+            # Headless: run-headless.sh named the run before the session
+            # existed, so the lock and the session id share no namespace.
+            ("run-1788592678-3277507", {"APPSEC_RUN_ID": "run-1788592678-3277507"}),
+        ],
+        ids=["interactive", "headless"],
+    )
+    def test_stop_during_owned_run_does_not_emit_summary(self, tmp_path, lock_owner, run_env):
+        """A nested Stop sharing the parent SID is not assessment completion.
+
+        Claude Code emits `Stop` inside sub-agent sessions under the parent's
+        session id. Reading the lock's run id as a session id made the headless
+        case report an unowned lock and finish the assessment mid-run.
+        """
         self._seed_log(tmp_path, [])
         out_dir = tmp_path / "docs" / "security"
-        (out_dir / ".appsec-lock").write_text("123\n0\nrunowner-full-session-id\n", encoding="utf-8")
+        (out_dir / ".appsec-lock").write_text(f"123\n0\n{lock_owner}\n", encoding="utf-8")
         event = {
             "hook_event_name": "Stop",
             "session_id": "runowner-full-session-id",
             "stop_reason": "end_turn",
             "usage": {"input_tokens": 1000, "output_tokens": 500},
         }
-        _, log = run_logger(event, tmp_path)
+        _, log = run_logger(event, tmp_path, extra_env=run_env)
         assert "SESSION_STOP" in log
         assert "ASSESSMENT_SUMMARY" not in log
         assert not (out_dir / ".assessment-summary-emitted").exists()
+
+    def test_stop_during_owned_run_leaves_running_agents_alone(self, tmp_path):
+        """The same guard protects the lifecycle, not just the summary.
+
+        A Stop treated as terminal marks every in-flight call failed, which in
+        the failing headless run reported three healthy agents as dead and
+        retired their budget counters while they were still working.
+        """
+        self._seed_log(tmp_path, [])
+        out_dir = tmp_path / "docs" / "security"
+        (out_dir / ".appsec-lock").write_text("123\n0\nrun-1788592678-3277507\n", encoding="utf-8")
+        agent_lifecycle.register_call(
+            out_dir,
+            {
+                "agent_call_id": "toolu_0182FvwAnGo4t2iNFNhgPKBL",
+                "session_id": "6b851f4b",
+                "agent": "recon-scanner",
+                "agent_type": "appsec-advisor:appsec-recon-scanner",
+                "action_id": "stage1c:b078fb4269a6b5c5",
+                "job_id": "phase2-recon",
+                "background": True,
+            },
+        )
+        event = {
+            "hook_event_name": "Stop",
+            "session_id": "6b851f4b-8235-4a64-bf25-7563d1377a0f",
+            "stop_reason": "end_turn",
+        }
+        _, log = run_logger(event, tmp_path, extra_env={"APPSEC_RUN_ID": "run-1788592678-3277507"})
+        assert "outer_session_terminal" not in log
+        assert "AGENT_FAILED" not in log
 
     def test_summary_aggregates_tokens(self, tmp_path):
         """Token counts from multiple SESSION_STOP entries are summed."""

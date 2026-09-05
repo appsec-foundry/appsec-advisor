@@ -579,7 +579,7 @@ def test_reentrant_same_run_id_is_granted(tmp_path: Path, capsys):
     assert rc == 0
     assert "LOCK_ACQUIRED" in capsys.readouterr().out
     # Run-id survives the re-acquire so later heartbeats keep it.
-    assert acquire_lock._read_run_id(lp) == "RUN-A"
+    assert acquire_lock.read_run_id(lp) == "RUN-A"
 
 
 def test_foreign_run_id_still_blocks(tmp_path: Path, capsys):
@@ -611,13 +611,13 @@ def test_heartbeat_preserves_run_id(tmp_path: Path):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()), "RUN-A")
     acquire_lock.main(["acquire_lock.py", str(lp), "--heartbeat"])
-    assert acquire_lock._read_run_id(lp) == "RUN-A"
+    assert acquire_lock.read_run_id(lp) == "RUN-A"
 
 
 def test_legacy_v2_lock_has_empty_run_id(tmp_path: Path):
     lp = _lock_path(tmp_path)
     acquire_lock._write_lock(lp, os.getpid(), int(time.time()))  # no run-id
-    assert acquire_lock._read_run_id(lp) == ""
+    assert acquire_lock.read_run_id(lp) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -709,7 +709,7 @@ def test_heartbeat_preserves_the_acquisition_stamp(tmp_path: Path):
     acquire_lock._write_lock(lp, DEAD_PID, taken, "RUN-LIVE", acquired_ts=taken)
     acquire_lock._do_heartbeat(lp)
     assert acquire_lock._read_acquired_ts(lp) == taken
-    assert acquire_lock._read_run_id(lp) == "RUN-LIVE"
+    assert acquire_lock.read_run_id(lp) == "RUN-LIVE"
 
 
 def test_the_acquisition_stamp_is_read_by_label_not_position(tmp_path: Path):
@@ -718,7 +718,7 @@ def test_the_acquisition_stamp_is_read_by_label_not_position(tmp_path: Path):
     lp = _lock_path(tmp_path)
     now = int(time.time())
     acquire_lock._write_lock(lp, DEAD_PID, now, "", acquired_ts=now)
-    assert acquire_lock._read_run_id(lp) == ""
+    assert acquire_lock.read_run_id(lp) == ""
     assert acquire_lock._read_acquired_ts(lp) == now
 
 

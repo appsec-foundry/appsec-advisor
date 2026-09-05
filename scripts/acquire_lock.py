@@ -231,7 +231,7 @@ def _tail_lines(lock_path: Path) -> list[str]:
         return []
 
 
-def _read_run_id(lock_path: Path) -> str:
+def read_run_id(lock_path: Path) -> str:
     """Return the optional run-id on the lock's 3rd line, or '' if absent.
 
     Backward compatible: v2 locks (pid + heartbeat only) return ''. A labeled
@@ -243,6 +243,53 @@ def _read_run_id(lock_path: Path) -> str:
         return ""
     candidate = lines[2]
     return "" if candidate.startswith(_ACQUIRED_PREFIX) else candidate
+
+
+def current_run_id(fallback: str = "") -> str:
+    """Return the run id the calling process belongs to.
+
+    ``APPSEC_RUN_ID`` comes first because ``run-headless.sh`` sets it before the
+    Claude session exists, and a session id only names the run when it does not.
+    Every surface that writes the lock's run id or decides whether a lock is its
+    own resolves it here: a reader that reimplements the order compares a
+    ``run-<epoch>-<pid>`` token against a session id and never matches.
+
+    ``fallback`` is for the writer alone. A generated id names a run no reader
+    can identify with, and it is only reachable outside a Claude session — where
+    no hook fires either.
+    """
+    for variable in ("APPSEC_RUN_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"):
+        value = os.environ.get(variable, "").strip()
+        if value:
+            return value
+    return fallback.strip()
+
+
+def run_id_matches(owner: str, session_id: str = "") -> bool:
+    """Return whether a lock's run id names the run this process belongs to.
+
+    ``session_id`` is the hook payload's session, used only when the environment
+    names no run at all — a hook invoked outside a Claude session. It is
+    compared on its first 8 characters because callers hold it in both the full
+    and the log-truncated form.
+    """
+    owner = (owner or "").strip()
+    if not owner:
+        return False
+    run_id = current_run_id()
+    if run_id:
+        return run_id == owner
+    session_id = (session_id or "").strip()
+    return bool(session_id) and owner[:8] == session_id[:8]
+
+
+def lock_is_owned_by_this_run(lock_path: Path, session_id: str = "") -> bool:
+    """Return whether the lock at ``lock_path`` belongs to this run.
+
+    Says nothing about liveness: a caller that also needs the holder to be alive
+    tests the heartbeat itself.
+    """
+    return run_id_matches(read_run_id(lock_path), session_id)
 
 
 def _read_acquired_ts(lock_path: Path) -> int | None:
@@ -278,7 +325,7 @@ def release_lock(lock_path: Path, run_id: str = "") -> str:
     if not lock_path.is_file():
         return "absent"
     state, _ = _classify_lock(lock_path)
-    if state == "fresh" and not (run_id and _read_run_id(lock_path) == run_id):
+    if state == "fresh" and not (run_id and read_run_id(lock_path) == run_id):
         return "held-by-other"
     try:
         lock_path.unlink()
@@ -504,7 +551,7 @@ def _do_heartbeat(lock_path: Path, phase: str = "?", step: str = "") -> int:
     now = int(time.time())
     if acquired is not None and now <= acquired:
         now = acquired + 1
-    _write_lock(lock_path, pid, now, _read_run_id(lock_path), acquired_ts=acquired)
+    _write_lock(lock_path, pid, now, read_run_id(lock_path), acquired_ts=acquired)
     _emit_hook_event(
         output_dir, "INFO", _HEARTBEAT_EVENT, f"pid={pid}  phase={phase}{('  step=' + step) if step else ''}  ts={now}"
     )
@@ -529,7 +576,7 @@ def _blocked_message(lock_path: Path, info: dict) -> str:
     """
     hb = info.get("heartbeat_age")
     threshold = info.get("threshold", HEARTBEAT_STALE_SECONDS)
-    run_id = _read_run_id(lock_path) or "unknown"
+    run_id = read_run_id(lock_path) or "unknown"
     lines = [f"LOCK_BLOCKED: {lock_path.parent} is held by another assessment (run {run_id})."]
     if hb is None:
         lines.append(f"  Legacy lock without a heartbeat; it clears itself {STALE_SECONDS}s after its mtime.")
@@ -613,7 +660,7 @@ def main(argv: list[str]) -> int:
         # false LOCK_BLOCKED aborted the 2026-07-02 juice-shop Stage-1 dispatch
         # and forced a costly re-dispatch. Concurrency safety is preserved: a
         # genuinely different run carries a different (or no) run-id and blocks.
-        existing_run_id = _read_run_id(lock_path)
+        existing_run_id = read_run_id(lock_path)
         if run_id and existing_run_id and run_id == existing_run_id:
             now = int(time.time())
             _write_lock(lock_path, os.getpid(), now, run_id, acquired_ts=now)
@@ -624,7 +671,7 @@ def main(argv: list[str]) -> int:
 
     if state == "abandoned":
         print(
-            f"LOCK_STALE: prior lock (run {_read_run_id(lock_path) or 'unknown'}) never "
+            f"LOCK_STALE: prior lock (run {read_run_id(lock_path) or 'unknown'}) never "
             f"heartbeated in {int(time.time() - (info.get('acquired') or 0))}s and its PID "
             f"{info['pid']} is gone — the holder died before starting; reaped.",
             file=sys.stderr,

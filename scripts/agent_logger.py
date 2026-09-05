@@ -1289,15 +1289,20 @@ def _write_trace_summary(sid: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _run_lock_owner_sid() -> str:
-    """Return the persisted run owner without applying a heartbeat-age test."""
+def _run_lock_is_ours(sid: str) -> bool:
+    """Return whether this run still holds the lock, without a heartbeat test.
+
+    The comparison is delegated because the lock's third line carries the *run
+    id*, which equals a session id only when the controller had no
+    ``APPSEC_RUN_ID`` to prefer. Reading it as a session id made every headless
+    run report an unowned lock.
+    """
+    from acquire_lock import lock_is_owned_by_this_run  # noqa: PLC0415 — off the per-tool-call path
+
     try:
-        lock_path = os.path.join(_output_dir(), ".appsec-lock")
-        with open(lock_path, encoding="utf-8") as fh:
-            lines = fh.read().splitlines()
-        return lines[2].strip()[:8] if len(lines) >= 3 else ""
-    except (OSError, IndexError):
-        return ""
+        return lock_is_owned_by_this_run(Path(_output_dir()) / ".appsec-lock", sid)
+    except OSError:
+        return False
 
 
 def _write_assessment_summary(sid: str) -> None:
@@ -3057,9 +3062,9 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     # on the same event always loses — summary runs at most once.
     # Current Claude Code releases also emit `Stop` inside sub-agent sessions,
     # all with the parent's session_id. While the run lock is still owned by
-    # this session, that event cannot be the completed outer assessment. The
+    # this run, that event cannot be the completed outer assessment. The
     # happy path releases the lock before its final Stop.
-    run_still_owned = bool(sid and _run_lock_owner_sid() == sid[:8])
+    run_still_owned = _run_lock_is_ours(sid)
     if event_name == "Stop" and not run_still_owned:
         clear_terminal_active_tool_calls()
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")

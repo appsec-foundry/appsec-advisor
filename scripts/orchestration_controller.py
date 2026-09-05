@@ -55,6 +55,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import acquire_lock  # noqa: E402
 import budget_watchdog  # noqa: E402
 import check_permissions  # noqa: E402
 import context_routing  # noqa: E402
@@ -2163,14 +2164,11 @@ def _run_id_for_this_run() -> str:
     session — ``scripts/run-headless.sh`` — needs to know the id in advance:
     it is the only thing that lets it release its own lock after killing the
     session, and ``acquire_lock.release_lock`` refuses a lock whose heartbeat
-    is still fresh unless the caller names the run holding it.
+    is still fresh unless the caller names the run holding it. The resolution
+    order itself lives with the lock format, so the hooks that read the id back
+    cannot drift from the writer.
     """
-    return (
-        os.environ.get("APPSEC_RUN_ID")
-        or os.environ.get("CLAUDE_CODE_SESSION_ID")
-        or os.environ.get("CLAUDE_SESSION_ID")
-        or f"run-{int(time.time())}-{os.getpid()}"
-    ).strip()
+    return acquire_lock.current_run_id(f"run-{int(time.time())}-{os.getpid()}")
 
 
 def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:

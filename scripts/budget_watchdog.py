@@ -211,8 +211,18 @@ def _state_lock(output_dir: str | Path) -> Iterator[None]:
 
 
 def _live_lock_owner(output_dir: str | Path) -> Optional[str]:
+    """Return the run id of a live lock, or None when ownership is indeterminate.
+
+    The value is the run id as written — ``run-<epoch>-<pid>`` under
+    ``run-headless.sh``, a session id otherwise. Truncating it to a session-id
+    prefix here made a headless run fail its own ownership test and drop every
+    budget flag it raised; ``acquire_lock.run_id_matches`` owns the comparison.
+    """
+    from acquire_lock import read_run_id  # noqa: PLC0415 — off the per-tool-call path
+
+    lock_path = Path(output_dir) / LOCK_FILENAME
     try:
-        raw = (Path(output_dir) / LOCK_FILENAME).read_text(encoding="utf-8")
+        raw = lock_path.read_text(encoding="utf-8")
     except OSError:
         return None
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
@@ -224,7 +234,7 @@ def _live_lock_owner(output_dir: str | Path) -> Optional[str]:
         return None
     if time.time() - heartbeat > LOCK_FRESH_SECONDS:
         return None
-    return lines[2][:8] or None
+    return read_run_id(lock_path) or None
 
 
 def _valid_marker_entry(entry: object) -> bool:
@@ -291,8 +301,10 @@ def _write_marker_entries(path: Path, entries: list[dict]) -> None:
 def _write_flag(output_dir: str | Path, filename: str, payload: dict) -> None:
     if not _valid_marker_entry(payload):
         return
+    from acquire_lock import run_id_matches  # noqa: PLC0415 — off the per-tool-call path
+
     owner = _live_lock_owner(output_dir)
-    if owner is not None and payload.get("sid") != owner:
+    if owner is not None and not run_id_matches(owner, payload.get("sid", "")):
         return
     path = Path(output_dir) / filename
     existing = _marker_entries(path)

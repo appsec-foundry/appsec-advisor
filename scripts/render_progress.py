@@ -100,6 +100,20 @@ def _strip_ids(detail: str, *keys: str) -> str:
     return detail.strip()
 
 
+# Lifecycle failure reasons are contract tokens. They stay verbatim in the log,
+# where aggregation and correlation read them; the live view is read by a person
+# watching a run, and a token names the internal state rather than what happened
+# to the agent on the line above it.
+_REASON_PROSE = {
+    "outer_session_terminal": "the run ended while it was still working",
+    "join_deadline_expired": "did not return before the wave's join window closed",
+    "superseded_without_return": "replaced by a newer dispatch of the same job",
+    "agent_tool_error": "the Agent tool returned an error",
+    "terminal_before_spawn": "its end arrived before its start (hook events out of order)",
+    "post_before_spawn": "its result arrived before its start (hook events out of order)",
+}
+
+
 def _terminal_subject(detail: str) -> str:
     """Parenthesised suffix for an agent's terminal line: which call ended.
 
@@ -115,6 +129,7 @@ def _terminal_subject(detail: str) -> str:
     subject = _kv(detail, "component_id") or _kv(detail, "job_id")
     m = re.search(r"\b(?:stop_)?reason=(.*?)(?=\s{2,}|$)", detail)
     reason = m.group(1).strip() if m else ""
+    reason = _REASON_PROSE.get(reason, reason)
     parts = [p for p in (subject, f"reason: {reason}" if reason else "") if p]
     return f" ({', '.join(parts)})" if parts else ""
 
@@ -220,10 +235,18 @@ def main() -> int:
         # `log_event.py` mirrors PHASE_START / PHASE_END into `.hook-events.log`
         # from the same `format_line` call that writes `.agent-run.log`, and
         # run-headless.sh tails both files — so a mirrored event arrives twice,
-        # byte-identical and carrying the same timestamp. Render the first copy
-        # and drop the second: two identical lines within one second produce two
-        # identical banners and no additional information.
-        dup_key = (comp, event, detail)
+        # carrying the same timestamp. Render the first copy and drop the
+        # second: two identical lines within one second produce two identical
+        # banners and no additional information.
+        #
+        # The component is deliberately not part of the key. A mirror is
+        # byte-identical only in its detail: the `.agent-run.log` copy carries
+        # the writing component and a blank session, so keying on it let every
+        # `agent_logger`-mirrored event through twice — the assessment summary
+        # among them. Two distinct producers emitting one event with identical
+        # detail in the same second would have to agree on the call id or
+        # component the detail names, which is what makes the detail sufficient.
+        dup_key = (event, detail)
         if ts != seen_ts:
             seen_ts, seen_in_ts = ts, {dup_key}
         elif dup_key in seen_in_ts:

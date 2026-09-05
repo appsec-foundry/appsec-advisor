@@ -14,6 +14,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import render_progress as rp  # noqa: E402
@@ -454,6 +456,60 @@ def test_a_failure_keeps_its_whole_reason():
     )
     assert "⚠ appsec-stride-analyzer-v2 failed (web3-nft, reason: call expired without a terminal hook event)" in out
     assert "description=" not in out
+
+
+@pytest.mark.parametrize(
+    "token, prose",
+    sorted(rp._REASON_PROSE.items()),
+)
+def test_a_contract_reason_reads_as_what_happened(token, prose):
+    """The live view is read by a person, so a state token is spelled out there.
+
+    The log keeps the token: aggregation and correlation match on it.
+    """
+    out = _render(
+        [
+            "2026-09-05T07:22:13Z  [6b851f4b]  WARN   AGENT_FAILED"
+            "  agent_call_id=toolu_0182FvwAnGo4t2iNFNhgPKBL"
+            "  agent_type=appsec-advisor:appsec-recon-scanner  model=haiku  background=true"
+            "  job_id=phase2-recon"
+            f"  reason={token}"
+            "  description=Recon scanner for insecure-python-app",
+        ]
+    )
+    assert f"⚠ appsec-recon-scanner failed (phase2-recon, reason: {prose})" in out
+    assert token not in out
+
+
+def test_an_agent_logger_mirror_is_rendered_once():
+    """`run-headless.sh` tails both logs, so a mirrored event arrives twice.
+
+    The two copies agree only on event and detail: the `.agent-run.log` copy
+    names the writing component and blanks the session. Keying the suppression
+    on the component showed the completion summary twice per run.
+    """
+    out = _render(
+        [
+            "2026-09-05T07:22:13Z  [6b851f4b]  INFO   ASSESSMENT_SUMMARY"
+            "  mode=full  duration=1m 23s  threats=0 (Critical=0, High=0, Medium=0, Low=0)",
+            "2026-09-05T07:22:13Z  [--------]  INFO   hook-logger         ASSESSMENT_SUMMARY"
+            "  mode=full  duration=1m 23s  threats=0 (Critical=0, High=0, Medium=0, Low=0)",
+        ]
+    )
+    assert out.count("assessment complete") == 1
+
+
+def test_an_unmapped_reason_is_shown_verbatim():
+    """A reason the map does not know must still reach the reader."""
+    out = _render(
+        [
+            "2026-09-05T07:22:13Z  [6b851f4b]  WARN   AGENT_FAILED"
+            "  agent_call_id=toolu_0182FvwAnGo4t2iNFNhgPKBL"
+            "  agent_type=appsec-advisor:appsec-recon-scanner"
+            "  reason=something nobody mapped yet",
+        ]
+    )
+    assert "reason: something nobody mapped yet" in out
 
 
 def _stride_spawn(ts: str, call_id: str, component: str) -> str:
