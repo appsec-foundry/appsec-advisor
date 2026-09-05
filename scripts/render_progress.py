@@ -181,8 +181,9 @@ def main() -> int:
     last_pct_shown = None  # last RUN_PROGRESS percentage given a permanent line
     spawned_calls: set[str] = set()
     terminal_calls: set[str] = set()
-    stride_calls: set[str] = set()  # STRIDE analyzer calls dispatched so far
-    stride_finished: set[str] = set()  # …of those, the ones that reached a terminal event
+    stride_calls: dict[str, str] = {}  # STRIDE analyzer call id -> the component it analyses
+    stride_components: set[str] = set()  # components dispatched so far
+    stride_finished: set[str] = set()  # …of those, the ones a call completed
     seen_ts = ""  # timestamp of the duplicate-suppression bucket below
     seen_in_ts: set[tuple[str, str, str]] = set()
     _CLEAR = "\r\033[K"  # carriage-return + clear-to-end-of-line
@@ -213,10 +214,16 @@ def main() -> int:
         independent of the watchdog's ``STRIDE_PROGRESS`` mirror — that one
         counts artifact *files* and stays silent whenever ``.appsec-checkpoint``
         does not read exactly ``phase=9``.
+
+        Counted per component and only on a completion. Counting calls and
+        treating any terminal event as progress let a wave of four report
+        ``4/4 components done`` on the very line saying one had failed, and
+        ``5/5`` once its retry had finished — a number larger than the number of
+        components, on a phase that had lost one.
         """
-        if not stride_calls:
+        if not stride_components:
             return ""
-        return f"STRIDE {len(stride_finished)}/{len(stride_calls)} components done"
+        return f"STRIDE {len(stride_finished)}/{len(stride_components)} components done"
 
     def heartbeat(line: str) -> None:
         """Show liveness without flooding the console."""
@@ -318,7 +325,10 @@ def main() -> int:
                 cur_phase = inferred_phase
                 phase_start = when
             if call_id and "stride-analyzer" in agent_name:
-                stride_calls.add(call_id)
+                # A retry is a new call for a component already counted.
+                component = _kv(detail, "component_id") or call_id
+                stride_calls[call_id] = component
+                stride_components.add(component)
             w(f"    ↳ {agent_name}{_agent_tag(model, depth)}: {task}")
 
         elif event == "AGENT_INVOKE":
@@ -338,7 +348,8 @@ def main() -> int:
             state = "done" if event == "AGENT_DONE" else "failed"
             tail = _terminal_subject(detail)
             if call_id and call_id in stride_calls:
-                stride_finished.add(call_id)
+                if event == "AGENT_DONE":
+                    stride_finished.add(stride_calls[call_id])
                 tail += f"   [{stride_tally()}]"
             w(f"    {mark} {agent_name} {state}{tail}")
 

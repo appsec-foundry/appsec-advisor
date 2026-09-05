@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -106,9 +108,10 @@ class Run:
 
     ACTION_ID = "stage1:a"
 
-    def __init__(self, host: dict, tmp_path: Path) -> None:
+    def __init__(self, host: dict, tmp_path: Path, monkeypatch) -> None:
         self.events = host["events"]
         self.tmp_path = tmp_path
+        self.monkeypatch = monkeypatch
         self.parent = _transcript(
             tmp_path / "parent.jsonl", stop_reason="tool_use", inp=900_000, out=40_000, tool_uses=2
         )
@@ -140,12 +143,49 @@ class Run:
         if "agent_transcript_path" in payload:
             payload["agent_transcript_path"] = self.parent
         payload.update(overrides)
+        self._send(payload)
+
+    def _send(self, payload: dict) -> None:
         stdin = sys.stdin
         sys.stdin = io.StringIO(json.dumps(payload))
         try:
             agent_logger.main()
         finally:
             sys.stdin = stdin
+
+    def parent_stop(self) -> None:
+        """The parent session's turn ends.
+
+        The fixtures carry no `Stop` payload because it is about the session,
+        not about one Agent call — which is exactly why its meaning could change
+        underneath the plugin without any fixture noticing.
+        """
+        self._send(
+            {
+                "session_id": self.events["SubagentStop"]["session_id"],
+                "transcript_path": self.parent,
+                "cwd": str(self.tmp_path),
+                "hook_event_name": "Stop",
+                "stop_hook_active": False,
+            }
+        )
+
+    #: The run id `run-headless.sh` exports, in its real shape. A run id that
+    #: happens to look like a session id is the one shape the reader that broke
+    #: this could still resolve, so a replay using one passes for the wrong
+    #: reason.
+    RUN_ID = "run-1788616498-31337"
+
+    def hold_lock(self) -> None:
+        """Take the run lock, the way the controller takes it before dispatching."""
+        self.monkeypatch.setenv("APPSEC_RUN_ID", self.RUN_ID)
+        (self.tmp_path / ".appsec-lock").write_text(
+            f"{os.getpid()}\n{int(time.time())}\n{self.RUN_ID}\n", encoding="utf-8"
+        )
+
+    def release_lock(self) -> None:
+        """Release it, the way the terminator releases it before the last Stop."""
+        (self.tmp_path / ".appsec-lock").unlink(missing_ok=True)
 
     def call(self, call_id: str, agent_id: str, agent_type: str, job_id: str, **child) -> None:
         """The full happy sequence for one Agent call."""
@@ -257,7 +297,8 @@ class Run:
 @pytest.fixture
 def run(host: dict, tmp_path: Path, monkeypatch) -> Run:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    return Run(host, tmp_path)
+    monkeypatch.delenv("APPSEC_RUN_ID", raising=False)
+    return Run(host, tmp_path, monkeypatch)
 
 
 def test_one_foreground_role_returns_with_child_usage(run: Run) -> None:
@@ -465,3 +506,68 @@ def test_a_call_outside_the_current_claim_gets_no_turn_budget(run: Run) -> None:
     run.stop("agent_a", "appsec-advisor:appsec-recon-scanner", tool_uses=30)
     assert "BUDGET_" not in run.log
     assert run.calls()[0]["state"] == "done"
+
+
+def test_a_whole_run_holds_its_invariants_whatever_the_events_mean(run: Run) -> None:
+    """The class guard for every event this plugin reads as an authority.
+
+    Between 05:17Z and 07:22Z on 2026-09-05 Claude Code changed what all three
+    of them mean: the Agent return became a launch acknowledgement carrying no
+    outcome, the child transcript stopped being written, and `Stop` began firing
+    once per parent turn instead of once per run — 28 across 18 dispatches. Each
+    change turned an event that had been read as an authority into one that no
+    longer observes what it was read for, and the run reported a telemetry
+    mismatch at every boundary, failed its live agents as
+    `outer_session_terminal` and printed a completion summary 1m23s into a
+    40-minute run.
+
+    A future host may change a fourth. These three invariants hold whatever any
+    single event means, so they are what a replay asserts.
+    """
+    run.hold_lock()
+    agents = [
+        ("toolu_a", "agent_a", "appsec-advisor:appsec-recon-scanner", "phase2-recon"),
+        ("toolu_b", "agent_b", "appsec-advisor:appsec-architecture-analyst", "phase3-6-architecture"),
+    ]
+    for call_id, agent_id, agent_type, job_id in agents:
+        run.dispatch(call_id, agent_id, agent_type, job_id)
+        run.deliver("SubagentStart", agent_id=agent_id, agent_type=agent_type)
+        run.parent_stop()
+        run.parent_tool(f"toolu_after_{call_id}")
+        # Headless: the host names a child transcript it never writes, so no
+        # surface reports how the child ended.
+        run.stop_without_transcript(agent_id, agent_type)
+        run.settle(call_id, agent_id, agent_type, job_id)
+        run.parent_stop()
+
+    assert [call["state"] for call in run.calls()] == ["done", "done"], "a dispatched call outlived its own return"
+    assert "outer_session_terminal" not in run.log, "a parent turn ending was read as the run ending"
+    assert "ASSESSMENT_SUMMARY" not in run.log, "the run summarised itself while it was still running"
+    assert run.budget_calls() == {}, "a stopped child still holds turn budget"
+
+
+def test_the_run_ends_only_once_its_lock_is_gone(run: Run) -> None:
+    """The other half: a `Stop` still has to end the run, exactly once.
+
+    The terminator releases the lock and the session then stops, so lock
+    ownership — not the event — is what separates a turn boundary from the end
+    of the run. Pinning both directions keeps the guard above from being
+    satisfiable by never cleaning up at all.
+    """
+    agent_type = "appsec-advisor:appsec-architecture-analyst"
+    run.hold_lock()
+    run.dispatch("toolu_a", "agent_a", agent_type, "phase3-6-architecture")
+    run.deliver("SubagentStart", agent_id="agent_a", agent_type=agent_type)
+
+    run.parent_stop()
+    assert run.calls()[0]["state"] == "running"
+    assert "outer_session_terminal" not in run.log
+
+    run.release_lock()
+    run.parent_stop()
+    # The cleanup removes the live call state with the call, so the log is what
+    # is left to read — the same shape `clear_terminal_active_tool_calls` leaves
+    # behind for an interrupted run.
+    assert "outer_session_terminal" in run.log
+    assert "AGENT_FAILED" in run.log
+    assert not lifecycle.state_path(run.tmp_path).exists()

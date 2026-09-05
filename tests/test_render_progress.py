@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -516,7 +517,15 @@ def _stride_spawn(ts: str, call_id: str, component: str) -> str:
     return (
         f"2026-08-31T{ts}Z  [b0ba1e2f]  INFO   AGENT_SPAWN  agent_call_id={call_id}"
         f"  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet"
-        f"  analysis_depth=full  description=STRIDE (full): {component}"
+        f"  component_id={component}  analysis_depth=full  description=STRIDE (full): {component}"
+    )
+
+
+def _stride_failed(ts: str, call_id: str, component: str, reason: str) -> str:
+    return (
+        f"2026-08-31T{ts}Z  [b0ba1e2f]  WARN   AGENT_FAILED  agent_call_id={call_id}"
+        f"  agent_type=appsec-advisor:appsec-stride-analyzer-v2  component_id={component}"
+        f"  reason={reason}"
     )
 
 
@@ -622,3 +631,21 @@ def test_verbose_does_not_print_the_hook_log_twice():
     assert "export APPSEC_VERBOSE=1" in branch
     assert 'tail -f "$LOG_FILE"' not in branch
     assert 'tail -f "$RUN_LOG_FILE"' in branch
+
+
+def test_the_stride_tally_counts_a_component_only_once_and_only_when_it_finished():
+    """A wave of four reported `4/4 components done` on the line saying one had
+    failed, then `5/5` once its retry finished — more components than the phase
+    had. The tally counted calls and read any terminal event as progress."""
+    out = _render(
+        [
+            _stride_spawn("08:09:06", "toolu_a", "fastapi-api"),
+            _stride_spawn("08:09:17", "toolu_b", "django-ui"),
+            _stride_done("08:19:44", "toolu_b", "django-ui"),
+            _stride_failed("08:25:26", "toolu_a", "fastapi-api", "join_deadline_expired"),
+            _stride_spawn("08:26:36", "toolu_a2", "fastapi-api"),
+            _stride_done("08:38:26", "toolu_a2", "fastapi-api"),
+        ]
+    )
+    tallies = re.findall(r"STRIDE (\d+)/(\d+) components done", out)
+    assert tallies == [("1", "2"), ("1", "2"), ("2", "2")]

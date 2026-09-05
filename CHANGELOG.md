@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--verbose` now reaches the skill in a headless run, so the completion summary shows the per-stage timings, the agent roster and the token/cost detail instead of the timing headline alone.
 - A headless run no longer reports its working agents as failed, finishes the assessment minutes after it started, or prints the completion summary twice; budget warnings raised by the run are no longer dropped, and an agent that does fail says what happened instead of naming an internal state.
 - On hosts that answer an Agent call with a launch acknowledgement, a finished agent is now recorded as finished: the run no longer reports a telemetry mismatch at every dispatch, and turn-budget warnings keep working for the rest of the run instead of stopping after the first agent.
+- The STRIDE progress count now counts components rather than dispatches, and only once one finishes, so a wave no longer reports every component done on the line saying one failed, nor more components done than the phase has.
 
 ### Added
 
