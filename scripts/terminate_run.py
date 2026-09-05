@@ -14,6 +14,11 @@ and best-effort in every direction: the terminator must never mask the failure
 that brought the run here, so it reports what it did on stdout and always
 exits 0.
 
+It is also scoped to one directory's own run. Every surface it converges —
+``RUN_ABORTED``, the checkpoint, the live agent markers, the run issues, the
+lock — is the lock holder's state, so a run whose exit class is "somebody else
+holds this output directory" terminates nothing in it.
+
 Usage
 -----
 
@@ -81,7 +86,18 @@ def _repo_root_from_config(output_dir: Path, given: str) -> str:
 
 
 def terminate(output_dir: Path, outcome: str, reason: str, run_id: str, repo_root: str, depth: str = "") -> list[str]:
-    """Bring every terminal surface into agreement. Returns what it did."""
+    """Bring every terminal surface into agreement. Returns what it did.
+
+    A run that never held this directory terminates nothing in it. The wrapper
+    calls the terminator on every non-clean exit, and ``LOCK_BLOCKED`` is one of
+    them: the blocked run exits 1 having touched nothing, and without this guard
+    the terminator would then abort the *holder's* checkpoint, fail the agents
+    it still has in flight and overwrite its run issues — the collision the lock
+    was refused to prevent, delivered by the failure path instead.
+    """
+    if acquire_lock.lock_held_by_live_other_run(output_dir / ".appsec-lock", run_id):
+        return ["lock held-by-other", "foreign live run — nothing terminated"]
+
     steps: list[str] = []
     kind = OUTCOMES[outcome]
     detail = f"outcome={kind}  reason={reason or kind}"

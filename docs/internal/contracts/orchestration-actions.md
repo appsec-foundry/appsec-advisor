@@ -56,9 +56,12 @@ A run that does not finish cleanly still reaches one terminal state.
 `scripts/terminate_run.py` is that single terminator: it records `RUN_ABORTED`
 unless a controller verdict already stands, closes the checkpoint, terminalizes
 remaining calls, removes live markers, aggregates run issues, and releases the
-lock when the run owns it. A lock whose holder is alive under a different run
-ID is never released. The headless wrapper calls it on operator interrupt and
-on a failed exit.
+lock when the run owns it. All of that is scoped to the run that owns the
+directory: when the lock is held by a live run under a different run ID, the
+terminator changes nothing there — not the lock, and not the checkpoint, live
+markers or run issues that are the holder's state. The headless wrapper calls
+it on operator interrupt and on a failed exit, and `LOCK_BLOCKED` is a failed
+exit.
 
 Each context-v2 boundary that runs after a producer returned first cross-checks
 the surfaces describing the calls of the most recent dispatch action: accepted

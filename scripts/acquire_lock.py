@@ -303,6 +303,23 @@ def _read_acquired_ts(lock_path: Path) -> int | None:
     return None
 
 
+def lock_held_by_live_other_run(lock_path: Path, run_id: str = "") -> bool:
+    """Return whether a *live* assessment other than ``run_id``'s holds this lock.
+
+    This is the predicate behind ``release_lock``'s ``held-by-other``, exposed
+    because releasing the lock is not the only thing a run must refuse to do to
+    a directory that is not its own. Everything in an output directory is the
+    holder's live run state: its checkpoint, its in-flight agent markers, its
+    run issues. A run that was refused the lock asks this before writing
+    anything there, and the answer stays in one place so acquisition, release
+    and those callers cannot drift apart.
+    """
+    if not lock_path.is_file():
+        return False
+    state, _ = _classify_lock(lock_path)
+    return state == "fresh" and not (run_id and read_run_id(lock_path) == run_id)
+
+
 def release_lock(lock_path: Path, run_id: str = "") -> str:
     """Remove a lock this run owns. Returns ``absent``, ``released``,
     ``held-by-other``, or ``error``.
@@ -324,8 +341,7 @@ def release_lock(lock_path: Path, run_id: str = "") -> str:
     """
     if not lock_path.is_file():
         return "absent"
-    state, _ = _classify_lock(lock_path)
-    if state == "fresh" and not (run_id and read_run_id(lock_path) == run_id):
+    if lock_held_by_live_other_run(lock_path, run_id):
         return "held-by-other"
     try:
         lock_path.unlink()

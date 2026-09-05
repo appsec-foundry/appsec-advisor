@@ -14,6 +14,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 SCRIPTS = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
@@ -164,3 +166,60 @@ def test_cli_reports_each_step(tmp_path: Path, capsys) -> None:
     out = capsys.readouterr().out
     assert "RUN_ABORTED recorded" in out
     assert "lock released" in out
+
+
+def _snapshot(output_dir: Path) -> dict[str, bytes]:
+    """Every file under the run directory, by relative path."""
+    return {str(p.relative_to(output_dir)): p.read_bytes() for p in sorted(output_dir.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.parametrize(
+    ("third_line", "run_id"),
+    [
+        # A v3 lock naming a different run — the LOCK_BLOCKED shape.
+        ("run-other", "run-mine"),
+        # A v2 lock: a live holder we cannot prove is ours.
+        ("", "run-mine"),
+        # Refused before this run had a lock of its own to name.
+        ("run-other", ""),
+    ],
+)
+def test_a_blocked_run_terminates_nothing_in_a_live_foreign_directory(
+    tmp_path: Path, third_line: str, run_id: str
+) -> None:
+    """The failure path must not deliver the collision the lock refused.
+
+    `LOCK_BLOCKED` is a non-clean exit, so the wrapper calls the terminator —
+    against a directory that is somebody else's live run. Releasing the lock was
+    already guarded; the checkpoint, the in-flight agent markers and the run
+    issues were not, so a blocked run aborted the holder's checkpoint and closed
+    its running agents as `outer_session_terminal`. The holder's controller then
+    read that `RUN_ABORTED` as its own verdict and stopped (2026-09-05,
+    insecure-python-app: 43 minutes of Phase 9 lost).
+
+    The rule is scope, not a list of surfaces: nothing in the directory changes.
+    """
+    _run_dir(tmp_path)
+    lock = f"{os.getpid()}\n{int(time.time())}\n" + (f"{third_line}\n" if third_line else "")
+    (tmp_path / ".appsec-lock").write_text(lock, encoding="utf-8")
+    lifecycle.register_call(
+        tmp_path,
+        {
+            "agent_call_id": "toolu_live",
+            "session_id": "6b851f4b",
+            "agent": "stride-analyzer-v2",
+            "agent_type": "appsec-advisor:appsec-stride-analyzer-v2",
+            "model": "sonnet",
+            "description": "STRIDE (full): fastapi-app",
+            "background": False,
+            "max_turns": 40,
+        },
+    )
+    before = _snapshot(tmp_path)
+
+    steps = terminate_run.terminate(tmp_path, "failure", "wrapper exit 1", run_id, str(tmp_path))
+
+    assert "lock held-by-other" in steps
+    assert _snapshot(tmp_path) == before
+    # The holder's agent is still in flight, so its live state must survive.
+    assert lifecycle.state_path(tmp_path).exists()
