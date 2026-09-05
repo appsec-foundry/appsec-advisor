@@ -602,6 +602,91 @@ def test_lock_failure_happens_before_intermediate_cleanup(monkeypatch, tmp_path)
     assert (output / ".stride-api.json").read_text() == "active run"
 
 
+# ── The blocked-lock question is decided here, not in the runtime ────────────
+#
+# A headless run printed the full "Held lock" menu into its log and then died at
+# the controller gate (2026-09-05). The runtime was told to skip the question
+# "under APPSEC_HEADLESS=1" — a condition it cannot evaluate, because it reads
+# the action, never the environment. The decision now rides in the action.
+
+
+def _lock_error(reason: str = "acquire_lock.py failed with exit 1: LOCK_BLOCKED: held") -> Exception:
+    return controller.ControllerError(reason, 3)
+
+
+def test_a_blocked_lock_invites_the_question_when_an_operator_can_answer(monkeypatch):
+    monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+
+    action = controller._failure_action(_lock_error())
+
+    assert action["lock_prompt_needed"] is True
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " 1 "])
+def test_a_headless_run_is_never_asked(monkeypatch, value):
+    monkeypatch.setenv("APPSEC_HEADLESS", value)
+
+    action = controller._failure_action(_lock_error())
+
+    assert action["lock_prompt_needed"] is False
+    assert action["exit_code"] == 3, "the runtime stops on the exit code instead"
+
+
+@pytest.mark.parametrize("value", ["0", "", "no", "off", "false"])
+def test_an_unset_or_negative_flag_keeps_the_question(monkeypatch, value):
+    monkeypatch.setenv("APPSEC_HEADLESS", value)
+
+    assert controller._failure_action(_lock_error())["lock_prompt_needed"] is True
+
+
+def test_the_field_appears_on_no_other_abort(monkeypatch):
+    """Only a held lock is answerable by a question. Every other abort is final,
+    and a field suggesting otherwise would invite a menu where none applies."""
+    monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+
+    other = controller._failure_action(controller.ControllerError("preflight found 3 findings", 2))
+    rejected = controller._failure_action(controller.CallError("unknown flag --nope"))
+
+    assert "lock_prompt_needed" not in other
+    assert "lock_prompt_needed" not in rejected
+
+
+def test_a_truncated_reason_still_carries_the_decision(monkeypatch):
+    """`_cap_reason` elides the middle of an over-long reason. LOCK_BLOCKED sits
+    in the head, so the gate must survive the truncation that reaches the
+    operator — the shape where a substring check silently starts failing."""
+    monkeypatch.setenv("APPSEC_HEADLESS", "1")
+    long_reason = "acquire_lock.py failed with exit 1: LOCK_BLOCKED: held\n" + ("receipt line\n" * 400)
+
+    action = controller._failure_action(controller.ControllerError(long_reason, 3))
+
+    assert len(action["reason"]) <= controller._MAX_ACTION_REASON
+    assert action["lock_prompt_needed"] is False
+
+
+def test_the_emitted_action_validates_with_the_field(monkeypatch, capsys):
+    """The action schema forbids unknown properties: an unvalidatable field would
+    replace the abort with a meta-error about the controller."""
+    monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+
+    exit_code = controller._emit(controller._failure_action(_lock_error()))
+    emitted = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 3
+    assert emitted["lock_prompt_needed"] is True
+
+
+def test_the_runtime_reads_the_field_instead_of_the_environment():
+    """Drift guard on the instruction the fix exists for: §1a must gate on the
+    action. The environment variable stays documented elsewhere (§2b) — this
+    asserts only that the lock section no longer asks the runtime to read it."""
+    runtime = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
+    section = runtime.split("### 1a.")[1].split("### 2")[0]
+
+    assert "ACTION.lock_prompt_needed" in section
+    assert "APPSEC_HEADLESS" not in section
+
+
 def test_next_action_rehydrates_from_filesystem(tmp_path):
     output = tmp_path / "out"
     output.mkdir()

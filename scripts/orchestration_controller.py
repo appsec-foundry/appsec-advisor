@@ -1271,14 +1271,32 @@ def clear_abort(output_dir: Path, reason: str) -> dict[str, Any]:
     )
 
 
+def _headless_session() -> bool:
+    """Whether this run has an operator who can answer a question.
+
+    The one authority on it. Every interactive decision the runtime may take is
+    resolved here and carried in the action, because the runtime reads the
+    action, not the environment: an instruction that says "skip the question
+    under APPSEC_HEADLESS=1" asks it to condition on something it cannot see.
+    """
+    return os.environ.get("APPSEC_HEADLESS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _failure_action(exc: ControllerError) -> dict[str, Any]:
     """Answer a malformed call with `reject`, everything else with `abort`."""
-    return {
+    action = {
         "schema_version": 1,
         "action": "reject" if isinstance(exc, CallError) else "abort",
         "reason": _cap_reason(str(exc)),
         "exit_code": exc.exit_code,
     }
+    # A held lock is the single abort the runtime may answer with a question
+    # instead of stopping — only the operator knows whether the holder is a live
+    # session. Whether anyone is there to be asked is decided here, so a headless
+    # run stops on the exit code rather than printing a menu into a log.
+    if "LOCK_BLOCKED" in action["reason"]:
+        action["lock_prompt_needed"] = not _headless_session()
+    return action
 
 
 def _resolve(argv: list[str]) -> dict[str, Any]:
@@ -2358,7 +2376,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     # repo-size recommendation (covers BOTH a Sonnet-5 and an Opus session), and
     # the run is interactive (forced false under APPSEC_HEADLESS=1).
     _orch_rec = cfg.get("orchestrator_recommended_model", "")
-    _headless = os.environ.get("APPSEC_HEADLESS", "").strip().lower() in ("1", "true", "yes", "on")
+    _headless = _headless_session()
     _orch_prompt_needed = bool(
         session_model and _orch_rec and not resolve_config._same_model(session_model, _orch_rec) and not _headless
     )

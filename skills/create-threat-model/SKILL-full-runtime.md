@@ -39,8 +39,15 @@ genuinely undecidable from the filesystem — only the operator knows whether a
 second Claude session is scanning that directory right now.
 
 Print `ACTION.reason` verbatim (it names the holder, the heartbeat age, and the
-self-clear ETA), then call `AskUserQuestion` — a sanctioned interactive call,
-like §2a. One question, header `Held lock`, options in this order:
+self-clear ETA). Then read `ACTION.lock_prompt_needed` — the controller has
+already decided whether anyone can answer, and it is the only party that can:
+
+**`false` — stop with `ACTION.exit_code`.** Nobody is there (a headless run).
+Do not ask, do not delete the lock, do not retry. A question printed here
+reaches a log file, and the run dies at the gate with a menu nobody read.
+
+**`true` — call `AskUserQuestion`**, a sanctioned interactive call like §2a. One
+question, header `Held lock`, options in this order:
 
 1. **Wait and retry** — “Re-run once the lock clears itself (~Ns).”
 2. **Take over the lock** — “Delete the lock and start now. Only if no other scan is running; two runs on one output directory corrupt each other's artifacts.”
@@ -52,9 +59,6 @@ Substitute the real ETA from `ACTION.reason`. On the answer:
 - *Take over* → `rm -f "$OUTPUT_DIR/.appsec-lock"`, then re-run the §1 prepare
   command **once**. If it blocks again, stop and report — do not loop.
 - *Cancel* → stop with `ACTION.exit_code`.
-
-Under `APPSEC_HEADLESS=1` there is nobody to ask: skip the question and stop
-with `ACTION.exit_code`.
 
 The controller has already:
 

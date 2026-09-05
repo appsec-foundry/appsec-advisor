@@ -79,6 +79,10 @@
     "orchestrator_prompt_needed": {
       "type": "boolean"
     },
+    "lock_prompt_needed": {
+      "$comment": "Set on a LOCK_BLOCKED abort only. false means no operator can answer (headless run): stop on exit_code, do not ask, do not delete the lock.",
+      "type": "boolean"
+    },
     "config_path": {
       "type": "string",
       "minLength": 1,
