@@ -2233,3 +2233,13 @@ class TestRequestedDeliverablesAreReported:
         assert gated - skill_owned == produced, (
             "every gated deliverable needs a deterministic producer or an explicit exemption"
         )
+
+
+class TestHeadlessWrapperForwardsVerbose:
+    """`run-headless.sh` consumes `--verbose` for its own console tails. It has
+    to forward it to the skill as well, or the detail this module gates on the
+    resolved `verbose` flag is unreachable outside an interactive run."""
+
+    def test_verbose_reaches_the_skill_prompt(self):
+        body = (REPO_ROOT / "scripts" / "run-headless.sh").read_text(encoding="utf-8")
+        assert 'PROMPT="$PROMPT $VERBOSE"' in body

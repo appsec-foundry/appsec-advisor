@@ -46,7 +46,9 @@ OUTPUT
   --logo <path|url>            Cover logo: local file path or http(s) URL
                                (org-profile branding.* sets these org-wide;
                                these flags override per run)
-  --verbose                    Append a Run Statistics section to the report
+  --verbose                    Detailed console summary — adds the per-stage
+                               timings, agent roster and token/cost block to
+                               the run statistics
   --quiet                      Compact console summary — only repository, run,
                                results, outputs and warnings (omits the verdict,
                                change summary, next steps, and run statistics)

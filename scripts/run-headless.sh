@@ -598,6 +598,13 @@ if [ "$SKILL" = "create-threat-model" ]; then
 
     [ "$NO_QA" = "1" ]   && PROMPT="$PROMPT --no-qa"
 
+    # The wrapper's --verbose is the skill's --verbose too. The resolved config
+    # gates the run summary's detail on it (per-stage timings, agent roster,
+    # token/cost); consuming the flag for the console tails alone left the two
+    # views on different settings, and the detail unreachable outside an
+    # interactive invocation.
+    [ -n "$VERBOSE" ]    && PROMPT="$PROMPT $VERBOSE"
+
     # Append remaining flags
     PROMPT="$PROMPT$SKILL_FLAGS"
 
