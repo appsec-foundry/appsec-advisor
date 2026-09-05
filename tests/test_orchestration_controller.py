@@ -6649,3 +6649,45 @@ def test_the_runtime_reads_the_context_field_instead_of_the_environment():
     mode_file = (base / "modes" / "business-context.md").read_text(encoding="utf-8")
     assert "business_context_prompt_needed" in mode_file
     assert "APPSEC_HEADLESS" not in mode_file
+
+
+def test_preflight_writes_the_run_start_marker(tmp_path, monkeypatch):
+    """The marker scopes issue aggregation, so a run that stops early must still
+    own it. The runtime wrote it in §4 — after the interactive steps — so a run
+    that stopped before §4 kept the previous run's epoch and reported that run's
+    events as its own.
+    """
+    import time
+
+    monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+    cfg = _cfg(tmp_path)
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    stale = "1000000000"
+    (output / ".scan-start-epoch").write_text(stale, encoding="utf-8")
+
+    seen = {}
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(
+        controller,
+        "_prepasses",
+        lambda cfg, receipts: seen.update(at_prepass=(output / ".scan-start-epoch").read_text()),
+    )
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "plan\n")
+
+    controller.prepare(["--full"])
+
+    written = (output / ".scan-start-epoch").read_text().strip()
+    assert written != stale, "a later run must not inherit the previous run's start epoch"
+    assert int(written) >= int(time.time()) - 300
+    assert seen["at_prepass"] == written, "the prepasses must already see this run's marker"
+
+
+def test_the_runtime_no_longer_writes_the_run_start_marker():
+    """One producer for the marker. Both writing it would let the later write
+    move the run boundary after the prepasses already read the earlier one."""
+    runtime = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
+    assert ".scan-start-epoch" not in runtime

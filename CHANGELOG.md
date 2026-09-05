@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - An unattended run no longer stops to ask whether to add business context.
+- A run that ends early no longer reports a previous run's failure as its own.
 - The secret masker no longer rewrites the line following a credential keyword that ends a line, so an entry point such as `GET /api/audit?token=` no longer corrupts the threat model into a document the run then aborts on.
 - A headless run blocked by another run's lock now stops with its exit code instead of printing an interactive menu into the log, no longer composes or reports on the artifacts of the assessment holding the lock, and no longer aborts it.
 - Interrupting an unattended headless run now actually stops it: the signal reaches Claude without a terminal, the run releases its own lock instead of blocking the next attempt for five minutes, and the printed recovery command offers `--rerender` when Stage 1 had already finished.

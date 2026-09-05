@@ -2363,6 +2363,19 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
                 "--step=stage1-dispatch",
             ],
         )
+        # The run-start marker, written here rather than by the runtime.
+        # `_scope_to_current_run` scopes issue aggregation to it, and the
+        # runtime wrote it in §4 — after the interactive steps. A run that
+        # stopped before §4 left the PREVIOUS run's epoch in place (the wipe
+        # preserves the file), so its run issues were scoped to that run and
+        # reported its events as their own: a headless run that stopped at §2b
+        # was told its top issue was a controller abort from five hours earlier
+        # (2026-09-05 insecure-python-app). Preflight is the earliest point the
+        # run exists and the last one no model can skip; the prepasses below
+        # already read the marker too.
+        from _atomic_io import atomic_write_text  # noqa: PLC0415
+
+        atomic_write_text(output_dir / ".scan-start-epoch", f"{int(time.time())}")
         _capture_business_context(cfg, receipts)
         _prepasses(cfg, receipts)
         _fetch_requirements(cfg)
