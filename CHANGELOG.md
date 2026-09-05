@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Added
+
+- `/appsec-advisor:repo-profile` reports a repository's size, language split, build manifests and tracked-versus-untracked content before a scan is started — deterministic, no model, no network.
+
 ## 0.6.0-beta.2 (2026-09-04)
 
 ### Added

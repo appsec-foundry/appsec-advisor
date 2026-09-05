@@ -100,6 +100,7 @@ APPSEC_COACH=0 claude ...       off for this session
 /appsec-advisor:status                  is a scan running
 /appsec-advisor:threat-model-health     is the stored model consistent
 /appsec-advisor:security-score          0-100 score, no model needed
+/appsec-advisor:repo-profile            size, stack and layout, before a scan
 /appsec-advisor:export-threat-model     PDF, HTML, SARIF
 /appsec-advisor:publish-threat-model    push the report to its target
 /appsec-advisor:report-error            bundle after a failed run
