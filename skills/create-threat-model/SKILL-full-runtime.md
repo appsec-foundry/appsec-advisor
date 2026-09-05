@@ -100,13 +100,14 @@ Never binding — the prompt exists so the user chooses.
 
 ### 2b. Business context
 
-This step is the interactive question only. A `business_context_source` was
-already captured by the controller pre-flight, and a capture that failed stopped
-the run there — nothing is left to do here.
-
-Skip when `skip_business_context` is true, when `business_context_source` is
-non-empty, or when `APPSEC_HEADLESS=1`. Otherwise bind both (§3), read
+Fires only when `ACTION.business_context_prompt_needed` is `true` (no source
+captured from `--context`, `--skip-context` not set, and an operator who can
+answer — never in a headless run). Then bind both (§3), read
 `<base-dir>/modes/business-context.md`, follow it, then emit the run plan.
+
+Otherwise nothing is left to do here: a `business_context_source` was already
+captured by the controller pre-flight, and a capture that failed stopped the run
+there.
 
 ## 3. Bind compact state
 

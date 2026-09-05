@@ -83,6 +83,10 @@
       "$comment": "Set on a LOCK_BLOCKED abort only. false means no operator can answer (headless run): stop on exit_code, do not ask, do not delete the lock.",
       "type": "boolean"
     },
+    "business_context_prompt_needed": {
+      "$comment": "Whether the runtime asks the business-context question at §2b. false covers all three reasons not to ask — headless, --skip-context, or a source already captured from --context — so the runtime never has to read the environment to find out.",
+      "type": "boolean"
+    },
     "config_path": {
       "type": "string",
       "minLength": 1,

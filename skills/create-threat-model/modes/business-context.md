@@ -8,8 +8,9 @@
 > This file is the interactive question only. A source supplied with `--context`
 > is captured by the controller during pre-flight, before this file is read, and
 > a failed capture stops the run there. So this file is read only when
-> `BUSINESS_CONTEXT_SOURCE` is empty, `SKIP_BUSINESS_CONTEXT` is false,
-> `APPSEC_HEADLESS` is not `1`, and `MODE` is `full` or `rebuild`.
+> `ACTION.business_context_prompt_needed` is `true` and `MODE` is `full` or
+> `rebuild`. That one field already carries the empty-source, skip-flag and
+> operator-present conditions, so none of them is re-derived here.
 
 Business context is what the repository cannot show: what the system is for, which
 flows carry money or personal data, which obligations apply. It weights the impact

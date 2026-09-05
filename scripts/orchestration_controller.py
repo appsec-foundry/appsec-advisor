@@ -2398,6 +2398,16 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     _orch_prompt_needed = bool(
         session_model and _orch_rec and not resolve_config._same_model(session_model, _orch_rec) and not _headless
     )
+    # The business-context question is the runtime's other interactive step, and
+    # it is decided here for the same reason. §2b used to tell the runtime to
+    # skip it "when APPSEC_HEADLESS=1" — an environment variable the runtime
+    # cannot read — so an unattended run printed the question, ended its turn
+    # waiting for an answer nobody could give, and died at the artifact gate
+    # with no Stage 1 (2026-09-05 insecure-python-app). Every condition the
+    # question depends on is resolved here, so the runtime has one field to read.
+    _context_prompt_needed = bool(
+        not _headless and not cfg.get("skip_business_context") and not cfg.get("business_context_source")
+    )
     # When the interactive prompt will handle the model choice, drop the passive
     # session cost callout + orchestrator recommendation line from the box (they
     # would just repeat the prompt). Keep them when no prompt fires (headless /
@@ -2457,6 +2467,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "orchestrator_recommended_model": _orch_rec,
         "orchestrator_recommendation_reason": cfg.get("orchestrator_recommendation_reason", ""),
         "orchestrator_prompt_needed": _orch_prompt_needed,
+        "business_context_prompt_needed": _context_prompt_needed,
         "receipts": receipts,
     }
 

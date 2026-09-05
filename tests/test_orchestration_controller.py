@@ -722,8 +722,9 @@ def test_the_emitted_action_validates_with_the_field(monkeypatch, capsys):
 
 def test_the_runtime_reads_the_field_instead_of_the_environment():
     """Drift guard on the instruction the fix exists for: §1a must gate on the
-    action. The environment variable stays documented elsewhere (§2b) — this
-    asserts only that the lock section no longer asks the runtime to read it."""
+    action. The environment variable stays named elsewhere (§2a, as background
+    to a field) — this asserts only that the lock section no longer asks the
+    runtime to read it."""
     runtime = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
     section = runtime.split("### 1a.")[1].split("### 2")[0]
 
@@ -6593,3 +6594,58 @@ def test_prepare_abuse_distinguishes_an_empty_candidate_set(tmp_path, monkeypatc
     receipts = " ".join(action["receipts"])
     assert "no candidates to verify" in receipts
     assert "budget-critical" not in receipts
+
+
+# ----------------------------------------------------------------------------
+# The business-context question is a controller decision, like the lock question
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("headless", "extra", "expected"),
+    [
+        (False, {}, True),
+        (True, {}, False),
+        (False, {"skip_business_context": True}, False),
+        (False, {"business_context_source": "docs/business-context.md"}, False),
+        (True, {"skip_business_context": True}, False),
+    ],
+)
+def test_the_business_context_question_is_decided_by_the_controller(tmp_path, monkeypatch, headless, extra, expected):
+    """Every reason not to ask is resolved here and shipped as one field.
+
+    The runtime cannot read `APPSEC_HEADLESS`, so an instruction to skip the
+    question under it never fired: an unattended run printed the question and
+    ended its turn with no Stage 1.
+    """
+    if headless:
+        monkeypatch.setenv("APPSEC_HEADLESS", "1")
+    else:
+        monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+    cfg = _cfg(tmp_path) | extra
+    Path(cfg["output_dir"]).mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "plan\n")
+
+    action = controller.prepare(["--full"])
+
+    assert controller._validate_action(action) == action
+    assert action["business_context_prompt_needed"] is expected
+
+
+def test_the_runtime_reads_the_context_field_instead_of_the_environment():
+    """Drift guard on the instruction the fix exists for: §2b must gate on the
+    action, and so must the mode file it hands off to."""
+    base = ROOT / "skills" / "create-threat-model"
+    section = (base / "SKILL-full-runtime.md").read_text(encoding="utf-8").split("### 2b.")[1].split("## 3.")[0]
+
+    assert "ACTION.business_context_prompt_needed" in section
+    assert "APPSEC_HEADLESS" not in section
+
+    mode_file = (base / "modes" / "business-context.md").read_text(encoding="utf-8")
+    assert "business_context_prompt_needed" in mode_file
+    assert "APPSEC_HEADLESS" not in mode_file
