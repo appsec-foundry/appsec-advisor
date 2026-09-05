@@ -361,6 +361,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         "last_run_mode",
         "last_run_depth",
         "last_run_iso",
+        "last_run_cost_usd",
         "component_durations",
         "component_durations_recorded_at",
         "component_durations_phase_9_start",

@@ -36,7 +36,8 @@
 #                           (implied by --trust-mode untrusted)
 #   --restore-from <path>   Unsupported because incremental mode is unavailable
 #   --max-duration <sec>    Abort the run if it exceeds <sec> seconds
-#   --max-budget <usd>      Stop when estimated cost exceeds this amount
+#   --soft-budget <usd>     Steer the run to this cost; it still finishes
+#   --hard-budget <usd>     Kill the session at this cost (API billing only)
 #   --clean-cache           Delete cache & transient files (keeps the model); exits
 #   --clean-all             Delete everything in <output-dir> (with confirmation); exits
 #   --force                 Skip confirmation for --clean-all (auto in CI), and
@@ -111,7 +112,11 @@ Options:
   --no-qa                    Skip Stage-3 QA reviewer (faster CI runs)
   --restore-from <path>      Unsupported because incremental mode is unavailable
   --max-duration <seconds>   Abort the run if it exceeds the given duration
-  --max-budget <usd>         Stop when estimated cost exceeds this amount
+  --soft-budget <usd>        Steer the run to this cost. A run that cannot fit
+                             does not start; a run that overruns still finishes.
+  --hard-budget <usd>        Kill the session at this cost, losing the report
+                             (API billing only). Defaults to 1.25 x the soft
+                             budget when only --soft-budget is given.
   --clean-cache              Delete cache & transient files in \$OUTPUT_DIR; keeps
                              the threat model and audit logs. Exits without running.
   --clean-all                Delete everything in \$OUTPUT_DIR (interactive confirm
@@ -208,6 +213,8 @@ SKILL_FLAGS=""
 REQUIREMENTS_INFO=""
 REQUIREMENTS_SRC=""
 MAX_BUDGET=""
+HARD_BUDGET_EXPLICIT=0
+SOFT_BUDGET=""
 MODEL=""
 REASONING_TIER=""
 EMIT_RAW_JSON=0
@@ -275,9 +282,15 @@ while [ $# -gt 0 ]; do
         --dry-run)
             DRY_RUN_REQUESTED=1
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
-        --max-wall-time|--max-cost)
+        --max-wall-time)
             UNSUPPORTED_RUNTIME_OPTION="$1"
             SKILL_FLAGS="$SKILL_FLAGS $1 ${2:-}"; shift 2 ;;
+        --soft-budget|--max-cost)
+            case "${2:-}" in
+                ''|*[!0-9.]*|*.*.*|.) die "$1 expects a positive amount in USD (e.g. 30)" ;;
+            esac
+            SOFT_BUDGET="$2"
+            SKILL_FLAGS="$SKILL_FLAGS --soft-budget $2"; shift 2 ;;
         --rerender)
             RUNTIME_MODE_ARGS="$RUNTIME_MODE_ARGS --rerender"
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
@@ -364,8 +377,8 @@ while [ $# -gt 0 ]; do
             warn "--requirements-url is deprecated — use --requirements <url>"
             SKILL_FLAGS="$SKILL_FLAGS --requirements $2"
             REQUIREMENTS_INFO="enabled → $2"; REQUIREMENTS_SRC="$2"; shift 2 ;;
-        --max-budget)
-            MAX_BUDGET="$2"; shift 2 ;;
+        --hard-budget|--max-budget)
+            MAX_BUDGET="$2"; HARD_BUDGET_EXPLICIT=1; shift 2 ;;
         --model)
             MODEL="$2"; shift 2 ;;
         --reasoning-model)
@@ -417,7 +430,7 @@ if [ "$SKILL" = "create-threat-model" ]; then
         die "--dry-run is not supported by the compact runtime. No scan was started."
     fi
     case "$UNSUPPORTED_RUNTIME_OPTION" in
-        --max-wall-time|--max-cost)
+        --max-wall-time)
             die "$UNSUPPORTED_RUNTIME_OPTION is not supported by the compact runtime. Use a host-level limit instead." ;;
         ?*)
             die "$UNSUPPORTED_RUNTIME_OPTION is not supported by the compact runtime. Use --full, --rebuild, or --rerender." ;;
@@ -456,16 +469,32 @@ if [ -z "$MODEL" ]; then
     info "Economy default: session model '$MODEL' (use --model to override)"
 fi
 
+# ── Hard backstop derived from the soft budget ──────────────────────
+# The two budgets do different jobs. --soft-budget steers the run and never
+# kills it; --hard-budget is the host's cut and always kills, leaving no report
+# beyond what --rerender can salvage from a completed Stage 1. The backstop must
+# therefore sit above the band the soft mechanism is allowed to use (a 10 %
+# target, 20 % declared as the failure point) plus a margin, because the two
+# sides count differently: the soft side values tokens with the plugin's price
+# table, the hard side is whatever the CLI itself counts. Hence 1.25 ×. See
+# specs/changes/a-cost-budget-steers-the-run.
+if [ -n "$SOFT_BUDGET" ] && [ -z "$MAX_BUDGET" ]; then
+    MAX_BUDGET="$(awk -v b="$SOFT_BUDGET" 'BEGIN { printf "%.2f", b * 1.25 }')"
+    info "Hard backstop derived from --soft-budget \$$SOFT_BUDGET: \$$MAX_BUDGET (override with --hard-budget)"
+fi
+
 # ── API billing mode adjustments ────────────────────────────────────
 if [ "$BILLING_MODE" = "api" ]; then
     # Warn if spending is uncapped — easy to run up unexpected charges.
     if [ -z "$MAX_BUDGET" ]; then
-        warn "API billing mode active with no budget cap — consider --max-budget <usd>"
+        warn "API billing mode active with no budget cap — consider --soft-budget <usd>"
     fi
 else
-    # Subscription mode: budget cap flag is not supported; drop it with a warning.
+    # Subscription mode: the host's cut is not available; drop it. Only say so
+    # when the operator asked for it — a derived backstop is not their doing.
     if [ -n "$MAX_BUDGET" ]; then
-        warn "--max-budget is only effective in API billing mode (ANTHROPIC_API_KEY unset); ignoring"
+        [ "$HARD_BUDGET_EXPLICIT" = "1" ] && \
+            warn "--hard-budget is only effective in API billing mode (ANTHROPIC_API_KEY unset); ignoring"
         MAX_BUDGET=""
     fi
 fi
@@ -490,13 +519,19 @@ fi
 # This catches automatic incremental selection from an existing baseline before
 # the headless Claude process is started and before this wrapper creates output.
 if [ "$SKILL" = "create-threat-model" ] && [ -z "$CLEAN_MODE" ]; then
+    # The budget and the depth decide admission too, so they have to reach the
+    # same read-only owner. Without them the wrapper would admit a run the
+    # controller refuses one step later, after the output directory exists.
+    ADMISSION_BUDGET_ARGS=""
+    [ -n "$SOFT_BUDGET" ] && ADMISSION_BUDGET_ARGS="--soft-budget $SOFT_BUDGET"
+    [ -n "$ASSESSMENT_DEPTH" ] && ADMISSION_BUDGET_ARGS="$ADMISSION_BUDGET_ARGS --assessment-depth $ASSESSMENT_DEPTH"
     set +e
     if [ -n "$RUNTIME_MODE_ARGS" ]; then
         ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
-            route -- $RUNTIME_MODE_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
+            route -- $RUNTIME_MODE_ARGS $ADMISSION_BUDGET_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
     else
         ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
-            route -- --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
+            route -- $ADMISSION_BUDGET_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
     fi
     ADMISSION_EXIT=$?
     set -e
@@ -706,7 +741,8 @@ echo "  Plugin     : $PLUGIN_DIR"
 # requirements source is a readable local file. Fails soft for URLs / config.
 [ -n "$REQUIREMENTS_SRC" ] && [ -f "$REQUIREMENTS_SRC" ] && \
     python3 "$SCRIPT_DIR/run_summary.py" requirements "$REQUIREMENTS_SRC" 2>/dev/null || true
-[ -n "$MAX_BUDGET" ]       && echo "  Budget cap : \$$MAX_BUDGET"
+[ -n "$SOFT_BUDGET" ]      && echo "  Soft budget: \$$SOFT_BUDGET (steers; the run still finishes)"
+[ -n "$MAX_BUDGET" ]       && echo "  Hard cut   : \$$MAX_BUDGET (kills the session)"
 [ -n "$CATEGORY_FILTER" ]  && echo "  Category   : $CATEGORY_FILTER"
 [ -n "$VERBOSE" ]          && echo "  Verbose    : real-time hook event log on stderr"
 echo ""

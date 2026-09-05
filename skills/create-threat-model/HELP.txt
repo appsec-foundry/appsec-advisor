@@ -167,8 +167,15 @@ MODES
   report history.
 
   Rejected before any run state changes or any agent is dispatched:
-  --incremental, --pr-mode, --resume, --dry-run, --max-wall-time, --max-cost
+  --incremental, --pr-mode, --resume, --dry-run, --max-wall-time
   and APPSEC_LIVE_PHASE=1.
+
+  --soft-budget <usd>          Steer the run to this cost. A run whose projected
+                               cost cannot fit does not start; a run that
+                               overruns still finishes. Not a cap. Under a
+                               subscription the figures are price-table
+                               valuations of tokens, not money billed.
+                               (--max-cost is the deprecated spelling.)
 
   --no-qa                      Skip the Stage 3 QA reviewer (implied by quick)
   --no-confirm / --yes         Skip interactive confirmation prompts

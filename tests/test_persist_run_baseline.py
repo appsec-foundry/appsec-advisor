@@ -80,7 +80,7 @@ def test_field_names_match_baseline_state_carry_forward():
     """`baseline_state.py` carries these forward on rewrite; a name that drifts
     apart from that list gets silently wiped by the next baseline write."""
     src = (REPO_ROOT / "scripts" / "baseline_state.py").read_text(encoding="utf-8")
-    for key in (prb.KEY_SECONDS, prb.KEY_MODE, prb.KEY_DEPTH, prb.KEY_ISO):
+    for key in (prb.KEY_SECONDS, prb.KEY_MODE, prb.KEY_DEPTH, prb.KEY_ISO, prb.KEY_COST):
         assert f'"{key}"' in src, f"{key} missing from baseline_state carry-forward"
 
 
@@ -198,3 +198,51 @@ def test_no_temp_file_left_behind(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(prb, "_net_wall_seconds", lambda *a, **k: None)
     prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 300)
     assert list((tmp_path / ".appsec-cache").glob("*.tmp")) == []
+
+
+# ---------------------------------------------------------------------------
+# Run cost — the next run's projection rests on it
+# ---------------------------------------------------------------------------
+
+
+def test_the_written_cost_is_consumed_by_the_projection(tmp_path: Path, monkeypatch):
+    """Writer and reader have to agree on the key, the same way they already do
+    for the duration. A misspelled name would leave the projection silently
+    falling back to the parametric floor."""
+    import project_run_cost
+
+    monkeypatch.setattr(
+        prb,
+        "_run_cost_usd",
+        lambda _output_dir: 29.59,
+    )
+    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
+    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
+
+    assert _read_cache(tmp_path)[prb.KEY_COST] == 29.59
+    assert project_run_cost.last_run_cost(tmp_path, "full", "standard") == 29.59
+
+
+def test_a_total_that_is_only_a_lower_bound_is_not_written(tmp_path: Path, monkeypatch):
+    """A floor total cannot be told apart from a complete one once it is in the
+    cache, and the next run would refuse or admit on a number it misreads."""
+    import cost_running_total
+
+    monkeypatch.setattr(
+        cost_running_total,
+        "aggregate_running_total",
+        lambda *_args, **_kwargs: {"status": "ok", "cost_usd": 29.59, "cost_is_floor": True},
+    )
+    assert prb._run_cost_usd(tmp_path) is None
+
+
+def test_unreadable_telemetry_leaves_the_duration_write_intact(tmp_path: Path, monkeypatch):
+    """The cost is best-effort like the timing itself: a run whose telemetry
+    cannot be totalled still teaches the estimator its duration."""
+    monkeypatch.setattr(prb, "_run_cost_usd", lambda _output_dir: None)
+    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
+    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
+
+    cache = _read_cache(tmp_path)
+    assert cache[prb.KEY_SECONDS] == 6000
+    assert prb.KEY_COST not in cache

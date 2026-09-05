@@ -120,7 +120,7 @@
           "estimate_total_pretty",
           "invocation_args",
           "keep_runtime_files",
-          "max_cost_usd",
+          "soft_budget_usd",
           "max_repair_iterations",
           "max_stride_components",
           "max_wall_time_seconds",

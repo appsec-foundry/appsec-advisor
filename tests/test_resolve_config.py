@@ -1163,7 +1163,7 @@ class TestCLI:
             "  local-default:\n"
             "    base_mode: standard\n"
             "    outputs: { sarif: true }\n"
-            "    guardrails: { max_cost_usd: 10 }\n"
+            "    guardrails: { soft_budget_usd: 10 }\n"
         )
         r = self._run("--config-summary", "--org-profile", str(profile))
         assert r.returncode == 0
@@ -1171,7 +1171,7 @@ class TestCLI:
         assert "My Org (myorg), preset local-default, source cli" in r.stdout
         assert "Outputs   :" in r.stdout
         assert "markdown + yaml + sarif" in r.stdout
-        assert "Limits    : cost $10.00" in r.stdout
+        assert "Limits    : soft budget $10.00" in r.stdout
 
     def test_summary_shows_pentest_target_inline(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -1216,7 +1216,32 @@ class TestCLI:
     def test_summary_shows_deadline_when_set(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         r = self._run("--config-summary", "--max-wall-time", "1h", "--max-cost", "15.0")
-        assert "Limits    : wall-time 1 h / cost $15.00" in r.stdout
+        assert "Limits    : wall-time 1 h / soft budget $15.00" in r.stdout
+
+    def test_summary_shows_soft_budget_under_its_own_name(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        r = self._run("--config-summary", "--soft-budget", "30")
+        assert "Limits    : soft budget $30.00" in r.stdout
+
+    def test_the_deprecated_org_guardrail_key_still_resolves(self, tmp_path, monkeypatch):
+        """`max_cost_usd` was published in the org-profile schema. A profile
+        that still spells it that way must keep working."""
+        monkeypatch.chdir(tmp_path)
+        profile = tmp_path / "org-profile" / "org-profile.yaml"
+        profile.parent.mkdir()
+        profile.write_text(
+            "api_version: appsec-advisor.org-profile/v2\n"
+            'organization: { id: myorg, name: My Org, profile_version: "1" }\n'
+            'compatibility: { core: ">=0.4 <0.7" }\n'
+            "default_preset: local-default\n"
+            "presets:\n"
+            "  local-default:\n"
+            "    base_mode: standard\n"
+            "    guardrails: { max_cost_usd: 12 }\n"
+        )
+        r = self._run("--config-summary", "--org-profile", str(profile))
+        assert r.returncode == 0
+        assert "Limits    : soft budget $12.00" in r.stdout
 
     def test_summary_box_wraps_long_values_without_breaking_border(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -1944,14 +1969,14 @@ class TestSummaryActiveOptions:
     def test_limits_wall_time_hours_and_cost(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(max_wall_time_seconds=7800, max_cost_usd=12.5)))
+        rows = dict(rc._summary_active_options(_base_cfg(max_wall_time_seconds=7800, soft_budget_usd=12.5)))
         assert "wall-time 2 h 10 min" in rows["Limits"]
-        assert "cost $12.50" in rows["Limits"]
+        assert "soft budget $12.50" in rows["Limits"]
 
     def test_limits_wall_time_minutes_only(self, monkeypatch):
         monkeypatch.delenv("APPSEC_PARALLEL_STRIDE", raising=False)
         monkeypatch.delenv("APPSEC_LIVE_PHASE", raising=False)
-        rows = dict(rc._summary_active_options(_base_cfg(max_wall_time_seconds=1800, max_cost_usd=None)))
+        rows = dict(rc._summary_active_options(_base_cfg(max_wall_time_seconds=1800, soft_budget_usd=None)))
         assert "wall-time 30 min" in rows["Limits"]
 
     def test_stride_profile_non_full(self, monkeypatch):
@@ -2721,7 +2746,7 @@ class TestRuntimeGeneration:
         assert resolved["runtime_generation_label"] == "context-v2 (single runtime)"
         assert resolved["runtime_artifact_schema_versions"] == rc.CONTEXT_V2_ARTIFACT_SCHEMA_VERSIONS
 
-    @pytest.mark.parametrize("flag,value", [("--max-wall-time", "30m"), ("--max-cost", "5")])
+    @pytest.mark.parametrize("flag,value", [("--max-wall-time", "30m"), ("--soft-budget", "5")])
     def test_special_mode_configuration_cannot_select_legacy(self, tmp_path, monkeypatch, flag, value):
         monkeypatch.chdir(tmp_path)
         out_dir = tmp_path / "out"

@@ -1954,16 +1954,21 @@ def build_parser() -> argparse.ArgumentParser:
         "Skill watchdog aborts the run when reached. "
         "Default: unbounded.",
     )
-    # M9 — cost budget hard cap (USD). Skill watchdog scans .hook-events.log
-    # for cumulative cost and aborts when reached.
+    # Soft cost budget (USD). It steers the run and never kills it: admission
+    # refuses an invocation that cannot fit, and the run finishes even when it
+    # overruns. `--max-cost` is the deprecated spelling; the name promised a
+    # maximum this value is not.
     p.add_argument(
+        "--soft-budget",
         "--max-cost",
         type=float,
         default=None,
+        dest="soft_budget",
         metavar="USD",
-        help="Hard cost cap in USD (e.g. 15.0). Skill watchdog "
-        "aborts the run when cumulative cost exceeds this. "
-        "Default: unbounded.",
+        help="Soft cost budget in USD (e.g. 30.0). A run that cannot fit it "
+        "does not start; a run that overruns it still finishes and reports "
+        "the overrun. Not a hard cap — use the wrapper's --hard-budget for "
+        "that. Default: unbounded.",
     )
     # Negative flags for tri-state semantics. When org profiles set output
     # defaults via a preset, the user needs an explicit way to opt back
@@ -2196,8 +2201,8 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
 
     # M11 — wall-time deadline parsing. Accept "3600" (s), "60m", "1h".
     cfg["max_wall_time_seconds"] = _parse_duration(ns.max_wall_time) if ns.max_wall_time else None
-    # M9 — cost budget. Plain float USD.
-    cfg["max_cost_usd"] = ns.max_cost
+    # Soft cost budget. Plain float USD.
+    cfg["soft_budget_usd"] = ns.soft_budget
 
     # Plugin metadata (always present).
     cfg["plugin_root"] = str(plugin_root)
@@ -2414,8 +2419,13 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
             org_block["max_wall_time_seconds"] = _parse_duration(defaults["max_wall_time"])
         except (TypeError, ValueError):
             pass
-    if ns.max_cost is None and isinstance(defaults.get("max_cost_usd"), (int, float)):
-        org_block["max_cost_usd"] = float(defaults["max_cost_usd"])
+    # `max_cost_usd` is the deprecated spelling of `soft_budget_usd`; the new
+    # key wins when a profile carries both.
+    if ns.soft_budget is None:
+        for _key in ("soft_budget_usd", "max_cost_usd"):
+            if isinstance(defaults.get(_key), (int, float)):
+                org_block["soft_budget_usd"] = float(defaults[_key])
+                break
 
     return org_block
 
@@ -3515,8 +3525,8 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
             deadline_parts.append(f"wall-time {h} h" + (f" {m} min" if m else ""))
         else:
             deadline_parts.append(f"wall-time {sec // 60} min")
-    if cfg.get("max_cost_usd"):
-        deadline_parts.append(f"cost ${cfg['max_cost_usd']:.2f}")
+    if cfg.get("soft_budget_usd"):
+        deadline_parts.append(f"soft budget ${cfg['soft_budget_usd']:.2f}")
     if deadline_parts:
         rows.append(("Limits", " / ".join(deadline_parts)))
 

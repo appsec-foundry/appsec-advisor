@@ -150,10 +150,19 @@ def test_route_rejects_unsupported_special_paths(monkeypatch, tmp_path, key):
 
 def test_rerender_with_deadline_is_rejected(monkeypatch, tmp_path):
     cfg = _cfg(tmp_path, "rerender")
-    cfg.update({"rerender": True, "max_cost_usd": 1})
+    cfg.update({"rerender": True, "max_wall_time_seconds": 60})
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    with pytest.raises(controller.ControllerError, match="--max-cost"):
+    with pytest.raises(controller.ControllerError, match="--max-wall-time"):
         controller.route([])
+
+
+def test_rerender_under_a_soft_budget_is_admitted(monkeypatch, tmp_path):
+    """A rerender rebuilds the report from existing artifacts and costs a
+    fraction of an analysis, so the analysis floor must not refuse it."""
+    cfg = _cfg(tmp_path, "rerender")
+    cfg.update({"rerender": True, "soft_budget_usd": 5})
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    assert controller.route([])["action"] == "load_runtime"
 
 
 def test_compact_rerender_prepare_verifies_artifacts_and_dispatches_stage2(monkeypatch, tmp_path):
@@ -191,13 +200,49 @@ def test_compact_rerender_prepare_fails_before_lock_when_artifacts_are_missing(m
     assert ".threats-merged.json" in action["reason"]
 
 
-@pytest.mark.parametrize("key", ["max_wall_time_seconds", "max_cost_usd"])
-def test_route_rejects_deadline_paths(monkeypatch, tmp_path, key):
+def test_route_rejects_deadline_paths(monkeypatch, tmp_path):
     cfg = _cfg(tmp_path)
-    cfg[key] = 60
+    cfg["max_wall_time_seconds"] = 60
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
     with pytest.raises(controller.ControllerError, match="unsupported invocation"):
         controller.route([])
+
+
+def test_route_refuses_a_budget_below_what_the_depth_costs(monkeypatch, tmp_path):
+    """The refusal is the point of admission: it happens before the run has
+    spent anything, and it names the two numbers it compared."""
+    cfg = _cfg(tmp_path)
+    cfg.update({"soft_budget_usd": 3, "assessment_depth": "standard"})
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    with pytest.raises(controller.ControllerError, match="declared budget cannot hold this run"):
+        controller.route([])
+
+
+def test_route_refuses_a_budget_below_the_measured_cost_of_the_last_run(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.update({"soft_budget_usd": 20, "assessment_depth": "standard"})
+    cache = Path(cfg["output_dir"]) / ".appsec-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "baseline.json").write_text(
+        json.dumps({"last_run_cost_usd": 29.59, "last_run_mode": "full", "last_run_depth": "standard"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    with pytest.raises(controller.ControllerError, match=r"cost \$29.59"):
+        controller.route([])
+
+
+def test_route_admits_a_budget_the_last_run_fits_into(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.update({"soft_budget_usd": 35, "assessment_depth": "standard"})
+    cache = Path(cfg["output_dir"]) / ".appsec-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "baseline.json").write_text(
+        json.dumps({"last_run_cost_usd": 29.59, "last_run_mode": "full", "last_run_depth": "standard"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    assert controller.route([])["action"] == "load_runtime"
 
 
 def test_route_rejects_pre_cutover_generation(monkeypatch, tmp_path):
@@ -222,7 +267,6 @@ def test_route_rejects_live_phase(monkeypatch, tmp_path):
         ["--resume"],
         ["--dry-run"],
         ["--full", "--max-wall-time", "30m"],
-        ["--full", "--max-cost", "5"],
     ],
 )
 def test_unsupported_modes_fail_before_output_mutation(monkeypatch, tmp_path, arguments, capsys):
@@ -230,6 +274,19 @@ def test_unsupported_modes_fail_before_output_mutation(monkeypatch, tmp_path, ar
     monkeypatch.chdir(tmp_path)
 
     code = controller.main(["route", "--", *arguments, "--repo", str(tmp_path), "--output", str(output)])
+
+    assert code == 2
+    assert json.loads(capsys.readouterr().out)["action"] == "abort"
+    assert not output.exists()
+
+
+def test_a_budget_refusal_creates_no_output(monkeypatch, tmp_path, capsys):
+    output = tmp_path / "not-created"
+    monkeypatch.chdir(tmp_path)
+
+    code = controller.main(
+        ["route", "--", "--full", "--soft-budget", "3", "--repo", str(tmp_path), "--output", str(output)]
+    )
 
     assert code == 2
     assert json.loads(capsys.readouterr().out)["action"] == "abort"

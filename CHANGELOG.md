@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Added
+
+- A run can declare a cost budget with `--soft-budget <usd>`, or `guardrails.soft_budget_usd` in an organization profile. It steers rather than caps: an invocation whose projected cost cannot fit is refused before it spends anything, and a run that overruns still finishes. Headless runs derive the hard `--hard-budget` cut at 1.25 times that value unless it is given. `--max-cost`, `max_cost_usd`, and `--max-budget` remain as deprecated spellings.
+
 ### Fixed
 
 - An unattended run no longer stops to ask whether to add business context.

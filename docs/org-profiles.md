@@ -155,7 +155,7 @@ presets:
     quality: { qa_review: auto }
     context:
       document_ids: [sso]
-    guardrails: { max_wall_time: 1h, max_cost_usd: 20, tracing: true }
+    guardrails: { max_wall_time: 1h, soft_budget_usd: 20, tracing: true }
 ```
 
 `llm_context.documents` declares organization Markdown sources.

@@ -62,6 +62,10 @@ KEY_SECONDS = "last_run_seconds"
 KEY_MODE = "last_run_mode"
 KEY_DEPTH = "last_run_depth"
 KEY_ISO = "last_run_iso"
+# Read by `project_run_cost.last_run_cost` so the next run projects against a
+# measurement of this repository instead of the parametric floor. Absent when
+# the run's telemetry could not be totalled; the projection then falls back.
+KEY_COST = "last_run_cost_usd"
 
 _ASSESSMENT_START_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s.*ASSESSMENT_START\b")
 
@@ -122,6 +126,28 @@ def _net_wall_seconds(output_dir: Path, plugin_root: Path | None) -> int | None:
     return int(raw) if raw.isdigit() and int(raw) > 0 else None
 
 
+def _run_cost_usd(output_dir: Path) -> float | None:
+    """This run's total from its own telemetry, or None when it cannot be read.
+
+    A total that is only a lower bound (an agent reported no usage) is not
+    written: the next run would then project against a figure it cannot tell
+    apart from a complete one.
+    """
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import cost_running_total  # type: ignore
+
+        result = cost_running_total.aggregate_running_total(Path(output_dir))
+    except Exception:  # noqa: BLE001 — best-effort by contract, like the timing write
+        return None
+    if result.get("status") != "ok" or result.get("cost_is_floor"):
+        return None
+    cost = result.get("cost_usd")
+    return round(float(cost), 4) if isinstance(cost, (int, float)) and cost > 0 else None
+
+
 def persist(
     output_dir: Path,
     mode: str,
@@ -152,6 +178,9 @@ def persist(
 
     iso = datetime.datetime.fromtimestamp(end_epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     fields = {KEY_SECONDS: seconds, KEY_MODE: mode, KEY_DEPTH: depth, KEY_ISO: iso}
+    cost = _run_cost_usd(output_dir)
+    if cost is not None:
+        fields[KEY_COST] = cost
 
     cache_dir = output_dir / ".appsec-cache"
     cache_dir.mkdir(parents=True, exist_ok=True)

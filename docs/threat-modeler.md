@@ -270,14 +270,17 @@ Headless runs default to 4.6 and accept `scripts/run-headless.sh --model <id>`. 
 
 | Interactive | Headless / CI | Effect |
 |---|---|---|
+| `--soft-budget <usd>` | `--soft-budget <usd>` | Steers the run. An invocation that cannot fit does not start; a run that overruns still finishes and reports the overrun. |
 | Unsupported | `--max-duration` | Maximum runtime enforced by the host wrapper. |
-| Unsupported | `--max-budget` | Maximum API spend enforced by the host wrapper. |
+| Unsupported | `--hard-budget` | Maximum API spend enforced by the host wrapper. It kills the session and loses the report, so it sits above the soft budget as a backstop. |
 
 ```text
-./scripts/run-headless.sh --full --max-duration 1800 --max-budget 5
+./scripts/run-headless.sh --full --max-duration 1800 --soft-budget 30
 ```
 
-Cost limits require an `ANTHROPIC_API_KEY`; time limits also work with Claude subscriptions.
+A soft budget is not a cap. It is honoured by refusing a run that cannot fit and, from a later change, by dropping optional work; the run always finishes. Under subscription billing the figures are price-table valuations of token counts rather than money billed.
+
+The hard cut requires an `ANTHROPIC_API_KEY`; the soft budget and time limits also work with Claude subscriptions.
 
 ## Repo-local context
 

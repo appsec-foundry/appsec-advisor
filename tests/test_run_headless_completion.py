@@ -133,7 +133,6 @@ def test_headless_has_no_generation_escape_hatch() -> None:
         (["--full", "--resume"], False, "--resume is not supported"),
         (["--dry-run"], False, "--dry-run is not supported"),
         (["--max-wall-time", "1"], False, "--max-wall-time is not supported"),
-        (["--max-cost", "1"], False, "--max-cost is not supported"),
         ([], True, "APPSEC_LIVE_PHASE=1 is not supported"),
     ],
 )
@@ -170,6 +169,38 @@ def test_unsupported_mode_exits_before_output_creation_or_claude(
     assert error_text in result.stderr
     assert not output.exists(), "unsupported mode mutated the requested output path"
     assert not marker.exists(), "unsupported mode reached Claude dispatch"
+
+
+def test_a_budget_that_cannot_hold_the_run_stops_it_before_output_or_claude(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal has to happen in the wrapper's admission call, which means
+    the budget and the depth must reach it. Refusing one step later would leave
+    the output directory behind and charge for the attempt."""
+    repo = tmp_path / "repo"
+    output = tmp_path / "not-created"
+    repo.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "claude-invoked"
+    claude = bin_dir / "claude"
+    claude.write_text('#!/bin/sh\nprintf invoked > "$CLAUDE_MARKER"\nexit 42\n', encoding="utf-8")
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_MARKER", str(marker))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    result = subprocess.run(
+        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--full", "--soft-budget", "3"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "declared budget cannot hold this run" in result.stderr
+    assert not output.exists(), "a refused budget mutated the requested output path"
+    assert not marker.exists(), "a refused budget reached Claude dispatch"
 
 
 def test_headless_parser_retains_no_yaml() -> None:
@@ -615,3 +646,69 @@ def test_a_blocked_run_touches_nothing_in_the_holders_directory(
     assert "fail-closed" not in combined, "reported the holder's missing report as its own failure"
     assert "does not resume incomplete analysis" not in combined, "offered a hint for a run it never made"
     assert "held by another assessment" in combined, "the operator is not told why the run stopped"
+
+
+def test_the_hard_cut_is_derived_from_the_soft_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """One number is the interface. The derived backstop sits above the band the
+    soft mechanism may use, so it only fires when that mechanism was wrong."""
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    argv_file = tmp_path / "claude-argv"
+    claude = bin_dir / "claude"
+    claude.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CLAUDE_ARGV"\nexit 0\n', encoding="utf-8")
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_ARGV", str(argv_file))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    result = subprocess.run(
+        [str(SCRIPT), "--repo", str(repo), "--output", str(output), "--full", "--soft-budget", "30"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    argv = argv_file.read_text(encoding="utf-8").splitlines() if argv_file.exists() else []
+    assert "--max-budget-usd" in argv, result.stdout + result.stderr
+    assert argv[argv.index("--max-budget-usd") + 1] == "37.50"
+    assert "--soft-budget 30" in " ".join(argv), "the soft budget never reached the skill"
+
+
+def test_an_explicit_hard_budget_wins_over_the_derived_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    repo.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    argv_file = tmp_path / "claude-argv"
+    claude = bin_dir / "claude"
+    claude.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@" > "$CLAUDE_ARGV"\nexit 0\n', encoding="utf-8")
+    claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setenv("CLAUDE_ARGV", str(argv_file))
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    result = subprocess.run(
+        [
+            str(SCRIPT),
+            "--repo",
+            str(repo),
+            "--output",
+            str(output),
+            "--full",
+            "--soft-budget",
+            "30",
+            "--hard-budget",
+            "50",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    argv = argv_file.read_text(encoding="utf-8").splitlines() if argv_file.exists() else []
+    assert "--max-budget-usd" in argv, result.stdout + result.stderr
+    assert argv[argv.index("--max-budget-usd") + 1] == "50"

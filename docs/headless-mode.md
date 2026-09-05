@@ -15,7 +15,7 @@ The headless wrapper uses the compact controller runtime only.
 | Rerender | `--rerender` | Rebuilds the report from validated Stage-1 artifacts without analyzing source again. |
 
 Incremental, resume, assessment dry-run, PR mode, baseline restore,
-`--max-wall-time`, `--max-cost`, and `APPSEC_LIVE_PHASE=1` are unsupported.
+`--max-wall-time`, and `APPSEC_LIVE_PHASE=1` are unsupported.
 They fail before output creation, run-state mutation, or model dispatch. Use
 `--full` after source changes, `--rebuild` for a clean restart, and `--rerender`
 only when the existing Stage-1 artifacts remain authoritative.
@@ -114,10 +114,12 @@ Headless limits are enforced outside the model runtime:
   --repo /repos/team-api \
   --full \
   --max-duration 3600 \
-  --max-budget 10
+  --soft-budget 30
 ```
 
-`--max-duration` uses the host `timeout` command. `--max-budget` applies to API billing. An interrupted or capped assessment is not resumable mid-analysis. One boundary is recoverable: a run that stopped after Stage 1 but before the report leaves validated Stage-1 artifacts, and `--rerender` turns them into a report without analyzing the source again. The run prints the command that applies to what it left behind. `--full` and `--rebuild` refuse to discard those artifacts until you repeat the invocation with `--force`. Anything earlier than that boundary starts again with `--full` or `--rebuild`; partial component artifacts may remain for diagnosis, but they are never silently admitted as a legacy continuation.
+`--max-duration` uses the host `timeout` command.
+
+The two cost flags do different jobs. `--soft-budget` steers the run: an invocation that cannot fit is refused before it spends anything, and a run that overruns still finishes and reports the overrun. `--hard-budget` is the host's cut, applies to API billing, and kills the session wherever it is. Giving only `--soft-budget` derives the hard cut at 1.25 times its value, above the band the soft budget is allowed to use, so it fires only when the soft mechanism was wrong. Pass `--hard-budget` to set it yourself. An interrupted or capped assessment is not resumable mid-analysis. One boundary is recoverable: a run that stopped after Stage 1 but before the report leaves validated Stage-1 artifacts, and `--rerender` turns them into a report without analyzing the source again. The run prints the command that applies to what it left behind. `--full` and `--rebuild` refuse to discard those artifacts until you repeat the invocation with `--force`. Anything earlier than that boundary starts again with `--full` or `--rebuild`; partial component artifacts may remain for diagnosis, but they are never silently admitted as a legacy continuation.
 
 ## Scheduled CI example
 
@@ -191,7 +193,8 @@ cleanup, and fail-closed report gate in every supported assessment mode.
 | `--requirements [source]` | Include the requirements catalog. |
 | `--context <source>` | Supply business context as untrusted data for this run. |
 | `--max-duration <seconds>` | Stop the wrapper after the host deadline. |
-| `--max-budget <usd>` | Stop when the API billing budget is reached. |
+| `--soft-budget <usd>` | Steer the run to this cost. A run that cannot fit does not start; a run that overruns still finishes. |
+| `--hard-budget <usd>` | Kill the session at this cost, losing the report (API billing). Defaults to 1.25 × the soft budget. |
 | `--trust-mode trusted\|untrusted` | Select repository trust preflight; default is untrusted. |
 | `--clean-cache` | Delete transient cache state and exit. |
 | `--clean-all` | Delete the selected output directory contents after confirmation and exit. |

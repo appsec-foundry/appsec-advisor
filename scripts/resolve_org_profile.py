@@ -238,6 +238,9 @@ def flatten_preset(
         "evidence_recheck": verification.get("evidence_recheck"),
         "generate_pentest_verification_tasks": verification.get("generate_pentest_verification_tasks"),
         "max_wall_time": guardrails.get("max_wall_time"),
+        # `max_cost_usd` is the deprecated spelling; both reach the resolver,
+        # which prefers `soft_budget_usd`.
+        "soft_budget_usd": guardrails.get("soft_budget_usd"),
         "max_cost_usd": guardrails.get("max_cost_usd"),
         "max_resumes": guardrails.get("max_resumes"),
         "tracing": guardrails.get("tracing"),

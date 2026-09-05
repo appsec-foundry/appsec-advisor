@@ -440,7 +440,7 @@ _DISPATCH_KEYS = (
     "skip_abuse_case_verification",
     "max_repair_iterations",
     "max_wall_time_seconds",
-    "max_cost_usd",
+    "soft_budget_usd",
 )
 _DISPATCH_EXTRA_KEYS = (
     "abuse_verifier_model_alias",
@@ -1317,13 +1317,38 @@ def _unsupported_runtime_reason(cfg: dict[str, Any]) -> str | None:
         return "incremental scans are not implemented by the compact runtime"
     if cfg.get("max_wall_time_seconds"):
         return "--max-wall-time is not implemented by the compact runtime"
-    if cfg.get("max_cost_usd"):
-        return "--max-cost is not implemented by the compact runtime"
     if os.environ.get("APPSEC_LIVE_PHASE") == "1" or cfg.get("live_phase"):
         return "APPSEC_LIVE_PHASE=1 is not implemented by the compact runtime"
     if cfg.get("mode") not in {"full", "rebuild", "rerender"}:
         return f"mode {cfg.get('mode')!r} is not implemented by the compact runtime"
     return None
+
+
+def _budget_admission_reason(cfg: dict[str, Any]) -> str | None:
+    """Explain why a declared soft budget cannot hold this invocation.
+
+    Read-only and evidence-based: it refuses on a measured previous run of the
+    same shape or on a budget below what the depth costs before any component
+    is analyzed. A first run against an unknown repository is admitted, because
+    the component count that drives the cost is not known until recon has run.
+    """
+    budget = cfg.get("soft_budget_usd")
+    if not budget:
+        return None
+    scripts_dir = str(PLUGIN_ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import project_run_cost  # type: ignore
+    except ImportError:
+        return None
+    projection = project_run_cost.project(
+        cfg.get("output_dir") or ".",
+        str(cfg.get("mode") or "full"),
+        str(cfg.get("assessment_depth") or "standard"),
+        float(budget),
+    )
+    return None if projection["fits"] else str(projection["reason"])
 
 
 def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
@@ -1338,6 +1363,12 @@ def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
             f"unsupported invocation: {unsupported}; no run state was changed and no agent was dispatched. "
             "Use --full or --rebuild for a new analysis, or --rerender for existing Stage-1 artifacts. "
             "The legacy runtime has been removed."
+        )
+    budget_reason = _budget_admission_reason(cfg)
+    if budget_reason:
+        raise ControllerError(
+            f"declared budget cannot hold this run: {budget_reason}; no run state was changed and no agent "
+            "was dispatched. Raise --soft-budget, or lower --assessment-depth."
         )
     if cfg.get("mode") in {"full", "rebuild"} and not cfg.get("rerender"):
         return "thin-full", THIN_RUNTIME

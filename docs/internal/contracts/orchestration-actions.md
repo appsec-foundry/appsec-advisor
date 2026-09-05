@@ -397,7 +397,12 @@ schema-incompatible generation and requires a new full or rebuild run.
 
 Full and rebuild use `SKILL-full-runtime.md`; rerender uses
 `SKILL-rerender-runtime.md`. Incremental, resume, dry-run, `--max-wall-time`,
-`--max-cost`, and `APPSEC_LIVE_PHASE=1` are unsupported until they have bounded
+and `APPSEC_LIVE_PHASE=1` are unsupported until they have bounded
 controller implementations. The router resolves these invocations without
 creating their output directory, then aborts before dispatch or run-state
 mutation with the supported alternatives.
+
+`--soft-budget` is admitted rather than refused. The router compares it against
+the cost of the last run of the same mode and depth and, for a mode that
+analyzes source, against the depth's floor; a budget that cannot hold the run
+aborts on the same read-only path, before the output directory exists.
