@@ -83,6 +83,42 @@ def _kv(detail: str, key: str) -> str:
     return m.group(1) if m else ""
 
 
+def _strip_ids(detail: str, *keys: str) -> str:
+    """Drop opaque correlation ids from a detail before it is displayed.
+
+    ``agent_call_id=toolu_…`` and ``action_id=stage1c:<hash>`` identify nothing
+    a reader can act on, but they cost ~35 columns each and push the part that
+    does carry meaning (component, counts, stop reason) past the right edge of
+    the terminal. They stay in the log for correlation; only the live view is
+    trimmed. ``job_id`` is stripped only from the component-scoped step lines,
+    where ``log_event.py`` prepends ``component=`` and ``attempt=`` alongside it
+    and the id repeats both; on a warning line it is kept, being the only
+    locator such a line has.
+    """
+    for key in keys:
+        detail = re.sub(rf"\s*\b{re.escape(key)}=[^\s]+", "", detail)
+    return detail.strip()
+
+
+def _terminal_subject(detail: str) -> str:
+    """Parenthesised suffix for an agent's terminal line: which call ended.
+
+    The lifecycle detail of ``AGENT_DONE`` / ``AGENT_FAILED`` repeats the
+    dispatch parameters (``agent_type``, ``model``, ``background``,
+    ``action_id``, ``description``) that the spawn line two lines up already
+    showed, and carries no outcome of its own. Only two things matter here:
+    *which* of several parallel calls of the same agent ended — its component
+    or job — and why it stopped. The reason carries an ``AGENT_FAILED``
+    explanation (``agent_lifecycle.event_detail``), so it is read to the end of
+    its field rather than to the next space, and never dropped.
+    """
+    subject = _kv(detail, "component_id") or _kv(detail, "job_id")
+    m = re.search(r"\b(?:stop_)?reason=(.*?)(?=\s{2,}|$)", detail)
+    reason = m.group(1).strip() if m else ""
+    parts = [p for p in (subject, f"reason: {reason}" if reason else "") if p]
+    return f" ({', '.join(parts)})" if parts else ""
+
+
 def _agent_tag(model: str, depth: str = "") -> str:
     """Parenthesised suffix for an agent line: model, plus the STRIDE tier.
 
@@ -129,6 +165,10 @@ def main() -> int:
     last_pct_shown = None  # last RUN_PROGRESS percentage given a permanent line
     spawned_calls: set[str] = set()
     terminal_calls: set[str] = set()
+    stride_calls: set[str] = set()  # STRIDE analyzer calls dispatched so far
+    stride_finished: set[str] = set()  # …of those, the ones that reached a terminal event
+    seen_ts = ""  # timestamp of the duplicate-suppression bucket below
+    seen_in_ts: set[tuple[str, str, str]] = set()
     _CLEAR = "\r\033[K"  # carriage-return + clear-to-end-of-line
 
     # Heartbeats are pure liveness — on a TTY they update one in-place status
@@ -147,6 +187,21 @@ def main() -> int:
         out.flush()
         last_perm = cur_when
 
+    def stride_tally() -> str:
+        """``STRIDE 3/5 components done``, or empty before the first dispatch.
+
+        Phase 9 runs the analyzers in parallel for ~20 minutes and interleaves
+        their spawn and completion lines, so the count of finished components is
+        the one number that says how far the phase has come. It is derived from
+        the dispatch lifecycle this view already renders, which makes it
+        independent of the watchdog's ``STRIDE_PROGRESS`` mirror — that one
+        counts artifact *files* and stays silent whenever ``.appsec-checkpoint``
+        does not read exactly ``phase=9``.
+        """
+        if not stride_calls:
+            return ""
+        return f"STRIDE {len(stride_finished)}/{len(stride_calls)} components done"
+
     def heartbeat(line: str) -> None:
         """Show liveness without flooding the console."""
         nonlocal status_shown
@@ -162,6 +217,19 @@ def main() -> int:
         if not parsed:
             continue
         ts, comp, event, detail = parsed
+        # `log_event.py` mirrors PHASE_START / PHASE_END into `.hook-events.log`
+        # from the same `format_line` call that writes `.agent-run.log`, and
+        # run-headless.sh tails both files — so a mirrored event arrives twice,
+        # byte-identical and carrying the same timestamp. Render the first copy
+        # and drop the second: two identical lines within one second produce two
+        # identical banners and no additional information.
+        dup_key = (comp, event, detail)
+        if ts != seen_ts:
+            seen_ts, seen_in_ts = ts, {dup_key}
+        elif dup_key in seen_in_ts:
+            continue
+        else:
+            seen_in_ts.add(dup_key)
         when = _parse_ts(ts)
         cur_when = when
         cur_clock = _clock(when)
@@ -225,6 +293,8 @@ def main() -> int:
             if inferred_phase and inferred_phase != cur_phase:
                 cur_phase = inferred_phase
                 phase_start = when
+            if call_id and "stride-analyzer" in agent_name:
+                stride_calls.add(call_id)
             w(f"    ↳ {agent_name}{_agent_tag(model, depth)}: {task}")
 
         elif event == "AGENT_INVOKE":
@@ -242,7 +312,11 @@ def main() -> int:
             agent_name = agent.split(":")[-1] if agent else "agent"
             mark = "✓" if event == "AGENT_DONE" else "⚠"
             state = "done" if event == "AGENT_DONE" else "failed"
-            w(f"    {mark} {agent_name} {state} — {detail}")
+            tail = _terminal_subject(detail)
+            if call_id and call_id in stride_calls:
+                stride_finished.add(call_id)
+                tail += f"   [{stride_tally()}]"
+            w(f"    {mark} {agent_name} {state}{tail}")
 
         elif event == "SCAN_END":
             # Publication milestone, not a lifecycle terminal: the producer has
@@ -255,7 +329,7 @@ def main() -> int:
 
         elif event in ("STEP_START", "STEP_END"):
             mark = "·" if event == "STEP_START" else "✓"
-            w(f"      {mark} {detail}")
+            w(f"      {mark} {_strip_ids(detail, 'agent_call_id', 'action_id', 'job_id')}")
 
         elif event == "STRIDE_PROGRESS":
             files = _kv(detail, "stride_files")
@@ -265,7 +339,9 @@ def main() -> int:
             total_el = _mins(run_start, when)
             if cur_phase:
                 phase_el = _mins(phase_start, when) if phase_start else "?"
-                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}   [+{total_el} total]")
+                tally = stride_tally() if cur_phase.startswith("9/") else ""
+                tally = f", {tally}" if tally else ""
+                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}{tally}   [+{total_el} total]")
             else:
                 step = _kv(detail, "step") or "startup"
                 heartbeat(f"    · starting up ({step}) — +{total_el}")
@@ -313,7 +389,7 @@ def main() -> int:
             # as plain progress so ⚠ and ⛔ keep meaning "look at this now".
             # The event itself is unchanged in the log and in run issues, and
             # MAX_TURNS — an agent that actually died — still carries a glyph.
-            w(f"   budget · {detail}")
+            w(f"   budget · {_strip_ids(detail, 'agent_call_id')}")
         elif event in (
             "MAX_TURNS",
             "AGENT_ERROR",
@@ -321,7 +397,7 @@ def main() -> int:
             "TELEMETRY_MISMATCH",
             "HOOK_PAYLOAD_UNEXPECTED",
         ):
-            w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
+            w(f"    ⚠ {event.lower().replace('_', ' ')} — {_strip_ids(detail, 'agent_call_id', 'action_id')}")
         elif event == "PARALLEL_STRIDE_RESOLVED":
             w(f"   config · {detail}")
         elif event == "ROUTE_INVENTORY_PREPASS":

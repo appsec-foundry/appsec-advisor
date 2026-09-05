@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A headless run blocked by another run's lock now stops with its exit code instead of printing an interactive menu into the log.
 - Interrupting an unattended headless run now actually stops it: the signal reaches Claude without a terminal, the run releases its own lock instead of blocking the next attempt for five minutes, and the printed recovery command offers `--rerender` when Stage 1 had already finished.
 - `--full` and `--rebuild` no longer discard a completed Stage 1 without asking, and the `--force` needed to discard it on purpose now reaches the skill.
+- The headless progress view no longer prints phase banners twice, shows how many STRIDE components have finished during the long parallel phase, and drops the internal call ids that pushed the readable part of each line off the screen.
 
 ### Added
 

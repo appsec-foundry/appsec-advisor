@@ -386,3 +386,153 @@ def test_session_aborted_midrun_event_renders():
     )
     assert "aborted mid-run" in out
     assert "phase=9" in out
+
+
+def test_mirrored_phase_boundary_renders_once():
+    """`log_event.py` writes PHASE_START/PHASE_END to `.agent-run.log` and
+    mirrors it to `.hook-events.log` from the same formatted line; run-headless
+    tails both, so the identical line arrives twice and must render once."""
+    line = "2026-08-31T08:55:57Z  [--------]  INFO   threat-renderer  PHASE_START  [Phase 11/11] Finalization"
+    out = _render([line, line])
+    assert out.count("▶ Phase 11/11") == 1
+
+
+def test_a_repeat_in_a_later_second_is_not_suppressed():
+    """Only the mirror is deduplicated. A genuinely repeated event — same text,
+    a later timestamp — stays visible; suppressing it would hide a stuck run."""
+    out = _render(
+        [
+            "2026-08-31T08:55:57Z  [--------]  INFO   stride-analyzer  STEP_START  Reading focus path source files",
+            "2026-08-31T08:57:57Z  [--------]  INFO   stride-analyzer  STEP_START  Reading focus path source files",
+        ]
+    )
+    assert out.count("Reading focus path source files") == 2
+
+
+def test_terminal_line_names_the_call_instead_of_echoing_the_dispatch():
+    """AGENT_DONE repeats the dispatch parameters the spawn line already showed.
+    The view keeps what identifies the finished call and drops the echo."""
+    out = _render(
+        [
+            "2026-08-31T08:17:44Z  [b0ba1e2f]  INFO   AGENT_DONE"
+            "  agent_call_id=toolu_01FgPyBi6TshkNrqEszCdxsJ"
+            "  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  background=true"
+            "  action_id=stage1c:872a05ac10a64c48  job_id=stride:auth-session:attempt-1"
+            "  component_id=auth-session  attempt=1  analysis_depth=full"
+            "  description=STRIDE (full): auth-session",
+        ]
+    )
+    assert "✓ appsec-stride-analyzer-v2 done (auth-session)" in out
+    for echoed in ("toolu_", "action_id", "background=true", "description="):
+        assert echoed not in out
+
+
+def test_terminal_line_keeps_a_reported_stop_reason():
+    out = _render(
+        [
+            "2026-08-15T04:47:36Z  [b0ba1e2f]  INFO   AGENT_DONE"
+            "  agent_call_id=toolu_01TkvNUF1iKrgk6L5basHv3Y"
+            "  agent_type=appsec-advisor:appsec-recon-scanner  stop_reason=max_turns",
+        ]
+    )
+    assert "✓ appsec-recon-scanner done (reason: max_turns)" in out
+
+
+def test_a_failure_keeps_its_whole_reason():
+    """`agent_lifecycle.event_detail` puts the failure explanation in a free-text
+    `reason=` field that runs to the next double space — a trim at the first
+    space would leave the failure line saying nothing."""
+    out = _render(
+        [
+            "2026-08-31T08:31:02Z  [b0ba1e2f]  WARN   AGENT_FAILED"
+            "  agent_call_id=toolu_015q4jYSPeJmLhF5PvCmTxYg"
+            "  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  background=true"
+            "  component_id=web3-nft"
+            "  reason=call expired without a terminal hook event"
+            "  description=STRIDE (full): web3-nft",
+        ]
+    )
+    assert "⚠ appsec-stride-analyzer-v2 failed (web3-nft, reason: call expired without a terminal hook event)" in out
+    assert "description=" not in out
+
+
+def _stride_spawn(ts: str, call_id: str, component: str) -> str:
+    return (
+        f"2026-08-31T{ts}Z  [b0ba1e2f]  INFO   AGENT_SPAWN  agent_call_id={call_id}"
+        f"  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet"
+        f"  analysis_depth=full  description=STRIDE (full): {component}"
+    )
+
+
+def _stride_done(ts: str, call_id: str, component: str) -> str:
+    return (
+        f"2026-08-31T{ts}Z  [b0ba1e2f]  INFO   AGENT_DONE  agent_call_id={call_id}"
+        f"  agent_type=appsec-advisor:appsec-stride-analyzer-v2  component_id={component}"
+    )
+
+
+def test_stride_tally_counts_finished_components_against_dispatched():
+    """Phase 9 runs the analyzers in parallel and interleaves their lines; the
+    tally is the only reading of how far the phase has come."""
+    out = _render(
+        [
+            _stride_spawn("08:09:06", "toolu_a", "frontend-spa"),
+            _stride_spawn("08:09:17", "toolu_b", "backend-api"),
+            _stride_done("08:17:44", "toolu_b", "backend-api"),
+            _stride_done("08:20:26", "toolu_a", "frontend-spa"),
+        ]
+    )
+    assert "[STRIDE 1/2 components done]" in out
+    assert "[STRIDE 2/2 components done]" in out
+
+
+def test_stride_tally_rides_along_on_the_phase_9_heartbeat():
+    out = _render(
+        [
+            _stride_spawn("08:09:06", "toolu_a", "frontend-spa"),
+            _stride_spawn("08:09:17", "toolu_b", "backend-api"),
+            _stride_done("08:17:44", "toolu_b", "backend-api"),
+            "2026-08-31T08:22:44Z  [--------]  INFO   HEARTBEAT  step=watchdog",
+        ]
+    )
+    assert "still in Phase 9/11 STRIDE — 13m, STRIDE 1/2 components done" in out
+
+
+def test_a_non_stride_agent_gets_no_tally():
+    out = _render(
+        [
+            "2026-08-31T08:09:06Z  [b0ba1e2f]  INFO   AGENT_SPAWN  agent_call_id=toolu_c"
+            "  agent_type=appsec-advisor:appsec-control-analyst  model=sonnet  description=Control analyst",
+            "2026-08-31T08:12:06Z  [b0ba1e2f]  INFO   AGENT_DONE  agent_call_id=toolu_c"
+            "  agent_type=appsec-advisor:appsec-control-analyst",
+        ]
+    )
+    assert "STRIDE" not in out
+
+
+def test_step_line_drops_the_injected_correlation_ids_but_keeps_the_component():
+    """`log_event.py` prepends `component= depth= action_id= job_id= attempt=`
+    to a component-scoped event. The two ids repeat what `component=` and
+    `attempt=` already say and are dropped from the view."""
+    out = _render(
+        [
+            "2026-08-31T08:09:42Z  [--------]  INFO   stride-analyzer  STEP_START"
+            "  component=auth-session depth=full action_id=stage1c:872a05ac10a64c48"
+            " job_id=stride:auth-session:attempt-1 attempt=1  AGENT_START model=sonnet",
+        ]
+    )
+    assert "component=auth-session depth=full attempt=1  AGENT_START model=sonnet" in out
+    assert "action_id" not in out and "job_id" not in out
+
+
+def test_a_warning_keeps_its_job_id_locator():
+    """The step-line strip must not reach a warning: `job_id` is the only thing
+    that says which dispatch the mismatch belongs to."""
+    out = _render(
+        [
+            "2026-08-31T08:00:08Z  [b0ba1e2f]  WARN   hook-logger  TELEMETRY_MISMATCH"
+            "  code=lifecycle_not_terminal  job_id=phase7-boundary  agent_call_id=toolu_016f5eRBaNTT",
+        ]
+    )
+    assert "job_id=phase7-boundary" in out
+    assert "toolu_" not in out
