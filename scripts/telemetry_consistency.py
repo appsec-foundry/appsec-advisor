@@ -107,6 +107,20 @@ def _open_budget_calls(output_dir: Path) -> set[str]:
     return set(calls) if isinstance(calls, dict) else set()
 
 
+def _usage_was_expected(call: dict[str, Any]) -> bool:
+    """Whether this call's return should have carried its own usage.
+
+    ``background`` records what the host *did*, and a host that answers every
+    Agent call asynchronously promotes every call to it. Reading that flag as
+    the run's intent silenced both usage checks below on exactly the host whose
+    change made them necessary: the 2026-09-05 runs produced no per-call usage
+    at all and no surface said so. ``background_promoted`` is the difference —
+    it marks a call the run dispatched in the foreground and expected an answer
+    from.
+    """
+    return not call.get("background") or bool(call.get("background_promoted"))
+
+
 def _mismatch(call: dict[str, Any], code: str, detail: str) -> dict[str, str]:
     return {
         "job_id": str(call.get("job_id") or "?"),
@@ -154,9 +168,7 @@ def check_returned_calls(output_dir: str | Path) -> list[dict[str, str]]:
     # it is a real gap; when none does, the source is absent. Say which.
     host_reports_usage = any(int((call.get("usage") or {}).get("output_tokens") or 0) for call in candidates)
     findings: list[dict[str, str]] = []
-    if not host_reports_usage and any(
-        call.get("state") == "done" and not call.get("background") for call in candidates
-    ):
+    if not host_reports_usage and any(call.get("state") == "done" and _usage_was_expected(call) for call in candidates):
         findings.append(
             _mismatch(
                 {"job_id": "-", "agent_call_id": "-", "agent_type": "-"},
@@ -195,7 +207,7 @@ def check_returned_calls(output_dir: str | Path) -> list[dict[str, str]]:
         # stage stats instead, so demanding it here would be demanding evidence
         # that cannot exist. The same holds for every call when the host
         # reports no usage at all, which `usage_source_absent` already covers.
-        if state_name == "done" and not charged and not call.get("background") and host_reports_usage:
+        if state_name == "done" and not charged and _usage_was_expected(call) and host_reports_usage:
             findings.append(_mismatch(call, "usage_unattributed", "terminal call carries no child output tokens"))
         if call.get("agent_call_id") in open_budget:
             findings.append(_mismatch(call, "budget_not_retired", "turn budget still holds an entry for the call"))

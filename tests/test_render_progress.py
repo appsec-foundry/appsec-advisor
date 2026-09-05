@@ -649,3 +649,28 @@ def test_the_stride_tally_counts_a_component_only_once_and_only_when_it_finished
     )
     tallies = re.findall(r"STRIDE (\d+)/(\d+) components done", out)
     assert tallies == [("1", "2"), ("1", "2"), ("2", "2")]
+
+
+def _telemetry_mismatch(ts: str, code: str, job_id: str) -> str:
+    return (
+        f"2026-08-31T{ts}Z  [b0ba1e2f]  WARN   TELEMETRY_MISMATCH  code={code}"
+        f"  job_id={job_id}  agent_call_id=toolu_x  agent_type=appsec-advisor:appsec-recon-scanner"
+        f"  detail=the host returns no per-call usage for Agent calls"
+    )
+
+
+def test_a_run_level_telemetry_finding_is_shown_once_and_a_per_call_one_every_time():
+    """`usage_source_absent` describes the run, not a call, so it is equally true
+    at each of the ~20 semantic boundaries that follow. Twenty identical warnings
+    is the shape operators already learned to skip."""
+    out = _render(
+        [
+            _telemetry_mismatch("08:09:06", "usage_source_absent", "-"),
+            _telemetry_mismatch("08:19:06", "usage_source_absent", "-"),
+            _telemetry_mismatch("08:29:06", "usage_source_absent", "-"),
+            _telemetry_mismatch("08:39:06", "lifecycle_not_terminal", "phase2-recon"),
+            _telemetry_mismatch("08:49:06", "lifecycle_not_terminal", "phase7-boundary"),
+        ]
+    )
+    assert out.count("usage_source_absent") == 1
+    assert out.count("lifecycle_not_terminal") == 2

@@ -303,3 +303,33 @@ def test_a_legacy_run_without_an_effective_plan_is_not_checked(tmp_path: Path) -
     _seed(tmp_path, state="failed", usage=False)
     (tmp_path / ".context-routing-plan.json").unlink()
     assert telemetry.check_returned_calls(tmp_path) == []
+
+
+def test_a_promoted_call_without_usage_still_reports_the_missing_source(tmp_path: Path) -> None:
+    """The host answers every Agent call asynchronously and returns no usage, so
+    the lifecycle promotes each call to background. Reading that flag as the
+    run's intent silenced this check on the runs that needed it: 2026-09-05
+    produced no per-call usage at all and no surface said so.
+
+    `background_promoted` is what separates a call the run dispatched in the
+    foreground and expected an answer from, from one it deliberately launched.
+    """
+    _seed(tmp_path, state="running", usage=False)
+    lifecycle.acknowledge_background_call(tmp_path, CALL_ID)  # the launch-shaped Agent return
+    lifecycle.finish_call(tmp_path, CALL_ID, lifecycle.OUTCOME_UNOBSERVED)
+    call = json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))["calls"][0]
+    assert call["background"] is True and call["background_promoted"] is True
+
+    assert "usage_source_absent" in _codes(tmp_path)
+
+
+def test_a_deliberately_backgrounded_call_is_not_expected_to_carry_usage(tmp_path: Path) -> None:
+    """The other side of the same predicate: a call the run launched on purpose
+    has no per-call usage source by construction, and demanding one would name
+    every background dispatch."""
+    _seed(tmp_path, usage=False)
+    state = json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))
+    state["calls"][0]["background"] = True  # dispatched as background, never promoted
+    lifecycle.state_path(tmp_path).write_text(json.dumps(state), encoding="utf-8")
+
+    assert "usage_source_absent" not in _codes(tmp_path)

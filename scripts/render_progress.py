@@ -181,6 +181,7 @@ def main() -> int:
     last_pct_shown = None  # last RUN_PROGRESS percentage given a permanent line
     spawned_calls: set[str] = set()
     terminal_calls: set[str] = set()
+    run_level_notices: set[str] = set()  # run-level telemetry codes already shown once
     stride_calls: dict[str, str] = {}  # STRIDE analyzer call id -> the component it analyses
     stride_components: set[str] = set()  # components dispatched so far
     stride_finished: set[str] = set()  # …of those, the ones a call completed
@@ -432,6 +433,15 @@ def main() -> int:
             "TELEMETRY_MISMATCH",
             "HOOK_PAYLOAD_UNEXPECTED",
         ):
+            # A telemetry finding about the run rather than about one call
+            # (`job_id=-`) is equally true at every later boundary. The log keeps
+            # each one for correlation; repeating it on screen turns the single
+            # line an operator needs to read into twenty they learn to skip.
+            if event == "TELEMETRY_MISMATCH" and _kv(detail, "job_id") == "-":
+                code = _kv(detail, "code")
+                if code in run_level_notices:
+                    continue
+                run_level_notices.add(code)
             w(f"    ⚠ {event.lower().replace('_', ' ')} — {_strip_ids(detail, 'agent_call_id', 'action_id')}")
         elif event == "PARALLEL_STRIDE_RESOLVED":
             w(f"   config · {detail}")
