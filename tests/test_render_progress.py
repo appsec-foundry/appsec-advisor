@@ -592,3 +592,33 @@ def test_a_warning_keeps_its_job_id_locator():
     )
     assert "job_id=phase7-boundary" in out
     assert "toolu_" not in out
+
+
+# ---------------------------------------------------------------------------
+# Wrapper wiring — which streams `run-headless.sh` puts on stderr per mode
+# ---------------------------------------------------------------------------
+
+_WRAPPER = Path(__file__).resolve().parents[1] / "scripts" / "run-headless.sh"
+
+
+def _verbose_branch() -> str:
+    body = _WRAPPER.read_text(encoding="utf-8")
+    start = body.index('if [ -n "$VERBOSE" ]; then')
+    return body[start : body.index('elif [ -z "$QUIET" ]; then', start)]
+
+
+def test_verbose_keeps_the_rendered_progress_view():
+    """`--verbose` adds the raw stream to the default view; it must not replace
+    it. Without the renderer the operator who asked for the most detail loses
+    the phase banners, the roadmap and the wall-clock anchors."""
+    assert "start_progress_monitor" in _verbose_branch()
+
+
+def test_verbose_does_not_print_the_hook_log_twice():
+    """`APPSEC_VERBOSE=1` already mirrors every `.hook-events.log` line to
+    stderr from agent_logger, so tailing that file as well would double it.
+    `.agent-run.log` has no mirror and stays tailed."""
+    branch = _verbose_branch()
+    assert "export APPSEC_VERBOSE=1" in branch
+    assert 'tail -f "$LOG_FILE"' not in branch
+    assert 'tail -f "$RUN_LOG_FILE"' in branch

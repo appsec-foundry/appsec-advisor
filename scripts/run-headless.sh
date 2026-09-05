@@ -49,7 +49,7 @@
 #   --evidence-verifier-cap <n>  Limit Phase-10a non-Critical verification work
 #   --json                  Echo the raw `claude -p` result object on stdout
 #                           (the run's token/cost readout is printed either way)
-#   --verbose               Show the full real-time hook event log on stderr
+#   --verbose               Add the raw event stream to the live phase progress
 #   --quiet                 Suppress live progress (default = milestone events)
 #
 # Skill selection:
@@ -130,7 +130,8 @@ Options:
                                repo-owned agent configuration before Claude starts.
   --strict-urls               Require APPSEC_URL_ALLOWLIST for remote related-repo fetches
   --json                     Echo the raw claude result object on stdout
-  --verbose                  Show the full real-time hook event log on stderr
+  --verbose                  Add the raw event stream (hook events, agent log)
+                             to the live phase progress on stderr
   --quiet                    Suppress live progress output (default shows
                              milestone events: phases, agent spawns, heartbeat)
 
@@ -720,16 +721,10 @@ case "$MODEL" in
 esac
 
 # ── Execute ─────────────────────────────────────────────────────────
-TAIL_PID=""
 TAIL_RUN_PID=""
 PROGRESS_PID=""
 
 cleanup_tails() {
-    if [ -n "$TAIL_PID" ]; then
-        kill "$TAIL_PID" 2>/dev/null || true
-        wait "$TAIL_PID" 2>/dev/null || true
-        TAIL_PID=""
-    fi
     if [ -n "$TAIL_RUN_PID" ]; then
         kill "$TAIL_RUN_PID" 2>/dev/null || true
         wait "$TAIL_RUN_PID" 2>/dev/null || true
@@ -799,18 +794,25 @@ if [ -n "$VERBOSE" ]; then
     # that pile up and duplicate stderr output on the next verbose run.
     trap 'cleanup_headless_runtime' EXIT INT TERM HUP
 
-    # APPSEC_VERBOSE=1 makes agent_logger.py emit compact `[appsec] ▶ …`
-    # progress lines to stderr. These are distinct from the raw log lines
-    # tailed below, so they complement each other (they do NOT duplicate).
+    # Verbose is the default view PLUS the raw stream, not a replacement for
+    # it. Without the renderer the operator who asked for the most detail gets
+    # the least orientation: no phase banners, no roadmap, no wall-clock
+    # anchors — only raw lines like `step=watchdog`.
+    start_progress_monitor
+
+    # APPSEC_VERBOSE=1 makes agent_logger.py mirror every line it appends to
+    # `.hook-events.log` to stderr as `[appsec] …`, plus the steering-hook
+    # diagnostics that reach no log file at all. That mirror already IS the raw
+    # `.hook-events.log` stream, so tailing the file on top of it would print
+    # each of its lines twice.
     export APPSEC_VERBOSE=1
 
-    # Start tailing both log files in background — real-time output to stderr
-    tail -f "$LOG_FILE" >&2 &
-    TAIL_PID=$!
+    # `.agent-run.log` has no such mirror: agents append to it directly, and
+    # log_event.py's stderr line is a compact summary, not the canonical line.
     tail -f "$RUN_LOG_FILE" >&2 &
     TAIL_RUN_PID=$!
 
-    info "Starting Claude Code in headless mode (verbose: tailing $LOG_FILE and $RUN_LOG_FILE)..."
+    info "Starting Claude Code in headless mode (verbose: live phase progress plus the raw event stream)..."
 elif [ -z "$QUIET" ]; then
     # Default: lightweight live progress (milestone events only) so the run
     # isn't a silent black box. Use --verbose for the full firehose, --quiet

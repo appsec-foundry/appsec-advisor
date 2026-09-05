@@ -197,7 +197,7 @@ cleanup, and fail-closed report gate in every supported assessment mode.
 | `--clean-all` | Delete the selected output directory contents after confirmation and exit. |
 | `--dry-run` with cleanup | Preview deterministic cleanup without writing. |
 | `--force` | Skip the `--clean-all` confirmation; with `--full` or `--rebuild`, discard a completed Stage 1 instead of rendering it. |
-| `--verbose` | Stream detailed runtime events. |
+| `--verbose` | Add the raw event stream to the live phase progress. |
 | `--quiet` | Suppress live progress. |
 
 `APPSEC_CLAUDE_EXECUTABLE` selects one Claude-compatible executable for the
