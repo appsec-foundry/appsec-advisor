@@ -50,6 +50,31 @@ models actually billed. It exists only once the session has exited, so
 Never compare figures across scopes. A run-to-run comparison is only valid when
 both numbers came from the same window and the same set of sessions.
 
+## While the run is going
+
+The live progress line carries the running figure as `out=<tokens> cost≥$<usd>`,
+refreshed every five minutes and at every phase boundary. Two rules keep it from
+asserting more than it knows.
+
+It is always a floor, and says so with `≥`: sub-agents report at completion, so
+whatever is in flight is missing from it. It is withheld entirely — no field at
+all, rather than a small number — when the host reported no session cost yet or
+when `usage_source_absent` was logged for the run. That flag alone moved a run
+that cost tens of dollars to a computed $0.19.
+
+Output tokens, not `total_tokens`. The total is ~94 % cache reads (measured on
+the 2026-08-31 juice-shop run: 54.7 M of 58.2 M), which grows with context
+re-reads rather than with work done, and is priced at a fiftieth of an output
+token. The full split by model belongs at the end of the run, where
+`headless_usage.py` prints it from the exact result object.
+
+Every checkpoint phase change writes `PHASE_COST` with that phase's duration and
+its share of the floor. `cost_running_total.py --format phases` turns those lines
+into the cost-by-phase table `run-headless.sh` prints under the model table — the
+one thing the exact figure cannot say, which phase spent it. The delta is left
+out when nothing was metered as the phase opened, because the difference would
+then be the whole run so far charged to one phase.
+
 ## Baseline
 
 juice-shop, 2026-08-17, `--rebuild`, standard depth, seven components, one

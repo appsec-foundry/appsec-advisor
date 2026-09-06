@@ -899,9 +899,21 @@ RESULT_CAPTURE="$RESULT_DIR/.headless-result.json"
 #      back to the hook-log figure and label it an estimate. That figure covers
 #      the host session only, so it is a lower bound and must never be shown
 #      as if it were the run's cost.
+print_phase_costs() {
+    _phase_table=$(python3 "$SCRIPT_DIR/cost_running_total.py" "$RESULT_DIR" \
+        --format phases 2>/dev/null || true)
+    [ -n "$_phase_table" ] || return 0
+    echo ""
+    printf '%s\n' "$_phase_table"
+}
+
 print_usage_summary() {
     [ -n "$RESULT_CAPTURE" ] || return 0
     if python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" 2>/dev/null; then
+        # The model table is exact and covers the whole run; the phase table
+        # below it is the floor the live view accumulated, and answers the one
+        # question the exact figure cannot — which phase spent it.
+        print_phase_costs
         return 0
     fi
     _usage_est=$(python3 "$SCRIPT_DIR/cost_running_total.py" "$RESULT_DIR" \
@@ -912,6 +924,7 @@ print_usage_summary() {
     warn "Token usage & cost — ESTIMATE (the run did not exit cleanly, so no result object)."
     echo "  Host session only, from .hook-events.log — sub-agent spend is NOT included (lower bound)."
     printf '%s\n' "$_usage_est"
+    print_phase_costs
 }
 
 # The capture is wrapper-owned scratch, not a run artifact: it is read out by

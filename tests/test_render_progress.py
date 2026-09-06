@@ -97,17 +97,69 @@ def _progress_lines(pcts: list[str], start_min: int = 0) -> list[str]:
     ]
 
 
+def _heartbeat_line(minute: int, phase: str = "7") -> str:
+    return (
+        f"2026-06-06T17:{minute:02d}:00Z  [--------]  INFO   HEARTBEAT"
+        f"           pid=1  phase={phase}  step=watchdog  ts={minute}"
+    )
+
+
 def test_repeated_identical_percentage_is_not_relogged():
-    """The percentage is phase-granular and sits flat through a long phase.
-    Off-TTY, an unchanged reading must not scroll a fresh line every minute —
-    but it must not go fully silent either: the watchdog emits no HEARTBEAT of
-    its own, so this line is the only liveness signal during flat stretches.
-    Twelve minutes of flat readings → 1 permanent line + a 300s-throttled tick
-    at minutes 5 and 10, instead of 12 lines."""
+    """A reading that has not moved must not scroll a fresh line every minute.
+    Twelve minutes of flat readings → one line, not twelve."""
     out = _render(_progress_lines(["40"] * 12))
-    assert out.count("progress · ") == 3
-    assert "elapsed=5m00s" in out and "elapsed=10m00s" in out  # ticks kept
-    assert "elapsed=3m00s" not in out  # in-between repeats dropped
+    assert out.count("progress · ") == 1
+    assert "elapsed=3m00s" not in out  # repeats dropped
+
+
+def test_the_percentage_rides_the_heartbeat_line():
+    """Production shape: the watchdog emits HEARTBEAT and RUN_PROGRESS in the
+    same second of the same loop, and `.hook-events.log` is tailed first. The
+    heartbeat therefore always takes the 300s throttle slot, so a repeated
+    reading routed through that channel is never shown — measured as 2 of 20
+    and 9 of 190 readings reaching the console. The tick carries the number
+    instead."""
+    stream = ["2026-06-06T17:00:00Z  [--------]  INFO   threat-analyst    PHASE_START   [Phase 9/11] STRIDE"]
+    for i in range(1, 13):
+        stream.append(_heartbeat_line(i))
+        stream.append(_progress_lines(["40"], start_min=i)[0])
+    out = _render(stream)
+    ticks = [ln for ln in out.splitlines() if "still in Phase" in ln]
+    assert ticks, "the liveness tick must survive"
+    assert all("~40%" in ln for ln in ticks)
+    assert out.count("progress · ") == 1  # the reading itself scrolls once
+
+
+def test_phase_boundary_line_reports_duration_and_spend():
+    out = _render(
+        [
+            "2026-06-06T17:20:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=9  duration=24m10s  delta=≥$12.40  total=≥$18.06",
+        ]
+    )
+    assert "✓ Phase 9 done — 24m10s · +≥$12.40 (run ≥$18.06)" in out
+
+
+def test_phase_boundary_line_without_an_attributable_delta_shows_the_run_total():
+    out = _render(
+        [
+            "2026-06-06T17:20:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=9  duration=24m10s  total=≥$18.06",
+        ]
+    )
+    assert "✓ Phase 9 done — 24m10s · run ≥$18.06" in out
+
+
+def test_phase_boundary_line_without_usage_shows_the_duration_only():
+    """The host may report no usage for the window; the boundary itself still
+    happened, and inventing a $0.00 delta for it would read as a free phase."""
+    out = _render(
+        [
+            "2026-06-06T17:20:00Z  [--------]  INFO   skill-watchdog      PHASE_COST          phase=2  duration=6m12s",
+        ]
+    )
+    assert "✓ Phase 2 done — 6m12s" in out
+    assert "$" not in out
 
 
 def test_each_changed_percentage_gets_its_own_line():

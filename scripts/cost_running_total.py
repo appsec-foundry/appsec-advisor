@@ -3,9 +3,10 @@
 from ``.hook-events.log`` and ``.agent-run.log``.
 
 Used by:
-  - The orchestrator after each PHASE_END to print a one-line banner showing
-    cumulative token spend and cost delta since the previous phase.
-  - The skill-level heartbeat watchdog to enforce ``--max-cost`` budget caps.
+  - ``skill_watchdog.py`` for the running figure on the live progress line,
+    refreshed on the cadence that view shows rather than every tick.
+  - ``run-headless.sh`` at the end of a run: the cost-by-phase table always, and
+    the whole-run figure when no result object survived to carry the exact one.
 
 What the run costs is not what one session reports. Two boundaries decide it,
 and getting either wrong moves the figure by a factor:
@@ -25,7 +26,7 @@ Design contract:
   - Zero LLM tokens — pure regex parsing.
 
 Usage:
-    cost_running_total.py <output-dir> [--format banner|json|total-only]
+    cost_running_total.py <output-dir> [--format banner|json|total-only|phases]
                                        [--since-iso <iso-timestamp>]
 
 Exit codes:
@@ -469,6 +470,11 @@ def aggregate_running_total(output_dir: Path, since_iso: str | None = None) -> d
         "unmetered_agents": sub["unmetered_agents"],
         "unpriced_tokens": sub["unpriced_tokens"],
         "unpriced_calls": sub["unpriced_calls"],
+        # Exposed, not just folded into `cost_is_floor`: mid-run every reading is
+        # a floor because sub-agents report at completion, while this flag means
+        # the host reports no per-call usage at all and the figure is short by
+        # orders of magnitude. Only the second is a reason to show nothing.
+        "usage_source_absent": bool(sub["usage_source_absent"]),
         "cost_is_floor": bool(sub["unmetered_agents"] or sub["usage_source_absent"] or sub["unpriced_tokens"]),
     }
 
@@ -509,6 +515,61 @@ def format_total_only(result: dict[str, Any]) -> str:
     return f"{result.get('cost_usd', 0.0):.4f}"
 
 
+_PHASE_COST_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?\sPHASE_COST\s+(.*)$")
+
+
+def _run_start_iso(output_dir: Path) -> str | None:
+    """This run's start as an ISO timestamp, from ``.scan-start-epoch``."""
+    try:
+        epoch = int((output_dir / ".scan-start-epoch").read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    if epoch <= 0:
+        return None
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def format_phase_table(agent_log: Path, since_iso: str | None = None) -> str:
+    """Where the run's time and money went, phase by phase.
+
+    Built from the ``PHASE_COST`` lines ``skill_watchdog.py`` writes at every
+    checkpoint phase change. The model table answers what a run cost; this
+    answers which phase spent it — Phase 9 alone is 30-55 % of the weighted
+    plan. Costs are the same floor the live view showed, so they are marked
+    ``≥`` and a phase whose window carried no metered usage shows a duration
+    only. Empty output when the log holds no such line: a run that ended before
+    its first phase boundary, or a watchdog that never started, has nothing to
+    report and must not print an empty frame.
+
+    ``since_iso`` scopes the table to the current run. ``.agent-run.log`` is
+    append-only and ``--rebuild`` preserves it on purpose, so without the bound
+    a rebuilt run would report the phases of the run before it as its own.
+    """
+    try:
+        lines = agent_log.read_text(errors="replace").splitlines()
+    except OSError:
+        return ""
+    rows: list[tuple[str, str, str]] = []
+    for line in lines:
+        m = _PHASE_COST_RE.match(line)
+        if not m:
+            continue
+        if since_iso and m.group(1) < since_iso:
+            continue
+        fields = dict(re.findall(r"(\w+)=([^\s]+)", m.group(2)))
+        phase = fields.get("phase")
+        if not phase:
+            continue
+        rows.append((phase, fields.get("duration", "?"), fields.get("delta", "")))
+    if not rows:
+        return ""
+    width = max(len(r[0]) for r in rows)
+    out = ["  Cost by phase — floor, from the run log"]
+    for phase, duration, cost in rows:
+        out.append(f"    phase {phase.ljust(width)}  {duration:>7}  {cost:>9}")
+    return "\n".join(out)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -517,7 +578,7 @@ def format_total_only(result: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="cost_running_total.py")
     p.add_argument("output_dir", help="$OUTPUT_DIR — must contain .hook-events.log")
-    p.add_argument("--format", choices=("banner", "json", "total-only"), default="banner")
+    p.add_argument("--format", choices=("banner", "json", "total-only", "phases"), default="banner")
     p.add_argument("--since-iso", default=None, help="Override window start (ISO 8601). Default: ASSESSMENT_START.")
     p.add_argument("--phase-label", default=None, help="Optional phase label for the banner (informational).")
     ns = p.parse_args(argv)
@@ -526,6 +587,12 @@ def main(argv: list[str] | None = None) -> int:
     if not output_dir.exists():
         print("  ↳ running total: n/a (output dir missing)", file=sys.stderr)
         return 1
+
+    if ns.format == "phases":
+        table = format_phase_table(output_dir / ".agent-run.log", ns.since_iso or _run_start_iso(output_dir))
+        if table:
+            print(table)
+        return 0
 
     result = aggregate_running_total(output_dir, ns.since_iso)
 

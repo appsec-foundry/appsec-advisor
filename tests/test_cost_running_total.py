@@ -15,6 +15,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -624,3 +625,93 @@ class TestStageStatsAreTheFallbackUsageSource:
         # "≥$0.00" would read as "this run was nearly free".
         assert "$0.00" not in banner
         assert "cost n/a" in banner
+
+
+class TestPhaseTable:
+    """The end-of-run "where did it go" block, built from the PHASE_COST lines
+    the watchdog writes at every checkpoint phase change."""
+
+    def _log(self, tmp_path, body: str) -> Path:
+        (tmp_path / ".agent-run.log").write_text(body)
+        return tmp_path / ".agent-run.log"
+
+    def test_rows_carry_duration_and_floor_cost(self, tmp_path):
+        crt = _load()
+        log = self._log(
+            tmp_path,
+            "2026-09-05T17:40:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=8  duration=6m12s  delta=≥$3.01  total=≥$5.66\n"
+            "2026-09-05T18:00:14Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=9  duration=24m10s  delta=≥$12.40  total=≥$18.06\n",
+        )
+        table = crt.format_phase_table(log)
+        assert "phase 8" in table and "6m12s" in table and "≥$3.01" in table
+        assert "phase 9" in table and "24m10s" in table and "≥$12.40" in table
+
+    def test_a_phase_without_metered_usage_shows_its_duration_only(self, tmp_path):
+        crt = _load()
+        log = self._log(
+            tmp_path,
+            "2026-09-05T17:40:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=2  duration=6m12s\n",
+        )
+        table = crt.format_phase_table(log)
+        assert "phase 2" in table and "6m12s" in table
+        assert "$" not in table
+
+    def test_no_boundary_no_frame(self, tmp_path):
+        """A run that ended before its first phase boundary has nothing to say;
+        an empty header would read as "no phase cost anything"."""
+        crt = _load()
+        assert crt.format_phase_table(self._log(tmp_path, "")) == ""
+        assert crt.format_phase_table(tmp_path / "absent.log") == ""
+
+    def test_cli_prints_the_table(self, tmp_path):
+        self._log(
+            tmp_path,
+            "2026-09-05T18:00:14Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=9  duration=24m10s  delta=≥$12.40  total=≥$18.06\n",
+        )
+        out = subprocess.run(
+            [sys.executable, str(SCRIPT), str(tmp_path), "--format", "phases"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert "Cost by phase" in out and "phase 9" in out
+
+
+def test_usage_source_absent_is_exposed_for_the_live_view(populated_run_dir):
+    """Mid-run every reading is a floor because sub-agents report at completion.
+    This flag means something else — the host reports no per-call usage at all —
+    and is the only one of the two that must hide the figure."""
+    crt = _load()
+    result = crt.aggregate_running_total(populated_run_dir)
+    assert result["usage_source_absent"] is False
+    (populated_run_dir / ".agent-run.log").write_text(
+        (populated_run_dir / ".agent-run.log").read_text()
+        + "2026-05-01T10:06:00Z  [abc12345]  WARN   threat-analyst  TELEMETRY_MISMATCH"
+        "   code=usage_source_absent  job_id=-  agent_type=-\n"
+    )
+    assert crt.aggregate_running_total(populated_run_dir)["usage_source_absent"] is True
+
+
+def test_phase_table_is_scoped_to_the_current_run(tmp_path):
+    """`.agent-run.log` is append-only and `--rebuild` keeps it: without the
+    bound, a rebuilt run reports the phases of the run before it as its own."""
+    crt = _load()
+    (tmp_path / ".agent-run.log").write_text(
+        "2026-09-05T10:00:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+        "          phase=2  duration=9m00s  delta=≥$1.00  total=≥$1.00\n"
+        "2026-09-06T04:30:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+        "          phase=8  duration=6m12s  delta=≥$3.01  total=≥$5.66\n"
+    )
+    (tmp_path / ".scan-start-epoch").write_text(str(int(datetime(2026, 9, 6, 4, 0, tzinfo=timezone.utc).timestamp())))
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_path), "--format", "phases"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "phase 8" in out
+    assert "phase 2" not in out

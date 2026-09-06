@@ -119,11 +119,28 @@ try:
 except Exception:  # pragma: no cover
     _PROGRESS_WEIGHTS = None  # type: ignore[assignment]
 
+# Running token + cost total for the progress line. Guarded like the siblings
+# above: without it the progress line simply carries no usage fields.
+try:
+    from cost_running_total import aggregate_running_total  # type: ignore
+except Exception:  # pragma: no cover
+    aggregate_running_total = None  # type: ignore[assignment]
+
 # The weight table ends at the last Stage-1 phase; Stage-2 (render/compose/QA/
 # repair) is unmodeled, so the phase-weight percentage must never assert a full
 # 100 while a run is still in Stage-2. Cap the finalization region here — a true
 # 100 would require Stage-2 to be weighted and to emit its own checkpoints.
 _FINALIZATION_CAP_PCT = 99
+
+# The running total re-parses both logs, so it is refreshed on the cadence the
+# progress view actually shows (5 min) rather than on every 60-second tick. The
+# fields carried between refreshes are the last reading, never interpolated.
+_USAGE_REFRESH_SECONDS = 300
+
+# Per-component STRIDE dispatch plan. Its presence is the "Phase 9 is running"
+# signal: `build_stride_dispatch_manifest.py` writes it immediately before the
+# fan-out, and it names every component of every wave.
+_DISPATCH_MANIFEST = ".stride-dispatch-manifest.json"
 
 
 _LOG_NAME = ".agent-run.log"
@@ -600,14 +617,45 @@ def _resolve_depth(output_dir: Path) -> str:
     return "standard"
 
 
+def _stride_fraction(output_dir: Path) -> tuple[int, int] | None:
+    """Return ``(finished, planned)`` components for Phase 9, else None.
+
+    The denominator is the dispatch manifest's component list, which covers
+    every wave rather than the one in flight. The numerator counts per-component
+    *results* through ``stride_output_files()``, never dispatches: a retried
+    component writes one file, so a wave of four can never report five of four.
+
+    Only results written after this run's manifest count. ``--mode full`` wipes
+    ``.stride-*.json`` at preflight, but ``--mode rebuild`` keeps them, and
+    counting those would open Phase 9 at 100 %.
+    """
+    manifest = output_dir / _DISPATCH_MANIFEST
+    try:
+        components = json.loads(manifest.read_text(encoding="utf-8"))["components"]
+        cutoff = manifest.stat().st_mtime
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    planned = len(components) if isinstance(components, list) else 0
+    if planned <= 0 or stride_output_files is None:
+        return None
+    finished = 0
+    for f in stride_output_files(output_dir):
+        try:
+            if f.stat().st_mtime >= cutoff:
+                finished += 1
+        except OSError:
+            pass
+    return min(finished, planned), planned
+
+
 def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int, str] | None:
     """Return ``(percent, phase_token)`` from ``.appsec-checkpoint``, or None.
 
     The percentage is the cumulative weight of all *completed* phases over the
-    total — a deliberate lower bound that never overstates and is phase-granular
-    (it jumps at phase boundaries and sits flat within a long phase such as
-    Phase 9 / STRIDE). The caller clamps it monotonically so resume/incremental
-    can't move it back.
+    total — a deliberate lower bound that never overstates. Within Phase 9 it is
+    interpolated on completed components (see below); every other phase is
+    granular and sits flat until its boundary. The caller clamps it monotonically
+    so resume/incremental can't move it back.
 
     ``status=completed`` is a **per-phase** marker (``batch_checkpoint.py``
     writes it at every phase end), not a run-terminal one — it means phase
@@ -630,6 +678,19 @@ def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int
         return None
     phase_done = re.search(r"status=completed", text) is not None
     done = sum(w for p, w in weights.items() if (p <= pos if phase_done else p < pos))
+    # Phase 9 is the single largest phase — 30 % of a quick run, 55 % of a
+    # standard one — and the checkpoint never reads `phase=9`, so the bar used to
+    # stand still for all of it and then jump (33 % → 96 % on the 2026-09-05
+    # insecure-python-app run). While the fan-out is on disk and the checkpoint
+    # has not moved past Phase 9, interpolate on completed components instead.
+    # The manifest, not `_is_past_stride_phase`, decides: that helper reads every
+    # token other than a bare `9` as past-STRIDE, which is every token the
+    # checkpoint actually carries during Phase 9.
+    frac = _stride_fraction(output_dir) if pos <= 9 and 9 in weights else None
+    if frac is not None:
+        finished, planned = frac
+        done = sum(w for p, w in weights.items() if p < 9) + weights[9] * finished / planned
+        token = "9"
     pct = max(0, min(100, round(100 * done / total)))
     # Finalization region: phase 11 (max weight) reported completed, or any
     # non-numeric Stage-2/repair token (pos → 99). The weight table stops at
@@ -640,6 +701,49 @@ def _progress_snapshot(output_dir: Path, weights: dict[int, float]) -> tuple[int
     if pos >= max(weights):
         pct = min(pct, _FINALIZATION_CAP_PCT)
     return pct, token
+
+
+def _fmt_tokens(count: int) -> str:
+    if count >= 1_000_000:
+        return f"{count / 1_000_000:.1f}M"
+    if count >= 1_000:
+        return f"{count / 1_000:.0f}k"
+    return str(count)
+
+
+def _running_usage(output_dir: Path) -> dict[str, Any] | None:
+    """Running output-token and cost total, or None when it cannot be trusted.
+
+    Two conditions gate the figure, and both are about the host rather than this
+    run: a session cost of zero means no ``SESSION_STOP`` has carried usage yet,
+    and ``usage_source_absent`` means the host stopped reporting per-call usage
+    for Agent calls at all (2026-09-05). Under either, every number here is a
+    floor short by orders of magnitude — the 2026-09-05 insecure-python-app run
+    computes to $0.19 for a run that cost tens of dollars — so the caller shows
+    nothing instead. Mid-run the total is a floor in any case: sub-agents report
+    at completion, so whatever is in flight is missing. It is displayed as ``≥``.
+
+    Output tokens, not the token total: the total is ~94 % cache reads (measured
+    on the 2026-08-31 juice-shop run), which grows with context re-reads rather
+    than with work done.
+    """
+    if aggregate_running_total is None:
+        return None
+    try:
+        result = aggregate_running_total(output_dir)
+    except Exception:  # pragma: no cover — telemetry must never stop the watchdog
+        return None
+    if result.get("status") != "ok":
+        return None
+    if result.get("usage_source_absent") or not result.get("host_cost_usd"):
+        return None
+    return result
+
+
+def _usage_fields(usage: dict[str, Any] | None) -> str:
+    if not usage:
+        return ""
+    return f"  out={_fmt_tokens(int(usage['out_tokens']))}  cost≥${float(usage['cost_usd']):.2f}"
 
 
 def watch(
@@ -705,6 +809,17 @@ def watch(
     last_pct = -1
     scan_start_epoch = _read_epoch(output_dir / ".scan-start-epoch")
     progress_weights = _PROGRESS_WEIGHTS.get(_resolve_depth(output_dir)) if _PROGRESS_WEIGHTS else None
+    # Running usage carried on the progress line, refreshed on the cadence the
+    # view shows rather than every tick. `phase_token` / `phase_since` /
+    # `phase_cost_base` track the checkpoint phase so a boundary can report what
+    # the phase it closes took — the checkpoint token change is that boundary:
+    # `PHASE_END` events fired 0-3 times per run in the three runs measured on
+    # 2026-09-06, while `batch_checkpoint.py` writes the token at every phase end.
+    usage: dict[str, Any] | None = None
+    usage_at = 0.0
+    phase_token: str | None = None
+    phase_since = 0.0
+    phase_cost_base: float | None = None
     iteration = 0
 
     while lock_path.exists():
@@ -933,14 +1048,13 @@ def watch(
                 _log(output_dir, "INFO", "WATCHDOG_END", f"abandoned  iter={iteration}")
                 return 0
 
-        # 7d — periodic RUN_PROGRESS line: coarse phase-granular % plus net
-        # runtime (wall minus cumulative standby). Best-effort and additive —
-        # only emitted for a real, timeable run (``.scan-start-epoch`` present)
-        # so unit tests with bare fixtures and pre-checkpoint early phases stay
-        # silent. The percentage is intentionally approximate (it jumps at
-        # phase boundaries and sits flat through long phases); cost is
-        # deliberately NOT shown here — a mid-run total is always an undercount
-        # while sub-agents are still running.
+        # 7d — periodic RUN_PROGRESS line: phase-weighted % plus net runtime
+        # (wall minus cumulative standby), and the running usage when the host
+        # meters it. Best-effort and additive — only emitted for a real, timeable
+        # run (``.scan-start-epoch`` present) so unit tests with bare fixtures and
+        # pre-checkpoint early phases stay silent. The percentage is approximate:
+        # it steps per completed component inside Phase 9 and jumps at every
+        # other phase boundary. The cost is a floor and says so with ``≥``.
         if progress_weights and scan_start_epoch:
             snap = _progress_snapshot(output_dir, progress_weights)
             if snap is not None:
@@ -948,13 +1062,43 @@ def watch(
                 if pct < last_pct:  # monotonic clamp (resume/incremental)
                     pct = last_pct
                 last_pct = pct
-                elapsed = time.time() - scan_start_epoch
+                now = time.time()
+                if now - usage_at >= _USAGE_REFRESH_SECONDS or phase_token not in (None, token):
+                    usage = _running_usage(output_dir)
+                    usage_at = now
+                elapsed = now - scan_start_epoch
                 idle_now = idle_total + run_idle_peak
                 net = elapsed - idle_now
                 detail = f"~{pct}%  phase={token}  elapsed={_fmt_hms(elapsed)}  net={_fmt_hms(net)}"
                 if idle_now >= 1:
                     detail += f" (standby {_fmt_hms(idle_now)})"
-                _log(output_dir, "INFO", "RUN_PROGRESS", detail)
+                _log(output_dir, "INFO", "RUN_PROGRESS", detail + _usage_fields(usage))
+
+                # 7e — phase boundary. The token changed, so the phase it names
+                # is over: report what it took. This is also the only per-phase
+                # cost record the run keeps; the end-of-run table is built from
+                # these lines.
+                if phase_token is None:
+                    phase_token, phase_since = token, scan_start_epoch
+                    phase_cost_base = float(usage["cost_usd"]) if usage else None
+                elif token != phase_token:
+                    cost_part = ""
+                    if usage:
+                        total_cost = float(usage["cost_usd"])
+                        # No base means the host had reported nothing when this
+                        # phase opened. The difference would then be the whole
+                        # run so far, charged to one phase; report the total only.
+                        if phase_cost_base is not None:
+                            cost_part = f"  delta=≥${total_cost - phase_cost_base:.2f}"
+                        cost_part += f"  total=≥${total_cost:.2f}"
+                        phase_cost_base = total_cost
+                    _log(
+                        output_dir,
+                        "INFO",
+                        "PHASE_COST",
+                        f"phase={phase_token}  duration={_fmt_hms(now - phase_since)}{cost_part}",
+                    )
+                    phase_token, phase_since = token, now
 
         # 8 — self-liveness tick.
         _bump_tick(output_dir, iteration)

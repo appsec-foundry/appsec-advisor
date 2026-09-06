@@ -196,6 +196,7 @@ def main() -> int:
     status_shown = False  # a transient \r heartbeat line is on screen
     last_perm = None  # datetime of the last permanent (scrolling) line
     last_pct_shown = None  # last RUN_PROGRESS percentage given a permanent line
+    last_pct_seen = None  # most recent RUN_PROGRESS reading, shown on the tick
     spawned_calls: set[str] = set()
     terminal_calls: set[str] = set()
     run_level_notices: set[str] = set()  # run-level telemetry codes already shown once
@@ -395,7 +396,15 @@ def main() -> int:
                 phase_el = _mins(phase_start, when) if phase_start else "?"
                 tally = stride_tally() if cur_phase.startswith("9/") else ""
                 tally = f", {tally}" if tally else ""
-                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}{tally}   [+{total_el} total]")
+                # The percentage rides this line rather than scrolling one of
+                # its own: the watchdog emits HEARTBEAT and RUN_PROGRESS in the
+                # same second of the same loop, and `.hook-events.log` is tailed
+                # first, so the heartbeat always took the throttle slot and the
+                # repeated reading was never shown. Two runs measured on
+                # 2026-09-06 put two and nine percentage lines on screen for
+                # 20 and 190 emitted readings.
+                pct_tag = f" · ~{last_pct_seen}%" if last_pct_seen else ""
+                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}{tally}{pct_tag}   [+{total_el} total]")
             else:
                 step = _kv(detail, "step") or "startup"
                 heartbeat(f"    · starting up ({step}) — +{total_el}")
@@ -413,20 +422,32 @@ def main() -> int:
             # here, so show the phase we tracked from them.
             if cur_phase:
                 detail = re.sub(r"\bphase=\S+", f"phase={cur_phase.split('/')[0]}", detail)
-            # The percentage is phase-granular: it sits flat for the whole of a
-            # long phase (Phase 9 / STRIDE runs ~20m). Only a *changed* reading
-            # earns a permanent line; the repeats carry no new progress and go
-            # through the heartbeat channel instead. They can't be dropped —
-            # the watchdog emits no HEARTBEAT of its own, so this line is the
-            # run's only liveness signal during those flat stretches.
+            # Only a *changed* reading earns a permanent line — inside Phase 9
+            # that is one step per finished component, elsewhere one per phase
+            # boundary. An unchanged repeat is dropped here and carried by the
+            # heartbeat line above instead, which is the one line that survives
+            # the throttle.
             m_pct = re.match(r"~(\d+)%", detail)
             pct = m_pct.group(1) if m_pct else None
-            line = f"    ◷ progress · {detail}"
+            last_pct_seen = pct or last_pct_seen
             if pct is None or pct != last_pct_shown:
                 last_pct_shown = pct
-                w(line)
+                w(f"    ◷ progress · {detail}")
+        elif event == "PHASE_COST":
+            # Boundary line: the phase named here is over. `delta≥` is what it
+            # spent, `total≥` the run so far — both floors, both only present
+            # when the host metered the window.
+            phase = _kv(detail, "phase")
+            duration = _kv(detail, "duration")
+            delta = _kv(detail, "delta")
+            total = _kv(detail, "total")
+            if delta and total:
+                spend = f" · +{delta} (run {total})"
+            elif total:  # nothing was metered when the phase opened
+                spend = f" · run {total}"
             else:
-                heartbeat(line)
+                spend = ""
+            w(f"    ✓ Phase {phase} done — {duration}{spend}")
         elif event in ("STRIDE_STALE", "STRIDE_CANARY_TIMEOUT", "STRIDE_COMPONENT_TIMEOUT"):
             w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "SUBSTEP2_IDLE":

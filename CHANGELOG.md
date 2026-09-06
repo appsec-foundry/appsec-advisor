@@ -11,10 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The live headless view carries the run's output tokens and a floor for its cost, and reports what each phase took when it ends; the end-of-run summary adds a cost-by-phase table below the exact model table. On a host that reports no per-call usage the figures are left out rather than shown as an undercount.
 - A run can declare a cost budget with `--soft-budget <usd>`, or `guardrails.soft_budget_usd` in an organization profile. It steers rather than caps: an invocation whose projected cost cannot fit is refused before it spends anything, and a run that overruns still finishes. Headless runs derive the hard `--hard-budget` cut at 1.25 times that value unless it is given. `--max-cost`, `max_cost_usd`, and `--max-budget` remain as deprecated spellings.
 
 ### Fixed
 
+- The live headless view keeps reporting progress inside a long phase: the percentage steps once per finished STRIDE component instead of standing still for the phase that is half the run, and every liveness tick carries it instead of two readings out of twenty reaching the console.
 - A run reports its token spend on hosts that return no per-call usage, where every figure previously read zero, and says that the cost cannot be priced rather than showing `$0.00`. A completed headless run records its exact cost so the next run projects a budget against a measurement instead of the parametric floor.
 - The live view states a host's missing call outcome once instead of appending it to every finished agent.
 - An unattended run no longer stops to ask whether to add business context.
