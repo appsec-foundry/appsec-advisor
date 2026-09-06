@@ -1,0 +1,157 @@
+diff --git a/scripts/requirements_hook.py b/scripts/requirements_hook.py
+--- a/scripts/requirements_hook.py
++++ b/scripts/requirements_hook.py
+@@ -5,8 +5,11 @@
+ this repository's `.claude/settings.json` and is deliberately absent from
+ `hooks/hooks.json`, which ships to users — nothing here should reach an install.
+ 
+-The decision register cannot change without the operator. The separate
+-`spec_guard.py` owns approval for the normative requirements catalog. For every
++An existing decision cannot change without the operator, while recording a new
++one is reviewed work like any other: an `Edit` that leaves everything it replaces
++byte-identical can only add to the register, and passes. The separate
++`spec_guard.py` owns approval for the normative requirements catalog, where a new
++ID is a new product promise and needs the operator too. For every
+ other edited file — named by a native write tool or by a write-shaped shell
+ command — this hook joins the product catalog with
+ `data/requirement-bindings.yaml` and puts applicable requirements in front of
+@@ -145,6 +148,36 @@
+     }
+ 
+ 
++def _is_insertion(edit: object) -> bool:
++    """Whether one edit only adds text around what it replaces."""
++    if not isinstance(edit, dict) or edit.get("replace_all"):
++        return False
++    old, new = edit.get("old_string"), edit.get("new_string")
++    if not isinstance(old, str) or not isinstance(new, str) or not old:
++        return False
++    return new != old and old in new
++
++
++def adds_without_changing(tool: str, tool_input: dict) -> bool:
++    """Whether the call can only add entries to the held register.
++
++    The register holds the operator's approval for changing a decision, not for
++    recording one, and a `PreToolUse` payload cannot see the file the call would
++    produce. An `Edit` payload does carry the text it replaces and the text it
++    writes, which answers the narrower question this rule needs: everything the
++    call replaces survives it byte-identical, so no row and no rule can be
++    loosened by it. `Write` replaces the whole file, `replace_all` multiplies an
++    edit across occurrences the payload does not name, and a shell command is
++    opaque here; each keeps asking.
++    """
++    if tool == "Edit":
++        return _is_insertion(tool_input)
++    if tool == "MultiEdit":
++        edits = tool_input.get("edits")
++        return isinstance(edits, list) and bool(edits) and all(_is_insertion(edit) for edit in edits)
++    return False
++
++
+ def decide(payload: dict) -> dict | None:
+     if payload.get("hook_event_name") != "PreToolUse":
+         return None
+@@ -169,6 +202,8 @@
+         return None
+ 
+     if wanted == _HELD_PATH:
++        if adds_without_changing(tool, payload.get("tool_input") or {}):
++            return None
+         return ask(wanted)
+ 
+     return requirements_context([wanted])
+diff --git a/tests/test_requirements_hook.py b/tests/test_requirements_hook.py
+--- a/tests/test_requirements_hook.py
++++ b/tests/test_requirements_hook.py
+@@ -42,6 +42,77 @@
+     assert held in decision["permissionDecisionReason"]
+ 
+ 
++HELD = "docs/internal/decisions.md"
++
++
++def edit(old: str, new: str, **extra) -> dict:
++    return {
++        "hook_event_name": "PreToolUse",
++        "tool_name": "Edit",
++        "tool_input": {"file_path": HELD, "old_string": old, "new_string": new, **extra},
++    }
++
++
++def test_a_new_decision_row_is_added_without_approval():
++    row = "| OR-1 | An existing decision | `a_guard` | `a_source.py` |"
++    assert requirements_hook.decide(edit(row, row + "\n| OR-2 | A new decision | `b_guard` | `b.py` |")) is None
++
++
++def test_a_new_section_is_added_without_approval():
++    heading = "## Orchestration"
++    assert requirements_hook.decide(edit(heading, "## A new area\n\n| ID |\n\n" + heading)) is None
++
++
++@pytest.mark.parametrize(
++    ("old", "new"),
++    [
++        ("| OR-1 | Narrow | `g` | `s.py` |", "| OR-1 | Wider | `g` | `s.py` |"),
++        ("| OR-1 | A decision | `g` | `s.py` |", ""),
++        ("ask the operator first", "ask the operator when convenient"),
++    ],
++    ids=["widened", "removed", "rule-relaxed"],
++)
++def test_changing_what_the_register_already_says_asks(old, new):
++    assert output(requirements_hook.decide(edit(old, new)))["permissionDecision"] == "ask"
++
++
++def test_replacing_every_occurrence_asks():
++    row = "| OR-1 | A decision | `g` | `s.py` |"
++    call = edit(row, row + "\n| OR-2 | Another | `g2` | `s2.py` |", replace_all=True)
++    assert output(requirements_hook.decide(call))["permissionDecision"] == "ask"
++
++
++def test_a_whole_file_write_asks_even_when_it_only_adds():
++    call = {
++        "hook_event_name": "PreToolUse",
++        "tool_name": "Write",
++        "tool_input": {"file_path": HELD, "content": "everything, plus one row"},
++    }
++    assert output(requirements_hook.decide(call))["permissionDecision"] == "ask"
++
++
++def test_a_multi_edit_asks_unless_every_edit_only_adds():
++    adds = {"old_string": "| OR-1 | A |", "new_string": "| OR-1 | A |\n| OR-2 | B |"}
++    changes = {"old_string": "| OR-3 | C |", "new_string": "| OR-3 | Wider |"}
++    call = {
++        "hook_event_name": "PreToolUse",
++        "tool_name": "MultiEdit",
++        "tool_input": {"file_path": HELD, "edits": [adds]},
++    }
++    assert requirements_hook.decide(call) is None
++    call["tool_input"]["edits"] = [adds, changes]
++    assert output(requirements_hook.decide(call))["permissionDecision"] == "ask"
++
++
++def test_a_shell_write_to_the_register_asks():
++    call = {
++        "hook_event_name": "PreToolUse",
++        "tool_name": "Bash",
++        "tool_input": {"command": f"echo '| OR-2 | new |' >> {HELD}"},
++    }
++    assert output(requirements_hook.decide(call))["permissionDecision"] == "ask"
++
++
+ def test_decision_register_requires_approval_through_an_absolute_path():
+     absolute = str(ROOT / "docs" / "internal" / "decisions.md")
+     assert output(requirements_hook.decide(payload(path=absolute)))["permissionDecision"] == "ask"
+diff --git a/specs/README.md b/specs/README.md
+--- a/specs/README.md
++++ b/specs/README.md
+@@ -80,8 +80,7 @@
+ `specs/requirements.md` file. It does not hold proposals, archived records, or
+ technical bindings.
+ 
+-`scripts/requirements_hook.py` surfaces applicable requirements and separately
+-holds the decision register. Both hooks are development-only and do not ship in
++`scripts/requirements_hook.py` surfaces applicable requirements and separately holds the decision register. An edit that leaves everything it replaces byte-identical only adds entries and passes; a whole-file write and a shell write still ask. Both hooks are development-only and do not ship in
+ the plugin.
+ 
+ Structural checks cannot determine whether a test truly proves a product

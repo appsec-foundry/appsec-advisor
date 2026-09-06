@@ -29,6 +29,8 @@ The operator approves a requirement's ID, title, and normative text. Creating a
 proposal or changing a technical binding uses the normal code-review process and
 does not require a separate specification permission prompt.
 
+The decision register is held for a different change. Its rule asks the operator before an entry is loosened, widened or retired, so recording a new decision is reviewed work like any other, while changing an existing one, removing one, or changing the register's own rules needs approval and a proposal.
+
 An incompatible implementation change updates and receives approval for the
 requirement before the implementation lands. Requirement IDs are never reused;
 removed IDs are recorded in the bindings file.
@@ -72,9 +74,7 @@ retired IDs, referenced paths and decisions, and exact test node IDs.
 coverage bound to a file. The development hook supplies the same context before
 a supported direct file edit.
 
-`python3 scripts/check_specs.py --changed-against <ref>` requires a changed
-proposal when the normative catalog or decision register changes. It records the
-change process but cannot prove that a person approved it.
+`python3 scripts/check_specs.py --changed-against <ref>` requires a changed proposal when the normative catalog changes at all, and when the decision register changes an entry it already had, drops one, or changes the text around its entries at all. A diff that only adds decision rows passes, because the text around them states how every later decision is made. Without a readable base revision the register is held like the catalog. The check records the change process but cannot prove that a person approved it.
 
 `scripts/spec_guard.py` asks before an identifiable mutation of the normative
 `specs/requirements.md` file. It does not hold proposals, archived records, or

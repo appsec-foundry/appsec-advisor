@@ -32,13 +32,15 @@ BINDINGS = ROOT / "data" / "requirement-bindings.yaml"
 BINDING_SCHEMA = ROOT / "schemas" / "requirement-bindings.schema.yaml"
 REGISTER = ROOT / "docs" / "internal" / "decisions.md"
 
-HELD_PATHS = ("specs/requirements.md", "docs/internal/decisions.md")
+REGISTER_PATH = "docs/internal/decisions.md"
+HELD_PATHS = ("specs/requirements.md", REGISTER_PATH)
 CHANGE_DIR = "specs/changes/"
 
 SECTION_RE = re.compile(r"^## (.+?)\s*$")
 ENTRY_RE = re.compile(r"^### (REQ-[A-Z]{2,5}-\d{3}) — (.+?)\s*$")
 ID_SHAPE_RE = re.compile(r"^REQ-[A-Z]{2,5}-\d{3}$")
 DECISION_RE = re.compile(r"^[A-Z]{2,3}-\d+$")
+DECISION_ROW_RE = re.compile(r"^\|\s*([A-Z]{2,3}-\d+)\s*\|(.*)$")
 TECHNICAL_FIELD_RE = re.compile(r"\*\*(?:Applies to|Source|Guard):\*\*")
 PROPOSAL_RE = re.compile(r"^specs/changes/[^/]+/proposal\.md$")
 
@@ -293,12 +295,74 @@ def render(entry: Entry, binding: Binding) -> str:
     )
 
 
-def unapproved_changes(paths: list[str]) -> list[str]:
-    """Return held files changed without a proposal changed in the same diff."""
+def register_entries(text: str) -> tuple[dict[str, str], list[str]]:
+    """Return the decision register's rows by ID and the prose lines around them."""
+    rows: dict[str, str] = {}
+    prose: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        row = DECISION_ROW_RE.match(line)
+        if row:
+            rows[row.group(1)] = row.group(2).strip()
+        elif line:
+            prose.append(line)
+    return rows, prose
+
+
+def _file_at(ref: str, path: str) -> str | None:
+    """Return ``path`` as of ``ref``, or ``None`` when it did not exist there."""
+    result = subprocess.run(
+        ["git", "show", f"{ref}:{path}"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout if result.returncode == 0 else None
+
+
+def register_change_needing_approval(ref: str | None) -> str | None:
+    """Return why the register's change needs the operator, or ``None``.
+
+    The register asks the operator before an entry is loosened, widened or
+    retired, and recording a new decision is ordinary reviewed work. Telling the
+    two apart needs the base revision: without one they are indistinguishable
+    and the change is held.
+
+    Only the rows are additive. The text around them states how every later
+    decision is made, so a sentence added to it steers as much as one removed.
+    """
+    if not ref:
+        return "cannot be compared against a base revision"
+    base = _file_at(ref, REGISTER_PATH)
+    if base is None:
+        return None
+    path = ROOT / REGISTER_PATH
+    current = path.read_text(encoding="utf-8") if path.exists() else ""
+    base_rows, base_prose = register_entries(base)
+    rows, prose = register_entries(current)
+    touched = sorted(rid for rid, body in base_rows.items() if rows.get(rid) != body)
+    if touched:
+        return f"{', '.join(touched)} changed or removed"
+    if base_prose != prose:
+        return "the rules around its entries changed"
+    return None
+
+
+def unapproved_changes(paths: list[str], ref: str | None = None) -> list[str]:
+    """Return held changes that need the operator and carry no proposal."""
     touched = [path for path in paths if path in HELD_PATHS]
     if not touched or any(PROPOSAL_RE.fullmatch(path) for path in paths):
         return []
-    return [f"{path} changed with no proposal under {CHANGE_DIR}" for path in touched]
+    problems: list[str] = []
+    for path in touched:
+        if path == REGISTER_PATH:
+            reason = register_change_needing_approval(ref)
+            if reason is not None:
+                problems.append(f"{path}: {reason}, with no proposal under {CHANGE_DIR}")
+            continue
+        problems.append(f"{path} changed with no proposal under {CHANGE_DIR}")
+    return problems
 
 
 def changed_since(ref: str) -> list[str]:
@@ -341,13 +405,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--changed-against",
         dest="ref",
-        help="fail when a held file changed against this ref with no changed proposal",
+        help="fail when a held change against this ref needs the operator and has no proposal",
     )
     args = parser.parse_args(argv)
 
     if args.ref:
         try:
-            problems = unapproved_changes(changed_since(args.ref))
+            problems = unapproved_changes(changed_since(args.ref), args.ref)
         except ValueError as error:
             print(str(error), file=sys.stderr)
             return 2

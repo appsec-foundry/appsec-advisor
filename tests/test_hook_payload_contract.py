@@ -16,6 +16,11 @@ Two layers here:
 
 Adding a supported host version means dropping its sanitized fixture into the
 directory; every case below then runs against it.
+
+The replay table exists because fixtures alone were not enough: on 2026-09-05
+three event meanings changed under the plugin between 05:17Z and 07:22Z, each
+fixed where it surfaced, while nothing asserted what has to hold whatever the
+events mean. That is what the run-shaped invariants below pin (`OR-22`).
 """
 
 from __future__ import annotations
