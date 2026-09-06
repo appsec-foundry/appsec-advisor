@@ -711,8 +711,14 @@ def _fmt_tokens(count: int) -> str:
     return str(count)
 
 
-def _running_usage(output_dir: Path) -> dict[str, Any] | None:
-    """Running output-token and cost total, or None when it cannot be trusted.
+def _running_usage(output_dir: Path) -> tuple[dict[str, Any] | None, bool]:
+    """Running output-token and cost total, and whether the host meters at all.
+
+    Returns ``(reading, host_absent)``. ``host_absent`` separates the two ways a
+    reading can be missing: nothing has been reported *yet* (early in a run, no
+    ``SESSION_STOP`` carried usage) from nothing being reported *at all*, which
+    is what a declared budget needs to hear — a budget nobody can measure is not
+    being watched, and only the host's own hard cut still applies.
 
     Two conditions gate the figure, and both are about the host rather than this
     run: a session cost of zero means no ``SESSION_STOP`` has carried usage yet,
@@ -728,22 +734,70 @@ def _running_usage(output_dir: Path) -> dict[str, Any] | None:
     than with work done.
     """
     if aggregate_running_total is None:
-        return None
+        return None, False
     try:
         result = aggregate_running_total(output_dir)
     except Exception:  # pragma: no cover — telemetry must never stop the watchdog
-        return None
+        return None, False
     if result.get("status") != "ok":
-        return None
-    if result.get("usage_source_absent") or not result.get("host_cost_usd"):
-        return None
-    return result
+        return None, False
+    absent = bool(result.get("usage_source_absent"))
+    if absent or not result.get("host_cost_usd"):
+        return None, absent
+    return result, False
 
 
-def _usage_fields(usage: dict[str, Any] | None) -> str:
+def _soft_budget(output_dir: Path) -> float | None:
+    """The run's declared soft budget, from the resolved config."""
+    try:
+        value = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8")).get("soft_budget_usd")
+        return float(value) if value else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _hard_budget() -> float | None:
+    """The host's own cut, exported by ``run-headless.sh`` as it launches.
+
+    It reaches no file: the wrapper passes it to ``claude --max-budget-usd`` and
+    the host enforces it by killing the session wherever it is, leaving no
+    report. That makes it the more important of the two to see coming, and the
+    environment is the only place the watchdog can read it from.
+    """
+    try:
+        value = float(os.environ.get("APPSEC_HARD_BUDGET_USD", ""))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _usage_fields(usage: dict[str, Any] | None, soft_budget: float | None = None) -> str:
     if not usage:
         return ""
-    return f"  out={_fmt_tokens(int(usage['out_tokens']))}  cost≥${float(usage['cost_usd']):.2f}"
+    cost = float(usage["cost_usd"])
+    fields = f"  out={_fmt_tokens(int(usage['out_tokens']))}  cost≥${cost:.2f}"
+    if soft_budget:
+        fields += f"/${soft_budget:.2f} (≥{round(100 * cost / soft_budget)}%)"
+    return fields
+
+
+def _budget_warnings(cost: float, soft: float | None, hard: float | None, fired: set[str]) -> list[str]:
+    """Threshold crossings not yet reported, as log details.
+
+    Reported once each and never as a gate. The figure is a floor, so a
+    threshold it has not reached may already be behind us — the crossing is
+    information for the operator, not a decision the watchdog is entitled to
+    make. Killing on it would also contradict the soft budget's contract, which
+    is to steer rather than to cap.
+    """
+    out = []
+    for scope, budget, share in (("soft", soft, 0.8), ("soft", soft, 1.0), ("hard", hard, 0.8)):
+        key = f"{scope}:{share}"
+        if not budget or key in fired or cost < budget * share:
+            continue
+        fired.add(key)
+        out.append(f"scope={scope}  used=≥${cost:.2f}  budget=${budget:.2f}  pct=≥{round(100 * cost / budget)}%")
+    return out
 
 
 def watch(
@@ -817,9 +871,14 @@ def watch(
     # 2026-09-06, while `batch_checkpoint.py` writes the token at every phase end.
     usage: dict[str, Any] | None = None
     usage_at = 0.0
+    usage_absent = False
     phase_token: str | None = None
     phase_since = 0.0
     phase_cost_base: float | None = None
+    soft_budget = _soft_budget(output_dir)
+    hard_budget = _hard_budget()
+    budget_fired: set[str] = set()
+    budget_blind = False
     iteration = 0
 
     while lock_path.exists():
@@ -1064,15 +1123,33 @@ def watch(
                 last_pct = pct
                 now = time.time()
                 if now - usage_at >= _USAGE_REFRESH_SECONDS or phase_token not in (None, token):
-                    usage = _running_usage(output_dir)
+                    usage, usage_absent = _running_usage(output_dir)
                     usage_at = now
+                    # A declared budget that nothing can measure is not being
+                    # watched: only the host's own cut still applies, and it
+                    # kills the session where it stands. Say so once.
+                    if usage_absent and (soft_budget or hard_budget) and not budget_blind:
+                        budget_blind = True
+                        declared = soft_budget or hard_budget
+                        _log(
+                            output_dir,
+                            "WARN",
+                            "RUN_BUDGET_UNWATCHED",
+                            f"budget=${declared:.2f}  the host reports no per-call usage, so spend "
+                            f"cannot be tracked against it; only the hard cut still applies",
+                        )
+                    if usage:
+                        for warning in _budget_warnings(
+                            float(usage["cost_usd"]), soft_budget, hard_budget, budget_fired
+                        ):
+                            _log(output_dir, "WARN", "RUN_BUDGET_WARN", warning)
                 elapsed = now - scan_start_epoch
                 idle_now = idle_total + run_idle_peak
                 net = elapsed - idle_now
                 detail = f"~{pct}%  phase={token}  elapsed={_fmt_hms(elapsed)}  net={_fmt_hms(net)}"
                 if idle_now >= 1:
                     detail += f" (standby {_fmt_hms(idle_now)})"
-                _log(output_dir, "INFO", "RUN_PROGRESS", detail + _usage_fields(usage))
+                _log(output_dir, "INFO", "RUN_PROGRESS", detail + _usage_fields(usage, soft_budget))
 
                 # 7e — phase boundary. The token changed, so the phase it names
                 # is over: report what it took. This is also the only per-phase

@@ -550,6 +550,7 @@ def format_phase_table(agent_log: Path, since_iso: str | None = None) -> str:
     except OSError:
         return ""
     rows: list[tuple[str, str, str]] = []
+    last_total = ""
     for line in lines:
         m = _PHASE_COST_RE.match(line)
         if not m:
@@ -561,13 +562,36 @@ def format_phase_table(agent_log: Path, since_iso: str | None = None) -> str:
         if not phase:
             continue
         rows.append((phase, fields.get("duration", "?"), fields.get("delta", "")))
+        last_total = fields.get("total", last_total)
     if not rows:
         return ""
     width = max(len(r[0]) for r in rows)
     out = ["  Cost by phase — floor, from the run log"]
     for phase, duration, cost in rows:
         out.append(f"    phase {phase.ljust(width)}  {duration:>7}  {cost:>9}")
+    budget_line = _budget_line(agent_log.parent, last_total)
+    if budget_line:
+        out.append(budget_line)
     return "\n".join(out)
+
+
+def _budget_line(output_dir: Path, last_total: str) -> str:
+    """Where the run's floor landed against its declared soft budget.
+
+    Compared against the floor the live view accumulated, never against the
+    exact result-object figure: mixing the two would compare a full total with a
+    budget the run was steered by on partial information. `≥` on both sides.
+    """
+    try:
+        budget = json.loads((output_dir / ".skill-config.json").read_text(encoding="utf-8")).get("soft_budget_usd")
+        budget = float(budget) if budget else None
+    except (OSError, ValueError, TypeError):
+        return ""
+    m = re.search(r"([\d.]+)", last_total or "")
+    if not budget or not m:
+        return ""
+    used = float(m.group(1))
+    return f"    run ≥${used:.2f} of the ${budget:.2f} soft budget (≥{round(100 * used / budget)}%)"
 
 
 # ---------------------------------------------------------------------------

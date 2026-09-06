@@ -1084,17 +1084,77 @@ def test_usage_fields_are_withheld_when_the_host_reports_no_usage(out_dir, monke
     sw = _load()
     metered = {"status": "ok", "out_tokens": 187_000, "cost_usd": 15.96, "host_cost_usd": 9.94}
     monkeypatch.setattr(sw, "aggregate_running_total", lambda _d: dict(metered))
-    assert sw._running_usage(out_dir) == metered
-    assert sw._usage_fields(sw._running_usage(out_dir)) == "  out=187k  cost≥$15.96"
+    assert sw._running_usage(out_dir) == (metered, False)
+    assert sw._usage_fields(sw._running_usage(out_dir)[0]) == "  out=187k  cost≥$15.96"
 
-    for broken in (
-        {**metered, "usage_source_absent": True},
-        {**metered, "host_cost_usd": 0.0},
-        {**metered, "status": "error"},
+    # The two ways a reading goes missing are not the same: `usage_source_absent`
+    # means the host meters nothing at all, which a declared budget must hear.
+    for broken, absent in (
+        ({**metered, "usage_source_absent": True}, True),
+        ({**metered, "host_cost_usd": 0.0}, False),
+        ({**metered, "status": "error"}, False),
     ):
         monkeypatch.setattr(sw, "aggregate_running_total", lambda _d, b=broken: dict(b))
-        assert sw._running_usage(out_dir) is None
+        assert sw._running_usage(out_dir) == (None, absent)
     assert sw._usage_fields(None) == ""
+
+
+def test_the_progress_line_measures_the_cost_against_the_soft_budget(out_dir):
+    sw = _load()
+    usage = {"status": "ok", "out_tokens": 187_000, "cost_usd": 15.96, "host_cost_usd": 9.94}
+    assert sw._usage_fields(usage, 25.0) == "  out=187k  cost≥$15.96/$25.00 (≥64%)"
+    assert sw._usage_fields(usage, None) == "  out=187k  cost≥$15.96"
+    (out_dir / ".skill-config.json").write_text(json.dumps({"soft_budget_usd": 25.0}))
+    assert sw._soft_budget(out_dir) == 25.0
+    (out_dir / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard"}))
+    assert sw._soft_budget(out_dir) is None
+
+
+def test_the_hard_cut_is_read_from_the_environment(monkeypatch):
+    """It is a `claude` launch flag, so it reaches no file the watchdog can read."""
+    sw = _load()
+    monkeypatch.delenv("APPSEC_HARD_BUDGET_USD", raising=False)
+    assert sw._hard_budget() is None
+    monkeypatch.setenv("APPSEC_HARD_BUDGET_USD", "40")
+    assert sw._hard_budget() == 40.0
+    monkeypatch.setenv("APPSEC_HARD_BUDGET_USD", "not-a-number")
+    assert sw._hard_budget() is None
+
+
+def test_each_budget_threshold_is_reported_once():
+    sw = _load()
+    fired: set[str] = set()
+    assert sw._budget_warnings(10.0, 25.0, 40.0, fired) == []
+    crossed = sw._budget_warnings(21.0, 25.0, 40.0, fired)
+    assert len(crossed) == 1 and "scope=soft" in crossed[0] and "pct=≥84%" in crossed[0]
+    assert sw._budget_warnings(22.0, 25.0, 40.0, fired) == []  # same threshold, silent
+    over = sw._budget_warnings(33.0, 25.0, 40.0, fired)
+    assert len(over) == 2  # soft exceeded, and 80 % of the hard cut
+    assert any("scope=hard" in w for w in over)
+    assert sw._budget_warnings(99.0, None, None, set()) == []
+
+
+def test_a_budget_nobody_can_measure_is_reported_as_unwatched(out_dir, silent_heartbeat, monkeypatch):
+    """Only the host's own cut still applies then, and it kills the session where
+    it stands — a silent budget would read as a watched one."""
+    sw = silent_heartbeat
+    monkeypatch.setattr(sw, "_running_usage", lambda _d: (None, True))
+    monkeypatch.setattr(sw, "_progress_snapshot", lambda _d, _w: (40, "8"))
+    (out_dir / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard", "soft_budget_usd": 25.0}))
+    (out_dir / ".scan-start-epoch").write_text(str(int(time.time()) - 120))
+    sw.watch(
+        output_dir=out_dir,
+        plugin_root=REPO_ROOT,
+        heartbeat_interval=0,
+        stride_stale_seconds=999,
+        stride_canary_seconds=999,
+        component_timeout_seconds=999,
+        max_iterations=3,
+        run_idle_seconds=0,
+    )
+    log = (out_dir / ".agent-run.log").read_text()
+    assert log.count("RUN_BUDGET_UNWATCHED") == 1  # once, not once per tick
+    assert "budget=$25.00" in log
 
 
 def test_phase_boundary_reports_the_phase_it_closes(out_dir, silent_heartbeat, monkeypatch):
@@ -1132,7 +1192,9 @@ def test_phase_boundary_omits_a_delta_it_cannot_attribute(out_dir, silent_heartb
     """Nothing was metered when the phase opened, so the difference would be the
     whole run so far charged to that one phase."""
     sw = silent_heartbeat
-    costs = iter([None, {"status": "ok", "out_tokens": 9000, "cost_usd": 16.40, "host_cost_usd": 1.0}])
+    costs = iter(
+        [(None, False), ({"status": "ok", "out_tokens": 9000, "cost_usd": 16.40, "host_cost_usd": 1.0}, False)]
+    )
     monkeypatch.setattr(sw, "_running_usage", lambda _d: next(costs))
     readings = iter([(40, "8"), (96, "10")])
     monkeypatch.setattr(sw, "_progress_snapshot", lambda _d, _w: next(readings))

@@ -167,6 +167,14 @@ modes:
 ./scripts/run-headless.sh --audit-requirements --repo /repos/team-api
 ```
 
+## While the run is going
+
+Unless you pass `--quiet`, the run prints a progress line: the phase it is in, roughly how far along it is, how long it has taken, and what it has spent so far. The spend is a lower bound, marked `≥`, because sub-agents only report when they finish. With `--soft-budget` it is shown against that budget, and passing 80 % or 100 % of it prints a warning once. A warning never stops the run; only `--hard-budget` does that.
+
+Where the host reports no usage, the run says so once and shows no spend at all rather than a figure that is far too low. Nothing is then tracking the soft budget, and only `--hard-budget` still applies.
+
+At the end you get the exact cost per model, and under it a table of what each phase took.
+
 ## Output
 
 A successful threat-model run writes `threat-model.md` and, unless disabled,

@@ -688,6 +688,11 @@ if [ -n "$MAX_DURATION" ]; then
 fi
 
 # Export env-vars the skill/orchestrator can pick up
+# The host's own cut, for the live view only. It is passed to `claude` above and
+# enforced by the host, which kills the session where it stands and leaves no
+# report — so it is worth seeing approach, and this is the only way it reaches
+# the watchdog: it is a launch flag, not part of the resolved config.
+[ -n "$MAX_BUDGET" ] && export APPSEC_HARD_BUDGET_USD="$MAX_BUDGET"
 # Headless marker: this run has no interactive user, so the skill must SKIP the
 # interactive orchestrator-model prompt (AskUserQuestion would block/error) and
 # proceed on the current session model. The compact full runtime owns the

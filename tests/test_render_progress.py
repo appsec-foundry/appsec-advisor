@@ -755,3 +755,26 @@ def test_a_run_level_terminal_reason_is_shown_once_and_a_per_call_one_every_time
     # Nothing else is lost: every call still reports as done, named by its job.
     assert out.count("✓ appsec-recon-scanner done") == 5
     assert "done (phase3-6-architecture)" in out
+
+
+def test_budget_threshold_warnings_name_which_budget_was_crossed():
+    out = _render(
+        [
+            "2026-09-06T05:10:00Z  [--------]  WARN   skill-watchdog      RUN_BUDGET_WARN"
+            "     scope=soft  used=≥$20.10  budget=$25.00  pct=≥80%",
+            "2026-09-06T05:30:00Z  [--------]  WARN   skill-watchdog      RUN_BUDGET_WARN"
+            "     scope=hard  used=≥$32.40  budget=$40.00  pct=≥81%",
+        ]
+    )
+    assert "⚠ cost soft budget — ≥$20.10 of $25.00 (≥80%)" in out
+    assert "⚠ cost hard cut (the host stops the run there) — ≥$32.40 of $40.00 (≥81%)" in out
+
+
+def test_an_unwatchable_budget_is_said_once():
+    out = _render(
+        [
+            "2026-09-06T05:10:00Z  [--------]  WARN   skill-watchdog      RUN_BUDGET_UNWATCHED"
+            "     budget=$25.00  the host reports no per-call usage, so spend cannot be tracked against it",
+        ]
+    )
+    assert "⚠ budget not watchable — budget=$25.00" in out

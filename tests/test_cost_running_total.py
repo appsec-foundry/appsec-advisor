@@ -715,3 +715,20 @@ def test_phase_table_is_scoped_to_the_current_run(tmp_path):
     ).stdout
     assert "phase 8" in out
     assert "phase 2" not in out
+
+
+def test_the_phase_table_closes_with_the_soft_budget(tmp_path):
+    """Floor against budget, both marked `≥`: the exact result-object figure is
+    a different scope and must not be compared with a budget the run was steered
+    by on partial information."""
+    crt = _load()
+    (tmp_path / ".agent-run.log").write_text(
+        "2026-09-06T04:30:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+        "          phase=9  duration=24m10s  delta=≥$12.40  total=≥$18.06\n"
+    )
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"soft_budget_usd": 25.0}))
+    table = crt.format_phase_table(tmp_path / ".agent-run.log")
+    assert "run ≥$18.06 of the $25.00 soft budget (≥72%)" in table
+
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard"}))
+    assert "soft budget" not in crt.format_phase_table(tmp_path / ".agent-run.log")

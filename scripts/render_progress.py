@@ -448,6 +448,13 @@ def main() -> int:
             else:
                 spend = ""
             w(f"    ✓ Phase {phase} done — {duration}{spend}")
+        elif event == "RUN_BUDGET_WARN":
+            scope = _kv(detail, "scope")
+            used, budget, pct = _kv(detail, "used"), _kv(detail, "budget"), _kv(detail, "pct")
+            label = "soft budget" if scope == "soft" else "hard cut (the host stops the run there)"
+            w(f"    ⚠ cost {label} — {used} of {budget} ({pct})")
+        elif event == "RUN_BUDGET_UNWATCHED":
+            w(f"    ⚠ budget not watchable — {detail}")
         elif event in ("STRIDE_STALE", "STRIDE_CANARY_TIMEOUT", "STRIDE_COMPONENT_TIMEOUT"):
             w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "SUBSTEP2_IDLE":
