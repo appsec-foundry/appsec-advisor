@@ -246,3 +246,89 @@ def test_unreadable_telemetry_leaves_the_duration_write_intact(tmp_path: Path, m
     cache = _read_cache(tmp_path)
     assert cache[prb.KEY_SECONDS] == 6000
     assert prb.KEY_COST not in cache
+
+
+# ---------------------------------------------------------------------------
+# The exact cost — from the result object, after the session has exited
+# ---------------------------------------------------------------------------
+
+
+def _result_object(cost: float, *, is_error: bool = False) -> dict:
+    return {
+        "type": "result",
+        "is_error": is_error,
+        "total_cost_usd": cost,
+        "modelUsage": {
+            "claude-sonnet-4-6": {
+                "inputTokens": 100,
+                "outputTokens": 200,
+                "cacheReadInputTokens": 300,
+                "cacheCreationInputTokens": 400,
+                "costUSD": cost,
+                "canonicalModel": "claude-sonnet-4-6",
+            }
+        },
+    }
+
+
+def _write_result(path: Path, payload: dict) -> Path:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_the_result_object_supplies_the_cost_the_in_run_telemetry_cannot(tmp_path: Path):
+    """On a host that reports no per-call token classes every in-run figure is a
+    floor, and `_run_cost_usd` refuses a floor — so without this the baseline
+    never gains a cost and every later run projects parametrically."""
+    prb = _load()
+    result = _write_result(tmp_path / "result.json", _result_object(7.25))
+
+    assert prb.persist_cost_from_result(tmp_path, result) == 7.25
+    assert _read_cache(tmp_path)[prb.KEY_COST] == 7.25
+
+
+def test_the_cost_write_leaves_the_timing_fields_alone(tmp_path: Path):
+    """Two writers own different fields of one file. The cost write runs after
+    the session exits, later than the timing write, and must not undo it."""
+    prb = _load()
+    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
+    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
+    result = _write_result(tmp_path / "result.json", _result_object(7.25))
+
+    prb.persist_cost_from_result(tmp_path, result)
+
+    cache = _read_cache(tmp_path)
+    assert cache[prb.KEY_COST] == 7.25
+    assert cache[prb.KEY_SECONDS] == 6000
+    assert cache[prb.KEY_MODE] == "full"
+    assert cache[prb.KEY_DEPTH] == "standard"
+
+
+def test_a_run_that_ended_in_error_does_not_become_the_projection_basis(tmp_path: Path):
+    prb = _load()
+    result = _write_result(tmp_path / "result.json", _result_object(7.25, is_error=True))
+
+    assert prb.persist_cost_from_result(tmp_path, result) is None
+    assert not (tmp_path / ".appsec-cache" / "baseline.json").exists()
+
+
+def test_a_result_without_a_usable_cost_writes_nothing(tmp_path: Path):
+    prb = _load()
+    for payload in ({"type": "result", "total_cost_usd": 0}, {"type": "result"}, {"nothing": True}):
+        result = _write_result(tmp_path / "result.json", payload)
+        assert prb.persist_cost_from_result(tmp_path, result) is None
+    assert prb.persist_cost_from_result(tmp_path, tmp_path / "absent.json") is None
+    assert not (tmp_path / ".appsec-cache" / "baseline.json").exists()
+
+
+def test_the_written_cost_is_what_the_projection_reads(tmp_path: Path):
+    """The key name is the whole contract: a misspelled one is indistinguishable
+    from a missing one, which is how the duration cache silently died once."""
+    prb = _load()
+    import project_run_cost
+
+    (tmp_path / ".scan-start-epoch").write_text("1000", encoding="utf-8")
+    prb.persist(tmp_path, "full", "standard", now_epoch=1000 + 6000)
+    prb.persist_cost_from_result(tmp_path, _write_result(tmp_path / "result.json", _result_object(7.25)))
+
+    assert project_run_cost.last_run_cost(str(tmp_path), "full", "standard") == 7.25

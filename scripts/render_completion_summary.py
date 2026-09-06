@@ -816,9 +816,48 @@ def extract_costs(output_dir: Path, plugin_root: Path) -> Optional[dict]:
     if r.returncode >= 2 or not r.stdout:
         return None
     try:
-        return json.loads(r.stdout)
+        parsed = json.loads(r.stdout)
     except json.JSONDecodeError:
         return None
+    return _add_unpriced_tokens(parsed, output_dir, plugin_root)
+
+
+def _add_unpriced_tokens(parsed: object, output_dir: Path, plugin_root: Path) -> Optional[dict]:
+    """Attach the token figure `SESSION_STOP` alone cannot see.
+
+    ``verify_run_costs`` reads only ``SESSION_STOP``, which carries usage only
+    where the host persists a transcript for the session that emitted it. Where
+    it does not, it reports zeros or fails outright with "No SESSION_STOP
+    entries with token data found" — and this summary then said "not captured"
+    or nothing at all for a run whose sub-agents demonstrably spent hundreds of
+    thousands of tokens, contradicting the phase banner that counts them from
+    the stage stats. One source answers both.
+
+    Kept beside ``totals`` rather than inside it: this is a different quantity,
+    sub-agents only and with no split into the four token classes, and no
+    consumer of ``verify_run_costs`` totals may add it to one of theirs. See
+    ``cost_running_total.stage_stats_residual_tokens``.
+    """
+    if not isinstance(parsed, dict):
+        return None
+    totals = parsed.get("totals")
+    if isinstance(totals, dict) and any(
+        totals.get(key) for key in ("total_tokens", "in", "out", "cache_write", "cache_read")
+    ):
+        return parsed
+    scripts_dir = str(plugin_root / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import cost_running_total  # type: ignore
+
+        running = cost_running_total.aggregate_running_total(Path(output_dir))
+    except Exception:  # noqa: BLE001 — an unreadable log must not cost the summary
+        return parsed
+    unpriced = running.get("unpriced_tokens") or 0
+    if running.get("status") == "ok" and unpriced > 0:
+        parsed["unpriced_tokens"] = int(unpriced)
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -1314,8 +1353,11 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
         if (total_tokens or 0) <= 0 and not cache_write and not cache_read and totals.get("cost", 0) <= 0:
             # Hook log captured no token data for the orchestrator session
             # (rare — usually means SESSION_STOP fired without a usage block).
-            lines.append("  Tokens / Cost       : not captured by Claude Code hooks")
-            lines.append("                        Run /usage in the chat for the actual figure.")
+            if cost.get("unpriced_tokens"):
+                lines.extend(_unpriced_token_lines(cost["unpriced_tokens"]))
+            else:
+                lines.append("  Tokens / Cost       : not captured by Claude Code hooks")
+                lines.append("                        Run /usage in the chat for the actual figure.")
         else:
             # Hook data is available — render the measured numbers verbatim.
             lines.append(
@@ -1350,9 +1392,24 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
                 lines.append(f"    Billing           : {billing}")
                 lines.append("    Note              : measured from orchestrator hook stream; for the authoritative")
                 lines.append("                        per-run figure, run /usage in the chat.")
+    elif isinstance(cost, dict) and cost.get("unpriced_tokens"):
+        # `verify_run_costs` could not total the run at all — on a host whose
+        # SESSION_STOP carries no usage that is every run. The sub-agent figure
+        # is still measured, and reporting nothing here while the phase banner
+        # reports it is the divergence this branch exists to close.
+        lines.extend(_unpriced_token_lines(cost["unpriced_tokens"]))
     elif cost is None:
         lines.append("  Tokens/Cost         : unavailable (verify_run_costs.py failed)")
     return lines
+
+
+def _unpriced_token_lines(unpriced: int) -> list[str]:
+    """The token readout for a run whose classes and cost cannot be known."""
+    return [
+        f"  Tokens (sub-agents) : {unpriced:,} total",
+        "  Cost                : not priceable — this host reports no per-call token classes",
+        "                        The orchestrator's own spend is not included.",
+    ]
 
 
 # Every optional deliverable a run can request: config flag → label → filename.

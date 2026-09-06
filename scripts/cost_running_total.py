@@ -115,6 +115,10 @@ _AGENT_USAGE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?\sAG
 _AGENT_SPAWN_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?\sAGENT_SPAWN\s+(.*)$")
 _USAGE_SOURCE_ABSENT = "code=usage_source_absent"
 
+#: Per-wave stats the orchestrator records from the host's `<usage>` block. The
+#: fallback token source when no hook-visible per-call usage exists.
+STAGE_STATS_FILENAME = ".stage-stats.jsonl"
+
 # AGENT_USAGE logs a model family; the pricing table is keyed by release.
 _PRICING_ALIAS = {"sonnet": "sonnet-4-6", "haiku": "haiku-4-5", "opus": "opus-4-6"}
 
@@ -176,21 +180,108 @@ def find_assessment_end(agent_log: Path) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def stage_stats_residual_tokens(
+    output_dir: Path,
+    host_tokens: dict[str, int],
+    window_start: str | None = None,
+    window_end: str | None = None,
+) -> tuple[int, set[str]]:
+    """Tokens of calls no ``AGENT_USAGE`` covers, from the stage stats.
+
+    ``AGENT_USAGE`` exists only where the host answered the call itself: a child
+    transcript at the path ``SubagentStop`` names, or a synchronous Agent return
+    carrying ``usage``. A headless session persists no transcript, and a host
+    that promotes the call to async returns a launch acknowledgement instead —
+    when both hold, the hook layer sees no usage for any call and every token
+    and cost figure in the run reads zero while the run in fact spent them.
+
+    ``.stage-stats.jsonl`` survives that, because its number comes from the
+    ``<usage>`` block the host renders to the orchestrator rather than from a
+    hook payload. It is the same quantity: on the one 2026-09-05 run where both
+    sources exist, the record's ``tokens`` equals the sum of ``in + out +
+    cache_write + cache_read`` of the calls it names, exactly, on eight of eight
+    waves. What it does not carry is the split into those four classes, and the
+    price of a token differs fiftyfold between them — so these tokens are
+    counted and deliberately left unpriced rather than priced on an invented
+    mix.
+
+    A record names its calls in ``dispatch_event_ids``. Where some of them are
+    already metered, their host totals are subtracted so a wave that is half
+    covered contributes only its remainder. Returns the residual token count and
+    the calls it accounts for.
+    """
+    path = Path(output_dir) / STAGE_STATS_FILENAME
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return 0, set()
+
+    residual = 0
+    covered: set[str] = set()
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        # A record that does not say when it was written stays in: dropping it
+        # would silently lose real spend, while keeping it can at worst charge
+        # this run for a wave of its own output directory.
+        recorded_at = record.get("recorded_at")
+        if isinstance(recorded_at, str) and recorded_at:
+            if window_start and recorded_at < window_start:
+                continue
+            if window_end and recorded_at > window_end:
+                continue
+        try:
+            tokens = int(record.get("tokens") or 0)
+        except (TypeError, ValueError):
+            continue
+        ids = [
+            str(entry)[len("call:") :]
+            for entry in record.get("dispatch_event_ids") or []
+            if isinstance(entry, str) and entry.startswith("call:")
+        ]
+        # A record that names no call cannot be attributed, and one reporting
+        # nothing is not evidence that its calls were free — the abuse-case
+        # verifiers record zero tokens and stay unmetered on purpose.
+        if not ids or tokens <= 0:
+            continue
+        unclaimed = [call_id for call_id in ids if call_id not in host_tokens]
+        if not unclaimed:
+            continue
+        remainder = tokens - sum(host_tokens[call_id] for call_id in ids if call_id in host_tokens)
+        if remainder <= 0:
+            continue
+        residual += remainder
+        covered.update(unclaimed)
+    return residual, covered
+
+
 def aggregate_subagent_usage(
     agent_log: Path,
     window_start: str | None = None,
     window_end: str | None = None,
 ) -> dict[str, Any]:
-    """Sum the ``AGENT_USAGE`` records the host session does not account for.
+    """Sum the sub-agent spend the host session does not account for.
 
-    Each sub-agent reports its own totals once, priced by the model it ran on.
-    ``unmetered_agents`` counts spawns that never reported usage — with those
-    present the returned cost is a floor, not a total.
+    ``AGENT_USAGE`` is the priced source: each sub-agent reports its four token
+    classes once, priced by the model it ran on. Calls it does not reach fall
+    back to the stage stats, which give an exact token total and no class split
+    — see ``stage_stats_residual_tokens``. ``unmetered_agents`` counts the
+    spawns neither source covers; with those, or with unpriced tokens present,
+    the returned cost is a floor rather than a total.
     """
     result: dict[str, Any] = {
         "subagent_count": 0,
         "unmetered_agents": 0,
         "usage_source_absent": False,
+        "unpriced_tokens": 0,
+        "unpriced_calls": 0,
         "subagent_snapshot": vrc.TokenSnapshot(),
         "subagent_cost": 0.0,
     }
@@ -201,6 +292,7 @@ def aggregate_subagent_usage(
     cost = 0.0
     metered: set[str] = set()
     spawned: set[str] = set()
+    host_tokens: dict[str, int] = {}
     try:
         lines = agent_log.read_text(errors="replace").splitlines()
     except OSError:
@@ -238,12 +330,16 @@ def aggregate_subagent_usage(
                 except ValueError:
                     continue
                 setattr(snapshot, attr, getattr(snapshot, attr) + value)
+                host_tokens[call_id] = host_tokens.get(call_id, 0) + value
                 cost += value * pricing[{"in": "input", "out": "output"}.get(log_field, log_field)] / 1_000_000
         if _USAGE_SOURCE_ABSENT in line:
             result["usage_source_absent"] = True
 
-    result["subagent_count"] = len(metered)
-    result["unmetered_agents"] = len(spawned - metered)
+    unpriced, covered = stage_stats_residual_tokens(agent_log.parent, host_tokens, window_start, window_end)
+    result["subagent_count"] = len(metered | covered)
+    result["unmetered_agents"] = len(spawned - metered - covered)
+    result["unpriced_tokens"] = unpriced
+    result["unpriced_calls"] = len(covered)
     result["subagent_snapshot"] = snapshot
     result["subagent_cost"] = cost
     return result
@@ -363,13 +459,17 @@ def aggregate_running_total(output_dir: Path, since_iso: str | None = None) -> d
         "out_tokens": total.out_tokens + sub_snapshot.out_tokens,
         "cache_write": total.cache_write + sub_snapshot.cache_write,
         "cache_read": total.cache_read + sub_snapshot.cache_read,
-        "total_tokens": total.total() + sub_snapshot.total(),
+        # Unpriced tokens are real spend and belong in the token total. They
+        # carry no class, so they are added to no class column and to no cost.
+        "total_tokens": total.total() + sub_snapshot.total() + sub["unpriced_tokens"],
         "cost_usd": round(host_cost + sub["subagent_cost"], 4),
         "host_cost_usd": host_cost,
         "subagent_cost_usd": round(sub["subagent_cost"], 4),
         "subagent_count": sub["subagent_count"],
         "unmetered_agents": sub["unmetered_agents"],
-        "cost_is_floor": bool(sub["unmetered_agents"] or sub["usage_source_absent"]),
+        "unpriced_tokens": sub["unpriced_tokens"],
+        "unpriced_calls": sub["unpriced_calls"],
+        "cost_is_floor": bool(sub["unmetered_agents"] or sub["usage_source_absent"] or sub["unpriced_tokens"]),
     }
 
 
@@ -393,6 +493,11 @@ def format_banner(result: dict[str, Any], phase_label: str | None = None) -> str
         token_str = f"{total / 1_000:.0f}k"
     else:
         token_str = str(total)
+    if result.get("unpriced_tokens") and cost <= 0:
+        # Every token this run reported came from the stage stats, which carry
+        # no class split. "≥$0.00" would read as "the run was nearly free" when
+        # the truth is that nothing here can be priced at all.
+        return f"  ↳ running total: {token_str} tokens, cost n/a (host reports no per-call token classes)"
     # "≥" rather than a number the reader would take as complete: some agents
     # run without reporting usage, and their spend is missing from `cost`.
     prefix = "≥" if result.get("cost_is_floor") else ""

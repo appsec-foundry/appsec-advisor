@@ -115,7 +115,16 @@ _REASON_PROSE = {
 }
 
 
-def _terminal_subject(detail: str) -> str:
+#: Reasons that describe the host rather than the call that carries them. A
+#: host either reports call outcomes or it does not, so such a reason is equally
+#: true of every call in the run and repeating it turns the one line an operator
+#: needs to read into one per agent. Shown on the first terminal line, dropped
+#: afterwards — the log keeps every occurrence for correlation. Every other
+#: reason distinguishes this call from its siblings and is always shown.
+_RUN_LEVEL_REASONS = frozenset({"outcome_unobserved"})
+
+
+def _terminal_subject(detail: str, shown_reasons: set[str] | None = None) -> str:
     """Parenthesised suffix for an agent's terminal line: which call ended.
 
     The lifecycle detail of ``AGENT_DONE`` / ``AGENT_FAILED`` repeats the
@@ -126,10 +135,18 @@ def _terminal_subject(detail: str) -> str:
     or job — and why it stopped. The reason carries an ``AGENT_FAILED``
     explanation (``agent_lifecycle.event_detail``), so it is read to the end of
     its field rather than to the next space, and never dropped.
+
+    ``shown_reasons`` carries the run-level reasons already rendered; pass the
+    same set across one render so ``_RUN_LEVEL_REASONS`` appear once.
     """
     subject = _kv(detail, "component_id") or _kv(detail, "job_id")
     m = re.search(r"\b(?:stop_)?reason=(.*?)(?=\s{2,}|$)", detail)
     reason = m.group(1).strip() if m else ""
+    if reason in _RUN_LEVEL_REASONS and shown_reasons is not None:
+        if reason in shown_reasons:
+            reason = ""
+        else:
+            shown_reasons.add(reason)
     reason = _REASON_PROSE.get(reason, reason)
     parts = [p for p in (subject, f"reason: {reason}" if reason else "") if p]
     return f" ({', '.join(parts)})" if parts else ""
@@ -182,6 +199,7 @@ def main() -> int:
     spawned_calls: set[str] = set()
     terminal_calls: set[str] = set()
     run_level_notices: set[str] = set()  # run-level telemetry codes already shown once
+    run_level_reasons: set[str] = set()  # run-level terminal reasons already shown once
     stride_calls: dict[str, str] = {}  # STRIDE analyzer call id -> the component it analyses
     stride_components: set[str] = set()  # components dispatched so far
     stride_finished: set[str] = set()  # …of those, the ones a call completed
@@ -347,7 +365,7 @@ def main() -> int:
             agent_name = agent.split(":")[-1] if agent else "agent"
             mark = "✓" if event == "AGENT_DONE" else "⚠"
             state = "done" if event == "AGENT_DONE" else "failed"
-            tail = _terminal_subject(detail)
+            tail = _terminal_subject(detail, run_level_reasons)
             if call_id and call_id in stride_calls:
                 if event == "AGENT_DONE":
                     stride_finished.add(stride_calls[call_id])

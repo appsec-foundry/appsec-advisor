@@ -674,3 +674,32 @@ def test_a_run_level_telemetry_finding_is_shown_once_and_a_per_call_one_every_ti
     )
     assert out.count("usage_source_absent") == 1
     assert out.count("lifecycle_not_terminal") == 2
+
+
+def _agent_done(ts: str, call_id: str, job_id: str, reason: str) -> str:
+    return (
+        f"2026-09-06T{ts}Z  [b0ba1e2f]  INFO   AGENT_DONE  agent_call_id={call_id}"
+        f"  agent_type=appsec-advisor:appsec-recon-scanner  model=haiku  background=true"
+        f"  job_id={job_id}  reason={reason}  description=STRIDE (recon_scanner): {job_id}"
+    )
+
+
+def test_a_run_level_terminal_reason_is_shown_once_and_a_per_call_one_every_time():
+    """A host either reports call outcomes or it does not, so `outcome_unobserved`
+    is equally true of every call in the run. Repeated on each terminal line it
+    put a failure-shaped clause on every ✓ of a healthy run. A reason that
+    distinguishes one call from its siblings keeps appearing."""
+    out = _render(
+        [
+            _agent_done("04:22:15", "toolu_a", "phase2-recon", "outcome_unobserved"),
+            _agent_done("04:24:13", "toolu_b", "phase3-6-architecture", "outcome_unobserved"),
+            _agent_done("04:31:05", "toolu_c", "phase7-boundary", "outcome_unobserved"),
+            _agent_done("04:36:34", "toolu_d", "phase8-controls", "join_deadline_expired"),
+            _agent_done("04:41:02", "toolu_e", "phase9-merge", "join_deadline_expired"),
+        ]
+    )
+    assert out.count("this host reported no result for it") == 1
+    assert out.count("join window closed") == 2
+    # Nothing else is lost: every call still reports as done, named by its job.
+    assert out.count("✓ appsec-recon-scanner done") == 5
+    assert "done (phase3-6-architecture)" in out

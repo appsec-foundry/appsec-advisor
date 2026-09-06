@@ -1303,6 +1303,19 @@ fi
 echo ""
 print_usage_summary
 
+# ── Cost baseline from the exact figure ────────────────────────────
+# The in-run write (`persist_run_baseline.py` from the skill) refuses a cost
+# that is only a floor, and on a host that reports no per-call token classes
+# every in-run figure is one — so the baseline would never gain a cost and every
+# later run would project parametrically. The result object carries the host's
+# own `total_cost_usd` with sub-agents included, but only exists once the
+# session has exited. Written here, and only for a run that delivered: an
+# interrupted or refused run must not teach the next projection what it costs.
+if [ "$EXIT_CODE" -eq 0 ] && [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ] && [ -d "$RESULT_DIR" ]; then
+    python3 "$PLUGIN_DIR/scripts/persist_run_baseline.py" \
+        --output-dir "$RESULT_DIR" --cost-from-result "$RESULT_CAPTURE" --quiet 2>/dev/null || true
+fi
+
 # ── Exact-value secret redaction ───────────────────────────────────
 # Pattern-based masking (upstream + postscan below) only neutralises a secret
 # in the form it can match; an LLM author who copies a raw secret VALUE into

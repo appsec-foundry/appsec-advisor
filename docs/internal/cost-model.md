@@ -23,10 +23,29 @@ snapshot in the log therefore charges the run for everything that followed it.
 The window closes at the last event a pipeline role wrote to `.agent-run.log`,
 plus a grace window for the snapshot that reports it.
 
-**Some agents never report usage.** The abuse-case verifiers run through a host
-path that returns no per-call usage, logged as `TELEMETRY_MISMATCH
-code=usage_source_absent`. Their spend is missing from every total. When
-`cost_is_floor` is set, the figure is a lower bound and the banner prints `≥`.
+**Some agents never report usage.** `AGENT_USAGE` exists only where the host
+answered the call itself, through a child transcript or a synchronous Agent
+return carrying `usage`. A headless session persists no transcript, and a host
+that promotes the call to async returns a launch acknowledgement instead; when
+both hold, no call has hook-visible usage, logged as `TELEMETRY_MISMATCH
+code=usage_source_absent`.
+
+Calls that source does not reach are counted from `.stage-stats.jsonl`, whose
+number comes from the `<usage>` block the host renders to the orchestrator. It
+is the same quantity — on a run where both exist it equals the sum of `in + out
++ cache_write + cache_read` of the calls a record names, exactly — but it
+carries no split into those four classes, and a `cache_read` token is priced at
+a fiftieth of an output token. Those tokens are therefore counted in
+`total_tokens` and left out of every class column and out `cost_usd`, reported
+as `unpriced_tokens`. When they or an uncovered spawn are present,
+`cost_is_floor` is set: the banner prints `≥`, or `cost n/a` when nothing at all
+could be priced.
+
+The exact figure for a headless run is the result object of `claude -p
+--output-format json`: `total_cost_usd` with sub-agents included, priced by the
+models actually billed. It exists only once the session has exited, so
+`run-headless.sh` writes it into the run baseline (`persist_run_baseline.py
+--cost-from-result`) after the run, and only for a run that delivered.
 
 Never compare figures across scopes. A run-to-run comparison is only valid when
 both numbers came from the same window and the same set of sessions.

@@ -462,3 +462,165 @@ class TestSubagentUsage:
         result = crt.aggregate_running_total(tmp_path)
         assert result["cost_is_floor"] is True
         assert "≥$" in crt.format_banner(result)
+
+
+# ---------------------------------------------------------------------------
+# Stage stats — the token source that survives a host reporting no per-call usage
+# ---------------------------------------------------------------------------
+
+
+def _stage_record(name: str, tokens: int, call_ids: list[str], recorded_at: str = "2026-05-01T10:30:00Z") -> str:
+    return (
+        json.dumps(
+            {
+                "stage": 1,
+                "name": name,
+                "tokens": tokens,
+                "recorded_at": recorded_at,
+                "dispatch_event_ids": [f"call:{cid}" for cid in call_ids],
+            }
+        )
+        + "\n"
+    )
+
+
+def _usage_line(call_id: str, out_tokens: int, ts: str = "2026-05-01T10:05:00Z") -> str:
+    return (
+        f"{ts}  [abc]  INFO   recon-scanner  AGENT_USAGE  "
+        f"agent_call_id={call_id}  model=sonnet  in=0  out={out_tokens}  cache_write=0  cache_read=0\n"
+    )
+
+
+def _spawn_line(call_id: str, ts: str = "2026-05-01T10:04:00Z") -> str:
+    return f"{ts}  [abc]  INFO   recon-scanner  AGENT_SPAWN  agent_call_id={call_id}  model=sonnet\n"
+
+
+class TestStageStatsAreTheFallbackUsageSource:
+    """The rule: a call's tokens are counted once, from the best source that
+    covers it. ``AGENT_USAGE`` is priced and wins; the stage stats fill the
+    calls it does not reach and stay unpriced, because they carry no split into
+    the four token classes whose prices differ fiftyfold."""
+
+    def test_a_call_only_the_stage_stats_cover_is_counted_and_unpriced(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(_stage_record("recon_scanner", 5000, ["toolu_a"]))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 5000
+        assert result["unpriced_calls"] == 1
+        # The call has a usage source now, so it is no longer unaccounted for.
+        assert result["unmetered_agents"] == 0
+        # Unpriced means unpriced: no token class and no cost may move.
+        assert result["subagent_cost"] == 0.0
+        assert result["subagent_snapshot"].total() == 0
+
+    def test_a_call_the_host_reported_is_not_counted_twice(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a") + _usage_line("toolu_a", 5000))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(_stage_record("recon_scanner", 5000, ["toolu_a"]))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 0
+        assert result["subagent_snapshot"].total() == 5000
+
+    def test_a_half_covered_wave_contributes_only_its_remainder(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(
+            _spawn_line("toolu_a") + _spawn_line("toolu_b") + _usage_line("toolu_a", 4000),
+        )
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(
+            _stage_record("stride_analyzer", 10_000, ["toolu_a", "toolu_b"])
+        )
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        # The wave's 10k less the 4k the host already reported for toolu_a.
+        assert result["unpriced_tokens"] == 6000
+        assert result["unmetered_agents"] == 0
+
+    def test_a_record_reporting_nothing_leaves_its_calls_unmetered(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(_stage_record("Abuse Case Verification", 0, ["toolu_a"]))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 0
+        # Zero tokens is not evidence that the call was free.
+        assert result["unmetered_agents"] == 1
+
+    def test_a_record_naming_no_call_is_ignored(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(_stage_record("qa", 900, []))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 0
+        assert result["unmetered_agents"] == 1
+
+    def test_a_record_outside_the_run_window_is_ignored(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(
+            _stage_record("recon_scanner", 5000, ["toolu_a"], recorded_at="2026-05-01T09:00:00Z")
+        )
+
+        result = crt.aggregate_subagent_usage(agent_log, "2026-05-01T10:00:00Z", "2026-05-01T11:00:00Z")
+        assert result["unpriced_tokens"] == 0
+
+    def test_a_run_without_stage_stats_is_unchanged(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a") + _usage_line("toolu_a", 1000))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 0
+        assert result["subagent_count"] == 1
+
+    def test_malformed_stage_stats_never_break_the_total(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(
+            "not json\n" + json.dumps(["not", "an", "object"]) + "\n" + _stage_record("recon", 700, ["toolu_a"])
+        )
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 700
+
+    def test_unpriced_tokens_reach_the_total_but_never_a_class_or_the_cost(self, tmp_path):
+        crt = _load()
+        _write_run(tmp_path)
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(agent_log.read_text() + _spawn_line("toolu_a", "2026-05-01T10:15:00Z"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(
+            _stage_record("recon_scanner", 8000, ["toolu_a"], recorded_at="2026-05-01T10:16:00Z")
+        )
+
+        before = crt.aggregate_running_total(tmp_path)
+        (tmp_path / crt.STAGE_STATS_FILENAME).unlink()
+        without = crt.aggregate_running_total(tmp_path)
+
+        assert before["total_tokens"] == without["total_tokens"] + 8000
+        for field in ("in_tokens", "out_tokens", "cache_write", "cache_read", "cost_usd"):
+            assert before[field] == without[field]
+        assert before["cost_is_floor"] is True
+
+    def test_a_run_with_only_unpriced_tokens_reports_no_cost_rather_than_zero(self, tmp_path):
+        crt = _load()
+        result = {
+            "status": "ok",
+            "total_tokens": 366_902,
+            "cost_usd": 0.0,
+            "unpriced_tokens": 366_902,
+            "cost_is_floor": True,
+        }
+        banner = crt.format_banner(result)
+        # "≥$0.00" would read as "this run was nearly free".
+        assert "$0.00" not in banner
+        assert "cost n/a" in banner

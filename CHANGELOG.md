@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A run reports its token spend on hosts that return no per-call usage, where every figure previously read zero, and says that the cost cannot be priced rather than showing `$0.00`. A completed headless run records its exact cost so the next run projects a budget against a measurement instead of the parametric floor.
+- The live view states a host's missing call outcome once instead of appending it to every finished agent.
 - An unattended run no longer stops to ask whether to add business context.
 - A run that ends early no longer reports a previous run's failure as its own.
 - The secret masker no longer rewrites the line following a credential keyword that ends a line, so an entry point such as `GET /api/audit?token=` no longer corrupts the threat model into a document the run then aborts on.

@@ -1482,6 +1482,35 @@ class TestRenderRunStatistics:
         out = "\n".join(rcs.render_run_statistics(stats, cost, verbose=True))
         assert "not captured by Claude Code hooks" in out
 
+    def test_subagent_tokens_are_reported_when_session_stop_carried_none(self):
+        """`verify_run_costs` reads only SESSION_STOP. Where the host persists no
+        transcript for the emitting session it carries nothing, and this summary
+        said "not captured" for a run whose sub-agents spent hundreds of
+        thousands of tokens — while the phase banner counted them. One figure."""
+        stats = {
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": 10,
+            "wall_secs": 10,
+            "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
+        }
+        # Both shapes this host produces: totals that are zero, and a
+        # verify_run_costs that could not total the run at all.
+        for cost in (
+            {"totals": {"total_tokens": 0, "cost": 0}, "billing": "api", "unpriced_tokens": 366902},
+            {"error": "No SESSION_STOP entries with token data found", "unpriced_tokens": 366902},
+        ):
+            out = "\n".join(rcs.render_run_statistics(stats, cost, verbose=True))
+            assert "366,902" in out
+            assert "not captured by Claude Code hooks" not in out
+            # Sub-agents only, and no cost may be implied from it.
+            assert "not priceable" in out
+            assert "orchestrator's own spend is not included" in out
+
     def test_cost_none_unavailable_line(self):
         stats = {
             "assess_secs": None,
