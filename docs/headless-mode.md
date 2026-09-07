@@ -173,7 +173,7 @@ Unless you pass `--quiet`, the run prints a progress line: the phase it is in, r
 
 Where the host reports no usage, the run says so once and shows no spend at all rather than a figure that is far too low. Nothing is then tracking the soft budget, and only `--hard-budget` still applies.
 
-At the end you get the exact cost per model, and under it a table of what each phase took.
+At the end you get the exact cost per model for the whole run, sub-agents included, and under it a table of what each phase took. A role that carries no model pin of its own runs on the session model, so a run can bill as few as two models and that is still the complete figure, not a truncated one. The `Models` line the run prints at the start names what each model drives; a model listed there and absent from the cost table means missing spend.
 
 ## Output
 

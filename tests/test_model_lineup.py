@@ -93,6 +93,16 @@ def test_headless_banner_shows_the_lineup_not_just_the_session_model() -> None:
     )
 
 
+def test_headless_banner_names_the_roles_as_sub_agent_dispatches() -> None:
+    """A role without a pin of its own inherits the session tier, so an
+    unoverridden run lists the session model for most of the pipeline and looks
+    like it uses fewer models than it does. The note also ties the banner to the
+    end-of-run cost table, where the same doubt returns as 'a model is missing'."""
+    body = HEADLESS.read_text(encoding="utf-8")
+    assert "each role is a sub-agent dispatch on that model" in body
+    assert "the end-of-run cost table bills exactly these" in body
+
+
 def test_headless_banner_places_models_after_depth() -> None:
     body = HEADLESS.read_text(encoding="utf-8")
     depth_at = body.index('echo "  Depth      : ')

@@ -736,6 +736,13 @@ MODEL_LINEUP=""
     ${REASONING_TIER:+--reasoning "$REASONING_TIER"} \
     --depth "${ASSESSMENT_DEPTH:-standard}" 2>/dev/null || printf '%s' "$MODEL")"
 [ -n "$MODEL_LINEUP" ]     && echo "  Models     : $MODEL_LINEUP"
+# The roles behind each model are sub-agent dispatches, and a role that carries
+# no pin of its own inherits the session tier — so a run without an override
+# lists the session model twice over and looks like it has fewer models than it
+# uses. Naming the end-of-run table here closes that loop: what is listed is
+# what gets billed, and a missing model there means missing spend, not a
+# sub-agent the accounting skipped.
+[ -n "$MODEL_LINEUP" ]     && echo "               each role is a sub-agent dispatch on that model; the end-of-run cost table bills exactly these"
 echo "  Context    : $CONTEXT_INFO"
 echo "  Plugin     : $PLUGIN_DIR"
 [ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"
