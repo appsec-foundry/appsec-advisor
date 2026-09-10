@@ -54,6 +54,7 @@ def _model(*, app=3, stores=1, flows=True, exposed=("app0",), xss=False, intra=F
                     "risk": "Critical" if n % 3 == 0 else "High",
                     "stride": "Spoofing" if k else "Information Disclosure",
                     "boundary_refs": [{"boundary_id": "tb-1"}] if c["id"] == "app0" else [],
+                    **({"cwe": "CWE-862" if k else "CWE-89"} if c["id"] == "app0" else {}),
                 }
             )
             n += 1
@@ -235,13 +236,55 @@ def test_intra_column_flow_uses_the_channel_and_is_verified():
     assert 'transform="rotate(-90' in svg  # rotated df-007 label along the channel
 
 
-def test_attackers_enter_at_the_most_attacked_entry_point():
+def test_attack_edges_follow_the_scenarios():
+    y, apd, tax = _model(xss=True)
+    svg, problems = F.check_diagram(y, apd, tax)
+    assert problems == []
+    _svg2, st = F._build(y, *F.scenarios_from_attack_paths(y, apd, tax))
+    attacks = {(e["src"], e["dst"]): e for e in st["edges"] if e.get("attack")}
+    # ① (anon) reaches app0 and db0: only the exposed process is attacked; ② (user) reaches app1, which is not
+    # exposed, so its first process stands in; ③ is a victim scenario and points back at the user.
+    assert set(attacks) == {("actor:a0", "app0"), ("actor:a1", "app1"), ("actor:a0", F.USER_ID)}
+    assert attacks[("actor:a0", "app0")]["scen"] == ["1"] and attacks[("actor:a0", F.USER_ID)]["victim"] is True
+    assert abs(attacks[("actor:a0", "app0")]["pts"][-1][0] - st["nodes"]["app0"]["x"]) < 0.6  # ends on the target
+    assert 'stroke-dasharray="5 4"' in svg  # the victim edge is dashed
+
+
+def test_one_bus_per_attacker_with_stubs():
+    y, apd, tax = _model(exposed=("app0", "app1"))
+    apd["attack_paths"][0]["findings"] = ["F-003", "F-005"]  # ① reaches app0 and app1, both exposed
+    _svg, problems = F.check_diagram(y, apd, tax)
+    assert problems == []
+    _svg2, st = F._build(y, *F.scenarios_from_attack_paths(y, apd, tax))
+    anon = [e for e in st["edges"] if e.get("attack") and e["src"] == "actor:a0"]
+    assert {e["dst"] for e in anon} == {"app0", "app1"}
+    trunk = [e for e in anon if len(e["pts"]) == 4]
+    stubs = [e for e in anon if len(e["pts"]) == 2]
+    assert len(trunk) == 1 and len(stubs) == 1
+    a0 = st["nodes"]["actor:a0"]
+    assert trunk[0]["pts"][0] == (a0["x"] + a0["w"], a0["cy"])  # the trunk leaves the attacker at its middle
+    assert stubs[0]["pts"][0][0] == trunk[0]["pts"][1][0]  # the stub starts on the same bus
+    stubs[0]["pts"][0] = (stubs[0]["pts"][0][0] + 5, stubs[0]["pts"][0][1])
+    problems = F._audit(st["d"], st["nodes"], st["edges"], st["chips"], st["boundaries"])
+    assert any("stub does not start on its attacker's bus" in p for p in problems)
+
+
+def test_weakness_line_shows_the_dominant_classes():
     y, apd, tax = _model()
-    _svg, st = F._build(y, *F.scenarios_from_attack_paths(y, apd, tax))
-    attacks = [e for e in st["edges"] if e.get("attack")]
-    assert len(attacks) == 2 and {e["dst"] for e in attacks} == {"app0"}
-    for e in attacks:
-        assert abs(e["pts"][-1][0] - st["nodes"]["app0"]["x"]) < 0.6  # arrow ends on the entry node's left edge
+    svg = _checked()
+    _svg2, st = F._build(y, *F.scenarios_from_attack_paths(y, apd, tax))
+    assert [(label, n) for label, n, _r in st["nodes"]["app0"]["weak"]] == [("injection", 1), ("missing authz", 1)]
+    assert st["nodes"]["app1"]["weak"] == []  # threats without a CWE stay unmapped and draw nothing
+    assert "injection 1" in svg and "missing authz 1" in svg
+
+
+def test_arrowheads_are_fixed_size_and_stop_at_the_border():
+    svg = _checked()
+    assert 'markerUnits="userSpaceOnUse"' in svg
+    assert F._trim([(0.0, 5.0), (10.0, 5.0)]) == [(1.2, 5.0), (8.2, 5.0)]
+    assert F._trim([(0.0, 0.0), (0.0, 10.0), (20.0, 10.0)]) == [(0.0, 1.2), (0.0, 10.0), (18.2, 10.0)]
+    assert 'paint-order="stroke"' in svg  # flow labels carry a halo
+    assert "TRUST BOUNDARY · tb-" not in svg  # each boundary appears once, as a chip or a tag
 
 
 def test_large_models_collapse_and_explain():

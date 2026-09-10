@@ -3,9 +3,11 @@
 
 Draws external entities, processes, data stores, labelled data flows, trust
 boundaries as zones with crossing chips that carry the assumption verdict, a
-STRIDE-per-element strip and severity counts on every node, and the numbered
-attack scenarios of the Security Posture section as badges on the components
-they touch. Attackers enter the diagram as red edges into the entry point.
+STRIDE-per-element strip, severity counts and the dominant weakness classes on
+every node, and the numbered attack scenarios of the Security Posture section as
+badges on the components they touch. Each attacker enters over one red bus that
+fans out into every exposed process its scenarios reach; a victim scenario adds
+a dashed edge back to the user.
 
 The layout is computed, never hand-placed: three columns (untrusted, application,
 data), zones stacked per column, nodes ordered by the barycenter of their
@@ -35,21 +37,22 @@ import re
 import sys
 
 from prepare_trust_boundary_context import boundary_endpoints_valid
+from weakness_classifier import classify_threat, load_weakness_classes
 
 # ---- style --------------------------------------------------------------------
 FONT = "Helvetica, Arial, sans-serif"
 INK, MUTED, LINE = "#1f2937", "#6b7280", "#94a3b8"
-RED, ORANGE, YELLOW, GREEN, AMBER, NAVY = "#dc2626", "#f59e0b", "#eab308", "#16a34a", "#d97706", "#1e3a5f"
-CLS_COL = {"Restricted": "#b91c1c", "Confidential": "#c2410c", "Internal": "#64748b", "Public": "#94a3b8"}
+RED, ORANGE, YELLOW, GREEN, AMBER, NAVY = "#b3453f", "#cf8a3e", "#c4a441", "#3f8a5e", "#b3842c", "#334d6e"
+CLS_COL = {"Restricted": "#9c3d3d", "Confidential": "#b46a38", "Internal": "#6f7d8f", "Public": "#a3aab4"}
 CLS_RANK = {"Restricted": 0, "Confidential": 1, "Internal": 2, "Public": 3}
 VERDICT = {"refuted": ("✕", RED), "clean": ("✓", GREEN), "held": ("✓", GREEN), "unconfirmed": ("?", AMBER)}
 ZONE_STYLE = {  # zone key -> (title, stroke, fill)
-    "internet": ("INTERNET — untrusted", "#b91c1c", "#fff5f5"),
-    "client": ("Client device", "#9a3412", "#fff7ed"),
-    "application": ("Application", "#1d4ed8", "#eff6ff"),
-    "build": ("Build pipeline", "#0369a1", "#f0f9ff"),
-    "data": ("Data", "#6d28d9", "#f5f3ff"),
-    "third-party": ("Third-party", "#0f766e", "#f0fdfa"),
+    "internet": ("INTERNET — untrusted", "#a04d4a", "#fbf6f6"),
+    "client": ("Client device", "#a0673f", "#fcf8f3"),
+    "application": ("Application", "#4f6d9c", "#f3f6fa"),
+    "build": ("Build pipeline", "#4b7a94", "#f3f8fa"),
+    "data": ("Data", "#7b62a6", "#f7f5fa"),
+    "third-party": ("Third-party", "#3f857c", "#f3f9f8"),
 }
 SEV_COL = {"Critical": RED, "High": ORANGE, "Medium": YELLOW}
 SEV_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -68,13 +71,29 @@ _FALLBACK_ACTOR = {
 USER_ID = "actor:user"
 
 # ---- geometry -------------------------------------------------------------------
-NODE_W, PROC_H, EXT_W, EXT_H = 190, 96, 172, 52
+NODE_W, PROC_H, EXT_W, EXT_H = 190, 110, 172, 52
+WEAK_LABEL = {  # weakness class id (data/weakness-classes.yaml) -> node label
+    "injection": "injection",
+    "broken_auth": "broken authn",
+    "secret_management": "secrets",
+    "missing_authz": "missing authz",
+    "weak_crypto": "weak crypto",
+    "server_side_exposure": "server exposure",
+    "output_xss_csp": "XSS/CSP",
+    "sensitive_disclosure": "data disclosure",
+    "dos": "DoS",
+    "outdated_deps": "outdated deps",
+}
+WEAK_MAX = 2  # weakness classes shown per node
+WEAK_SEV_COL = {0: "#c05656", 1: "#d39a4a"}  # worst severity rank of the class: Critical, High
+WEAK_COL = "#a08a5a"
+
 ZONE_PAD, ZONE_HEAD, NODE_GAP, ZONE_GAP = 14, 36, 26, 26
 COL_W = NODE_W + 2 * ZONE_PAD
 GAP, MARGIN, TOP = 150, 20, 66
 B_OFF = 100  # boundary line offset inside a gap (from gap left)
 LANE0, LANE_STEP = 40, 10  # first lane offset right of the boundary (clear of the chips)
-LEGEND_W = 300
+LEGEND_W = 350
 FS = 8.5  # small label font
 ZONE_CAP = 8  # drawn nodes per zone; the rest collapse into one bar
 ACTOR_CAP = 4
@@ -135,11 +154,12 @@ class _Canvas:
         )
         self.maxy = max(self.maxy, y + h)
 
-    def text(self, x, y, s, size=11, fill=INK, anchor="middle", weight="normal", italic=False, track=None):
+    def text(self, x, y, s, size=11, fill=INK, anchor="middle", weight="normal", italic=False, track=None, halo=False):
         st = ' font-style="italic"' if italic else ""
+        hl = ' paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round"' if halo else ""
         self.add(
             f'<text x="{x:.1f}" y="{y:.1f}" font-family="{FONT}" font-size="{size}" fill="{fill}" '
-            f'text-anchor="{anchor}" font-weight="{weight}"{st}>{_esc(s)}</text>'
+            f'text-anchor="{anchor}" font-weight="{weight}"{st}{hl}>{_esc(s)}</text>'
         )
         self.maxy = max(self.maxy, y + 3)
         if track:
@@ -188,7 +208,7 @@ def _globe(c, cx, cy, r=6.5):
     c.path(f"M {cx} {cy - r} A {r * 0.5} {r} 0 0 0 {cx} {cy + r} A {r * 0.5} {r} 0 0 0 {cx} {cy - r}", RED, sw=1)
 
 
-def _lock(c, cx, cy, col="#7c3aed"):
+def _lock(c, cx, cy, col="#7b62a6"):
     c.rect(cx - 5, cy - 1, 10, 8, fill=col, rx=1.5)
     c.path(f"M {cx - 3} {cy - 1} V {cy - 4} A 3 3 0 0 1 {cx + 3} {cy - 4} V {cy - 1}", col, sw=1.6)
 
@@ -203,6 +223,24 @@ def _chip_width(tbid, n):
 
 
 # ---- inputs ---------------------------------------------------------------------------
+def _top_weak(counts, sevs):
+    """Classes worth a line on the node: two or more threats, or one rated High or Critical. Worst two."""
+    keep = [(k, n) for k, n in counts.items() if n >= 2 or sevs.get(k, 9) <= 1]
+    keep.sort(key=lambda kn: (sevs.get(kn[0], 9), -kn[1], kn[0]))
+    return [(WEAK_LABEL.get(k, k), n, sevs.get(k, 9)) for k, n in keep[:WEAK_MAX]]
+
+
+def _weak_line(c, x, y, items, maxw):
+    xx = x
+    for label, n, r in items:
+        txt = f"{label} {n}"
+        if xx + 9 + _tw(txt, 8) > x + maxw:
+            break
+        c.rect(xx, y - 7, 6, 6, fill=WEAK_SEV_COL.get(r, WEAK_COL), rx=1)
+        c.text(xx + 9, y, txt, size=8, anchor="start", fill=INK, weight="bold")
+        xx += 9 + _tw(txt, 8) + 10
+
+
 def _zone_key(comp):
     tier = (comp.get("tier") or "application").lower()
     zones = [str(z).lower() for z in (comp.get("deployment_zones") or [])]
@@ -333,7 +371,15 @@ def _build_model(d, scenarios, actors):
     sev = collections.defaultdict(collections.Counter)
     stride = collections.defaultdict(collections.Counter)
     tb_threats = collections.Counter()
+    weak = collections.defaultdict(collections.Counter)
+    weak_sev = collections.defaultdict(dict)  # component -> class -> best severity rank
+    vocab = load_weakness_classes()
     for t in d.get("threats") or []:
+        cls = classify_threat(t, vocab, warn=False)
+        if cls and cls != "_unmapped":
+            weak[t.get("component")][cls] += 1
+            r = SEV_RANK.get(t.get("effective_severity") or t.get("risk") or t.get("severity"), 9)
+            weak_sev[t.get("component")][cls] = min(r, weak_sev[t.get("component")].get(cls, 9))
         sev[t.get("component")][t.get("effective_severity") or t.get("risk") or t.get("severity")] += 1
         stride[t.get("component")][(t.get("stride") or "?")[0].upper()] += 1
         for b in t.get("boundary_refs") or []:
@@ -368,6 +414,7 @@ def _build_model(d, scenarios, actors):
             "complex": comp.get("complexity") == "complex",
             "badges": [],
             "assets": [],
+            "weak": _top_weak(weak[cid], weak_sev[cid]),
             "order": len(nodes),
         }
     for s in scenarios:
@@ -388,7 +435,7 @@ def _build_model(d, scenarios, actors):
             linked = {int(m) for t in (a.get("linked_threats") or []) for m in re.findall(r"(\d+)$", str(t))}
             a["_hits"] = [s["n"] for s in scenarios if linked & set(s.get("fids") or [])]
         stores[0]["assets"] = assets
-        stores[0]["h"] = 100 + 15 * len(assets) + (6 if assets else 0)
+        stores[0]["h"] = 114 + 15 * len(assets) + (6 if assets else 0)
     # actors: one legitimate user, then the attackers
     victim_of = [s["n"] for s in scenarios if s.get("victim")]
     nodes[USER_ID] = {
@@ -467,17 +514,36 @@ def _build_model(d, scenarios, actors):
             b["bidi"] = True
     edges = list(bundles.values())
     d["_undrawn_flows"] = undrawn
-    # attack edges: every attacker targets the entry point with the most boundary-crossing threats
-    ext_tb = collections.Counter()
-    for t in tbs:
-        if t.get("from") == "external" and t.get("to") in nodes:
-            ext_tb[t["to"]] += tb_threats.get(t["id"], 0) + 1
-    entry = [n for n in nodes.values() if n["col"] == 1 and n["kind"] == "process"]
-    entry.sort(key=lambda n: (-ext_tb[n["id"]], -n["sev"].get("Critical", 0), -n["sev"].get("High", 0), n["order"]))
-    if entry:
-        for n in nodes.values():
-            if n.get("attacker"):
-                edges.append({"src": n["id"], "dst": entry[0]["id"], "ids": [], "cls": None, "tb": [], "attack": True})
+    # attack edges: every exposed process a scenario reaches; a victim scenario also points at the user
+    attacker_by_name = {n["name"]: n["id"] for n in nodes.values() if n.get("attacker")}
+    default_attacker = next(iter(attacker_by_name.values()), None)
+    atk = collections.OrderedDict()
+    for s in scenarios:
+        src = attacker_by_name.get(s.get("actor")) or default_attacker
+        if not src:
+            continue
+        cids = s.get("cids") or [by_cnum.get(cn) for cn in s.get("cnums") or []]
+        app = [c for c in cids if c in nodes and nodes[c]["col"] == 1 and nodes[c]["kind"] == "process"]
+        hit = [c for c in app if nodes[c].get("exposed")]
+        if not hit and not s.get("victim"):  # a victim scenario reaches the user, not an unexposed process
+            hit = app[:1]
+        for dst in hit:
+            atk.setdefault((src, dst), []).append(s["n"])
+        if s.get("victim"):
+            atk.setdefault((src, USER_ID), []).append(s["n"])
+    for (src, dst), ns in atk.items():
+        edges.append(
+            {
+                "src": src,
+                "dst": dst,
+                "ids": [],
+                "cls": None,
+                "tb": [],
+                "attack": True,
+                "scen": ns,
+                "victim": dst == USER_ID,
+            }
+        )
     # trust boundaries: chip on the flow that crosses them, else a tag on the guarded node
     unplaced = []
     for t in tbs:
@@ -560,9 +626,16 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
         else:
             sides[e["src"]]["R"].append(("out", e))
             sides[e["dst"]]["R"].append(("in", e))
+
     # 2. node heights grow with port count and boundary tags
+    def _nports(items):  # all attack edges of one attacker share a port on either end
+        keys = set()
+        for role, e in items:
+            keys.add(("atk", e["src"]) if e.get("attack") and not e.get("victim") else id(e))
+        return len(keys)
+
     for n in nodes.values():
-        k = max(len(sides[n["id"]]["L"]), len(sides[n["id"]]["R"]))
+        k = max(_nports(sides[n["id"]]["L"]), _nports(sides[n["id"]]["R"]))
         n["tagspace"] = 20 * len(n.get("tags", []))
         n["h"] = max(n["h"], n["tagspace"] + PORT_STEP * (k + 1))
     # 3. column widths (right-side channel for intra edges), gap widths (one lane per edge)
@@ -670,8 +743,13 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
     lanes = {}
     for g, ge in gap_edges.items():
         ge.sort(key=lambda e: (abs(e["yd"] - e["ys"]), e["ys"], e["ids"]))
-        for i, e in enumerate(ge):
+        flows = [e for e in ge if not e.get("attack")]
+        for i, e in enumerate(flows):
             lanes[id(e)] = boundaries[g] + LANE0 + i * LANE_STEP
+        buses = list(dict.fromkeys(e["src"] for e in ge if e.get("attack")))  # one bus per attacker, right of the flows
+        for e in ge:
+            if e.get("attack"):
+                lanes[id(e)] = boundaries[g] + LANE0 + (len(flows) + buses.index(e["src"])) * LANE_STEP
     chan_used = collections.Counter()
     for e in edges:
         s, t = nodes[e["src"]], nodes[e["dst"]]
@@ -715,6 +793,26 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
                 ]
             e["bx"] = boundaries[g1]
             detour_y += LANE_STEP
+    # attack buses: the trunk leaves the attacker once; every further target is a stub off the bus
+    groups = collections.defaultdict(list)
+    for e in edges:
+        if e.get("attack") and e["kind"] == "forward" and not e["skip"]:
+            groups[e["src"]].append(e)
+    for src, ge in groups.items():
+        s = nodes[src]
+        bus, ys = ge[0]["pts"][1][0], s["cy"]
+        ge.sort(key=lambda e: e["yd"])
+        down = [e for e in ge if e["yd"] >= ys]
+        up = [e for e in ge if e["yd"] < ys]
+        for e in ge:
+            e["pts"] = [(bus, e["yd"]), (nodes[e["dst"]]["x"], e["yd"])]
+        if down:
+            e = down[-1]
+            e["pts"] = [(s["x"] + s["w"], ys), (bus, ys), (bus, e["yd"]), (nodes[e["dst"]]["x"], e["yd"])]
+        if up:
+            e = up[0]
+            head = [(s["x"] + s["w"], ys)] if not down else []
+            e["pts"] = head + [(bus, ys), (bus, e["yd"]), (nodes[e["dst"]]["x"], e["yd"])]
     # 7. chips: on the crossing of their own flow; same-flow chips stack, others slide along their line
     chips = []
     for e in edges:
@@ -742,6 +840,20 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
 
 
 # ---- rendering ----------------------------------------------------------------------------------
+def _trim(pts, a=1.2, b=1.8):
+    """Drawn copy of a polyline: starts just outside the source border, ends where the arrowhead touches the target."""
+
+    def sg(v):
+        return (v > 0) - (v < 0)
+
+    p = [tuple(q) for q in pts]
+    (x0, y0), (x1, y1) = p[0], p[1]
+    p[0] = (x0 + sg(x1 - x0) * a, y0 + sg(y1 - y0) * a)
+    (xa, ya), (xb, yb) = p[-2], p[-1]
+    p[-1] = (xb - sg(xb - xa) * b, yb - sg(yb - ya) * b)
+    return p
+
+
 def _orth(pts, r=8.0):
     """Orthogonal polyline with uniformly rounded corners."""
     if len(pts) < 3:
@@ -785,8 +897,8 @@ def _render(
     defs = "<defs>"
     for key, col in list(CLS_COL.items()) + [("red", RED), ("grey", LINE)]:
         defs += (
-            f'<marker id="arw-{key}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" '
-            f'orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="{col}"/></marker>'
+            f'<marker id="arw-{key}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" '
+            f'markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="{col}"/></marker>'
         )
     c.add(defs + "</defs>")
     meta = d.get("meta") or {}
@@ -852,20 +964,95 @@ def _render(
     # boundary lines
     for i, bx in enumerate(boundaries):
         c.path(f"M {bx} {TOP - 4} V {height - MARGIN}", RED, sw=2.4, dash="6 5")
-        ids = {ch["tb"] for ch in chips if ch["bx"] == bx}
-        for n in nodes.values():
-            if n["col"] == i + 1:
-                ids |= set(n.get("tags", []))
         c.text(
             bx,
             TOP - 9,
-            "TRUST BOUNDARY · " + " · ".join(sorted(ids, key=_tb_num)),
+            "TRUST BOUNDARY",
             size=8,
             fill=RED,
             weight="bold",
             track="bline",
         )
 
+    # edges
+    def chip(x, y, tbid, track=True):
+        v = next((t.get("assumption_verdict") for t in tbs if t["id"] == tbid), "unconfirmed")
+        g, col = VERDICT.get(v, VERDICT["unconfirmed"])
+        n = tb_threats.get(tbid, 0)
+        w = _chip_width(tbid, n)
+        x0 = x - w / 2
+        c.rect(x0, y - 8, w, 16, fill="#ffffff", stroke=col, sw=1.5, rx=8)
+        c.text(x0 + 8, y + 3.5, tbid, size=8.5, anchor="start", weight="bold", fill=col)
+        gx = x0 + 8 + _tw(tbid, 8.5) + 4
+        c.text(gx + 5, y + 4, g, size=10, weight="bold", fill=col)
+        if n:
+            c.rect(gx + 14, y - 6, 6 + _tw(str(n), 8), 12, fill=col, rx=6)
+            c.text(gx + 17 + _tw(str(n), 8) / 2, y + 3, str(n), size=8, fill="#ffffff", weight="bold")
+        if track:
+            c.labels.append((x0, y - 8, x0 + w, y + 8, f"chip {tbid}"))
+        return w
+
+    intra_n = collections.Counter(nodes[e["src"]]["col"] for e in edges if e["kind"] == "intra")
+
+    def _chan(col):  # width of the intra-column channel that sits right of the nodes in `col`
+        return 14 * intra_n[col] + 4 if intra_n[col] else 0
+
+    for e in edges:
+        if e.get("attack"):
+            c.path(
+                _orth(_trim(e["pts"])),
+                RED,
+                sw=(1.6 if e.get("victim") else 2.2),
+                marker="arw-red",
+                dash=("5 4" if e.get("victim") else None),
+            )
+            continue
+        col = CLS_COL.get(e["cls"], LINE)
+        mk = f"arw-{e['cls'] if e['cls'] in CLS_COL else 'grey'}"
+        c.path(
+            _orth(_trim(e["pts"])),
+            col,
+            sw=(2.2 if e["cls"] == "Restricted" else 1.6),
+            marker=mk,
+            marker_start=(mk if e.get("bidi") else None),
+        )
+        ids = "/".join(i.replace("df-", "") for i in e["ids"])
+        lbl = "df-" + ids if len(e["ids"]) <= 3 else f"df-{e['ids'][0][3:]} +{len(e['ids']) - 1}"
+        x0, y0 = e["pts"][0]
+        if e["kind"] == "forward":  # past the intra channel of its column; the halo keeps it legible on the border
+            c.text(
+                x0 + 6 + _chan(nodes[e["src"]]["col"]),
+                y0 - 4,
+                lbl,
+                size=FS,
+                fill=col,
+                anchor="start",
+                weight="bold",
+                track=f"label {lbl}",
+                halo=True,
+            )
+        elif e["kind"] == "backward":
+            xe, ye = e["pts"][-1]
+            c.text(
+                xe + 6 + _chan(nodes[e["dst"]]["col"]),
+                ye - 4,
+                lbl,
+                size=FS,
+                fill=col,
+                anchor="start",
+                weight="bold",
+                track=f"label {lbl}",
+                halo=True,
+            )
+        else:  # intra: rotated along the channel segment
+            (cx, ya), (_, yb) = e["pts"][1], e["pts"][2]
+            ym = (ya + yb) / 2
+            c.add(
+                f'<text x="{cx + 9:.1f}" y="{ym:.1f}" font-family="{FONT}" font-size="{FS}" fill="{col}" text-anchor="middle" '
+                f'font-weight="bold" transform="rotate(-90 {cx + 9:.1f} {ym:.1f})">{_esc(lbl)}</text>'
+            )
+            w = _tw(lbl, FS)
+            c.labels.append((cx + 3, ym - w / 2, cx + 13, ym + w / 2, f"label {lbl}"))
     # nodes
     for n in sorted(nodes.values(), key=lambda n: n["order"]):
         x, y, w, h = n["x"], n["y"], n["w"], n["h"]
@@ -902,12 +1089,13 @@ def _render(
         ty = y + 22 + len(lines) * 13 + 2
         _sev_chips(c, x + ox + 2, ty, n["sev"])
         _stride_strip(c, x + ox, ty + 10, n["stride"])
+        _weak_line(c, x + ox, ty + 36, n.get("weak") or [], w - ox - 8)
         if n["exposed"]:
             _globe(c, x + w - 16, y + 15)
         if n["sensitive"]:
             _lock(c, x + w - 16, y + 34)
         if n["assets"]:
-            ay = ty + 36
+            ay = ty + 50
             c.text(x + ox, ay, "Crown jewels stored here", size=8.5, anchor="start", fill=MUTED, italic=True)
             for i, a in enumerate(n["assets"]):
                 col = CLS_COL.get(str(a.get("classification")).title(), MUTED)
@@ -927,54 +1115,6 @@ def _render(
             _badge(c, x + w - 18 - i * 19, y + h - 1, b)
             c.badges.append((x + w - 26 - i * 19, y + h - 9, x + w - 10 - i * 19, y + h + 7, f"badge {b} on {n['id']}"))
 
-    # edges
-    def chip(x, y, tbid, track=True):
-        v = next((t.get("assumption_verdict") for t in tbs if t["id"] == tbid), "unconfirmed")
-        g, col = VERDICT.get(v, VERDICT["unconfirmed"])
-        n = tb_threats.get(tbid, 0)
-        w = _chip_width(tbid, n)
-        x0 = x - w / 2
-        c.rect(x0, y - 8, w, 16, fill="#ffffff", stroke=col, sw=1.5, rx=8)
-        c.text(x0 + 8, y + 3.5, tbid, size=8.5, anchor="start", weight="bold", fill=col)
-        gx = x0 + 8 + _tw(tbid, 8.5) + 4
-        c.text(gx + 5, y + 4, g, size=10, weight="bold", fill=col)
-        if n:
-            c.rect(gx + 14, y - 6, 6 + _tw(str(n), 8), 12, fill=col, rx=6)
-            c.text(gx + 17 + _tw(str(n), 8) / 2, y + 3, str(n), size=8, fill="#ffffff", weight="bold")
-        if track:
-            c.labels.append((x0, y - 8, x0 + w, y + 8, f"chip {tbid}"))
-        return w
-
-    for e in edges:
-        if e.get("attack"):
-            c.path(_orth(e["pts"]), RED, sw=2.4, marker="arw-red")
-            continue
-        col = CLS_COL.get(e["cls"], LINE)
-        mk = f"arw-{e['cls'] if e['cls'] in CLS_COL else 'grey'}"
-        c.path(
-            _orth(e["pts"]),
-            col,
-            sw=(2.2 if e["cls"] == "Restricted" else 1.6),
-            marker=mk,
-            marker_start=(mk if e.get("bidi") else None),
-        )
-        ids = "/".join(i.replace("df-", "") for i in e["ids"])
-        lbl = "df-" + ids if len(e["ids"]) <= 3 else f"df-{e['ids'][0][3:]} +{len(e['ids']) - 1}"
-        x0, y0 = e["pts"][0]
-        if e["kind"] == "forward":
-            c.text(x0 + 6, y0 - 4, lbl, size=FS, fill=col, anchor="start", weight="bold", track=f"label {lbl}")
-        elif e["kind"] == "backward":
-            xe, ye = e["pts"][-1]
-            c.text(xe + 6, ye - 4, lbl, size=FS, fill=col, anchor="start", weight="bold", track=f"label {lbl}")
-        else:  # intra: rotated along the channel segment
-            (cx, ya), (_, yb) = e["pts"][1], e["pts"][2]
-            ym = (ya + yb) / 2
-            c.add(
-                f'<text x="{cx + 9:.1f}" y="{ym:.1f}" font-family="{FONT}" font-size="{FS}" fill="{col}" text-anchor="middle" '
-                f'font-weight="bold" transform="rotate(-90 {cx + 9:.1f} {ym:.1f})">{_esc(lbl)}</text>'
-            )
-            w = _tw(lbl, FS)
-            c.labels.append((cx + 3, ym - w / 2, cx + 13, ym + w / 2, f"label {lbl}"))
     for ch in chips:
         chip(ch["x"], ch["y"], ch["tb"])
     for n in nodes.values():  # boundary tags on the corner of the node they guard
@@ -1034,7 +1174,13 @@ def _render(
     )
     y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=2.4, marker="arw-red")
-    c.text(lx + 40, y + 3, "attacker → entry point (⊕ = every exposed process)", size=9, anchor="start")
+    c.text(
+        lx + 40,
+        y + 3,
+        "attacker → every exposed process its scenarios reach · dashed = victim (user)",
+        size=9,
+        anchor="start",
+    )
     y += 20
     _globe(c, lx + 21, y - 2)
     c.text(lx + 40, y + 3, "⊕ internet-exposed entry point", size=9, anchor="start")
@@ -1045,6 +1191,16 @@ def _render(
     _stride_strip(c, lx + 10, y - 9, {"S": 1, "T": 1, "I": 1})
     c.text(lx + 10, y + 20, "STRIDE-per-element: filled = threats found in that class", size=8.5, anchor="start")
     y += 30
+    _weak_line(c, lx + 10, y + 1, [("missing authz", 5, 0), ("injection", 3, 2)], 200)
+    c.text(
+        lx + 10,
+        y + 16,
+        "dominant weakness classes (§8) · count = threats · colour = worst severity",
+        size=8.5,
+        anchor="start",
+        fill=MUTED,
+    )
+    y += 26
     xx = lx + 10
     for s, col in SEV_COL.items():
         c.circle(xx, y - 2, 4.5, fill=col)
@@ -1234,7 +1390,14 @@ def _audit(d, nodes, edges, chips, boundaries):
         s, t = nodes[e["src"]], nodes[e["dst"]]
         name = "/".join(e["ids"]) or f"attack {s['name']}"
         p1 = e["pts"][-1]
-        if not on_edge(e["pts"][0], s):
+        if e.get("attack") and not on_edge(e["pts"][0], s):
+            bus_ok = any(
+                o is not e and o.get("attack") and o["src"] == e["src"] and o["pts"][1][0] == e["pts"][0][0]
+                for o in edges
+            )
+            if not bus_ok:
+                problems.append(f"{name}: stub does not start on its attacker's bus")
+        elif not on_edge(e["pts"][0], s):
             problems.append(f"{name}: does not start on its source {s['id']}")
         if not on_edge(p1, t):
             problems.append(f"{name}: does not end on its target {t['id']}")
