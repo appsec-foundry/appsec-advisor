@@ -414,6 +414,55 @@ def test_a_url_blocked_by_the_guard_falls_back(config: dict, monkeypatch):
     assert "not in allowlist" in note
 
 
+# ---------- the signed release source ------------------------------------
+
+
+def from_releases(config: dict) -> dict:
+    return {**config, "url": "", "release": {"repository": "example-org/baseline", "allowed_signers": ["k"]}}
+
+
+def test_a_verified_release_ahead_of_the_configured_id_is_installed(config: dict, monkeypatch):
+    """The configured id is the floor a release is held to, not the only version it may carry."""
+    newer = BASELINE_TEXT.replace("test-1.0", "test-1.1")
+    asked: list[str] = []
+
+    def fetch_latest(release, minimum):
+        asked.append(minimum)
+        return ib.br.Release(newer, "test-1.1", "example-org/baseline release test-1.1, signature verified")
+
+    monkeypatch.setattr(ib.br, "fetch_latest", fetch_latest)
+    text, origin, note = ib.resolve_source(from_releases(config), offline=False)
+    assert text == newer
+    assert "signature verified" in origin
+    assert note == ""
+    assert asked == ["test-1.0"]
+
+
+def test_a_release_that_does_not_verify_falls_back_and_says_why(repo: Path, home: Path, config: dict, monkeypatch):
+    def fetch_latest(release, minimum):
+        raise ib.br.ReleaseError("the manifest signature is not from a trusted release key")
+
+    monkeypatch.setattr(ib.br, "fetch_latest", fetch_latest)
+    steps = ib.install("project", repo, home, from_releases(config))
+    assert (repo / config["install_filename"]).read_text(encoding="utf-8") == BASELINE_TEXT
+    assert any("example-org/baseline" in step and "trusted release key" in step for step in steps)
+
+
+def test_the_cli_counts_a_newer_release_as_installed(repo: Path, home: Path, config: dict, monkeypatch, capsys):
+    """A signed release ahead of the configured id is loaded, not missing."""
+    newer = BASELINE_TEXT.replace("test-1.0", "test-1.1")
+    monkeypatch.setattr(ib.bc, "load_config", lambda: from_releases(config))
+    monkeypatch.setattr(
+        ib.br,
+        "fetch_latest",
+        lambda release, minimum: ib.br.Release(newer, "test-1.1", "example-org/baseline release test-1.1"),
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    assert ib.main(["--scope", "project", "--repo", str(repo)]) == 0
+    assert "ahead of test-1.0" in capsys.readouterr().out
+
+
 # ---------- the git source ------------------------------------------------
 
 

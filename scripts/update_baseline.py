@@ -22,11 +22,16 @@ What it refuses to do
 * **Fall back to the bundled copy.** An update that quietly writes the plugin's
   vendored text after a failed fetch would replace a current copy with an older
   one and still report success. ``--offline`` asks for that copy explicitly.
-* **Move to a different baseline id.** The id is configuration: the session
-  banner, ``verify-baseline`` and an organization profile all check for the one
-  this build declares. A newly published version is therefore reported, not
-  installed — it arrives with the plugin release that vendors it, which is what
-  ``sync_baseline.py --accept-id`` prepares.
+* **Move to a different baseline id from a URL or git source.** The id is
+  configuration: the session banner, ``verify-baseline`` and an organization
+  profile all check for the one this build declares. A new version there is
+  therefore reported, not installed — it arrives with the plugin release that
+  vendors it, which is what ``sync_baseline.py --accept-id`` prepares. A signed
+  release is the exception: its publisher's key vouches for every version, so a
+  later release of the configured baseline is installed, and the banner reports
+  it as ahead of the configured id.
+* **Write older rules over newer ones.** A copy ahead of what the source serves
+  is left as it is, whichever source that is.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import baseline_check as bc  # noqa: E402
+import baseline_release as br  # noqa: E402
 import sync_baseline as sb  # noqa: E402
 
 # Reported, not raised, when the published baseline has moved to a new id: the
@@ -51,6 +57,16 @@ class UpdateError(Exception):
     """A condition the user has to resolve; reported without a traceback."""
 
 
+def follows_releases(config: dict, *, offline: bool) -> bool:
+    """True when this update moves to the latest signed release.
+
+    Only the release source qualifies: its signature is what makes a later id
+    safe to install without a plugin release. ``--offline`` reads the bundled
+    copy instead, which carries the configured id and is never ahead of it.
+    """
+    return bool(config.get("release")) and not (config.get("url") or config.get("git")) and not offline
+
+
 def source_text(config: dict, *, offline: bool) -> tuple[str, str]:
     """Return ``(text, origin)`` for the text to update to."""
     if offline:
@@ -61,6 +77,12 @@ def source_text(config: dict, *, offline: bool) -> tuple[str, str]:
             return bundled.read_text(encoding="utf-8", errors="replace"), str(bundled)
         except OSError as exc:
             raise UpdateError(f"cannot read the bundled copy: {exc}") from exc
+    if follows_releases(config, offline=offline):
+        try:
+            release = br.fetch_latest(config["release"], config["id"])
+        except br.ReleaseError as exc:
+            raise UpdateError(f"{exc}; --offline updates from the copy bundled in the plugin") from exc
+        return release.text, release.origin
     try:
         return sb.fetch_published(config)
     except sb.SyncError as exc:
@@ -97,17 +119,20 @@ def owned(path: Path, config: dict) -> bool:
     return path.name == config["install_filename"]
 
 
-def _partition(result: dict, config: dict) -> tuple[list[Path], list[str]]:
-    """Split the loaded baseline files into the ones to rewrite and notes.
+def _partition(result: dict, config: dict, *, include_newer: bool = False) -> tuple[list[tuple[Path, str]], list[str]]:
+    """Split the loaded baseline files into ``(path, carried id)`` to rewrite, and notes.
 
     Both the matching and the outdated files: an older version of the configured
     baseline is the case this command exists for, and it lands in its own bucket
-    rather than under ``matches``.
+    rather than under ``matches``. An update that follows signed releases takes
+    the files already ahead of the configured id as well, because the latest
+    release may be further ahead still.
     """
-    targets: list[Path] = []
+    targets: list[tuple[Path, str]] = []
     notes: list[str] = []
     seen: set[str] = set()
-    for match in result["matches"] + result["older"]:
+    newer = (result.get("newer") or []) if include_newer else []
+    for match in result["matches"] + result["older"] + newer:
         path = Path(match["file"])
         key = bc._resolved_str(path)
         if key in seen:
@@ -120,7 +145,7 @@ def _partition(result: dict, config: dict) -> tuple[list[Path], list[str]]:
                 f"left alone: {path} carries the rules among its own content, so it is not this command's to rewrite"
             )
         else:
-            targets.append(path)
+            targets.append((path, match["id"]))
     return targets, notes
 
 
@@ -136,6 +161,7 @@ def update(
     if not config["enabled"]:
         return ["no secure-coding baseline is configured for this build"], 0
 
+    forward = follows_releases(config, offline=offline)
     result = bc.check(repo=repo, home=home, config=config)
     status = result["status"]
     if status == "missing":
@@ -149,14 +175,14 @@ def update(
             f"a different baseline is loaded ({loaded}), not the configured {config['id']}",
             "nothing was touched — replacing someone else's rules is not this command's call",
         ], 0
-    if status == "newer":
+    if status == "newer" and not forward:
         loaded = ", ".join(sorted({item["id"] for item in result["newer"]}))
         return [
             f"the loaded baseline ({loaded}) is ahead of the configured {config['id']} — nothing to update",
             "updating would write the older rules over the newer ones",
         ], 0
 
-    targets, steps = _partition(result, config)
+    targets, steps = _partition(result, config, include_newer=forward)
     if not targets:
         steps.append("nothing left to update")
         return steps, 0
@@ -165,7 +191,7 @@ def update(
     state, found = verdict(text, config)
     if state == "foreign":
         raise UpdateError(f"{origin} declares no baseline id — refusing to install it as security rules")
-    if state == "changed":
+    if state == "changed" and not (forward and bc.is_newer(found, config["id"])):
         steps.extend(
             [
                 f"{origin} now publishes {found}; this build is configured for {config['id']}",
@@ -176,7 +202,10 @@ def update(
         return steps, ACTION_NEEDED
 
     steps.append(f"source: {origin} ({found})")
-    for path in targets:
+    for path, carried in targets:
+        if bc.is_newer(carried, found):
+            steps.append(f"left alone: {path} carries {carried}, ahead of {found}")
+            continue
         if bc._read(path) == text:
             steps.append(f"already current: {path}")
             continue

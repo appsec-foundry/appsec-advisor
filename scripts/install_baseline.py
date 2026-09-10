@@ -20,15 +20,19 @@ one file on disk, so refreshing it updates every place that reads it.
 
 Where the text comes from
 -------------------------
-The published baseline, fetched from the URL in the ``baseline`` block of
-``config.json``, so an install tracks upstream. The copy bundled in the plugin
-is the fallback for when that URL cannot be reached — an air-gapped machine, a
-proxy, an outage. The report always names which of the two was used, because a
-fallback copy can be older than the published text.
+The published baseline, from the source in the ``baseline`` block of
+``config.json``, so an install tracks upstream: the latest signed release for
+the plugin's own baseline, or an organization's URL or git repository. The copy
+bundled in the plugin is the fallback for when that source cannot be used — an
+air-gapped machine, a proxy, an outage, a release that does not verify. The
+report always names which of the two was used, because a fallback copy can be
+older than the published text.
 
-Whatever the source, the content must declare the expected baseline id before
-anything is written. That is what stops a captive-portal HTML page, a 404 body,
-or a moved URL from being installed as security rules.
+A signed release has to verify and be the configured baseline at the configured
+version or a later one (``baseline_release``). Any other source must declare the
+expected baseline id before anything is written. That is what stops a
+captive-portal HTML page, a 404 body, or a moved URL from being installed as
+security rules.
 
 Write discipline
 ----------------
@@ -55,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import _url_guard  # noqa: E402
 import baseline_check as bc  # noqa: E402
+import baseline_release as br  # noqa: E402
 
 # A markdown instruction file. Large enough for any real baseline, small enough
 # that a redirected download cannot fill the disk.
@@ -152,10 +157,10 @@ def _validated(text: str, expected: str, origin: str) -> str:
 def resolve_source(config: dict, *, offline: bool) -> tuple[str, str, str]:
     """Return ``(text, origin, note)`` for the baseline to install.
 
-    The configured source wins — an ``http(s)`` URL, or a file in a git
-    repository. The copy bundled in the plugin is the fallback, so an install
-    still works air-gapped. ``note`` carries the reason the fallback was used
-    and is empty when the configured source loaded.
+    The configured source wins — an ``http(s)`` URL, a file in a git
+    repository, or the latest signed release. The copy bundled in the plugin is
+    the fallback, so an install still works air-gapped. ``note`` carries the
+    reason the fallback was used and is empty when the configured source loaded.
     """
     expected = config["id"]
     reason = ""
@@ -176,6 +181,12 @@ def resolve_source(config: dict, *, offline: bool) -> tuple[str, str, str]:
             text, origin = _git_export(config["git"])
             return _validated(text, expected, origin), origin, ""
         except InstallError as exc:
+            reason = str(exc)
+    elif config.get("release"):
+        try:
+            release = br.fetch_latest(config["release"], expected)
+            return release.text, release.origin, ""
+        except br.ReleaseError as exc:
             reason = str(exc)
 
     bundled = bc.fallback_path(config)
@@ -345,6 +356,7 @@ def install(
             source = (
                 config.get("url")
                 or ((config.get("git") or {}).get("url") if config.get("git") else None)
+                or ((config.get("release") or {}).get("repository") if config.get("release") else None)
                 or "the configured source"
             )
             steps.append(f"! could not use {source} — {note}")
@@ -435,7 +447,9 @@ def main(argv: list[str] | None = None) -> int:
 
     result = bc.check(repo=repo, home=home, config=config)
     print("")
-    if result["status"] == "installed":
+    # A signed release later than the configured id is loaded as well; the
+    # summary names it as ahead of the id this build declares.
+    if result["status"] in ("installed", "newer"):
         print(f"✓ verified: {bc.summary(result)}")
         return 0
     # Written but not detected — the file landed somewhere Claude Code does not

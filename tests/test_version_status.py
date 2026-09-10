@@ -138,6 +138,42 @@ def test_newer_published_core_is_reported_as_behind(plugin: Path, monkeypatch) -
     assert "outdated, published 0.7.0" in dict(vs.rows(data))["Core"]
 
 
+def _from_releases(plugin: Path) -> None:
+    config = json.loads((plugin / "config.json").read_text(encoding="utf-8"))
+    del config["baseline"]["url"]
+    config["baseline"]["release"] = {"repository": "example-org/baseline", "allowed_signers": ["k"]}
+    (plugin / "config.json").write_text(json.dumps(config), encoding="utf-8")
+
+
+def test_update_check_reads_the_published_id_from_a_verified_release(plugin: Path, monkeypatch) -> None:
+    _from_releases(plugin)
+    _served(monkeypatch, {})
+    monkeypatch.setattr(
+        vs.br,
+        "fetch_latest",
+        lambda release, minimum: vs.br.Release(BASELINE_DOCUMENT, "test-1.2", "example-org/baseline release test-1.2"),
+    )
+    data = vs.collect(repo=None, plugin_root=plugin, check_updates=True)
+
+    assert data["baseline"]["published_id"] == "test-1.2"
+    assert data["baseline"]["state"] == "outdated"
+    assert dict(vs.rows(data))["Baseline source"] == "example-org/baseline, latest signed release"
+
+
+def test_a_release_that_does_not_verify_is_unknown_with_a_reason(plugin: Path, monkeypatch) -> None:
+    _from_releases(plugin)
+    _served(monkeypatch, {})
+
+    def refuse(release, minimum):
+        raise vs.br.ReleaseError("the manifest signature is not from a trusted release key")
+
+    monkeypatch.setattr(vs.br, "fetch_latest", refuse)
+    data = vs.collect(repo=None, plugin_root=plugin, check_updates=True)
+
+    assert data["baseline"]["state"] == "unknown"
+    assert "trusted release key" in data["baseline"]["note"]
+
+
 def test_unreachable_sources_are_unknown_with_a_reason(plugin: Path, monkeypatch) -> None:
     _served(monkeypatch, {})
     data = vs.collect(repo=None, plugin_root=plugin, check_updates=True)

@@ -3,10 +3,11 @@ name: update-baseline
 description: >-
   Refresh an already-installed secure-coding baseline from the source that
   publishes it, in place, wherever it is loaded from — this machine, the
-  repository, or a file the repository already carried. Reports when the
-  published baseline has moved to a new id, which arrives with a plugin release
-  rather than with this command, and never overwrites a foreign baseline, a
-  newer one, or a file that holds more than the rules. Use on a request to
+  repository, or a file the repository already carried. Installs a newer signed
+  release once its signature verifies; reports when a URL or git source has
+  moved to a new id, which arrives with a plugin release rather than with this
+  command; and never overwrites a foreign baseline, a newer one, or a file that
+  holds more than the rules. Use on a request to
   update, refresh or re-fetch the secure-coding baseline / secure coding rules,
   or to ask whether the installed copy is still current. Installs nothing —
   /appsec-advisor:install-baseline is what puts a baseline on a machine that has
@@ -44,8 +45,8 @@ WHAT IT UPDATES
   the rules, not the wiring.
 
 WHAT IT LEAVES ALONE
-  A baseline nobody here configured, and one that is already ahead of this
-  build: replacing either would be a downgrade, and which rules win is your
+  A baseline nobody here configured, and one already ahead of what the
+  source serves: replacing either would be a downgrade, and which rules win is your
   call. A file that carries the rules among its own content — AGENTS.md, a
   team instruction file — is reported rather than rewritten, because the rest
   of that file would be lost. An unreachable source changes nothing at all.
@@ -54,9 +55,10 @@ EXIT CODES
   0  The state was reported, and anything this command owns is current.
   2  The update did not happen: the source could not be read, what it served
      was no baseline at all, or a file could not be written.
-  3  The source now publishes a different baseline id than this build is
-     configured for. Nothing was written — a new version arrives with the
-     plugin release that vendors it.
+  3  A URL or git source now publishes a different baseline id than this
+     build is configured for. Nothing was written — a new version arrives
+     with the plugin release that vendors it. A newer signed release is
+     installed instead.
 
 Related: /appsec-advisor:verify-baseline — what is loaded, changes nothing.
          /appsec-advisor:install-baseline — put one on a machine that has none.
@@ -110,6 +112,7 @@ Only where it tells the user something the output does not:
   not in this one. Claude Code reads instruction files when a session begins.
 - **A file in the repository was updated** — it is uncommitted. Name the path so
   the user can review the diff and commit it. Do not commit it yourself.
+- **A newer signed release was installed** — the session banner reports it as ahead of the configured id until the plugin catches up. That is expected, not a fault.
 - **Exit `3`, a new published id** — the id is what the session banner and
   `verify-baseline` look for, so it moves when the plugin does. Say that
   updating the plugin is what brings the new version, and stop. Do not fetch it

@@ -7,15 +7,9 @@ instruction files and reports at session start whether it is actually loaded.
 
 ## What is in here, and when it is used
 
-`/appsec-advisor:install-baseline` fetches the baseline from the URL in the
-`baseline` block of `config.json`, so an installed copy tracks the published
-text. The file in this directory is the **fallback** used when that URL cannot
-be reached — an air-gapped machine, a proxy, an outage. The installer always
-says which of the two it used.
+`/appsec-advisor:install-baseline` installs the latest signed release named in the `baseline` block of `config.json`, and only after its signature and checksum verify, so an installed copy tracks the published releases. The file in this directory is the **fallback** used when that release cannot be fetched or does not verify, for example on an air-gapped machine, behind a proxy, or during an outage. The installer always says which of the two it used.
 
-Because the fallback is pinned at whatever the plugin release shipped, it can
-be older than the URL. `--refresh` re-fetches an installed copy once the network
-is back.
+Because the fallback is pinned at whatever the plugin release shipped, it can be older than the latest release. `--refresh` fetches the release again once it can be read.
 
 Re-vendor the file here with `make baseline-sync`. It stops instead of writing
 when the published baseline id has changed, because that id also stands in
@@ -24,7 +18,7 @@ moves all three together.
 
 | File | Baseline id | Source |
 |---|---|---|
-| `secure-coding-baseline.md` | `aisec-0.1` | <https://github.com/appsec-foundry/aiscb> |
+| `secure-coding-baseline.md` | `aiscb-0.1.14` | <https://github.com/appsec-foundry/aiscb> |
 
 ## Attribution
 
@@ -32,7 +26,7 @@ moves all three together.
 by Matthias Rohr, licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). It is redistributed
 here unmodified; edit it upstream, not in this directory. A build that adapts
-the rules must change the baseline id (`aisec-0.1+acme`) so the id no longer
+the rules must change the baseline id (`aiscb-0.1.14+acme`) so the id no longer
 claims the published text — see the id convention in the upstream README.
 
 ## Shipping a different baseline

@@ -5,8 +5,9 @@ description: >-
   coding rules are in context on every prompt instead of only the ones that mention
   security. Menu-driven: this machine (~/.claude/CLAUDE.md), this repository
   (project CLAUDE.md), or this repository without touching CLAUDE.md
-  (.claude/rules/). Fetches the published baseline and falls back to the copy
-  bundled in the plugin when the URL cannot be reached. Use when the session banner
+  (.claude/rules/). Fetches the published baseline, installs a signed release only
+  once its signature verifies, and falls back to the copy bundled in the plugin
+  when the source cannot be used. Use when the session banner
   reports the baseline is not installed, or on a request to install, add, set up,
   refresh or update the secure-coding baseline / secure coding rules / AI coding
   guardrails.
@@ -57,9 +58,10 @@ ALREADY HAVE IT?
   .github/copilot-instructions.md — or a copy committed but never imported is
   wired up rather than duplicated, so there stays one file to keep current.
 
-The baseline is fetched from the URL configured in the plugin; the bundled copy
-is the fallback when that URL cannot be reached. Existing instruction files are
-only appended to, never rewritten, and re-running is safe.
+The baseline is fetched from the source configured in the plugin; a signed
+release is installed only once its signature and checksum verify. The bundled
+copy is the fallback when that source cannot be used. Existing instruction
+files are only appended to, never rewritten, and re-running is safe.
 
 Related: /appsec-advisor:verify-baseline — check what is loaded, changes nothing.
          /appsec-advisor:update-baseline — refresh a copy that is already
@@ -134,6 +136,7 @@ Read `status` from the JSON:
   is not an install: the scope is already chosen and only the text is behind.
   Name both ids, point at `/appsec-advisor:update-baseline`, and exit `0` unless
   the user explicitly asked for another scope.
+- **`newer`** — a later version of the configured baseline is loaded, usually a signed release newer than the id this build names. Treat it like `installed`: say so in one line, naming the loaded id and that it is ahead of the configured one, and stop unless the user passed `--refresh` or `--scope`.
 - **`other`** — a baseline is loaded, but not the configured one. Name both ids
   before the menu: the user is about to add a second set of rules, and needs to
   know that.
@@ -196,10 +199,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/install_baseline.py" \
 
 Print the output as-is and propagate the exit status.
 
-If the output reports that the bundled copy was used because the URL could not
-be reached, say plainly that the installed text may be older than the published
-baseline and that `--refresh` updates it once the network is back. Do not
-present that as a failure — the rules are installed and in context either way.
+If the output reports that the bundled copy was used because the configured source could not be used, say plainly that the installed text may be older than the published baseline and that `--refresh` updates it once the source can be read again. When the reason is a failed signature or manifest check, say that the published release was refused, not merely unreachable. Do not present either case as a failed install: the rules are installed and in context.
 
 ## Step 6 — Say what happens next
 

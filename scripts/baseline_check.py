@@ -156,12 +156,14 @@ def load_config(plugin_root: Path | None = None) -> dict:
         block = {}
 
     git = block.get("git")
+    release = block.get("release")
     config = {
         "enabled": block.get("enabled", True) is not False,
         "id": _clean(block.get("id")),
         "name": _clean(block.get("name")) or DEFAULT_NAME,
         "url": _clean(block.get("url")),
         "git": git if isinstance(git, dict) else None,
+        "release": release if isinstance(release, dict) else None,
         "fallback_file": _clean(block.get("fallback_file")),
         "install_filename": _clean(block.get("install_filename")) or "secure-coding-baseline.md",
         # Off unless an organization turned it on. Which rules a machine loads is
@@ -642,6 +644,8 @@ def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
     lines.append("  This confirms the rules are in context, not that they were followed.")
     if config.get("url"):
         lines.append(f"  Baseline source: {config['url']}")
+    elif config.get("release"):
+        lines.append(f"  Baseline source: signed releases of {config['release'].get('repository')}")
     return "\n".join(lines)
 
 

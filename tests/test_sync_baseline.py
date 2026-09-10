@@ -93,6 +93,58 @@ def configured_id(plugin: Path) -> str:
     return json.loads((plugin / "config.json").read_text(encoding="utf-8"))["baseline"]["id"]
 
 
+@pytest.fixture
+def releases(plugin: Path, monkeypatch):
+    """Point config.json at a signed release and serve ``text`` as its latest one.
+
+    ``text=None`` makes the verification fail.
+    """
+    data = json.loads((plugin / "config.json").read_text(encoding="utf-8"))
+    del data["baseline"]["url"]
+    data["baseline"]["release"] = {"repository": "example-org/baseline", "allowed_signers": ["k"]}
+    (plugin / "config.json").write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    def _releases(text: str | None):
+        def fetch_latest(release, minimum):
+            assert minimum is None, "a sync leaves a new id to --accept-id instead of refusing it"
+            if text is None:
+                raise sb.br.ReleaseError("the manifest signature is not from a trusted release key")
+            return sb.br.Release(text, bc.find_ids(text)[0], "example-org/baseline release, signature verified")
+
+        monkeypatch.setattr(sb.br, "fetch_latest", fetch_latest)
+
+    return _releases
+
+
+# ---------- the signed release source --------------------------------------
+
+
+def test_a_signed_release_with_the_same_id_rewrites_the_copy(plugin: Path, releases):
+    releases(PUBLISHED)
+    steps = sb.sync(plugin)
+    assert bundled(plugin) == PUBLISHED
+    assert any("signature verified" in step for step in steps)
+
+
+def test_a_signed_release_with_a_new_id_stops_until_it_is_accepted(plugin: Path, releases):
+    newer = PUBLISHED.replace("test-1.0", "test-1.1")
+    releases(newer)
+    with pytest.raises(sb.VersionChange):
+        sb.sync(plugin)
+    assert bundled(plugin) == VENDORED
+
+    sb.sync(plugin, accept_id="test-1.1")
+    assert bundled(plugin) == newer
+    assert configured_id(plugin) == "test-1.1"
+
+
+def test_a_release_that_does_not_verify_leaves_the_copy_alone(plugin: Path, releases):
+    releases(None)
+    with pytest.raises(sb.SyncError, match="trusted release key"):
+        sb.sync(plugin)
+    assert bundled(plugin) == VENDORED
+
+
 # ---------- the ordinary case: same id, newer text -------------------------
 
 

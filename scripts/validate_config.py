@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -65,7 +66,7 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
         if not isinstance(baseline, dict):
             errors.append(f"{path}: 'baseline' must be an object")
         else:
-            known = {"enabled", "id", "name", "url", "git", "fallback_file", "install_filename", "enforce"}
+            known = {"enabled", "id", "name", "url", "git", "release", "fallback_file", "install_filename", "enforce"}
             unknown_baseline = set(baseline.keys()) - known
             if unknown_baseline:
                 errors.append(f"{path}: unknown keys in 'baseline': {sorted(unknown_baseline)}")
@@ -77,9 +78,29 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
                     errors.append(f"{path}: 'baseline.{key}' must be a string or null")
             if baseline.get("git") is not None and not isinstance(baseline["git"], dict):
                 errors.append(f"{path}: 'baseline.git' must be an object or null")
+            release = baseline.get("release")
+            if release is not None and not isinstance(release, dict):
+                errors.append(f"{path}: 'baseline.release' must be an object or null")
+            elif release is not None:
+                unknown_release = set(release) - {"repository", "allowed_signers"}
+                if unknown_release:
+                    errors.append(f"{path}: unknown keys in 'baseline.release': {sorted(unknown_release)}")
+                if not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+", str(release.get("repository") or "")):
+                    errors.append(f"{path}: 'baseline.release.repository' must name a GitHub repository as owner/name")
+                signers = release.get("allowed_signers")
+                if not (
+                    isinstance(signers, list) and signers and all(isinstance(s, str) and s.strip() for s in signers)
+                ):
+                    errors.append(f"{path}: 'baseline.release.allowed_signers' must list at least one signer line")
+                # A URL or git source wins over the release, so beside one the
+                # signature would go unchecked without anyone noticing.
+                if baseline.get("url") or baseline.get("git"):
+                    errors.append(
+                        f"{path}: 'baseline.release' cannot be combined with 'baseline.url' or 'baseline.git'"
+                    )
             # The id is what every check compares against; a source without one
             # can never match, so the build would ship a baseline nothing accepts.
-            if not baseline.get("id") and any(baseline.get(k) for k in ("url", "git", "fallback_file")):
+            if not baseline.get("id") and any(baseline.get(k) for k in ("url", "git", "release", "fallback_file")):
                 errors.append(f"{path}: 'baseline.id' is required when a source is configured")
             if isinstance(baseline.get("url"), str) and baseline["url"]:
                 parsed = urlparse(baseline["url"])

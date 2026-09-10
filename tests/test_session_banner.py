@@ -51,6 +51,11 @@ CONFIG = json.loads((SCRIPT.parent.parent / "config.json").read_text(encoding="u
 # The banner heads the baseline line with the configured name, so the tests read
 # it from the same place the hook does rather than pinning this build's wording.
 BASELINE_NAME = CONFIG["baseline"]["name"]
+# The id likewise, so a version the build moves to does not break tests that
+# only care which bucket a baseline lands in.
+BASELINE_ID = CONFIG["baseline"]["id"]
+OLDER_ID = f"{BASELINE_ID.rsplit('-', 1)[0]}-0.0"
+NEWER_ID = f"{BASELINE_ID.rsplit('-', 1)[0]}-99.0"
 
 
 @pytest.fixture(autouse=True)
@@ -459,7 +464,7 @@ def test_installed_baseline_names_its_id_and_scope(tmp_path):
     write_model(tmp_path)
     install_baseline_for(tmp_path)
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == f"{BASELINE_NAME} · aisec-0.1 · this repo"
+    assert line == f"{BASELINE_NAME} · {BASELINE_ID} · this repo"
 
 
 def test_an_organizations_baseline_appears_under_its_own_name(tmp_path, monkeypatch):
@@ -483,16 +488,16 @@ def test_a_second_different_baseline_beside_the_loaded_one_is_named(tmp_path):
     install_baseline_for_user(tmp_path)
     (tmp_path / "CLAUDE.md").write_text("baseline-id: `acme-sec-1.0`\n", encoding="utf-8")
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == f"{BASELINE_NAME} · aisec-0.1 · this machine · also acme-sec-1.0 in this repo"
+    assert line == f"{BASELINE_NAME} · {BASELINE_ID} · this machine · also acme-sec-1.0 in this repo"
 
 
 def test_a_declared_derivative_beside_the_baseline_is_not_a_foreign_one(tmp_path):
     """``<id>+suffix`` is the same rules adapted, so it counts as loaded, not as drift."""
     write_model(tmp_path)
     install_baseline_for_user(tmp_path)
-    (tmp_path / "CLAUDE.md").write_text("baseline-id: `aisec-0.1+acme`\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(f"baseline-id: `{BASELINE_ID}+acme`\n", encoding="utf-8")
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == f"{BASELINE_NAME} · aisec-0.1, aisec-0.1+acme · this repo+this machine"
+    assert line == f"{BASELINE_NAME} · {BASELINE_ID}, {BASELINE_ID}+acme · this repo+this machine"
     assert "also" not in line
 
 
@@ -504,9 +509,11 @@ def test_an_outdated_baseline_points_at_update_rather_than_install(tmp_path):
     that applies.
     """
     write_model(tmp_path)
-    (tmp_path / "CLAUDE.md").write_text("baseline-id: `aisec-0.0`\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(f"baseline-id: `{OLDER_ID}`\n", encoding="utf-8")
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == (f"{BASELINE_NAME} · aisec-0.0 · this repo · behind aisec-0.1 · /appsec-advisor:update-baseline")
+    assert line == (
+        f"{BASELINE_NAME} · {OLDER_ID} · this repo · behind {BASELINE_ID} · /appsec-advisor:update-baseline"
+    )
     assert "install-baseline" not in line
 
 
@@ -554,9 +561,9 @@ def test_a_newer_baseline_is_reported_as_ahead_without_a_command(tmp_path):
     newer rules, so the line names the state and stops.
     """
     write_model(tmp_path)
-    (tmp_path / "CLAUDE.md").write_text("baseline-id: `aisec-9.9`\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(f"baseline-id: `{NEWER_ID}`\n", encoding="utf-8")
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == f"{BASELINE_NAME} · aisec-9.9 · this repo · ahead of aisec-0.1"
+    assert line == f"{BASELINE_NAME} · {NEWER_ID} · this repo · ahead of {BASELINE_ID}"
     assert "install-baseline" not in line
 
 

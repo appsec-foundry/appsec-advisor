@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import baseline_check as bc  # noqa: E402
+import baseline_release as br  # noqa: E402
 import install_baseline as ib  # noqa: E402
 import validate_org_profile as vop  # noqa: E402
 
@@ -182,6 +183,7 @@ def fetch_published(config: dict) -> tuple[str, str]:
     """
     url = str(config.get("url") or "").strip()
     git = config.get("git") if isinstance(config.get("git"), dict) else None
+    release = config.get("release") if isinstance(config.get("release"), dict) else None
     try:
         if url:
             raw = ib._fetch(url)
@@ -190,9 +192,14 @@ def fetch_published(config: dict) -> tuple[str, str]:
             return raw.decode("utf-8", errors="replace"), url
         if git:
             return ib._git_export(git)
-    except ib.InstallError as exc:
+        if release:
+            # No minimum: a new or renamed id is not an error here but the
+            # decision --accept-id records, so the id comparison makes it.
+            latest = br.fetch_latest(release, None)
+            return latest.text, latest.origin
+    except (ib.InstallError, br.ReleaseError) as exc:
         raise SyncError(f"could not read the published baseline: {exc}") from exc
-    raise SyncError("config.json names neither a url nor a git source to sync from")
+    raise SyncError("config.json names no url, git or release source to sync from")
 
 
 def edit_config_id(text: str, old: str, new: str) -> str:
