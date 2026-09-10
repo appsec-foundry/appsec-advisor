@@ -14,7 +14,8 @@ Layout (see docs/internal/analysis/plan-session-banner-redesign-2026-07-29.md):
 1. Who + help — plugin identity (or org ``banner.headline``) and ``help`` when packaged.
 2. Threat model — fixed label, severity-first facts, object-local command when needed.
 3. Secure coding baseline — id and scope when loaded, otherwise the problem and
-   the install command on that same line.
+   the install command on that same line. A calm state is left out where the
+   aiscb installer's own startup hook already prints the baseline status.
 
 No color glyphs. Commands sit on the domain they act on. A calm, current model
 carries facts only — no habitual review link.
@@ -355,6 +356,11 @@ def _baseline_line(repo: Path | None) -> str:
     that ships its own baseline sees it under that name rather than a generic
     label.
 
+    Where the aiscb installer's own startup hook prints the baseline status, the
+    calm states are left out, so the reader sees one line about the rules rather
+    than two. Only that hook hides anything: without it the line is as before,
+    and a state that asks for a decision or a command is reported either way.
+
     Failure is silence. ``baseline_check`` is a plain stdlib module, but this is
     a startup hook and a banner that cannot report the baseline must still
     report the threat model.
@@ -369,6 +375,12 @@ def _baseline_line(repo: Path | None) -> str:
 
     status = result.get("status")
     if status in (None, "disabled"):
+        return ""
+
+    announced = result.get("announced_by_hook") is True
+    # Only aiscb's hooks switch a baseline off, and the hook that does is the one
+    # that prints that state at startup.
+    if status == "switched_off":
         return ""
 
     label = _text(result, "name") or baseline_check.DEFAULT_NAME
@@ -387,6 +399,8 @@ def _baseline_line(repo: Path | None) -> str:
             found = ", ".join(sorted({item["id"] for item in others}))
             where = baseline_check.scope_text([item["scope"] for item in others])
             beside = f"also {found} in {where}" if where else f"also {found}"
+        if announced and not others:
+            return ""
         # No command: which of two rule sets to drop is a decision, not a repair.
         return _join(label, ids, scopes, beside)
 
@@ -402,12 +416,18 @@ def _baseline_line(repo: Path | None) -> str:
         # carrier. It is still better than naming no command at all in a build
         # whose allowlist does not carry update-baseline.
         command = _skill_command(UPDATE_BASELINE) or _skill_command(INSTALL_BASELINE)
+        # A copy in an aiscb installation is that installer's to update, and
+        # neither command writes it, so none is named.
+        if all(item.get("managed_by") == "aiscb" for item in result.get("older") or []):
+            command = ""
         return _join(label, ids, scopes, behind, command)
 
     if status == "newer":
         # The baseline moves on its own schedule, so a machine ahead of this
         # build is the normal state, not a fault. No command either: the only
         # one that applies would write the older text over the newer rules.
+        if announced:
+            return ""
         ids = ", ".join(sorted({m["id"] for m in result.get("newer") or []}))
         scopes = baseline_check.scope_text(result.get("scopes"))
         return _join(label, ids, scopes, f"ahead of {result.get('expected_id') or '?'}")

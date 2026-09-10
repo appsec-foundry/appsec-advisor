@@ -110,7 +110,8 @@ installed is the one way this command can only do harm.
 - **`other`** — a different baseline is loaded, not the configured one. Name
   both ids and stop: this command removes the configured baseline, and deleting
   somebody else's rules is not what was asked. Exit `0`.
-- **`installed`** — continue.
+- **`switched_off`** — the configured baseline comes from the AI Secure Coding Baseline's own installer (aiscb) and is only switched off for this session. Say that its own installer removes it, together with the hooks and links it set up, and exit `0`.
+- **`installed`** — continue, unless every record in `matches` carries `managed_by: aiscb`: then the same applies as for `switched_off`, because this command changes nothing in that installation.
 
 ### `policy` in `scopes` — say it before anything else
 

@@ -26,6 +26,17 @@ it with ``@AGENTS.md``, which the import walk below picks up on its own.
 This is presence, not compliance. It proves the rules are in context; whether
 the assistant follows them is what the upstream test harness measures.
 
+The AI Secure Coding Baseline's own installer (aiscb) can load the rules without
+an import: its SessionStart hooks run a helper that hands the text to Claude
+Code as hook output, and leave it out for a session started with
+``AISCB_DISABLE=1``. Those hooks are read from the settings files Claude Code
+applies, and one counts only where it runs at startup and its helper can read
+the baseline beside it. The same hooks print the baseline status at session
+start (``announced_by_hook``), which is how the session banner avoids a second
+line saying the same thing. Files inside an aiscb installation carry
+``managed_by: aiscb``: that installer updates and removes them, so install,
+update and remove here leave them alone.
+
 Why deterministic Python rather than asking the model
 -----------------------------------------------------
 The baseline also instructs the assistant to name every id it carries when
@@ -50,6 +61,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -120,6 +132,22 @@ UNLOADED_CANDIDATES = (
     (".github/copilot-instructions.md", "GitHub Copilot"),
 )
 UNLOADED_GLOBS = ((".github/instructions", "*.md", "GitHub Copilot"),)
+
+# The AI Secure Coding Baseline's own installer (aiscb) can load the rules through
+# SessionStart hooks instead of an @ import. Its helper reads the baseline beside
+# itself, or one level up from a project's ``.aiscb/``; a user install keeps its
+# files in the data directory below, with or without that helper.
+AISCB_HELPER = "show-baseline-version.py"
+AISCB_BASELINE = "secure-coding-baseline.md"
+AISCB_PROJECT_DIR = ".aiscb"
+AISCB_USER_DATA = Path(".local") / "share" / "aiscb"
+AISCB_INSTALLER = "install.py"
+
+# The settings files whose hooks Claude Code runs, relative to the repository and
+# to the home directory, most specific first. Behind the managed settings, that
+# is the order in which ``disableAllHooks`` is decided.
+PROJECT_SETTINGS_FILES = (".claude/settings.local.json", ".claude/settings.json")
+USER_SETTINGS_FILES = (".claude/settings.json",)
 
 
 def _plugin_root() -> Path:
@@ -338,6 +366,172 @@ def _policy_settings_ids(paths: tuple[str, ...] | None = None) -> list[tuple[str
     return out
 
 
+def _settings(repo: Path | None, home: Path, policy_settings: tuple[str, ...] | None) -> list[tuple[str, Path, dict]]:
+    """The settings files Claude Code applies, highest precedence first, as (scope, path, data)."""
+    candidates = [
+        ("policy", Path(raw)) for raw in (policy_settings if policy_settings is not None else POLICY_SETTINGS_FILES)
+    ]
+    if repo is not None:
+        candidates.extend(("project", repo / rel) for rel in PROJECT_SETTINGS_FILES)
+    candidates.extend(("user", home / rel) for rel in USER_SETTINGS_FILES)
+    out: list[tuple[str, Path, dict]] = []
+    for scope, path in candidates:
+        text = _read(path)
+        if not text:
+            continue
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            out.append((scope, path, data))
+    return out
+
+
+def _runs_at_startup(matcher: object) -> bool:
+    """True when a SessionStart matcher covers a fresh session.
+
+    Only an absent, empty or ``*`` matcher and a literal ``startup`` alternative
+    count. A pattern this does not understand counts as not running, which at
+    worst leaves the banner reporting the baseline twice.
+    """
+    if matcher is None or matcher in ("", "*"):
+        return True
+    return isinstance(matcher, str) and "startup" in [part.strip() for part in matcher.split("|")]
+
+
+def _flag(tokens: list[str], name: str) -> str | None:
+    """The value of ``name`` in ``tokens``, spelled ``--name value`` or ``--name=value``."""
+    for index, token in enumerate(tokens):
+        if token == name and index + 1 < len(tokens):
+            return tokens[index + 1]
+        if token.startswith(name + "="):
+            return token[len(name) + 1 :]
+    return None
+
+
+def _aiscb_helper(handler: object, repo: Path | None, home: Path) -> tuple[Path, list[str]] | None:
+    """The aiscb helper a hook handler runs, and the arguments that follow it.
+
+    ``command`` is split the way a shell would and ``args`` appended, because the
+    installer writes both forms. ``$CLAUDE_PROJECT_DIR`` is the directory the
+    session runs in, which is ``repo``; a relative path resolves there as well.
+    """
+    if not isinstance(handler, dict) or handler.get("type") != "command":
+        return None
+    command = handler.get("command")
+    if not isinstance(command, str):
+        return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    args = handler.get("args")
+    if isinstance(args, list):
+        tokens.extend(arg for arg in args if isinstance(arg, str))
+    for index, token in enumerate(tokens):
+        if Path(token).name != AISCB_HELPER:
+            continue
+        raw = token.replace("${CLAUDE_PROJECT_DIR}", "$CLAUDE_PROJECT_DIR")
+        if "$CLAUDE_PROJECT_DIR" in raw:
+            if repo is None:
+                return None
+            raw = raw.replace("$CLAUDE_PROJECT_DIR", str(repo))
+        if raw.startswith("~/"):
+            path = home / raw[2:]
+        elif os.path.isabs(raw):
+            path = Path(raw)
+        elif repo is not None:
+            path = repo / raw
+        else:
+            return None
+        return (path, tokens[index + 1 :]) if path.is_file() else None
+    return None
+
+
+def _aiscb_baseline(helper: Path) -> Path | None:
+    """The baseline an aiscb helper reads: beside it, or one level up.
+
+    The helper's own lookup, including its refusal of a symlink, so a hook only
+    counts where the helper can actually load something.
+    """
+    for candidate in (helper.parent / AISCB_BASELINE, helper.parent.parent / AISCB_BASELINE):
+        if candidate.is_file() and not candidate.is_symlink():
+            return candidate
+    return None
+
+
+def aiscb_hooks(repo: Path | None, home: Path, policy_settings: tuple[str, ...] | None = None) -> list[dict]:
+    """The aiscb SessionStart hooks that run when a session starts.
+
+    One entry per settings file and baseline. ``loads`` is set when a handler
+    puts the rules into context (``--session-context --part 0``, the part that
+    carries the id); ``announces`` when one prints the status line, which that
+    same part does, and ``--output json`` of a static install. Nothing counts
+    while the settings turn all hooks off.
+    """
+    settings = _settings(repo, home, policy_settings)
+    for _scope, _path, data in settings:
+        disabled = data.get("disableAllHooks")
+        if isinstance(disabled, bool):
+            if disabled:
+                return []
+            break
+    found: dict[tuple[str, str], dict] = {}
+    for scope, path, data in settings:
+        hooks = data.get("hooks")
+        entries = hooks.get("SessionStart") if isinstance(hooks, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict) or not _runs_at_startup(entry.get("matcher")):
+                continue
+            handlers = entry.get("hooks")
+            for handler in handlers if isinstance(handlers, list) else []:
+                helper = _aiscb_helper(handler, repo, home)
+                baseline = _aiscb_baseline(helper[0]) if helper else None
+                if helper is None or baseline is None:
+                    continue
+                rest = helper[1]
+                loads = "--session-context" in rest and _flag(rest, "--part") == "0"
+                item = found.setdefault(
+                    (str(path), _resolved_str(baseline)),
+                    {
+                        "scope": scope,
+                        "settings": str(path),
+                        "baseline": _resolved_str(baseline),
+                        "loads": False,
+                        "announces": False,
+                    },
+                )
+                item["loads"] = item["loads"] or loads
+                item["announces"] = item["announces"] or loads or _flag(rest, "--output") == "json"
+    return [item for item in found.values() if item["loads"] or item["announces"]]
+
+
+def aiscb_managed(path: Path | str, home: Path) -> bool:
+    """True when ``path`` lives in an installation of the aiscb installer.
+
+    That installer updates and removes its own files, and the hooks and links it
+    set up point at them, so nothing here writes or deletes one. Resolved first:
+    the file Claude Code reads is often a link into that installation.
+    """
+    try:
+        directory = Path(path).resolve().parent
+        user_data = (home / AISCB_USER_DATA).resolve()
+    except (OSError, RuntimeError):
+        return False
+    return (
+        directory == user_data
+        or (directory / AISCB_HELPER).is_file()
+        or (directory / AISCB_PROJECT_DIR / AISCB_HELPER).is_file()
+    )
+
+
+def aiscb_update_command(home: Path) -> str:
+    """How an aiscb installation is updated, naming its installer where there is one."""
+    installer = home / AISCB_USER_DATA / AISCB_INSTALLER
+    return f"python3 {installer} --update" if installer.is_file() else "the aiscb installer's --update"
+
+
 def _unloaded_carriers(repo: Path | None, config: dict) -> list[tuple[Path, str]]:
     """Files carrying instructions that Claude Code does not load, as (path, tool)."""
     if repo is None:
@@ -431,9 +625,14 @@ def check(
     Returns a dict that is stable enough to be the JSON contract of this
     module's CLI. ``status`` is ``installed`` (the expected id is loaded),
     ``newer`` (a later version of the same baseline is loaded), ``other`` (some
-    baseline is loaded, but not the configured one), ``missing`` (no baseline is
-    in Claude Code's context), or ``disabled`` (no baseline is configured for
-    this build).
+    baseline is loaded, but not the configured one), ``switched_off`` (it comes
+    only from aiscb hooks that ``AISCB_DISABLE=1`` turned off for this session),
+    ``missing`` (no baseline is in Claude Code's context), or ``disabled`` (no
+    baseline is configured for this build).
+
+    ``announced_by_hook`` says whether an aiscb hook prints the baseline status
+    at session start. A record carries ``managed_by: aiscb`` when its file
+    belongs to an aiscb installation, which updates and removes it itself.
 
     ``present_unloaded`` is separate from all of that: files that carry the
     baseline for another tool, or a copy sitting in the repository that nothing
@@ -449,8 +648,10 @@ def check(
         "newer": [],
         "older": [],
         "other": [],
+        "switched_off": [],
         "present_unloaded": [],
         "scopes": [],
+        "announced_by_hook": False,
     }
     if not cfg["enabled"]:
         return result
@@ -459,6 +660,8 @@ def check(
 
     def record(found: str, scope: str, entry: Path, path: Path) -> None:
         item = {"id": found, "scope": scope, "entry": str(entry), "file": str(path)}
+        if aiscb_managed(path, home_dir):
+            item["managed_by"] = "aiscb"
         if is_match(found, cfg["id"]):
             bucket = "matches"
         elif is_newer(found, cfg["id"]):
@@ -480,13 +683,39 @@ def check(
     for found, path in _policy_settings_ids(policy_settings):
         record(found, "policy", path, path)
 
+    # aiscb's hooks put the rules into context as hook output and leave them out
+    # of a session started with AISCB_DISABLE=1. Kept out of ``matches`` then: the
+    # rules are installed but not in context, and nothing may take them for a
+    # copy to update, remove, or wire up with a second import.
+    hooks = aiscb_hooks(repo, home_dir, policy_settings)
+    result["announced_by_hook"] = any(hook["announces"] for hook in hooks)
+    session_off = os.environ.get("AISCB_DISABLE") == "1"
+    for hook in hooks:
+        if not hook["loads"]:
+            continue
+        baseline = Path(hook["baseline"])
+        for found in find_ids(_read(baseline)):
+            if not session_off:
+                record(found, hook["scope"], Path(hook["settings"]), baseline)
+                continue
+            item = {
+                "id": found,
+                "scope": hook["scope"],
+                "entry": hook["settings"],
+                "file": hook["baseline"],
+                "managed_by": "aiscb",
+            }
+            if item not in result["switched_off"]:
+                result["switched_off"].append(item)
+
     # Compared against resolved paths, because the walk above records what an
     # import resolved to while the carriers below are spelled relative to the
     # repository. Where those two spellings differ — a symlinked checkout, or
     # macOS, where /tmp is a link to /private/tmp — an already-imported
     # AGENTS.md would be listed a second time as if it were unwired.
     loaded_files = {
-        _resolved_str(item["file"]) for item in result["matches"] + result["newer"] + result["older"] + result["other"]
+        _resolved_str(item["file"])
+        for item in result["matches"] + result["newer"] + result["older"] + result["other"] + result["switched_off"]
     }
     for path, tool in _unloaded_carriers(repo, cfg):
         if not path.is_file() or _resolved_str(path) in loaded_files:
@@ -508,6 +737,9 @@ def check(
     elif result["other"]:
         result["status"] = "other"
         result["scopes"] = sorted({m["scope"] for m in result["other"]}, key=lambda s: _SCOPE_ORDER.get(s, 9))
+    elif result["switched_off"]:
+        result["status"] = "switched_off"
+        result["scopes"] = sorted({m["scope"] for m in result["switched_off"]}, key=lambda s: _SCOPE_ORDER.get(s, 9))
     else:
         result["status"] = "missing"
     return result
@@ -564,6 +796,12 @@ def summary(result: dict) -> str:
         line = f"{name} {', '.join(ids)}" + (f" · {scopes}" if scopes else "")
         return f"{line} · behind {result['expected_id']}"
 
+    if status == "switched_off":
+        ids = sorted({m["id"] for m in result["switched_off"]})
+        scopes = _scope_labels(result)
+        line = f"{name} {', '.join(ids)}" + (f" · {scopes}" if scopes else "")
+        return f"{line} · switched off by AISCB_DISABLE=1"
+
     if status == "other":
         ids = sorted({m["id"] for m in result["other"]})
         return f"{name} {result['expected_id']} not loaded · found {', '.join(ids)}{found_note}"
@@ -573,16 +811,17 @@ def summary(result: dict) -> str:
 
 
 def is_failing(result: dict) -> bool:
-    """True for the states a gate should reject: no baseline, a foreign one, or
-    an older version of the configured one.
+    """True for the states a gate should reject: no baseline, a foreign one, an
+    older version of the configured one, or one switched off for the session.
 
     A newer version is not one of them. It is the same rules, further along, and
     a build that rejected it would be demanding a downgrade. An older version is:
     the rules this build names are not the ones in context, which is what the
     gate exists to establish. Splitting ``outdated`` out of ``other`` changed how
-    that state is reported, not whether it passes.
+    that state is reported, not whether it passes. A switched-off baseline is
+    installed but not in context, which is the same failure.
     """
-    return result.get("status") in ("missing", "other", "outdated")
+    return result.get("status") in ("missing", "other", "outdated", "switched_off")
 
 
 def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
@@ -600,19 +839,30 @@ def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
     elif status == "outdated":
         loaded = ", ".join(sorted({m["id"] for m in result["older"]}))
         lines.append(f"✗ {result['name']} is loaded at {loaded}, behind the {result['expected_id']} this build names.")
-        lines.append("  Refresh it in place with /appsec-advisor:update-baseline")
+        if all(m.get("managed_by") == "aiscb" for m in result["older"]):
+            lines.append("  Its aiscb installation is updated by that installer, not by this plugin.")
+        else:
+            lines.append("  Refresh it in place with /appsec-advisor:update-baseline")
     elif status == "other":
         lines.append(f"✗ {result['name']} ({result['expected_id']}) is NOT loaded.")
         lines.append("  A different baseline is in context — the configured rules are not.")
+    elif status == "switched_off":
+        lines.append(f"✗ {result['name']} is switched off for this session (AISCB_DISABLE=1).")
+        lines.append("  A session started without AISCB_DISABLE=1 loads it again.")
     else:
         lines.append(f"✗ {result['name']} ({result['expected_id']}) is NOT loaded.")
 
     expected = result["expected_id"]
-    for record in result["matches"] + result["newer"] + result["older"] + result["other"]:
-        mark = "✓" if is_match(record["id"], expected) or is_newer(record["id"], expected) else "!"
+    switched_off = result.get("switched_off") or []
+    for record in result["matches"] + result["newer"] + result["older"] + result["other"] + switched_off:
+        if record in switched_off:
+            mark = "-"
+        else:
+            mark = "✓" if is_match(record["id"], expected) or is_newer(record["id"], expected) else "!"
         scope = SCOPE_LABELS.get(record["scope"], record["scope"])
+        owner = "  managed by aiscb" if record.get("managed_by") == "aiscb" else ""
         via = "" if record["file"] == record["entry"] else f"\n      via {record['file']}"
-        lines.append(f"  {mark} {record['id']}  [{scope}]\n      {record['entry']}{via}")
+        lines.append(f"  {mark} {record['id']}  [{scope}]{owner}\n      {record['entry']}{via}")
 
     carriers = result.get("present_unloaded") or []
     if carriers:
@@ -641,6 +891,7 @@ def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
     lines.append("  Checked, plus their @ imports: project CLAUDE.md, .claude/CLAUDE.md,")
     lines.append("           CLAUDE.local.md, .claude/rules/*.md, ~/.claude/CLAUDE.md,")
     lines.append("           ~/.claude/rules/*.md, and the managed-policy CLAUDE.md.")
+    lines.append("  Also checked: the aiscb installer's SessionStart hooks in settings.json.")
     lines.append("  This confirms the rules are in context, not that they were followed.")
     if config.get("url"):
         lines.append(f"  Baseline source: {config['url']}")

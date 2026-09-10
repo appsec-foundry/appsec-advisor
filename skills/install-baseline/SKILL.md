@@ -132,11 +132,14 @@ Read `status` from the JSON:
     colleague cloning this repository gets no baseline, in case `project` was
     what they meant.
 
+  When the records in `matches` carry `managed_by: aiscb`, the AI Secure Coding Baseline's own installer set the baseline up and updates it, and this plugin writes none of its files: name that installer's `install.py --update` instead of offering `--refresh`.
+
 - **`outdated`** — the configured baseline is loaded, at an older version. This
   is not an install: the scope is already chosen and only the text is behind.
   Name both ids, point at `/appsec-advisor:update-baseline`, and exit `0` unless
   the user explicitly asked for another scope.
 - **`newer`** — a later version of the configured baseline is loaded, usually a signed release newer than the id this build names. Treat it like `installed`: say so in one line, naming the loaded id and that it is ahead of the configured one, and stop unless the user passed `--refresh` or `--scope`.
+- **`switched_off`** — the configured baseline comes from the AI Secure Coding Baseline's own installer (aiscb) and is switched off for this session with `AISCB_DISABLE=1`. Say so and exit `0`: a session started without the variable loads it again, and a copy installed here would load even while it is switched off.
 - **`other`** — a baseline is loaded, but not the configured one. Name both ids
   before the menu: the user is about to add a second set of rules, and needs to
   know that.

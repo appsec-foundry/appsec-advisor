@@ -59,6 +59,12 @@ def repo(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _session_switch_unset(monkeypatch):
+    """``AISCB_DISABLE`` is the developer's own session switch, not a test input."""
+    monkeypatch.delenv("AISCB_DISABLE", raising=False)
+
+
 def write(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -434,6 +440,290 @@ def test_shipped_config_matches_the_bundled_copy():
     bundled = bc.fallback_path(config, REPO_ROOT)
     assert bundled is not None, "config names a fallback_file that is not shipped"
     assert any(bc.is_match(found, config["id"]) for found in bc.find_ids(bundled.read_text(encoding="utf-8")))
+
+
+# ---------- the aiscb installer's session hooks ---------------------------
+
+LOADER_TEXT = "# AI Secure Coding Baseline session loader\n\nApply the aiscb-session-part markers.\n"
+
+
+def aiscb_user_install(home: Path, text: str = BASELINE_TEXT) -> Path:
+    """The files the aiscb installer keeps in the user data directory."""
+    data = home / ".local" / "share" / "aiscb"
+    write(data / "secure-coding-baseline.md", text)
+    write(data / "install.py", "# installer\n")
+    write(data / "show-baseline-version.py", "# helper\n")
+    return data
+
+
+def session_hook(command: str) -> dict:
+    """The SessionStart entry of a switchable install: four parts, the id in part 0."""
+    return {
+        "matcher": "startup|resume|fork|clear|compact",
+        "hooks": [
+            {"type": "command", "command": f"{command} --session-context --part {part}", "timeout": 5}
+            for part in range(4)
+        ],
+    }
+
+
+def version_hook(script: str) -> dict:
+    """The SessionStart entry of a static install: it prints the status and loads nothing."""
+    return {
+        "matcher": "startup|resume|fork",
+        "hooks": [{"type": "command", "command": "python3", "args": [script, "--output", "json"], "timeout": 5}],
+    }
+
+
+def hook_settings(path: Path, *entries: dict, **extra: object) -> Path:
+    return write(path, json.dumps({"hooks": {"SessionStart": list(entries)}, **extra}))
+
+
+def switchable_user_install(home: Path) -> Path:
+    """The user scope as the installer leaves it: the import reaches a loader, the hooks the rules."""
+    data = aiscb_user_install(home)
+    write(data / "session-loader.md", LOADER_TEXT)
+    (home / ".claude" / "secure-coding-baseline.md").symlink_to(data / "session-loader.md")
+    write(home / ".claude" / "CLAUDE.md", "@~/.claude/secure-coding-baseline.md\n")
+    hook_settings(home / ".claude" / "settings.json", session_hook(f"python3 {data / 'show-baseline-version.py'}"))
+    return data
+
+
+def project_session_install(repo: Path, settings_name: str = "settings.json") -> None:
+    """A switchable project install: its hook runs the helper below the project directory."""
+    write(repo / "secure-coding-baseline.md", BASELINE_TEXT)
+    write(repo / ".aiscb" / "show-baseline-version.py", "# helper\n")
+    hook_settings(
+        repo / ".claude" / settings_name,
+        session_hook('python3 "${CLAUDE_PROJECT_DIR}/.aiscb/show-baseline-version.py"'),
+    )
+
+
+def check_hooks(repo: Path | None, home: Path) -> dict:
+    """``bc.check`` without the host's administrator-deployed files, which may carry hooks."""
+    return bc.check(repo=repo, home=home, config=CONFIG, policy_roots=(), policy_settings=())
+
+
+def test_a_switchable_aiscb_install_is_loaded_through_its_hooks(repo: Path, home: Path):
+    """The import reaches only a loader without an id; the hooks carry the rules.
+
+    Reading imports alone reported such a machine as having no baseline, and the
+    banner offered an install that would have written over the loader.
+    """
+    data = switchable_user_install(home)
+    result = check_hooks(repo, home)
+    assert result["status"] == "installed"
+    assert result["scopes"] == ["user"]
+    assert result["announced_by_hook"] is True
+    [match] = result["matches"]
+    assert match["file"] == str((data / "secure-coding-baseline.md").resolve())
+    assert match["entry"] == str(home / ".claude" / "settings.json")
+    assert match["managed_by"] == "aiscb"
+
+
+@pytest.mark.parametrize("settings_name", ["settings.json", "settings.local.json"])
+def test_a_project_hook_loads_the_copy_in_the_project(repo: Path, home: Path, settings_name: str):
+    """``$CLAUDE_PROJECT_DIR`` is the repository, and the hook loads its copy.
+
+    That copy is not also listed as unwired: importing it as well would load the
+    rules a second time, and past the session switch.
+    """
+    project_session_install(repo, settings_name)
+    result = check_hooks(repo, home)
+    assert result["status"] == "installed"
+    assert result["scopes"] == ["project"]
+    assert result["matches"][0]["managed_by"] == "aiscb"
+    assert result["present_unloaded"] == []
+
+
+def test_a_hook_in_managed_settings_is_a_policy_deployment(repo: Path, home: Path, tmp_path: Path):
+    data = aiscb_user_install(home)
+    managed = hook_settings(
+        tmp_path / "managed-settings.json", session_hook(f"python3 {data / 'show-baseline-version.py'}")
+    )
+    result = bc.check(repo=repo, home=home, config=CONFIG, policy_roots=(), policy_settings=(str(managed),))
+    assert result["status"] == "installed"
+    assert result["scopes"] == ["policy"]
+
+
+def test_a_static_install_hook_announces_the_status_but_loads_nothing(repo: Path, home: Path):
+    """A static install loads the rules through its import; its hook only prints the status."""
+    data = aiscb_user_install(home)
+    hook_settings(home / ".claude" / "settings.json", version_hook(str(data / "show-baseline-version.py")))
+    result = check_hooks(repo, home)
+    assert result["status"] == "missing"
+    assert result["announced_by_hook"] is True
+
+    (home / ".claude" / "secure-coding-baseline.md").symlink_to(data / "secure-coding-baseline.md")
+    write(home / ".claude" / "CLAUDE.md", "@~/.claude/secure-coding-baseline.md\n")
+    result = check_hooks(repo, home)
+    assert result["status"] == "installed"
+    assert result["matches"][0]["managed_by"] == "aiscb"
+
+
+def _not_at_startup(entry: dict, data: Path) -> None:
+    entry["matcher"] = "resume|clear"
+
+
+def _not_a_command(entry: dict, data: Path) -> None:
+    for handler in entry["hooks"]:
+        handler["type"] = "prompt"
+
+
+def _another_script(entry: dict, data: Path) -> None:
+    for handler in entry["hooks"]:
+        handler["command"] = handler["command"].replace("show-baseline-version.py", "other.py")
+
+
+def _without_part_0(entry: dict, data: Path) -> None:
+    entry["hooks"] = entry["hooks"][1:]
+
+
+def _unparsable_command(entry: dict, data: Path) -> None:
+    for handler in entry["hooks"]:
+        handler["command"] += ' "'
+
+
+def _helper_missing(entry: dict, data: Path) -> None:
+    (data / "show-baseline-version.py").unlink()
+
+
+def _baseline_missing(entry: dict, data: Path) -> None:
+    (data / "secure-coding-baseline.md").unlink()
+
+
+def _baseline_is_a_link(entry: dict, data: Path) -> None:
+    moved = (data / "secure-coding-baseline.md").rename(data.parent / "elsewhere.md")
+    (data / "secure-coding-baseline.md").symlink_to(moved)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        _not_at_startup,
+        _not_a_command,
+        _another_script,
+        _without_part_0,
+        _unparsable_command,
+        _helper_missing,
+        _baseline_missing,
+        _baseline_is_a_link,
+    ],
+)
+def test_a_hook_that_cannot_load_the_rules_at_startup_counts_for_nothing(repo: Path, home: Path, change):
+    """Each of these leaves the helper unable to run at startup or to read the rules.
+
+    Counting one would report rules that are not in context, and would hide the
+    banner's line while no status line is printed in its place.
+    """
+    data = aiscb_user_install(home)
+    entry = session_hook(f"python3 {data / 'show-baseline-version.py'}")
+    change(entry, data)
+    hook_settings(home / ".claude" / "settings.json", entry)
+    result = check_hooks(repo, home)
+    assert result["status"] == "missing"
+    assert result["announced_by_hook"] is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{not json",
+        "[]",
+        json.dumps({"hooks": []}),
+        json.dumps({"hooks": {"SessionStart": {}}}),
+        json.dumps({"hooks": {"SessionStart": ["x", {"hooks": "x"}, {"hooks": [None, {"type": "command"}]}]}}),
+    ],
+)
+def test_malformed_settings_do_not_raise(repo: Path, home: Path, text: str):
+    aiscb_user_install(home)
+    write(home / ".claude" / "settings.json", text)
+    result = check_hooks(repo, home)
+    assert result["status"] == "missing"
+    assert result["announced_by_hook"] is False
+
+
+def test_settings_that_turn_all_hooks_off_leave_the_rules_out(repo: Path, home: Path):
+    data = aiscb_user_install(home)
+    hook_settings(
+        home / ".claude" / "settings.json",
+        session_hook(f"python3 {data / 'show-baseline-version.py'}"),
+        disableAllHooks=True,
+    )
+    result = check_hooks(repo, home)
+    assert result["status"] == "missing"
+    assert result["announced_by_hook"] is False
+
+
+def test_the_most_specific_settings_decide_whether_hooks_run(repo: Path, home: Path):
+    """A project's local settings override the user's, as they do in Claude Code."""
+    data = aiscb_user_install(home)
+    hook_settings(
+        home / ".claude" / "settings.json",
+        session_hook(f"python3 {data / 'show-baseline-version.py'}"),
+        disableAllHooks=True,
+    )
+    write(repo / ".claude" / "settings.local.json", json.dumps({"disableAllHooks": False}))
+    assert check_hooks(repo, home)["status"] == "installed"
+
+
+def test_aiscb_disable_switches_the_hooked_rules_off(repo: Path, home: Path, monkeypatch):
+    """Installed, but not in context: a state of its own, and a failing one."""
+    switchable_user_install(home)
+    monkeypatch.setenv("AISCB_DISABLE", "1")
+    result = check_hooks(repo, home)
+    assert result["status"] == "switched_off"
+    assert result["matches"] == []
+    assert [item["id"] for item in result["switched_off"]] == ["test-1.0"]
+    assert result["announced_by_hook"] is True
+    assert bc.is_failing(result)
+    assert bc.summary(result).endswith("switched off by AISCB_DISABLE=1")
+    assert "switched off for this session" in bc._render(result, CONFIG)
+
+
+def test_a_switched_off_project_copy_is_not_offered_for_wiring(repo: Path, home: Path, monkeypatch):
+    """An import of it would load the rules whatever the switch says."""
+    project_session_install(repo)
+    monkeypatch.setenv("AISCB_DISABLE", "1")
+    result = check_hooks(repo, home)
+    assert result["status"] == "switched_off"
+    assert result["present_unloaded"] == []
+
+
+def test_aiscb_disable_leaves_an_imported_copy_loaded(repo: Path, home: Path, monkeypatch):
+    """The switch covers the hooked installation only; a copy loaded by import stays."""
+    switchable_user_install(home)
+    write(repo / "CLAUDE.md", BASELINE_TEXT)
+    monkeypatch.setenv("AISCB_DISABLE", "1")
+    result = check_hooks(repo, home)
+    assert result["status"] == "installed"
+    assert result["scopes"] == ["project"]
+
+
+@pytest.mark.parametrize("layout", ["user data with hooks", "user data without hooks", "project"])
+def test_every_aiscb_layout_belongs_to_its_installer(tmp_path: Path, home: Path, layout: str):
+    """Resolved through the link Claude Code reads, whichever layout the installer used."""
+    if layout == "project":
+        write(tmp_path / "project" / ".aiscb" / "show-baseline-version.py", "# helper\n")
+        source = write(tmp_path / "project" / "secure-coding-baseline.md", BASELINE_TEXT)
+    else:
+        data = home / ".local" / "share" / "aiscb"
+        source = write(data / "secure-coding-baseline.md", BASELINE_TEXT)
+        if layout == "user data with hooks":
+            write(data / "show-baseline-version.py", "# helper\n")
+    link = home / ".claude" / "secure-coding-baseline.md"
+    link.symlink_to(source)
+    assert bc.aiscb_managed(link, home)
+    assert not bc.aiscb_managed(write(home / ".claude" / "own-copy.md", BASELINE_TEXT), home)
+
+
+def test_a_copy_outside_an_aiscb_installation_has_no_other_owner(repo: Path, home: Path):
+    write(repo / "CLAUDE.md", BASELINE_TEXT)
+    assert "managed_by" not in check_hooks(repo, home)["matches"][0]
+
+
+def test_the_report_names_the_hooks_it_checks(repo: Path, home: Path):
+    assert "SessionStart hooks" in bc._render(check_hooks(repo, home), CONFIG)
 
 
 # ---------- bounds and robustness ----------------------------------------

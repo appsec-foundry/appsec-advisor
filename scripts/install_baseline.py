@@ -41,6 +41,10 @@ reordered, and the import line is added only when no import already resolves to
 the baseline. Re-running the command is therefore safe: it converges instead of
 accumulating. The baseline file itself is overwritten, since it is the plugin's
 own artifact and the whole point of ``--refresh``.
+
+A file inside an installation of the aiscb installer is never written, whatever
+the scope points at: that installer's hooks and links depend on its own files,
+and it updates them itself.
 """
 
 from __future__ import annotations
@@ -331,6 +335,11 @@ def install(
     where = plan(scope, repo, home, config)
     target: Path = where["target"]
     steps: list[str] = []
+    if bc.aiscb_managed(target, home):
+        raise InstallError(
+            f"{target} belongs to an aiscb installation, which updates it itself "
+            f"({bc.aiscb_update_command(home)}) — nothing was written"
+        )
 
     found = find_existing_carrier(repo, home, config, scope) if reuse and not force else None
     if found is not None:

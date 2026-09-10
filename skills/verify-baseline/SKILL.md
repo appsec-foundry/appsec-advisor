@@ -47,6 +47,11 @@ WHAT IS CHECKED
   ~/.claude/rules/*.md, and the organization's managed-policy CLAUDE.md —
   plus every file they pull in with an @ import.
 
+  SessionStart hooks of the AI Secure Coding Baseline's own installer
+  (aiscb) count too, from the settings.json files Claude Code applies: they
+  load the rules as hook output. AISCB_DISABLE=1 switches those off for the
+  session, and the report says so.
+
   Files another tool reads and Claude Code does not — AGENTS.md,
   .github/copilot-instructions.md — are reported separately, as is a copy in
   the repository that nothing imports. Those are not loaded, but they are the

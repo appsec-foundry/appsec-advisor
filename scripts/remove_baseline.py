@@ -31,6 +31,11 @@ plugin-written copy. Nothing on disk records which it was — there is no instal
 manifest — so the report names whether git tracks the file and the caller
 confirms before the flag is passed.
 
+Nothing of an installation of the aiscb installer is touched, not even the
+import that loads it: that installer set up the hooks and links around its
+files and removes them together, and dropping one piece would leave the rest
+loading the rules.
+
 Write discipline
 ----------------
 Only whole lines that consist of nothing but the import are dropped; an import
@@ -190,6 +195,11 @@ def remove(
     target: Path = where["target"]
     instructions: Path | None = where["instructions"]
     steps: list[str] = []
+    if bc.aiscb_managed(target, home):
+        raise RemoveError(
+            f"{target} belongs to an aiscb installation, whose own installer removes it together "
+            "with the hooks and links it set up — nothing was changed"
+        )
 
     if instructions is None:
         if not target.is_file():
@@ -266,12 +276,14 @@ def main(argv: list[str] | None = None) -> int:
 
     result = bc.check(repo=repo, home=home, config=config)
     print("")
-    if result["status"] != "installed":
+    if result["status"] not in ("installed", "switched_off"):
         print("✓ the baseline no longer loads (from the next session start).")
         return 0
     # Still loaded from somewhere else: a second scope, or an organization-wide
     # policy deployment that no local removal can reach. Naming it is the point.
-    print(f"! still loaded — {bc.summary(result)}")
+    # Switched off only holds for this session; the next one loads it again.
+    state = "still installed" if result["status"] == "switched_off" else "still loaded"
+    print(f"! {state} — {bc.summary(result)}")
     print("  /appsec-advisor:verify-baseline shows every scope it comes from.")
     return 0
 

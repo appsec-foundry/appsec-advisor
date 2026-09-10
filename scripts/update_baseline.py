@@ -19,6 +19,9 @@ What it refuses to do
   team's own instructions around the rules; replacing it with the baseline text
   would delete them. Only a file named like the plugin's own artifact is
   rewritten.
+* **Write into an aiscb installation.** A copy the AI Secure Coding Baseline's
+  own installer set up is loaded through that installer's hooks or links, and it
+  updates the copy itself; the report names its command instead.
 * **Fall back to the bundled copy.** An update that quietly writes the plugin's
   vendored text after a failed fetch would replace a current copy with an older
   one and still report success. ``--offline`` asks for that copy explicitly.
@@ -119,7 +122,9 @@ def owned(path: Path, config: dict) -> bool:
     return path.name == config["install_filename"]
 
 
-def _partition(result: dict, config: dict, *, include_newer: bool = False) -> tuple[list[tuple[Path, str]], list[str]]:
+def _partition(
+    result: dict, config: dict, *, include_newer: bool = False, home: Path | None = None
+) -> tuple[list[tuple[Path, str]], list[str]]:
     """Split the loaded baseline files into ``(path, carried id)`` to rewrite, and notes.
 
     Both the matching and the outdated files: an older version of the configured
@@ -140,6 +145,11 @@ def _partition(result: dict, config: dict, *, include_newer: bool = False) -> tu
         seen.add(key)
         if match["scope"] == "policy":
             notes.append(f"org policy deploys {path} — updating it is the administrator's job, not this command's")
+        elif match.get("managed_by") == "aiscb":
+            notes.append(
+                f"left alone: {path} belongs to an aiscb installation — update it with "
+                f"{bc.aiscb_update_command(home or Path.home())}"
+            )
         elif not owned(path, config):
             notes.append(
                 f"left alone: {path} carries the rules among its own content, so it is not this command's to rewrite"
@@ -175,6 +185,11 @@ def update(
             f"a different baseline is loaded ({loaded}), not the configured {config['id']}",
             "nothing was touched — replacing someone else's rules is not this command's call",
         ], 0
+    if status == "switched_off":
+        return [
+            f"{config['name']} is switched off for this session (AISCB_DISABLE=1) — nothing to update here",
+            f"its aiscb installation is updated with {bc.aiscb_update_command(home)}",
+        ], 0
     if status == "newer" and not forward:
         loaded = ", ".join(sorted({item["id"] for item in result["newer"]}))
         return [
@@ -182,7 +197,7 @@ def update(
             "updating would write the older rules over the newer ones",
         ], 0
 
-    targets, steps = _partition(result, config, include_newer=forward)
+    targets, steps = _partition(result, config, include_newer=forward, home=home)
     if not targets:
         steps.append("nothing left to update")
         return steps, 0

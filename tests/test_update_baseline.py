@@ -22,6 +22,7 @@ the fetch.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -239,6 +240,45 @@ def test_a_policy_deployment_is_not_this_command_s(config: dict):
 
     assert targets == []
     assert any("administrator" in note for note in notes)
+
+
+def aiscb_user_install(home: Path, text: str) -> Path:
+    """A static aiscb user install: its copy in the data directory, linked and imported."""
+    data = home / ".local" / "share" / "aiscb"
+    data.mkdir(parents=True)
+    copy = data / "secure-coding-baseline.md"
+    copy.write_text(text, encoding="utf-8")
+    (data / "install.py").write_text("# installer\n", encoding="utf-8")
+    (home / ".claude" / "secure-coding-baseline.md").symlink_to(copy)
+    (home / ".claude" / "CLAUDE.md").write_text("@~/.claude/secure-coding-baseline.md\n", encoding="utf-8")
+    return copy
+
+
+def test_a_copy_in_an_aiscb_installation_is_left_to_its_installer(repo: Path, home: Path, config: dict):
+    """That installer verifies and replaces its own files; the report names its command."""
+    copy = aiscb_user_install(home, EDITED_TEXT)
+
+    steps, code = ub.update(repo, home, config, offline=True)
+
+    assert code == 0
+    assert copy.read_text(encoding="utf-8") == EDITED_TEXT
+    assert any(f"python3 {copy.parent / 'install.py'} --update" in step for step in steps)
+
+
+def test_a_switched_off_aiscb_install_is_not_updated(repo: Path, home: Path, config: dict, monkeypatch):
+    copy = aiscb_user_install(home, EDITED_TEXT)
+    helper = copy.parent / "show-baseline-version.py"
+    helper.write_text("# helper\n", encoding="utf-8")
+    hook = {"hooks": [{"type": "command", "command": f"python3 {helper} --session-context --part 0"}]}
+    (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [hook]}}), encoding="utf-8")
+    (home / ".claude" / "CLAUDE.md").unlink()
+    monkeypatch.setenv("AISCB_DISABLE", "1")
+
+    steps, code = ub.update(repo, home, config, offline=True)
+
+    assert code == 0
+    assert "switched off" in steps[0]
+    assert copy.read_text(encoding="utf-8") == EDITED_TEXT
 
 
 def test_an_unreachable_source_does_not_touch_the_copy(

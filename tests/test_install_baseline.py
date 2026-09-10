@@ -520,6 +520,40 @@ def test_git_source_needs_both_url_and_path(config: dict):
     assert "needs both" in note
 
 
+# ---------- an aiscb installation is its installer's ---------------------
+
+LOADER_TEXT = "# AI Secure Coding Baseline session loader\n"
+
+
+def aiscb_loader(directory: Path) -> Path:
+    """An aiscb session loader beside the installer's helper, as a switchable install leaves it."""
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "show-baseline-version.py").write_text("# helper\n", encoding="utf-8")
+    loader = directory / "session-loader.md"
+    loader.write_text(LOADER_TEXT, encoding="utf-8")
+    return loader
+
+
+@pytest.mark.parametrize("scope", ["user", "project-rules"])
+def test_nothing_is_written_through_a_link_into_an_aiscb_installation(repo: Path, home: Path, config: dict, scope: str):
+    """The link Claude Code reads leads to aiscb's loader, which its hooks rely on.
+
+    Writing through it replaced the loader with the rules: they loaded twice, and
+    AISCB_DISABLE no longer switched them off.
+    """
+    loader = aiscb_loader(home / ".local" / "share" / "aiscb" if scope == "user" else repo / ".aiscb")
+    target = ib.plan(scope, repo, home, config)["target"]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(loader)
+
+    with pytest.raises(ib.InstallError, match="aiscb installation"):
+        ib.install(scope, repo, home, config, offline=True, force=True)
+
+    assert loader.read_text(encoding="utf-8") == LOADER_TEXT
+    assert target.is_symlink()
+    assert not (home / ".claude" / "CLAUDE.md").exists()
+
+
 # ---------- CLI -----------------------------------------------------------
 
 

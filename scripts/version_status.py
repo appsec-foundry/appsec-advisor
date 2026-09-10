@@ -257,7 +257,7 @@ def _baseline_block(config: dict, loaded: dict, *, check_updates: bool) -> dict:
         "state": "not-checked",
         "note": "",
     }
-    matches = loaded.get("matches") or loaded.get("newer") or loaded.get("other") or []
+    matches = loaded.get("matches") or loaded.get("newer") or loaded.get("other") or loaded.get("switched_off") or []
     if matches and isinstance(matches[0], dict):
         block["loaded_id"] = _text(matches[0].get("id"))
 
@@ -397,4 +397,6 @@ def _loaded_text(baseline: dict) -> str:
         return f"{line}, ahead of the configured id"
     if status == "other":
         return f"{line}, not the configured baseline"
+    if status == "switched_off":
+        return f"{line}, switched off by AISCB_DISABLE=1"
     return line

@@ -346,3 +346,10 @@ def test_fetch_refuses_a_url_the_guard_rejects(monkeypatch) -> None:
     monkeypatch.setattr(vs._url_guard, "validate_target_url", lambda *a, **k: Verdict())
     with pytest.raises(vs.FetchError, match="URL guard"):
         vs._fetch("https://blocked.example.test/baseline.md")
+
+
+def test_a_switched_off_baseline_is_named_as_such() -> None:
+    """Installed by the aiscb installer, but switched off for this session."""
+    loaded = {"status": "switched_off", "scopes": ["user"], "switched_off": [{"id": "test-1.2", "scope": "user"}]}
+    block = vs._baseline_block({"enabled": True, "id": "test-1.2"}, loaded, check_updates=False)
+    assert vs._loaded_text(block) == "test-1.2 (this machine), switched off by AISCB_DISABLE=1"

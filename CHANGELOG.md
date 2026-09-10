@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The session banner and the baseline commands recognize a baseline that the AI Secure Coding Baseline installer loads through its session hooks instead of reporting it as not installed, leave that installer's files to it, and the banner no longer repeats the baseline status that installer's startup hook already prints.
 - The progress percentage moves during the STRIDE phase instead of standing still for up to half the run and then jumping, and it now appears on every progress line rather than two or three times per run.
 - A run reports its token spend on hosts that return no per-call usage, where every figure previously read zero, and says that the cost cannot be priced rather than showing `$0.00`. A completed headless run records its exact cost so the next run projects a budget against a measurement instead of the parametric floor.
 - The live view states a host's missing call outcome once instead of appending it to every finished agent.
