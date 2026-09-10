@@ -5889,16 +5889,16 @@ def _figure_basename_for_md(md_name: str) -> str:
 
 
 def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
-    """Build Figure 1 as a deterministic hand-built SVG (the PRIMARY renderer),
-    write it next to threat-model.md, and return the image-reference markdown.
+    """Build Figure 1 as a deterministic hand-built SVG, write it next to
+    threat-model.md, and return the image-reference markdown.
 
-    Why SVG instead of the Mermaid builder below: Mermaid/ELK lays each tier out
-    as one horizontal row and scatters disconnected nodes, so the figure could
-    not wrap a busy tier into a grid and grew unboundedly wide. The SVG generator
-    computes the layout itself (top-N grid that grows in height, multi-actor band,
-    per-component internet-exposed markers, a straight direct-attack arrow). It
-    emits plain primitives (rect/line/circle/text) which GitHub, VS Code and
-    WeasyPrint all render natively — so the PDF export needs no Chrome for it.
+    PRIMARY: ``figure1_dfd`` draws a data-flow diagram (trust zones, data flows,
+    boundary crossings with their assumption verdict, STRIDE per element, attack
+    scenarios). FALLBACK: the ``figure1_svg`` tier stack. Both compute their own
+    layout and emit plain primitives (rect/path/text) which GitHub, VS Code and
+    WeasyPrint render natively — so the PDF export needs no Chrome for it. The
+    Mermaid builder below is the last resort: Mermaid/ELK lays each tier out as
+    one horizontal row and grew unboundedly wide on busy models.
 
     ``attack_paths_data`` is already actor-collapsed by the caller (public-repo /
     open-registration), so the SVG attribution matches Figure 2. Returns "" when
@@ -5908,36 +5908,49 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     components = ctx.yaml_data.get("components") or []
     if not components or not (attack_paths_data.get("attack_paths") or []):
         return ""
-    try:
-        from figure1_svg import build_figure1_svg
-    except Exception:  # noqa: BLE001 — missing module must never break the section
-        return ""
     actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
-    svg = build_figure1_svg(
-        ctx.yaml_data,
-        attack_paths_data,
-        attack_taxonomy,
-        meta=ctx.yaml_data.get("meta") or {},
-        actor_labels=actor_labels,
-    )
+    kwargs = {"meta": ctx.yaml_data.get("meta") or {}, "actor_labels": actor_labels}
+    # PRIMARY: the data-flow diagram (zones, flows, boundary crossings, STRIDE
+    # per element). FALLBACK: the tier-stack generator, kept for models the DFD
+    # builder cannot draw.
+    svg, intro = "", ""
+    try:
+        from figure1_dfd import build_figure1_dfd_svg
+
+        svg = build_figure1_dfd_svg(ctx.yaml_data, attack_paths_data, attack_taxonomy, **kwargs)
+        intro = (
+            "Data-flow diagram: external entities, processes and data stores in their trust zones "
+            "(Internet → Application → Data), the data flows between them, and the attack scenarios "
+            "numbered as in the table below. Each crossing of a dashed trust-boundary line carries the "
+            "`tb-N` id catalogued in [§1 Trust Boundaries](#trust-boundaries) with the verdict on its "
+            "enforcement assumption. The in-figure legend on the right explains the notation."
+        )
+    except Exception:  # noqa: BLE001 — the DFD builder must never break the section
+        svg = ""
     if not (svg or "").strip():
-        return ""
+        try:
+            from figure1_svg import build_figure1_svg
+        except Exception:  # noqa: BLE001 — missing module must never break the section
+            return ""
+        svg = build_figure1_svg(ctx.yaml_data, attack_paths_data, attack_taxonomy, **kwargs)
+        if not (svg or "").strip():
+            return ""
+        intro = (
+            "Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the "
+            "top threats per component. The in-figure legend on the right explains the attack scenarios, "
+            "severity dots and symbols."
+        )
+        # Name the boundary dividers only when the builder actually drew them —
+        # `figure1_svg.diag_rows` gates its own legend row on `drawn_dividers`, and a
+        # caption that promises an element the figure omits is the same defect as the
+        # §2 `==>` legend bullet.
+        if "trust boundary" in (svg or ""):
+            intro += (
+                " Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids "
+                "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
+            )
     # Always write the file (referenced by the published md / consumed by export).
     (ctx.output_dir / ctx.figure_basename).write_text(svg, encoding="utf-8")
-    intro = (
-        "Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the "
-        "top threats per component. The in-figure legend on the right explains the attack scenarios, "
-        "severity dots and symbols."
-    )
-    # Name the boundary dividers only when the builder actually drew them —
-    # `figure1_svg.diag_rows` gates its own legend row on `drawn_dividers`, and a
-    # caption that promises an element the figure omits is the same defect as the
-    # §2 `==>` legend bullet.
-    if "trust boundary" in (svg or ""):
-        intro += (
-            " Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids "
-            "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
-        )
     # Embed inline when the CLI flag is set OR the skill persisted the choice in
     # .skill-config.json — the latter lets `/create-threat-model --embed-figures`
     # work through the renderer/recompose paths without threading a flag to each.

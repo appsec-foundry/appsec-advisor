@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Figure 1 is now a data-flow diagram: trust zones, labelled data flows, boundary crossings with their assumption verdict, STRIDE per element and the numbered attack scenarios, drawn deterministically for any repository size.
 - A headless run shows what it has spent so far, measured against `--soft-budget`, warns once at 80 % and at 100 % of it, and ends with a table of what each phase cost. Where the spend cannot be measured the run says so instead of showing a figure, and no warning stops a run. The end-of-run cost table states that it covers the whole run including sub-agents, and the `Models` line says that the roles behind each model are sub-agent dispatches billed in that table.
 - A run can declare a cost budget with `--soft-budget <usd>`, or `guardrails.soft_budget_usd` in an organization profile. It steers rather than caps: an invocation whose projected cost cannot fit is refused before it spends anything, and a run that overruns still finishes. Headless runs derive the hard `--hard-budget` cut at 1.25 times that value unless it is given. `--max-cost`, `max_cost_usd`, and `--max-budget` remain as deprecated spellings.
 
