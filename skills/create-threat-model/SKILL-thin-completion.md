@@ -80,9 +80,11 @@ minus `--patch-placeholders --no-print`. Capture stdout for the final response;
 do not rewrite or summarize it. The script owns missing-deliverable warnings,
 verdict, timing, cost, output paths, and next steps.
 
-Before cleanup, run these best-effort measurement writers:
+Before cleanup, run these best-effort baseline writers; the first records the recon fingerprint a later depth increase reuses:
 
 ```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_state.py" update \
+  --output-dir "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --mode full || true
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/persist_run_baseline.py" \
   --output-dir "$OUTPUT_DIR" --mode "$MODE" --depth "$ASSESSMENT_DEPTH" \
   --plugin-root "$CLAUDE_PLUGIN_ROOT" || true

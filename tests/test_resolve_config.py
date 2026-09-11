@@ -2223,13 +2223,13 @@ class TestPreflightStatusLine:
     """The early one-line status the skill prints during the otherwise-silent
     pre-flight wait (before the slow incremental dirty-set git diffs)."""
 
-    def test_incremental_existing_model_announces_delta(self):
+    def test_incremental_classification_never_announces_a_delta(self):
         line = rc._preflight_status_line({"mode": "incremental", "incremental": True, "baseline_state": "structured"})
-        assert "Existing threat model found" in line and "incremental delta" in line
+        assert "Existing threat model found" in line and "incremental delta" not in line
 
     def test_incremental_legacy_baseline_also_counts_as_existing(self):
         line = rc._preflight_status_line({"mode": "incremental", "incremental": True, "baseline_state": "legacy"})
-        assert "Existing threat model found" in line and "incremental delta" in line
+        assert "Existing threat model found" in line and "incremental delta" not in line
 
     def test_full_over_existing_model(self):
         line = rc._preflight_status_line({"mode": "full", "incremental": False, "baseline_state": "structured"})

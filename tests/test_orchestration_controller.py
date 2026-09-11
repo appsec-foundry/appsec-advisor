@@ -280,6 +280,23 @@ def test_unsupported_modes_fail_before_output_mutation(monkeypatch, tmp_path, ar
     assert not output.exists()
 
 
+def test_an_existing_model_without_a_mode_flag_is_refused_before_output_mutation(monkeypatch, tmp_path, capsys):
+    """A bare rerun resolves to an automatic incremental scan; the refusal names the model that selected it."""
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "threat-model.yaml").write_text("meta:\n  assessment_depth: standard\nthreats: []\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = controller.main(["route", "--", "--repo", str(tmp_path), "--output", str(output)])
+
+    assert code == 2
+    action = json.loads(capsys.readouterr().out)
+    assert action["action"] == "abort"
+    assert "existing threat model" in action["reason"]
+    assert "--full" in action["reason"]
+    assert sorted(path.name for path in output.iterdir()) == ["threat-model.yaml"]
+
+
 def test_a_budget_refusal_creates_no_output(monkeypatch, tmp_path, capsys):
     output = tmp_path / "not-created"
     monkeypatch.chdir(tmp_path)
@@ -4794,7 +4811,7 @@ class TestContextV2ReconWave:
         assert (output / ".threat-modeling-context.md").read_text(encoding="utf-8") != "stale\n"
 
     def test_begin_reuses_recon_when_the_fingerprint_is_unchanged(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
+        output = _context_v2_run(tmp_path, reuse_recon_eligible=True)
         (tmp_path / "repo" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
@@ -4809,7 +4826,7 @@ class TestContextV2ReconWave:
         assert "recon_scanner" not in roles
 
     def test_begin_does_not_reuse_legacy_free_form_recon_evidence(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
+        output = _context_v2_run(tmp_path, reuse_recon_eligible=True)
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         legacy = _valid_recon_signals()
         legacy["schema_version"] = 1
@@ -4823,7 +4840,7 @@ class TestContextV2ReconWave:
         assert "recon_scanner" in roles
 
     def test_begin_runs_recon_when_the_fingerprint_check_fails(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
+        output = _context_v2_run(tmp_path, reuse_recon_eligible=True)
         (output / ".recon-summary.md").write_text("prior\n", encoding="utf-8")
 
         def fake_script(name, args, **kwargs):
@@ -4839,7 +4856,7 @@ class TestContextV2ReconWave:
         assert "recon_scanner" in roles
 
     def test_begin_continues_deterministically_when_the_wave_is_empty(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
+        output = _context_v2_run(tmp_path, reuse_recon_eligible=True)
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
         (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")

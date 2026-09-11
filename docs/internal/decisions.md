@@ -219,7 +219,7 @@ Removing an entry means listing it here in the same change.
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
 | IN-1 | Reuse is authorised by a fingerprint match on an unchanged tree; a cache is validated, never assumed fresh | `test_check_fingerprint_match`, `test_cmd_validate_valid` | `scripts/baseline_state.py` |
-| IN-2 | A shallower rescan carries an unverified prior finding; an equal-or-deeper rescan records a non-reproduced finding as resolved with its prior identity and reason instead of dropping its history | `test_reconcile_carries_dropped_prior_threat_at_shallower_depth`, `test_reconcile_no_carry_at_equal_depth` | `scripts/build_threat_model_yaml.py`; see `docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md` |
+| IN-2 | An equal-or-deeper rescan records a non-reproduced finding as resolved with its prior identity and reason; a shallower `--full` rescan suppresses the delta and reports a snapshot with a shallower-scan note instead of claiming fixes | `test_reconcile_no_carry_at_equal_depth`, `test_changelog_full_delta_resolves_by_fingerprint`, `test_changelog_shallower_full_rescan_claims_no_fix` | `scripts/build_threat_model_yaml.py`; the incremental-only carry from `docs/internal/analysis/proposal-depth-downgrade-incremental-preservation.md` is unreachable while the compact runtime refuses incremental runs (DP-2) |
 | IN-3 | Changed business context recommends a full run, it never forces one — unlike a requirements toggle, because re-rating every finding on every context edit costs more than the drift | `test_changed_context_is_flagged_on_an_incremental_run`, `test_unchanged_context_is_not_flagged` | `scripts/resolve_config.py::resolve_business_context`; `meta.business_context_sha256` |
 
 ## Exports

@@ -146,7 +146,7 @@ check:  ## Continuous gate: lint, format, config, drift, full test suite (no cov
 	@python3 scripts/check_specs.py
 	@# Run WITHOUT --cov: coverage enables `[tool.coverage.run] patch=["subprocess"]`,
 	@# which instruments every child interpreter. The subprocess-heavy integration
-	@# tests (e.g. test_incremental_mode spawning run-headless.sh) then crawl and the
+	@# tests (e.g. test_run_headless_completion spawning run-headless.sh) then crawl and the
 	@# release gate appears to hang. Coverage is enforced separately by `make test` /
 	@# `make coverage` (and the CI coverage job), not on this fast correctness gate.
 	@$(PYTHON) -m pytest tests/ --tb=short

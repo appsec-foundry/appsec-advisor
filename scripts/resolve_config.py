@@ -1305,10 +1305,9 @@ def resolve_incremental_mode(
                 f"Error: --incremental requires a structured baseline "
                 f"(threat-model.yaml), but\n       only a legacy "
                 f"threat-model.md was found at {output_dir}.\n       This "
-                f"report was generated before incremental mode was "
-                f"supported.\n  Fix: run once without --incremental to "
-                f"bootstrap threat-model.yaml, then\n       subsequent runs "
-                f"will automatically use incremental mode."
+                f"report predates the structured baseline.\n  Fix: run with "
+                f"--full to rebuild threat-model.yaml; incremental scans are "
+                f"not supported by the compact runtime."
             )
         return {
             "mode": "incremental",
@@ -2254,7 +2253,7 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
     # incremental pre-check / dirty-set git diffs run. It fills the otherwise
     # silent gap between the "🔧 Building …" line and the Pre-flight summary so
     # the user knows what the wait is doing (notably "existing model found,
-    # computing incremental delta"). Deterministic content; the model only
+    # preparing a full re-assessment"). Deterministic content; the model only
     # relays it (same pattern as the LLM-typed Pre-flight summary).
     cfg["preflight_status"] = _preflight_status_line(cfg)
 
@@ -2269,8 +2268,8 @@ def _preflight_status_line(cfg: dict) -> str:
         return "🔧 Rebuilding from scratch — wiping the prior model and cache …"
     if cfg.get("rerender"):
         return "🖉 Re-rendering the report from existing analysis fragments …"
-    if cfg.get("incremental") and has_model:
-        return "📋 Existing threat model found — computing the incremental delta (changed files vs. baseline) …"
+    # An incremental classification never reaches the pre-flight: the compact
+    # runtime refuses it first, so an existing model only ever precedes a full run.
     if has_model:
         return "📋 Existing threat model found — preparing a full re-assessment …"
     return "🔍 No prior threat model — preparing a full assessment …"

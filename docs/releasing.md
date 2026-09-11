@@ -163,7 +163,7 @@ to make the gate pass.**
 | # | Stage | Symptom | Fix |
 |---|-------|---------|-----|
 | 1 | `ruff check` | `file:line` + rule code (e.g. `F401`) | `make fix` (runs `ruff check --fix`), or fix manually. Don't silence with `# noqa` unless justified. |
-| 2 | `ruff format --check` | `Would reformat: …` | `make fix` (runs `ruff format`). Never hand-format `resolve_config.py` — it's intentionally excluded (doc-invariant in `test_incremental_mode.py`). |
+| 2 | `ruff format --check` | `Would reformat: …` | `make fix` (runs `ruff format`). Never hand-format `resolve_config.py` — it is intentionally excluded in `pyproject.toml`. |
 | 3 | `validate_config.py` | config/YAML schema error | Correct the offending field. Fix the producer, don't loosen the schema. |
 | 4 | `check_fragment_registry.py` | registry maps out of sync | Align all registry maps — see [`adding-a-section.md`](internal/runbooks/adding-a-section.md) and `schema-invariants.md §4f`. |
 | 5 | `pytest` + coverage | failing tests or coverage below floor | Separate pre-existing failures from new ones. Run a single file with `pytest tests/test_x.py -v --tb=short`. Add tests for new code; don't lower the floor. |

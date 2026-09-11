@@ -1314,7 +1314,13 @@ def _unsupported_runtime_reason(cfg: dict[str, Any]) -> str | None:
     if cfg.get("resume"):
         return "--resume is not implemented by the compact runtime"
     if cfg.get("mode") == "incremental" or cfg.get("incremental"):
-        return "incremental scans are not implemented by the compact runtime"
+        # A bare rerun over an existing model resolves to an incremental scan
+        # without the user asking for one, so the refusal names that cause.
+        return (
+            "incremental scans are not implemented by the compact runtime, and the existing "
+            f"threat model at {cfg.get('output_dir') or 'the output directory'} selects one "
+            "unless a mode flag is given; pass --full to reassess it with its history preserved"
+        )
     if cfg.get("max_wall_time_seconds"):
         return "--max-wall-time is not implemented by the compact runtime"
     if os.environ.get("APPSEC_LIVE_PHASE") == "1" or cfg.get("live_phase"):
@@ -3959,7 +3965,7 @@ def _recon_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
         )
     except ControllerError:
         return False
-    if not cfg.get("recon_reuse_eligible"):
+    if not cfg.get("reuse_recon_eligible"):
         return False
     args = [
         "check-fingerprint",

@@ -1077,6 +1077,26 @@ def test_changelog_full_delta_resolves_by_fingerprint(tmp_path):
     assert "+1/-1 vs prior" in e["note"]
 
 
+def test_changelog_shallower_full_rescan_claims_no_fix(tmp_path):
+    """A --full rescan at a shallower depth did not examine everything the deeper
+    prior did, so a prior finding it did not reach is not resolved (IN-2)."""
+    b = _load()
+    t1 = [
+        {"id": "T-001", "component": "comp-a", "cwe": "CWE-89", "title": "SQLi"},
+        {"id": "T-002", "component": "comp-b", "cwe": "CWE-639", "title": "IDOR"},
+    ]
+    run1 = b.build_changelog(_CL_CFG, t1, _CL_COMPS, [], None, tmp_path, current_sha="sha-1")
+    cfg2 = {"mode": "full", "assessment_depth": "quick", "reasoning_model": "sonnet-economy"}
+    t2 = [{"id": "T-001", "component": "comp-a", "cwe": "CWE-89", "title": "SQLi"}]
+    run2 = b.build_changelog(cfg2, t2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-2")
+    e = run2[0]
+    assert e["delta_basis"] == "shallower-scan"
+    assert not e["resolved"]["threats"]
+    assert not e["resolved"].get("fingerprints")
+    assert e["added"]["threats"] == ["T-001"]
+    assert "shallower" in e["note"]
+
+
 def test_changelog_rescan_same_commit_suppresses_noise_delta(tmp_path):
     """Regression (2026-06-27 juice-shop): five quick --full re-runs of the SAME
     commit, repo untouched, each reported ~16 added / ~37 resolved — pure LLM
