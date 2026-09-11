@@ -5041,6 +5041,30 @@ def _build_auth_mechanism_inventory(yaml_data: dict) -> list[str]:
 # control can never leave a dangling link in the covered-list.
 _COVERED_SENTINEL = "<!-- __CONTROLS_COVERED_SENTINEL__ -->"
 
+_V2_REALTIME_HINTS = ("websocket", "web socket", "socket.io", "socketio", "real-time", "realtime")
+_V2_RPC_SURFACES = (("graphql", "GraphQL API Security"), ("grpc", "gRPC Service Security"))
+
+
+def _v2_special_surfaces(yaml_data: dict) -> list[str]:
+    """Name the real-time, LLM, GraphQL and gRPC surfaces the model contains.
+
+    §6.12 used to collapse to "Not applicable … no AI/LLM surfaces detected"
+    whenever no finding routed there by CWE, contradicting a report with a
+    Socket.IO server and LLM findings (juice-shop 2026-09-11). A modelled
+    component or an LLM-tagged finding is a surface; a recon-only mention such
+    as a package.json dependency is not.
+    """
+    components = [c for c in yaml_data.get("components") or [] if isinstance(c, dict)]
+    threats = [t for t in yaml_data.get("threats") or [] if isinstance(t, dict)]
+    blobs = [" ".join(str(c.get(key) or "") for key in ("id", "name", "framework")).lower() for c in components]
+    surfaces = []
+    if any(hint in blob for blob in blobs for hint in _V2_REALTIME_HINTS):
+        surfaces.append("Real-Time Channel Security")
+    if any(_is_llm_component(c) for c in components) or any(t.get("owasp_llm_ids") for t in threats):
+        surfaces.append("LLM Integration Security")
+    surfaces.extend(label for hint, label in _V2_RPC_SURFACES if any(hint in blob for blob in blobs))
+    return surfaces
+
 
 def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> str:
     """13-section §6 scaffold for the v2 security-architecture contract.
@@ -5053,6 +5077,7 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
     quick_depth = (depth or "").strip().lower() == "quick"
     controls = _normalize_security_controls(yaml_data.get("security_controls"))
     threats = yaml_data.get("threats") or []
+    special_surfaces = _v2_special_surfaces(yaml_data)
 
     eff_counts: dict[str, int] = {}
     for c in controls:
@@ -5239,7 +5264,8 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # Fix 1 — §6.12 Not-Applicable stub. The section is reserved for
         # real-time / WebSocket controls AND a catch-all for absent domains
         # (AI/LLM, GraphQL, gRPC) the report should explicitly acknowledge.
-        # When no findings route to §6.12 via the CWE mapping, the section
+        # When no finding routes to §6.12 via the CWE mapping AND the model
+        # has none of those surfaces (`_v2_special_surfaces`), the section
         # has nothing real to say — even if a control was mis-routed here
         # (e.g. Container Hardening mapping to §6.12 instead of §6.11), it
         # belongs in its primary domain section, not in a category about
@@ -5250,23 +5276,23 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
         # ~3657; this is the v2 equivalent.
         if heading.startswith("6.12 "):
             domain_links = _v2_finding_links(threats, heading, max_links=1)
-            if not domain_links:
+            if not domain_links and not special_surfaces:
                 # LOCKED marker is the renderer agent's signal to leave the
                 # stub alone. Without it, the LLM tends to "improve" the
                 # one-liner by acknowledging tools it sees in recon (e.g.
                 # socket.io in package.json), which defeats the whole point
                 # of collapsing this section to one line.
                 lines.append(
-                    "<!-- §6.12 LOCKED — mechanically derived from absence "
-                    "of real-time findings. Renderer must not rewrite the "
-                    "line below. -->"
+                    "<!-- §6.12 LOCKED — mechanically derived: no routed finding "
+                    "and no real-time, LLM, GraphQL, or gRPC component in the "
+                    "model. Renderer must not rewrite the line below. -->"
                 )
                 lines.append(
-                    "_Not applicable — no real-time / WebSocket findings "
-                    "routed to this category, and no AI/LLM, GraphQL, or "
-                    "gRPC surfaces detected by the recon scan. Controls "
-                    "catalogued elsewhere (container hardening, dependency "
-                    "determinism) are covered in their primary §6 sections._"
+                    "_Not applicable — no finding routed to this category, and "
+                    "the architecture model contains no real-time / WebSocket, "
+                    "AI/LLM, GraphQL, or gRPC component. Controls catalogued "
+                    "elsewhere (container hardening, dependency determinism) "
+                    "are covered in their primary §6 sections._"
                 )
                 lines.append("")
                 continue
@@ -5305,6 +5331,14 @@ def gen_security_architecture_v2(yaml_data: dict, depth: str = "standard") -> st
                 }
             ]
             control_names = ["JWT Session Issuance and Verification"]
+        elif heading.startswith("6.12 ") and not control_names and special_surfaces:
+            # One block per modelled surface, so the renderer describes the
+            # controls the collapsed stub used to deny.
+            section_controls = [
+                {"control": name, "name": name, "effectiveness": "", "implementation": "", "subcontrols": []}
+                for name in special_surfaces
+            ]
+            control_names = list(special_surfaces)
 
         # §6.6 must OPEN with a general validation-approach block before the
         # specific boundary sub-blocks (contract: validation_approach_first).

@@ -51,12 +51,17 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
    - For `type: unclassified` — inspect `raw_issue`, make a best-effort fragment repair, log the action.
 3. After all fragments are written, re-invoke the renderer with strict enforcement:
    ```bash
+   OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+   CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/compose_threat_model.py" \
        --output-dir "$OUTPUT_DIR" --strict --skip-changelog-audit
    ```
    A non-zero exit is a repair failure — emit `RENDER_FAILED` and let the skill's loop count this iteration as unsuccessful.
 4. **Re-run the deterministic finalization tail, then verify with the gate that decides.** A `--strict` recompose regenerates the Markdown from fragments and therefore discards **every** post-compose mutation the pre-agent gate applied:
    ```bash
+   OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+   REPO_ROOT="<REPO_ROOT from the dispatch>"
+   CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/apply_prose_fixes.py" "$OUTPUT_DIR/threat-model.md"
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" gate \
        "$OUTPUT_DIR/threat-model.md" "$OUTPUT_DIR" "$REPO_ROOT"
@@ -70,6 +75,8 @@ This agent runs on the model passed via the Agent-tool `model` parameter at disp
    - `3` (manual review) or `4` (cosmetic advisory) — not repairable by re-render. Emit `REPAIR_SKIPPED` and stop; do not spend an attempt on them.
 6. Only after the gate exits 0, regenerate the auxiliary changelog audit once:
    ```bash
+   OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+   CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_changelog_audit.py" --output-dir "$OUTPUT_DIR"
    ```
    This keeps failed intermediate compose attempts from repeatedly parsing and writing the large audit export while preserving it for every repaired final report.

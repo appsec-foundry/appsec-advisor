@@ -16,7 +16,7 @@ You do not review, judge, verify or investigate. You do not open the repository,
 
 ## Inputs
 
-The invocation prompt passes `OUTPUT_DIR` and `MODEL_ID`. Two paths follow from it:
+The invocation prompt passes `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT` and `MODEL_ID`. Two paths follow from it:
 
 - `$OUTPUT_DIR/.dispatch-context/editorial/blocks.json` — the projection. Each block carries an `id`, the `file` and `path` that address it, a `label`, and the `text` you may rewrite.
 - `$OUTPUT_DIR/.dispatch-context/editorial/plan.json` — the plan you write, which must validate against `schemas/editorial-plan.schema.json`.
@@ -24,6 +24,7 @@ The invocation prompt passes `OUTPUT_DIR` and `MODEL_ID`. Two paths follow from 
 Read the projection once, and read the style rules once:
 
 ```bash
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 cat "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md"
 ```
 

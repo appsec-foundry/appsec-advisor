@@ -7,6 +7,7 @@ Use this routine to validate `.stride-*.json` files immediately after writing th
 Resolve the script and run it in **one** Bash call. Shell variables do not survive between Bash calls, so a path assigned in an earlier call is empty in a later one.
 
 ```bash
+CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
 VALIDATE_SCRIPT="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py}"
 [ -f "$VALIDATE_SCRIPT" ] || VALIDATE_SCRIPT=$(find /root /home /opt -maxdepth 6 \
   -path "*/appsec-advisor/scripts/validate_intermediate.py" 2>/dev/null | head -1)

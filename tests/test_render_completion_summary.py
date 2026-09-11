@@ -1252,6 +1252,18 @@ class TestRunStatisticsStageRows:
         assert stats["total_secs_from_stages"] == 120
         assert len(stats["stage_rows"]) == 2
 
+    def test_deterministic_row_covers_no_dispatch(self, tmp_path: Path):
+        """A zero-token `deterministic:` row ran no agent. Counting it as one
+        dispatch hid an unrecorded agent (juice-shop 2026-09-11 showed 22 of 23
+        where 21 of 23 agents were recorded)."""
+        (tmp_path / ".stage-stats.jsonl").write_text(
+            '{"stage": 1, "agent": "x:stride", "model": "sonnet", "duration_ms": 1000, "dispatch_count": 3}\n'
+            '{"stage": 3, "agent": "deterministic:qa_checks.py", "model": "none", "duration_ms": 0, "tokens": 0}\n'
+        )
+        (tmp_path / ".agent-run.log").write_text("")
+        stats = rcs.extract_run_statistics(tmp_path, {})
+        assert stats["recorded_dispatches"] == 3
+
     def test_wall_seconds_file(self, tmp_path: Path):
         (tmp_path / ".scan-wall-seconds").write_text("450\n")
         (tmp_path / ".agent-run.log").write_text("")

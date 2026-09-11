@@ -12,6 +12,7 @@
 **Prose-style anchor — read once before composing the draft.** The Management Summary is the most-read prose surface of the entire report. Apply the rules from `agents/shared/prose-style.md` (specificity, falsifiability, information-density, scannable structure, no boilerplate) to every sentence you write here. Load it now if you have not already in this Phase:
 
 ```bash
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 cat "$CLAUDE_PLUGIN_ROOT/agents/shared/prose-style.md"
 ```
 

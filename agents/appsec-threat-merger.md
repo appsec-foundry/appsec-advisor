@@ -147,6 +147,9 @@ After writing the decision file, run the shared schema and admitted-candidate
 gate before completion:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+CANDIDATES_FILE="<CANDIDATES_FILE from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/merge_threats.py" validate-decisions \
   --output-dir "$OUTPUT_DIR" --candidates "$CANDIDATES_FILE"
 ```

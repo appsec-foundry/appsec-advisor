@@ -51,11 +51,17 @@ is set.
 
 ## Budget wrap-up signal (read at every phase boundary)
 
-Every agent that runs more than a handful of phases must run
-`python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical
---output-dir "$OUTPUT_DIR"` at each phase boundary. A zero exit means the
-marker identity still matches a running call and its authoritative controller
-claim. Bare file existence is never a control signal; legacy or malformed
+Every agent that runs more than a handful of phases must run this at each
+phase boundary:
+
+```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
+CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"
+```
+
+A zero exit means the marker identity still matches a running call and its
+authoritative controller claim. Bare file existence is never a control signal; legacy or malformed
 entries are inert.
 
 When the command exits zero:
@@ -109,8 +115,11 @@ Pair every `⟶ Dispatching …` print with its `AGENT_INVOKE` log line (same Ba
 
 Execute this IMMEDIATELY before any file reads, globs, or greps.
 
-**Assign `OUTPUT_DIR` inside the same Bash command that uses it**, substituting
-the literal path from your dispatch prompt. Combine the startup log with
+**Assign `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT` and `REPO_ROOT` inside the same Bash
+command that uses them**, substituting the literal paths from your dispatch
+prompt — as a statement on its own line, never as a `VAR=x cmd "$VAR"` prefix,
+which expands `$VAR` before it is set; `export` it when a called script reads it
+from the environment (`agent_progress.sh` does). Combine the startup log with
 `date +%s` to capture `START_EPOCH`:
 
 ```bash
@@ -151,6 +160,7 @@ Emit at the **start** and **end** of each step or check (see event catalog above
 ```bash
 # STEP_START / STEP_END pairs (stride-analyzer, context-resolver, triage-validator, orchestrator):
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
+CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent <AGENT>
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent <AGENT>
 
@@ -185,6 +195,7 @@ Use a `python3` call to compute the elapsed duration and write the final log ent
 
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
+CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" \
   "$OUTPUT_DIR" "<AGENT>" "<MODEL>" "$START_EPOCH"
 ```

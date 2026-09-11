@@ -70,12 +70,20 @@ If you were dispatched directly and an input is missing, run the same determinis
 
 - **No `REQUIREMENTS_YAML`** → produce it:
   ```bash
+  OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+  CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/fetch_requirements.py" --caller verify-requirements \
     --output-dir "$OUTPUT_DIR" --plugin-root "$CLAUDE_PLUGIN_ROOT" --require \
     --fallback-baseline "$CLAUDE_PLUGIN_ROOT/data/appsec-bestpractices-baseline.yaml"
   ```
   → company catalog if configured, else the best-practices baseline. It aborts (exit 2) only when an explicitly-named source fails to load — propagate that.
-- **No `DIFF_FILE`** → build it: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_verify_diff.py" --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR"` (add `--base "$BASE_REF"` if set).
+- **No `DIFF_FILE`** → build it (add `--base "$BASE_REF"` if set):
+  ```bash
+  OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+  REPO_ROOT="<REPO_ROOT from the dispatch>"
+  CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/build_verify_diff.py" --repo-root "$REPO_ROOT" --output-dir "$OUTPUT_DIR"
+  ```
 - **No `STEERING_MAP`** → default to `$CLAUDE_PLUGIN_ROOT/hooks/steering_keywords.json`.
 
 ## Untrusted-input discipline

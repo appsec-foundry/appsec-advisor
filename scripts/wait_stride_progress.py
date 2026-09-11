@@ -13,6 +13,7 @@ import sys
 import time
 from pathlib import Path
 
+import agent_lifecycle
 import stride_dispatch_waves
 
 PENDING_EXIT_CODE = 75
@@ -57,6 +58,21 @@ def _wave_status(output_dir: Path, component_ids: list[str]) -> str | None:
     return status if status in {"complete", "pending", "expired"} else "invalid"
 
 
+def _live_wave_calls(output_dir: Path, component_ids: list[str]) -> list[dict]:
+    """Analyzer calls of this wave whose child has not stopped yet.
+
+    The final artifact is not an analyzer's last action; its closing progress
+    and log calls follow. Advancing the wave before the child stops moves the
+    claim and rejects them (juice-shop 2026-09-11, ci-cd-pipeline).
+    """
+    wanted = set(component_ids)
+    return [
+        call
+        for call in agent_lifecycle.running_calls(output_dir)
+        if call.get("component_id") in wanted and not call.get("stopped_at")
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("output_dir", type=Path)
@@ -65,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rounds", type=int, default=24)
     parser.add_argument("--plugin-root", type=Path, default=None)
     parser.add_argument("--component", action="append", default=[])
+    parser.add_argument("--settle-seconds", type=int, default=90)
     args = parser.parse_args(argv)
 
     if args.expected <= 0:
@@ -80,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     last_rc = 1
     last_wave_status: str | None = None
     previous_progress: str | None = None
+    settle_deadline: float | None = None
     for round_no in range(1, args.rounds + 1):
         elapsed = int(time.time() - start)
         elapsed_s = f"{elapsed // 60}m{elapsed % 60:02d}s"
@@ -93,7 +111,17 @@ def main(argv: list[str] | None = None) -> int:
                 print(progress, end="")
             previous_progress = progress
         last_wave_status = _wave_status(args.output_dir, args.component)
-        if last_wave_status == "complete" or (last_wave_status is None and last_rc == 0):
+        if last_wave_status == "complete":
+            live = _live_wave_calls(args.output_dir, args.component)
+            if not live:
+                return 0
+            # Bounded, so a call whose stop was never recorded cannot hold the wave.
+            if settle_deadline is None:
+                settle_deadline = time.time() + max(args.settle_seconds, 0)
+                print(f"  ↳ wave complete; waiting up to {args.settle_seconds}s for {len(live)} analyzer(s) to stop")
+            if time.time() >= settle_deadline or round_no == args.rounds:
+                return 0
+        elif last_wave_status is None and last_rc == 0:
             return 0
         if last_wave_status == "expired":
             print(
@@ -104,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         if last_rc >= 2:
             return last_rc
-        if round_no in {12, 24, 36}:
+        if settle_deadline is None and round_no in {12, 24, 36}:
             print(
                 f"BASH_WARN STRIDE polling slow — still waiting after {elapsed_s}",
                 file=sys.stderr,

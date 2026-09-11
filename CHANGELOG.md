@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A depth increase over an unchanged repository reuses the previous run's reconnaissance again: the run end records the recon fingerprint, and the controller reads the eligibility flag under the name the resolver writes.
 - Starting a run over an existing threat model without a mode flag now says that the existing model selected an unsupported incremental rescan and that `--full` reassesses it.
+- The report no longer sets ordinary words and punctuation such as `to` or `/` in code format throughout the document because one finding used them as code.
+- §6.12 no longer claims "Not applicable" when the model contains a real-time, LLM, GraphQL or gRPC component, and no longer drops an LLM control catalogued there.
+- The completion summary no longer counts a deterministic QA step as an agent, so a run with unrecorded agents reports its compute as partial.
+- STRIDE analyzers' closing progress and log lines are no longer rejected, because a wave is joined only after its analyzers stop.
+- Agents no longer run their documented commands with an empty output directory or plugin path, and the runtimes name the exact heartbeat and lock-release commands.
 
 ### Changed
 

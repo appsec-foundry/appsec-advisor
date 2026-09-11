@@ -230,3 +230,28 @@ def test_structured_vocabulary_bounds_wide_branching() -> None:
 def test_structured_vocabulary_ignores_oversized_strings() -> None:
     vocabulary = formatter.structured_vocabulary({"snippet": "x" * 20_000})
     assert vocabulary == frozenset()
+
+
+def test_prose_backticks_do_not_turn_words_or_symbols_into_known_tokens() -> None:
+    """A backticked word or symbol in model prose is formatting, not code evidence.
+
+    juice-shop 2026-09-11: one `to` (a query parameter), one `/` and a `)` left
+    by an escaped template literal became known tokens, and every bare "to",
+    "/" and ")" of the report was wrapped — 405, 67 and 157 times.
+    """
+    data = {
+        "scenario": "delivers it as the `to` query parameter",
+        "steps": ["require a relative path starting with `/`", "compare `redirectUrl` with `$where`"],
+        "evidence_summary": "executes `models.sequelize.query(\\`SELECT 1\\`)` here",
+    }
+    vocabulary = formatter.structured_vocabulary(data)
+    assert {"to", "/", ")"}.isdisjoint(vocabulary)
+    assert {"redirectUrl", "$where"} <= vocabulary
+
+    prose = "An attacker can combine flaws to take control (see [scope](#scope)) and read / write data."
+    assert formatter.format_inline_code(prose, vocabulary) == (prose, 0)
+
+
+def test_known_tokens_without_letters_never_match() -> None:
+    prose = "Combine the flaws (see [scope](#scope)) and read / write."
+    assert formatter.format_inline_code(prose, {")", "/", "//", "401"}) == (prose, 0)

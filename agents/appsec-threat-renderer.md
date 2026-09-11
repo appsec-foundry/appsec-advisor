@@ -147,7 +147,7 @@ Author `ms-verdict.json` **exactly once**. Do **NOT** re-open or rewrite an MS f
 After authoring the MS fragment, run the compactness gate **once**:
 
 ```bash
-OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"; CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_ms_compactness.py" "$OUTPUT_DIR"
 ```
 

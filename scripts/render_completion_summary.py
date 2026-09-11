@@ -602,7 +602,12 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
                 recorded = rec.get("dispatch_count")
                 if not (isinstance(recorded, int) and recorded > 0):
                     recorded = rec.get("recorded_dispatch_count")
-                stats["recorded_dispatches"] += recorded if isinstance(recorded, int) and recorded > 0 else 1
+                if isinstance(recorded, int) and recorded > 0:
+                    stats["recorded_dispatches"] += recorded
+                elif not str(rec.get("agent") or "").startswith("deterministic:"):
+                    # A `deterministic:` row ran no agent, so it covers no
+                    # dispatch; counting it as one hid an unrecorded agent.
+                    stats["recorded_dispatches"] += 1
                 stats["stage_rows"].append(
                     (
                         rec.get("stage"),

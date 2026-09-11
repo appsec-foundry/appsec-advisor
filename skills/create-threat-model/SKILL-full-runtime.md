@@ -8,6 +8,10 @@ Task lifecycle, Agent dispatch, and gates.
 
 ## 1. Prepare
 
+Each Bash call is a fresh shell: start every command with
+`CLAUDE_PLUGIN_ROOT=<plugin root the router resolved>` on its own line, plus
+the §3 values it uses.
+
 Run one Bash call, forwarding the invocation arguments as separate arguments.
 Use the first form normally. Use the second only when the invocation contains
 the skill-only `--force` flag:
@@ -262,6 +266,9 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" \
 ```
 
 Load `TaskStop` before its first use and pass `task_id`, never `taskId`.
+When they say to send the final heartbeat, run `python3
+"$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
+--run-id="$APPSEC_RUN_ID" --heartbeat --phase=skill`, then stop the watchdog.
 
 Do not repeat what §1 lists as already done by the controller.
 

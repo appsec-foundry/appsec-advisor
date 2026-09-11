@@ -1083,6 +1083,41 @@ class TestSecurityArchitectureCWEMapping:
         assert "F-300" not in sec_7_12, "F-300 has nothing to do with real-time controls"
 
 
+class TestSection612Surfaces:
+    """§6.12 collapses to "Not applicable" only when the model has no real-time,
+    LLM, GraphQL or gRPC surface. The stub used to claim "no AI/LLM surfaces"
+    beside a Socket.IO server and LLM findings (juice-shop 2026-09-11)."""
+
+    @staticmethod
+    def _section(yaml_data: dict) -> str:
+        md = pf.gen_security_architecture_v2({"security_controls": [], **yaml_data})
+        return md.split("### 6.12 ", 1)[1].split("### 6.13 ", 1)[0]
+
+    def test_realtime_component_gets_a_block_instead_of_the_stub(self):
+        section = self._section(
+            {"components": [{"id": "realtime-service", "name": "Socket.IO Real-Time Event Server"}], "threats": []}
+        )
+        assert "_Not applicable" not in section
+        assert "#### 6.12.1 Real-Time Channel Security" in section
+
+    def test_llm_tagged_finding_is_an_llm_surface(self):
+        threat = {
+            "id": "T-1",
+            "title": "Prompt Injection (routes/chat.ts:1)",
+            "cwe": "CWE-74",
+            "owasp_llm_ids": ["LLM01"],
+        }
+        section = self._section({"components": [{"id": "api", "name": "API Server"}], "threats": [threat]})
+        assert "_Not applicable" not in section
+        assert "LLM Integration Security" in section
+
+    def test_stub_claims_only_what_was_checked(self):
+        section = self._section({"components": [{"id": "api", "name": "API Server"}], "threats": []})
+        assert "§6.12 LOCKED" in section
+        assert "_Not applicable — no finding routed to this category" in section
+        assert "recon scan" not in section
+
+
 class TestSystemContextDiagram:
     """§2.1 mermaid is now derived from yaml actors / surface / threats."""
 

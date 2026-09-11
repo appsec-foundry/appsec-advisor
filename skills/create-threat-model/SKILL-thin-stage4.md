@@ -25,8 +25,8 @@ repairs nothing.
 
 Mark Stage 4 in progress, start the fixed heartbeat, print the handoff. Dispatch
 `appsec-advisor:appsec-architect-reviewer` exactly once, with description
-`Editorial pass`, `run_in_background: false`, and the resolved
-`ARCHITECT_MODEL`. Pass only `OUTPUT_DIR` and `MODEL_ID`. Wait for the result;
+`Editorial pass` and the resolved
+`ARCHITECT_MODEL`. Pass only `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT`, and `MODEL_ID`. Wait for the result;
 do NOT end your turn while it runs. Never dispatch it twice. An Agent error is
 non-fatal: continue at §3, where an absent plan applies nothing.
 
