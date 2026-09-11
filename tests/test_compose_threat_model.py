@@ -5741,6 +5741,45 @@ def test_render_figure1_svg_skill_config_false_is_file_reference(tmp_path: Path)
     assert "](figure1.svg)" in md and "data:image" not in md
 
 
+def test_render_figure1_svg_prefers_the_data_flow_diagram(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = _fig1_ctx(out)
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert md.startswith("Data-flow diagram:")
+    assert "Architecture tiers top-to-bottom" not in md
+    assert not [w for w in ctx.warnings if w.startswith("figure1:")]
+    assert "Notation (DFD)" in (out / "figure1.svg").read_text(encoding="utf-8")
+
+
+def test_render_figure1_svg_falls_back_to_tier_stack_when_dfd_raises(tmp_path: Path, monkeypatch) -> None:
+    def boom(*_a, **_k):
+        raise KeyError("pts")
+
+    monkeypatch.setattr("figure1_dfd.check_diagram", boom)
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = _fig1_ctx(out)
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert md.startswith("Architecture tiers top-to-bottom")
+    assert (out / "figure1.svg").is_file()
+    assert [w for w in ctx.warnings if w.startswith("figure1: data-flow diagram builder failed (KeyError")]
+
+
+def test_render_figure1_svg_falls_back_when_dfd_fails_its_self_check(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "figure1_dfd.check_diagram", lambda *_a, **_k: ("<svg>bad</svg>", ["edge df-001 crosses node api"])
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = _fig1_ctx(out)
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert md.startswith("Architecture tiers top-to-bottom")
+    assert "bad" not in (out / "figure1.svg").read_text(encoding="utf-8")
+    warns = [w for w in ctx.warnings if w.startswith("figure1: data-flow diagram failed its self-check")]
+    assert warns and "edge df-001 crosses node api" in warns[0]
+
+
 # ---------------------------------------------------------------------------
 # §3 required-pattern gate (zero-Critical reports) + §6 domain-pattern
 # applicability gating (non-applicable controls, e.g. no WebSockets).

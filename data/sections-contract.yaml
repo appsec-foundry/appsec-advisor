@@ -777,9 +777,9 @@ sections:
         # CLIENT is titled "Untrusted Zone - …" for the same reason EXT is:
         # a browser SPA executes on the user's device, on the attacker's side
         # of every server-side control, so it is NOT a trust zone of its own.
-        # `figure1_svg.py::_zone_rank` collapses actors + client into one
-        # untrusted zone and puts the trust divider BELOW the client tier;
-        # §2.3 must not contradict that. Four zone-looking columns that marked
+        # Figure 1 draws the client device INSIDE the untrusted Internet zone
+        # (`figure1_dfd.py`; the `figure1_svg.py::_zone_rank` fallback collapses
+        # actors + client the same way), so §2.3 must not contradict that. Four zone-looking columns that marked
         # nothing invited the reader to place the boundary between EXT and
         # CLIENT, where trust does not change — the parallel titles say the
         # untrusted zone spans both, and the boundary-crossing edges below

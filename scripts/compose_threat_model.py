@@ -5912,20 +5912,34 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     kwargs = {"meta": ctx.yaml_data.get("meta") or {}, "actor_labels": actor_labels}
     # PRIMARY: the data-flow diagram (zones, flows, boundary crossings, STRIDE
     # per element). FALLBACK: the tier-stack generator, kept for models the DFD
-    # builder cannot draw.
+    # builder cannot draw. The DFD builder verifies its own output (no edge
+    # through a foreign node, no label overlap, every arrow matches its YAML
+    # flow); a diagram that fails that check is wrong, not merely ugly, so it
+    # falls back like a crash does — and both paths leave a RENDER_WARN, so a
+    # silent downgrade cannot hide behind a report that still has a Figure 1.
     svg, intro = "", ""
     try:
-        from figure1_dfd import build_figure1_dfd_svg
+        from figure1_dfd import check_diagram
 
-        svg = build_figure1_dfd_svg(ctx.yaml_data, attack_paths_data, attack_taxonomy, **kwargs)
-        intro = (
-            "Data-flow diagram: external entities, processes and data stores in their trust zones "
-            "(Internet → Application → Data), the data flows between them, and the attack scenarios "
-            "numbered as in the table below. Each crossing of a dashed trust-boundary line carries the "
-            "`tb-N` id catalogued in [§1 Trust Boundaries](#trust-boundaries) with the verdict on its "
-            "enforcement assumption. The in-figure legend on the right explains the notation."
+        svg, problems = check_diagram(ctx.yaml_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels)
+        if problems:
+            ctx.warnings.append(
+                f"figure1: data-flow diagram failed its self-check ({len(problems)} problem(s): "
+                f"{'; '.join(problems[:3])}) — rendered the tier-stack fallback"
+            )
+            svg = ""
+        else:
+            intro = (
+                "Data-flow diagram: external entities, processes and data stores in their trust zones "
+                "(Internet → Application → Data), the data flows between them, and the attack scenarios "
+                "numbered as in the table below. Each crossing of a dashed trust-boundary line carries the "
+                "`tb-N` id catalogued in [§1 Trust Boundaries](#trust-boundaries) with the verdict on its "
+                "enforcement assumption. The in-figure legend on the right explains the notation."
+            )
+    except Exception as exc:  # noqa: BLE001 — the DFD builder must never break the section
+        ctx.warnings.append(
+            f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc}) — rendered the tier-stack fallback"
         )
-    except Exception:  # noqa: BLE001 — the DFD builder must never break the section
         svg = ""
     if not (svg or "").strip():
         try:
@@ -7400,14 +7414,12 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
 
     # Figure 1 is built DETERMINISTICALLY from yaml + the SAME reconciled
     # attack_paths order that drives Figure 2's glyphs, so ①–⑦ agree across
-    # both figures and the Top Threats table. The deterministic builder is the
-    # AUTHORITATIVE source: it guarantees the agreed format every run — actor
-    # band on top, Client→Application→Data tier stack, per-component finding
-    # badges (🔴/🟠), red attackers / green users, no actor→data edges, and
-    # in-range linkStyle indices. An LLM/operator-authored
-    # `.fragments/top-threats-architecture.md` is consulted ONLY as a fallback
-    # when the builder yields nothing (e.g. no attack_paths). This precedence
-    # is intentional: when the LLM fragment was preferred it produced free-form
+    # both figures and the Top Threats table. Precedence, see
+    # `_render_figure1_svg`: the self-checked data-flow diagram, then the
+    # tier-stack SVG, then the Mermaid builder below, and an LLM/operator-
+    # authored `.fragments/top-threats-architecture.md` ONLY when every
+    # deterministic builder yields nothing (e.g. no attack_paths). The fragment
+    # comes last on purpose: when it was preferred it produced free-form
     # diagrams that ignored the prescribed structure and emitted out-of-range
     # `linkStyle` indices that crash Mermaid (2026-05-30 regression). Best-effort:
     # a builder failure must never break the section (Figure 2 + table still render).

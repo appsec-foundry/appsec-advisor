@@ -210,6 +210,34 @@ li { margin: 0.15em 0; }
  * export_pdf.py wraps the leading title/subtitle/metadata block into
  * <div class="cover-page">. It fills the first page (no page number) and a
  * page break sends the Table of Contents onto its own page. */
+/* export_pdf.py wraps a wide Figure 1 (heading, caption, intro, image) into
+ * <div class="figure-landscape">. The named page turns the sheet sideways so
+ * the data-flow diagram keeps a readable scale. The body carries its own page
+ * name because WeasyPrint resolves `page: auto` to the page it is already on:
+ * without `main`, the content after the figure would stay landscape. The
+ * tightened spacing and the height cap keep heading, caption, intro and image
+ * on ONE landscape page (12/16 mm margins leave 182 mm; the text block above
+ * the image takes ~35 mm). */
+body {
+  page: main;
+}
+@page main {
+  size: A4;
+}
+@page landscape {
+  size: A4 landscape;
+  margin: 12mm 12mm 16mm 12mm;
+}
+.figure-landscape {
+  page: landscape;
+}
+.figure-landscape h3 { margin-top: 0; }
+.figure-landscape p { margin: 0.4em 0; }
+.figure-landscape img {
+  max-width: 100%;
+  max-height: 140mm;
+}
+
 @page cover {
   margin: 0;
   @bottom-right { content: none; }   /* no footer page number on the cover */
