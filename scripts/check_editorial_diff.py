@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """check_editorial_diff.py — invariant guard for the Stage-4 editorial pass.
 
-The editorial pass rewrites prose and nothing else. This module pins what
-"nothing else" means, so a rewrite that moves meaning is reverted instead of
-shipped:
+The editorial pass is permitted to rewrite wording only. This module checks
+structural and lexical invariants; it does not prove semantic equivalence:
 
   * outside the editable allow-list, ``threat-model.yaml`` and the JSON
     fragments must stay deep-equal;
@@ -23,7 +22,7 @@ Usage::
     check_editorial_diff.py verify   --output-dir DIR [--restore]
     check_editorial_diff.py restore  --output-dir DIR
 
-``snapshot`` stores the guarded files verbatim in ``.editorial-snapshot.json``.
+``snapshot`` stores guarded files in ``.dispatch-context/editorial/snapshot.json``.
 ``verify`` recomputes both sides from those bytes, so the report can name the
 exact field and token that changed. Exit 0 when clean, 2 on any violation, 1 on
 a usage or I/O error. With ``--restore`` a violating run is rolled back to the
@@ -69,6 +68,13 @@ _LINK_TARGET_RE = re.compile(r"\]\(([^)\s]+)")
 _URL_RE = re.compile(r"https?://[^\s)\]>]+")
 _PATH_RE = re.compile(r"\b[\w./-]+\.[A-Za-z0-9]{1,6}(?::\d+(?:-\d+)?)?\b")
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)*")
+# Lexical tripwires, not a semantic equivalence proof. Preserve uncertainty,
+# negation and explicit rating vocabulary even inside editable prose.
+_CLAIM_RE = re.compile(
+    r"\b(?:may|might|could|appears to|unverified|unproven|not|never|no|cannot|critical|high|medium|low)\b|\b\w+n['’]t\b",
+    re.IGNORECASE,
+)
+_BOLD_LABEL_RE = re.compile(r"^\s*(\*\*[^*\n]{1,60}\*\*:?)")
 
 
 class GuardError(RuntimeError):
@@ -178,6 +184,7 @@ def text_invariants(text: str) -> dict[str, list[str]]:
         "urls": sorted(_URL_RE.findall(plain)),
         "paths": sorted(_PATH_RE.findall(plain)),
         "numbers": sorted(_NUMBER_RE.findall(plain)),
+        "claim_markers": sorted(m.group(0) for m in _CLAIM_RE.finditer(plain)),
     }
 
 
@@ -277,6 +284,21 @@ def _token_violations(file_name: str, where: str, old: str, new: str) -> list[di
     if dropped:
         out.append({"file": file_name, "kind": "code_spans_dropped", "detail": f"{where}: lost {dropped}"})
     return out
+
+
+def prose_violations(old: str, new: str) -> list[dict]:
+    """Reject local invariant drift before it can discard other valid edits.
+
+    This detects token changes, empty replacements and lost leading labels.
+    It cannot prove that two sentences mean the same thing.
+    """
+    violations = _compare_markdown("block", old, new)
+    if not new.strip():
+        violations.append({"kind": "field_blanked"})
+    label = _BOLD_LABEL_RE.match(old)
+    if label and not new.lstrip().startswith(label.group(1)):
+        violations.append({"kind": "label_changed"})
+    return violations
 
 
 def _multiset_difference(left: list[str], right: list[str]) -> list[str]:

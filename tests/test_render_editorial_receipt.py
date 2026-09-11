@@ -176,7 +176,8 @@ def test_missing_inputs_still_produce_a_status(output_dir: Path, capsys: pytest.
 
     assert status["status"] == "pass"
     assert status["blocks_offered"] == 0
-    assert "No rewrite needed" in capsys.readouterr().out
+    assert "No rewrite needed" not in capsys.readouterr().out
+    assert status["outcome"] == "failed"
 
 
 def test_unparseable_inputs_do_not_crash(output_dir: Path) -> None:
@@ -236,3 +237,57 @@ def test_an_unwritable_log_does_not_fail_the_stage(output_dir: Path) -> None:
 
     assert receipt.main([str(output_dir), "--no-print"]) == 0
     assert (output_dir / receipt.STATUS_NAME).is_file()
+
+
+def test_missing_plan_with_offered_blocks_is_incomplete(output_dir):
+    _write(output_dir, "blocks.json", {"selection": {"blocks_total": 232}})
+    status = receipt.build_status(output_dir)
+    assert status["outcome"] == "failed"
+    assert "No rewrite needed" not in receipt.render(status)
+
+
+def test_only_completed_empty_work_is_no_change(output_dir):
+    _write(output_dir, "guard-report.json", {"status": "clean"})
+    _write(output_dir, "blocks.json", {"selection": {"blocks_total": 20}, "run_id": "a" * 32})
+    _write(
+        output_dir,
+        "apply-report.json",
+        {"complete": True, "run_id": "a" * 32, "proposed_count": 0, "applied_count": 0, "rejected_count": 0},
+    )
+    status = receipt.build_status(output_dir)
+    assert status["outcome"] == "no_change"
+    assert "No rewrite needed" in receipt.render(status)
+    _write(
+        output_dir, "apply-report.json", {"complete": True, "run_id": "b" * 32, "proposed_count": 0, "applied_count": 0}
+    )
+    assert receipt.build_status(output_dir)["outcome"] == "failed"
+
+
+def test_partial_packets_keep_applied_count_and_show_incompleteness(output_dir):
+    _write(output_dir, "blocks.json", {"selection": {"blocks_total": 40}})
+    _write(
+        output_dir,
+        "apply-report.json",
+        {
+            "complete": False,
+            "proposed_count": 2,
+            "applied_count": 2,
+            "files_touched": ["threat-model.yaml"],
+            "batches_expected": 2,
+            "batches_completed": 1,
+            "blocks_reviewed": 20,
+        },
+    )
+    status = receipt.build_status(output_dir)
+    assert status["outcome"] == "partial"
+    assert status["edits_applied"] == 2
+    assert "Completed 1 of 2 packets" in receipt.render(status)
+
+
+def test_qa_restore_is_visible_even_after_invariant_guard_was_clean(output_dir):
+    _clean_pass(output_dir)
+    _write(output_dir, "guard-report.json", {"status": "restored", "restored": ["threat-model.yaml"]})
+    status = receipt.build_status(output_dir)
+    assert status["outcome"] == "reverted"
+    assert status["edits_applied"] == 0
+    assert "post-edit verification failed" in receipt.render(status)

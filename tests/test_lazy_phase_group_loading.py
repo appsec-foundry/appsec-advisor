@@ -109,6 +109,8 @@ def test_stage4_is_one_editorial_pass_with_no_repair_loop():
     assert ".architect-status.json" in stage4
     assert "runs **once**" in stage4
     assert "Never dispatch it twice." in stage4
+    assert "at most three concurrent calls" in stage4
+    assert "Do not retry a failed packet." in stage4
     assert "secret gate" not in stage4  # the tail is spelled out as commands now
     assert "qa_checks.py" in stage4 and "unmasked_secrets" in stage4
 

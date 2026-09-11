@@ -1789,6 +1789,40 @@ def _qa_status_supersedes(output_dir: Path, plan_path: Path) -> bool:
         return False
 
 
+def _extract_editorial_outcome(agent_log: list[tuple[int, str]]) -> list[dict]:
+    """Read the final receipt from the durable log, including legacy failures."""
+    for line_number, raw in reversed(agent_log):
+        event = _parse_event_line(raw)
+        if not event or event["event"] != "EDITORIAL_PASS":
+            continue
+        fields = dict(re.findall(r"\b([a-z_]+)=([^\s]+)", event["detail"]))
+        outcome = fields.get("outcome")
+        if outcome is None:
+            outcome = (
+                "failed"
+                if fields.get("apply_report_missing") == "true"
+                else "reverted"
+                if fields.get("reverted") == "true"
+                else "applied"
+            )
+        if outcome in {"applied", "no_change", "unchanged"}:
+            return []
+        return [
+            {
+                "category": "editorial_pass_incomplete",
+                "severity": "warning",
+                "title": f"Editorial pass ended with outcome {outcome}",
+                "evidence": {
+                    "log_file": ".agent-run.log",
+                    "log_line": line_number,
+                    "raw_event": _clip(raw, 500),
+                    "outcome": outcome,
+                },
+            }
+        ]
+    return []
+
+
 def _extract_gate_events(output_dir: Path) -> list[dict]:
     """Surface Stage-2/Stage-3 gate friction that left a *persistent artifact*.
 
@@ -2158,6 +2192,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))
     issues.extend(_extract_stride_ceiling_events(output_dir))
     issues.extend(_extract_gate_events(output_dir))
+    issues.extend(_extract_editorial_outcome(agent_log))
     issues.extend(_extract_stride_model_mismatch(output_dir, hook_log, agent_log))
     issues.extend(_extract_run_outcome(agent_log, output_dir))
 

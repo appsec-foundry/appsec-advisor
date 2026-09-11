@@ -319,3 +319,15 @@ def test_shipped_settings_is_covered_by_yaml():
         f"Bash entries in .claude/settings.json not covered by data/required-permissions.yaml: "
         f"{unexplained}. Either add them to the YAML or remove them from settings.json."
     )
+
+
+def test_editorial_packet_and_gate_targets_are_covered():
+    entries = cp.load_required(cp.DATA_FILE)
+    rules = [cp.expand_entry(e["entry"], Path("/repo"), Path("/repo/out"), plugin_dir=Path("/plugin")) for e in entries]
+    for operation in [
+        "Read(/repo/out/.dispatch-context/editorial/blocks-0001.json)",
+        "Write(/repo/out/.dispatch-context/editorial/plan-0001.json)",
+        "Write(/repo/out/.dispatch-context/editorial/gate-baseline.json)",
+        "Bash(python3 /plugin/scripts/editorial_gate.py check)",
+    ]:
+        assert any(cp._rule_covers(rule, operation) for rule in rules)

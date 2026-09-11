@@ -421,3 +421,10 @@ def test_resolvable_agent_carries_no_degraded_marker(tmp_path):
         rec = rf._recommend_max_turns_subagent(issue, tmp_path)
     assert "degraded" not in rec
     assert rec["auto_applicable"] is True
+
+
+def test_editorial_incompleteness_has_durable_manual_guidance(tmp_path):
+    rec = rf.RECOMMENDERS["editorial_pass_incomplete"]({"evidence": {"outcome": "partial"}}, tmp_path)
+    assert rec["auto_applicable"] is False
+    assert rec["actions"][0]["target"] == ".agent-run.log"
+    assert "packet counts" in rec["actions"][0]["details"]

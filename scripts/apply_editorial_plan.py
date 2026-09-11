@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """apply_editorial_plan.py — apply the Stage-4 editorial plan deterministically.
 
-The editorial pass emits one plan (``schemas/editorial-plan.schema.json``) and
-writes no report bytes itself. This script performs every write, which keeps
-the pass at a handful of tool calls and keeps `Edit` with the two repair roles
-OR-2 names.
+The editorial pass emits bounded, run-bound id packets validated against
+``schemas/editorial-plan.schema.json``. This script resolves their originals
+through the validated work projection and performs the report writes. Legacy
+explicit ``--plan`` inputs retain their exact-match address format.
 
 Two action shapes, both exact-match:
 
@@ -17,7 +17,8 @@ Two action shapes, both exact-match:
 
 Rejected actions never abort the run: a stale lock or an off-list address is
 skipped, reported, and the remaining actions still apply. Exit 0 when every
-action applied, 1 when any was rejected, 2 on a usage or I/O error. The caller
+action applied and all packets completed, 1 for rejected or incomplete work,
+2 on a usage or I/O error. The caller
 runs ``check_editorial_diff.py verify --restore`` afterwards; that guard, not
 this script, decides whether the result may ship.
 """
@@ -33,9 +34,12 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _atomic_io import atomic_write_text  # noqa: E402
+from _path_guard import run_path_arg  # noqa: E402
+from build_editorial_context import MAX_BATCH_BYTES, is_editorial_path, validate_work  # noqa: E402
 from check_editorial_diff import (  # noqa: E402
     YAML_NAME,
     fragment_editable_paths,
+    prose_violations,
     yaml_editable_paths,
 )
 
@@ -87,6 +91,8 @@ def _write_path(data: Any, path: tuple, value: str) -> None:
 
 def load_plan(plan_path: Path) -> dict:
     try:
+        if plan_path.stat().st_size > 256_000:
+            raise PlanError("editorial plan exceeds the file size limit")
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
     except OSError as exc:
         raise PlanError(f"cannot read {plan_path}: {exc}") from exc
@@ -97,14 +103,22 @@ def load_plan(plan_path: Path) -> dict:
         import jsonschema
 
         jsonschema.validate(plan, json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
-    except ImportError:  # pragma: no cover — jsonschema is a declared dependency
-        pass
+    except ImportError as exc:  # pragma: no cover — declared dependency
+        raise PlanError("jsonschema is required to validate editorial plans") from exc
     except Exception as exc:  # noqa: BLE001 — jsonschema raises its own error types
-        raise PlanError(f"plan fails {SCHEMA_PATH.name}: {exc}") from exc
+        raise PlanError(f"plan fails {SCHEMA_PATH.name}") from exc
 
     actions = plan.get("actions") or []
     if plan.get("status") == "no_change" and actions:
         raise PlanError("status is no_change but the plan carries actions")
+    if plan.get("status") == "edits" and not actions:
+        raise PlanError("edits requires an action")
+    if plan.get("schema_version") == 2:
+        if len({a["id"] for a in actions}) != len(actions):
+            raise PlanError("duplicate block id in packet")
+        if sum(len(a["replace"].encode("utf-8")) for a in actions) > MAX_BATCH_BYTES * 2:
+            raise PlanError("packet replacements exceed the byte budget")
+        return plan
     for i, action in enumerate(actions):
         is_markdown = str(action.get("file", "")).endswith(".md")
         if is_markdown and action.get("path"):
@@ -112,6 +126,58 @@ def load_plan(plan_path: Path) -> dict:
         if not is_markdown and not action.get("path"):
             raise PlanError(f"actions[{i}]: a structured target needs a field address")
     return plan
+
+
+def load_packets(output_dir: Path) -> tuple[dict, dict]:
+    """Resolve only this run's assigned packet names, preserving valid siblings."""
+    context = output_dir / ".dispatch-context/editorial"
+    work_path = context / "blocks.json"
+    if not is_editorial_path(work_path, output_dir):
+        raise PlanError("editorial work escapes output directory")
+    try:
+        if work_path.stat().st_size > 8_000_000:
+            raise ValueError("editorial work exceeds the file size limit")
+        work = json.loads(work_path.read_text(encoding="utf-8"))
+        validate_work(work)
+    except (OSError, ValueError) as exc:
+        raise PlanError("missing or invalid editorial work") from exc
+    except Exception as exc:
+        raise PlanError("editorial work fails schema validation") from exc
+    blocks = {b["id"]: b for b in work["blocks"]}
+    actions = []
+    completed = 0
+    reviewed = 0
+    errors = []
+    for batch in work["batches"]:
+        path = context / f"plan-{batch['id']}.json"
+        try:
+            if not is_editorial_path(path, output_dir):
+                raise PlanError("packet escapes output directory")
+            plan = load_plan(path)
+            if plan.get("schema_version") != 2 or plan["run_id"] != work["run_id"] or plan["batch_id"] != batch["id"]:
+                raise PlanError("packet belongs to a different run or batch")
+            if any(a["id"] not in batch["block_ids"] for a in plan["actions"]):
+                raise PlanError("packet references an unassigned block")
+        except PlanError:
+            errors.append(batch["id"])
+            continue
+        completed += 1
+        reviewed += len(batch["block_ids"])
+        for action in plan["actions"]:
+            block = blocks[action["id"]]
+            actions.append(
+                {"file": block["file"], "path": block["path"], "find": block["text"], "replace": action["replace"]}
+            )
+    return {"actions": actions}, {
+        "run_id": work["run_id"],
+        "batches_expected": len(work["batches"]),
+        "batches_completed": completed,
+        "blocks_reviewed": reviewed,
+        "blocks_skipped": work["selection"]["blocks_skipped"],
+        "invalid_batches": errors,
+        "proposed_count": len(actions),
+        "complete": completed == len(work["batches"]) and not work["selection"]["blocks_skipped"],
+    }
 
 
 def _allowed_paths(name: str, document: Any) -> set[tuple]:
@@ -168,6 +234,8 @@ def _apply_markdown(name: str, path_obj: Path, actions: list[dict]) -> tuple[int
         if occurrences != 1:
             rejected.append({"file": name, "path": None, "reason": f"`find` matches {occurrences} times, expected 1"})
             continue
+        if action["find"] == action["replace"]:
+            continue
         text = text.replace(action["find"], action["replace"], 1)
         applied += 1
     if text != original:
@@ -185,13 +253,29 @@ def apply_plan(plan: dict, output_dir: Path, dry_run: bool = False) -> dict:
     touched: list[str] = []
     for name, actions in sorted(by_file.items()):
         target = output_dir / name
+        if name not in {
+            YAML_NAME,
+            ".fragments/security-architecture.md",
+            ".fragments/ms-verdict.json",
+            ".fragments/ms-anti-patterns.json",
+        } or not is_editorial_path(target, output_dir):
+            rejected.extend(
+                {"file": name, "path": a.get("path"), "reason": "target is outside the allow-list"} for a in actions
+            )
+            continue
         if not target.is_file():
             rejected.extend({"file": name, "path": a.get("path"), "reason": "target file is absent"} for a in actions)
             continue
+        valid = []
+        for action in actions:
+            if prose_violations(action["find"], action["replace"]):
+                rejected.append({"file": name, "path": action.get("path"), "reason": "prose invariant changed"})
+            else:
+                valid.append(action)
         if dry_run:
             continue
         handler = _apply_markdown if name.endswith(".md") else _apply_structured
-        count, file_rejected, changed = handler(name, target, actions)
+        count, file_rejected, changed = handler(name, target, valid)
         applied += count
         rejected.extend(file_rejected)
         if changed:
@@ -207,7 +291,7 @@ def apply_plan(plan: dict, output_dir: Path, dry_run: bool = False) -> dict:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="apply_editorial_plan.py", description=__doc__)
-    parser.add_argument("output_dir")
+    parser.add_argument("output_dir", type=run_path_arg)
     parser.add_argument("--plan", help=f"plan path (default: <output_dir>/{PLAN_NAME})")
     parser.add_argument("--dry-run", action="store_true", help="validate the plan and its targets, write nothing")
     args = parser.parse_args(argv)
@@ -219,8 +303,18 @@ def main(argv: list[str]) -> int:
     plan_path = Path(args.plan) if args.plan else output_dir / PLAN_NAME
 
     try:
-        plan = load_plan(plan_path)
+        work_path = output_dir / ".dispatch-context/editorial/blocks.json"
+        # A new projection owns packet discovery. Never fall back to a stale
+        # legacy plan when its packets are missing or malformed.
+        if not args.plan and work_path.exists():
+            plan, packet_report = load_packets(output_dir)
+        else:
+            plan = load_plan(plan_path)
+            if plan.get("schema_version") != 1:
+                raise PlanError("id plans require their run's work manifest")
+            packet_report = {"complete": True, "proposed_count": len(plan["actions"])}
         report = apply_plan(plan, output_dir, dry_run=args.dry_run)
+        report.update(packet_report)
     except PlanError as exc:
         print(f"apply_editorial_plan.py: {exc}", file=sys.stderr)
         return 1
@@ -233,7 +327,7 @@ def main(argv: list[str]) -> int:
     for entry in report["rejected"]:
         where = f"{entry['file']}:{entry['path']}" if entry["path"] else entry["file"]
         print(f"[editorial] rejected {where} — {entry['reason']}", file=sys.stderr)
-    return 1 if report["rejected"] else 0
+    return 1 if report["rejected"] or not report["complete"] else 0
 
 
 if __name__ == "__main__":

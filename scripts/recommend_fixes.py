@@ -619,6 +619,26 @@ def _recommend_qa_status_not_pass(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_editorial_pass_incomplete(issue: dict, output_dir: Path) -> dict:
+    """An optional editorial pass failed, lost packets, or restored its edits."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": "Editorial work was incomplete or discarded; the report was not fully polished.",
+        "rationale": "Stage completion does not prove the reviewer delivered a valid plan for every packet.",
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".agent-run.log",
+                "details": "Inspect the final EDITORIAL_PASS outcome and packet counts; correlate failed dispatches before another run. Do not raise token limits or alter the released report manually.",
+            }
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_architect_status_not_pass(issue: dict, output_dir: Path) -> dict:
     """`.architect-status.json` shows a non-pass status at completion."""
     ev = issue.get("evidence", {})
@@ -854,6 +874,7 @@ def _recommend_business_context_unmapped(issue: dict, output_dir: Path) -> dict:
 
 
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
+    "editorial_pass_incomplete": _recommend_editorial_pass_incomplete,
     "business_context_unmapped": _recommend_business_context_unmapped,
     "component_evidence_coverage": _recommend_component_evidence_coverage,
     "routing_effectiveness": _recommend_routing_effectiveness,

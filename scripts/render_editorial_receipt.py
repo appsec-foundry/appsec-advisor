@@ -47,7 +47,8 @@ LOG_NAME = ".agent-run.log"
 
 def _load(path: Path) -> Any:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else None
     except (OSError, ValueError):
         return None
 
@@ -80,12 +81,18 @@ def build_status(output_dir: Path) -> dict:
     context = output_dir / CONTEXT_DIR
     projection = _load(context / "blocks.json") or {}
     plan = _load(context / "plan.json") or {}
+    if not isinstance(plan.get("actions", []), list):
+        plan = {}
     apply_raw = _load(context / "apply-report.json")
     apply_report = apply_raw if isinstance(apply_raw, dict) else {}
+    if "run_id" in projection:
+        plan = {}  # A legacy plan cannot describe this packet run.
+        if apply_report.get("run_id") != projection["run_id"]:
+            apply_report = {}
     guard_report = _load(context / "guard-report.json") or {}
     advisories = _advisory_findings(_load(output_dir / PRE_PASS_NAME))
 
-    reverted = bool(guard_report.get("restored")) or guard_report.get("status") == "violations"
+    reverted = bool(guard_report.get("restored")) or guard_report.get("status") in {"violations", "restored"}
     applied = 0 if reverted else int(apply_report.get("applied_count") or 0)
 
     # The applier exits non-zero when it refuses the plan outright — a schema
@@ -95,13 +102,35 @@ def build_status(output_dir: Path) -> dict:
     # proposed nothing: `applied_count` and `rejected_count` both read 0. The
     # flag is what lets the receipt say which of the two happened.
     apply_report_missing = not apply_report
+    proposed = int(apply_report.get("proposed_count", len(plan.get("actions") or [])))
+    complete = apply_report.get("complete") is True and guard_report.get("status") in {
+        "clean",
+        "violations",
+        "restored",
+    }
+    if "run_id" in projection:
+        complete = complete and apply_report.get("run_id") == projection["run_id"]
+    if reverted:
+        outcome = "reverted"
+    elif apply_report_missing:
+        outcome = "failed"
+    elif not complete:
+        outcome = "partial" if applied else "incomplete"
+    elif apply_report.get("rejected_count"):
+        outcome = "partial"
+    elif applied:
+        outcome = "applied"
+    elif proposed:
+        outcome = "unchanged"
+    else:
+        outcome = "no_change"
 
     return {
         "status": "pass",
         "source": "editorial-pass",
         "generated": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "blocks_offered": int((projection.get("selection") or {}).get("blocks_total") or 0),
-        "edits_proposed": len(plan.get("actions") or []),
+        "edits_proposed": proposed,
         "edits_applied": applied,
         "edits_rejected": int(apply_report.get("rejected_count") or 0),
         "apply_report_missing": apply_report_missing,
@@ -109,15 +138,24 @@ def build_status(output_dir: Path) -> dict:
         "reverted": reverted,
         "files_touched": [] if reverted else list(apply_report.get("files_touched") or []),
         "advisory_findings": advisories,
+        "outcome": outcome,
+        "complete": complete,
+        "batches_expected": int(apply_report.get("batches_expected") or len(projection.get("batches") or [])),
+        "batches_completed": int(apply_report.get("batches_completed") or 0),
+        "blocks_reviewed": int(apply_report.get("blocks_reviewed") or 0),
+        "blocks_skipped": int((projection.get("selection") or {}).get("blocks_skipped") or 0),
     }
 
 
 def render(status: dict) -> str:
     lines = ["", "Stage 4 — editorial pass"]
     if status["reverted"]:
-        lines.append(
-            f"  Reverted: {status['guard_violations']} invariant violation(s); the report keeps its original wording"
+        reason = (
+            f"{status['guard_violations']} invariant violation(s)"
+            if status["guard_violations"]
+            else "post-edit verification failed"
         )
+        lines.append(f"  Reverted: {reason}; the report keeps its original wording")
     elif status["edits_applied"]:
         files = ", ".join(status["files_touched"]) or "—"
         lines.append(f"  Rewrote {status['edits_applied']} of {status['blocks_offered']} blocks in {files}")
@@ -131,8 +169,16 @@ def render(status: dict) -> str:
         )
         if status["apply_report_missing"]:
             lines.append("  The applier refused the plan and wrote no report — see plan.json for the rejected actions")
-    else:
+    elif status["outcome"] == "no_change":
         lines.append(f"  No rewrite needed across {status['blocks_offered']} blocks")
+    else:
+        lines.append("  Editorial pass incomplete: no validated result — the report keeps its original wording")
+    if not status["complete"] and status["batches_expected"]:
+        lines.append(
+            f"  Completed {status['batches_completed']} of {status['batches_expected']} packets; reviewed {status['blocks_reviewed']} blocks"
+        )
+    if status["blocks_skipped"]:
+        lines.append(f"  Unreviewed: {status['blocks_skipped']} block(s) exceed the packet byte budget")
     if status["edits_rejected"]:
         lines.append(f"  Rejected: {status['edits_rejected']} action(s) — stale or off-list, reported by the applier")
 
@@ -157,6 +203,9 @@ def log_detail(status: dict) -> str:
         f"guard_violations={status['guard_violations']} "
         f"reverted={str(status['reverted']).lower()} "
         f"advisory_warnings={len(status['advisory_findings'])}"
+        f" outcome={status['outcome']} complete={str(status['complete']).lower()}"
+        f" batches_expected={status['batches_expected']} batches_completed={status['batches_completed']}"
+        f" reviewed={status['blocks_reviewed']} skipped={status['blocks_skipped']}"
     )
 
 

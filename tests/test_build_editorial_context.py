@@ -265,3 +265,74 @@ def test_the_selection_summary_reports_the_size(output_dir: Path) -> None:
     assert selection["blocks_total"] == len(projection["blocks"])
     assert selection["chars_total"] == sum(len(b["text"]) for b in projection["blocks"])
     assert selection["severity_floor"] == "high"
+
+
+def test_packets_cover_each_block_once_with_byte_and_count_limits(output_dir):
+    projection = _build(output_dir)
+    assigned = []
+    for batch in projection["batches"]:
+        packet = json.loads((output_dir / builder.CONTEXT_DIR / f"blocks-{batch['id']}.json").read_text())
+        builder.validate_work(packet)
+        assert packet["run_id"] == projection["run_id"]
+        assert len(packet["blocks"]) <= builder.MAX_BATCH_BLOCKS
+        assert sum(len(b["text"].encode()) for b in packet["blocks"]) <= builder.MAX_BATCH_BYTES
+        assigned.extend(b["id"] for b in packet["blocks"])
+    assert sorted(assigned) == sorted(b["id"] for b in projection["blocks"])
+    assert len(assigned) == len(set(assigned))
+
+
+def test_partition_uses_bytes_and_reports_oversized_blocks(output_dir):
+    projection = builder.build(output_dir, 3, 20)
+    projection["blocks"][0]["text"] = "ä" * 4001
+    work = builder.partition(projection)
+    assert work["selection"]["blocks_skipped"] == 1
+    assert projection["blocks"][0]["id"] not in {b["id"] for b in work["blocks"]}
+
+
+def test_new_projection_invalidates_old_run_ids(output_dir):
+    first = _build(output_dir)
+    second = _build(output_dir)
+    assert first["run_id"] != second["run_id"]
+    assert first["batches"] == second["batches"]
+
+
+def test_packet_balance_follows_bytes_instead_of_source(output_dir):
+    projection = builder.build(output_dir, 3, 20)
+    original = projection["blocks"][0]
+    projection["blocks"] = [{**original, "id": f"b{i:03d}", "text": "a" * (1000 if i < 12 else 100)} for i in range(24)]
+    work = builder.partition(projection)
+    sizes = {b["id"]: len(b["text"]) for b in work["blocks"]}
+    loads = [sum(sizes[bid] for bid in batch["block_ids"]) for batch in work["batches"]]
+    assert max(loads) - min(loads) <= 1000
+
+
+def test_projection_rejects_artifact_aliases(output_dir):
+    target = output_dir / ".fragments/security-architecture.md"
+    unrelated = output_dir / "unrelated.md"
+    unrelated.write_text(PROSE_A)
+    target.unlink()
+    target.symlink_to(unrelated)
+    assert builder.main([str(output_dir)]) == 2
+
+
+def test_output_root_symlink_remains_supported(output_dir, tmp_path):
+    alias = tmp_path / "alias"
+    alias.symlink_to(output_dir, target_is_directory=True)
+    assert builder.main([str(alias)]) == 0
+
+
+@pytest.mark.parametrize("defect", ["count", "null_address", "duplicate_assignment", "unknown_field"])
+def test_malformed_work_is_rejected_before_dispatch(output_dir, defect):
+    import jsonschema
+
+    work = builder.partition(builder.build(output_dir, 3, 20))
+    if defect == "count":
+        work["selection"]["blocks_total"] += 1
+    elif defect == "null_address":
+        next(b for b in work["blocks"] if b["file"] == "threat-model.yaml")["path"] = None
+    elif defect == "duplicate_assignment":
+        work["batches"][0]["block_ids"].append(work["batches"][0]["block_ids"][0])
+    else:
+        work["command"] = "untrusted data"
+    with pytest.raises((ValueError, jsonschema.ValidationError)):
+        builder.validate_work(work)

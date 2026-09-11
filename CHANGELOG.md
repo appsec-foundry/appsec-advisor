@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The editorial pass processes bounded packets concurrently, retains valid partial results, reports incomplete work, and preserves previously accepted QA observations.
+
 - A depth increase over an unchanged repository reuses the previous run's reconnaissance again: the run end records the recon fingerprint, and the controller reads the eligibility flag under the name the resolver writes.
 - Starting a run over an existing threat model without a mode flag now says that the existing model selected an unsupported incremental rescan and that `--full` reassesses it.
 - The report no longer sets ordinary words and punctuation such as `to` or `/` in code format throughout the document because one finding used them as code.
