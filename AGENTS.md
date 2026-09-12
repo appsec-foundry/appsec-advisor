@@ -47,6 +47,7 @@ reviewed implementation work.
   renderer, or deterministic enforcer that creates them.
 - Do not hide a defect by patching a rendered report, weakening schemas or QA,
   or changing fixture expectations. Do not ship LLM-authored placeholders.
+- Do not respond to a failure by blindly raising budgets, timeouts, retry counts, or size limits. Diagnose the root cause from logs and measured usage first. Fix unnecessary work or faulty behavior at its source. Increase a limit only when evidence shows that legitimate work requires it. Document that evidence and verify the previously failing case.
 - A renderer or QA autofix normalizes only what its contract assigns to it.
 - Change report structure atomically across the section registry, templates,
   schemas, producers, composer, QA, and tests.
