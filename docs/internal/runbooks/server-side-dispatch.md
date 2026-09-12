@@ -1,19 +1,15 @@
 # Server-Side Threat-Model Dispatch
 
-Run a headless threat model entirely on a GitHub Actions runner — no local
-checkout, no laptop. One manual dispatch runs one preset against one target
-repo. Presets live in `.github/threat-model-presets.json` (single source of
-truth); the workflow is `.github/workflows/threat-model-dispatch.yml`.
+Run a headless threat model entirely on a GitHub Actions runner without a local checkout. One manual dispatch selects a target and depth, which together identify one preset. Presets live in `.github/threat-model-presets.json`, and the workflow lives in `.github/workflows/threat-model-dispatch.yml`.
 
-This is plugin-development / ops infrastructure — the targets are the project's
-own deliberately-insecure test repos, not user-facing scans.
+This is plugin-development and operations infrastructure. Its targets are the project's deliberately insecure test repositories rather than user-facing scans.
 
 ## What one dispatch does
 
 ```text
-dispatch (use_case=python-standard)
+dispatch (target=python, depth=standard)
   │
-  ├─ checkout plugin  (this repo @ plugin_ref | dispatch branch)  → .
+  ├─ checkout plugin  (this repo @ dispatch branch)               → .
   ├─ resolve preset   (threat-model-presets.json)                 → target_repo, depth, mode, out
   ├─ checkout target  (matthiasrohr/insecure-python-app)          → ./target
   ├─ sanitize         (rm Claude memory / .claude / IDE task config) → ./target  (untrusted-safe)
@@ -45,20 +41,18 @@ not the workflow.
 
 ```bash
 # The workflow + presets must live on the ref you dispatch (default branch for the UI).
-gh workflow run threat-model-dispatch.yml --ref main -f use_case=python-standard
-gh workflow run threat-model-dispatch.yml --ref main -f use_case=spring-standard
-gh workflow run threat-model-dispatch.yml --ref main -f use_case=ai-standard
-gh workflow run threat-model-dispatch.yml --ref main -f use_case=juice-shop-standard
+gh workflow run threat-model-dispatch.yml --ref main -f target=python -f depth=standard
+gh workflow run threat-model-dispatch.yml --ref main -f target=spring -f depth=standard
+gh workflow run threat-model-dispatch.yml --ref main -f target=ai -f depth=standard
+gh workflow run threat-model-dispatch.yml --ref main -f target=juice-shop -f depth=standard
 ```
 
-Optional inputs (blank = preset default):
+To test a repair branch before merging, dispatch that branch with the same target and depth as the original run:
 
 ```bash
-gh workflow run threat-model-dispatch.yml --ref main \
-  -f use_case=python-thorough \
-  -f plugin_ref=dev \            # which appsec-advisor commit/branch to run
-  -f override_mode=full \        # full | incremental | dry-run
-  -f override_depth=thorough     # quick | standard | thorough
+gh workflow run threat-model-dispatch.yml --ref repair/run-123456789 \
+  -f target=python \
+  -f depth=thorough
 ```
 
 Or via the UI: **Actions → "Threat Model (Preset)" → Run workflow**.
@@ -67,7 +61,7 @@ Or via the UI: **Actions → "Threat Model (Preset)" → Run workflow**.
 
 ```bash
 gh run list --workflow threat-model-dispatch.yml
-gh run download <run-id>        # → threat-model-<use_case>/ (md, yaml, sarif, run log, effective-permissions.json)
+gh run download <run-id>        # → threat-model-<target>-<depth>/ (md, yaml, sarif, run log, effective-permissions.json)
 ```
 
 The artifact includes the dot-prefixed run state (`.run-issues.json`,
@@ -111,9 +105,7 @@ enforceable:
   legitimate outcome). A refused change is not discarded: the staged diff is
   published as the `repair-refused-<run-id>` artifact and the job fails loudly.
 
-The gate confirms that evidence exists — it cannot confirm the diagnosis is
-right. The PR is opened with `GITHUB_TOKEN`, so no checks run on the branch;
-re-dispatch against `plugin_ref: repair/run-<run-id>` before merging.
+The gate confirms that evidence exists, but it cannot confirm the diagnosis. The PR is opened with `GITHUB_TOKEN`, so no checks run on the branch. Before merging, re-dispatch the workflow from `repair/run-<run-id>` with the original target and depth.
 
 ## Operating notes
 
@@ -128,6 +120,4 @@ re-dispatch against `plugin_ref: repair/run-<run-id>` before merging.
   step strips repo-owned `.claude` / IDE task config (the injection vectors
   `scripts/preflight_untrusted.py` refuses on); escaping symlinks are surfaced
   as warnings, not auto-removed, and the untrusted preflight aborts on them.
-- **Concurrency.** Runs are serialized per `use_case`
-  (`group: threat-model-<use_case>`, no cancel-in-progress) because they share
-  an output dir.
+- **Concurrency.** Runs are serialized per target and depth (`group: threat-model-<target>-<depth>`, without cancellation) because matching runs share an output directory.

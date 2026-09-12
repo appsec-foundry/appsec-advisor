@@ -209,7 +209,8 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 | Add repository context or trust-boundary declarations | [Repo-local context](docs/threat-modeler.md#repo-local-context) |
 | Configure models, cost, logging, or organization settings | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |
-| Run without interaction or integrate with CI | [Non-interactive Mode](docs/headless-mode.md) |
+| Run an existing plugin checkout without interaction | [Non-interactive Mode](docs/headless-mode.md) |
+| Provision the plugin and target for terminal, cron, GitHub Actions, or GitLab CI | [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools) |
 | Package the plugin for an organization | [Internal Plugin Packaging](docs/internal-plugin-packaging.md) |
 | Browse complete report examples | [Threat Modeler Examples](examples/threat-modeler/README.md) |
 | Develop or contribute | [Contributing](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) |
@@ -225,6 +226,7 @@ The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `template
 
 ### Companion repositories
 
+- [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools) provides a launcher and CI templates for unattended assessments. It provisions the plugin and target, then delegates the assessment to this plugin's headless runner.
 - [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) builds organization-specific plugin packages from pinned upstream releases.
 - [aiscb](https://github.com/appsec-foundry/aiscb) contains the secure-coding rules bundled by the plugin.
 
