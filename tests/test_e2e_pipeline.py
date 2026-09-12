@@ -174,6 +174,56 @@ def rendered_run(e2e_run: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("registration,public_source", [(True, False), (False, True), (True, True), (False, False)])
+@pytest.mark.parametrize("fallback", [False, True])
+def test_report_and_figure_explain_actual_actor_groupings(e2e_run, monkeypatch, registration, public_source, fallback):
+    import xml.etree.ElementTree as ET
+
+    import figure1_dfd
+
+    model_path = e2e_run / "threat-model.yaml"
+    model = yaml.safe_load(model_path.read_text())
+    model["meta"].update(open_user_registration=registration, public_source_repo=public_source)
+    actors = ["internet-anon", "internet-user", "repo-read", "internet-priv-user"]
+    for threat, actor in zip(model["threats"], actors):
+        threat["vektor"] = actor
+    model_path.write_text(yaml.safe_dump(model))
+    paths = {
+        "schema_version": 1,
+        "actors": actors,
+        "attack_paths": [
+            {
+                "class": cl,
+                "actor": actor,
+                "target": "application",
+                "description": "An attacker exploits a missing control in the service.",
+                "impact": ["customer-data-exfiltration"],
+                "findings": [threat["t_id"]],
+            }
+            for cl, actor, threat in zip(
+                ["injection", "auth-bypass", "sensitive-data-exposure", "privilege-escalation"],
+                actors,
+                model["threats"],
+            )
+        ],
+    }
+    (e2e_run / ".fragments/security-posture-attack-paths.json").write_text(json.dumps(paths))
+    if fallback:
+        monkeypatch.setattr(figure1_dfd, "check_diagram", lambda *a, **kw: ("", ["test forces SVG fallback"]))
+    markdown, warnings = compose.render(CONTRACT, e2e_run)
+    svg = (e2e_run / "figure1.svg").read_text()
+    svg_text = " ".join(" ".join(ET.fromstring(svg).itertext()).split())
+    assert ("Notation (DFD)" in svg_text) != fallback
+    assert not warnings or fallback
+    for text in (markdown, svg_text):
+        assert ("because registration is open" in text) == registration
+        assert ("because the source repository is public" in text) == public_source
+        assert ("Each finding retains its login and privilege requirements." in text) == (registration or public_source)
+    assert "it is shown distinctly" not in markdown
+    assert "| Privileged User |" in markdown
+    assert yaml.safe_load(model_path.read_text()) == model
+
+
 def test_compose_renders_canonical_document(rendered_run: Path) -> None:
     md = (rendered_run / "threat-model.md").read_text(encoding="utf-8")
 

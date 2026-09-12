@@ -25,7 +25,7 @@ schema_version: 1
 actors:
   internet-anon:
     label: "Anonymous Internet Attacker"
-    default_subtitle: "no account; registers in seconds when needed"
+    default_subtitle: "no account or prior foothold"
     role: attacker
     diagram_position: bottom    # below the victim, so XSS/CSRF arrows
                                 # at the top stay short

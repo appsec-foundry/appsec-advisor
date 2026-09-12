@@ -106,6 +106,49 @@ def overview_actor_slug(slug: str, meta: dict) -> str:
     return slug
 
 
+def overview_actor_notes(
+    yaml_data: dict, attack_paths_data: dict | None = None, attack_taxonomy: dict | None = None
+) -> list[str]:
+    """Explain only folds represented in the model or the selected attack paths.
+
+    Finding vectors retain the original prerequisites after path actors have
+    been projected. Consult only referenced findings when rendering a figure,
+    so an unrelated finding cannot introduce a grouping explanation there.
+    """
+    meta = yaml_data.get("meta") or {}
+    threats = [t for t in yaml_data.get("threats") or [] if isinstance(t, dict)]
+    sources = set()
+    if attack_paths_data is not None:
+        paths = [p for p in attack_paths_data.get("attack_paths") or [] if isinstance(p, dict)]
+        classes = {c.get("id"): c for c in (attack_taxonomy or {}).get("classes") or []}
+        refs = set()
+        for path in paths:
+            actor = path.get("actor") or (classes.get(path.get("class")) or {}).get("default_actor") or "internet-anon"
+            sources.add(actor)
+            if overview_actor_slug(actor, meta) == "internet-anon":
+                refs.update(
+                    str(fid).upper().removeprefix("F-").removeprefix("T-") for fid in path.get("findings") or []
+                )
+        threats = [
+            t
+            for t in threats
+            if str(t.get("id") or t.get("t_id") or "").upper().removeprefix("F-").removeprefix("T-") in refs
+        ]
+    sources.update(t.get("vektor") for t in threats)
+    notes = []
+    if "internet-user" in sources and overview_actor_slug("internet-user", meta) == "internet-anon":
+        notes.append(
+            "Regular self-registered users are grouped with anonymous internet attackers because registration is open."
+        )
+    if "repo-read" in sources and overview_actor_slug("repo-read", meta) == "internet-anon":
+        notes.append(
+            "Repository readers are grouped with anonymous internet attackers because the source repository is public."
+        )
+    if notes:
+        notes.append("Each finding retains its login and privilege requirements.")
+    return notes
+
+
 def detect(yaml_data: dict, routes: list | None = None) -> tuple[bool, str]:
     """Returns (open_registration, reason). The reason is a short
     human-readable string for the audit log.

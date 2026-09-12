@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -19,6 +20,50 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import detect_open_registration as D  # noqa: E402
 
 detect = D.detect
+
+
+@pytest.mark.parametrize("registration", [False, True])
+@pytest.mark.parametrize("public_source", [False, True])
+def test_overview_notes_explain_only_enabled_folds(registration, public_source):
+    model = {
+        "meta": {"open_user_registration": registration, "public_source_repo": public_source},
+        "threats": [{"vektor": a} for a in ("internet-user", "repo-read", "internet-priv-user", "build-time")],
+    }
+    text = " ".join(D.overview_actor_notes(model))
+    assert ("because registration is open" in text) == registration
+    assert ("because the source repository is public" in text) == public_source
+    assert ("login and privilege requirements" in text) == (registration or public_source)
+
+
+def test_overview_notes_require_a_represented_actor_and_confirmed_metadata():
+    model = {"meta": {"open_user_registration": True, "public_source_repo": True}}
+    assert D.overview_actor_notes(model) == []
+    model["threats"] = [{"vektor": "internet-priv-user"}, {"vektor": "build-time"}]
+    assert D.overview_actor_notes(model) == []
+    model["threats"] = [{"vektor": "internet-user"}, {"vektor": "repo-read"}]
+    model["meta"] = {"open_user_registration": "false", "public_source_repo": "false"}
+    assert D.overview_actor_notes(model) == []
+
+
+def test_overview_notes_recover_projected_actors_only_from_referenced_findings():
+    model = {
+        "meta": {"open_user_registration": True, "public_source_repo": True},
+        "threats": [{"id": "T-001", "vektor": "internet-user"}, {"id": "T-002", "vektor": "repo-read"}],
+    }
+    paths = {"attack_paths": [{"actor": "internet-anon", "findings": ["F-001"]}]}
+    text = " ".join(D.overview_actor_notes(model, paths))
+    assert "registration is open" in text
+    assert "repository is public" not in text
+    assert D.overview_actor_notes(model, {"attack_paths": []}) == []
+    paths["attack_paths"][0]["actor"] = "internet-priv-user"
+    assert D.overview_actor_notes(model, paths) == []
+
+
+def test_overview_notes_use_the_same_default_actor_as_the_diagram():
+    model = {"meta": {"public_source_repo": True}}
+    paths = {"attack_paths": [{"class": "source-secret"}]}
+    taxonomy = {"classes": [{"id": "source-secret", "default_actor": "repo-read"}]}
+    assert "repository is public" in " ".join(D.overview_actor_notes(model, paths, taxonomy))
 
 
 def _route(path, method="POST", authn="unknown", authz="unknown", mgmt=False):

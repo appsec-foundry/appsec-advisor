@@ -351,6 +351,25 @@ def test_open_registration_merges_regular_attackers_but_preserves_privileged_acc
     assert F.check_diagram(model, paths, taxonomy)[1] == []
 
 
+@pytest.mark.parametrize("registration,public_source", [(True, False), (False, True), (True, True), (False, False)])
+def test_actor_grouping_is_explained_in_standalone_dfd(registration, public_source):
+    model, paths, taxonomy = _model()
+    model["meta"].update(open_user_registration=registration, public_source_repo=public_source)
+    for actor in ("repo-read", "internet-priv-user", "build-time"):
+        paths["attack_paths"].append(dict(paths["attack_paths"][0], actor=actor))
+    original = copy.deepcopy((model, paths, taxonomy))
+    svg, problems = F.check_diagram(model, paths, taxonomy)
+    assert problems == []
+    assert svg == F.build_figure1_dfd_svg(model, paths, taxonomy)
+    text = " ".join(ET.fromstring(svg).itertext())
+    assert ("because registration is open" in text) == registration
+    assert ("because the source repository is public" in text) == public_source
+    assert ("Actor grouping" in text) == (registration or public_source)
+    actors = F.scenarios_from_attack_paths(model, paths, taxonomy)[1]
+    assert {"internet-priv-user", "build-time"} <= {a["slug"] for a in actors}
+    assert (model, paths, taxonomy) == original
+
+
 def test_roles_and_identity_provider_use_distinct_left_side_nodes():
     model, paths, taxonomy = _model()
     model["external_entities"] = [

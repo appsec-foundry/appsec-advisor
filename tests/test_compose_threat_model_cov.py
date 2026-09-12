@@ -2159,6 +2159,25 @@ class TestRenderIdentifiedActors:
         anon_row = next(ln for ln in out.splitlines() if "Anonymous Internet Attacker" in ln)
         assert "| 1 |" in anon_row
 
+    def test_grouped_inventory_explains_both_reasons_and_preserves_privileged_findings(self, tmp_path):
+        import copy
+
+        data = {
+            "meta": {"open_user_registration": True, "public_source_repo": True},
+            "threats": [
+                {"id": f"T-{i:03}", "vektor": actor, "component": "service"}
+                for i, actor in enumerate(("internet-anon", "internet-user", "repo-read", "internet-priv-user"), 1)
+            ],
+        }
+        original = copy.deepcopy(data)
+        out = compose._render_identified_actors(_mk_ctx(tmp_path, yaml_data=data), None, {})
+        assert "because registration is open" in out
+        assert "because the source repository is public" in out
+        assert "Each finding retains its login and privilege requirements." in out
+        assert "| Internet Attacker | attacker | can self-register a regular account | 3 |" in out
+        assert "| Privileged User | attacker | elevated rights inside the application | 1 |" in out
+        assert data == original
+
 
 class TestPostureShortLabel:
     def test_abbreviates(self):

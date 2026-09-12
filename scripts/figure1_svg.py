@@ -21,6 +21,7 @@ import math
 import re
 
 from _boundary_criticality import exposure_of, label_of, tier_of
+from detect_open_registration import overview_actor_notes, overview_actor_slug
 from prepare_trust_boundary_context import boundary_endpoints_valid
 
 # ---- palette ---------------------------------------------------------------
@@ -780,6 +781,8 @@ def build_figure1_svg(
 
     def actor_name(slug: str) -> str:
         slug = (slug or "internet-anon").strip()
+        if slug == "internet-anon" and meta.get("open_user_registration") is True:
+            return "Internet Attacker"
         if actor_labels and slug in actor_labels:
             return (actor_labels[slug] or {}).get("label") or _FALLBACK_ACTOR.get(slug) or slug
         return _FALLBACK_ACTOR.get(slug, slug)
@@ -833,6 +836,7 @@ def build_figure1_svg(
         actor = raw_actor
         if actor in ("victim-required", ""):
             actor = "internet-anon"
+        actor = overview_actor_slug(actor, meta)
         if actor not in actor_order:
             actor_order.append(actor)
         tgt = (
@@ -988,7 +992,7 @@ def build_figure1_svg(
 
     def _actor_sub(slug):
         if slug == "internet-anon" and open_reg:
-            return "incl. self-registered users (registration ≈ anonymous)"
+            return "can self-register a regular account"
         return (actor_labels.get(slug) or {}).get("default_subtitle") if actor_labels else ""
 
     def draw_actor_card(kind, slug, label, bx, by, w, h):
@@ -1628,6 +1632,15 @@ def build_figure1_svg(
     ly = panel("Attack Scenarios — by actor", ly, scen_rows, len(actor_order) + len(scenarios))
     ly = panel("Severity", ly, sev_rows, 2)
     ly = panel("Diagram Legend", ly, diag_rows, diag_n_rows)
+    actor_notes = overview_actor_notes({**yaml_data, "meta": meta}, attack_paths_data, attack_taxonomy)
+    if actor_notes:
+        note_lines = [line for note in actor_notes for line in _wrap(note, _LEGW - 24, 10)]
+
+        def actor_note_rows(y0):
+            for i, line in enumerate(note_lines):
+                c.text(lx + 12, y0 + i * 15, line, size=10, fill=_INK, anchor="start")
+
+        ly = panel("Actor grouping", ly, actor_note_rows, len(note_lines), rh=15)
     # Honest legend: the panel exists only when the figure actually placed a
     # boundary, so a model with none renders exactly as before.
     if legend_boundaries:

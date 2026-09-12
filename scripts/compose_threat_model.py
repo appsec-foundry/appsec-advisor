@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import functools
 import html
 import importlib.util
@@ -102,6 +103,7 @@ from _manifest_readers import (
 # `_MULTI_MATCH_WARNED` is re-exported so existing call sites/tests keep
 # mutating the shared warned-CWE set.
 from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
+from detect_open_registration import overview_actor_notes, overview_actor_slug
 from pregenerate_fragments import _TIER_HINTS as _pregen_tier_hints
 from pregenerate_fragments import _classify_tier as _pregen_classify_tier
 from pregenerate_fragments import gen_architecture_diagrams
@@ -5893,8 +5895,8 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     Mermaid builder below is the last resort: Mermaid/ELK lays each tier out as
     one horizontal row and grew unboundedly wide on busy models.
 
-    ``attack_paths_data`` is already actor-collapsed by the caller (public-repo /
-    open-registration), so the SVG attribution matches Figure 2. Returns "" when
+    Each SVG builder projects the original actors for display and explains the
+    grouping, so its attribution matches Figure 2. Returns "" when
     there is nothing to draw or the generator is unavailable — the caller then
     falls back to the Mermaid builder and finally the LLM fragment.
     """
@@ -6784,7 +6786,9 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     return body
 
 
-def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonomy: dict) -> str:
+def _build_security_posture_actor_legend(
+    attack_paths_data: dict, attack_taxonomy: dict, model_meta: dict | None = None
+) -> str:
     """Build the ``**Threat actors.**`` legend rendered below the two figures.
 
     Lists every actor present in ``attack_paths`` (attackers AND the
@@ -6834,6 +6838,9 @@ def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonom
         meta = actor_meta.get(a) or {}
         name = _FIG1_ACTOR_LABEL.get(a) or meta.get("label") or a
         sub = meta.get("default_subtitle") or ""
+        if a == "internet-anon" and (model_meta or {}).get("open_user_registration") is True:
+            name = "Internet Attacker"
+            sub = "can self-register a regular account"
         is_victim = meta.get("role") == "victim" or a == "victim-required"
         verb = "target of" if is_victim else "drives"
         paths = ", ".join(drives[a])
@@ -7019,6 +7026,8 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     impact_taxonomy = _load_business_impact_taxonomy()
     actor_labels = _load_posture_actor_labels()
     attack_paths_data = _load_attack_paths_fragment(ctx, attack_taxonomy, threats)
+    figure1_paths = copy.deepcopy(attack_paths_data)
+    actor_notes = overview_actor_notes(ctx.yaml_data, figure1_paths, attack_taxonomy)
 
     # Reach-equivalent regular accounts share an overview origin; findings
     # retain their actual authentication prerequisites and privileged roles.
@@ -7117,13 +7126,6 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "Client → Application → Data) → **impact** (right). "
         f"Numbered red arrows {glyph_range} are the threats enumerated in the Top Threats table below."
     )
-    if open_user_registration:
-        intro_paragraph += (
-            " Self-registration is open, so the **Authenticated Internet Attacker** "
-            "tier is one POST away from anonymous — it is shown distinctly because a "
-            "post-login endpoint is still a different attack surface."
-        )
-
     diagram_data = {
         "intro_paragraph": intro_paragraph,
         "subgraph_actors": {
@@ -7305,10 +7307,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # Attacker" read identically to "Anonymous Internet Attacker".
     _actor_prose: dict[str, str] = {
         "internet-anon": (
-            "no account, no foothold; reaches every unauthenticated route, "
-            "registers a throw-away account in seconds when needed, and can "
-            "clone the public repository to obtain any committed secret offline. "
-            "Initiates the outgoing attack arrows."
+            "no account, no foothold; reaches unauthenticated routes. Initiates the outgoing attack arrows."
         ),
         "internet-user": (
             "owns a valid registered account and an active session; can reach "
@@ -7405,7 +7404,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # PRIMARY: deterministic hand-built SVG (written next to threat-model.md).
     figure1_md = ""
     try:
-        figure1_md = _render_figure1_svg(ctx, attack_paths_data, attack_taxonomy).strip()
+        figure1_md = _render_figure1_svg(ctx, figure1_paths, attack_taxonomy).strip()
     except Exception:  # noqa: BLE001 — Figure 1 is non-essential
         figure1_md = ""
     # FALLBACK 1: the legacy deterministic Mermaid builder (kept for robustness
@@ -7429,13 +7428,15 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     parts: list[str] = ["### Security Posture & Top Threats", ""]
     if figure1_md:
         parts += ["**Figure 1 — Architecture & Top Threats**", "", figure1_md, ""]
+    if actor_notes:
+        parts += ["**Actor grouping.** " + " ".join(actor_notes), ""]
     parts += [
         "**Figure 2 — Risk Flow: Actor → Tier → Impact**",
         "",
         figure2_block.rstrip(),
         "",
     ]
-    legend_md = _build_security_posture_actor_legend(attack_paths_data, attack_taxonomy)
+    legend_md = _build_security_posture_actor_legend(attack_paths_data, attack_taxonomy, ctx.yaml_data.get("meta"))
     if legend_md:
         parts += [legend_md.rstrip(), ""]
     parts += [table_md]
@@ -15392,7 +15393,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
     Renders nothing when no finding carries a vektor (legacy runs).
     """
     threats = ctx.yaml_data.get("threats") or []
-    public_repo = bool((ctx.yaml_data.get("meta") or {}).get("public_source_repo"))
+    meta = ctx.yaml_data.get("meta") or {}
 
     counts: dict[str, int] = {}
     components: dict[str, set[str]] = {}
@@ -15402,11 +15403,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         vek = (t.get("vektor") or "").strip()
         if not vek:
             continue
-        # A committed secret in a PUBLIC repo is readable by any anonymous
-        # attacker, so the repo-reader folds into internet-anon — the same
-        # collapse the MS figures apply (_collapse_public_repo_actors).
-        if public_repo and vek == "repo-read":
-            vek = "internet-anon"
+        vek = overview_actor_slug(vek, meta)
         counts[vek] = counts.get(vek, 0) + 1
         comp = (t.get("component") or "").strip()
         if comp:
@@ -15428,6 +15425,9 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         "client-side attacks, not an attacker."
     )
     lines.append("")
+    actor_notes = overview_actor_notes(ctx.yaml_data)
+    if actor_notes:
+        lines.extend(["**Actor grouping.** " + " ".join(actor_notes), ""])
     lines.append("| Actor | Role | Reach | Findings | Components |")
     lines.append("|---|---|---|---|---|")
     for a in present:
@@ -15435,6 +15435,9 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         name = m.get("label") or _FIG1_ACTOR_LABEL.get(a) or a
         role = "victim" if (m.get("role") == "victim" or a == "victim-required") else "attacker"
         reach = m.get("default_subtitle") or "—"
+        if a == "internet-anon" and meta.get("open_user_registration") is True:
+            name = "Internet Attacker"
+            reach = "can self-register a regular account"
         comps = ", ".join(sorted(components.get(a, set()))) or "—"
         lines.append(f"| {name} | {role} | {reach} | {counts.get(a, 0)} | {comps} |")
     lines.append("")

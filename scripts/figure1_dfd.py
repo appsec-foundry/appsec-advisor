@@ -36,7 +36,7 @@ import html
 import re
 import sys
 
-from detect_open_registration import overview_actor_slug
+from detect_open_registration import overview_actor_notes, overview_actor_slug
 from prepare_trust_boundary_context import boundary_endpoints_valid
 from weakness_classifier import load_weakness_classes
 
@@ -1046,6 +1046,7 @@ def _render(
     height,
     dropped,
     unattached_assets,
+    actor_notes=(),
 ):
     actor_colors = {n["name"]: n["color"] for n in nodes.values() if n.get("attacker")}
     scenario_colors = {s["n"]: actor_colors.get(s.get("actor"), RED) for s in scenarios}
@@ -1395,6 +1396,15 @@ def _render(
     )
     y += 32
 
+    if actor_notes:
+        y = head(y, "Actor grouping")
+        for note in actor_notes:
+            for line in _wrap(note, lw - 20, 9):
+                c.text(lx + 10, y + 3, line, size=9, anchor="start", track="actor grouping")
+                y += 13
+            y += 5
+        y += 8
+
     if scenarios:
         y = head(y, "Attack scenarios — by actor")
         cur = None
@@ -1637,7 +1647,7 @@ def _audit(d, nodes, edges, chips, boundaries):
 
 
 # ---- entry points ---------------------------------------------------------------------------------
-def _build(yaml_data, scenarios, actors):
+def _build(yaml_data, scenarios, actors, actor_notes=()):
     d = dict(yaml_data)  # the builder annotates a shallow copy, never the caller's model
     nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors)
     nodes, edges, dropped = _select_drawn(nodes, edges, d)
@@ -1662,6 +1672,7 @@ def _build(yaml_data, scenarios, actors):
         height,
         dropped,
         unattached,
+        actor_notes,
     )
     return svg, {"d": d, "nodes": nodes, "edges": edges, "chips": chips, "boundaries": boundaries, "canvas": canvas}
 
@@ -1673,7 +1684,9 @@ def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=No
     scenarios, actors = scenarios_from_attack_paths(
         yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
     )
-    svg, _state = _build(yaml_data, scenarios, actors)
+    svg, _state = _build(
+        yaml_data, scenarios, actors, overview_actor_notes(yaml_data, attack_paths_data, attack_taxonomy)
+    )
     return svg
 
 
@@ -1683,7 +1696,9 @@ def check_diagram(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=No
         scenarios, actors = scenarios_from_attack_paths(
             yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
         )
-    svg, st = _build(yaml_data, scenarios, actors or [])
+    svg, st = _build(
+        yaml_data, scenarios, actors or [], overview_actor_notes(yaml_data, attack_paths_data, attack_taxonomy)
+    )
     problems = _check_geometry(st["nodes"], st["edges"], st["canvas"], st["chips"]) + _audit(
         st["d"], st["nodes"], st["edges"], st["chips"], st["boundaries"]
     )
