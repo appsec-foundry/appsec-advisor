@@ -161,7 +161,7 @@ python3 scripts/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz      
 | `data/` | Requirements, policy, and rule data |
 | `scripts/` | Python helpers used by agents/hooks plus user-facing CLI wrappers (`run-headless.sh`, `harvest_requirements.py`, `mock-server.py`) |
 | `tests/` | Pytest suite — agent definitions, integration, steering, SARIF, schemas |
-| `examples/` | Reference threat model outputs (e.g. OWASP Juice Shop) |
+| `examples/` | Example requirements catalogs, blueprints, abuse cases, and audit outputs |
 | `docs/` | User and maintainer documentation |
 | `config.json` | Plugin config (external context, pricing, logging) |
 

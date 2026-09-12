@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Threat model examples now live in the companion `appsec-advisor-examples` repository instead of the plugin release.
 - The worst-case scenarios in the management summary name the weakness class, such as SQL injection or cross-site scripting, and the console verdict tags each scenario with its class.
 - `install-baseline` and `update-baseline` now install the latest signed release of the AI Secure Coding Baseline, only after its signature and checksum verify, instead of unverified text from its main branch or the outdated bundled `aisec-0.1`.
 
