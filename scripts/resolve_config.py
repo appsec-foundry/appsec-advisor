@@ -1694,7 +1694,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--tracing",
         dest="tracing",
         action="store_true",
-        default=True,
+        default=None,  # None = neither flag given: an org-profile preset may decide, else ON
         help="Record per-agent token/cost/timing to .appsec-trace.log (default: ON since M3.6).",
     )
     p.add_argument(
@@ -2086,7 +2086,7 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
         "slug": (secrets.token_hex(2) if ns.slug == "__auto__" else ns.slug),
         "verbose": ns.verbose,
         "quiet": ns.quiet,
-        "tracing": ns.tracing,
+        "tracing": True if ns.tracing is None else ns.tracing,
         "resume": ns.resume,
         "pr_mode": ns.pr_mode,
         "base_ref": ns.base,
@@ -2407,7 +2407,9 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
             org_block[_bkey] = defaults[_bkey]
 
     # Tracing / scan_manifest: preset wins when user did not pass the flag.
-    if not ns.tracing and isinstance(defaults.get("tracing"), bool):
+    # --tracing/--no-tracing leave None when neither is given; --scan-manifest
+    # has no negative flag, so falsy already means "not passed" there.
+    if ns.tracing is None and isinstance(defaults.get("tracing"), bool):
         org_block["tracing"] = defaults["tracing"]
     if not ns.scan_manifest and isinstance(defaults.get("scan_manifest"), bool):
         org_block["scan_manifest"] = defaults["scan_manifest"]

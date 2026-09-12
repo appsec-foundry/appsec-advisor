@@ -48,6 +48,7 @@ Removing an entry means listing it here in the same change.
 | ST-2 | A stale receipt is refused, never repaired | `test_shadow_plan_rejects_stale_action_receipt` | `docs/internal/analysis/implplan-threat-analysis-context-and-turn-reduction-2026-08-05.md`, Contract A |
 | ST-3 | Every new run uses the context-v2 artifact generation; a missing or pre-cutover generation is refused rather than migrated or resumed | `test_runtime_generation_has_no_legacy_selection`, `test_context_v2_action_refuses_a_run_without_a_persisted_generation` | `docs/internal/analysis/analysis-repository-legacy-and-pipeline-ballast-2026-08-19.md` |
 | ST-4 | An authoritative abort blocks further producer dispatch for that run; recovery starts a fresh full or rebuild invocation | `test_after_an_abort_only_a_producer_dispatch_is_denied` | `CHANGELOG.md` (context-v2) |
+| ST-5 | Run-mode markers (`.appsec-verbose`, `.appsec-tracing`) live in the output directory, never under `$TMPDIR`: the controller writes them from its Bash shell, the hooks read them in the Claude Code process, and the two `TMPDIR`s differ under the sandbox. The closing Stop summary is their last reader and removes them | `test_hook_reads_the_markers_the_controller_writes`, `test_final_stop_writes_trace_summary_then_clears_markers` | docstring of `_activate_markers` in `scripts/orchestration_controller.py` |
 
 ## Orchestration
 

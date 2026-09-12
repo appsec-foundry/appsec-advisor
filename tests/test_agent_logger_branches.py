@@ -24,11 +24,9 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "agent_logger.py"
 
 def _load(monkeypatch, tmp_path, *, env=None, name="agent_logger"):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    # Isolate tracing detection from host state: a stale APPSEC_TRACING env or a
-    # leftover ${TMPDIR}/.appsec-tracing-<uid> marker from a real --tracing run
+    # Isolate tracing detection from host state: a stale APPSEC_TRACING env
     # would otherwise flip _TRACING on and break the not-tracing assertions.
     monkeypatch.delenv("APPSEC_TRACING", raising=False)
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
     for k, v in (env or {}).items():
         if v is None:
             monkeypatch.delenv(k, raising=False)
@@ -103,20 +101,6 @@ class TestModeDetectionBranches:
             name="al_verbose_cfg",
         )
         assert al._is_verbose() is True
-
-    def test_verbose_getuid_attribute_error(self, al, monkeypatch, tmp_path):
-        monkeypatch.delenv("APPSEC_VERBOSE", raising=False)
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        monkeypatch.delattr(al.os, "getuid", raising=False)
-        # uid falls back to 0; no marker file -> False
-        assert al._is_verbose() is False
-
-    def test_tracing_getuid_attribute_error(self, al, monkeypatch, tmp_path):
-        monkeypatch.delenv("APPSEC_TRACING", raising=False)
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        monkeypatch.delattr(al.os, "getuid", raising=False)
-        (tmp_path / ".appsec-tracing-0").write_text("")
-        assert al._is_tracing() is True
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +314,27 @@ class TestHandleStopBranches:
         assert (tmp_path / ".assessment-summary-emitted").exists()
         # Second Stop with same sentinel present -> FileExistsError branch, no crash.
         al.handle_stop({"stop_reason": "end_turn"}, "sidone12", "Stop")
+
+    def test_final_stop_writes_trace_summary_then_clears_markers(self, monkeypatch, tmp_path):
+        (tmp_path / ".appsec-tracing").write_text("")
+        (tmp_path / ".appsec-verbose").write_text("")
+        traced = _load(monkeypatch, tmp_path, name="al_traced_final_stop")
+        (tmp_path / ".hook-events.log").write_text("2026-06-14T10:00:00Z  [sidone12]  INFO   SCAN_START  repo=/r\n")
+        (tmp_path / ".appsec-trace.log").write_text(
+            "TRACE AGENT_DISPATCH agent=x model=sonnet context_ktok=1 max_turns=5\n"
+            "TRACE AGENT_COMPLETE agent=x in=1,000 out=10 cost=$0.01 turns=2 wall_secs=5 stop=end_turn\n"
+        )
+        traced.handle_stop({"stop_reason": "end_turn"}, "sidone12", "Stop")
+        assert "ASSESSMENT_TRACE" in (tmp_path / ".appsec-trace.log").read_text()
+        assert not (tmp_path / ".appsec-tracing").exists()
+        assert not (tmp_path / ".appsec-verbose").exists()
+
+    def test_stop_while_the_run_holds_its_lock_keeps_markers(self, monkeypatch, tmp_path):
+        (tmp_path / ".appsec-tracing").write_text("")
+        traced = _load(monkeypatch, tmp_path, name="al_traced_running_stop")
+        monkeypatch.setattr(traced, "_run_lock_is_ours", lambda sid: True)
+        traced.handle_stop({"stop_reason": "end_turn"}, "sidrun12", "Stop")
+        assert (tmp_path / ".appsec-tracing").exists()
 
 
 # ---------------------------------------------------------------------------

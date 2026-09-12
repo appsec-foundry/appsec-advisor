@@ -126,59 +126,63 @@ _PRICING = _load_pricing()
 # ---------------------------------------------------------------------------
 # Verbose mode — mirror log lines to stderr for real-time terminal output
 # ---------------------------------------------------------------------------
+# Run-mode markers live in the output directory, never under $TMPDIR: the
+# controller writes them from its Bash shell (sandboxed: TMPDIR=/tmp/claude-<uid>)
+# while these hooks run in the Claude Code process, which may have no TMPDIR at
+# all. Both sides resolve the output directory alike.
+VERBOSE_MARKER = ".appsec-verbose"
+TRACING_MARKER = ".appsec-tracing"
+
+
 def _is_verbose() -> bool:
     """Check whether verbose logging is enabled.
 
     Enabled by any of:
       - Environment variable APPSEC_VERBOSE=1 (or any truthy value)
       - config.json logging.verbose: true
-      - Per-user marker file at ${TMPDIR:-/tmp}/.appsec-verbose-<uid>
-        (written by the create-threat-model skill when --verbose is passed;
-        hooks cannot inherit env vars set by Bash tool calls inside a Claude
-        Code session, so a filesystem marker is the only way for a skill
-        to flip verbose mode on for the duration of its own run)
+      - Marker ``<output dir>/.appsec-verbose``, written by the controller for
+        a run started with --verbose (hooks cannot inherit env vars set by Bash
+        tool calls inside a Claude Code session)
     """
     env = os.environ.get("APPSEC_VERBOSE", "").strip()
     if env and env not in ("0", "false", "no"):
         return True
     if _load_config().get("logging", {}).get("verbose", False):
         return True
-    tmpdir = os.environ.get("TMPDIR", "/tmp")
-    try:
-        uid = os.getuid()
-    except AttributeError:
-        uid = 0
-    marker = os.path.join(tmpdir, f".appsec-verbose-{uid}")
-    return os.path.exists(marker)
-
-
-_VERBOSE = _is_verbose()
+    return _marker_exists(VERBOSE_MARKER)
 
 
 # ---------------------------------------------------------------------------
 # Tracing mode — per-agent token/turn breakdown to .appsec-trace.log
 # ---------------------------------------------------------------------------
 def _is_tracing() -> bool:
-    """Check whether --tracing mode is active.
+    """Check whether tracing is active.
 
-    Enabled by:
-      - Environment variable APPSEC_TRACING=1 (or any truthy value)
-      - Per-user marker file at ${TMPDIR:-/tmp}/.appsec-tracing-<uid>
-        (written by the create-threat-model skill when --tracing is passed)
+    ``APPSEC_TRACING`` decides when set: 0/false/no/off turns tracing off even
+    for a traced run, any other value turns it on. Otherwise the marker
+    ``<output dir>/.appsec-tracing`` decides; the controller writes it for a
+    run resolved with tracing on and removes it for one resolved off.
     """
-    env = os.environ.get("APPSEC_TRACING", "").strip()
-    if env and env not in ("0", "false", "no"):
-        return True
-    tmpdir = os.environ.get("TMPDIR", "/tmp")
+    env = os.environ.get("APPSEC_TRACING", "").strip().lower()
+    if env:
+        return env not in ("0", "false", "no", "off")
+    return _marker_exists(TRACING_MARKER)
+
+
+def _marker_exists(name: str) -> bool:
     try:
-        uid = os.getuid()
-    except AttributeError:
-        uid = 0
-    marker = os.path.join(tmpdir, f".appsec-tracing-{uid}")
-    return os.path.exists(marker)
+        return os.path.exists(os.path.join(_output_dir(), name))
+    except OSError:
+        return False
 
 
-_TRACING = _is_tracing()
+def _clear_run_markers() -> None:
+    """Remove the run-mode markers once the run's closing summary is written."""
+    for name in (VERBOSE_MARKER, TRACING_MARKER):
+        try:
+            os.remove(os.path.join(_output_dir(), name))
+        except OSError:
+            pass
 
 
 def _existing_output_root(start: str) -> str | None:
@@ -254,6 +258,11 @@ def _trace_path() -> str:
     log_dir = _output_dir()
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, ".appsec-trace.log")
+
+
+# Evaluated once per hook process, after _output_dir() is defined.
+_VERBOSE = _is_verbose()
+_TRACING = _is_tracing()
 
 
 # --------------------------------------------------------------------------
@@ -3262,6 +3271,9 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                 _write_assessment_summary(sid)
             except Exception:
                 pass
+            # The summary was the markers' last reader; left in place they would
+            # keep tracing every later session in this repository.
+            _clear_run_markers()
 
 
 _USAGE_TOKEN_KEYS = (

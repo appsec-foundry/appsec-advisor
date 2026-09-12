@@ -95,8 +95,9 @@ and, when enabled, the same call with `--stage post-architect`. The stage is a
 `post-architect`) — neither a positional argument nor the `stageN` labels used
 elsewhere in this pipeline. Cleanup
 must preserve canonical deliverables, audit artifacts, and
-`.appsec-cache/baseline.json`. Always release run state, kept runtime files
-included: `rm -f "$OUTPUT_DIR/.appsec-lock" "${TMPDIR:-/tmp}"/.appsec-{verbose,tracing}-$(id -u)`.
+`.appsec-cache/baseline.json`. Always release the run lock, kept runtime files
+included: `rm -f "$OUTPUT_DIR/.appsec-lock"`. Leave `.appsec-verbose` and
+`.appsec-tracing` alone: the closing Stop hook still reads them and removes them.
 
 Emit the captured completion-summary stdout verbatim as response text, then
 exit 0. On any blocking branch, call `terminate_run.py --outcome failure` with

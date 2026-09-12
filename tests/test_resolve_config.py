@@ -1666,6 +1666,49 @@ class TestBrandingFlags:
         assert cfg["logo"] == "https://org.test/logo.png"
 
 
+class TestTracingPrecedence:
+    """An explicit flag beats an org-profile preset, which beats the default (on)."""
+
+    def _run(self, *argv):
+        return subprocess.run([sys.executable, str(SCRIPT_PATH), *argv], capture_output=True, text=True)
+
+    def _write_profile(self, tmp_path: Path, tracing: bool) -> Path:
+        profile = tmp_path / "org-profile" / "org-profile.yaml"
+        profile.parent.mkdir()
+        profile.write_text(
+            "api_version: appsec-advisor.org-profile/v2\n"
+            'organization: { id: myorg, name: My Org, profile_version: "1" }\n'
+            'compatibility: { core: ">=0.0 <999.0" }\n'
+            "default_preset: std\n"
+            "presets:\n"
+            "  std:\n"
+            "    base_mode: standard\n"
+            f"    guardrails: {{ tracing: {str(tracing).lower()} }}\n"
+        )
+        return profile
+
+    @pytest.mark.parametrize(
+        ("preset", "flags", "expected"),
+        [
+            (None, [], True),
+            (None, ["--tracing"], True),
+            (None, ["--no-tracing"], False),
+            (True, [], True),
+            (False, [], False),
+            (True, ["--no-tracing"], False),
+            (False, ["--tracing"], True),
+        ],
+    )
+    def test_resolved_tracing(self, tmp_path, monkeypatch, preset, flags, expected):
+        monkeypatch.chdir(tmp_path)
+        argv = list(flags)
+        if preset is not None:
+            argv += ["--org-profile", str(self._write_profile(tmp_path, preset))]
+        r = self._run(*argv)
+        assert r.returncode == 0, r.stderr
+        assert json.loads(r.stdout)["tracing"] is expected
+
+
 # ---------------------------------------------------------------------------
 # Render helpers — coverage of the run-plan / config-summary surface.
 # These are pure functions over a resolved cfg dict; we resolve a real cfg

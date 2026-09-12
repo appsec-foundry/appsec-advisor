@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 import budget_watchdog
+import orchestration_controller
 import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -491,9 +492,7 @@ class TestWriteTraceSummary:
 class TestModeDetection:
     def test_verbose_marker_file(self, al, tmp_path, monkeypatch):
         monkeypatch.delenv("APPSEC_VERBOSE", raising=False)
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        uid = al.os.getuid() if hasattr(al.os, "getuid") else 0
-        (tmp_path / f".appsec-verbose-{uid}").write_text("")
+        (tmp_path / ".appsec-verbose").write_text("")
         assert al._is_verbose() is True
 
     def test_tracing_env(self, al, monkeypatch):
@@ -502,15 +501,60 @@ class TestModeDetection:
 
     def test_tracing_marker_file(self, al, tmp_path, monkeypatch):
         monkeypatch.delenv("APPSEC_TRACING", raising=False)
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
-        uid = al.os.getuid() if hasattr(al.os, "getuid") else 0
-        (tmp_path / f".appsec-tracing-{uid}").write_text("")
+        (tmp_path / ".appsec-tracing").write_text("")
         assert al._is_tracing() is True
 
-    def test_tracing_false_value(self, al, tmp_path, monkeypatch):
+    def test_tracing_false_value(self, al, monkeypatch):
         monkeypatch.setenv("APPSEC_TRACING", "0")
-        monkeypatch.setenv("TMPDIR", str(tmp_path))
         assert al._is_tracing() is False
+
+    @pytest.mark.parametrize("value", ["0", "false", "FALSE", "no", "off"])
+    def test_tracing_env_off_wins_over_a_marker(self, al, tmp_path, monkeypatch, value):
+        monkeypatch.setenv("APPSEC_TRACING", value)
+        (tmp_path / ".appsec-tracing").write_text("")
+        assert al._is_tracing() is False
+
+    def test_a_marker_under_tmpdir_is_not_read(self, al, tmp_path, monkeypatch):
+        monkeypatch.delenv("APPSEC_TRACING", raising=False)
+        (tmp_path / "tmp").mkdir()
+        (tmp_path / "tmp" / ".appsec-tracing").write_text("")
+        monkeypatch.setenv("TMPDIR", str(tmp_path / "tmp"))
+        assert al._is_tracing() is False
+
+
+class TestRunModeMarkersAcrossProcesses:
+    """The controller writes the markers from its Bash shell and the hooks read
+    them in the Claude Code process; under the sandbox their TMPDIRs differ."""
+
+    @staticmethod
+    def _hook():
+        spec = importlib.util.spec_from_file_location("agent_logger_marker_probe", SCRIPT_PATH)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["agent_logger_marker_probe"] = module
+        assert spec.loader is not None
+        with contextlib.redirect_stderr(io.StringIO()):
+            spec.loader.exec_module(module)
+        return module
+
+    @pytest.mark.parametrize("hook_tmpdir", [None, "claude-sandbox-tmp", "output"])
+    def test_hook_reads_the_markers_the_controller_writes(self, tmp_path, monkeypatch, hook_tmpdir):
+        output = tmp_path / "output"
+        output.mkdir()
+        monkeypatch.delenv("APPSEC_TRACING", raising=False)
+        monkeypatch.setenv("OUTPUT_DIR", str(output))
+        monkeypatch.setenv("TMPDIR", str(tmp_path / "controller-tmp"))
+        orchestration_controller._activate_markers({"tracing": True, "verbose": True}, output)
+
+        if hook_tmpdir is None:
+            monkeypatch.delenv("TMPDIR")
+        else:
+            monkeypatch.setenv("TMPDIR", str(tmp_path / hook_tmpdir))
+        hook = self._hook()
+        assert hook._TRACING is True
+        assert hook._VERBOSE is True
+
+        orchestration_controller._activate_markers({"tracing": False, "verbose": False}, output)
+        assert self._hook()._TRACING is False
 
 
 # ---------------------------------------------------------------------------

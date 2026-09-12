@@ -1695,23 +1695,28 @@ def _boundary_budget_abort_reason(cfg: dict[str, Any]) -> str:
     )
 
 
-def _activate_markers(cfg: dict[str, Any]) -> None:
-    temp = Path(os.environ.get("TMPDIR") or "/tmp")
-    uid = os.getuid()
-    if cfg.get("verbose"):
-        (temp / f".appsec-verbose-{uid}").touch()
-    if cfg.get("tracing"):
-        (temp / f".appsec-tracing-{uid}").touch()
+_RUN_MARKERS = {"verbose": ".appsec-verbose", "tracing": ".appsec-tracing"}
 
 
-def _deactivate_markers() -> None:
-    temp = Path(os.environ.get("TMPDIR") or "/tmp")
-    uid = os.getuid()
-    for name in (f".appsec-verbose-{uid}", f".appsec-tracing-{uid}"):
+def _activate_markers(cfg: dict[str, Any], output_dir: Path) -> None:
+    """Make the run-mode markers match cfg: present when on, absent when off.
+
+    They live in the output directory because their reader, agent_logger.py,
+    runs in the Claude Code process, whose TMPDIR need not match this shell's
+    (a sandboxed shell gets /tmp/claude-<uid>). Removing an off marker keeps
+    one left by an earlier run from switching the mode back on.
+    """
+    for key, name in _RUN_MARKERS.items():
+        if cfg.get(key):
+            (output_dir / name).touch()
+        else:
+            (output_dir / name).unlink(missing_ok=True)
+
+
+def _deactivate_markers(output_dir: Path) -> None:
+    for name in _RUN_MARKERS.values():
         try:
-            (temp / name).unlink()
-        except FileNotFoundError:
-            pass
+            (output_dir / name).unlink()
         except OSError:
             pass
 
@@ -2244,7 +2249,7 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
             [str(output_dir / ".appsec-lock"), f"--run-id={cfg['run_id']}"],
         )
         config_path = _persist_config(cfg, output_dir)
-        _activate_markers(cfg)
+        _activate_markers(cfg, output_dir)
         _run_script(
             "acquire_lock.py",
             [
@@ -2260,7 +2265,7 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
             (output_dir / ".appsec-lock").unlink()
         except OSError:
             pass
-        _deactivate_markers()
+        _deactivate_markers(output_dir)
         if isinstance(exc, ControllerError):
             raise
         raise ControllerError(f"rerender preflight filesystem operation failed: {exc}") from exc
@@ -2392,7 +2397,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         )
 
         config_path = _persist_config(cfg, output_dir)
-        _activate_markers(cfg)
+        _activate_markers(cfg, output_dir)
         _run_script(
             "acquire_lock.py",
             [
@@ -2424,7 +2429,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             (output_dir / ".appsec-lock").unlink()
         except OSError:
             pass
-        _deactivate_markers()
+        _deactivate_markers(output_dir)
         if isinstance(exc, ControllerError):
             raise
         raise ControllerError(f"preflight filesystem operation failed: {exc}") from exc

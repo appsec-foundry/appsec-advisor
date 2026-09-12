@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--no-tracing` and an organization profile's `guardrails.tracing: false` now reliably turn tracing off, and a run's tracing and verbose modes end with the run instead of carrying over into later sessions.
+
 - Source analysis detects executable NoSQL predicates and input-driven code or template compilation, preserves distinct injection sinks, and rejects XSS attribution to a database.
 
 - The editorial pass processes bounded packets concurrently, retains valid partial results, reports incomplete work, and preserves previously accepted QA observations.

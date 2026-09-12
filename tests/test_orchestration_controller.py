@@ -4289,7 +4289,7 @@ def test_post_lock_oserror_is_wrapped_and_releases_lock(monkeypatch, tmp_path):
     output.mkdir(parents=True)
     repo.mkdir()
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    monkeypatch.setattr(controller, "_activate_markers", lambda cfg: None)
+    monkeypatch.setattr(controller, "_activate_markers", lambda cfg, output_dir: None)
 
     def run(name, args, **kwargs):
         if name == "acquire_lock.py":
@@ -4309,20 +4309,24 @@ def test_post_lock_oserror_is_wrapped_and_releases_lock(monkeypatch, tmp_path):
 # --- verbose/tracing markers ---------------------------------------------------
 
 
-def test_markers_activate_then_deactivate(monkeypatch, tmp_path):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    uid = controller.os.getuid()
-    controller._activate_markers({"verbose": True, "tracing": True})
-    assert (tmp_path / f".appsec-verbose-{uid}").exists()
-    assert (tmp_path / f".appsec-tracing-{uid}").exists()
-    controller._deactivate_markers()
-    assert not (tmp_path / f".appsec-verbose-{uid}").exists()
-    assert not (tmp_path / f".appsec-tracing-{uid}").exists()
+def test_markers_activate_then_deactivate(tmp_path):
+    controller._activate_markers({"verbose": True, "tracing": True}, tmp_path)
+    assert (tmp_path / ".appsec-verbose").exists()
+    assert (tmp_path / ".appsec-tracing").exists()
+    controller._deactivate_markers(tmp_path)
+    assert not (tmp_path / ".appsec-verbose").exists()
+    assert not (tmp_path / ".appsec-tracing").exists()
 
 
-def test_deactivate_markers_is_idempotent(monkeypatch, tmp_path):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    controller._deactivate_markers()  # nothing to remove → no error
+def test_deactivate_markers_is_idempotent(tmp_path):
+    controller._deactivate_markers(tmp_path)  # nothing to remove → no error
+
+
+@pytest.mark.parametrize("key", ["verbose", "tracing"])
+def test_activate_markers_removes_a_marker_an_earlier_run_left(tmp_path, key):
+    (tmp_path / f".appsec-{key}").write_text("")
+    controller._activate_markers({key: False}, tmp_path)
+    assert not (tmp_path / f".appsec-{key}").exists()
 
 
 # --- _fetch_requirements arg modes ---------------------------------------------
