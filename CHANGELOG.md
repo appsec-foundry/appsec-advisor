@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `--no-tracing` and an organization profile's `guardrails.tracing: false` now reliably turn tracing off, and a run's tracing and verbose modes end with the run instead of carrying over into later sessions.
 
+- A run no longer fills the console with repeated status lines while its report renderers, QA reviewer, fragment fixer or editorial agents run.
+
 - Source analysis detects executable NoSQL predicates and input-driven code or template compilation, preserves distinct injection sinks, and rejects XSS attribution to a database.
 
 - The editorial pass processes bounded packets concurrently, retains valid partial results, reports incomplete work, and preserves previously accepted QA observations.

@@ -54,6 +54,10 @@ which the Agent tool rejects outright. Pass only `REPO_ROOT`, `OUTPUT_DIR`,
 repair-plan path. The reviewer is read-only for canonical report artifacts and
 must write `.qa-status.json` last.
 
+Join every QA-reviewer or fixer dispatch before reading its results, printing
+nothing meanwhile: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_agent_calls.py" "$OUTPUT_DIR" --since "<dispatch start ISO>"`
+(Bash timeout 600000); exit 75: repeat it unchanged.
+
 ## 3. Bounded repair
 
 Initialize one repair counter when entering Stage 3 and cap it by

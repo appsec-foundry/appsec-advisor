@@ -29,13 +29,17 @@ pregeneration and the filesystem-authoritative compose handoff.
    - `ms-only`: call only `appsec-advisor:appsec-ms-renderer`, description
      `Render: Management Summary`. This is default
      Quick. The deterministic security-architecture scaffold remains on disk.
-   - `parallel`: issue both calls in one message and wait for both. Call
+   - `parallel`: issue both calls in one message. Call
      `appsec-advisor:appsec-secarch-renderer`, description
      `Render: §7 Security Architecture`; call
      `appsec-advisor:appsec-ms-renderer`, description
      `Render: Management Summary`.
    - `full`: call `appsec-advisor:appsec-threat-renderer`, description
      `Threat Model Renderer (Stage 2)`.
+
+   Join them before step 4 and print nothing meanwhile; never poll logs or files:
+   `python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_agent_calls.py" "$OUTPUT_DIR" --since "$STAGE2_START_ISO"`
+   (Bash timeout 600000). Exit 75: repeat it unchanged; otherwise continue.
 
    Specialists write only their owned fragments and never compose. The profile
    never skips fragment validation, strict compose, prose fixes, QA autofix, or
@@ -62,6 +66,6 @@ pregeneration and the filesystem-authoritative compose handoff.
    ```
 
    The controller validates fragments and composes when ready. A Stage-2
-   response naming a repair agent must dispatch it; any other Stage-2 response
+   response naming a repair agent must dispatch and join it as in step 3; any other Stage-2 response
    repeats this procedure. Continue only on Stage 3, Stage 4, or complete.
    Never infer completion from Agent prose or report-file presence.
