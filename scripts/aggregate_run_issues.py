@@ -1658,7 +1658,8 @@ def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     haiku verifier ran out of its turn budget mid-chain. Previously invisible
     to the aggregator, so the §9 ``inconclusive`` rows shipped with no
     run-level signal. Surfaced at ``warning`` severity (the chain is reported,
-    just not confirmed)."""
+    just not confirmed). A ``refuted`` step is a settled result, not a
+    verification gap, and raises nothing on its own (AC-6)."""
     issues: list[dict] = []
     merged = output_dir / ".abuse-case-verdicts.json"
     if not merged.is_file():

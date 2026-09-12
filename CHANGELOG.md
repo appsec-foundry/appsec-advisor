@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Changed
+
+- The completion summary's "Open questions for the team" (formerly "Manual threat modeling follow-up") asks the decision each Weakness Register entry depends on, linked to the W entry and its worst findings, and closes with the findings whose evidence is still unverified.
+- An abuse-case step the verifier establishes as a wrong pairing is reported as `✗ Refuted` in §9 instead of `? Inconclusive`, and no longer surfaces as an open question.
+
+### Fixed
+
 - An early STRIDE completion check no longer starts the same component analyses again while their wave is still running.
 
 ## 0.6.0-beta.3 (2026-09-12)

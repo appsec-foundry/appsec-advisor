@@ -603,6 +603,26 @@ def test_list_inconclusive_no_verdicts_file_is_empty(tmp_path: Path, capsys):
     assert capsys.readouterr().out.strip() == ""
 
 
+def test_list_inconclusive_skips_chains_settled_by_refutation(tmp_path: Path, capsys):
+    # AC-6: re-verifying a refuted pairing cannot change it. An open step, or a
+    # chain with no recorded step verdicts, stays on the work-list.
+    steps = {
+        "AC-T-001": [{"step": 1, "verdict": "confirmed"}, {"step": 2, "verdict": "refuted"}],
+        "AC-T-002": [{"step": 1, "verdict": "refuted"}, {"step": 2, "verdict": "inconclusive"}],
+        "AC-T-003": [],
+    }
+    doc = {
+        "schema_version": 1,
+        "verdicts": [
+            {"abuse_case_id": cid, "chain_verdict": "inconclusive", "step_verdicts": sv} for cid, sv in steps.items()
+        ],
+    }
+    (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(doc))
+    _write_matches(tmp_path, [(cid, "candidate") for cid in steps])
+    mac.main(["list-inconclusive", "--output-dir", str(tmp_path)])
+    assert capsys.readouterr().out.split() == ["AC-T-002", "AC-T-003"]
+
+
 # ---------------------------------------------------------------------------
 # load_findings — shape handling
 # ---------------------------------------------------------------------------
@@ -686,6 +706,20 @@ def test_finalize_any_inconclusive_is_inconclusive():
     cm = _cm([{"step": 1, "required": True}, {"step": 2, "required": True}])
     sv = [{"step": 1, "verdict": "confirmed"}, {"step": 2, "verdict": "inconclusive"}]
     assert mac.finalize_verdict(cm, sv) == "inconclusive"
+
+
+def test_finalize_refuted_step_caps_the_chain_like_inconclusive():
+    # AC-6: a refuted step folds exactly like an inconclusive one in every chain
+    # shape — required leg or non-required payoff, after a confirmed or a
+    # blocked setup. A settled mismatch never makes a chain fully viable.
+    for required in (True, False):
+        cm = _cm([{"step": 1, "required": True}, {"step": 2, "required": required}])
+        for setup in ("confirmed", "blocked"):
+            refuted = [{"step": 1, "verdict": setup}, {"step": 2, "verdict": "refuted"}]
+            open_step = [{"step": 1, "verdict": setup}, {"step": 2, "verdict": "inconclusive"}]
+            assert mac.finalize_verdict(cm, refuted) == mac.finalize_verdict(cm, open_step)
+        confirmed_setup = [{"step": 1, "verdict": "confirmed"}, {"step": 2, "verdict": "refuted"}]
+        assert mac.finalize_verdict(cm, confirmed_setup) == "inconclusive"
 
 
 def test_finalize_all_confirmed_no_controls_is_fully_viable():

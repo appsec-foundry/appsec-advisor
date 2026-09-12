@@ -615,34 +615,53 @@ class TestManualReviewStep:
         }
 
     @staticmethod
-    def report(findings):
-        return "\n".join(f'<a id="{t["id"].replace("T-", "F-").lower()}"></a>' for t in findings)
+    def weakness(number, mechanism_id, *instances):
+        return {
+            "id": f"W-{number:03}",
+            "mechanism_id": mechanism_id,
+            "instances": [{"id": f"T-{n:03}"} for n in instances],
+        }
 
-    def render(self, findings, **model_fields):
+    @staticmethod
+    def report(findings, weaknesses=()):
+        anchors = [t["id"].replace("T-", "F-").lower() for t in findings] + [w["id"].lower() for w in weaknesses]
+        return "\n".join(f'<a id="{anchor}"></a>' for anchor in anchors)
+
+    def render(self, findings, weaknesses=(), report=None, **model_fields):
         return rcs.build_manual_review_step(
-            {"threats": findings, **model_fields}, self.report(findings), Path("/tmp/assessment/threat-model.md")
+            {"threats": findings, "weaknesses": list(weaknesses), **model_fields},
+            self.report(findings, weaknesses) if report is None else report,
+            Path("/tmp/assessment/threat-model.md"),
         )
 
     def test_selects_three_distinct_decisions_with_real_finding_links(self):
         findings = [
             self.finding(41),
-            self.finding(10, "CWE-306", "Unauthenticated database console"),
-            self.finding(11, "CWE-862", "Missing authorization on admin API"),
-            self.finding(20, "CWE-321", "Hardcoded JWT signing key"),
-            self.finding(21, "CWE-347", "JWT accepted without signature validation"),
-            self.finding(22, "CWE-863", "Unsigned JWT grants administrative role"),
             self.finding(1, "CWE-639", "Object owner not checked"),
+            self.finding(2, "CWE-862", "Missing ownership check on bulk update"),
+            self.finding(20, "CWE-321", "Hardcoded JWT signing key"),
+            self.finding(30, "CWE-306", "Unauthenticated admin console"),
         ]
-        text = self.render(findings)
-        assert len(text.splitlines()) == 4
-        assert "could a takeover reach other services or shared credentials?" in text
-        assert "who should reach these interfaces, and what enforces that in deployment?" in text
-        assert "would key rotation close every affected authentication path?" in text
-        assert re.findall(r"\[(F-\d+)\]", text) == ["F-041", "F-010", "F-011", "F-020", "F-021", "F-022"]
-        for fid in re.findall(r"\[(F-\d+)\]", text):
-            assert f"[{fid}](</tmp/assessment/threat-model.md#{fid.lower()}>)" in text
+        weaknesses = [
+            self.weakness(2, "route-by-route-authorization", 1, 2),
+            self.weakness(3, "secrets-committed-to-source", 20),
+            self.weakness(4, "missing-endpoint-authentication", 30),
+        ]
+        text = self.render(findings, weaknesses)
+        lines = text.splitlines()
+        assert lines[0] == rcs.TEAM_QUESTIONS_HEADER
+        # Same severity everywhere: the register's decisions come before the
+        # unclassified takeover signal (F-041), and the cap holds at three.
+        assert [re.findall(r"\[(W-\d+)\]", line) for line in lines[1:]] == [["W-002"], ["W-003"], ["W-004"]]
+        assert re.findall(r"\[(F-\d+)\]", text) == ["F-001", "F-002", "F-020", "F-030"]
+        assert "which single policy layer should enforce ownership" in lines[1]
+        assert "who\nrotates".replace("\n", " ") in lines[2]
+        assert "intentionally public" in lines[3]
+        assert len(lines) == 4
+        for ref in re.findall(r"\[([FW]-\d+)\]", text):
+            assert f"[{ref}](</tmp/assessment/threat-model.md#{ref.lower()}>)" in text
         assert "T-" not in text
-        assert self.render(list(reversed(findings))) == text
+        assert self.render(list(reversed(findings)), list(reversed(weaknesses))) == text
 
     @pytest.mark.parametrize(
         "overrides",
@@ -667,10 +686,44 @@ class TestManualReviewStep:
         text = self.render([self.finding(1, evidence_check=state)])
         assert "[F-001](</tmp/assessment/threat-model.md#f-001>) (unproven)" in text
         assert "could a takeover" in text
+        assert text.splitlines()[-1].startswith(
+            "- [F-001](</tmp/assessment/threat-model.md#f-001>) — Unverified evidence"
+        )
 
     def test_practice_evidence_does_not_become_confirmed_exploitation(self):
         text = self.render([self.finding(1, evidence_tier="insecure-practice")])
         assert "(unproven)" in text
+        # The insecure state is observed and verified: nothing left to confirm.
+        assert "Unverified evidence" not in text
+
+    def test_unverified_findings_close_the_block_outside_the_question_cap(self):
+        findings = [self.finding(n, "CWE-639", "Object owner not checked") for n in range(1, 5)]
+        findings.append(self.finding(9, "CWE-89", "SQL injection in invoice search", evidence_check="ambiguous"))
+        findings.append(self.finding(10, "CWE-328", "Unsalted MD5 password hash", evidence_tier="insecure-practice"))
+        weaknesses = [
+            self.weakness(1, "route-by-route-authorization", 1),
+            self.weakness(2, "secrets-committed-to-source", 2),
+            self.weakness(3, "missing-endpoint-authentication", 3),
+            self.weakness(4, "build-pipeline-mutable-refs", 4),
+        ]
+        lines = self.render(findings, weaknesses).splitlines()
+        assert len(lines) == 5
+        assert [re.findall(r"\[(W-\d+)\]", line) for line in lines[1:4]] == [["W-001"], ["W-002"], ["W-003"]]
+        # The verified practice-tier F-010 is not listed; only the ambiguous F-009.
+        assert lines[4] == (
+            "- [F-009](</tmp/assessment/threat-model.md#f-009>) — Unverified evidence: confirm or rule out "
+            "what the code alone could not establish before scheduling the fix."
+        )
+        # A verified-only model raises no closing line; six unverified findings list five.
+        assert "Unverified evidence" not in self.render(findings[:4], weaknesses[:1])
+        many = [self.finding(n, "CWE-89", "SQL injection", evidence_check="ambiguous") for n in range(1, 7)]
+        assert self.render(many).splitlines() == [
+            rcs.TEAM_QUESTIONS_HEADER,
+            "- "
+            + ", ".join(f"[F-{n:03}](</tmp/assessment/threat-model.md#f-{n:03}>)" for n in range(1, 6))
+            + " (+1 more) — Unverified evidence: confirm or rule out what the code alone could not establish "
+            "before scheduling the fix.",
+        ]
 
     @pytest.mark.parametrize(
         "report",
@@ -692,28 +745,47 @@ class TestManualReviewStep:
         assert self.render([self.finding(1, "CWE-89", "SQL injection in invoice search")]) == ""
 
     def test_build_time_execution_does_not_imply_application_takeover(self):
-        text = self.render([self.finding(1, evidence=[{"file": ".github/workflows/package.yml", "line": 20}])])
-        assert "Build input trust" in text
+        finding = self.finding(1, evidence=[{"file": ".github/workflows/package.yml", "line": 20}])
+        assert self.render([finding]) == ""
+        text = self.render([finding], [self.weakness(6, "build-pipeline-mutable-refs", 1)])
+        assert "Who can change build inputs or publish artifacts" in text
         assert "takeover" not in text
 
-    def test_admin_question_needs_an_administrative_surface(self):
-        assert self.render([self.finding(1, "CWE-306", "Missing authentication on catalog endpoint")]) == ""
+    def test_weakness_questions_come_from_mechanism_guidance_not_cwe_membership(self):
+        # AC-7: the same CWE-639 finding asks nothing on its own, asks the
+        # register's question under the mechanism that carries one, and stays
+        # silent under a mechanism whose fix is mechanical.
+        owner = self.finding(1, "CWE-639", "Object owner not checked")
+        assert self.render([owner]) == ""
+        text = self.render([owner], [self.weakness(2, "route-by-route-authorization", 1)])
+        assert text.splitlines()[1].startswith(
+            "- [W-002](</tmp/assessment/threat-model.md#w-002>): [F-001](</tmp/assessment/threat-model.md#f-001>) — "
+        )
+        assert "which single policy layer should enforce ownership" in text
+        assert self.render([owner], [self.weakness(2, "database-query-concatenation", 1)]) == ""
+        assert self.render([owner], [self.weakness(2, "no-such-mechanism", 1)]) == ""
+        questions = rcs.mechanism_team_questions()
+        assert set(questions) >= {"route-by-route-authorization", "secrets-committed-to-source"}
+        assert "database-query-concatenation" not in questions
+        assert all(q.endswith("?") and "\n" not in q for q in questions.values())
 
-    def test_token_recovery_needs_identity_key_and_verifier_evidence(self):
-        findings = [
-            self.finding(1, "CWE-321", "Hardcoded database encryption key", scenario="JWT users access the database."),
-            self.finding(2, "CWE-347", "Package signature not checked"),
-        ]
-        text = self.render(findings)
-        assert "token bypasses" not in text
-        assert "F-002" not in text
+    def test_weakness_line_links_three_worst_instances_and_counts_the_rest(self):
+        findings = [self.finding(n, "CWE-862", "Missing ownership check", risk="High") for n in range(1, 5)]
+        findings.append(self.finding(7, "CWE-639", "Object owner not checked"))
+        findings.append(self.finding(8, "CWE-639", "Refuted owner check", evidence_check="refuted"))
+        text = self.render(findings, [self.weakness(2, "route-by-route-authorization", 1, 2, 3, 4, 7, 8)])
+        # Critical F-007 first, then the High ones in id order; the refuted
+        # instance is neither linked nor counted.
+        assert re.findall(r"\[(F-\d+)\]", text) == ["F-007", "F-001", "F-002"]
+        assert "(+2 more) — " in text
+        assert "(unproven)" not in text
 
-    def test_mixed_groups_retain_each_mechanism_with_a_small_reference_budget(self):
-        findings = [self.finding(n, "CWE-321", "Hardcoded token signing key") for n in range(1, 8)]
-        findings.append(self.finding(9, "CWE-347", "JWT signature not checked"))
-        text = self.render(findings)
-        assert "F-009" in text
-        assert len(re.findall(r"\[F-\d+\]", text)) == 3
+    def test_weakness_link_requires_a_delivered_register_anchor(self):
+        owner = self.finding(1, "CWE-639", "Object owner not checked")
+        weaknesses = [self.weakness(2, "route-by-route-authorization", 1)]
+        text = self.render([owner], weaknesses, report=self.report([owner]))
+        assert "[W-002]" not in text
+        assert text.splitlines()[1].startswith("- [F-001](</tmp/assessment/threat-model.md#f-001>) — ")
 
     def test_model_question_requires_tool_authority(self):
         no_tools = self.finding(1, "CWE-1427", "LLM prompt injection")
@@ -775,6 +847,13 @@ class TestManualReviewStep:
             {"chain_verdict": "mitigated"},
             {"chain_verdict": "fully_viable"},
             {"matched_finding_ids": ["F-999"]},
+            # AC-6: a refuted step is the verifier's answer, not an open question.
+            {
+                "steps": [
+                    {"finding_id": "F-001", "verdict": "confirmed", "unverified": False},
+                    {"finding_id": "F-002", "verdict": "refuted", "unverified": False},
+                ]
+            },
         ],
     )
     def test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses(self, overrides):
@@ -799,7 +878,7 @@ class TestManualReviewStep:
         report.write_text(self.report(findings))
         before = {path: path.read_bytes() for path in (model, report)}
         steps = rcs.build_next_steps(tmp_path, tmp_path, {"threats_by_sev": {"Critical": 1}}, {})
-        assert steps[2].startswith("Manual threat modeling follow-up")
+        assert steps[2].startswith(rcs.TEAM_QUESTIONS_HEADER)
         assert steps[-1].startswith("Or just ask me:")
         rendered = "\n".join(rcs.render_next_steps(steps))
         assert "      - [F-001]" in rendered
@@ -817,7 +896,7 @@ class TestManualReviewStep:
             tmp_path, tmp_path, {"threats_by_sev": {"Critical": 1}}, {"architect_review": True}
         )
         assert len(steps) == 5
-        assert any(step.startswith("Manual threat modeling") for step in steps)
+        assert any(step.startswith(rcs.TEAM_QUESTIONS_HEADER) for step in steps)
         assert any(step.startswith("Read the architect review") for step in steps)
         assert steps[-1].startswith("Or just ask me:")
 

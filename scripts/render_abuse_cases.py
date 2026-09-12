@@ -181,6 +181,8 @@ def _step_status_icon(verdict: str, controls_found: list) -> str:
         return "✓"
     if verdict == "confirmed":
         return "◐" if controls_found else "⚠"
+    if verdict == "refuted":
+        return "✗"
     return "?"  # inconclusive / unknown
 
 
@@ -269,7 +271,7 @@ def render_case(
     unfinalized verifier freeze a wrong link into the chain — e.g. a
     mass-assignment step echoed back as the IDOR finding (juice-shop 2026-07-13).
     Matcher-first keeps the identity deterministic and reproducible while the
-    per-step icon stays honest ("?" when unverified, ⚠/◐/✓ once a verifier verdict
+    per-step icon stays honest ("?" when unverified, ⚠/◐/✓/✗ once a verifier verdict
     exists). When neither source binds a finding the row renders without a link.
     RC-2026-06 / RC-2026-07.
     """
@@ -316,7 +318,7 @@ def render_case(
         if ev.get("file"):
             loc = f"{ev['file']}:{ev['line']}" if ev.get("line") else str(ev["file"])
         semantic_verdict = str(sv.get("verdict") or "inconclusive")
-        if semantic_verdict not in {"confirmed", "blocked", "inconclusive"}:
+        if semantic_verdict not in {"confirmed", "blocked", "refuted", "inconclusive"}:
             semantic_verdict = "inconclusive"
         evidence_ref = None
         if ev.get("file"):
@@ -603,7 +605,8 @@ _LEGEND = (
     "_Verdict: ⚠ Fully viable — no effective control blocks this chain · "
     "◐ Partially blocked — at least one step has a compensating control but the "
     "chain is not fully closed · ✓ Mitigated — chain is broken at a verified step · "
-    "? Inconclusive — could not be verified end-to-end._"
+    "? Inconclusive — could not be verified end-to-end. "
+    "Step: ✗ Refuted — the matched pairing does not hold on the code._"
 )
 
 

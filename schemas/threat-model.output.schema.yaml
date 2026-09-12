@@ -585,7 +585,7 @@ properties:
                 properties:
                   step: {type: integer, minimum: 1}
                   outcome: {type: string, maxLength: 1000}
-                  verdict: {type: string, enum: [confirmed, blocked, inconclusive]}
+                  verdict: {type: string, enum: [confirmed, blocked, refuted, inconclusive]}
                   finding_id:
                     type: [string, "null"]
                     pattern: "^F-[0-9]{3,}$"

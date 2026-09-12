@@ -905,26 +905,71 @@ def _add_unpriced_tokens(parsed: object, output_dir: Path, plugin_root: Path) ->
 # ---------------------------------------------------------------------------
 
 
-def build_manual_review_step(yaml_data: dict, report_text: str, report_path: Path) -> str:
-    """Select up to three finding-backed questions about unresolved consequences.
+TEAM_QUESTIONS_HEADER = "Open questions for the team:"
+_TEAM_QUESTION_KEY = "team_question"
 
-    These are workshop hypotheses, not new findings or severity assessments.
-    CWE identifies the observed mechanism; title/context signals distinguish
-    privileged interfaces, token use, model tools and build-time execution.
-    Each rule below states the missing deployment or business decision. Mere
-    category membership never establishes the downstream consequence asked about.
 
-    Only Medium-or-higher register findings with evidence and a delivered F
-    anchor participate. Refuted findings, passed checks and design-only sources
-    are excluded. Unverified evidence and practice sites keep an unproven label.
+def mechanism_team_questions(plugin_root: Optional[Path] = None) -> dict[str, str]:
+    """`team_question` per `mechanism_guidance` key in `data/weakness-classes.yaml`.
+
+    The question is authored next to the mechanism it belongs to, so the
+    register entry (W-NNN), its structural fix, and the decision the team has
+    to make stay one unit; a mechanism whose fix is purely mechanical carries
+    none. Absent or unreadable vocabulary yields no questions, never a default.
+    """
+    root = plugin_root or Path(__file__).resolve().parent.parent
+    guidance = _load_yaml(root / "data" / "weakness-classes.yaml").get("mechanism_guidance") or {}
+    return {
+        str(key): str(entry[_TEAM_QUESTION_KEY]).strip()
+        for key, entry in guidance.items()
+        if isinstance(entry, dict) and str(entry.get(_TEAM_QUESTION_KEY) or "").strip()
+    }
+
+
+def build_manual_review_step(
+    yaml_data: dict,
+    report_text: str,
+    report_path: Path,
+    *,
+    team_questions: Optional[dict[str, str]] = None,
+) -> str:
+    """Select the open questions a code-derived model leaves to the team.
+
+    Three sources, in this order of priority:
+
+    1. An investigated abuse-case chain the verifier could neither confirm nor
+       refute — an `inconclusive` step with a decided reason. A `refuted` step
+       is the opposite finding, the matched pairing does not hold, and asks
+       nothing: the verifier already answered.
+    2. A register weakness whose mechanism carries a `team_question` in
+       `data/weakness-classes.yaml` (see `mechanism_team_questions`). The line
+       links the W anchor and up to three of its worst instances.
+    3. Two mechanism signals the register does not classify: process takeover
+       reach (command/code execution, server-side requests) and model-controlled
+       actions. CWE identifies the mechanism; a title/context signal is required
+       so category membership alone never asks the question.
+
+    Up to three questions, worst register severity first, source order on ties.
+    A closing line lists the Medium-or-higher findings whose evidence check did
+    not settle (ambiguous, unchecked): confirming or ruling them out is the
+    team's verification task, outside the question cap. A practice-tier finding
+    with verified evidence keeps its "(unproven)" label (REQ-MOD-009) but is not
+    listed there — its insecure state is observed, nothing is left to confirm.
+
+    These are questions, not new findings or severity assessments. Only
+    Medium-or-higher register findings with evidence and a delivered F anchor
+    participate. Refuted findings, passed checks and design-only sources are
+    excluded. Unverified evidence and practice sites keep an unproven label.
     Neither repository prose nor artifact strings become output text or URLs.
     """
+    if team_questions is None:
+        team_questions = mechanism_team_questions()
     # Ignore example anchors in code fences and comments, and require an actual
     # declaration rather than a mention/link that may itself be dangling.
     visible_report = re.sub(r"(?ms)^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?^ {0,3}\1[^\n]*$", "", report_text)
     visible_report = re.sub(r"(?s)<!--.*?-->", "", visible_report)
     visible_report = re.sub(r"(?s)(`+).*?\1", "", visible_report)
-    anchors = set(re.findall(r"<a\s+id=[\"'](f-\d{3,})[\"']\s*>\s*</a>", visible_report))
+    anchors = set(re.findall(r"<a\s+id=[\"']([fw]-\d{3,})[\"']\s*>\s*</a>", visible_report))
     candidates: list[dict] = []
     for threat in _severity_rollup.register_threats(yaml_data):
         raw_id = str(threat.get("id") or "")
@@ -966,9 +1011,11 @@ def build_manual_review_step(yaml_data: dict, report_text: str, report_path: Pat
                 "build_time": build_time,
                 "unproven": threat.get("evidence_tier") != "confirmed-exploitable"
                 or threat.get("evidence_check") not in {"verified", "verified-prior"},
+                "unverified": threat.get("evidence_check") not in {"verified", "verified-prior"},
             }
         )
     candidates.sort(key=lambda item: (item["rank"], int(item["id"][2:])))
+    by_id = {item["id"]: item for item in candidates}
 
     def matching(cwes: set[str], pattern: str = "", *, title_only: bool = False) -> list[dict]:
         return [
@@ -978,84 +1025,42 @@ def build_manual_review_step(yaml_data: dict, report_text: str, report_path: Pat
             and (not pattern or re.search(pattern, item["title"] if title_only else item["context"], re.I))
         ]
 
-    topics: list[tuple[int, int, str, list[dict]]] = []
+    topics: list[dict] = []
 
-    def add(question: str, *groups: list[dict], priority: int | None = None, limit: int = 2) -> None:
-        # Round-robin retains each mechanism in a combined question: a long
-        # list of exposed keys must not crowd out the signature-bypass evidence.
+    def add(
+        question: str,
+        *groups: list[dict],
+        priority: int | None = None,
+        limit: int = 2,
+        register_id: str = "",
+    ) -> None:
+        # Round-robin retains each source in a combined question: a long list
+        # from one group must not crowd out the other group's evidence.
         refs: list[dict] = []
+        seen: set[str] = set()
         for offset in range(limit):
             for group in groups:
-                if offset < len(group) and group[offset]["id"] not in {item["id"] for item in refs}:
+                if offset < len(group) and group[offset]["id"] not in seen:
                     refs.append(group[offset])
-            if len(refs) >= limit:
-                break
-        if refs:
-            refs = refs[:limit]
-            topics.append(
-                (min(item["rank"] for item in refs), len(topics) if priority is None else priority, question, refs)
-            )
-
-    execution = [item for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-95"}) if not item["build_time"]]
-    if execution:
-        mechanism = (
-            "Command execution" if all(item["cwes"] & {"CWE-77", "CWE-78"} for item in execution) else "Code execution"
-        )
-        add(f"{mechanism}: could a takeover reach other services or shared credentials?", execution)
-    else:
-        add(
-            "Server-side requests: could these reach internal services or infrastructure credentials?",
-            matching({"CWE-918"}),
+                    seen.add(group[offset]["id"])
+        if not refs:
+            return
+        hidden = len({item["id"] for group in groups for item in group}) - min(len(refs), limit)
+        topics.append(
+            {
+                "rank": min(item["rank"] for item in refs),
+                "order": len(topics) if priority is None else priority,
+                "question": question,
+                "refs": refs[:limit],
+                "hidden": hidden,
+                "register_id": register_id if register_id.lower() in anchors else "",
+            }
         )
 
-    # A generic authentication gap does not establish an administrative surface.
-    access_cwes = {"CWE-306", "CWE-862", "CWE-425"}
-    consoles = matching(access_cwes, r"\b(console|actuator|management)\b", title_only=True)
-    admin = matching(access_cwes, r"\b(admin|administrative|administrator)\b", title_only=True)
-    add("Admin access gaps: who should reach these interfaces, and what enforces that in deployment?", consoles, admin)
-
-    token_pattern = r"\b(jwt|tokens?|signing)\b"
-    keys = matching({"CWE-321", "CWE-798"}, token_pattern)
-    verifiers = matching({"CWE-347", "CWE-287", "CWE-863"}, token_pattern, title_only=True)
-    if keys and verifiers:
-        add(
-            "Exposed keys and token bypasses: would key rotation close every affected authentication path?",
-            keys,
-            verifiers,
-            limit=3,
-        )
-    elif verifiers:
-        add(
-            "Token verification gaps: which services trust these identities, and could a forged role cross between them?",
-            verifiers,
-        )
-    else:
-        add(
-            "Exposed secrets: where else are they used, and what must be replaced after a leak?",
-            matching({"CWE-321", "CWE-798"}),
-        )
-
-    # Tool authority requires a model-related finding AND a tool/action signal;
-    # an ordinary injection finding or a dependency name alone is insufficient.
-    model_tools = [
-        item
-        for item in matching({"CWE-1427", "CWE-20", "CWE-863", "CWE-862"}, r"\b(llm|prompt injection|language model)\b")
-        if re.search(r"\b(tool|tools|tool-calling|agent|actions?)\b", item["context"], re.I)
-    ]
-    add("Model-controlled actions: which business decisions need authorization outside the assistant?", model_tools)
-    add(
-        "Object access and updates: which cross-user actions are legitimate, and where must ownership be enforced?",
-        matching({"CWE-639", "CWE-915"}),
-    )
-    add(
-        "Build input trust: who can change inputs or publish artifacts, and which independent approvals apply?",
-        [item for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-829", "CWE-494"}) if item["build_time"]],
-    )
-
-    # An inconclusive investigation can seed a workshop question. A verifier
-    # that ran out of budget cannot: unverified steps belong to scan recovery.
+    # 1. An inconclusive investigation can seed a question. A verifier that ran
+    # out of budget cannot (unverified steps belong to scan recovery), and a
+    # refuted step cannot either: it is the answer, not the question.
     analysis = yaml_data.get("abuse_case_analysis") or {}
-    by_id = {item["id"]: item for item in candidates}
     for case in analysis.get("cases", []) if analysis.get("status") == "completed" else []:
         if (
             case.get("chain_verdict") != "inconclusive"
@@ -1077,26 +1082,75 @@ def build_manual_review_step(yaml_data: dict, report_text: str, report_path: Pat
                 priority=-1,
             )
 
-    if not topics:
+    # 2. The register already names each root cause once, with the findings that
+    # evidence it. Its mechanism carries the question the structural fix depends
+    # on; instances outside the candidate set (refuted, Low, unanchored) drop.
+    weaknesses = [item for item in yaml_data.get("weaknesses") or [] if isinstance(item, dict)]
+    for weakness in sorted(weaknesses, key=lambda item: str(item.get("id") or "")):
+        register_id = str(weakness.get("id") or "")
+        question = team_questions.get(str(weakness.get("mechanism_id") or ""))
+        if not question or not re.fullmatch(r"W-\d{3,}", register_id):
+            continue
+        instance_ids = {
+            _severity_rollup.display_id(str(instance.get("id") or ""))
+            for instance in weakness.get("instances") or []
+            if isinstance(instance, dict)
+        }
+        add(question, [item for item in candidates if item["id"] in instance_ids], limit=3, register_id=register_id)
+
+    # 3. Mechanisms the register does not classify. Category membership alone
+    # never asks: the takeover question needs an application-side interpreter,
+    # the model question a model-related finding AND a tool/action signal.
+    execution = [item for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-95"}) if not item["build_time"]]
+    if execution:
+        mechanism = (
+            "Command execution" if all(item["cwes"] & {"CWE-77", "CWE-78"} for item in execution) else "Code execution"
+        )
+        add(f"{mechanism}: could a takeover reach other services or shared credentials?", execution)
+    else:
+        add(
+            "Server-side requests: could these reach internal services or infrastructure credentials?",
+            matching({"CWE-918"}),
+        )
+    model_tools = [
+        item
+        for item in matching({"CWE-1427", "CWE-20", "CWE-863", "CWE-862"}, r"\b(llm|prompt injection|language model)\b")
+        if re.search(r"\b(tool|tools|tool-calling|agent|actions?)\b", item["context"], re.I)
+    ]
+    add("Model-controlled actions: which business decisions need authorization outside the assistant?", model_tools)
+
+    unverified = [item for item in candidates if item["unverified"]]
+    if not topics and not unverified:
         return ""
     target = quote(str(report_path.absolute()), safe="/:")
-    lines = ["Manual threat modeling follow-up — discuss with the team:"]
+
+    def link(item_id: str, *, unproven_label: bool = False) -> str:
+        return f"[{item_id}](<{target}#{item_id.lower()}>)" + (" (unproven)" if unproven_label else "")
+
+    lines = [TEAM_QUESTIONS_HEADER]
     used: set[str] = set()
     questions: set[str] = set()
-    for _, _, question, refs in sorted(
-        topics, key=lambda topic: (topic[0], topic[1], tuple(item["id"] for item in topic[3]))
-    ):
-        if question in questions or all(item["id"] in used for item in refs):
+    for topic in sorted(topics, key=lambda t: (t["rank"], t["order"], tuple(item["id"] for item in t["refs"]))):
+        if topic["question"] in questions or all(item["id"] in used for item in topic["refs"]):
             continue
-        links = ", ".join(
-            f"[{item['id']}](<{target}#{item['id'].lower()}>)" + (" (unproven)" if item["unproven"] else "")
-            for item in refs
-        )
-        lines.append(f"- {links} — {question}")
-        questions.add(question)
-        used.update(item["id"] for item in refs)
+        links = ", ".join(link(item["id"], unproven_label=item["unproven"]) for item in topic["refs"])
+        if topic["hidden"] > 0:
+            links += f" (+{topic['hidden']} more)"
+        if topic["register_id"]:
+            links = f"{link(topic['register_id'])}: {links}"
+        lines.append(f"- {links} — {topic['question']}")
+        questions.add(topic["question"])
+        used.update(item["id"] for item in topic["refs"])
         if len(lines) == 4:
             break
+    if unverified:
+        shown = ", ".join(link(item["id"]) for item in unverified[:5])
+        if len(unverified) > 5:
+            shown += f" (+{len(unverified) - 5} more)"
+        lines.append(
+            f"- {shown} — Unverified evidence: confirm or rule out what the code alone could not establish "
+            "before scheduling the fix."
+        )
     return "\n".join(lines)
 
 
@@ -1113,17 +1167,17 @@ def build_next_steps(
     section — the runtime is compact and the summary is deterministic, so the
     conditions live here with the code that applies them.
 
-    Returns up to five actions: read, triage, discuss manual threat-modeling
-    questions, inspect an actionable architect review, or ask about the model.
+    Returns up to five actions: read, triage, settle the open questions with
+    the team, inspect an actionable architect review, or ask about the model.
     Informational notices belong in `build_run_notes`.
 
     Technical follow-ups such as SARIF upload and a deeper re-run belong in
-    `build_follow_ups`. Manual threat modeling is a primary way to use the
-    assessment and stays here with its finding-linked discussion questions.
+    `build_follow_ups`. The team questions stay here: they are the decisions a
+    code-derived model cannot make, linked to the findings that raise them.
 
     Entry 0 is the report step and stays first (it is the one most readers
     want), and the ask step stays last — it is the open-ended fallback, and it
-    follows the manual-review questions. Each entry is a self-contained
+    follows the team questions. Each entry is a self-contained
     imperative and starts capitalised; the list carries no conjunctions, so
     nothing has to read on from the entry above it.
 

@@ -549,7 +549,12 @@ def match_case(case: dict, findings: list[dict], signals: set[str] | None, repo_
 
 _CONFIRMED = "confirmed"
 _BLOCKED = "blocked"
+_REFUTED = "refuted"
 _INCONCLUSIVE = "inconclusive"
+# Neither verdict establishes the step: the verifier could not decide, or it
+# decided the matched pairing does not hold. Both cap the chain the same way;
+# they differ downstream — a refuted step is a settled result, not open work.
+_UNESTABLISHED = {_INCONCLUSIVE, _REFUTED}
 
 
 def _step_controls(step_match: dict, step_verdict: dict | None) -> list:
@@ -583,11 +588,17 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     all required steps confirmed, nothing unresolved -> fully_viable
     >=1 required confirmed AND >=1 step has a control -> partially_blocked
     all required steps blocked                        -> mitigated
-    any ASSESSED step inconclusive                    -> inconclusive
+    any ASSESSED step inconclusive or refuted         -> inconclusive
 
     ``fully_viable`` is a positive claim of end-to-end exploitability, so it
     requires every step the verifier actually assessed to be ``confirmed`` —
     not merely the ``required`` subset. See the inconclusive cap below.
+
+    A ``refuted`` step (the verifier established that the matched pairing does
+    not hold) caps the chain exactly like an inconclusive one: the chain as
+    matched is not an established path, and no chain-level verdict claims more.
+    The step keeps its own verdict, so §9 and the completion summary can tell
+    a settled mismatch from open work.
     """
     by_step = {v.get("step"): v for v in step_verdicts}
     step_matches = case_match.get("step_matches", [])
@@ -602,7 +613,7 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
 
     if all(v == _BLOCKED for v in verdicts):
         return "mitigated"
-    if any(v == _INCONCLUSIVE for v in verdicts):
+    if any(v in _UNESTABLISHED for v in verdicts):
         return "inconclusive"
     # An inconclusive step ANYWHERE on the chain caps the verdict, whether the
     # matcher flagged that leg `required` or not, and whether the verifier left
@@ -634,12 +645,12 @@ def finalize_verdict(case_match: dict, step_verdicts: list[dict]) -> str:
     # its individual verdict, `_combined_risk` simply stops applying the
     # fully-viable severity escalation, and triage_compute_ranking stops
     # elevating the member findings off an unproven chain.
-    if any(v.get("verdict") == _INCONCLUSIVE for v in step_verdicts):
+    if any(v.get("verdict") in _UNESTABLISHED for v in step_verdicts):
         return "inconclusive"
     confirmed = [v == _CONFIRMED for v in verdicts]
     if all(confirmed):
         return "partially_blocked" if any_control else "fully_viable"
-    # mix of confirmed + blocked, none inconclusive
+    # mix of confirmed + blocked, none unestablished
     if any(confirmed):
         return "partially_blocked"
     return "inconclusive"
@@ -782,7 +793,9 @@ def cmd_list_inconclusive(args: argparse.Namespace) -> int:
 
     Run AFTER `finalize` (needs `chain_verdict`). Output is the escalation
     work-list for the skill's sonnet re-verify pass. Capped at `--max` so the
-    escalation cost stays bounded; the cap drop is logged to stderr.
+    escalation cost stays bounded; the cap drop is logged to stderr. A chain
+    capped only by `refuted` steps is settled — a re-read of the same mismatch
+    cannot change it — and is not listed (AC-6).
     """
     out_dir = Path(args.output_dir)
     verdicts_path = out_dir / ".abuse-case-verdicts.json"
@@ -809,12 +822,17 @@ def cmd_list_inconclusive(args: argparse.Namespace) -> int:
         except (OSError, json.JSONDecodeError, KeyError):
             candidates = set()
 
+    def open_work(verdict: dict) -> bool:
+        steps = {s.get("verdict") for s in verdict.get("step_verdicts") or [] if isinstance(s, dict)}
+        return _INCONCLUSIVE in steps or _REFUTED not in steps
+
     inconclusive = sorted(
         v.get("abuse_case_id")
         for v in (verdicts or [])
         if v.get("chain_verdict") == _INCONCLUSIVE
         and v.get("abuse_case_id")
         and (not candidates or v.get("abuse_case_id") in candidates)
+        and open_work(v)
     )
 
     cap = max(0, int(getattr(args, "max", 5) or 0))

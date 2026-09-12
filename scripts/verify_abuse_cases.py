@@ -27,7 +27,7 @@ from pathlib import Path
 
 import budget_watchdog
 
-_VALID_STEP_VERDICTS = {"confirmed", "blocked", "inconclusive"}
+_VALID_STEP_VERDICTS = {"confirmed", "blocked", "refuted", "inconclusive"}
 
 
 # Reason prefixes the verifier contract reserves for an announcement write —
