@@ -171,7 +171,7 @@ def test_worst_case_prefers_the_persisted_verdict(tmp_path):
     body = """\
         meta: {project: {name: Demo}}
         threats:
-          - {t_id: T-001, risk: Critical, component: auth, title: secret}
+          - {t_id: T-001, risk: Critical, component: auth, title: secret, cwe: CWE-798}
         mitigations:
           - {id: M-001, priority: P1}
         critical_findings:
@@ -194,10 +194,12 @@ def test_worst_case_prefers_the_persisted_verdict(tmp_path):
     assert "Verdict    🔴 not production-ready" in out
     assert "anyone can reach admin data today" in out
     assert "Fix the credential handling" in out
-    assert "Full admin takeover" in out
-    assert "✓ verified attack path" in out
-    assert "F-001" in out
-    # the weak fallback must not also render
+    # The shared worst-case table: rank, ✓, outcome, the finding's weakness class.
+    label = stm.verdict_class_labels(data["threats"])["F-001"][0]
+    assert f"\n  1 ✓  Full admin takeover  {label}\n" in out
+    assert stm.WORST_CASE_LEGEND in out
+    # the sentence stays in the report; the weak fallback must not also render
+    assert "Anyone can sign in as an administrator" not in out
     assert "→ M-001 (P1)" not in out
 
 

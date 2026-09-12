@@ -72,6 +72,7 @@ from urllib.parse import quote
 import _severity_rollup  # sibling script — see extract_metrics()
 import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
 import stamp_threat_model  # sibling script — owns which deliverables get stamped
+import summarize_threat_model  # sibling script — owns the worst-case table both consoles print
 from _atomic_io import atomic_write_text
 from _shared_sources import DESIGN_LEVEL_SOURCES
 
@@ -2341,7 +2342,7 @@ def render_summary(
         lines.extend(render_files(output_dir, cfg))
         return "\n".join(lines) + "\n"
 
-    lines.extend(render_verdict(md_text, cfg, _verdict_class_labels(yaml_data.get("threats"), plugin_root)))
+    lines.extend(render_verdict(md_text, cfg, summarize_threat_model.persisted_verdict(yaml_data, plugin_root)))
     if change:
         lines.extend(render_change_summary(change))
         lines.extend(render_threat_delta(change))
@@ -2443,90 +2444,59 @@ def _extract_verdict(md_text: str) -> str:
     return _html_to_plain(m.group(1))
 
 
-# Trailing finding-reference clause on a worst-case-outcome bullet, e.g.
-# ` *(🔴 [F-006](#f-006) — Hardcoded Cryptographic Key (\`lib/insecurity.ts:21\`),
-# … → [W-004](#w-004))*`. The lookahead requires at least one F-/T-/W-NNN link
-# inside, so an ordinary italic parenthetical is never touched. Non-greedy `)\*`
-# is deliberate: the clause itself contains `(…)` file locations, and the first
-# `)` followed by `*` is the real terminator.
-_VERDICT_REF_CLAUSE_RE = re.compile(r"\s*\*\((?=[^\n]*\[[FTW]-\d{3}\])[^\n]*?\)\*")
+# A worst-case bullet of the report's `### Verdict` (`- **Outcome** — …`) and
+# the bold intro line above the list (`**What an attacker can do today, …:**`).
+_VERDICT_BULLET_RE = re.compile(r"^- \*\*")
+_VERDICT_INTRO_RE = re.compile(r"^\*\*([^*]+?):\*\*$")
 
 
-# Report anchor of a cited finding inside that clause, e.g. `[F-011](#f-011)`.
-_VERDICT_REF_ID_RE = re.compile(r"\[([FT]-\d{3,4})\]")
-# `Improper Neutralization … (SQL Injection)` → `SQL Injection`.
-_CWE_SHORT_NAME_RE = re.compile(r"\(([^()]+)\)\s*$")
+def _verdict_console_lines(verdict_md: str, bullets: list[dict]) -> list[str]:
+    """The verdict slice with its bullet list swapped for the shared worst-case table.
 
-
-def _verdict_class_labels(threats: Any, plugin_root: Path) -> dict[str, list[str]]:
-    """Weakness-class labels per report anchor (F-NNN), from each finding's CWE.
-
-    The label is the CWE title's parenthetical short name when it has one
-    (`SQL Injection`, `XSS`), else the title itself. A CWE absent from
-    `data/cwe-taxonomy.yaml` contributes no label.
+    The report keeps the bullets with their finding links; on the console the
+    persisted bullets render as `summarize_threat_model.render_worst_case_table`
+    under the intro's own wording. Without persisted bullets the slice stays
+    as it is. Runs of blank lines collapse to one.
     """
-    cwes = _load_yaml(plugin_root / "data" / "cwe-taxonomy.yaml").get("cwes") or {}
-    labels: dict[str, list[str]] = {}
-    for threat in threats if isinstance(threats, list) else []:
-        if not isinstance(threat, dict):
-            continue
-        raw = threat.get("cwe")
-        found: list[str] = []
-        for cwe in raw if isinstance(raw, list) else [raw]:
-            title = str((cwes.get(str(cwe)) or {}).get("title") or "").strip() if cwe else ""
-            m = _CWE_SHORT_NAME_RE.search(title)
-            label = (m.group(1) if m else title).strip()
-            if label and label not in found:
-                found.append(label)
-        if found:
-            labels[_severity_rollup.display_id(str(threat.get("id") or ""))] = found
-    return labels
+    lines = verdict_md.splitlines()
+    first = next((i for i, line in enumerate(lines) if _VERDICT_BULLET_RE.match(line)), None)
+    if bullets and first is not None:
+        end = first
+        while end < len(lines) and (_VERDICT_BULLET_RE.match(lines[end]) or not lines[end].strip()):
+            end += 1
+        start, caption = first, []
+        intro = next((i for i in range(first - 1, -1, -1) if lines[i].strip()), None)
+        match = _VERDICT_INTRO_RE.match(lines[intro].strip()) if intro is not None else None
+        if match:
+            start, caption = intro, [match.group(1), ""]
+        table = summarize_threat_model.render_worst_case_table(bullets, indent="")
+        lines = [*lines[:start], *caption, *table, "", *lines[end:]]
+    out: list[str] = []
+    for line in lines:
+        if line.strip() or (out and out[-1].strip()):
+            out.append(line)
+    while out and not out[-1].strip():
+        out.pop()
+    return out
 
 
-def _strip_verdict_refs(text: str, class_labels: dict[str, list[str]] | None = None) -> str:
-    """Replace the per-bullet finding-reference clauses in the console verdict.
-
-    The report keeps them — a reader in `threat-model.md` follows the links.
-    On the console they are pure noise: the anchors are not clickable and each
-    bullet carries three-plus of them, burying the one sentence that matters.
-    With `class_labels` the clause becomes a compact weakness-class tag such as
-    `(SQL Injection)` — the one fact it carried that a console reader acts on —
-    leaving out any class the bullet already names. Any trailing marker after
-    the clause (e.g. `— ✓ verified attack path`) stays.
-    """
-
-    def _line(ln: str) -> str:
-        plain = _VERDICT_REF_CLAUSE_RE.sub("", ln).lower()
-
-        def _tag(match: re.Match[str]) -> str:
-            tags: list[str] = []
-            for ref in _VERDICT_REF_ID_RE.findall(match.group(0)):
-                for label in (class_labels or {}).get(_severity_rollup.display_id(ref), []):
-                    if label not in tags and label.lower() not in plain:
-                        tags.append(label)
-            return f" ({', '.join(tags)})" if tags else ""
-
-        return _VERDICT_REF_CLAUSE_RE.sub(_tag, ln)
-
-    return "\n".join(_line(ln) for ln in text.splitlines())
-
-
-def render_verdict(md_text: str, cfg: dict, class_labels: dict[str, list[str]] | None = None) -> list[str]:
+def render_verdict(md_text: str, cfg: dict, verdict: dict | None = None) -> list[str]:
     """Console `-- Verdict --` block: the report's headline verdict.
 
     Shown by default so the user sees the assessment's bottom line without
     opening `threat-model.md`. Suppressed when `cfg["quiet"]` is set
-    (the skill's `--quiet` flag). `class_labels` (see `_verdict_class_labels`)
-    tags each worst-case bullet with the weakness classes its findings carry.
+    (the skill's `--quiet` flag). `verdict` is the model's persisted verdict
+    (`summarize_threat_model.persisted_verdict`); its bullets replace the
+    report's bullet list with the worst-case table.
     """
     if cfg.get("quiet"):
         return []
-    verdict = _strip_verdict_refs(_extract_verdict(md_text), class_labels)
-    if not verdict:
+    verdict_md = _extract_verdict(md_text)
+    if not verdict_md:
         return []
     lines = ["", f"  -- Verdict {SECTION_RULE[:48]}", ""]
-    for ln in verdict.splitlines():
-        lines.append(f"  {ln}" if ln.strip() else "")
+    for line in _verdict_console_lines(verdict_md, (verdict or {}).get("bullets") or []):
+        lines.append(f"  {line}" if line.strip() else "")
     return lines
 
 

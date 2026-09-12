@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The completion summary's "Open questions for the team" (formerly "Manual threat modeling follow-up") asks the decision each Weakness Register entry depends on, linked to the W entry and its worst findings, and closes with the findings whose evidence is still unverified.
 - An abuse-case step the verifier establishes as a wrong pairing is reported as `✗ Refuted` in §9 instead of `? Inconclusive`, and no longer surfaces as an open question.
+- The completion summary and `show-threat-model` list the worst-case scenarios as a compact table: outcome, weakness class, and ✓ for a verified attack path.
 
 ### Fixed
 

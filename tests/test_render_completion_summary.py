@@ -2273,31 +2273,36 @@ class TestVerdictEcho:
     def test_render_verdict_absent_section_omits_block(self):
         assert rcs.render_verdict("# Threat Model\n\n## 1. Scope\nbody\n", {}) == []
 
-    def test_render_verdict_drops_per_bullet_finding_refs(self):
+    def test_render_verdict_swaps_bullets_for_the_worst_case_table(self):
         md = _VERDICT_MD.replace(
             "- **Admin takeover via forged JWT** — key committed at lib/insecurity.ts:23.\n",
             "- **Admin takeover via forged JWT** — key committed. "
             "*(🔴 [F-006](#f-006) — Hardcoded Key (`lib/insecurity.ts:23`), "
             "🔴 [F-008](#f-008) — Insecure JWT → [W-004](#w-004))* — ✓ verified attack path\n",
         )
-        joined = "\n".join(rcs.render_verdict(md, {}))
-        # The bullet's own sentence and any trailing marker survive …
-        assert "Admin takeover via forged JWT" in joined
-        assert "✓ verified attack path" in joined
-        # … but the reference clause goes in full — ids, titles, locations.
-        assert "F-006" not in joined
-        assert "W-004" not in joined
+        verdict = {
+            "bullets": [
+                {"title": "Admin takeover via forged JWT", "classes": ["Hard-coded Key"], "verified_attack_path": True}
+            ]
+        }
+        joined = "\n".join(rcs.render_verdict(md, {}, verdict))
+        assert "  1 ✓  Admin takeover via forged JWT  Hard-coded Key" in joined
+        assert rcs.summarize_threat_model.WORST_CASE_LEGEND in joined
+        # The sentence and the reference clause (ids, titles, locations) stay in the report.
+        assert "key committed" not in joined
+        assert "F-006" not in joined and "W-004" not in joined
         assert "lib/insecurity.ts:23" not in joined
+        # Lines outside the bullet list are untouched.
+        assert "**Risk distribution:** 🔴 Critical: 24" in joined
+        assert "Rotate the key before production." in joined
 
-    def test_strip_verdict_refs_leaves_plain_italic_parenthetical(self):
-        line = "Total findings *(including design risks)* remain unchanged."
-        assert rcs._strip_verdict_refs(line) == line
+    def test_render_verdict_without_persisted_bullets_keeps_the_report_lines(self):
+        joined = "\n".join(rcs.render_verdict(_VERDICT_MD, {}))
+        assert "- **Admin takeover via forged JWT** — key committed at lib/insecurity.ts:23." in joined
 
-    def test_strip_verdict_refs_is_idempotent(self):
-        line = "- **X** — Y. *([T-015](#t-015) — RCE)*"
-        once = rcs._strip_verdict_refs(line)
-        assert once == "- **X** — Y."
-        assert rcs._strip_verdict_refs(once) == once
+    def test_render_verdict_collapses_blank_runs(self):
+        body = rcs.render_verdict(_VERDICT_MD.replace("\n\n", "\n\n\n\n"), {})[3:]
+        assert body and all(a or b for a, b in zip(body, body[1:]))
 
     def _output_dir_with_verdict(self, tmp_path: Path) -> Path:
         (tmp_path / "threat-model.md").write_text(_VERDICT_MD)

@@ -1,12 +1,14 @@
-"""Console verdict: a weakness-class tag replaces each bullet's finding-reference clause."""
+"""Console verdict: the persisted worst-case bullets render as one shared table."""
 
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
 
+import summarize_threat_model as stm
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -41,74 +43,129 @@ def _plugin_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _bullet(body: str, refs: str) -> str:
-    return f"- **Customer data exposed** — {body} *({refs} → [W-003](#w-003))* — ✓ verified attack path"
+def _bullet(title: str, classes: list[str] | None = None, verified: bool = False) -> dict:
+    return {"title": title, "classes": classes or [], "verified_attack_path": verified}
 
 
 def test_labels_follow_the_cwe_short_name_rule(tmp_path):
-    labels = rcs._verdict_class_labels(
+    labels = stm.verdict_class_labels(
         [
             {"id": "T-011", "cwe": "CWE-1"},
             {"id": "T-012", "cwe": "CWE-2"},
             {"id": "T-013", "cwe": ["CWE-3", "CWE-3"]},
-            {"id": "T-014", "cwe": "CWE-999"},
-            {"id": "T-015"},
+            {"t_id": "T-014", "cwe": "CWE-1"},
+            {"id": "T-015", "cwe": "CWE-999"},
+            {"id": "T-016"},
             "not-a-threat",
         ],
         _plugin_root(tmp_path),
     )
-    assert labels == {"F-011": ["Query Injection"], "F-012": ["Path Traversal"], "F-013": ["XSS"]}
+    assert labels == {
+        "F-011": ["Query Injection"],
+        "F-012": ["Path Traversal"],
+        "F-013": ["XSS"],
+        "F-014": ["Query Injection"],
+    }
 
 
 def test_missing_taxonomy_yields_no_labels(tmp_path):
-    assert rcs._verdict_class_labels([{"id": "T-011", "cwe": "CWE-1"}], tmp_path) == {}
+    assert stm.verdict_class_labels([{"id": "T-011", "cwe": "CWE-1"}], tmp_path) == {}
 
 
-def test_clause_becomes_a_class_tag_before_the_badge():
-    line = _bullet(
-        "Anyone can dump every record.", "🔴 [F-011](#f-011) — Query built from input (`src/db/search.ts:23`)"
+def test_bullet_classes_follow_finding_order_without_repeats(tmp_path):
+    data = {
+        "threats": [
+            {"id": "T-011", "cwe": "CWE-1"},
+            {"id": "T-012", "cwe": ["CWE-1", "CWE-2"]},
+            {"id": "T-013", "cwe": "CWE-3"},
+        ],
+        "verdict": {
+            "opening": "Not production-ready.",
+            "bullets": [{"title": "Customer data exposed", "findings": ["F-012", "T-011", "F-013"]}],
+        },
+    }
+    bullet = stm.persisted_verdict(data, _plugin_root(tmp_path))["bullets"][0]
+    assert bullet["classes"] == ["Query Injection", "Path Traversal", "XSS"]
+
+
+def test_rows_carry_rank_mark_outcome_and_first_class_in_one_column():
+    rows = stm.render_worst_case_table(
+        [
+            _bullet("Admin takeover", ["SQL Injection"]),
+            _bullet("Token forgery", ["Hard-coded Key", "Signature Bypass"], verified=True),
+            _bullet("Unclassified outcome"),
+        ],
+        indent="",
     )
-    out = rcs._strip_verdict_refs(line, {"F-011": ["Query Injection"]})
-    assert out == (
-        "- **Customer data exposed** — Anyone can dump every record. (Query Injection) — ✓ verified attack path"
-    )
+    assert [row[:5] for row in rows[:3]] == ["1    ", "2 ✓  ", "3    "]
+    assert rows[0][5:].startswith("Admin takeover") and rows[1][5:].startswith("Token forgery")
+    assert rows[0].index("SQL Injection") == rows[1].index("Hard-coded Key +1")
+    assert rows[2] == "3    Unclassified outcome"
+    assert rows[3:] == ["", stm.WORST_CASE_LEGEND]
 
 
-def test_tag_is_left_out_when_the_bullet_already_names_the_class():
-    line = _bullet("Query injection lets anyone dump every record.", "🔴 [F-011](#f-011)")
-    assert rcs._strip_verdict_refs(line, {"F-011": ["Query Injection"]}) == rcs._strip_verdict_refs(line)
+def test_legend_only_when_a_path_is_verified():
+    assert stm.render_worst_case_table([_bullet("Admin takeover", ["SQL Injection"])]) == [
+        "  1    Admin takeover  SQL Injection"
+    ]
+    assert stm.render_worst_case_table([]) == []
 
 
-def test_labels_of_several_refs_are_deduplicated_in_order():
-    line = _bullet("Anyone can dump every record.", "🔴 [F-011](#f-011), 🔴 [F-012](#f-012), 🟠 [F-013](#f-013)")
-    labels = {"F-011": ["Query Injection"], "F-012": ["Query Injection", "Path Traversal"], "F-013": ["XSS"]}
-    assert "(Query Injection, Path Traversal, XSS)" in rcs._strip_verdict_refs(line, labels)
+def test_ranks_stay_aligned_past_nine():
+    rows = stm.render_worst_case_table([_bullet(f"Outcome {n}", ["XSS"]) for n in range(1, 11)], indent="")
+    assert len({row.index("XSS") for row in rows}) == 1
+    assert rows[0].startswith("1 ") and rows[9].startswith("10 ")
 
 
-def test_without_labels_the_clause_is_only_dropped():
-    line = _bullet("Anyone can dump every record.", "🔴 [F-011](#f-011)")
-    assert rcs._strip_verdict_refs(line) == (
-        "- **Customer data exposed** — Anyone can dump every record. — ✓ verified attack path"
-    )
+def test_no_line_opens_a_markdown_block():
+    # The completion summary is relayed as Markdown, which strips leading blanks
+    # and reads `#`, `-`, `>`, `1.` at a line start as block syntax.
+    bullets = [_bullet(f"Outcome {n}", ["XSS"], verified=n % 2 == 0) for n in range(1, 12)]
+    for row in stm.render_worst_case_table(bullets, indent=""):
+        assert not re.match(r"(#|[-*+>=]|\d+[.)])(\s|$)", row), row
 
 
-def test_summary_tags_bullets_from_the_run_yaml(tmp_path):
+def test_completion_summary_swaps_the_bullets_for_the_table(tmp_path):
     out = tmp_path / "run"
     out.mkdir()
     (out / "threat-model.md").write_text(
-        "# Threat Model\n\n## Management Summary\n\n### Verdict\n\n🔴 Not production-ready.\n\n"
-        + _bullet("Anyone can dump every record.", "🔴 [F-011](#f-011)")
-        + "\n\n### Security Posture & Top Threats\n\nNot part of the verdict.\n",
+        "# Threat Model\n\n## Management Summary\n\n### Verdict\n\n🔴 Not production-ready.\n\n\n\n"
+        "**What an attacker can do today, worst first:**\n\n\n"
+        "- **Customer data exposed** — Anyone can dump every record. "
+        "*(🔴 [F-011](#f-011) — Query built from input (`src/db/search.ts:23`) → [W-003](#w-003))*"
+        " — ✓ verified attack path\n\n\n\n"
+        "Fix the query layer first.\n\n### Security Posture & Top Threats\n\nNot part of the verdict.\n",
         encoding="utf-8",
     )
     threats = [{"id": "T-011", "cwe": "CWE-89", "title": "Query built from input", "risk": "Critical"}]
-    model = {"meta": {"schema_version": 1}, "threats": threats, "mitigations": [], "components": []}
+    verdict = {
+        "severity": "red",
+        "opening": "Not production-ready.",
+        "bullets": [
+            {
+                "title": "Customer data exposed",
+                "body": "Anyone can dump every record.",
+                "findings": ["F-011"],
+                "verified_attack_path": True,
+            }
+        ],
+        "closing": "Fix the query layer first.",
+    }
+    model = {"meta": {"schema_version": 1}, "threats": threats, "mitigations": [], "components": [], "verdict": verdict}
     (out / "threat-model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
-    expected = rcs._verdict_class_labels(threats, REPO_ROOT)["F-011"]
+    label = stm.verdict_class_labels(threats)["F-011"][0]
     r = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out), "--repo-root", str(out), "--mode", "full"],
         capture_output=True,
         text=True,
     )
     assert r.returncode == 0, r.stderr
-    assert f"Anyone can dump every record. ({', '.join(expected)})" in r.stdout
+    verdict_block = r.stdout.split("-- Verdict", 1)[1].split("Fix the query layer first.", 1)[0]
+    assert "\n  What an attacker can do today, worst first\n" in verdict_block
+    assert f"\n  1 ✓  Customer data exposed  {label}\n" in verdict_block
+    assert stm.WORST_CASE_LEGEND in verdict_block
+    # The sentence, the finding links and their locations stay in the report.
+    assert "Anyone can dump every record" not in verdict_block
+    assert "F-011" not in verdict_block and "W-003" not in verdict_block and "search.ts" not in verdict_block
+    assert "**" not in verdict_block
+    assert "\n\n\n" not in verdict_block

@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -150,25 +151,74 @@ def _coverage(threats: list) -> dict:
     return {"with_mitigation": with_m, "uncovered": len(threats) - with_m}
 
 
-def _verdict(data: dict) -> dict | None:
+# `Improper Neutralization … (SQL Injection)` → `SQL Injection`.
+_CWE_SHORT_NAME_RE = re.compile(r"\(([^()]+)\)\s*$")
+
+
+def verdict_class_labels(threats: object, plugin_root: Path | None = None) -> dict[str, list[str]]:
+    """Weakness-class labels per report anchor (F-NNN), from each finding's CWE.
+
+    The label is the CWE title's parenthetical short name when it has one
+    (`SQL Injection`, `XSS`), else the title itself. A CWE absent from
+    `data/cwe-taxonomy.yaml` contributes no label.
+    """
+    import yaml
+
+    root = plugin_root or Path(__file__).resolve().parent.parent
+    try:
+        taxonomy = yaml.safe_load((root / "data" / "cwe-taxonomy.yaml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return {}
+    cwes = (taxonomy.get("cwes") if isinstance(taxonomy, dict) else None) or {}
+    labels: dict[str, list[str]] = {}
+    for threat in threats if isinstance(threats, list) else []:
+        if not isinstance(threat, dict):
+            continue
+        raw = threat.get("cwe")
+        found: list[str] = []
+        for cwe in raw if isinstance(raw, list) else [raw]:
+            title = str((cwes.get(str(cwe)) or {}).get("title") or "").strip() if cwe else ""
+            match = _CWE_SHORT_NAME_RE.search(title)
+            label = (match.group(1) if match else title).strip()
+            if label and label not in found:
+                found.append(label)
+        raw_id = str(threat.get("t_id") or threat.get("id") or "")
+        if found and raw_id:
+            labels[_severity_rollup.display_id(raw_id)] = found
+    return labels
+
+
+def persisted_verdict(data: dict, plugin_root: Path | None = None) -> dict | None:
     """The report's `### Verdict` block, read verbatim from ``verdict``.
 
     Written by the composer after a successful render (the LLM fragment it
     comes from is deleted by cleanup). Absent on models composed before the
-    field existed — callers degrade rather than invent a verdict."""
+    field existed — callers degrade rather than invent a verdict. Each bullet
+    carries the weakness classes of its findings (``verdict_class_labels``),
+    in finding order without repeats."""
     v = data.get("verdict")
     if not isinstance(v, dict) or not (v.get("opening") or "").strip():
         return None
-    bullets = [
-        {
-            "title": str(b.get("title") or "").strip(),
-            "body": str(b.get("body") or "").strip(),
-            "findings": [str(f).strip() for f in (b.get("findings") or []) if str(f).strip()],
-            "verified_attack_path": bool(b.get("verified_attack_path")),
-        }
-        for b in (v.get("bullets") or [])
-        if isinstance(b, dict) and str(b.get("title") or "").strip()
-    ]
+    labels = verdict_class_labels(data.get("threats"), plugin_root)
+    bullets = []
+    for b in v.get("bullets") or []:
+        if not isinstance(b, dict) or not str(b.get("title") or "").strip():
+            continue
+        findings = [str(f).strip() for f in (b.get("findings") or []) if str(f).strip()]
+        classes: list[str] = []
+        for fid in findings:
+            for label in labels.get(_severity_rollup.display_id(fid), []):
+                if label not in classes:
+                    classes.append(label)
+        bullets.append(
+            {
+                "title": str(b.get("title") or "").strip(),
+                "body": str(b.get("body") or "").strip(),
+                "findings": findings,
+                "classes": classes,
+                "verified_attack_path": bool(b.get("verified_attack_path")),
+            }
+        )
     return {
         "severity": str(v.get("severity") or "").strip(),
         "opening": str(v.get("opening") or "").strip(),
@@ -310,7 +360,7 @@ def build_summary(data: dict, output_dir: Path) -> dict:
         # bucket is not a measurement — the histogram says `n/a`, like the
         # report's Risk-distribution line.
         "low_suppressed": _severity_rollup.low_suppressed(data),
-        "verdict": _verdict(data),
+        "verdict": persisted_verdict(data),
         "backlog": _backlog_by_priority(mitigations),
         "coverage": _coverage(threats),
         "control_posture": _control_posture(controls),
@@ -415,23 +465,42 @@ def _render_verdict_block(verdict: dict | None) -> list[str]:
     return out
 
 
+WORST_CASE_LEGEND = "✓ attack path verified end-to-end in code"
+
+
+def render_worst_case_table(bullets: list[dict], indent: str = "  ") -> list[str]:
+    """The verdict's worst-case outcomes as one aligned row each.
+
+    Shared by the completion summary and this overview so both consoles show
+    the list identically: rank, ✓ for a verified attack path, outcome, and the
+    first weakness class with a `+N` count of the rest. There is no header row
+    and every line starts with the rank or ✓: the completion summary is relayed
+    as Markdown, which strips leading blanks and reads a leading `#` as a
+    heading. review-threat-model's landing lists finding-level worst cases with
+    their fixes — a triage view on another basis — and keeps its own rows.
+    """
+    if not bullets:
+        return []
+    rank_w = len(str(len(bullets)))
+    title_w = max(len(b["title"]) for b in bullets)
+    rows = []
+    for rank, b in enumerate(bullets, 1):
+        classes = b.get("classes") or []
+        weakness = f"{classes[0]} +{len(classes) - 1}" if len(classes) > 1 else "".join(classes[:1])
+        mark = "✓" if b.get("verified_attack_path") else " "
+        rows.append(f"{indent}{rank:<{rank_w}} {mark}  {b['title']:<{title_w}}  {weakness}".rstrip())
+    if any(b.get("verified_attack_path") for b in bullets):
+        rows += ["", f"{indent}{WORST_CASE_LEGEND}"]
+    return rows
+
+
 def _render_worst_case_block(summary: dict) -> list[str]:
-    """Worst-case scenarios — the verdict's own bullets when the model carries
-    them, otherwise the weaker ``critical_findings[]`` fallback."""
+    """Worst-case scenarios — the verdict's own bullets as the shared table when
+    the model carries them, otherwise the weaker ``critical_findings[]`` fallback."""
     verdict = summary.get("verdict") or {}
     bullets = verdict.get("bullets") or []
     if bullets:
-        out = ["Worst case if nothing changes"]
-        for b in bullets:
-            head = f"  ⚠ {b['title']}"
-            if b.get("verified_attack_path"):
-                head += "   ✓ verified attack path"
-            out.append(head)
-            out.extend(_wrap(b["body"], indent=" " * 6))
-            if b.get("findings"):
-                out.append(" " * 6 + " · ".join(b["findings"]))
-        out.append("")
-        return out
+        return ["Worst case if nothing changes", *render_worst_case_table(bullets), ""]
 
     worst = summary.get("worst_case") or []
     if not worst:
