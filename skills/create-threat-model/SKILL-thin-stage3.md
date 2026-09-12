@@ -41,11 +41,7 @@ exit exactly:
 - `4`: select the same pass receipt with `cosmetic_advisories` copied from the
   plan; leave the plan for the completion summary. No Agent dispatch.
 - `1`: enter the bounded repair loop below.
-- `2` or `3`: dispatch the QA reviewer once for tool-error or semantic triage.
-  Require a readable `.qa-status.json` whose status is exactly `pass` or
-  `repair_required`; absence, an unknown status, or another tool error aborts.
-  Before accepting `pass`, run `qa_release_gate.py .qa-status.json`; every
-  non-zero exit is blocking. A `repair_required` status enters the repair loop.
+- `2` or `3`: dispatch the QA reviewer once for tool-error or semantic triage. Require a readable `.qa-status.json` whose status is exactly `pass` or `repair_required`; absence, an unknown status, or another tool error aborts. Before accepting `pass`, run `qa_release_gate.py .qa-status.json`; every non-zero exit is blocking. `repair_required` enters the repair loop only when `.qa-repair-plan.json` is actionable; with a non-actionable plan it takes the same `qa_release_gate.py` check instead and goes to §4 with 0 repair iterations.
 
 For a QA dispatch, use `appsec-advisor:appsec-qa-reviewer`, description
 `QA review of threat model`, and an explicit model taken verbatim from
@@ -76,11 +72,7 @@ each actionable `.qa-repair-plan.json`:
    `compose --strict → apply_prose_fixes → qa_checks.py gate`, then rerun this
    runtime from §1 so secret and integrity checks cover the new bytes.
 
-Count each real fixer dispatch and each deterministic repair attempt. A
-capacity error that changed no fragment may be retried once without consuming
-an iteration. At the cap, preserve the final plan, print that the report is not
-released, and abort with exit 2. A non-actionable plan never dispatches the
-fixer; it must pass `qa_release_gate.py` and remain visible as manual review.
+Count each real fixer dispatch and each deterministic repair attempt. A capacity error that changed no fragment may be retried once without consuming an iteration. At the cap, preserve the final plan, print that the report is not released, and abort with exit 2. A non-actionable plan never enters this loop: no `apply_repair_plan.py` attempt, no fixer dispatch, 0 iterations; it must pass `qa_release_gate.py` and remain visible as manual review.
 
 Apply `.qa-content-repair-plan.json`, when written by the reviewer, only through
 `apply_content_repair.py`. Then require strict compose, prose fixes, and
@@ -99,11 +91,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" unmasked_secrets \
   > "$OUTPUT_DIR/.qa-secret-scan.json"
 ```
 
-Any non-zero exit, including a tool error, aborts with exit 2. Never skip this
-depth-independent secret-leak gate for Quick or `SKIP_QA=true`. Only after both
-commands pass, write `.qa-status.json` last with `status=pass` and the selected
-source; on a skipped QA path use `source=secret-gate-only` and
-`qa_skipped=true`.
+Any non-zero exit, including a tool error, aborts with exit 2. Never skip this depth-independent secret-leak gate for Quick or `SKIP_QA=true`. Only after both commands pass, write `.qa-status.json` last with `status=pass`: after a QA-reviewer dispatch keep every other field the reviewer wrote, including its `source` (`targeted-semantic-review`) and `manual_review_items`; otherwise use the source §2 selects; on a skipped QA path use `source=secret-gate-only` and `qa_skipped=true`.
 
 Then print the receipt, immediately — this stage's only console output, and the
 sole place the run reports what QA did while it is still the reader's context:
@@ -121,8 +109,13 @@ for a deterministic pass. The script is a reader — it never writes
 `.qa-status.json`. A non-zero exit there is a reporting failure, not a release
 failure: report it and continue.
 
-Record the deterministic fast path as zero-token Stage 3 stats. Record each QA
-or fixer call separately, with fixer variants `repair-<iteration>` and its own
-dispatch start time. Stop the heartbeat, mark Stage 3 complete only after the
-fresh release receipts exist, call `orchestration_controller.py next`, and
-honor its returned instruction file.
+Record one Stage-3 stats row per path taken, each under its own `--variant`, or the script skips the later row as a replay: `qa-gate` for the deterministic gate (`--agent deterministic:qa_checks.py --model none`, zero counts, no `--subagent-type`/`--since-iso`), `qa-review` for the reviewer dispatch, `repair-<n>` for the n-th fixer dispatch. A dispatch row passes the alias given to the Agent tool as `--model`, that call's `<usage>`, and its own dispatch start. A stats failure never blocks:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
+  --stage 3 --variant <variant> --name "<variant>" --agent "<agent type>" \
+  --model "<Agent-tool alias>" --duration-ms <ms> --tool-uses <n> --tokens <n> \
+  --subagent-type "<agent type>" --since-iso "<dispatch start ISO>" || true
+```
+
+Stop the heartbeat, mark Stage 3 complete only after the fresh release receipts exist, call `orchestration_controller.py next`, and honor its returned instruction file.

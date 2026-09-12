@@ -120,9 +120,6 @@ _USAGE_SOURCE_ABSENT = "code=usage_source_absent"
 #: fallback token source when no hook-visible per-call usage exists.
 STAGE_STATS_FILENAME = ".stage-stats.jsonl"
 
-# AGENT_USAGE logs a model family; the pricing table is keyed by release.
-_PRICING_ALIAS = {"sonnet": "sonnet-4-6", "haiku": "haiku-4-5", "opus": "opus-4-6"}
-
 
 def find_assessment_start(hook_log: Path, agent_log: Path) -> str | None:
     """Find the ASSESSMENT_START timestamp from agent-run.log first
@@ -299,6 +296,7 @@ def aggregate_subagent_usage(
     except OSError:
         return result
 
+    usage_rows: list[tuple[str, dict[str, str]]] = []
     for line in lines:
         for pattern, seen in ((_AGENT_USAGE_RE, metered), (_AGENT_SPAWN_RE, spawned)):
             m = pattern.match(line)
@@ -314,33 +312,54 @@ def aggregate_subagent_usage(
             if not call_id or call_id in seen:
                 continue
             seen.add(call_id)
-            if pattern is not _AGENT_USAGE_RE:
-                continue
-            pricing = vrc.PRICING_MODELS.get(
-                _PRICING_ALIAS.get(fields.get("model", ""), ""),
-                vrc.PRICING_MODELS["sonnet-4-6"],
-            )
-            for log_field, attr in (
-                ("in", "in_tokens"),
-                ("out", "out_tokens"),
-                ("cache_write", "cache_write"),
-                ("cache_read", "cache_read"),
-            ):
-                try:
-                    value = int(fields.get(log_field, "0").replace(",", ""))
-                except ValueError:
-                    continue
-                setattr(snapshot, attr, getattr(snapshot, attr) + value)
-                host_tokens[call_id] = host_tokens.get(call_id, 0) + value
-                cost += value * pricing[{"in": "input", "out": "output"}.get(log_field, log_field)] / 1_000_000
+            if pattern is _AGENT_USAGE_RE:
+                usage_rows.append((call_id, fields))
         if _USAGE_SOURCE_ABSENT in line:
             result["usage_source_absent"] = True
+
+    # A call is priced as the release the host reported it ran on. One that
+    # names only its alias takes the release this run's host resolved that alias
+    # to, and only then the fixed fallback table — see vrc.release_key.
+    learned = vrc.learn_alias_releases([fields for _, fields in usage_rows])
+    unpriced_release_tokens = 0
+    unpriced_release_calls = 0
+    for call_id, fields in usage_rows:
+        counts: dict[str, int] = {}
+        for log_field in ("in", "out", "cache_write", "cache_read"):
+            try:
+                counts[log_field] = int(fields.get(log_field, "0").replace(",", ""))
+            except ValueError:
+                counts[log_field] = 0
+        host_tokens[call_id] = sum(counts.values())
+        alias = vrc.strip_model_id(fields.get("model", ""))
+        requested = vrc.release_key(fields.get("model", ""))
+        release = (
+            vrc.release_key(fields.get("resolved_model", ""))
+            or learned.get(alias)
+            or vrc.ALIAS_FALLBACK_RELEASES.get(alias)
+            or (requested if requested in vrc.PRICING_MODELS else "sonnet-4-6")
+        )
+        pricing = vrc.PRICING_MODELS.get(release)
+        if pricing is None:
+            # The host ran a release the table does not know: real spend, left
+            # unpriced so the total reads as a floor instead of a wrong figure.
+            unpriced_release_tokens += host_tokens[call_id]
+            unpriced_release_calls += 1
+            continue
+        for log_field, attr in (
+            ("in", "in_tokens"),
+            ("out", "out_tokens"),
+            ("cache_write", "cache_write"),
+            ("cache_read", "cache_read"),
+        ):
+            setattr(snapshot, attr, getattr(snapshot, attr) + counts[log_field])
+            cost += counts[log_field] * pricing[{"in": "input", "out": "output"}.get(log_field, log_field)] / 1_000_000
 
     unpriced, covered = stage_stats_residual_tokens(agent_log.parent, host_tokens, window_start, window_end)
     result["subagent_count"] = len(metered | covered)
     result["unmetered_agents"] = len(spawned - metered - covered)
-    result["unpriced_tokens"] = unpriced
-    result["unpriced_calls"] = len(covered)
+    result["unpriced_tokens"] = unpriced + unpriced_release_tokens
+    result["unpriced_calls"] = len(covered) + unpriced_release_calls
     result["subagent_snapshot"] = snapshot
     result["subagent_cost"] = cost
     return result

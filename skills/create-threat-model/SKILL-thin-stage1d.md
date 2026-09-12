@@ -70,7 +70,7 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
        --stage 1 --variant abuse-verification --name "Abuse Case Verification" \
        --agent appsec-advisor:appsec-abuse-case-verifier \
-       --model "$ABUSE_VERIFIER_MODEL" \
+       --model "<job model alias from step 3>" \
        --duration-ms <ms> --tool-uses <n> --tokens <n> \
        --subagent-type appsec-advisor:appsec-abuse-case-verifier \
        --since-iso "$STAGE_ABUSE_START_ISO" 2>/dev/null || true

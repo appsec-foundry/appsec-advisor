@@ -75,6 +75,7 @@ Removing an entry means listing it here in the same change.
 | OR-20 | A stopped child owns no further turns: turn attribution ends at `SubagentStop`, before the outcome is settled, while attempt ownership continues so a late progress write is still attributed | `test_a_stopped_child_does_not_own_the_parents_later_turns` | comment at `agent_lifecycle.is_current_claim` |
 | OR-21 | A call's usage is expected wherever the run dispatched it in the foreground, `background_promoted` included; a host that promotes every call must not thereby silence the check that says its usage source is gone | `test_a_promoted_call_without_usage_still_reports_the_missing_source`, `test_a_deliberately_backgrounded_call_is_not_expected_to_carry_usage` | `scripts/telemetry_consistency.py::_usage_was_expected` |
 | OR-22 | Host event meaning is pinned by run-shaped invariants, not by fixtures alone: per pinned host, a replayed run asserts that no dispatched call outlives its return, that a parent turn ending is not the run ending, and that a stopped child holds no turn budget | `test_a_whole_run_holds_its_invariants_whatever_the_events_mean`, `test_the_run_ends_only_once_its_lock_is_gone` | `tests/test_hook_payload_contract.py`; extends OR-9 |
+| OR-23 | Lifecycle and budget state record a non-plugin agent only while the run holds its lock, and the terminal sweep settles a still-running call from its child transcript (usage, release, API error) before failing the rest as `outer_session_terminal` | `tests/test_agent_logger_run_scope.py` | `scripts/agent_logger.py` → `_agent_in_run_scope`, `_settle_swept_calls` |
 
 ## Repair
 
@@ -92,6 +93,7 @@ Removing an entry means listing it here in the same change.
 | CE-3 | Stage 2 context stays cumulatively bounded | `test_thin_full_cumulative_stage2_context_is_bounded` | `data/context-budgets.yaml`; see `docs/internal/analysis/analysis-context-compaction-thorough-runs-2026-07-16.md` |
 | CE-4 | Phase groups load at their boundary, never inline | `tests/test_lazy_phase_group_loading.py` | `docs/internal/contracts/orchestration-actions.md` |
 | CE-5 | Dispatch prompts run stable → specific → volatile | `tests/test_dispatch_prompt_cache_order.py` | `skills/create-threat-model/SKILL-thin-stage1-v2.md` |
+| CE-6 | The controller prints each action as one compact JSON line and never drops a field to save context: the printed action is the exact action the effective plan binds | `test_emit_prints_the_whole_action_as_one_compact_line`, `test_controller_emit_binds_identity_on_a_shadow_only_action` | `docs/internal/contracts/orchestration-actions.md` |
 
 ## Depth and turn budgets
 
@@ -122,6 +124,7 @@ Removing an entry means listing it here in the same change.
 | MD-4 | The session model controls the orchestrator and is the primary cost lever; the pipeline centrally routes subagents, while no agent selects its own model | — *(no guard written)* | `docs/model-selection.md` |
 | MD-5 | Session-model detection is advisory and fails open; routing resolves with no session model present | `test_effective_routing_empty_session_model` | `scripts/resolve_config.py` |
 | MD-6 | An organization may cap Opus org-wide; absent policy defaults to permitted | `test_policy_disable_opus_absent_defaults_false` | `schemas/org-profile.schema.yaml` → `policy.disable_opus` |
+| MD-7 | A sub-agent call is priced as the release the host reports it ran on; a bare alias takes the release this run's host resolved it to, then a fallback table, and a reported release the table does not know stays unpriced | `tests/test_model_release_pricing.py` | `scripts/verify_run_costs.py` → `release_key`, `learn_alias_releases` |
 
 ## Trust boundaries
 
@@ -141,7 +144,7 @@ Removing an entry means listing it here in the same change.
 
 | ID | Decision | Guard | Rationale |
 |---|---|---|---|
-| FE-1 | CVSS is assigned only to evidence-backed dependency and known-vulnerability findings and to eligible STRIDE CWEs with file-and-line evidence | `tests/test_cvss_eligibility.py` | `data/cvss-eligible-cwes.yaml` |
+| FE-1 | CVSS is assigned only to evidence-backed dependency and known-vulnerability findings and to eligible STRIDE CWEs with file-and-line evidence | `tests/test_cvss_eligibility.py`, `test_critical_without_cvss_follows_cvss_eligibility` | `data/cvss-eligible-cwes.yaml` |
 | FE-2 | A control is rated only from what the pipeline actually invokes — never from a tool name in a comment, a step label, or string data | `tests/test_assess_supply_chain_controls.py` *(name-level check open)* | `CHANGELOG.md` |
 | FE-3 | Client-side code is not modelled as a trust zone | `tests/test_prepare_trust_boundary_context.py` *(name-level check open)* | `CHANGELOG.md` |
 | FE-4 | Findings require target evidence from source, configuration, git history or target-owned declarations; validated external context may seed only an unverified hypothesis, and walkthroughs, solution guides or bundled vulnerability prose seed nothing | `test_cross_repo_mismatch_requires_target_evidence` | `docs/internal/analysis/analysis-external-threat-model-ingestion.md` |
@@ -149,6 +152,7 @@ Removing an entry means listing it here in the same change.
 | FE-6 | Every remote fetch goes through a URL allow-list and an SSRF guard | `tests/test_url_guard.py`, see TR-4 | `schemas/org-profile.schema.yaml` → `policy.url_allowlist` |
 | FE-7 | Declared business context weights and flags; it never sets or raises a severity. It may mark a component crown-jewel and it may raise a triage flag, and the severity caps stay authoritative | `test_step5b_flags_low_impact_where_context_declares_assets`, `test_declared_business_assets_make_a_component_crown_jewel` | `scripts/triage_validate_ratings.py`; `scripts/build_stride_dispatch_manifest.py`; `data/severity-caps.yaml` |
 | FE-8 | An organization's LLM policy answers what code cannot: without a declared list the permitted-data and approval questions stay unanswered rather than guessed | `test_llm_policy_reaches_the_effective_profile`, `test_llm_policy_absent_stays_none` | `schemas/org-profile.schema.yaml` → `llm_policy`; `agents/shared/owasp-llm-top10.md` |
+| FE-9 | A config/IaC finding is titled with its check's `violation_title`, which names the defect; the check `name` states the desired state and would read as a pass | `test_every_check_titles_its_violation_not_its_desired_state` | `data/config-iac-checks.yaml`; `agents/shared/finding-title-contract.md` |
 
 ## Weaknesses
 
@@ -160,6 +164,7 @@ Removing an entry means listing it here in the same change.
 | WK-4 | A design-risk weakness is `kind: design` and carries no CVSS | `tests/test_detect_impl_strategy.py` | see FE-1 |
 | WK-5 | Known vulnerabilities roll up into a vulnerability-management weakness instead of staying loose findings | `test_known_vuln_becomes_vulnerability_management_weakness` | `scripts/merge_threats.py` |
 | WK-6 | Per-instance findings stay separate by default; consolidation by mechanism is the exception you justify | — *(guard not located)* | `data/consolidation-groups.yaml`; see `docs/internal/analysis/analysis-finding-consolidation-improvements-2026-06-26.md` |
+| WK-7 | Findings with the same normalized title (at least two keywords besides a trailing locator) at the same concrete `file:line` are one finding across CWE, threat category, component and STRIDE; the higher risk stays primary and every other primary category is kept in `additional_categories`. The LLM merger still never joins categories | `tests/test_merge_threats.py::TestTitleLocatorDedup` | `scripts/merge_threats.py` → `_dedupe_title_locator`; REQ-MOD-001 |
 
 ## Security architecture
 
@@ -190,6 +195,8 @@ Removing an entry means listing it here in the same change.
 | RA-5 | Structure and integrity gates after the review stages are read-only | — *(guard not located)* | `docs/internal/contracts/orchestration-actions.md` |
 | RA-6 | Audit artifacts and `.appsec-cache/baseline.json` survive normal cleanup; `--rebuild` is the only exception | `tests/test_runtime_cleanup.py` | `docs/internal/contracts/cleanup-whitelist.md` |
 | RA-7 | Every surface that shows a reader an aggregate finding tally takes it from `_severity_rollup`; a surface never counts `threats[]` itself. Triage surfaces that tally the finding list they operate on are a different basis and say so | `TestSeverityBasisMatchesTheReport`, `tests/test_severity_rollup.py` | `scripts/_severity_rollup.py` module docstring |
+| RA-8 | The completion summary takes what a run requested from `.skill-config.json`, the file the exports and the stamp read; argv switch pairs only fill keys a directory without that file lacks | `tests/test_render_completion_summary_config.py` | `scripts/render_completion_summary.py` → `resolved_run_switches` |
+| RA-9 | A worst-case bullet body names the weakness class in plain words, its standard term optional in parentheses; opening, titles and closing state outcomes only, and technology identifiers, code and locations stay out of every verdict field | `test_check_verdict_body_may_name_the_weakness_class`, `test_check_verdict_keeps_weakness_class_out_of_outcome_fields`, `test_check_verdict_body_still_rejects_technology_terms` | `scripts/validate_ms_compactness.py`; `agents/appsec-threat-renderer.md` |
 
 ## Abuse cases
 

@@ -20,10 +20,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/aggregate_run_issues.py" "$OUTPUT_DIR" \
   --repo-root "$REPO_ROOT" --depth "$ASSESSMENT_DEPTH" || true
 ```
 
-Compute `.scan-wall-seconds` from `.scan-start-epoch` when available. Then run
-`render_completion_summary.py` exactly as written here — the flag names are not
-guessable from the config keys, and a wrong argv aborts the run at its last
-step:
+Compute `.scan-wall-seconds` from `.scan-start-epoch` when available, then run this argv (a wrong argv aborts the run at its last step):
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
@@ -38,15 +35,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_completion_summary.py" \
   --patch-placeholders --no-print
 ```
 
-`--repo-root` is required. `--reasoning-model` takes `REASONING_MODEL`, not the
-session model, and `--assessment-depth` takes `ASSESSMENT_DEPTH`; there are no
-`--model` or `--depth` flags. Each `WRITE_*`, `CHECK_REQUIREMENTS`, and
-`ARCHITECT_REVIEW` switch is a flag pair — pass `--write-yaml` when the resolved
-value is true and `--no-write-yaml` when it is false, never `--write-yaml true`.
-Also pass `--plugin-dev`, `--verbose`, and `--quiet` only when their resolved
-switches are true. PDF and HTML have no summary flags; the renderer reports
-their actual files. Placeholder patching is the only mutation permitted after
-review.
+`--reasoning-model` takes `REASONING_MODEL`, not the session model; there are no `--model` or `--depth` flags. The script reads the run's deliverable switches from `.skill-config.json`; the `--[no-]…` pairs apply only without it. PDF and HTML have no summary flags. Pass `--plugin-dev`, `--verbose` and `--quiet` only when true. Placeholder patching is the only mutation permitted after review.
 
 Immediately certify the persisted bytes:
 
@@ -65,15 +54,16 @@ unreleased until these gates pass. Do not repair in completion.
 
 ## 2. Exports and summary
 
-When requested, run `export_pdf.py` and `export_html.py --require-mermaid`
-unsandboxed so headless Chrome can render every diagram. Export failures are
-non-fatal but must remain visible; never weaken them with `--no-mermaid`.
+Run each export whose `WRITE_PDF` / `WRITE_HTML` switch is true, unsandboxed so headless Chrome can render every diagram. Export failures are non-fatal but must remain visible; never weaken them with `--no-mermaid`.
 
-Do **not** call `stamp_threat_model.py` yourself. `render_completion_summary.py`
-already exports and then stamps, in that order, idempotently and with its output
-captured. A separate call only re-prints the stamped copy set, which is
-build-internal bookkeeping the reader cannot act on — keep those paths out of
-the response for the same reason.
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_pdf.py" \
+  --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.pdf"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/export_html.py" --require-mermaid \
+  --input "$OUTPUT_DIR/threat-model.md" --output "$OUTPUT_DIR/threat-model.html"
+```
+
+Do **not** call `stamp_threat_model.py` yourself: `render_completion_summary.py` backfills missing SARIF, Threat Dragon and pentest-task exports, then stamps, but never exports PDF or HTML, so run those first. Keep stamped-copy paths out of the response.
 
 Run `render_completion_summary.py` once more with the identical argv from §1
 minus `--patch-placeholders --no-print`. Capture stdout for the final response;

@@ -534,6 +534,22 @@ def test_a_contract_reason_reads_as_what_happened(token, prose):
     assert token not in out
 
 
+def test_an_api_error_reason_names_the_host_error_code():
+    """A child the model API refused carries the host's error code; the live view spells out the token."""
+    out = _render(
+        [
+            "2026-09-05T07:22:13Z  [6b851f4b]  WARN   AGENT_FAILED"
+            "  agent_call_id=toolu_0182FvwAnGo4t2iNFNhgPKBL"
+            "  agent_type=appsec-advisor:appsec-recon-scanner  model=haiku  background=true"
+            "  job_id=phase2-recon"
+            "  reason=subagent_api_error:max_output_tokens"
+            "  description=Recon scanner for insecure-python-app",
+        ]
+    )
+    assert "⚠ appsec-recon-scanner failed (phase2-recon, reason: the model API stopped it (max_output_tokens))" in out
+    assert "subagent_api_error" not in out
+
+
 def test_an_agent_logger_mirror_is_rendered_once():
     """`run-headless.sh` tails both logs, so a mirrored event arrives twice.
 

@@ -330,7 +330,9 @@ class TestEvidenceDedup:
         assert set(kept.get("merged_strides", [])) == {"Spoofing", "Information Disclosure"}
 
     def test_same_line_family_members_with_different_categories_stay_distinct(self, mt):
-        """A CWE family is not proof of one architectural threat category."""
+        """A CWE family is not proof of one architectural threat category: with
+        different titles the pair stays separate through both location passes.
+        An identical title at the same line is one finding (TestTitleLocatorDedup)."""
         ev = {"file": "lib/insecurity.ts", "line": 21}
         spoof = _threat(
             component_id="auth",
@@ -338,6 +340,7 @@ class TestEvidenceDedup:
             stride="Spoofing",
             evidence=dict(ev),
             threat_category_id="TH-01",
+            title="Hardcoded signing key forges session tokens",
         )
         disclose = _threat(
             component_id="backend",
@@ -345,8 +348,9 @@ class TestEvidenceDedup:
             stride="Information Disclosure",
             evidence=dict(ev),
             threat_category_id="TH-99",
+            title="Signing key disclosed in committed source",
         )
-        assert len(mt._dedupe_evidence([spoof, disclose])) == 2
+        assert len(mt._dedupe_title_locator(mt._dedupe_evidence([spoof, disclose]))) == 2
 
     def test_same_line_other_family_falls_back_to_exact_cwe(self, mt):
         # Two findings whose CWEs both land in the catch-all "other" family must
@@ -366,6 +370,105 @@ class TestEvidenceDedup:
             component_id="c", cwe="CWE-94", stride="Elevation of Privilege", evidence={"file": "server.ts", "line": 0}
         )
         assert len(mt._dedupe_evidence([a, b])) == 2
+
+
+class TestTitleLocatorDedup:
+    """One object reported under one title at one concrete line is one finding
+    (REQ-MOD-001) even when the analyzers' CWEs, and so their derived threat
+    categories, differ; every other category survives in additional_categories."""
+
+    TITLE = "Session token kept in browser storage"
+    EV = {"file": "src/auth/session.ts", "line": 40}
+
+    def _pair(self, **second):
+        first = _threat(
+            component_id="session-api",
+            title=self.TITLE,
+            cwe="CWE-522",
+            stride="Information Disclosure",
+            evidence=dict(self.EV),
+            threat_category_id="TH-10",
+            mitigation_ids=["M-001"],
+        )
+        other = _threat(
+            component_id="web-client",
+            title=self.TITLE,
+            cwe="CWE-922",
+            stride="Information Disclosure",
+            evidence=dict(self.EV),
+            threat_category_id="TH-04",
+            mitigation_ids=["M-002"],
+        )
+        other.update(second)
+        return first, other
+
+    def test_fold_across_cwe_category_and_component(self, mt):
+        first, other = self._pair()
+        result = mt._dedupe_title_locator([first, other])
+        assert len(result) == 1
+        kept = result[0]
+        # Equal risk: the first-seen member stays primary.
+        assert kept["threat_category_id"] == "TH-10"
+        assert kept["additional_categories"] == ["TH-04"]
+        assert kept["instance_count"] == 2
+        assert set(kept["merged_cwes"]) == {"CWE-522", "CWE-922"}
+        assert set(kept["merged_from"]) == {"session-api", "web-client"}
+        assert kept["mitigation_ids"] == ["M-001", "M-002"]
+
+    def test_higher_risk_member_is_primary_in_the_first_slot(self, mt):
+        first, other = self._pair(risk="Critical")
+        before = _threat(title="Unrelated finding before", evidence={"file": "src/a.ts", "line": 1})
+        after = _threat(title="Unrelated finding after", evidence={"file": "src/b.ts", "line": 2})
+        result = mt._dedupe_title_locator([before, first, after, other])
+        assert [t["title"] for t in result] == [before["title"], self.TITLE, after["title"]]
+        kept = result[1]
+        assert kept["risk"] == "Critical"
+        assert kept["threat_category_id"] == "TH-04"
+        assert kept["additional_categories"] == ["TH-10"]
+
+    def test_existing_additional_categories_are_kept_once_without_the_primary(self, mt):
+        first, other = self._pair(additional_categories=["TH-10", "TH-02"])
+        kept = mt._dedupe_title_locator([first, other])[0]
+        assert kept["threat_category_id"] == "TH-10"
+        assert kept["additional_categories"] == ["TH-02", "TH-04"]
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            {"title": "Session token written to the access log"},
+            {"evidence": {"file": "src/auth/session.ts", "line": 41}},
+            {"evidence": {"file": "src/auth/refresh.ts", "line": 40}},
+        ],
+        ids=["different-title", "different-line", "different-file"],
+    )
+    def test_different_title_or_location_stays_separate(self, mt, change):
+        first, other = self._pair(**change)
+        assert len(mt._dedupe_title_locator([first, other])) == 2
+
+    @pytest.mark.parametrize("line", [0, None, True], ids=["zero", "absent", "bool"])
+    def test_no_concrete_line_stays_separate(self, mt, line):
+        first, other = self._pair()
+        for threat in (first, other):
+            threat["evidence"] = {"file": "src/auth/session.ts", "line": line}
+        assert len(mt._dedupe_title_locator([first, other])) == 2
+
+    def test_one_keyword_title_stays_separate_despite_a_locator_suffix(self, mt):
+        title = "XSS (src/auth/session.ts:40)"
+        first, other = self._pair(title=title)
+        first["title"] = title
+        assert len(mt._dedupe_title_locator([first, other])) == 2
+
+    def test_collect_folds_the_pair_before_grouping(self, mt, tmp_path):
+        first, other = self._pair()
+        for threat in (first, other):
+            threat.pop("mitigation_ids")
+        _write_stride(tmp_path, "session-api", [first])
+        _write_stride(tmp_path, "web-client", [other])
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        candidates = json.loads((tmp_path / ".merge-candidates.json").read_text())
+        folded = [t for t in candidates["threats"] if t["title"] == self.TITLE]
+        assert len(folded) == 1
+        assert folded[0]["additional_categories"] == ["TH-04"]
 
 
 # ---------------------------------------------------------------------------

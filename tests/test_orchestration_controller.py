@@ -4195,6 +4195,23 @@ def test_emit_rewrites_invalid_action_to_abort(capsys):
     assert code == 2
 
 
+def test_emit_prints_the_whole_action_as_one_compact_line(capsys):
+    action = {
+        "schema_version": 1,
+        "action": "complete",
+        "mode": "full",
+        "stage": "complete",
+        "instruction_file": str(controller.THIN_COMPLETION_RUNTIME),
+        "config_path": "/tmp/.skill-config.json",
+        "dispatch_values": {},
+    }
+    assert controller._emit(copy.deepcopy(action)) == 0
+    out = capsys.readouterr().out
+    assert out.count("\n") == 1 and out.endswith("\n")
+    assert ": " not in out and "\n " not in out
+    assert json.loads(out) == controller._validate_action(copy.deepcopy(action))
+
+
 def test_main_route_end_to_end(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(controller, "_resolve", lambda argv: _cfg(tmp_path))
     code = controller.main(["route", "--", "--full"])

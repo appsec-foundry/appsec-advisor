@@ -82,6 +82,19 @@ def test_a_dispatched_reviewer_and_its_repairs_reach_the_console(
     assert "actionable violations" in out
     assert "appsec-qa-reviewer, appsec-fragment-fixer" in out
     assert "Repaired: 2 iteration(s)" in out
+    assert "re-composed" in out
+
+
+def test_a_repair_without_the_fixer_claims_no_recompose(output_dir: Path, capsys: pytest.CaptureFixture) -> None:
+    # A deterministic repair edits the Markdown in place; only a fixer dispatch re-composes.
+    _clean_pass(output_dir)
+
+    assert receipt.main([str(output_dir), "--gate-exit", "0", "--repair-iterations", "1"]) == 0
+    out = capsys.readouterr().out
+
+    assert "Repair iterations: 1" in out
+    assert "re-composed" not in out
+    assert "report unchanged" not in out
 
 
 def test_a_residual_repair_plan_is_broken_down_by_severity(output_dir: Path, capsys: pytest.CaptureFixture) -> None:

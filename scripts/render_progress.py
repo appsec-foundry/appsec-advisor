@@ -147,7 +147,12 @@ def _terminal_subject(detail: str, shown_reasons: set[str] | None = None) -> str
             reason = ""
         else:
             shown_reasons.add(reason)
-    reason = _REASON_PROSE.get(reason, reason)
+    # The terminal sweep appends the host's error code to this token for a child
+    # the model API refused (agent_logger._settle_swept_calls).
+    if reason.startswith("subagent_api_error:"):
+        reason = f"the model API stopped it ({reason.split(':', 1)[1]})"
+    else:
+        reason = _REASON_PROSE.get(reason, reason)
     parts = [p for p in (subject, f"reason: {reason}" if reason else "") if p]
     return f" ({', '.join(parts)})" if parts else ""
 

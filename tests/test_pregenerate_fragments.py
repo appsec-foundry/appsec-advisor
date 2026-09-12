@@ -332,6 +332,59 @@ class TestAiExposure:
         pf.gen_ai_exposure(d)
         assert "T-008" not in capsys.readouterr().err
 
+    def test_a_non_llm_prompt_is_not_llm_prose(self, capsys):
+        """A bare "prompt" also names download, password and command prompts.
+        Only LLM-specific phrases put a threat's own prose on the LLM surface."""
+        d = {
+            "components": [{"id": "api", "name": "API Server"}],
+            "threats": [
+                {
+                    "id": "T-048",
+                    "title": "Open Redirect — src/auth/redirect.ts:12",
+                    "component": "api",
+                    "impact_description": "Victims land on a page that shows malicious download prompts.",
+                    "risk": "Medium",
+                },
+                {
+                    "id": "T-049",
+                    "title": "Coupon Executor Runs Without an Approval Step — src/chat/tools.ts:40",
+                    "component": "api",
+                    "impact_description": "A prompt injection in the chat reaches the coupon tool unreviewed.",
+                    "risk": "High",
+                },
+            ],
+        }
+        pf.gen_ai_exposure(d)
+        err = capsys.readouterr().err
+        assert "T-048" not in err
+        assert "T-049" in err
+
+    @pytest.mark.parametrize(
+        "impact,categorised",
+        [
+            ("Each login prompts the server to keep another token in memory.", False),
+            ("Each call is forwarded to a metered language model API.", True),
+        ],
+    )
+    def test_weak_rule_gate_reads_llm_specific_phrases_only(self, impact, categorised):
+        """A weak keyword ("unbounded") needs LLM context. A non-LLM "prompts"
+        in its prose is not that context; a language-model phrase is."""
+        d = {
+            "components": [{"id": "api", "name": "API Server"}],
+            "threats": [
+                {
+                    "id": "T-060",
+                    "title": "Unbounded Request Handling — src/api/handler.ts:22",
+                    "component": "api",
+                    "impact_description": impact,
+                    "risk": "High",
+                }
+            ],
+        }
+        out = pf.gen_ai_exposure(d)
+        refs = set() if out is None else {f["ref"] for r in json.loads(out)["ai_risks"] for f in r["findings"]}
+        assert ("T-060" in refs) is categorised
+
     def test_categorises_and_excludes_noise(self):
         out = pf.gen_ai_exposure(self._LLM_YAML)
         assert out is not None

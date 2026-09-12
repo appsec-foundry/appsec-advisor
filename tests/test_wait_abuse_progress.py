@@ -86,3 +86,14 @@ def test_candidate_ids_are_bounded_and_safe(tmp_path):
     assert wap.main([str(tmp_path)]) == 0
     assert wap.main([str(tmp_path), "../escape"]) == 2
     assert wap.main([str(tmp_path), "AC-T-001", "AC-T-001"]) == 2
+
+
+def test_an_unchanged_count_is_reported_once(tmp_path, monkeypatch, capsys):
+    rounds = iter(["pending", "pending", "pending", "complete"])
+    monkeypatch.setattr(wap, "candidate_status", lambda _output_dir, _candidate_id: next(rounds))
+    monkeypatch.setattr(wap.time, "sleep", lambda seconds: None)
+
+    assert wap.main([str(tmp_path), "AC-T-001"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("abuse verification 0/1 complete") == 1
+    assert out.count("abuse verification 1/1 complete") == 1

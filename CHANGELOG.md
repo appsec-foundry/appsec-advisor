@@ -26,9 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The completion summary no longer counts a deterministic QA step as an agent, so a run with unrecorded agents reports its compute as partial.
 - STRIDE analyzers' closing progress and log lines are no longer rejected, because a wave is joined only after its analyzers stop.
 - Agents no longer run their documented commands with an empty output directory or plugin path, and the runtimes name the exact heartbeat and lock-release commands.
+- Config and IaC findings are titled with the defect they report, such as "Missing npm Lockfile", instead of the desired state.
+- Two components that report the same finding under the same title at the same code line now produce one finding that keeps both threat categories.
+- The completion summary lists every deliverable the run requested, including PDF and HTML, and states the outcome of the editorial pass instead of "pass".
+- A finding or mitigation title that starts with a file name no longer fails the reference-format QA check, and the QA receipt says the report was re-composed only when a repair re-composed it.
+- Stage 4 no longer warns about a Critical finding without a CVSS vector when its weakness is not CVSS-eligible, and the AI/LLM exposure diagnostic no longer counts findings that merely mention a prompt.
+- Cost reports price each sub-agent at the rates of the model release that actually ran it, instead of assuming an older release for an alias such as `opus`.
+- Agents started after a run finished no longer appear in that run's logs, and an agent the API stopped keeps its token spend and the reason it stopped.
 
 ### Changed
 
+- The worst-case scenarios in the management summary name the weakness class, such as SQL injection or cross-site scripting, and the console verdict tags each scenario with its class.
 - `install-baseline` and `update-baseline` now install the latest signed release of the AI Secure Coding Baseline, only after its signature and checksum verify, instead of unverified text from its main branch or the outdated bundled `aisec-0.1`.
 
 ### Fixed

@@ -551,13 +551,24 @@ def call_by_runtime_agent_id(output_dir: str | Path, runtime_agent_id: str) -> d
     return dict(matches[0]) if len(matches) == 1 else None
 
 
+_MODEL_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/\[\]-]{0,127}")
+
+
 def _record_usage_for_call(
     output_dir: str | Path,
     call_id: str,
     usage: dict[str, Any],
     *,
     tool_uses: int | None = None,
+    resolved_model: str = "",
 ) -> list[LifecycleEvent]:
+    """Record a call's usage once and return its ``AGENT_USAGE`` event.
+
+    ``resolved_model`` is the release the host reports the call ran on; pricing
+    needs it because an alias such as ``opus`` names no release. It rides on the
+    event only — the persisted call shape is schema-bound
+    (``schemas/agent-call-lifecycle.schema.json``) and nothing reads it back.
+    """
     with _locked(output_dir):
         state = _read_state_unlocked(output_dir)
         # Terminal calls accept usage too: SubagentStop is the only per-call
@@ -582,7 +593,10 @@ def _record_usage_for_call(
         if tool_uses is not None:
             call["usage"]["tool_uses"] = max(0, int(tool_uses))
         _write_state_unlocked(output_dir, state)
-        return [LifecycleEvent("AGENT_USAGE", dict(call))]
+        event_call = dict(call)
+        if _MODEL_ID_RE.fullmatch(resolved_model or ""):
+            event_call["resolved_model"] = resolved_model
+        return [LifecycleEvent("AGENT_USAGE", event_call)]
 
 
 def record_call_usage(
@@ -591,9 +605,10 @@ def record_call_usage(
     usage: dict[str, Any],
     *,
     tool_uses: int | None = None,
+    resolved_model: str = "",
 ) -> list[LifecycleEvent]:
     """Attribute usage to a call by its own ID, for a source that knows it."""
-    return _record_usage_for_call(output_dir, call_id, usage, tool_uses=tool_uses)
+    return _record_usage_for_call(output_dir, call_id, usage, tool_uses=tool_uses, resolved_model=resolved_model)
 
 
 def record_runtime_usage(
@@ -602,6 +617,7 @@ def record_runtime_usage(
     usage: dict[str, Any],
     *,
     tool_uses: int | None = None,
+    resolved_model: str = "",
 ) -> list[LifecycleEvent]:
     call = call_by_runtime_agent_id(output_dir, runtime_agent_id)
     if call is None:
@@ -611,6 +627,7 @@ def record_runtime_usage(
         call["agent_call_id"],
         usage,
         tool_uses=tool_uses,
+        resolved_model=resolved_model,
     )
 
 
@@ -732,8 +749,10 @@ def event_detail(event: LifecycleEvent) -> str:
         f"agent_call_id={call.get('agent_call_id', '?')}",
         f"agent_type={call.get('agent_type', '?')}",
         f"model={call.get('model', '?')}",
-        f"background={str(bool(call.get('background'))).lower()}",
     ]
+    if call.get("resolved_model"):
+        fields.append(f"resolved_model={call['resolved_model']}")
+    fields.append(f"background={str(bool(call.get('background'))).lower()}")
     for key in ("action_id", "job_id", "component_id", "attempt", "analysis_depth"):
         if call.get(key) not in (None, ""):
             fields.append(f"{key}={call[key]}")

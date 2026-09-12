@@ -5959,6 +5959,15 @@ def _clean_finding_label(title: str) -> str:
     return label
 
 
+# Phrases that place a threat's own prose on an LLM surface. Word-bounded and
+# LLM-specific: a bare "prompt" also names download, password and command
+# prompts, and put an open-redirect finding into the untagged-LLM diagnostic.
+_LLM_SURFACE_RE = re.compile(
+    r"\b(?:llms?|language models?|chatbots?|prompt[- ]injections?|system prompts?"
+    r"|prompt templates?|model api|jailbreaks?)\b"
+)
+
+
 def gen_ai_exposure(yaml_data: dict):
     """Deterministically emit ms-ai-exposure.json when the model has an LLM/AI
     surface, else return ``None`` (→ no file written, section renders nothing).
@@ -5981,7 +5990,7 @@ def gen_ai_exposure(yaml_data: dict):
     def _llm_context(threat: dict, blob_lc: str) -> bool:
         if threat.get("component") in llm_component_ids:
             return True
-        return any(h in blob_lc for h in ("llm", "chatbot", "prompt", "model api"))
+        return bool(_LLM_SURFACE_RE.search(blob_lc))
 
     # First-match-wins categorization of each threat into an LLM Top-10 bucket.
     # Categorization itself stays TITLE-scoped: many threats' impact/evidence
@@ -6046,7 +6055,7 @@ def gen_ai_exposure(yaml_data: dict):
             # every route — on juice-shop it flagged 14 threats including SQL
             # injection and IDOR. A diagnostic with that many false positives
             # gets ignored, which is worse than having none.
-            if any(h in context_blob_lc for h in ("llm", "chatbot", "prompt", "model api")):
+            if _LLM_SURFACE_RE.search(context_blob_lc):
                 untagged_llm_threats.append(str(th.get("id") or th.get("title") or "?"))
 
     if untagged_llm_threats:

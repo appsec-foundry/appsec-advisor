@@ -61,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     started = time.time()
+    reported: int | None = None
     for round_no in range(1, args.rounds + 1):
         states = {candidate: candidate_status(args.output_dir, candidate) for candidate in args.candidate_ids}
         complete = sum(state == "complete" for state in states.values())
@@ -68,7 +69,10 @@ def main(argv: list[str] | None = None) -> int:
         _close_jobs(args.output_dir, completed_ids, success=True)
         pending = [candidate for candidate, state in states.items() if state != "complete"]
         elapsed = int(time.time() - started)
-        print(f"  ↳ (+{elapsed // 60}m{elapsed % 60:02d}s) abuse verification {complete}/{len(states)} complete")
+        # A round is reported only when the count moves; the caller reads the last one.
+        if complete != reported:
+            print(f"  ↳ (+{elapsed // 60}m{elapsed % 60:02d}s) abuse verification {complete}/{len(states)} complete")
+            reported = complete
         if not pending:
             return 0
         if round_no in {12, 24, 36}:

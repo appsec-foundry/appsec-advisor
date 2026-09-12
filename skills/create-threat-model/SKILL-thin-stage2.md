@@ -48,7 +48,7 @@ pregeneration and the filesystem-authoritative compose handoff.
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
      --stage 2 --name "<renderer_profile>" --agent "<agent_type>" \
-     --model "<model>" --duration-ms <sum> --tool-uses <sum> --tokens <sum> \
+     --model "<renderer_model_alias>" --duration-ms <sum> --tool-uses <sum> --tokens <sum> \
      --subagent-type "<agent_type>" --since-iso "$STAGE2_START_ISO"
    ```
 

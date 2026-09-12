@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import validate_ms_compactness as mod
@@ -86,6 +87,81 @@ def test_check_verdict_rejects_technical_detail_and_multiple_sentences(tmp_path)
     assert any("title contains technical detail 'JWT'" in issue for issue in v)
     assert any("body has 2 sentences" in issue for issue in v)
     assert any("body contains technical detail 'middleware'" in issue for issue in v)
+
+
+def test_check_verdict_body_may_name_the_weakness_class(tmp_path):
+    bodies = [
+        "Database query injection (SQL injection) in the product search lets anyone dump every customer record.",
+        "Stored cross-site scripting (XSS) in product reviews lets an attacker hijack any visitor's session.",
+        "XML external entity injection (XXE) in the invoice import lets any customer read server files.",
+        "Missing ownership checks (IDOR) let any signed-in customer read another customer's orders.",
+        "A private key published in the source tree lets anyone forge an administrator login.",
+    ]
+    _write_verdict(tmp_path, {"bullets": [{"title": "Customer data exposed", "body": b} for b in bodies]})
+    v: list[str] = []
+    mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
+    assert v == []
+
+
+def test_check_verdict_keeps_weakness_class_out_of_outcome_fields(tmp_path):
+    _write_verdict(
+        tmp_path,
+        {
+            "opening": "Not production-ready. SQL injection exposes every customer account.",
+            "closing": "Fix the XSS before release.",
+            "bullets": [{"title": "IDOR on orders", "body": "Anyone can read another customer's orders."}],
+        },
+    )
+    v: list[str] = []
+    mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
+    assert any("opening contains technical detail 'SQL'" in issue for issue in v)
+    assert any("closing contains technical detail 'XSS'" in issue for issue in v)
+    assert any("title contains technical detail 'IDOR'" in issue for issue in v)
+
+
+def test_check_verdict_body_still_rejects_technology_terms(tmp_path):
+    _write_verdict(
+        tmp_path,
+        {
+            "bullets": [
+                {
+                    "title": "Admin account takeover",
+                    "body": "A hard-coded JWT signing key lets anyone forge an admin login.",
+                },
+                {"title": "Server files exposed", "body": "The XML parser lets any customer read files on the server."},
+                {"title": "Customer data exposed", "body": "An open endpoint returns every customer record to anyone."},
+            ]
+        },
+    )
+    v: list[str] = []
+    mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
+    assert any("bullets[0].body contains technical detail 'JWT'" in issue for issue in v)
+    assert any("bullets[1].body contains technical detail 'XML'" in issue for issue in v)
+    assert any("bullets[2].body contains technical detail 'endpoint'" in issue for issue in v)
+
+
+def test_check_verdict_bullet_word_cap_boundary(tmp_path):
+    cap = mod.VERDICT_BULLET_BODY_MAX_WORDS
+    _write_verdict(
+        tmp_path,
+        {"bullets": [{"body": " ".join(["word"] * cap)}, {"body": " ".join(["word"] * (cap + 1))}]},
+    )
+    v: list[str] = []
+    mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
+    assert v == [f"ms-verdict.json: bullets[1].body is {cap + 1} words (max {cap})"]
+
+
+def test_renderer_contract_states_the_gate_word_cap():
+    renderer = Path(__file__).resolve().parent.parent / "agents" / "appsec-threat-renderer.md"
+    m = re.search(
+        r"aim for (\d+) words and never exceed (\d+)\*\* \(the gate rejects (\d+)\+\)",
+        renderer.read_text(encoding="utf-8"),
+    )
+    assert m, "renderer no longer states the bullet-body word budget"
+    target, cap, rejected = (int(g) for g in m.groups())
+    assert cap == mod.VERDICT_BULLET_BODY_MAX_WORDS
+    assert rejected == cap + 1
+    assert target < cap
 
 
 # --- main ------------------------------------------------------------------

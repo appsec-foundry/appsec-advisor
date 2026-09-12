@@ -96,66 +96,92 @@ def main(argv: list[str] | None = None) -> int:
     start = time.time()
     last_rc = 1
     last_wave_status: str | None = None
-    previous_progress: str | None = None
+    previous_ready_line: str | None = None
+    last_progress = ""
     settle_deadline: float | None = None
-    for round_no in range(1, args.rounds + 1):
-        elapsed = int(time.time() - start)
-        elapsed_s = f"{elapsed // 60}m{elapsed % 60:02d}s"
-        last_rc, progress = _run_progress(progress_script, args.output_dir, args.expected, force=(round_no == 1))
-        # Report a round only when it says something the last one did not, so
-        # the caller sees every state transition — including the final ready
-        # count the stage runtime reads — without the identical rounds between.
-        if progress != previous_progress:
-            print(f"  ↳ (+{elapsed_s}) STRIDE progress poll {round_no}/{args.rounds}")
+    try:
+        for round_no in range(1, args.rounds + 1):
+            elapsed = int(time.time() - start)
+            elapsed_s = f"{elapsed // 60}m{elapsed % 60:02d}s"
+            last_rc, progress = _run_progress(progress_script, args.output_dir, args.expected, force=(round_no == 1))
+            # An empty poll means stride_progress.py saw nothing new. A round is
+            # reported only when its ready line moves: the per-component step
+            # lines change almost every round (4.9 KB for one call on run
+            # 90aba1e5), and the stage runtime reads only the ready line.
             if progress:
-                print(progress, end="")
-            previous_progress = progress
-        last_wave_status = _wave_status(args.output_dir, args.component)
-        if last_wave_status == "complete":
-            live = _live_wave_calls(args.output_dir, args.component)
-            if not live:
+                last_progress = progress
+                ready_line = _ready_line(progress)
+                if ready_line != previous_ready_line:
+                    print(f"  ↳ (+{elapsed_s}) STRIDE progress poll {round_no}/{args.rounds}")
+                    print(ready_line)
+                    previous_ready_line = ready_line
+            last_wave_status = _wave_status(args.output_dir, args.component)
+            if last_wave_status == "complete":
+                live = _live_wave_calls(args.output_dir, args.component)
+                if not live:
+                    return 0
+                # Bounded, so a call whose stop was never recorded cannot hold the wave.
+                if settle_deadline is None:
+                    settle_deadline = time.time() + max(args.settle_seconds, 0)
+                    print(
+                        f"  ↳ wave complete; waiting up to {args.settle_seconds}s for {len(live)} analyzer(s) to stop"
+                    )
+                if time.time() >= settle_deadline or round_no == args.rounds:
+                    return 0
+            elif last_wave_status is None and last_rc == 0:
                 return 0
-            # Bounded, so a call whose stop was never recorded cannot hold the wave.
-            if settle_deadline is None:
-                settle_deadline = time.time() + max(args.settle_seconds, 0)
-                print(f"  ↳ wave complete; waiting up to {args.settle_seconds}s for {len(live)} analyzer(s) to stop")
-            if time.time() >= settle_deadline or round_no == args.rounds:
-                return 0
-        elif last_wave_status is None and last_rc == 0:
-            return 0
-        if last_wave_status == "expired":
+            if last_wave_status == "expired":
+                print(
+                    "BASH_WARN STRIDE wave join deadline reached — returning to controller retry ownership",
+                    file=sys.stderr,
+                )
+                return 1
+            if last_wave_status == "invalid":
+                return 2
+            if last_rc >= 2:
+                return last_rc
+            if settle_deadline is None and round_no in {12, 24, 36}:
+                print(
+                    f"BASH_WARN STRIDE polling slow — still waiting after {elapsed_s}",
+                    file=sys.stderr,
+                )
+            if round_no < args.rounds:
+                time.sleep(max(args.interval, 1))
+
+        # Only the pending path is repeatable, so only it may say so. The host
+        # renders every non-zero exit as a failed call; without this wording the
+        # operator reads a healthy wave-in-progress as a broken run.
+        if last_wave_status == "pending":
             print(
-                "BASH_WARN STRIDE wave join deadline reached — returning to controller retry ownership", file=sys.stderr
-            )
-            return 1
-        if last_wave_status == "invalid":
-            return 2
-        if last_rc >= 2:
-            return last_rc
-        if settle_deadline is None and round_no in {12, 24, 36}:
-            print(
-                f"BASH_WARN STRIDE polling slow — still waiting after {elapsed_s}",
+                "STRIDE join slice exhausted while the wave is still running and its cumulative "
+                "deadline has not expired. This is expected, not a failure: exit 75 means repeat "
+                "the identical waiter call.",
                 file=sys.stderr,
             )
-        if round_no < args.rounds:
-            time.sleep(max(args.interval, 1))
-
-    # Only the pending path is repeatable, so only it may say so. The host
-    # renders every non-zero exit as a failed call; without this wording the
-    # operator reads a healthy wave-in-progress as a broken run.
-    if last_wave_status == "pending":
+            return PENDING_EXIT_CODE
         print(
-            "STRIDE join slice exhausted while the wave is still running and its cumulative "
-            "deadline has not expired. This is expected, not a failure: exit 75 means repeat "
-            "the identical waiter call.",
+            "STRIDE join slice exhausted while the cumulative wave deadline remains",
             file=sys.stderr,
         )
-        return PENDING_EXIT_CODE
-    print(
-        "STRIDE join slice exhausted while the cumulative wave deadline remains",
-        file=sys.stderr,
-    )
-    return last_rc
+        return last_rc
+    finally:
+        _print_component_state(last_progress)
+
+
+def _ready_line(progress: str) -> str:
+    """The ``[stride] <ready>/<expected> ready`` line, or the whole text when a poll has none."""
+    for line in progress.splitlines():
+        if line.startswith("[stride]"):
+            return line
+    return progress.rstrip("\n")
+
+
+def _print_component_state(progress: str) -> None:
+    """Print the per-component lines of the last poll once, whichever way the join ends."""
+    lines = progress.splitlines()
+    detail = [line for line in lines if not line.startswith("[stride]")]
+    if detail and len(detail) < len(lines):
+        print("\n".join(detail))
 
 
 if __name__ == "__main__":

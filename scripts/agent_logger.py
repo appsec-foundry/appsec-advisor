@@ -905,22 +905,59 @@ def _record_tool_end(data: dict) -> int:
     return started_at
 
 
-def clear_terminal_active_tool_calls(output_dir: str | Path | None = None) -> None:
+def _settle_swept_calls(destination: str, session_transcript: str) -> list[agent_lifecycle.LifecycleEvent]:
+    """Usage and API-error outcome of running calls whose child transcript exists."""
+    events: list[agent_lifecycle.LifecycleEvent] = []
+    if not session_transcript:
+        return events
+    for call in agent_lifecycle.running_calls(destination):
+        transcript = _child_transcript(session_transcript, str(call.get("runtime_agent_id") or ""))
+        if not transcript:
+            continue
+        call_id = str(call["agent_call_id"])
+        usage = _usage_from_transcript(transcript)
+        if usage:
+            events += agent_lifecycle.record_call_usage(
+                destination,
+                call_id,
+                usage,
+                tool_uses=_tool_uses_from_transcript(transcript),
+                resolved_model=_resolved_model_from_transcript(transcript),
+            )
+        error = _api_error_from_transcript(transcript)
+        if error:
+            events += agent_lifecycle.fail_call(destination, call_id, f"subagent_api_error:{error}")
+    return events
+
+
+def clear_terminal_active_tool_calls(output_dir: str | Path | None = None, session_transcript: str = "") -> None:
     """Remove live-only call state after the outer session has terminated.
 
     Sub-agent PreToolUse hooks do not reliably receive matching PostToolUse
     events. Their markers are useful while the run is live, but retaining them
     after the terminal outer Stop or controller abort makes preserved-runtime
     diagnostics report work that can no longer be active.
+
+    A call still running here never got its SubagentStop — a child the API
+    refused sends none. Given the outer ``session_transcript`` its own
+    transcript is still readable, so such a call first gets its real usage and,
+    when an API error ended it, that error as its reason
+    (``_settle_swept_calls``). Every other call fails as
+    ``outer_session_terminal``.
     """
     destination = os.fspath(output_dir) if output_dir is not None else _output_dir()
     try:
-        events = agent_lifecycle.fail_all_running(destination, "outer_session_terminal")
+        settled = _settle_swept_calls(destination, session_transcript)
+    except Exception:
+        settled = []
+    try:
+        events = settled + agent_lifecycle.fail_all_running(destination, "outer_session_terminal")
         agent_lifecycle.append_events(destination, events)
-        if events:
+        failed = [event for event in events if event.event == "AGENT_FAILED"]
+        if failed:
             from budget_watchdog import close_call
 
-            for event in events:
+            for event in failed:
                 close_call(str(event.call.get("agent_call_id") or ""), destination)
     except Exception:
         pass
@@ -1305,6 +1342,31 @@ def _run_lock_is_ours(sid: str) -> bool:
         return lock_is_owned_by_this_run(Path(_output_dir()) / ".appsec-lock", sid)
     except OSError:
         return False
+
+
+def _agent_in_run_scope(agent_type: str, sid: str) -> bool:
+    """Whether an Agent call belongs in the run's lifecycle and budget state.
+
+    A plugin agent always does. Any other agent — a user's own subagent, a fork —
+    is part of a run only while that run holds its lock. The output directory is
+    resolved from the working tree, so a session that keeps working in the
+    repository after the run would otherwise write its agents into the finished
+    run's logs, where a completion summary counts them as dispatches and the
+    cost window stretches to cover them.
+    """
+    return bool(_short_agent_name(agent_type)) or _run_lock_is_ours(sid)
+
+
+def _call_is_registered(call_id: str) -> bool:
+    """Whether the lifecycle holds this Agent call at all."""
+    if not call_id:
+        return False
+    try:
+        state = json.loads(agent_lifecycle.state_path(_output_dir()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    calls = state.get("calls") if isinstance(state, dict) else None
+    return any(isinstance(call, dict) and call.get("agent_call_id") == call_id for call in calls or [])
 
 
 def _write_assessment_summary(sid: str) -> None:
@@ -2433,7 +2495,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         return
 
     lifecycle_events: list[agent_lifecycle.LifecycleEvent] = []
-    if event.is_agent_call:
+    if event.is_agent_call and _agent_in_run_scope(str(event.tool_input.get("subagent_type") or ""), sid):
         inp = event.tool_input
         subtype = str(inp.get("subagent_type") or "unknown")
         params = _agent_params(str(inp.get("prompt") or ""))
@@ -2598,6 +2660,8 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
 
     inp = event.tool_input
     subtype = inp.get("subagent_type", "unknown")
+    if not _agent_in_run_scope(str(subtype), sid):
+        return
     desc = _plain_log_text(inp.get("description", ""))
     bg = inp.get("run_in_background", False)
     bg_tag = " [bg]" if bg else "     "
@@ -2764,6 +2828,93 @@ def _tool_uses_from_transcript(transcript_path: str) -> int:
     return len(tool_ids)
 
 
+def _resolved_model_from_transcript(transcript_path: str) -> str:
+    """The model the host actually served a transcript's session on, or ``""``.
+
+    An Agent call names an alias (``opus``); only the assistant records say which
+    release answered, and pricing differs by release. The most frequent model
+    wins so one odd turn cannot relabel a session. The host's synthetic error
+    records name no model and are skipped.
+    """
+    if not transcript_path:
+        return ""
+    counts: dict[str, int] = {}
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if not raw.lstrip().startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except ValueError:
+                    continue
+                msg = obj.get("message") if isinstance(obj, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                model = msg.get("model")
+                if isinstance(model, str) and model and not model.startswith("<"):
+                    counts[model] = counts.get(model, 0) + 1
+    except OSError:
+        return ""
+    return max(counts, key=lambda model: counts[model]) if counts else ""
+
+
+def _api_error_from_transcript(transcript_path: str) -> str:
+    """The host's error code when an API error ended the transcript, or ``""``.
+
+    A child the API refuses — output over the token maximum, an overload — never
+    reaches SubagentStop. Its transcript ends on a synthetic assistant record
+    flagged ``isApiErrorMessage`` that carries the code, the only place the
+    reason survives.
+    """
+    if not transcript_path:
+        return ""
+    last = ""
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if not raw.lstrip().startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(obj, dict) or obj.get("type") != "assistant":
+                    continue
+                last = str(obj.get("error") or "unknown") if obj.get("isApiErrorMessage") is True else ""
+    except OSError:
+        return ""
+    if not last:
+        return ""
+    return last if re.fullmatch(r"[a-z0-9_]{1,64}", last) else "unknown"
+
+
+def _child_transcript(session_transcript: str, runtime_agent_id: str) -> str:
+    """The transcript the host keeps for one child of a session, when it exists.
+
+    SubagentStop names it as ``agent_transcript_path``. A child that died on an
+    API error never sends that event, so the terminal sweep derives the path
+    from the host layout ``<session transcript>/subagents/agent-<id>.jsonl``
+    (see tests/fixtures/hook-payloads) and accepts it only when its records name
+    the same agent.
+    """
+    if not session_transcript or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", runtime_agent_id or ""):
+        return ""
+    candidate = Path(session_transcript).with_suffix("") / "subagents" / f"agent-{runtime_agent_id}.jsonl"
+    try:
+        with candidate.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                try:
+                    obj = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(obj, dict) and obj.get("agentId"):
+                    return str(candidate) if obj["agentId"] == runtime_agent_id else ""
+    except OSError:
+        return ""
+    return str(candidate)
+
+
 def _transcript_diagnosis(path: str) -> str:
     """Why a transcript yielded nothing, in terms the next reader can act on."""
     if not path:
@@ -2841,7 +2992,15 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     cr = usage.get("cache_read_input_tokens", 0)
     has_usage = bool(usage)  # False when neither the payload nor the transcript had usage
 
-    if event_name == "SubagentStop" and not has_usage:
+    # A child that is no call of this run leaves no lifecycle or usage trace in
+    # the run's logs — see _agent_in_run_scope.
+    foreign_child = (
+        event_name == "SubagentStop"
+        and bool(event.agent_id)
+        and not _agent_in_run_scope(event.agent_type, sid)
+        and agent_lifecycle.call_by_runtime_agent_id(_output_dir(), event.agent_id) is None
+    )
+    if event_name == "SubagentStop" and not has_usage and not foreign_child:
         # "no usage data" alone cannot be acted on: the path may be absent from
         # the payload, name a file the host has not written, or hold records
         # this parser does not recognize. Say which — a completed call that
@@ -2857,7 +3016,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
             sid,
         )
 
-    runtime_agent_id = event.agent_id if event_name == "SubagentStop" else ""
+    runtime_agent_id = event.agent_id if event_name == "SubagentStop" and not foreign_child else ""
     if runtime_agent_id:
         agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, event.agent_type)
     tool_uses = _tool_uses_from_transcript(transcript) if runtime_agent_id and transcript else 0
@@ -2878,7 +3037,13 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
             pass
     if has_usage and runtime_agent_id:
         try:
-            events = agent_lifecycle.record_runtime_usage(_output_dir(), runtime_agent_id, usage, tool_uses=tool_uses)
+            events = agent_lifecycle.record_runtime_usage(
+                _output_dir(),
+                runtime_agent_id,
+                usage,
+                tool_uses=tool_uses,
+                resolved_model=_resolved_model_from_transcript(transcript),
+            )
             agent_lifecycle.append_events(_output_dir(), events)
             if not events:
                 _write(
@@ -2889,7 +3054,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                 )
         except agent_lifecycle.LifecycleError:
             pass
-    elif has_usage:
+    elif has_usage and not foreign_child:
         _write(
             "WARN ",
             "AGENT_USAGE_UNATTRIBUTED",
@@ -3082,7 +3247,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     # happy path releases the lock before its final Stop.
     run_still_owned = _run_lock_is_ours(sid)
     if event_name == "Stop" and not run_still_owned:
-        clear_terminal_active_tool_calls()
+        clear_terminal_active_tool_calls(session_transcript=transcript)
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
         try:
             with open(sentinel, "x") as fh:  # atomic O_CREAT|O_EXCL
@@ -3127,6 +3292,12 @@ def _agent_return_usage(value: object) -> tuple[dict[str, int], int | None] | No
         return None
     tool_uses = value.get("totalToolUseCount")
     return counters, tool_uses if isinstance(tool_uses, int) and not isinstance(tool_uses, bool) else None
+
+
+def _resolved_model_from_return(value: object) -> str:
+    """The release an Agent return reports the call ran on (``resolvedModel``), or ``""``."""
+    model = value.get("resolvedModel") if isinstance(value, dict) else None
+    return model if isinstance(model, str) else ""
 
 
 def _call_has_usage(call_id: str) -> bool:
@@ -3176,6 +3347,8 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     # --- Agent invocation ---
     if tool == "Agent":
         subtype = inp.get("subagent_type", "unknown")
+        if not _agent_in_run_scope(str(subtype), sid) and not _call_is_registered(event.tool_use_id):
+            return
         desc = _plain_log_text(inp.get("description", ""))
         bg = inp.get("run_in_background", False)
         bg_tag = " [bg]" if bg else "     "
@@ -3197,7 +3370,13 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
                 try:
                     agent_lifecycle.append_events(
                         _output_dir(),
-                        agent_lifecycle.record_call_usage(_output_dir(), call_id, returned[0], tool_uses=returned[1]),
+                        agent_lifecycle.record_call_usage(
+                            _output_dir(),
+                            call_id,
+                            returned[0],
+                            tool_uses=returned[1],
+                            resolved_model=_resolved_model_from_return(resp),
+                        ),
                     )
                 except agent_lifecycle.LifecycleError:
                     pass
@@ -3428,6 +3607,8 @@ def handle_subagent_start(data: dict, sid: str) -> None:
     event = _hook_event(data, "SubagentStart", sid)
     runtime_agent_id = event.agent_id
     agent_type = event.agent_type
+    if not _agent_in_run_scope(agent_type, sid):
+        return
     try:
         call = agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, agent_type)
     except agent_lifecycle.LifecycleError as exc:

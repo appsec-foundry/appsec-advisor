@@ -90,6 +90,82 @@ PRICING_MODELS: dict[str, dict[str, float]] = {
     },
 }
 
+#: Release a bare family alias is priced as when the run does not say which
+#: release the host resolved it to. The host moves an alias to each new release,
+#: so a fixed table prices a newer release at an older one's rates: this is only
+#: the fallback behind the host-reported ``resolved_model`` on ``AGENT_USAGE``
+#: and the resolution ``learn_alias_releases`` reads from the same run.
+ALIAS_FALLBACK_RELEASES: dict[str, str] = {"sonnet": "sonnet-4-6", "opus": "opus-4-6", "haiku": "haiku-4-5"}
+
+_USAGE_EVENT_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?\sAGENT_USAGE\s+(.*)$")
+
+
+def strip_model_id(raw: str) -> str:
+    """One spelling per model: no vendor prefix, date, version, or context tag."""
+    name = str(raw or "").strip().lower()
+    name = re.sub(r"\[[^\]]*\]$", "", name)
+    name = name.rsplit("/", 1)[-1].split("@", 1)[0]
+    name = re.sub(r"^(?:[a-z]{2,4}\.)?anthropic\.", "", name)
+    name = name.removeprefix("claude-")
+    name = re.sub(r"-v\d+(?::\d+)?$", "", name)
+    return re.sub(r"-\d{8}$", "", name)
+
+
+def release_key(model_id: str) -> str:
+    """Pricing-table key of the release a host-reported model id names.
+
+    Hosts spell one release several ways — ``claude-opus-5``,
+    ``claude-haiku-4-5-20251001``, ``us.anthropic.claude-sonnet-4-6-v1:0``,
+    ``claude-opus-4-6@20250101``, ``claude-opus-5[1m]`` — and each prices as the
+    release it names. A bare family alias names no release and returns ``""``,
+    as does anything that is not a model id. The key may be missing from
+    ``PRICING_MODELS``; such a release stays unpriced rather than borrowing
+    another release's rates.
+    """
+    name = strip_model_id(model_id)
+    if name in ALIAS_FALLBACK_RELEASES or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", name):
+        return ""
+    return name
+
+
+def learn_alias_releases(rows: list[dict[str, str]]) -> dict[str, str]:
+    """The release the host ran each family alias as, from calls that report both.
+
+    ``rows`` are parsed ``AGENT_USAGE`` fields. Where one alias resolved to more
+    than one release, the most frequent wins, ties broken by key for a stable
+    answer.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for fields in rows:
+        alias = strip_model_id(fields.get("model", ""))
+        release = release_key(fields.get("resolved_model", ""))
+        if alias in ALIAS_FALLBACK_RELEASES and release:
+            bucket = counts.setdefault(alias, {})
+            bucket[release] = bucket.get(release, 0) + 1
+    return {alias: max(bucket, key=lambda key: (bucket[key], key)) for alias, bucket in counts.items()}
+
+
+def learned_alias_releases(
+    agent_log: Path,
+    window_start: str | None = None,
+    window_end: str | None = None,
+) -> dict[str, str]:
+    """``learn_alias_releases`` over the ``AGENT_USAGE`` lines of one run window."""
+    try:
+        lines = agent_log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    rows: list[dict[str, str]] = []
+    for line in lines:
+        match = _USAGE_EVENT_RE.match(line)
+        if not match:
+            continue
+        if (window_start and match.group(1) < window_start) or (window_end and match.group(1) > window_end):
+            continue
+        rows.append(dict(re.findall(r"(\w+)=([^\s]+)", match.group(2))))
+    return learn_alias_releases(rows)
+
+
 # Field name in SESSION_STOP log → TokenSnapshot attribute name
 _FIELD_MAP = {
     "in": "in_tokens",
@@ -889,8 +965,10 @@ def aggregate_by_agent(
     return rows
 
 
-def _detect_agent_models(output_dir: Path) -> dict[str, str]:
+def _detect_agent_models(output_dir: Path, alias_releases: dict[str, str] | None = None) -> dict[str, str]:
     """Read agent_models from threat-model.yaml, return normalized model map.
+
+    ``alias_releases`` resolves a bare alias the way ``_normalize_model_name`` does.
 
     Returns a dict like {"threat-analyst": "sonnet-4-6", "stride-analyzer": "opus-4-6"}.
     """
@@ -909,7 +987,7 @@ def _detect_agent_models(output_dir: Path) -> dict[str, str]:
                 m = re.match(r"^\s{2}model:\s+\"?([^\"]+)\"?\s*$", line)
                 if m and not in_agent_models:
                     raw = m.group(1).strip()
-                    base_model = _normalize_model_name(raw)
+                    base_model = _normalize_model_name(raw, alias_releases)
 
                 # agent_models: block
                 if re.match(r"^\s{2}agent_models:\s*$", line):
@@ -919,7 +997,7 @@ def _detect_agent_models(output_dir: Path) -> dict[str, str]:
                     am = re.match(r"^\s{4}(\S+):\s+\"?([^\"]+)\"?\s*$", line)
                     if am:
                         agent = am.group(1).strip()
-                        model = _normalize_model_name(am.group(2).strip())
+                        model = _normalize_model_name(am.group(2).strip(), alias_releases)
                         models[agent] = model
                     elif not line.startswith("    "):
                         in_agent_models = False
@@ -933,22 +1011,18 @@ def _detect_agent_models(output_dir: Path) -> dict[str, str]:
     return models
 
 
-def _normalize_model_name(raw: str) -> str:
-    """Normalize model identifiers to pricing model keys.
+def _normalize_model_name(raw: str, alias_releases: dict[str, str] | None = None) -> str:
+    """Normalize a model identifier to its pricing-table key.
 
-    Maps 'claude-sonnet-4-6' → 'sonnet-4-6', 'claude-opus-4-6' → 'opus-4-6', etc.
+    A spelled-out release maps to the release it names (``strip_model_id``). A
+    bare family alias maps to the release this run's host resolved it to
+    (``alias_releases``, from ``learned_alias_releases``) and only without that
+    to ``ALIAS_FALLBACK_RELEASES``.
     """
-    name = raw.lower().strip()
-    for prefix in ("claude-", "anthropic/"):
-        if name.startswith(prefix):
-            name = name[len(prefix) :]
-    # Map common aliases
-    aliases = {
-        "sonnet": "sonnet-4-6",
-        "opus": "opus-4-6",
-        "haiku": "haiku-4-5",
-    }
-    return aliases.get(name, name)
+    name = strip_model_id(raw)
+    if name in ALIAS_FALLBACK_RELEASES:
+        return (alias_releases or {}).get(name) or ALIAS_FALLBACK_RELEASES[name]
+    return name
 
 
 def calc_cost(snap: TokenSnapshot, pricing: dict[str, float]) -> float:
@@ -1109,7 +1183,7 @@ def verify_run_costs(
     has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
     # Detect mixed-model runs from threat-model.yaml agent_models
-    agent_models = _detect_agent_models(output_dir)
+    agent_models = _detect_agent_models(output_dir, learned_alias_releases(agent_log, start, end))
     mixed_model_costs: dict[str, Any] | None = None
     if agent_models:
         unique_models = set(agent_models.values())

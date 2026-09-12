@@ -1203,7 +1203,10 @@ def _emit(action: dict[str, Any]) -> int:
             _open_receipt_verification(Path(action["dispatch_values"]["output_dir"]), action)
     except ControllerError as exc:
         action = _failure_action(exc)
-    print(json.dumps(action, indent=2, sort_keys=True))
+    # One compact line: every action lands in the orchestrator's context and the
+    # indentation alone was 17 % of it. No field may be dropped from it, though —
+    # the effective-plan binding hashes the printed action (context_routing._action_basis).
+    print(json.dumps(action, sort_keys=True, separators=(",", ":")))
     return int(action.get("exit_code", 0)) if action["action"] in {"abort", "reject"} else 0
 
 

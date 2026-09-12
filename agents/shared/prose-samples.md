@@ -268,11 +268,11 @@ The Verdict is the one block the **product owner / project lead** reads. Bullets
 ### AFTER (product-owner altitude)
 
 > - **Anyone can use the app without signing in** — it ships no authentication layer, so every function is open to unauthenticated callers on the public internet.
-> - **Attackers can read or change customer data** — the application does not consistently keep one customer's data separate from another's.
-> - **A normal account can gain administrator access** — important permissions are not checked reliably before sensitive actions are allowed.
+> - **Attackers can read or change customer data** — missing ownership checks (IDOR) let any signed-in customer read or change another customer's records.
+> - **A normal account can gain administrator access** — the account update accepts a role field (mass assignment), so any customer can make themselves an administrator.
 
 ### Regel
 1. **Lead with the business outcome** ("anyone can use the app without signing in"), not the mechanism.
 2. **Describe the missing control as a class** ("no authentication layer", "skips several standard practices"), not a config key.
-3. **No config keys / versions / CVE / file:line / framework symbols / security acronyms** in `body` — the technical detail belongs in §6 and §8.
+3. **Name the weakness class in plain words**, with its standard term in parentheses when it helps ("missing ownership checks (IDOR)"), but **no config keys / versions / CVE / file:line / framework symbols / technology identifiers** in `body` — that detail belongs in §6 and §8.
 4. **A pure config-line ("missing httpOnly") is not a Verdict bullet** — fold it into a broader "hardened session handling" class or leave it to §6.

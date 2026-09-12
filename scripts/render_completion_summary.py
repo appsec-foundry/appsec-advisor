@@ -37,6 +37,10 @@ Flags:
     --write-threatdragon / --no-write-threatdragon
     --check-requirements / --no-check-requirements
     --architect-review / --no-architect-review
+                                Fallbacks only: when ``.skill-config.json``
+                                exists, its ``_RUN_SWITCHES`` win, because
+                                the exports and the stamp already read it
+                                and the summary must describe the same run.
     --reasoning-model {opus-cheap,sonnet,opus,sonnet-economy,haiku-economy}
                                 Used only to decide whether the "re-run
                                 with --reasoning-model opus" Next Steps
@@ -104,6 +108,35 @@ def _load_json_object(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+# What the run requested. Presentation switches (--verbose, --quiet,
+# --plugin-dev) are deliberately absent: they belong to the invocation, so a
+# caller can re-render a finished run with more or less detail.
+_RUN_SWITCHES: tuple[str, ...] = (
+    "write_yaml",
+    "write_sarif",
+    "write_pentest_tasks",
+    "write_threatdragon",
+    "write_pdf",
+    "write_html",
+    "check_requirements",
+    "architect_review",
+    "skip_qa",
+)
+
+
+def resolved_run_switches(output_dir: Path) -> dict[str, bool]:
+    """The run's requested switches from the resolved ``.skill-config.json``.
+
+    Exports and the slug stamp read that file; a summary rebuilt from argv
+    alone reported a different run than the files on disk — deliverables that
+    exist listed as not requested, PDF/HTML never listed because no flag
+    carries them. Only keys the config holds are returned, so argv still fills
+    in for an invocation without one.
+    """
+    config = _load_json_object(output_dir / ".skill-config.json")
+    return {key: bool(config[key]) for key in _RUN_SWITCHES if key in config}
 
 
 def _has_cost_signal(output_dir: Path) -> bool:
@@ -1928,6 +1961,21 @@ def _summary_qa(output_dir: Path, cfg: dict) -> str:
     return status.replace("_", " ")
 
 
+# Plain words for the editorial pass's `outcome` (render_editorial_receipt.py
+# build_status). Its `status` stays `pass` for every outcome because the pass
+# never blocks release, so printing status alone said "pass" beside a receipt
+# reporting that the pass produced nothing.
+_ARCHITECT_OUTCOME_WORDS = {
+    "applied": "rewrote {applied} block(s)",
+    "partial": "partial — rewrote {applied} block(s)",
+    "unchanged": "edits proposed, none applied",
+    "no_change": "no change needed",
+    "incomplete": "incomplete — no validated result",
+    "failed": "incomplete — no validated result",
+    "reverted": "reverted — original wording kept",
+}
+
+
 def _summary_architect(output_dir: Path, cfg: dict) -> str:
     if not cfg.get("architect_review"):
         return "skipped"
@@ -1935,9 +1983,18 @@ def _summary_architect(output_dir: Path, cfg: dict) -> str:
     if status_path.is_file():
         try:
             data = json.loads(status_path.read_text(encoding="utf-8"))
-            return str(data.get("status") or "recorded").replace("_", " ")
         except (OSError, json.JSONDecodeError):
             return "status unreadable"
+        if not isinstance(data, dict):
+            return "status unreadable"
+        outcome = str(data.get("outcome") or "")
+        if outcome in _ARCHITECT_OUTCOME_WORDS:
+            try:
+                applied = int(data.get("edits_applied") or 0)
+            except (TypeError, ValueError):
+                applied = 0
+            return _ARCHITECT_OUTCOME_WORDS[outcome].format(applied=applied)
+        return (outcome or str(data.get("status") or "recorded")).replace("_", " ")
     if (output_dir / ".architect-review.md").is_file():
         return "completed"
     return "not recorded"
@@ -2033,7 +2090,7 @@ def render_summary(
         lines.extend(render_files(output_dir, cfg))
         return "\n".join(lines) + "\n"
 
-    lines.extend(render_verdict(md_text, cfg))
+    lines.extend(render_verdict(md_text, cfg, _verdict_class_labels(yaml_data.get("threats"), plugin_root)))
     if change:
         lines.extend(render_change_summary(change))
         lines.extend(render_threat_delta(change))
@@ -2144,28 +2201,76 @@ def _extract_verdict(md_text: str) -> str:
 _VERDICT_REF_CLAUSE_RE = re.compile(r"\s*\*\((?=[^\n]*\[[FTW]-\d{3}\])[^\n]*?\)\*")
 
 
-def _strip_verdict_refs(text: str) -> str:
-    """Drop the per-bullet finding-reference clauses from the console verdict.
+# Report anchor of a cited finding inside that clause, e.g. `[F-011](#f-011)`.
+_VERDICT_REF_ID_RE = re.compile(r"\[([FT]-\d{3,4})\]")
+# `Improper Neutralization … (SQL Injection)` → `SQL Injection`.
+_CWE_SHORT_NAME_RE = re.compile(r"\(([^()]+)\)\s*$")
+
+
+def _verdict_class_labels(threats: Any, plugin_root: Path) -> dict[str, list[str]]:
+    """Weakness-class labels per report anchor (F-NNN), from each finding's CWE.
+
+    The label is the CWE title's parenthetical short name when it has one
+    (`SQL Injection`, `XSS`), else the title itself. A CWE absent from
+    `data/cwe-taxonomy.yaml` contributes no label.
+    """
+    cwes = _load_yaml(plugin_root / "data" / "cwe-taxonomy.yaml").get("cwes") or {}
+    labels: dict[str, list[str]] = {}
+    for threat in threats if isinstance(threats, list) else []:
+        if not isinstance(threat, dict):
+            continue
+        raw = threat.get("cwe")
+        found: list[str] = []
+        for cwe in raw if isinstance(raw, list) else [raw]:
+            title = str((cwes.get(str(cwe)) or {}).get("title") or "").strip() if cwe else ""
+            m = _CWE_SHORT_NAME_RE.search(title)
+            label = (m.group(1) if m else title).strip()
+            if label and label not in found:
+                found.append(label)
+        if found:
+            labels[_severity_rollup.display_id(str(threat.get("id") or ""))] = found
+    return labels
+
+
+def _strip_verdict_refs(text: str, class_labels: dict[str, list[str]] | None = None) -> str:
+    """Replace the per-bullet finding-reference clauses in the console verdict.
 
     The report keeps them — a reader in `threat-model.md` follows the links.
     On the console they are pure noise: the anchors are not clickable and each
     bullet carries three-plus of them, burying the one sentence that matters.
-    Only the clause is removed; any trailing marker after it (e.g.
-    `— ✓ verified attack path`) stays.
+    With `class_labels` the clause becomes a compact weakness-class tag such as
+    `(SQL Injection)` — the one fact it carried that a console reader acts on —
+    leaving out any class the bullet already names. Any trailing marker after
+    the clause (e.g. `— ✓ verified attack path`) stays.
     """
-    return "\n".join(_VERDICT_REF_CLAUSE_RE.sub("", ln) for ln in text.splitlines())
+
+    def _line(ln: str) -> str:
+        plain = _VERDICT_REF_CLAUSE_RE.sub("", ln).lower()
+
+        def _tag(match: re.Match[str]) -> str:
+            tags: list[str] = []
+            for ref in _VERDICT_REF_ID_RE.findall(match.group(0)):
+                for label in (class_labels or {}).get(_severity_rollup.display_id(ref), []):
+                    if label not in tags and label.lower() not in plain:
+                        tags.append(label)
+            return f" ({', '.join(tags)})" if tags else ""
+
+        return _VERDICT_REF_CLAUSE_RE.sub(_tag, ln)
+
+    return "\n".join(_line(ln) for ln in text.splitlines())
 
 
-def render_verdict(md_text: str, cfg: dict) -> list[str]:
+def render_verdict(md_text: str, cfg: dict, class_labels: dict[str, list[str]] | None = None) -> list[str]:
     """Console `-- Verdict --` block: the report's headline verdict.
 
     Shown by default so the user sees the assessment's bottom line without
     opening `threat-model.md`. Suppressed when `cfg["quiet"]` is set
-    (the skill's `--quiet` flag).
+    (the skill's `--quiet` flag). `class_labels` (see `_verdict_class_labels`)
+    tags each worst-case bullet with the weakness classes its findings carry.
     """
     if cfg.get("quiet"):
         return []
-    verdict = _strip_verdict_refs(_extract_verdict(md_text))
+    verdict = _strip_verdict_refs(_extract_verdict(md_text), class_labels)
     if not verdict:
         return []
     lines = ["", f"  -- Verdict {SECTION_RULE[:48]}", ""]
@@ -2241,7 +2346,7 @@ _YAML_DERIVED_EXPORTS: tuple[tuple[str, str, str], ...] = (
 
 
 def _export_deliverables_if_configured(output_dir: Path) -> None:
-    """Produce the requested yaml-derived exports before the summary reports them.
+    """Produce the requested deterministic exports before the summary reports them.
 
     ``orchestration_controller._export_if_configured`` is the primary anchor,
     but it fires only when the mandatory ``next`` gate returns
@@ -2285,6 +2390,15 @@ def _export_deliverables_if_configured(output_dir: Path) -> None:
             )
         except (OSError, subprocess.SubprocessError):
             continue
+    # Pentest tasks take their own argv (merged findings, dialect, target URL),
+    # so the controller keeps them outside the mirrored table; delegate to its
+    # producer rather than mirror that argv here too.
+    try:
+        import orchestration_controller
+
+        orchestration_controller._export_pentest_tasks_if_configured(output_dir, cfg)
+    except (ImportError, OSError, subprocess.SubprocessError):
+        pass
 
 
 def _stamp_slug_if_configured(output_dir: Path) -> None:
@@ -2439,6 +2553,7 @@ def main(argv: list[str] | None = None) -> int:
         "verbose": args.verbose,
         "quiet": args.quiet,
     }
+    cfg.update(resolved_run_switches(args.output_dir))
 
     if args.mode == "dry-run":
         print(render_dry_run(args.output_dir, args.repo_root), end="")

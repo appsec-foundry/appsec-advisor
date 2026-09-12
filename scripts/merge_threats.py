@@ -1122,10 +1122,9 @@ def _dedupe_exact(threats: list[dict]) -> list[dict]:
         k = (*_exact_key(t), category)
         if k in by_key:
             primary = by_key[k]
-            # An identical title/location is not sufficient when upstream
-            # classification assigned distinct architectural threat categories.
-            # Keep the findings separate rather than silently discarding a
-            # category; this matches the guard enforced for LLM decisions.
+            # Distinct categories stay apart here; _dedupe_title_locator folds
+            # such a pair at a concrete line and keeps the other category in
+            # additional_categories, so no category is silently discarded.
             if not _same_primary_threat_category([primary, t]):
                 out.append(t)
                 continue
@@ -1573,6 +1572,87 @@ def _dedupe_evidence(threats: list[dict]) -> list[dict]:
         else:
             keep = prev
         _merge_member_metadata(keep, [prev, t], systemic=False)
+    return out
+
+
+# One content word names only a weakness class ("XSS"), which can legitimately
+# occur twice at one line through different parameters; two or more words name
+# the mechanism, so identical titles at one location describe one finding.
+_TITLE_LOCATOR_MIN_KEYWORDS = 2
+
+
+def _title_locator_key(t: dict) -> tuple | None:
+    """Identity key for ``_dedupe_title_locator``: concrete location + title.
+
+    ``None`` when the evidence has no concrete positive line, or when the title
+    without its trailing locator has fewer than ``_TITLE_LOCATOR_MIN_KEYWORDS``
+    keywords — the locator's path tokens would otherwise satisfy the minimum
+    for any one-word title."""
+    ev = t.get("evidence") or {}
+    if not isinstance(ev, dict):
+        return None
+    file_path = (ev.get("file") or "").strip().lower()
+    line = ev.get("line")
+    if not file_path or not isinstance(line, int) or isinstance(line, bool) or line <= 0:
+        return None
+    title = t.get("title") or ""
+    if len(_normalize_title_keywords(_declassify_config_title(title))) < _TITLE_LOCATOR_MIN_KEYWORDS:
+        return None
+    return (file_path, line, _normalize_title_keywords(title))
+
+
+def _dedupe_title_locator(threats: list[dict]) -> list[dict]:
+    """Collapse findings with an identical normalized title at the same concrete
+    evidence location, across CWE, threat category, component and STRIDE.
+
+    Two analyzers reporting one object under one title found one finding
+    (REQ-MOD-001: same affected object, same mechanism) even when they label it
+    with different CWEs and therefore different derived categories — a session
+    token in browser storage reported as CWE-922 by one component and CWE-522 by
+    another. ``_dedupe_exact`` and ``_dedupe_evidence`` keep such pairs apart
+    because a CWE family alone does not prove one category; an identical title
+    at one line does. The higher-risk member stays primary (tie → first seen)
+    in the slot of the group's first member, the others become ``instances[]``,
+    and every other primary category is kept in ``additional_categories`` so no
+    classification is lost. Runs after ``_dedupe_evidence``; the LLM merger
+    still never joins categories (``_same_primary_threat_category``)."""
+    order: list[tuple[str, Any]] = []
+    groups: dict[tuple, list[dict]] = {}
+    for t in threats:
+        key = _title_locator_key(t)
+        if key is None:
+            order.append(("threat", t))
+            continue
+        if key not in groups:
+            groups[key] = []
+            order.append(("group", key))
+        groups[key].append(t)
+
+    out: list[dict] = []
+    for kind, value in order:
+        if kind == "threat":
+            out.append(value)
+            continue
+        members = groups[value]
+        if len(members) == 1:
+            out.append(members[0])
+            continue
+        survivor = min(members, key=lambda m: _risk_rank(m.get("risk")))
+        _merge_member_metadata(survivor, members, systemic=False)
+        primary = survivor.get("threat_category_id")
+        extra = [c for c in survivor.get("additional_categories") or [] if c != primary]
+        for member in members:
+            category = member.get("threat_category_id")
+            if (
+                isinstance(category, str)
+                and _TH_ID_RE.match(category)
+                and category != primary
+                and category not in extra
+            ):
+                extra.append(category)
+        if extra:
+            survivor["additional_categories"] = extra
+        out.append(survivor)
     return out
 
 
@@ -2320,6 +2400,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # (CWE,STRIDE) candidate grouping both miss. Runs here, before grouping, so
     # the merger / finalize path never has to reunite a STRIDE-split pair.
     deduped = _dedupe_evidence(deduped)
+    # Title-at-location identity: the same title at the same concrete line is
+    # one finding even when analyzers disagree on CWE and derived category.
+    deduped = _dedupe_title_locator(deduped)
     # Systemic config-scan consolidation (2026-06-13): collapse N hits of one
     # IaC/CI check (same config_check_id, across many files or many stages of
     # one Dockerfile) into a single finding whose instances[] lists every hit.

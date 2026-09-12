@@ -1,8 +1,6 @@
 # Orchestration Action Contract
 
-`scripts/orchestration_controller.py` is the deterministic control plane for
-the single full/rebuild and rerender runtimes. Its stdout is validated against
-`schemas/orchestration-action.schema.json` before the skill consumes it.
+`scripts/orchestration_controller.py` is the deterministic control plane for the single full/rebuild and rerender runtimes. Its stdout is one compact JSON line, validated against `schemas/orchestration-action.schema.json` before the skill consumes it. The printed action is the exact action the effective plan binds, so no field may be dropped from it to save context.
 
 ## Control-plane invariants
 

@@ -109,7 +109,7 @@ def render(status: dict) -> str:
 
     if status["qa_skipped"]:
         lines.append("  QA skipped by configuration — only the secret-leak gate ran")
-    elif status["gate_exit"] == 0 and not status["dispatched"]:
+    elif status["gate_exit"] == 0 and not status["dispatched"] and not status["repair_iterations"]:
         lines.append("  Passed deterministically — no reviewer dispatch needed, report unchanged")
     else:
         outcome = GATE_OUTCOMES.get(status["gate_exit"], "outcome not reported by the runtime")
@@ -118,9 +118,13 @@ def render(status: dict) -> str:
     if status["dispatched"]:
         lines.append(f"  Dispatched: {', '.join(status['dispatched'])}")
     if status["repair_iterations"]:
-        lines.append(
-            f"  Repaired: {status['repair_iterations']} iteration(s) — the report was re-composed and re-gated"
-        )
+        # Only the fragment fixer re-composes (it self-verifies through compose --strict).
+        if any("fragment-fixer" in agent for agent in status["dispatched"]):
+            lines.append(
+                f"  Repaired: {status['repair_iterations']} iteration(s) — the report was re-composed and re-gated"
+            )
+        else:
+            lines.append(f"  Repair iterations: {status['repair_iterations']}")
 
     for label, key in (("Open repair plan", "repair_plan"), ("Open content repairs", "content_repair_plan")):
         plan = status[key]

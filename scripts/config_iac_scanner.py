@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Evaluate the Config/IaC rule catalog deterministically."""
+"""Evaluate the Config/IaC rule catalog deterministically.
+
+A finding is titled with its check's ``violation_title``, which names the
+defect. The check ``name`` states the desired state and would read as a pass.
+"""
 
 from __future__ import annotations
 
@@ -51,7 +55,7 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
     patterns_by_type = data.get("file_patterns_by_type", {})
     if not isinstance(patterns_by_type, dict):
         raise ConfigScanError("file_patterns_by_type must be a mapping")
-    required = {"id", "name", "iac_type", "file_pattern", "expect", "severity_if_violated", "cwe"}
+    required = {"id", "name", "violation_title", "iac_type", "file_pattern", "expect", "severity_if_violated", "cwe"}
     seen: set[str] = set()
     for index, check in enumerate(checks):
         if not isinstance(check, dict) or not required.issubset(check):
@@ -60,6 +64,9 @@ def _catalog(path: Path) -> list[dict[str, Any]]:
         if not isinstance(check_id, str) or check_id in seen:
             raise ConfigScanError(f"check catalog entry {index} has an invalid or duplicate id")
         seen.add(check_id)
+        violation_title = check["violation_title"]
+        if not isinstance(violation_title, str) or not violation_title.strip():
+            raise ConfigScanError(f"{check_id} has no violation_title")
         configured_patterns = patterns_by_type.get(check["iac_type"], [check["file_pattern"]])
         if (
             not isinstance(configured_patterns, list)
@@ -240,8 +247,8 @@ def scan(repo_root: Path, checks_path: Path, *, depth: str, output: Path) -> dic
                 "file": relative,
                 "line": row["line"],
                 "evidence_snippet": row["snippet"],
-                "title": check["name"],
-                "scenario": f"{check['name']}: {check.get('rationale', '').strip()}",
+                "title": check["violation_title"],
+                "scenario": f"{check['violation_title']}: {check.get('rationale', '').strip()}",
                 "severity": check["severity_if_violated"],
                 "cwe": [check["cwe"]],
                 "recommended_mitigation_title": check.get("remediation"),

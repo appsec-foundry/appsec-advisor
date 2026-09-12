@@ -289,6 +289,7 @@ def test_unknown_evaluator_fails_the_catalog_gate(tmp_path):
                     {
                         "id": "IAC-900",
                         "name": "Structured check with a typo",
+                        "violation_title": "Structured Check Violated",
                         "iac_type": "agent_config",
                         "file_pattern": ".claude/settings.json",
                         "expect": "structured",
