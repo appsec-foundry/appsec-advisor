@@ -152,14 +152,17 @@ requirements:
       - scripts/_severity_rollup.py
       - scripts/build_posture_verdict.py
       - scripts/compose_threat_model.py
+      - scripts/render_completion_summary.py
       - schemas/stride.schema.yaml
       - schemas/threats-merged.schema.yaml
     decisions:
       - FE-1
       - WK-4
     documents: []
-    coverage: advisory
-    guards: []
+    coverage: partial
+    guards:
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_unproven_evidence_keeps_its_status
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_practice_evidence_does_not_become_confirmed_exploitation
 
   REQ-ARC-001:
     applies_to:
@@ -343,12 +346,15 @@ requirements:
       - scripts/export_threat_dragon.py
       - scripts/export_html.py
       - scripts/export_pdf.py
+      - scripts/render_completion_summary.py
     decisions:
       - RA-3
     documents:
       - docs/internal/contracts/schema-invariants.md
     coverage: partial
     guards:
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_only_links_to_delivered_anchors
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_selects_three_distinct_decisions_with_real_finding_links
       - tests/test_compose_depth_scoped_crossrefs.py::TestSection6BackLink::test_every_emitted_anchor_is_injectable
       - tests/test_export_threat_dragon.py::test_title_carries_the_report_anchor_not_the_yaml_id
       - tests/test_export_threat_dragon.py::test_named_external_entities_keep_identity_and_public_boundary_flag
@@ -364,6 +370,7 @@ requirements:
       - scripts/compose_threat_model.py
       - scripts/walkthrough_renderer.py
       - scripts/qa_checks.py
+      - scripts/render_completion_summary.py
     decisions:
       - RA-4
       - RN-5
@@ -371,6 +378,8 @@ requirements:
       - agents/shared/prose-style.md
     coverage: partial
     guards:
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_no_generic_questions_for_empty_or_unmatched_models
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses
       - tests/test_reference_format.py::test_strip_trailing_locator_all_forms
       - tests/test_reference_format.py::test_linkify_full_form_basename_and_backticked
       - tests/test_agent_definitions.py::TestProseStyleAnchor::test_prose_style_file_exists

@@ -67,11 +67,13 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import quote
 
 import _severity_rollup  # sibling script — see extract_metrics()
 import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
 import stamp_threat_model  # sibling script — owns which deliverables get stamped
 from _atomic_io import atomic_write_text
+from _shared_sources import DESIGN_LEVEL_SOURCES
 
 BANNER_WIDTH = 62
 RULE = "═" * BANNER_WIDTH
@@ -903,6 +905,201 @@ def _add_unpriced_tokens(parsed: object, output_dir: Path, plugin_root: Path) ->
 # ---------------------------------------------------------------------------
 
 
+def build_manual_review_step(yaml_data: dict, report_text: str, report_path: Path) -> str:
+    """Select up to three finding-backed questions about unresolved consequences.
+
+    These are workshop hypotheses, not new findings or severity assessments.
+    CWE identifies the observed mechanism; title/context signals distinguish
+    privileged interfaces, token use, model tools and build-time execution.
+    Each rule below states the missing deployment or business decision. Mere
+    category membership never establishes the downstream consequence asked about.
+
+    Only Medium-or-higher register findings with evidence and a delivered F
+    anchor participate. Refuted findings, passed checks and design-only sources
+    are excluded. Unverified evidence and practice sites keep an unproven label.
+    Neither repository prose nor artifact strings become output text or URLs.
+    """
+    # Ignore example anchors in code fences and comments, and require an actual
+    # declaration rather than a mention/link that may itself be dangling.
+    visible_report = re.sub(r"(?ms)^ {0,3}(`{3,}|~{3,})[^\n]*\n.*?^ {0,3}\1[^\n]*$", "", report_text)
+    visible_report = re.sub(r"(?s)<!--.*?-->", "", visible_report)
+    visible_report = re.sub(r"(?s)(`+).*?\1", "", visible_report)
+    anchors = set(re.findall(r"<a\s+id=[\"'](f-\d{3,})[\"']\s*>\s*</a>", visible_report))
+    candidates: list[dict] = []
+    for threat in _severity_rollup.register_threats(yaml_data):
+        raw_id = str(threat.get("id") or "")
+        if not re.fullmatch(r"[TF]-\d{3,}", raw_id):
+            continue
+        fid = _severity_rollup.display_id(raw_id)
+        rank = _severity_rollup.SEVERITY_ORDER.get(_severity_rollup.register_severity(threat), 99)
+        evidence = threat.get("evidence")
+        locations = evidence if isinstance(evidence, list) else [evidence]
+        if (
+            fid.lower() not in anchors
+            or rank > 2
+            or not any(isinstance(location, dict) and location.get("file") for location in locations)
+            or str(threat.get("source") or "") in DESIGN_LEVEL_SOURCES
+            or str(threat.get("status") or threat.get("_status") or "").lower()
+            in {"pass", "passed", "resolved", "mitigated", "false_positive", "dormant"}
+        ):
+            continue
+        cwe = threat.get("cwe")
+        cwes = {str(value) for value in cwe} if isinstance(cwe, list) else {str(cwe)}
+        title = str(threat.get("title") or "")
+        context = " ".join(str(threat.get(field) or "") for field in ("title", "evidence_summary"))
+        build_time = any(
+            isinstance(location, dict)
+            and re.search(
+                r"(?:^|/)(?:Dockerfile(?:\.[^/]+)?|Jenkinsfile)$|"
+                r"^\.github/workflows/|^\.gitlab-ci\.ya?ml$",
+                str(location.get("file") or ""),
+            )
+            for location in locations
+        )
+        candidates.append(
+            {
+                "id": fid,
+                "rank": rank,
+                "cwes": cwes,
+                "title": title,
+                "context": context,
+                "build_time": build_time,
+                "unproven": threat.get("evidence_tier") != "confirmed-exploitable"
+                or threat.get("evidence_check") not in {"verified", "verified-prior"},
+            }
+        )
+    candidates.sort(key=lambda item: (item["rank"], int(item["id"][2:])))
+
+    def matching(cwes: set[str], pattern: str = "", *, title_only: bool = False) -> list[dict]:
+        return [
+            item
+            for item in candidates
+            if item["cwes"] & cwes
+            and (not pattern or re.search(pattern, item["title"] if title_only else item["context"], re.I))
+        ]
+
+    topics: list[tuple[int, int, str, list[dict]]] = []
+
+    def add(question: str, *groups: list[dict], priority: int | None = None, limit: int = 2) -> None:
+        # Round-robin retains each mechanism in a combined question: a long
+        # list of exposed keys must not crowd out the signature-bypass evidence.
+        refs: list[dict] = []
+        for offset in range(limit):
+            for group in groups:
+                if offset < len(group) and group[offset]["id"] not in {item["id"] for item in refs}:
+                    refs.append(group[offset])
+            if len(refs) >= limit:
+                break
+        if refs:
+            refs = refs[:limit]
+            topics.append(
+                (min(item["rank"] for item in refs), len(topics) if priority is None else priority, question, refs)
+            )
+
+    execution = [item for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-95"}) if not item["build_time"]]
+    if execution:
+        mechanism = (
+            "Command execution" if all(item["cwes"] & {"CWE-77", "CWE-78"} for item in execution) else "Code execution"
+        )
+        add(f"{mechanism}: could a takeover reach other services or shared credentials?", execution)
+    else:
+        add(
+            "Server-side requests: could these reach internal services or infrastructure credentials?",
+            matching({"CWE-918"}),
+        )
+
+    # A generic authentication gap does not establish an administrative surface.
+    access_cwes = {"CWE-306", "CWE-862", "CWE-425"}
+    consoles = matching(access_cwes, r"\b(console|actuator|management)\b", title_only=True)
+    admin = matching(access_cwes, r"\b(admin|administrative|administrator)\b", title_only=True)
+    add("Admin access gaps: who should reach these interfaces, and what enforces that in deployment?", consoles, admin)
+
+    token_pattern = r"\b(jwt|tokens?|signing)\b"
+    keys = matching({"CWE-321", "CWE-798"}, token_pattern)
+    verifiers = matching({"CWE-347", "CWE-287", "CWE-863"}, token_pattern, title_only=True)
+    if keys and verifiers:
+        add(
+            "Exposed keys and token bypasses: would key rotation close every affected authentication path?",
+            keys,
+            verifiers,
+            limit=3,
+        )
+    elif verifiers:
+        add(
+            "Token verification gaps: which services trust these identities, and could a forged role cross between them?",
+            verifiers,
+        )
+    else:
+        add(
+            "Exposed secrets: where else are they used, and what must be replaced after a leak?",
+            matching({"CWE-321", "CWE-798"}),
+        )
+
+    # Tool authority requires a model-related finding AND a tool/action signal;
+    # an ordinary injection finding or a dependency name alone is insufficient.
+    model_tools = [
+        item
+        for item in matching({"CWE-1427", "CWE-20", "CWE-863", "CWE-862"}, r"\b(llm|prompt injection|language model)\b")
+        if re.search(r"\b(tool|tools|tool-calling|agent|actions?)\b", item["context"], re.I)
+    ]
+    add("Model-controlled actions: which business decisions need authorization outside the assistant?", model_tools)
+    add(
+        "Object access and updates: which cross-user actions are legitimate, and where must ownership be enforced?",
+        matching({"CWE-639", "CWE-915"}),
+    )
+    add(
+        "Build input trust: who can change inputs or publish artifacts, and which independent approvals apply?",
+        [item for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-829", "CWE-494"}) if item["build_time"]],
+    )
+
+    # An inconclusive investigation can seed a workshop question. A verifier
+    # that ran out of budget cannot: unverified steps belong to scan recovery.
+    analysis = yaml_data.get("abuse_case_analysis") or {}
+    by_id = {item["id"]: item for item in candidates}
+    for case in analysis.get("cases", []) if analysis.get("status") == "completed" else []:
+        if (
+            case.get("chain_verdict") != "inconclusive"
+            or not case.get("verification_complete")
+            or case.get("unverified_steps")
+        ):
+            continue
+        unresolved = [
+            by_id[step["finding_id"]]
+            for step in case.get("steps") or []
+            if step.get("verdict") == "inconclusive" and not step.get("unverified") and step.get("finding_id") in by_id
+        ]
+        related = [by_id[fid] for fid in case.get("matched_finding_ids") or [] if fid in by_id]
+        if unresolved and len({item["id"] for item in unresolved + related}) >= 2:
+            add(
+                "Unproven attack chain: what would confirm or rule out this combination in the deployed system?",
+                unresolved,
+                related,
+                priority=-1,
+            )
+
+    if not topics:
+        return ""
+    target = quote(str(report_path.absolute()), safe="/:")
+    lines = ["Manual threat modeling follow-up — discuss with the team:"]
+    used: set[str] = set()
+    questions: set[str] = set()
+    for _, _, question, refs in sorted(
+        topics, key=lambda topic: (topic[0], topic[1], tuple(item["id"] for item in topic[3]))
+    ):
+        if question in questions or all(item["id"] in used for item in refs):
+            continue
+        links = ", ".join(
+            f"[{item['id']}](<{target}#{item['id'].lower()}>)" + (" (unproven)" if item["unproven"] else "")
+            for item in refs
+        )
+        lines.append(f"- {links} — {question}")
+        questions.add(question)
+        used.update(item["id"] for item in refs)
+        if len(lines) == 4:
+            break
+    return "\n".join(lines)
+
+
 def build_next_steps(
     output_dir: Path,
     repo_root: Path,
@@ -916,21 +1113,17 @@ def build_next_steps(
     section — the runtime is compact and the summary is deterministic, so the
     conditions live here with the code that applies them.
 
-    Returns a capped 5-item list of MUTUALLY ALTERNATIVE actions: read the
-    report, *or* triage it, *or* ask it a question. None of them requires the
-    one before, which is also why every entry must be an action the reader can
-    actually take. Anything purely informational belongs in `build_run_notes`,
-    not here.
+    Returns up to five actions: read, triage, discuss manual threat-modeling
+    questions, inspect an actionable architect review, or ask about the model.
+    Informational notices belong in `build_run_notes`.
 
-    An action that ADDS to reading the report rather than replacing it belongs
-    in `build_follow_ups`. Uploading the SARIF and re-running deeper used to sit
-    in this list, where they read as a choice against reading the report —
-    which is not a choice anyone makes.
+    Technical follow-ups such as SARIF upload and a deeper re-run belong in
+    `build_follow_ups`. Manual threat modeling is a primary way to use the
+    assessment and stays here with its finding-linked discussion questions.
 
     Entry 0 is the report step and stays first (it is the one most readers
     want), and the ask step stays last — it is the open-ended fallback, and it
-    is the only multi-line entry, so anything after it would be separated from
-    the first bullet by its example block. Each entry is a self-contained
+    follows the manual-review questions. Each entry is a self-contained
     imperative and starts capitalised; the list carries no conjunctions, so
     nothing has to read on from the entry above it.
 
@@ -951,6 +1144,13 @@ def build_next_steps(
     # independently of this pipeline, so it fits any follow-up session.
     if sum(sev.values()):
         lines.append("Triage the findings — /appsec-advisor:review-threat-model")
+
+    report_path = output_dir / "threat-model.md"
+    manual_review = build_manual_review_step(
+        _load_yaml(output_dir / "threat-model.yaml"), _load_text(report_path), report_path
+    )
+    if manual_review:
+        lines.append(manual_review)
 
     # Asking is the non-mutating default exploration path and must stay visible
     # rather than sink into an easy-to-miss footer. Show the question, NOT
@@ -994,10 +1194,7 @@ def build_next_steps(
     # before, and it cannot carry it from inside the lead-in once the questions
     # sit on their own lines.
     #
-    # This entry stays LAST: it is the only multi-line step, so a bullet after
-    # it would be cut off from the top of the list by the example block. Last
-    # among a handful of bullets is still in view, and it is where the
-    # open-ended fallback belongs anyway.
+    # Keep the open-ended fallback last, after the focused review questions.
     #
     # The examples follow the findings, and lead with orientation before action,
     # mirroring the two entries above (read it, then triage it). On a clean run
@@ -1821,7 +2018,7 @@ def render_next_steps(
     notes: Optional[list[str]] = None,
     follow_ups: Optional[list[str]] = None,
 ) -> list[str]:
-    """Bullet the steps — they are alternatives, not a sequence.
+    """Bullet the actions without implying an execution order.
 
     A numbered 1-2-3 list reads as "do all three, in this order". Reading the
     report, triaging it, and asking it a question are none of that: each is a
