@@ -243,13 +243,7 @@ budget described below. Other producer failures follow the boundary-specific
 behavior in the table, and a deterministic producer's invalid output is never
 retried.
 
-Every dispatching action carries `next_boundary`, the command the caller must
-invoke once those jobs return. The caller invokes it verbatim and never derives
-the successor from the run's shape: quick depth skips actor discovery, so the
-boundary after recon differs by depth. Re-invoking a boundary whose semantic
-dispatch already ran repeats that dispatch without preparing its outputs a
-second time; only a changed action under the same job identity is rejected as a
-replay and aborts the run.
+Every dispatching action carries `next_boundary`, the command the caller must invoke once those jobs return. The caller invokes it verbatim and never derives the successor from the run's shape: quick depth skips actor discovery, so the boundary after recon differs by depth. Re-reading a dispatch-producing boundary returns the same action without preparing its outputs a second time; this does not authorize starting an already dispatched job again. A changed action under the same job identity is rejected as a replay and aborts the run. An early `context-v2-post-stride` call while its active wave remains unjoined returns `reject` with exit code 3 and no dispatch jobs. The caller joins the current wave before repeating that successor boundary; the existing deadline and retry budget remain authoritative.
 
 The generation is the default for eligible full/rebuild runs. `prepare` returns
 the plugin-owned `SKILL-thin-stage1-v2.md` instruction path, and the compact
@@ -356,11 +350,7 @@ Before boundary assessment, the architecture handoff reconciles evidenced OAuth/
   A structured receipt records the relative path, schema identity, SHA-256,
   record count, and successful validation status from the exact validated
   bytes.
-- A command that rejects its own arguments answers `reject` with exit code 3,
-  writes no `RUN_ABORTED`, and leaves the run untouched; the caller corrects the
-  call and repeats it. Everything a command learns from disk — a changed
-  artifact, an invalid contract, a stale receipt — answers `abort`, ends the
-  run, and is never repeated.
+- A command with invalid arguments or an unmet sequencing precondition answers `reject` with exit code 3 and writes no `RUN_ABORTED`; the caller corrects the arguments, completes receipt verification, or joins the current STRIDE wave before repeating it. Invalid artifacts, contracts, and stale receipts answer `abort`, end the run, and are never repeated.
 - Receipt creation validates and hashes one exact byte snapshot. Before returning a dispatch, the controller freezes the emitted action hash, plan hash, plan-receipt hash, and complete receipt set in `.pending-dispatch.json`, validated by `schemas/pending-dispatch.schema.json`; failure to persist that state aborts the emission. Immediately before Agent dispatch, the thin runtime calls `verify-receipts` once. `--action-id` resolves the frozen emitted expectation rather than the mutable effective plan; `--receipt PATH SHA256` echoes the same complete set and stays accepted. Exactly one of the two forms is allowed. Naming one path twice with the same fingerprint verifies it once rather than failing. A missing validator, unreadable artifact, byte change, or one path carrying two fingerprints fails closed.
 - The completed verification is recorded in `.receipt-verification.json`, validated by `schemas/receipt-verification.schema.json`, and binds the same action, plan, plan receipt, and receipt-set fingerprints. A boundary after an unverified plan-bound dispatch answers `reject`, while missing, malformed, or stale controller state aborts as invalid disk state. The orchestrator verifies and repeats only the ordinary unverified boundary; it never reconstructs or repairs verification state.
 - Before returning a semantic dispatch, the controller removes prior bytes for

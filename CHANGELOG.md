@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+- An early STRIDE completion check no longer starts the same component analyses again while their wave is still running.
+
 ## 0.6.0-beta.3 (2026-09-12)
 
 ### Added

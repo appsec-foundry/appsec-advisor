@@ -19,6 +19,7 @@ import context_routing
 import cutoff_cause
 import orchestration_controller as controller
 import pytest
+import stride_dispatch_waves as stride_waves
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -3358,6 +3359,124 @@ def test_context_v2_prepare_stride_twice_repeats_one_wave_without_clearing_it(tm
         for path in sorted((output / ".dispatch-context").rglob("*"))
         if path.is_file()
     } == context_before
+
+
+@pytest.fixture
+def active_stride_wave(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path, stride_concurrency=3)
+    cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+    components = []
+    for component_id in ("api", "worker", "store"):
+        bundle_dir = output / ".dispatch-context" / component_id
+        bundle_dir.mkdir(parents=True)
+        (bundle_dir / "evidence-bundle.json").write_text(
+            json.dumps({"component": {"id": component_id}, "source_slices": []}), encoding="utf-8"
+        )
+        components.append(
+            {
+                "component_id": component_id,
+                "focus_paths": [],
+                "exclude_paths": [],
+                "max_turns": 22,
+                "evidence_bundle_path": f".dispatch-context/{component_id}/evidence-bundle.json",
+            }
+        )
+    manifest = {"context_version": 2, "components": components}
+    (output / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    real_run_script = controller._run_script
+
+    def run_script(name, args, **kwargs):
+        if name == "stride_dispatch_waves.py":
+            return real_run_script(name, args, **kwargs)
+        if name == "validate_dispatch_manifest.py":
+            return _completed()
+        pytest.fail(f"unexpected downstream script: {name}")
+
+    monkeypatch.setattr(controller, "_run_script", run_script)
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    monkeypatch.setattr(controller, "_context_v2_taxonomy_slice", _taxonomy_stub)
+    action = controller._context_v2_stride_wave_action(output, cfg, manifest, initialize=True)
+    controller.context_routing.resolve_action(
+        action, output, semantic_roles=controller.SEMANTIC_ROLE_REGISTRY, model_keys=controller.SEMANTIC_ROLE_MODEL_KEYS
+    )
+    return output, cfg, manifest, action
+
+
+def _write_wave_result(output, component_id, *, partial=False):
+    path = output / stride_waves.attempt_artifact(component_id, 1)
+    path.write_text(
+        json.dumps(
+            {
+                "component_id": component_id,
+                "component_name": component_id,
+                "started_at": "2026-01-01T00:00:00Z",
+                "analyzed_at": "2026-01-01T00:01:00Z",
+                "partial": partial,
+                "skipped_categories": [],
+                "threats": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("completed_count", [0, 2])
+@pytest.mark.parametrize("begin_join", [False, True])
+def test_post_stride_rejects_unjoined_wave_without_redispatch(
+    active_stride_wave, monkeypatch, capsys, completed_count, begin_join
+):
+    """A partial third result must not redispatch its two completed siblings."""
+    output, _cfg_value, _manifest, action = active_stride_wave
+    component_ids = [job["component_id"] for job in action["dispatch_jobs"]]
+    for component_id in component_ids[:completed_count]:
+        _write_wave_result(output, component_id)
+    _write_wave_result(output, component_ids[-1], partial=True)
+    status = stride_waves.load_wait_status(output, component_ids, begin=begin_join)
+    assert status["status"] == ("pending" if begin_join else "unstarted")
+    plan_before = (output / stride_waves.PLAN_NAME).read_bytes()
+    attempts_before = {path.name: path.read_bytes() for path in (output / ".stride-attempts").iterdir()}
+    context_before = (output / ".context-routing-plan.json").read_bytes()
+    # Receipt admission has its own integration tests; exercise the actual CLI
+    # rejection and wave completion gate with no mocked scheduling decisions.
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    monkeypatch.setattr(sys, "argv", ["controller", "context-v2-post-stride", "--output-dir", str(output)])
+
+    assert controller.main() == 3
+    result = json.loads(capsys.readouterr().out)
+    assert result["action"] == "reject"
+    assert "wait_stride_progress.py" in result["reason"]
+    assert "dispatch_jobs" not in result
+    assert (output / stride_waves.PLAN_NAME).read_bytes() == plan_before
+    assert {path.name: path.read_bytes() for path in (output / ".stride-attempts").iterdir()} == attempts_before
+    assert (output / ".context-routing-plan.json").read_bytes() == context_before
+    assert not (output / ".agent-run.log").exists() or "RUN_ABORTED" not in (output / ".agent-run.log").read_text()
+
+
+def test_post_stride_retries_only_unfinished_component_after_deadline(active_stride_wave):
+    output, cfg, manifest, action = active_stride_wave
+    component_ids = [job["component_id"] for job in action["dispatch_jobs"]]
+    for component_id in component_ids[:-1]:
+        _write_wave_result(output, component_id)
+    _write_wave_result(output, component_ids[-1], partial=True)
+    stride_waves.load_wait_status(output, component_ids, begin=True, now=1)
+
+    retry = controller._context_v2_stride_wave_action(output, cfg, manifest, initialize=False)
+
+    assert retry["action"] == "dispatch_parallel"
+    assert [(job["component_id"], job["attempt"]) for job in retry["dispatch_jobs"]] == [(component_ids[-1], 2)]
+    assert retry["dispatch_jobs"][0]["output_artifacts"] == [stride_waves.attempt_artifact(component_ids[-1], 2)]
+
+
+def test_post_stride_advances_after_pending_component_finishes(active_stride_wave):
+    output, cfg, manifest, action = active_stride_wave
+    component_ids = [job["component_id"] for job in action["dispatch_jobs"]]
+    stride_waves.load_wait_status(output, component_ids, begin=True)
+    for component_id in component_ids:
+        _write_wave_result(output, component_id)
+
+    assert controller._context_v2_stride_wave_action(output, cfg, manifest, initialize=False) is None
+    plan = json.loads((output / stride_waves.PLAN_NAME).read_text())
+    assert all(attempt == 1 for attempt in plan["attempts"].values())
 
 
 def test_context_v2_prepare_stride_rejects_bundle_escape_after_external_gate(tmp_path, monkeypatch):

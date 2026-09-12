@@ -474,15 +474,12 @@ class ControllerError(RuntimeError):
 
 
 class CallError(ControllerError):
-    """The invocation itself is malformed; the run behind it is intact.
+    """Malformed invocation or unmet sequencing precondition; the run is intact.
 
-    Raised only while reading a command's own arguments, before anything is
-    read from or written to the run. Nothing has happened that a corrected
-    second call would repeat, so this ends the call and not the run: the
-    controller answers `reject` with exit code 3 and writes no `RUN_ABORTED`.
-    Everything a command learns from disk — a changed artifact, an invalid
-    contract, a stale receipt — is a statement about the run and stays a
-    terminal abort.
+    Missing receipt verification and an unfinished STRIDE join are corrected
+    before repeating the boundary. They reject with exit code 3 and no
+    RUN_ABORTED. Invalid artifacts, contracts, and stale receipts remain
+    terminal errors rather than sequencing preconditions.
     """
 
     def __init__(self, message: str):
@@ -1287,7 +1284,7 @@ def _headless_session() -> bool:
 
 
 def _failure_action(exc: ControllerError) -> dict[str, Any]:
-    """Answer a malformed call with `reject`, everything else with `abort`."""
+    """Reject call/precondition errors; abort on invalid run state."""
     action = {
         "schema_version": 1,
         "action": "reject" if isinstance(exc, CallError) else "abort",
@@ -4730,12 +4727,20 @@ def _context_v2_stride_wave_action(
     status = claim_payload.get("status")
     if status == "complete":
         return None
-    # ``in_flight`` carries the wave already issued, so a boundary that is
-    # re-read answers with that dispatch instead of ending the run. The replay
-    # guard below then recognizes the identical action and skips the side
-    # effect that would delete what the first dispatch produced.
+    # ``in_flight`` lets preparation recover the action it already issued. The
+    # replay guard below skips deletion of existing producer output. Advancing
+    # an unjoined wave is a sequencing error, not another dispatch admission.
     if status not in {"claimed", "in_flight"} or (status == "in_flight" and "wave" not in claim_payload):
         raise ControllerError(f"STRIDE wave claim returned unsupported status: {status!r}")
+    if status == "in_flight" and not initialize:
+        # Re-reading preparation may recover an undelivered dispatch. The
+        # successor boundary must instead join the existing producers: returning
+        # their action here launches the same jobs again under attempt-1.
+        raise CallError(
+            "STRIDE wave is still in flight: join the current action's components with "
+            "wait_stride_progress.py before repeating context-v2-post-stride; "
+            "do not re-dispatch its agents or re-run context-v2-prepare-stride"
+        )
     wave = claim_payload.get("wave")
     claimed_components = wave.get("components") if isinstance(wave, dict) else None
     if not isinstance(claimed_components, list) or not claimed_components:

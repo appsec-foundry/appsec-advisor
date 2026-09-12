@@ -45,7 +45,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
   verify-receipts --output-dir "$OUTPUT_DIR" --action-id <context_plan.action_id>
 ```
 
-After launching STRIDE, join only the current action's components:
+Join the current STRIDE wave (Bash timeout `600000`, no `run_in_background`):
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
@@ -54,8 +54,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
   --component <dispatch_jobs[0].component_id> [...]
 ```
 
-Exit `75`: repeat unchanged. `0`/`1`: call `context-v2-post-stride`. `2`:
-abort. Never re-dispatch or end here.
+Exit `75`: repeat unchanged. `0`/`1`: call `context-v2-post-stride`. `2`: abort. On an in-flight `reject`, join again before repeating the boundary. Never re-dispatch or end here.
 
 `context-v2-begin` opens the chain. After dispatched jobs return, invoke the
 action's `next_boundary` verbatim. Never derive it from run shape or re-invoke
