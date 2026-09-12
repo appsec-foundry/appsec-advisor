@@ -101,6 +101,18 @@ Every W-NNN has a required `title` of at most 80 characters. It is the short,
 reader-facing heading and must not contain CWE IDs, source paths, routes, or
 code snippets; `statement` holds the explanatory detail instead.
 
+## Architecture identity and evidence
+
+Optional `external_entities[]` travels from `.data-flows.json` through boundary-assessment input into the canonical export. Entity IDs are unique and distinct from component IDs. A flow's `from_entity` or `to_entity` resolves in this registry and requires the corresponding endpoint to remain `external`. Boundary adjacency and exposure continue to use canonical component/external endpoints. Missing legacy identities stay generic; consumers must not invent a role or provider.
+
+At the controller-owned architecture handoff, `scripts/discover_identity_providers.py` reconciles concrete outbound OAuth/OIDC/SAML client calls and declarative client endpoints with finalized components and data flows. Generated entities and flows carry contained source evidence and satisfy the existing data-flow schema before publication. Explicit internal identity-server topology takes precedence. Ambiguous component ownership blocks the handoff; dependency names, unused URLs, disabled configuration blocks, and unknown dynamic addresses do not create external entities. Deployment activation remains qualified, and discovery never fetches an endpoint or emits a security finding. The renderer consumes the reconciled inventory without performing discovery.
+
+`components[].sensitive_data[]` provides category, observed or declared basis, handling, and contained repository evidence. The legacy `handles_sensitive_data` Boolean remains a conservative analysis-selection signal. Figure 1 does not display a sensitive-data-handling marker. `assets[].component_refs[]` records an evidenced storage, processing, or transmission relation to a known component. Classification and a single-store topology do not establish where an asset is stored.
+
+ORM setters, query construction, and rendering execute in application components. A data store may cite a storage schema, but executable ORM source also requires an application owner independent of its framework label. A database engine is not an XSS sink. SQL-injection and XSS findings share a consolidated card only when the same sink or an explicit common control scope establishes the shared defect. Instance provenance retains the originating component and scenario. Figure 1 annotates each component with at most three short, evidenced High/Critical causes. Annotations use consistent security-mechanism terms such as `Insecure Output Handling` and `Improper Client Trust`. They omit register IDs, full titles, and finding lists; the report retains the concrete mechanisms and complete register. Asset storage labels require evidenced storage relationships, and the data-flow legend resolves the IDs displayed on edges. Its counts need not sum to the number of unique findings across components.
+
+When validated actor resolution establishes open self-registration, overview diagrams combine anonymous and regular authenticated internet access. Findings retain their authentication prerequisites and privileged actors remain separate. Attacker arrows share their source actor's colour and identifier; data-flow identifiers resolve to the corresponding legend entries.
+
 ## §4h. Trust-boundary catalogue and finding-reference invariant
 
 Trust zones and trust boundaries are different objects. A diagram may draw a

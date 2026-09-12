@@ -67,9 +67,7 @@ In a path glob `*` stays inside one segment and never crosses `/`, so
 sources continue into subdirectories, write `pkg/**/*.java` instead. Verify
 against `REPO_ROOT` which form the layout requires — a pattern that stops at
 the top level silently drops every nested file from the component.
-Shared files may belong to multiple co-located security components when their
-observed behavior supports both roles. Do not broaden a component to an
-unrelated parent directory merely to include one file. Map
+Shared files may belong to multiple co-located security components when their observed behavior supports both roles. A datastore represents storage, not the application code using it: assign ORM setters, query construction, password hashing, and output handling to their executing application component. Use database initialization/configuration evidence for the datastore paths. An executable ORM model file requires an application owner even when a datastore also cites its storage schema. Include embedded document collections as well as relational storage. Verify framework names and algorithms against imports and implementation. Include login handlers and their delegated code in the auth component. Do not broaden a component to an unrelated parent directory merely to include one file. Map
 deployment zones only from the canonical access-zone values carried by the
 input. Leave reachability unknown when evidence is insufficient. Keep auth or
 identity as its own component even when its source is co-located with a
@@ -88,6 +86,10 @@ provisional fingerprint with the finalized inventory fingerprint before any
 consumer can read the artifact. Do not invent a crossing or endpoint from
 prose alone. Every data-flow evidence file must be a contained regular file in
 `REPO_ROOT`, and an evidence line must exist in that file.
+
+Persist `external_entities[]` in `.data-flows.json` for evidenced legitimate roles, identity providers, and external services, including browser-only OAuth/OIDC and SAML/SSO clients. Each needs an `ext-*` ID, name, kind (`legitimate-role`, `identity-provider`, or `external-service`), description, and file/line evidence. Distinguish roles with different privileges or workflows; do not substitute attacker personas for legitimate roles. Retain `external` as the flow endpoint and use `from_entity` or `to_entity` to identify that participant. Keep separate authorities and actual flow directions; do not invent a backend exchange for a browser-only integration. An identity server implemented inside the analyzed scope remains a component. Preserve deployment conditions; dependency names and unused URLs alone establish no integration. Reconcile flow ownership with the components implementing it; the controller checks concrete client endpoints against this inventory before boundary assessment.
+
+Populate `components[].sensitive_data[]` only with evidenced categories (`credentials`, `personal-data`, `payment-data`, `secrets`, `business-data`), basis (`observed` or `declared`), handling (`stores`, `processes`, `transmits`), and file/line evidence. Business sensitivity requires declared context. Keep `handles_sensitive_data` for conservative scope selection; the Boolean alone does not justify a visible sensitivity claim. Assets may carry `component_refs[]` with `component_id`, relation (`stored`, `processed`, `transmitted`), and file/line evidence. Leave unknown locations unassigned; one datastore does not imply it holds all assets.
 
 Build the asset inventory from the projected candidates. Reserve its IDs with
 `python3 <plugin-root>/scripts/reserve_ids.py asset --count <N> --output-dir
@@ -118,7 +120,7 @@ REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json" --repo-root "$REPO_ROOT"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
 ```
 

@@ -865,3 +865,91 @@ def test_unknown_component_slug_is_left_for_the_schema_to_reject(tmp_path):
     assert _anti_patterns_refs(output_dir) == ["C-02", "not-a-component"]
     report = json.loads((output_dir / ".pre-render-report.json").read_text(encoding="utf-8"))
     assert "ms-anti-patterns.json" in {entry["file"] for entry in report["failed"]}
+
+
+def test_external_entity_references_resolve_and_remain_external():
+    entity = {
+        "id": "ext-operator",
+        "name": "Operator",
+        "kind": "legitimate-role",
+        "description": "Maintains settings",
+        "evidence": [{"file": "src/roles.ts", "line": 1}],
+    }
+    data = {
+        "external_entities": [entity],
+        "data_flows": [{"id": "df-001", "from": "external", "from_entity": "ext-operator", "to": "api"}],
+    }
+    assert vf.architecture_reference_errors(data) == []
+    data["data_flows"][0]["from"] = "api"
+    assert vf.architecture_reference_errors(data)
+    data["data_flows"][0]["from"] = "external"
+    data["external_entities"] = []
+    assert vf.architecture_reference_errors(data)
+
+
+def test_architecture_evidence_must_be_real_contained_source(tmp_path):
+    (tmp_path / "roles.ts").write_text('export const roles = ["operator"]\n')
+    data = {"external_entities": [{"id": "ext-operator", "evidence": [{"file": "roles.ts", "line": 1}]}]}
+    assert vf.repository_path_errors("data-flows", data, tmp_path) == []
+    data["external_entities"][0]["evidence"][0]["line"] = 2
+    assert vf.repository_path_errors("data-flows", data, tmp_path)
+    data["external_entities"][0]["evidence"][0] = {"file": "../outside.ts", "line": 1}
+    assert vf.repository_path_errors("data-flows", data, tmp_path)
+    assets = {
+        "assets": [
+            {
+                "id": "A-001",
+                "component_refs": [
+                    {"component_id": "missing", "relation": "stored", "evidence": [{"file": "roles.ts", "line": 1}]}
+                ],
+            }
+        ],
+        "components": [{"id": "api"}],
+    }
+    assert vf.repository_path_errors("assets", assets, tmp_path) == []
+    assert vf.architecture_reference_errors(assets)
+
+
+def test_xss_on_database_is_rejected_even_when_a_model_path_matches():
+    data = {
+        "components": [{"id": "database", "tier": "data"}],
+        "threats": [{"id": "T-001", "component": "database", "cwe": "CWE-79"}],
+    }
+    assert any("XSS" in error for error in vf.architecture_reference_errors(data))
+
+
+def test_optional_architecture_schema_shapes_stay_aligned():
+    import yaml
+
+    fragments = {
+        name: json.loads((SCHEMAS_DIR / f"{name}.schema.json").read_text())["properties"]
+        for name in ("data-flows", "components", "assets")
+    }
+    canonical = yaml.safe_load((REPO_ROOT / "schemas/threat-model.output.schema.yaml").read_text())["properties"]
+    boundary = json.loads((REPO_ROOT / "schemas/trust-boundary-assessment-input.schema.json").read_text())["properties"]
+    assert fragments["data-flows"]["external_entities"] == boundary["external_entities"]
+    # Definitions can carry different descriptions; their validating properties must agree.
+    assert (
+        fragments["data-flows"]["external_entities"]["items"]["properties"]
+        == canonical["external_entities"]["items"]["properties"]
+    )
+    for field, owner in [("sensitive_data", "components"), ("component_refs", "assets")]:
+        assert (
+            fragments[owner][owner]["items"]["properties"][field]["items"]["properties"]
+            == canonical[owner]["items"]["properties"][field]["items"]["properties"]
+        )
+
+
+def test_orm_ownership_cannot_be_evaded_by_clearing_the_framework_label(tmp_path):
+    (tmp_path / "models").mkdir()
+    path = tmp_path / "models/account.ts"
+    path.write_text("import { DataTypes } from 'sequelize'\nAccount.init({ email: DataTypes.STRING })\n")
+    data = {"components": [{"id": "store", "tier": "data", "paths": ["models/**"], "framework": None}]}
+    assert any(
+        "application component owner" in error for error in vf.repository_path_errors("components", data, tmp_path)
+    )
+    data["components"].append({"id": "api", "tier": "application", "paths": ["models/**/*.ts"]})
+    assert vf.repository_path_errors("components", data, tmp_path) == []
+    data["components"].pop()
+    path.write_text("// import { DataTypes } from 'sequelize'\n// Account.init({ email: DataTypes.STRING })\n")
+    assert vf.repository_path_errors("components", data, tmp_path) == []

@@ -22,6 +22,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import jsonschema
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -147,3 +149,95 @@ def test_input_validation_mechanism_narrative_is_not_blacklist_asserting() -> No
     assert "absent" in desc
     # Fix direction stays allowlist/schema enforcement.
     assert "allowlist" in m["structural_fix"].lower() or "schema" in m["structural_fix"].lower()
+
+
+def _annotation_catalog() -> dict:
+    return yaml.safe_load((DATA / "weakness-classes.yaml").read_text())["diagram_annotations"]
+
+
+def test_diagram_annotation_catalog_matches_schema() -> None:
+    schema = yaml.safe_load((SCHEMAS / "figure1-annotations.schema.yaml").read_text())
+    jsonschema.Draft202012Validator.check_schema(schema)
+    jsonschema.validate(_annotation_catalog(), schema)
+
+
+@pytest.mark.parametrize("label", ["Client-Side Security Enforcement", "Authentication", "Input Validation"])
+def test_diagram_annotation_schema_rejects_neutral_control_names(label) -> None:
+    schema = yaml.safe_load((SCHEMAS / "figure1-annotations.schema.yaml").read_text())
+    catalog = _annotation_catalog()
+    catalog["labels"][label] = catalog["labels"].pop("Improper Client Trust")
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(catalog, schema)
+
+
+@pytest.mark.parametrize("qualifier", ["SQL Injection", "DOM-XSS", "SQLi/LDAPi", "LongTag"])
+def test_attack_pattern_qualifiers_remain_single_short_abbreviations(qualifier) -> None:
+    schema = yaml.safe_load((SCHEMAS / "figure1-annotations.schema.yaml").read_text())
+    catalog = _annotation_catalog()
+    catalog["labels"]["Unsafe Query Construction"]["cwe_qualifiers"]["CWE-89"] = qualifier
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(catalog, schema)
+
+
+def test_diagram_annotations_have_unambiguous_assignments() -> None:
+    catalog = _annotation_catalog()
+    orders = [entry["tie_break_order"] for entry in catalog["labels"].values()]
+    assert len(orders) == len(set(orders)), "Figure 1 tie-break positions must be unique"
+    variants = [
+        (entry.get("control_family", label), entry.get("variant_order", 0))
+        for label, entry in catalog["labels"].items()
+    ]
+    assert len(variants) == len(set(variants)), "Control-family variant precedence must be unambiguous"
+    for field in ("cwes", "mechanisms"):
+        owners = {}
+        for label, entry in catalog["labels"].items():
+            for key in entry.get(field, []):
+                assert key not in owners, f"{key} assigned to both {owners.get(key)} and {label}"
+                owners[key] = label
+        if field == "cwes":
+            assert not owners.keys() & catalog["exceptions"].keys()
+    for label, entry in catalog["labels"].items():
+        qualifiers = entry.get("cwe_qualifiers", {})
+        assert qualifiers.keys() <= set(entry["cwes"])
+        assert all(len(f"{label} ({qualifier})") <= 36 for qualifier in qualifiers.values())
+
+
+def test_diagram_annotations_cover_declared_cwes_and_curated_mechanisms() -> None:
+    """Guard explicit CWE selectors in shipped catalogs, excluding the annotation
+    catalog itself, comments, prose, pillar references and negative selectors.
+    New supported values must gain a label or an individually reasoned exception.
+    """
+    supported = set()
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "diagram_annotations":
+                    continue
+                if key in {"cwe", "cwes", "cwe_any", "cwe_all"}:
+                    values = value if isinstance(value, list) else [value]
+                    supported.update(v for v in values if isinstance(v, str) and re.fullmatch(r"CWE-\d+", v))
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    for path in sorted(DATA.rglob("*.yaml")):
+        walk(yaml.safe_load(path.read_text()))
+    supported.update(yaml.safe_load((DATA / "cwe-taxonomy.yaml").read_text())["cwes"])
+    catalog = _annotation_catalog()
+    mapped = {cwe for entry in catalog["labels"].values() for cwe in entry["cwes"]}
+    accounted = mapped | catalog["exceptions"].keys()
+    assert supported <= accounted, f"Missing Figure 1 annotation decisions: {sorted(supported - accounted)}"
+    assert catalog["exceptions"].keys() <= supported, "Remove exceptions for unsupported CWEs"
+
+    vocabulary = yaml.safe_load((DATA / "weakness-classes.yaml").read_text())
+    mechanisms = set(vocabulary["mechanism_guidance"])
+    libraries = yaml.safe_load((DATA / "security-libraries.yaml").read_text())
+    mechanisms.update(
+        control["mechanism_id"]
+        for domain in libraries["domains"].values()
+        if (control := domain.get("central_control", {})).get("mechanism_id")
+    )
+    mapped_mechanisms = {m for entry in catalog["labels"].values() for m in entry.get("mechanisms", [])}
+    assert mechanisms == mapped_mechanisms

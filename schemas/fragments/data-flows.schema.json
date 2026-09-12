@@ -11,6 +11,73 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "external_entities": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "description",
+          "evidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "maxLength": 100
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "legitimate-role",
+              "identity-provider",
+              "external-service"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "file",
+                "line"
+              ],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "not": {
+                    "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+                  }
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "data_flows": {
       "type": "array",
       "maxItems": 500,
@@ -58,6 +125,8 @@
         "id": {"type": "string", "pattern": "^df-[0-9]{3,}$"},
         "from": {"$ref": "#/$defs/endpoint"},
         "to": {"$ref": "#/$defs/endpoint"},
+        "from_entity": {"type": "string", "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 100},
+        "to_entity": {"type": "string", "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 100},
         "label": {"type": "string", "minLength": 1, "maxLength": 120},
         "protocol": {"type": "string", "minLength": 1, "maxLength": 80},
         "data_classification": {"type": "string", "minLength": 1, "maxLength": 80},

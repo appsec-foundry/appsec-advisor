@@ -5425,17 +5425,8 @@ def _tier_header_summary(display_name: str, comp_ids: list[str], n_findings: int
 
 
 def _collapse_open_registration_actors(attack_paths_data: dict) -> None:
-    """Fold internet-user and internet-priv-user into internet-anon when
-    the app exposes open self-registration. Mutates the dict in place.
-
-    Reason: with `POST /register`-style routes available to anyone, the
-    three-tier attacker spectrum (anon / authenticated / privileged) on
-    the heatmap implies a reachability ladder that doesn't exist —
-    every "authenticated" attack is one HTTP POST away from anonymous.
-    The §8 Vektor column keeps its granularity; only the heatmap card
-    column and the attack-arrow origins collapse.
-    """
-    collapse_from = {"internet-user", "internet-priv-user"}
+    """Fold regular self-registered users in the overview, preserving privileged access and finding prerequisites."""
+    collapse_from = {"internet-user"}
 
     # 1. Rewrite the top-level `actors` array.
     actors = attack_paths_data.get("actors") or []
@@ -5563,12 +5554,14 @@ def _build_actor_cards(
             # Make the collapse explicit so the reader doesn't wonder
             # why there's no "Authenticated User" card despite many
             # findings on auth-required routes.
-            subtitle = "any internet user — public registration is one POST away"
+            subtitle = "can self-register a regular account"
         cards.append(
             {
                 "id": node_id,
                 "slug": slug,
-                "label": meta.get("label") or slug,
+                "label": "Internet Attacker"
+                if slug == "internet-anon" and open_user_registration
+                else meta.get("label") or slug,
                 "subtitle": subtitle,
                 "severity_class": meta.get("severity_class") or "actorAnon",
                 "role": meta.get("role") or "attacker",
@@ -6105,12 +6098,12 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
 
     # Actor collapse: when self-registration is open, an "authenticated" internet
     # attacker is one trivial POST away from an account, so it is not meaningfully
-    # distinct from the anonymous attacker. Fold internet-user / internet-priv-user
+    # distinct from the anonymous attacker. Fold internet-user
     # into internet-anon and annotate the merged node. Driven by
     # meta.open_user_registration (set by detect_open_registration.py). Same
     # principle the Figure-2 heatmap uses, applied here so both figures agree.
     collapse_authed = bool((ctx.yaml_data.get("meta") or {}).get("open_user_registration"))
-    _COLLAPSIBLE_AUTHED = {"internet-user", "internet-priv-user"}
+    _COLLAPSIBLE_AUTHED = {"internet-user"}
 
     def _collapse_slug(slug: str) -> str:
         if collapse_authed and (slug or "").strip() in _COLLAPSIBLE_AUTHED:
@@ -7027,26 +7020,12 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     actor_labels = _load_posture_actor_labels()
     attack_paths_data = _load_attack_paths_fragment(ctx, attack_taxonomy, threats)
 
-    # When the app exposes open user self-registration, the heatmap actor
-    # spectrum `internet-anon → internet-user → internet-priv-user` is
-    # misleading — reaching the "authenticated" position is a single POST,
-    # so distinct attacker cards for each tier paint a false picture of
-    # reachability gates. Collapse the three slugs to `internet-anon` for
-    # both the actor-card column and the attack-arrow origins. The §8
-    # Vektor column (and the YAML field) keep their granularity — only
-    # the at-a-glance heatmap collapses.
+    # Reach-equivalent regular accounts share an overview origin; findings
+    # retain their actual authentication prerequisites and privileged roles.
     open_user_registration = bool((ctx.yaml_data.get("meta") or {}).get("open_user_registration"))
-    # 2026-05-31 actor-model decision: do NOT collapse the authenticated
-    # internet tiers (`internet-user` / `internet-priv-user`) into `internet-anon`
-    # on open registration. Registering is trivial, but an authenticated request
-    # is still a distinct attack position (a post-login state-changing endpoint
-    # is a different surface than an anonymous one), and collapsing it hid the
-    # "Authenticated Internet Attacker" entirely. The `internet-anon` card is
-    # still relabelled below (open_user_registration=True) to note registration
-    # is one POST away, so the trivial-escalation insight is preserved without
-    # erasing the authenticated tier. The legacy collapse helper
-    # (_collapse_open_registration_actors) is retained but no longer called.
-    #
+    if open_user_registration:
+        _collapse_open_registration_actors(attack_paths_data)
+
     # A committed secret in a PUBLIC repo is readable by any anonymous attacker,
     # so the repo-reader vektor collapses into internet-anon (drops the
     # "Internal Developer" actor — anyone can clone public source). Gated on

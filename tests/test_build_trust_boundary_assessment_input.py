@@ -308,3 +308,27 @@ def test_rejects_unknown_flow_endpoint(tmp_path: Path):
 
     with pytest.raises(ValueError, match="unknown component endpoint"):
         builder.build(repo, output, "standard")
+
+
+def test_named_external_roles_survive_boundary_input_and_keep_flow_identity(tmp_path):
+    repo, output, receipt = _setup(tmp_path)
+    _write_flows(output, receipt)
+    path = output / ".data-flows.json"
+    data = json.loads(path.read_text())
+    data["external_entities"] = [
+        {
+            "id": "ext-operator",
+            "name": "Operator",
+            "kind": "legitimate-role",
+            "description": "Maintains settings",
+            "evidence": [{"file": "src/flow.ts", "line": 1}],
+        }
+    ]
+    data["data_flows"][0].update({"from": "external", "from_entity": "ext-operator"})
+    path.write_text(json.dumps(data))
+    result = builder.build(repo, output, "standard")
+    assert result["external_entities"] == data["external_entities"]
+    assert result["data_flows"][0]["from_entity"] == "ext-operator"
+    unnamed = dict(data["data_flows"][0])
+    unnamed.pop("from_entity")
+    assert builder._flow_identity(unnamed) != builder._flow_identity(data["data_flows"][0])

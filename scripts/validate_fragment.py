@@ -207,6 +207,29 @@ def repository_evidence_errors(
     return errors
 
 
+def _orm_application_ownership_errors(components: list, repo_root: Path) -> list[str]:
+    """An imported ORM plus executable model/query code requires an application owner.
+
+    Inspect bounded, contained JS/TS source claimed by data-tier components.
+    Comments, tests, dependency declarations, and engine initialization alone
+    do not establish this contradiction. Storage may still cite the schema.
+    """
+    from reclassify_components import _glob_to_regex, orm_source_files
+
+    owners = [
+        _glob_to_regex(path)
+        for component in components
+        if isinstance(component, dict) and component.get("tier") == "application"
+        for path in component.get("paths") or []
+        if _safe_repository_relative(path)
+    ]
+    return [
+        f"{relative}: executable ORM code needs an application component owner; the datastore may only cite its storage schema"
+        for relative in orm_source_files(components, repo_root)
+        if not any(owner.search(relative) for owner in owners)
+    ]
+
+
 def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> list[str]:
     """Validate repository-backed paths that JSON Schema cannot resolve."""
     try:
@@ -224,6 +247,12 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
                 continue
             component_id = str(component.get("id") or "<unknown>")
             errors.extend(_tier_contradiction_errors(component, component_id))
+            for item in component.get("sensitive_data") or []:
+                errors.extend(
+                    repository_evidence_errors(
+                        item.get("evidence"), root, label=f"component {component_id} sensitive data"
+                    )
+                )
             paths = component.get("paths", [])
             for raw in paths if isinstance(paths, list) else []:
                 canonical = _safe_repository_relative(raw)
@@ -231,6 +260,8 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
                     errors.append(f"component {component_id} has an unsafe or non-canonical path/glob: {raw!r}")
                 elif not _repository_pattern_matches(root, canonical):
                     errors.append(f"component {component_id} path/glob matches no repository entry: {canonical!r}")
+        if isinstance(components, list):
+            errors.extend(_orm_application_ownership_errors(components, root))
     elif fragment_type == "data-flows":
         flows = data.get("data_flows", []) if isinstance(data, dict) else []
         for flow in flows if isinstance(flows, list) else []:
@@ -239,6 +270,56 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
             flow_id = str(flow.get("id") or "<unknown>")
             evidence = flow.get("evidence", [])
             errors.extend(repository_evidence_errors(evidence, root, label=f"data flow {flow_id} evidence"))
+        for entity in data.get("external_entities") or []:
+            errors.extend(
+                repository_evidence_errors(entity.get("evidence"), root, label=f"entity {entity.get('id')} evidence")
+            )
+    elif fragment_type == "assets":
+        for asset in data.get("assets") or []:
+            for reference in asset.get("component_refs") or []:
+                errors.extend(
+                    repository_evidence_errors(
+                        reference.get("evidence"), root, label=f"asset {asset.get('id')} location"
+                    )
+                )
+    return errors
+
+
+def architecture_reference_errors(data: dict) -> list[str]:
+    """Validate optional identities; schema-invalid shapes remain validation errors."""
+
+    def rows(value):
+        return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+    errors = []
+    entities = rows(data.get("external_entities"))
+    entity_ids = [e["id"] for e in entities if isinstance(e.get("id"), str)]
+    if len(entity_ids) != len(set(entity_ids)):
+        errors.append("external_entities contains duplicate IDs")
+    for flow in rows(data.get("data_flows")):
+        for side in ("from", "to"):
+            ref = flow.get(f"{side}_entity")
+            if ref is not None and (ref not in entity_ids or flow.get(side) != "external"):
+                errors.append(f"{flow.get('id')}: {side}_entity must resolve and its endpoint must be external")
+    if "components" in data:
+        components = [c for c in rows(data.get("components")) if isinstance(c.get("id"), str)]
+        component_ids = {c["id"] for c in components}
+        if component_ids.intersection(entity_ids):
+            errors.append("external entity IDs must not collide with component IDs")
+        tiers = {c["id"]: c.get("tier") for c in components}
+        for threat in rows(data.get("threats")):
+            if (
+                str(threat.get("cwe") or "").upper() in {"CWE-79", "CWE-80"}
+                and isinstance(threat.get("component"), str)
+                and tiers.get(threat["component"]) == "data"
+            ):
+                errors.append(
+                    f"{threat.get('id')}: XSS requires an application or rendering component; a data store is not an XSS sink"
+                )
+        for asset in rows(data.get("assets")):
+            for ref in rows(asset.get("component_refs")):
+                if ref.get("component_id") not in sorted(component_ids):
+                    errors.append(f"asset {asset.get('id')}: unknown component {ref.get('component_id')}")
     return errors
 
 
@@ -276,6 +357,8 @@ def fragment_invariant_errors(
     """
     if fragment_type == "trust-boundary-candidates":
         return _trust_boundary_candidate_errors(data, context)
+    if fragment_type == "data-flows" and isinstance(data, dict):
+        return architecture_reference_errors(data)
     return []
 
 
@@ -409,9 +492,22 @@ def _tier_contradiction_errors(component: dict, component_id: str) -> list[str]:
     about where a component belongs stays the analyst's.
     """
     tier = str(component.get("tier") or "").strip().lower()
+    framework = str(component.get("framework") or "").strip().lower()
+    if tier == "data" and framework in {
+        "sequelize",
+        "typeorm",
+        "prisma",
+        "sqlalchemy",
+        "hibernate",
+        "jpa",
+        "mongoose",
+        "knex",
+    }:
+        return [
+            f"component {component_id}: ORM framework {framework!r} executes in the application tier; model the storage engine separately"
+        ]
     if tier != "client":
         return []
-    framework = str(component.get("framework") or "").strip().lower()
     if framework not in _SERVER_SIDE_RENDERERS:
         return []
     return [

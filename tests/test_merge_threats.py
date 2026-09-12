@@ -1361,32 +1361,27 @@ class TestConsolidateByGroup:
         ]
         assert len(mt._consolidate_by_group(rows)) == 2
 
-    def test_sql_injection_consolidates_per_component(self, mt):
-        # CWE-89 sinks in ONE component share a root cause (raw SQL from
-        # untrusted input) and one fix (parameterize) → one systemic survivor
-        # with every sink preserved as an instance. (Added 2026-07-02 to stop N
-        # near-identical SQLi findings/§3 walkthroughs.)
+    def test_distinct_sql_sinks_in_one_component_stay_separate(self, mt):
         rows = [
-            _threat(
-                cwe="CWE-89",
-                title="SQL injection request data interpolated into a SQL",
-                evidence={"file": f, "line": ln},
-                component_id="backend-api",
-            )
-            for f, ln in (("routes/login.ts", 34), ("routes/search.ts", 23))
+            _threat(cwe="CWE-89", component_id="api", evidence={"file": f"routes/{name}.ts", "line": 10})
+            for name in ("signin", "lookup")
         ]
-        out = mt._consolidate_by_group([dict(t) for t in rows])
-        survivors = [t for t in out if t.get("consolidation_group") == "sql-injection-per-component"]
-        assert len(survivors) == 1
-        s = survivors[0]
-        assert s["systemic"] is True
-        assert s["title"] == "SQL Injection"
-        assert s["instance_count"] == 2
-        assert "routes/login.ts" in s["affected_files"]
-        assert "routes/search.ts" in s["affected_files"]
+        assert len(mt._consolidate_by_group(rows)) == 2
+        rows[1]["evidence"] = dict(rows[0]["evidence"])
+        assert len(mt._consolidate_by_group(rows)) == 1
+
+    def test_distinct_xss_sinks_need_explicit_shared_control(self, mt):
+        rows = [
+            _threat(cwe="CWE-79", component_id="web", evidence={"file": f"src/{name}.ts", "line": 10})
+            for name in ("profile", "results")
+        ]
+        assert len(mt._consolidate_by_group(rows)) == 2
+        for row in rows:
+            row["control_scope"] = "shared-markup-renderer"
+        assert len(mt._consolidate_by_group(rows)) == 1
 
     def test_high_cardinality_consolidation_preserves_all_instances(self, mt):
-        # A component with MANY same-CWE sinks collapses to ONE survivor that
+        # Many callers of one explicitly shared control collapse to ONE survivor that
         # preserves every hit as an instance (data completeness for YAML/SARIF).
         # The DATA list is deliberately unbounded — the §8 card render caps the
         # DISPLAY at 8 (see test_high_cardinality_instances_capped_with_more_suffix),
@@ -1398,6 +1393,7 @@ class TestConsolidateByGroup:
                 title="SQL injection",
                 evidence={"file": f"routes/r{i:02d}.ts", "line": i},
                 component_id="backend-api",
+                control_scope="shared-query-builder",
             )
             for i in range(1, 13)
         ]

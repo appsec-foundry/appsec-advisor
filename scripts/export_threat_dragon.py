@@ -726,12 +726,42 @@ def build_threat_dragon(
     flows: list[dict] = []
     external: dict | None = None
 
-    def _endpoint(ref: str) -> dict | None:
+    entities = {
+        e["id"]: e for e in data.get("external_entities") or [] if isinstance(e, dict) and isinstance(e.get("id"), str)
+    }
+
+    entity_nodes: dict[str, dict] = {}
+
+    def _endpoint(ref: str, entity_ref: str | None = None) -> dict | None:
         """Resolve a flow endpoint. `external` is a reserved value in
         `data_flows[].from`/`.to` (see the output schema) meaning the world
         outside the system — Threat Dragon models exactly that as an actor, so
         materialise one on first use instead of dropping the flow."""
         nonlocal external
+        if entity_ref is not None and not isinstance(entity_ref, str):
+            return None
+        if entity_ref:
+            entity = entities.get(entity_ref)
+            if ref != EXTERNAL_REF or not entity:
+                return None
+            node = entity_nodes.get(entity_ref)
+            if node is None:
+                if by_id.get(entity_ref) is not None:
+                    return None  # A component cannot masquerade as an external actor.
+                index = per_shape_index.get("actor", 0)
+                per_shape_index["actor"] = index + 1
+                node = _build_node(
+                    entity_ref,
+                    _text(entity.get("name")) or entity_ref,
+                    _text(entity.get("description")),
+                    "actor",
+                    "tm.Actor",
+                    index,
+                )
+                nodes.append(node)
+                by_id[entity_ref] = node
+                entity_nodes[entity_ref] = node
+            return node
         node = by_id.get(ref) or by_name.get(ref.lower())
         if node is not None:
             return node
@@ -771,7 +801,7 @@ def build_threat_dragon(
         # The §2.2 diagram renderer tolerates the same legacy aliases; match it.
         src_ref = _text(flow.get("from") or flow.get("src") or flow.get("source"))
         dst_ref = _text(flow.get("to") or flow.get("dst") or flow.get("destination"))
-        src, dst = _endpoint(src_ref), _endpoint(dst_ref)
+        src, dst = _endpoint(src_ref, flow.get("from_entity")), _endpoint(dst_ref, flow.get("to_entity"))
         if src is None or dst is None:
             warnings.append(f"data flow {src_ref!r} → {dst_ref!r} has an unresolved endpoint — dropped")
             continue
@@ -801,7 +831,7 @@ def build_threat_dragon(
                     "isBidirectional": _text(flow.get("direction")).lower() in BIDIRECTIONAL_DIRECTIONS,
                     "protocol": protocol,
                     "isEncrypted": protocol.lower() in {"https", "tls", "wss", "mtls", "ssh", "sftp"},
-                    "isPublicNetwork": frozenset((src["id"], dst["id"])) in public_pairs,
+                    "isPublicNetwork": frozenset((src_ref, dst_ref)) in public_pairs,
                     "threats": [],
                 },
             }

@@ -162,3 +162,30 @@ class TestCli:
         data = _read_yaml(tmp_path)
         assert data["meta"]["open_user_registration"] is False
         assert "open_user_registration=False" in capsys.readouterr().out
+
+
+def test_authoritative_actor_resolution_precedes_legacy_route_guess():
+    assert (
+        detect(
+            {
+                "meta": {"open_user_registration": True, "open_registration_source": "actor-resolution"},
+                "attack_surface": [],
+            }
+        )[0]
+        is True
+    )
+    assert (
+        detect(
+            {
+                "meta": {"open_user_registration": False, "open_registration_source": "actor-resolution"},
+                "attack_surface": [{"entry_point": "POST /users", "auth_required": False}],
+            }
+        )[0]
+        is False
+    )
+
+
+def test_overview_projection_preserves_privileged_actor_and_unknown_registration():
+    assert D.overview_actor_slug("internet-user", {"open_user_registration": True}) == "internet-anon"
+    assert D.overview_actor_slug("internet-priv-user", {"open_user_registration": True}) == "internet-priv-user"
+    assert D.overview_actor_slug("internet-user", {}) == "internet-user"

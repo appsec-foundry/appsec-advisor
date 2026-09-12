@@ -1435,7 +1435,8 @@ class TestBuildActorCards:
             "actors": {"internet-anon": {"label": "Anon", "default_subtitle": "x"}},
         }
         cards = compose._build_actor_cards(_simple_attack_paths(), labels, open_user_registration=True)
-        assert "registration is one POST away" in cards[0]["subtitle"]
+        assert cards[0]["subtitle"] == "can self-register a regular account"
+        assert cards[0]["label"] == "Internet Attacker"
 
     def test_victim_labels_from_taxonomy(self):
         labels = {

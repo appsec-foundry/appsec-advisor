@@ -4,9 +4,8 @@
 Scans `threat-model.yaml → attack_surface[]` for an unauthenticated entry
 that creates user accounts. The signal flips the heatmap-actor collapse
 rule in `compose_threat_model.py:_build_actor_cards`: when open registration
-is present, the spectrum `internet-anon → internet-user → internet-priv-user`
-collapses to a single attacker on the heatmap card column, because reaching
-the "authenticated" position takes one HTTP POST.
+is present, `internet-user` shares the `internet-anon` overview origin.
+Privileged access stays separate; a regular registration does not grant it.
 
 Detection pattern: `attack_surface[].entry_point` matches one of the common
 registration paths AND `auth_required` is False/None.
@@ -98,6 +97,15 @@ def _route_is_open_registration(route: dict) -> bool:
     return True
 
 
+def overview_actor_slug(slug: str, meta: dict) -> str:
+    """Project reach-equivalent actors for display, retaining privileged access."""
+    if slug == "internet-user" and meta.get("open_user_registration") is True:
+        return "internet-anon"
+    if slug == "repo-read" and meta.get("public_source_repo") is True:
+        return "internet-anon"
+    return slug
+
+
 def detect(yaml_data: dict, routes: list | None = None) -> tuple[bool, str]:
     """Returns (open_registration, reason). The reason is a short
     human-readable string for the audit log.
@@ -116,6 +124,10 @@ def detect(yaml_data: dict, routes: list | None = None) -> tuple[bool, str]:
     pinned = meta.get("open_user_registration_pinned")
     if isinstance(pinned, bool):
         return pinned, f"pinned in meta (operator override = {pinned})"
+    if meta.get("open_registration_source") == "actor-resolution" and isinstance(
+        meta.get("open_user_registration"), bool
+    ):
+        return meta["open_user_registration"], "validated actor reach equivalence"
 
     surface = yaml_data.get("attack_surface") or []
     for entry in surface:

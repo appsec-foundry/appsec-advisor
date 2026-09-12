@@ -65,6 +65,8 @@ requirements:
     coverage: partial
     guards:
       - tests/test_merge_threats.py::TestWeaknessRegister::test_known_vuln_becomes_vulnerability_management_weakness
+      - tests/test_merge_threats.py::TestConsolidateByGroup::test_distinct_sql_sinks_in_one_component_stay_separate
+      - tests/test_merge_threats.py::TestConsolidateByGroup::test_distinct_xss_sinks_need_explicit_shared_control
 
   REQ-MOD-002:
     applies_to:
@@ -134,12 +136,14 @@ requirements:
       - agents/appsec-stride-analyzer-v2.md
       - schemas/related-repos.schema.yaml
       - scripts/slice_cross_repo_for_component.py
+      - scripts/discover_identity_providers.py
     decisions:
       - FE-4
     documents: []
     coverage: partial
     guards:
       - tests/test_agent_definitions.py::test_cross_repo_mismatch_requires_target_evidence
+      - tests/test_discover_identity_providers.py::test_client_integrations_are_generic_and_evidenced
       - tests/test_build_threat_modeling_context.py::test_supplied_reference_document_is_admitted_as_fenced_and_named_data
 
   REQ-MOD-009:
@@ -347,6 +351,8 @@ requirements:
     guards:
       - tests/test_compose_depth_scoped_crossrefs.py::TestSection6BackLink::test_every_emitted_anchor_is_injectable
       - tests/test_export_threat_dragon.py::test_title_carries_the_report_anchor_not_the_yaml_id
+      - tests/test_export_threat_dragon.py::test_named_external_entities_keep_identity_and_public_boundary_flag
+      - tests/test_figure1_dfd.py::test_roles_and_identity_provider_use_distinct_left_side_nodes
 
   REQ-RPT-003:
     applies_to:

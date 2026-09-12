@@ -16,7 +16,7 @@ import validate_intermediate as intermediate_contract
 import yaml
 from _atomic_io import atomic_write_json
 from finalize_component_inventory import validate_receipt
-from validate_fragment import repository_path_errors
+from validate_fragment import architecture_reference_errors, repository_path_errors
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 INPUT_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-assessment-input.schema.json"
@@ -473,6 +473,9 @@ def _prior_identity_hints(output_dir: Path) -> list[dict[str, Any]]:
 
 def _semantic_flow_validation(flows: dict[str, Any], receipt: dict[str, Any]) -> None:
     _validate(flows, FLOW_SCHEMA)
+    errors = architecture_reference_errors(flows)
+    if errors:
+        raise ValueError("; ".join(errors))
     if flows["component_inventory_fingerprint"] != receipt["component_inventory_fingerprint"]:
         raise ValueError("data-flow sidecar carries a stale component inventory fingerprint")
     allowed = set(receipt["component_ids"]) | {"external"}
@@ -486,10 +489,12 @@ def _semantic_flow_validation(flows: dict[str, Any], receipt: dict[str, Any]) ->
             raise ValueError(f"{row['id']} is not a cross-component flow")
 
 
-def _flow_identity(row: dict[str, Any]) -> tuple[str, str, str, str]:
+def _flow_identity(row: dict[str, Any]) -> tuple[str, ...]:
     return (
         str(row.get("from") or ""),
         str(row.get("to") or ""),
+        str(row.get("from_entity") or ""),
+        str(row.get("to_entity") or ""),
         _bounded_text(row.get("protocol"), 80).casefold(),
         _bounded_text(row.get("label"), 120).casefold(),
     )
@@ -553,6 +558,7 @@ def build(repo_root: Path, output_dir: Path, depth: str) -> dict[str, Any]:
         "assessment_depth": depth,
         "components": components,
         "data_flows": flows,
+        "external_entities": flow_doc.get("external_entities") or [],
         "signals": _signals(flows, components, source_context),
         "prior_boundary_identity_hints": _prior_identity_hints(output_dir),
         "source_context": source_context,

@@ -121,6 +121,9 @@ $defs:
         minimum: 0
       evidence_snippet:
         type: string
+      evidence_tier:
+        type: [string, "null"]
+        enum: [confirmed-exploitable, insecure-practice, null]
       title:
         type: string
       scenario:

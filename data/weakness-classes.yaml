@@ -30,17 +30,227 @@
 #   - Count >= 2 and mixed variants   → "<icon> Multiple <plural_label> (e.g. <first variant>)"
 #   - Threat IDs are NEVER rendered inside the heat-map line.
 
+# Figure 1 projects evidenced High/Critical findings onto this separate, concise
+# mechanism vocabulary. It never infers labels from titles, technology names, or
+# cluster membership. Exceptions retain their report findings and severity counts.
+# Labels name the defect, not its severity: Improper covers missing or incorrect
+# checks; Insecure names unsafe handling; Insufficient names inadequate coverage
+# or limits. Missing requires an established absence. A broad impact such as
+# disclosure never establishes the specific mechanism that failed. Broken names
+# an identified control failure; Weak names inadequate resistance. General
+# architectural risks retain Insecure rather than asserting a proven failure.
+# tie_break_order preserves selection across wording changes when severity,
+# priority group, structural support and finding count are equal.
+# Shape: schemas/figure1-annotations.schema.yaml; coverage and uniqueness:
+# tests/test_weakness_class_config_consistency.py.
+diagram_annotations:
+  schema_version: 1
+  labels:
+    Unsafe Query Construction:
+      tie_break_order: 200
+      cwes: [CWE-89, CWE-90, CWE-643, CWE-943]
+      cwe_qualifiers:
+        CWE-89: SQLi
+        CWE-90: LDAPi
+        CWE-643: XPathi
+        CWE-943: NoSQLi
+      mechanisms: [database-query-concatenation]
+      priority_group: interpreter
+    Insecure Output Handling:
+      tie_break_order: 170
+      cwes: [CWE-74, CWE-79, CWE-80, CWE-83, CWE-84, CWE-85, CWE-86, CWE-87, CWE-116]
+      cwe_qualifiers:
+        CWE-79: XSS
+        CWE-80: XSS
+        CWE-83: XSS
+        CWE-84: XSS
+        CWE-85: XSS
+        CWE-86: XSS
+        CWE-87: XSS
+      mechanisms: [frontend-output-encoding]
+      priority_group: interpreter
+    Insecure Command Handling:
+      tie_break_order: 50
+      cwes: [CWE-77, CWE-78]
+      priority_group: interpreter
+    Insecure Code Evaluation:
+      tie_break_order: 30
+      cwes: [CWE-94, CWE-95, CWE-917]
+      priority_group: interpreter
+    Insecure Template Handling:
+      tie_break_order: 240
+      cwes: [CWE-1336]
+      priority_group: interpreter
+    Insecure XML Processing:
+      tie_break_order: 260
+      cwes: [CWE-91, CWE-611]
+      cwe_qualifiers:
+        CWE-91: XMLi
+        CWE-611: XXE
+    Insecure Prompt Handling:
+      tie_break_order: 140
+      cwes: [CWE-1427]
+    Insecure File Handling:
+      tie_break_order: 120
+      cwes: [CWE-22, CWE-23, CWE-73, CWE-377, CWE-434]
+    Insecure Deserialization:
+      tie_break_order: 100
+      cwes: [CWE-502]
+    Insecure Dynamic Code Handling:
+      tie_break_order: 40
+      cwes: [CWE-913]
+    Improper Attribute Modification:
+      tie_break_order: 320
+      cwes: [CWE-915, CWE-1321]
+    Improper Input Validation:
+      tie_break_order: 330
+      cwes: [CWE-20, CWE-158, CWE-1284, CWE-1287]
+      mechanisms: [blacklist-only-input-validation]
+      priority_group: fallback
+    Broken Authentication:
+      tie_break_order: 10
+      control_family: authentication
+      variant_order: 2
+      cwes: [CWE-287, CWE-290, CWE-294, CWE-303, CWE-306, CWE-620]
+      mechanisms: [missing-endpoint-authentication]
+    Weak Authentication:
+      tie_break_order: 11
+      control_family: authentication
+      variant_order: 1
+      cwes: [CWE-308, CWE-521, CWE-640, CWE-1391]
+    Insecure Authentication:
+      tie_break_order: 12
+      control_family: authentication
+      variant_order: 0
+      cwes: []
+      mechanisms: [hand-rolled-token-verification]
+    Improper Access Control:
+      tie_break_order: 270
+      cwes: [CWE-284]
+    Improper Client Trust:
+      tie_break_order: 400
+      # CWE-565 covers security decisions based on unchecked client cookies,
+      # including non-session state such as roles and prices (CWE-602 child).
+      cwes: [CWE-565, CWE-602]
+    Broken Authorization:
+      tie_break_order: 290
+      control_family: authorization
+      variant_order: 1
+      cwes: [CWE-285, CWE-639, CWE-862, CWE-863]
+    Insecure Authorization:
+      tie_break_order: 291
+      control_family: authorization
+      variant_order: 0
+      cwes: []
+      mechanisms: [route-by-route-authorization]
+    Improper Privilege Management:
+      tie_break_order: 190
+      cwes: [CWE-250, CWE-266, CWE-269]
+    Improper Permission Assignment:
+      tie_break_order: 180
+      cwes: [CWE-276, CWE-732]
+    Improper Interface Exposure:
+      tie_break_order: 350
+      cwes: [CWE-749]
+    Insufficient Rate Limiting:
+      tie_break_order: 370
+      cwes: [CWE-307]
+    Insecure Session Management:
+      tie_break_order: 230
+      cwes: [CWE-384, CWE-613, CWE-614, CWE-1004]
+      mechanisms: [browser-clients-without-bff]
+    Insecure Secret Management:
+      tie_break_order: 220
+      cwes: [CWE-259, CWE-260, CWE-321, CWE-522, CWE-547, CWE-798]
+      mechanisms: [secrets-committed-to-source]
+    Insecure Cryptography:
+      tie_break_order: 70
+      cwes: [CWE-261, CWE-326, CWE-327, CWE-328, CWE-329, CWE-330, CWE-338, CWE-759, CWE-760, CWE-916]
+      mechanisms: [weak-cryptographic-primitives, application-owned-cryptography]
+    Improper Authenticity Checks:
+      tie_break_order: 340
+      cwes: [CWE-345, CWE-347]
+    Improper Origin Validation:
+      tie_break_order: 360
+      cwes: [CWE-346, CWE-352, CWE-942]
+      cwe_qualifiers:
+        CWE-352: CSRF
+    Insecure Framing Policy:
+      tie_break_order: 130
+      cwes: [CWE-1021]
+    Insecure Outbound Requests:
+      tie_break_order: 160
+      cwes: [CWE-441, CWE-918]
+      cwe_qualifiers:
+        CWE-918: SSRF
+    Insecure Redirect Handling:
+      tie_break_order: 210
+      cwes: [CWE-601]
+    Insufficient Resource Isolation:
+      tie_break_order: 380
+      cwes: [CWE-668]
+    Insecure Resource References:
+      tie_break_order: 381
+      # CWE-610 concerns attacker-selected resource references, not proof of
+      # deficient sandboxing or process/tenant isolation.
+      cwes: [CWE-610]
+    Insecure Data Transmission:
+      tie_break_order: 250
+      cwes: [CWE-319]
+    Improper Certificate Validation:
+      tie_break_order: 20
+      cwes: [CWE-295]
+    Missing Data Encryption:
+      tie_break_order: 300
+      cwes: [CWE-311]
+    Insecure Data Storage:
+      tie_break_order: 80
+      cwes: [CWE-312, CWE-922]
+    Improper File Exposure:
+      tie_break_order: 310
+      cwes: [CWE-538, CWE-548, CWE-552]
+    Insecure URL Data Handling:
+      tie_break_order: 311
+      cwes: [CWE-598]
+    Insecure Error Handling:
+      tie_break_order: 110
+      cwes: [CWE-209, CWE-703]
+    Insecure Log Handling:
+      tie_break_order: 150
+      cwes: [CWE-117, CWE-532]
+    Insufficient Audit Logging:
+      tie_break_order: 280
+      cwes: [CWE-223, CWE-778]
+    Insufficient Resource Limits:
+      tie_break_order: 390
+      cwes: [CWE-400, CWE-409, CWE-674, CWE-770, CWE-776, CWE-834, CWE-1333]
+    Insecure Dependency Management:
+      tie_break_order: 90
+      cwes: [CWE-829, CWE-937, CWE-1104, CWE-1357, CWE-1395]
+      mechanisms: [build-pipeline-mutable-refs, vulnerability-management-gap]
+    Improper Configuration Control:
+      tie_break_order: 60
+      cwes: [CWE-15]
+  exceptions:
+    CWE-16: Configuration category does not identify a deficient security mechanism; use an evidenced parent mechanism.
+    CWE-200: Information disclosure alone does not identify the failed protection mechanism; use an evidenced parent mechanism.
+    CWE-358: A nonconforming security check does not identify which control is deficient; use an evidenced parent mechanism.
+    CWE-359: Personal information exposure alone does not establish a storage, access, or handling defect; use an evidenced parent mechanism.
+    CWE-506: Embedded malicious code alone does not establish a dependency or integrity-control defect; use an evidenced parent mechanism.
+    CWE-693: Protection mechanism failure is too broad to select a specific mechanism; use an evidenced parent mechanism.
+
 clusters:
   - id: injection
     label: Injection
     plural_label: Injections
-    cwes: [CWE-89, CWE-943, CWE-78, CWE-94, CWE-95, CWE-611, CWE-22, CWE-23, CWE-502, CWE-1427]
+    cwes: [CWE-89, CWE-943, CWE-78, CWE-94, CWE-95, CWE-1336, CWE-611, CWE-22, CWE-23, CWE-502, CWE-1427]
     variants_by_cwe:
       CWE-89:  SQLi
       CWE-943: NoSQLi
       CWE-78:  OS-cmd
       CWE-94:  code
       CWE-95:  template
+      CWE-1336: template
       CWE-611: XXE
       CWE-22:  path
       CWE-23:  path

@@ -1,0 +1,76 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor.local/schemas/figure1-annotations.schema.yaml
+title: Figure 1 annotation vocabulary
+description: The diagram_annotations block in data/weakness-classes.yaml, validated by the vocabulary consistency tests.
+type: object
+additionalProperties: false
+required: [schema_version, labels, exceptions]
+properties:
+  schema_version:
+    const: 1
+  labels:
+    type: object
+    minProperties: 1
+    propertyNames:
+      type: string
+      pattern: '^(?:Insecure|Unsafe|Insufficient|Improper|Missing|Weak|Broken) [A-Za-z]+(?: [A-Za-z]+)*$'
+      maxLength: 32
+    additionalProperties:
+      type: object
+      additionalProperties: false
+      required: [cwes, tie_break_order]
+      properties:
+        tie_break_order:
+          description: Stable ordering of otherwise equal causes, independent of the display wording.
+          type: integer
+          minimum: 0
+        control_family:
+          description: Variants of one control share a single component annotation.
+          type: string
+          pattern: '^[a-z]+(?:-[a-z]+)*$'
+        variant_order:
+          description: Selects the most specific evidenced variant within a control family, independently of severity.
+          type: integer
+          minimum: 0
+        cwes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            pattern: '^CWE-[0-9]+$'
+        mechanisms:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            pattern: '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'
+        cwe_qualifiers:
+          description: One abbreviation of at most six characters, used only when all contributing findings support it.
+          type: object
+          minProperties: 1
+          propertyNames:
+            pattern: '^CWE-[0-9]+$'
+          additionalProperties:
+            type: string
+            pattern: '^[A-Za-z][A-Za-z0-9]*$'
+            maxLength: 6
+        priority_group:
+          enum: [interpreter, standard, fallback]
+      dependentRequired:
+        control_family: [variant_order]
+        variant_order: [control_family]
+      anyOf:
+        - properties:
+            cwes:
+              minItems: 1
+        - required: [mechanisms]
+          properties:
+            mechanisms:
+              minItems: 1
+  exceptions:
+    type: object
+    propertyNames:
+      pattern: '^CWE-[0-9]+$'
+    additionalProperties:
+      type: string
+      minLength: 30

@@ -100,9 +100,11 @@ class TestCLI:
             text=True,
         )
         assert r.returncode == 0
-        # 9 canonical IDs expected
+        # Application data access and storage have separate canonical identities.
         lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
-        assert len(lines) == 9, f"expected 9 canonical IDs, got {len(lines)}"
+        assert len(lines) == 10, f"expected 10 canonical IDs, got {len(lines)}"
+        assert any(line.startswith("data-access ") for line in lines)
+        assert any(line.startswith("data-persistence ") for line in lines)
 
     def test_validate_all_historical_ids(self):
         r = subprocess.run(

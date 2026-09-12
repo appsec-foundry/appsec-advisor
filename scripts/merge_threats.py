@@ -769,6 +769,9 @@ _AUTHZ_TO_STRIDE: dict[str, str] = {
     "AUTHZ-302": "Elevation of Privilege",  # Confirmed missing route auth (authz_confirm.py)
     "INJ-001": "Tampering",  # SQL injection — request data in query string
     "INJ-002": "Elevation of Privilege",  # Command injection — shell RCE
+    "INJ-NODE-006": "Tampering",  # Executable NoSQL predicate
+    "INJ-NODE-007": "Elevation of Privilege",  # Dynamic code execution
+    "INJ-NODE-008": "Tampering",  # Template source compilation
     "INJ-003": "Information Disclosure",  # SSRF — reach internal targets
     "INJ-LLM-001": "Tampering",  # Unvalidated structured model output
     "INJ-LLM-002": "Tampering",  # Model output rendered as active content
@@ -863,6 +866,8 @@ def _source_auth_finding_to_threat(f: dict) -> dict:
         threat["owasp_llm_ids"] = ["LLM05"]
     elif check_id == "AUTHZ-LLM-001":
         threat["owasp_llm_ids"] = ["LLM06"]
+    if f.get("evidence_tier") in {"confirmed-exploitable", "insecure-practice"}:
+        threat["evidence_tier"] = f["evidence_tier"]
     category = _threat_category_id_for(threat)
     if category:
         threat["threat_category_id"] = category
@@ -1387,6 +1392,17 @@ def _group_bucket_key(t: dict, g: dict) -> tuple:
             parts.extend(("component", (t.get("component_id") or t.get("component") or "").strip().lower()))
     else:
         parts.append((t.get("component_id") or t.get("component") or "").strip().lower())
+    if g.get("require_shared_sink"):
+        scope = str(t.get("control_scope") or "").strip()
+        evidence = t.get("evidence") or {}
+        if isinstance(evidence, list):
+            evidence = next((e for e in evidence if isinstance(e, dict)), {})
+        if scope:
+            parts.extend(("control", scope))
+        elif evidence.get("file") and evidence.get("line"):
+            parts.extend(("sink", str(evidence["file"]), str(evidence["line"])))
+        else:
+            parts.extend(("unresolved-sink", str(t.get("local_id") or t.get("id") or json.dumps(t, sort_keys=True))))
     for dim in g.get("split_by") or []:
         parts.append(str(t.get(dim) or ""))
     return tuple(parts)
@@ -2059,7 +2075,8 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
             instance.setdefault("line", evidence.get("line"))
             scenario = member.get("scenario")
             if isinstance(scenario, str) and scenario.strip():
-                instance["scenario"] = scenario.strip()
+                instance.setdefault("scenario", scenario.strip())
+            instance.setdefault("component_id", member.get("component_id"))
             source_ref = member.get("local_id") or member.get("source_scan_ref") or member.get("config_scan_ref")
             if source_ref:
                 instance["source_ref"] = source_ref

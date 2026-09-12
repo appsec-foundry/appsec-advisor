@@ -11,11 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Figure 1 is now a data-flow diagram: trust zones, labelled data flows, boundary crossings with their assumption verdict, STRIDE per element with the dominant weakness classes of each component, the numbered attack scenarios, and one attack bus per actor into every exposed component its scenarios reach, drawn deterministically for any repository size; the PDF export puts it on a landscape page, and a diagram that fails its own layout check falls back to the tier stack with a render warning.
+- Figure 1 shows evidenced roles, external services including detected OAuth/OIDC/SAML identity integrations, data flows, asset locations, up to three short High/Critical causes per component from a shared repository-independent vocabulary, and distinguishable red/purple attacker paths, combining regular internet attackers when registration is open.
 - A headless run shows what it has spent so far, measured against `--soft-budget`, warns once at 80 % and at 100 % of it, and ends with a table of what each phase cost. Where the spend cannot be measured the run says so instead of showing a figure, and no warning stops a run. The end-of-run cost table states that it covers the whole run including sub-agents, and the `Models` line says that the roles behind each model are sub-agent dispatches billed in that table.
 - A run can declare a cost budget with `--soft-budget <usd>`, or `guardrails.soft_budget_usd` in an organization profile. It steers rather than caps: an invocation whose projected cost cannot fit is refused before it spends anything, and a run that overruns still finishes. Headless runs derive the hard `--hard-budget` cut at 1.25 times that value unless it is given. `--max-cost`, `max_cost_usd`, and `--max-budget` remain as deprecated spellings.
 
 ### Fixed
+
+- Source analysis detects executable NoSQL predicates and input-driven code or template compilation, preserves distinct injection sinks, and rejects XSS attribution to a database.
 
 - The editorial pass processes bounded packets concurrently, retains valid partial results, reports incomplete work, and preserves previously accepted QA observations.
 

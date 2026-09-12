@@ -3,9 +3,9 @@
 
 Draws external entities, processes, data stores, labelled data flows, trust
 boundaries as zones with crossing chips that carry the assumption verdict, a
-STRIDE-per-element strip, severity counts and the dominant weakness classes on
+STRIDE-per-element strip, severity counts and evidenced weaknesses or causes on
 every node, and the numbered attack scenarios of the Security Posture section as
-badges on the components they touch. Each attacker enters over one red bus that
+badges on the components they touch. Each attacker enters over a labelled, coloured bus that
 fans out into every exposed process its scenarios reach; a victim scenario adds
 a dashed edge back to the user.
 
@@ -36,8 +36,9 @@ import html
 import re
 import sys
 
+from detect_open_registration import overview_actor_slug
 from prepare_trust_boundary_context import boundary_endpoints_valid
-from weakness_classifier import classify_threat, load_weakness_classes
+from weakness_classifier import load_weakness_classes
 
 # ---- style --------------------------------------------------------------------
 FONT = "Helvetica, Arial, sans-serif"
@@ -69,23 +70,11 @@ _FALLBACK_ACTOR = {
     "b2b-partner": "B2B Partner",
 }
 USER_ID = "actor:user"
+ACTOR_COLORS = ("#b3453f", "#79439b", "#8c2545", "#b85283", "#552660", "#d05c61", "#9b4890", "#732e38")
 
 # ---- geometry -------------------------------------------------------------------
 NODE_W, PROC_H, EXT_W, EXT_H = 190, 110, 172, 52
-WEAK_LABEL = {  # weakness class id (data/weakness-classes.yaml) -> node label
-    "injection": "injection",
-    "broken_auth": "broken authn",
-    "secret_management": "secrets",
-    "missing_authz": "missing authz",
-    "weak_crypto": "weak crypto",
-    "server_side_exposure": "server exposure",
-    "output_xss_csp": "XSS/CSP",
-    "sensitive_disclosure": "data disclosure",
-    "dos": "DoS",
-    "outdated_deps": "outdated deps",
-}
-WEAK_MAX = 2  # weakness classes shown per node
-WEAK_SEV_COL = {0: "#c05656", 1: "#d39a4a"}  # worst severity rank of the class: Critical, High
+WEAK_SEV_COL = {0: "#c05656", 1: "#d39a4a"}  # weakness/finding severity: Critical, High
 WEAK_COL = "#a08a5a"
 
 ZONE_PAD, ZONE_HEAD, NODE_GAP, ZONE_GAP = 14, 36, 26, 26
@@ -96,10 +85,9 @@ LANE0, LANE_STEP = 40, 10  # first lane offset right of the boundary (clear of t
 LEGEND_W = 350
 FS = 8.5  # small label font
 ZONE_CAP = 8  # drawn nodes per zone; the rest collapse into one bar
-ACTOR_CAP = 4
 PORT_STEP = 22  # minimum spacing between ports on one node side
 BAR_H = 24
-COLUMN = {"client": 0, "application": 1, "build": 1, "data": 2, "third-party": 2}
+COLUMN = {"client": 0, "application": 1, "build": 1, "data": 2, "third-party": 0}
 ZONE_ORDER = {"client": 0, "application": 0, "build": 1, "data": 0, "third-party": 1}
 
 
@@ -208,11 +196,6 @@ def _globe(c, cx, cy, r=6.5):
     c.path(f"M {cx} {cy - r} A {r * 0.5} {r} 0 0 0 {cx} {cy + r} A {r * 0.5} {r} 0 0 0 {cx} {cy - r}", RED, sw=1)
 
 
-def _lock(c, cx, cy, col="#7b62a6"):
-    c.rect(cx - 5, cy - 1, 10, 8, fill=col, rx=1.5)
-    c.path(f"M {cx - 3} {cy - 1} V {cy - 4} A 3 3 0 0 1 {cx + 3} {cy - 4} V {cy - 1}", col, sw=1.6)
-
-
 def _person(c, x, y, col):
     c.circle(x, y, 5, fill="none", stroke=col, sw=1.5)
     c.path(f"M {x - 8} {y + 16} A 8 8 0 0 1 {x + 8} {y + 16}", col, sw=1.5)
@@ -223,22 +206,136 @@ def _chip_width(tbid, n):
 
 
 # ---- inputs ---------------------------------------------------------------------------
-def _top_weak(counts, sevs):
-    """Classes worth a line on the node: two or more threats, or one rated High or Critical. Worst two."""
-    keep = [(k, n) for k, n in counts.items() if n >= 2 or sevs.get(k, 9) <= 1]
-    keep.sort(key=lambda kn: (sevs.get(kn[0], 9), -kn[1], kn[0]))
-    return [(WEAK_LABEL.get(k, k), n, sevs.get(k, 9)) for k, n in keep[:WEAK_MAX]]
+MAX_CAUSE_ANNOTATIONS = 3
+
+
+def _annotation_vocabulary():
+    """Index the central presentation vocabulary without guessing unknown causes.
+
+    Catalog shape and supported-CWE coverage are guarded at build time by
+    test_weakness_class_config_consistency. Reject ambiguous assignments here
+    rather than letting catalog order silently choose a label.
+    """
+    catalog = load_weakness_classes()["diagram_annotations"]
+    by_cwe, by_mechanism, priority_groups, tie_break_order, families = {}, {}, {}, {}, {}
+    qualifiers = {}
+    family_variants = set()
+    for label, entry in catalog["labels"].items():
+        for field, index in (("cwes", by_cwe), ("mechanisms", by_mechanism)):
+            for key in entry.get(field, []):
+                if key in index:
+                    raise ValueError(f"Duplicate Figure 1 annotation for {key}")
+                index[key] = label
+        priority_groups[label] = entry.get("priority_group", "standard")
+        tie_break_order[label] = entry["tie_break_order"]
+        families[label] = (entry.get("control_family", label), entry.get("variant_order", 0))
+        if families[label] in family_variants:
+            raise ValueError("Duplicate Figure 1 control-family variant")
+        family_variants.add(families[label])
+        qualifiers[label] = entry.get("cwe_qualifiers", {})
+        if not qualifiers[label].keys() <= set(entry["cwes"]):
+            raise ValueError("Figure 1 qualifier requires a CWE assigned to its label")
+    if by_cwe.keys() & catalog["exceptions"].keys():
+        raise ValueError("Figure 1 annotation also declared as an exception")
+    return by_cwe, by_mechanism, priority_groups, tie_break_order, families, qualifiers
+
+
+def _component_weaknesses(model):
+    """At most three short High/Critical causes; the report retains the full register."""
+    by_cwe, by_mechanism, priority_groups, tie_break_order, families, qualifiers = _annotation_vocabulary()
+    threats = {t.get("id"): t for t in model.get("threats") or [] if isinstance(t, dict)}
+    ranks = {
+        tid: SEV_RANK.get(t.get("effective_severity") or t.get("risk") or t.get("severity"), 9)
+        for tid, t in threats.items()
+    }
+    rows, covered = collections.defaultdict(dict), collections.defaultdict(set)
+
+    def add(cid, label, rank, ids, structural):
+        if rank > 1:
+            return
+        # One control family gets one badge. Wording follows its most specific
+        # evidenced defect; severity remains the maximum supported family risk.
+        for old_label, previous in list(rows[cid].items()):
+            if families[old_label][0] != families[label][0]:
+                continue
+            label = max((label, old_label), key=lambda candidate: families[candidate][1])
+            rank, ids, structural = min(rank, previous[0]), ids | previous[1], structural or previous[2]
+            del rows[cid][old_label]
+        rows[cid][label] = (rank, ids, structural)
+
+    for weakness in model.get("weaknesses") or []:
+        label = by_mechanism.get(weakness.get("mechanism_id"))
+        rank = SEV_RANK.get(weakness.get("severity"), 9)
+        if not label or rank > 1:
+            continue
+        backing = weakness.get("observable_backing") or {}
+        # Confirmed instances establish this mechanism's scope. A supporting
+        # practice site alone must not extend it to an unrelated component.
+        references = weakness.get("instances") or backing.get("practice_evidence") or []
+        linked = {i.get("id") for i in references if isinstance(i, dict)} & threats.keys()
+        owners = {cid for tid in linked if ranks[tid] <= 1 for cid in _affected_components(threats[tid])}
+        if not linked and backing:
+            owners.update(weakness.get("affected_components") or [])
+        for cid in owners:
+            hits = {tid for tid in linked if ranks[tid] <= 1 and cid in _affected_components(threats[tid])}
+            # A general architectural risk does not prove a broken control.
+            # Actual linked defects can refine its badge, within the same family.
+            variants = [label]
+            for tid in hits:
+                specific = by_cwe.get(threats[tid].get("cwe"))
+                if specific and families[specific][0] == families[label][0]:
+                    variants.append(specific)
+            evidenced_label = max(variants, key=lambda candidate: families[candidate][1])
+            add(cid, evidenced_label, rank, hits, True)
+            covered[cid].update(hits)
+    for tid, threat in threats.items():
+        label = by_cwe.get(threat.get("cwe"))
+        if not label or ranks[tid] > 1:
+            continue
+        for cid in _affected_components(threat):
+            if tid not in covered[cid]:
+                add(cid, label, ranks[tid], {tid}, False)
+    result = {}
+    for cid, causes in rows.items():
+        ordered = sorted(
+            causes.items(),
+            key=lambda item: (
+                item[1][0],
+                priority_groups[item[0]] != "interpreter",
+                not item[1][2],
+                priority_groups[item[0]] == "fallback",
+                -len(item[1][1]),
+                tie_break_order[item[0]],
+            ),
+        )
+        result[cid] = []
+        for label, (rank, ids, _structural) in ordered[:MAX_CAUSE_ANNOTATIONS]:
+            # Qualify after ranking; a mixed or design-only cause stays generic.
+            suffixes = {qualifiers[label].get(threats[tid].get("cwe")) for tid in ids}
+            if len(suffixes) == 1 and None not in suffixes:
+                label = f"{label} ({suffixes.pop()})"
+            result[cid].append((label, len(ids), rank))
+    return result
+
+
+def _weak_lines(items, maxw):
+    return [
+        (line, rank, index == 0)
+        for label, _count, rank in items
+        for index, line in enumerate(_wrap(label, maxw - 9, 9))
+    ]
+
+
+def _asset_lines(asset):
+    return _wrap(f"{asset.get('id')} {asset.get('name')}", NODE_W - 46, 8.5)
 
 
 def _weak_line(c, x, y, items, maxw):
-    xx = x
-    for label, n, r in items:
-        txt = f"{label} {n}"
-        if xx + 9 + _tw(txt, 8) > x + maxw:
-            break
-        c.rect(xx, y - 7, 6, 6, fill=WEAK_SEV_COL.get(r, WEAK_COL), rx=1)
-        c.text(xx + 9, y, txt, size=8, anchor="start", fill=INK, weight="bold")
-        xx += 9 + _tw(txt, 8) + 10
+    for i, (line, rank, first) in enumerate(_weak_lines(items, maxw)):
+        yy = y + 12 * i
+        if first:
+            c.rect(x, yy - 7, 6, 6, fill=WEAK_SEV_COL.get(rank, WEAK_COL), rx=1)
+        c.text(x + 9, yy, line, size=9, anchor="start", fill=INK)
 
 
 def _zone_key(comp):
@@ -253,6 +350,20 @@ def _zone_key(comp):
     return "application"
 
 
+def _affected_components(threat):
+    return list(
+        dict.fromkeys(
+            c
+            for c in [
+                threat.get("component"),
+                *(threat.get("merged_from") or []),
+                *(i.get("component_id") for i in threat.get("instances") or [] if isinstance(i, dict)),
+            ]
+            if isinstance(c, str) and c
+        )
+    )
+
+
 def _finding_component_map(threats):
     """F-NNN / T-NNN → component id, from every id field a threat may carry."""
     fid_comp = {}
@@ -264,7 +375,7 @@ def _finding_component_map(threats):
             m = re.match(r"^[FT]-(\d+)$", str(t.get(kn) or "").strip().upper())
             if m:
                 for pre in ("F-", "T-"):
-                    fid_comp.setdefault(f"{pre}{m.group(1)}", cid)
+                    fid_comp.setdefault(f"{pre}{m.group(1)}", _affected_components(t))
     return fid_comp
 
 
@@ -280,11 +391,16 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
             sev_by_fid[int(m.group(1))] = t.get("effective_severity") or t.get("risk") or t.get("severity")
     cls_by_id = {c.get("id"): c for c in (attack_taxonomy.get("classes") or []) if isinstance(c, dict)}
     labels = actor_labels or {}
+    meta = yaml_data.get("meta") or {}
 
     def actor_name(slug):
+        if slug == "internet-anon" and meta.get("open_user_registration") is True:
+            return "Internet Attacker"
         return (labels.get(slug) or {}).get("label") or _FALLBACK_ACTOR.get(slug) or slug
 
     def actor_sub(slug):
+        if slug == "internet-anon" and meta.get("open_user_registration") is True:
+            return "can self-register a regular account"
         return (labels.get(slug) or {}).get("default_subtitle") or ""
 
     scenarios, order = [], []
@@ -297,6 +413,7 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
         tgt = str(ap.get("_llm_target") or ap.get("target") or cl.get("default_target_tier") or "application").lower()
         victim = raw_actor == "victim-required" or tgt in ("client", "victim")
         actor = "internet-anon" if raw_actor in ("victim-required", "") else raw_actor
+        actor = overview_actor_slug(actor, meta)
         if actor not in order:
             order.append(actor)
         cids, fids = [], []
@@ -304,9 +421,9 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
             m = re.match(r"^[FT]-(\d+)$", str(f or "").upper())
             if m:
                 fids.append(int(m.group(1)))
-            cid = fid_comp.get(str(f or "").upper())
-            if cid and cid not in cids:
-                cids.append(cid)
+            for cid in fid_comp.get(str(f or "").upper(), []):
+                if cid not in cids:
+                    cids.append(cid)
         sevs = [sev_by_fid[f] for f in fids if sev_by_fid.get(f)]
         risk = min(sevs, key=lambda s: SEV_RANK.get(s, 9)) if sevs else ""
         scenarios.append(
@@ -314,13 +431,14 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
                 "n": str(idx + 1),
                 "title": cl.get("short_label") or cl.get("label") or slug or "attack",
                 "actor": actor_name(actor),
+                "actor_slug": actor,
                 "victim": victim,
                 "cids": cids,
                 "fids": fids,
                 "risk": risk,
             }
         )
-    actors = [{"name": actor_name(s), "sub": actor_sub(s), "attacker": True} for s in order]
+    actors = [{"name": actor_name(s), "slug": s, "sub": actor_sub(s), "attacker": True} for s in order]
     return scenarios, actors
 
 
@@ -364,6 +482,14 @@ def _parse_markdown(md_text):
 
 
 # ---- model preparation ------------------------------------------------------------------
+def _flow_endpoints(flow):
+    src, dst = flow.get("from"), flow.get("to")
+    return (
+        flow.get("from_entity") or USER_ID if src == "external" else src,
+        flow.get("to_entity") or f"ext:{src}" if dst == "external" else dst,
+    )
+
+
 def _build_model(d, scenarios, actors):
     comps = [c for c in (d.get("components") or []) if isinstance(c, dict) and c.get("id")]
     cnum = {c["id"]: f"C-{i:02d}" for i, c in enumerate(comps, 1)}
@@ -371,17 +497,11 @@ def _build_model(d, scenarios, actors):
     sev = collections.defaultdict(collections.Counter)
     stride = collections.defaultdict(collections.Counter)
     tb_threats = collections.Counter()
-    weak = collections.defaultdict(collections.Counter)
-    weak_sev = collections.defaultdict(dict)  # component -> class -> best severity rank
-    vocab = load_weakness_classes()
+    weak = _component_weaknesses(d)
     for t in d.get("threats") or []:
-        cls = classify_threat(t, vocab, warn=False)
-        if cls and cls != "_unmapped":
-            weak[t.get("component")][cls] += 1
-            r = SEV_RANK.get(t.get("effective_severity") or t.get("risk") or t.get("severity"), 9)
-            weak_sev[t.get("component")][cls] = min(r, weak_sev[t.get("component")].get(cls, 9))
-        sev[t.get("component")][t.get("effective_severity") or t.get("risk") or t.get("severity")] += 1
-        stride[t.get("component")][(t.get("stride") or "?")[0].upper()] += 1
+        for cid in _affected_components(t):
+            sev[cid][t.get("effective_severity") or t.get("risk") or t.get("severity")] += 1
+            stride[cid][(t.get("stride") or "?")[0].upper()] += 1
         for b in t.get("boundary_refs") or []:
             if isinstance(b, dict):
                 tb_threats[b.get("boundary_id")] += 1
@@ -410,11 +530,10 @@ def _build_model(d, scenarios, actors):
             "sev": sev[cid],
             "stride": stride[cid],
             "exposed": cid in exposed or "internet" in [str(z).lower() for z in comp.get("deployment_zones") or []],
-            "sensitive": bool(comp.get("handles_sensitive_data")),
             "complex": comp.get("complexity") == "complex",
             "badges": [],
             "assets": [],
-            "weak": _top_weak(weak[cid], weak_sev[cid]),
+            "weak": weak.get(cid, []),
             "order": len(nodes),
         }
     for s in scenarios:
@@ -422,20 +541,24 @@ def _build_model(d, scenarios, actors):
         for cid in cids:
             if cid in nodes:
                 nodes[cid]["badges"].append(s["n"])
-    # a single data store lists the crown jewels; a scenario marks the asset it reaches
-    stores = [n for n in nodes.values() if n["kind"] == "store"]
-    for st in stores:
-        st["badges"] = []
-    if len(stores) == 1:
-        assets = sorted(
-            [a for a in (d.get("assets") or []) if isinstance(a, dict)],
-            key=lambda a: (CLS_RANK.get(str(a.get("classification")).title(), 9), str(a.get("id"))),
-        )[:4]
-        for a in assets:
-            linked = {int(m) for t in (a.get("linked_threats") or []) for m in re.findall(r"(\d+)$", str(t))}
-            a["_hits"] = [s["n"] for s in scenarios if linked & set(s.get("fids") or [])]
-        stores[0]["assets"] = assets
-        stores[0]["h"] = 114 + 15 * len(assets) + (6 if assets else 0)
+    # Storage claims require an explicit, evidenced relation; classification alone is insufficient.
+    for asset in d.get("assets") or []:
+        if not isinstance(asset, dict):
+            continue
+        linked = {int(m) for t in asset.get("linked_threats") or [] for m in re.findall(r"(\d+)$", str(t))}
+        for ref in asset.get("component_refs") or []:
+            node = nodes.get(ref.get("component_id"))
+            if node and node["kind"] == "store" and ref.get("relation") == "stored" and ref.get("evidence"):
+                node["assets"].append(
+                    dict(asset, _hits=[s["n"] for s in scenarios if linked & set(s.get("fids") or [])])
+                )
+    for node in nodes.values():
+        node["h"] = max(
+            PROC_H,
+            108
+            + 12 * len(_weak_lines(node["weak"], NODE_W - 32))
+            + (24 + sum(11 * len(_asset_lines(a)) + 17 for a in node["assets"]) if node["assets"] else 0),
+        )
     # actors: one legitimate user, then the attackers
     victim_of = [s["n"] for s in scenarios if s.get("victim")]
     nodes[USER_ID] = {
@@ -453,7 +576,7 @@ def _build_model(d, scenarios, actors):
         "order": 0,
         "badges": [],
     }
-    for i, a in enumerate(actors[: ACTOR_CAP - 1]):
+    for i, a in enumerate(actors):
         nodes[f"actor:a{i}"] = {
             "id": f"actor:a{i}",
             "kind": "ext",
@@ -464,11 +587,35 @@ def _build_model(d, scenarios, actors):
             "w": EXT_W,
             "h": EXT_H,
             "col_rank": 2,
-            "color": RED,
+            "color": ACTOR_COLORS[i % len(ACTOR_COLORS)],
+            "marker": f"attacker-{i}",
+            "actor_code": f"A{i + 1}",
             "order": i + 1,
             "attacker": True,
             "badges": [],
         }
+
+    for entity in d.get("external_entities") or []:
+        key = entity["id"]
+        role = entity.get("kind") == "legitimate-role"
+        nodes[key] = {
+            "id": key,
+            "kind": "ext",
+            "name": entity["name"],
+            "sub": _cut(entity.get("description") or "", 34),
+            "zone": "internet" if role else "third-party",
+            "col": 0,
+            "w": EXT_W,
+            "h": EXT_H,
+            "color": GREEN if role else INK,
+            "order": len(nodes),
+            "badges": [],
+        }
+    needs_generic_user = victim_of or any(
+        f.get("from") == "external" and not f.get("from_entity") for f in d.get("data_flows") or []
+    )
+    if not needs_generic_user and any(e.get("kind") == "legitimate-role" for e in d.get("external_entities") or []):
+        nodes.pop(USER_ID)
 
     # edges from data flows; `external` is the user's client on the way in, a third-party entity on the way out
     bundles = collections.OrderedDict()
@@ -478,13 +625,16 @@ def _build_model(d, scenarios, actors):
             continue
         src, dst = f.get("from"), f.get("to")
         fid = f.get("id") or "?"
-        if src == dst:
+        if (src, f.get("from_entity")) == (dst, f.get("to_entity")):
             undrawn.append((fid, "self-loop"))
             continue
         if src == "external":
-            src = USER_ID
+            src = f.get("from_entity") or USER_ID
         if dst == "external":
-            key = f"ext:{f.get('from')}"
+            key = f.get("to_entity") or f"ext:{f.get('from')}"
+            if key not in nodes and f.get("to_entity"):
+                undrawn.append((fid, f"unknown external entity {key}"))
+                continue
             if key not in nodes:
                 nodes[key] = {
                     "id": key,
@@ -492,7 +642,7 @@ def _build_model(d, scenarios, actors):
                     "name": "External service",
                     "sub": _cut(f.get("label") or "", 36),
                     "zone": "third-party",
-                    "col": 2,
+                    "col": 0,
                     "w": EXT_W,
                     "h": EXT_H,
                     "color": INK,
@@ -551,10 +701,17 @@ def _build_model(d, scenarios, actors):
         dst = t.get("to")
         if dst == "external":
             dst = f"ext:{t.get('from')}"
-        hit = next((e for e in edges if e["src"] == src and e["dst"] == dst), None)
+        matching_ids = {
+            f.get("id")
+            for f in d.get("data_flows") or []
+            if (f.get("from"), f.get("to")) == (t.get("from"), t.get("to"))
+        }
+        matching_edges = [e for e in edges if matching_ids.intersection(e["ids"])]
+        # Canonical boundaries cannot select one role from several named flows.
+        hit = matching_edges[0] if len(matching_edges) == 1 else None
         if hit and nodes[hit["src"]]["col"] != nodes[hit["dst"]]["col"]:
             hit["tb"].append(t["id"])
-        elif dst in nodes and dst != USER_ID:
+        elif t.get("to") != "external" and dst in nodes and dst != USER_ID:
             nodes[dst].setdefault("tags", []).append(t["id"])  # guards the entry into dst
         elif src in nodes and src != USER_ID:
             nodes[src].setdefault("tags", []).append(t["id"])  # guards the exit from src
@@ -578,7 +735,7 @@ def _select_drawn(nodes, edges, d):
     for n in nodes.values():
         by_zone[(n["col"], n["zone"])].append(n)
     for (col, zk), members in by_zone.items():
-        cap = ACTOR_CAP if zk == "internet" else ZONE_CAP
+        cap = len(members) if zk in {"internet", "third-party"} else ZONE_CAP
         members.sort(
             key=lambda n: (
                 -linked[n["id"]],
@@ -890,12 +1047,15 @@ def _render(
     dropped,
     unattached_assets,
 ):
+    actor_colors = {n["name"]: n["color"] for n in nodes.values() if n.get("attacker")}
+    scenario_colors = {s["n"]: actor_colors.get(s.get("actor"), RED) for s in scenarios}
     W = col_x[-1] + col_w[-1] + 30 + LEGEND_W + MARGIN
     c = _Canvas()
     c.add("")  # header, filled in once the height is known
     c.add("")
     defs = "<defs>"
-    for key, col in list(CLS_COL.items()) + [("red", RED), ("grey", LINE)]:
+    markers = [(n["marker"], n["color"]) for n in nodes.values() if n.get("attacker")]
+    for key, col in list(CLS_COL.items()) + [("red", RED), ("grey", LINE)] + markers:
         defs += (
             f'<marker id="arw-{key}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" '
             f'markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="{col}"/></marker>'
@@ -942,7 +1102,7 @@ def _render(
         c.rect(zb["x"], zb["y"], zb["w"], zb["h"], fill=fill, stroke=stroke, sw=1.6, rx=10, dash="7 4")
         c.text(zb["x"] + 10, zb["y"] + 16, title, size=10.5, anchor="start", weight="bold", fill=stroke)
         zk = zb["zone"]
-        sub = {"internet": "actors and their browsers", "third-party": "outbound dependencies"}.get(zk) or (
+        sub = {"internet": "actors and their browsers", "third-party": "external integrations"}.get(zk) or (
             ", ".join(sorted(zone_sub[zk])) + (" · " + ", ".join(sorted(zone_fw[zk])) if zone_fw[zk] else "")
             if zone_sub[zk]
             else ""
@@ -1001,11 +1161,25 @@ def _render(
         if e.get("attack"):
             c.path(
                 _orth(_trim(e["pts"])),
-                RED,
+                nodes[e["src"]]["color"],
                 sw=(1.6 if e.get("victim") else 2.2),
-                marker="arw-red",
+                marker=f"arw-{nodes[e['src']]['marker']}",
                 dash=("5 4" if e.get("victim") else None),
             )
+            source = nodes[e["src"]]
+            if not e.get("victim") and abs(e["pts"][0][0] - source["x"] - source["w"]) < 0.6:
+                x0, y0 = e["pts"][0]
+                c.text(
+                    x0 + 6,
+                    y0 - 4,
+                    source["actor_code"],
+                    size=FS,
+                    fill=source["color"],
+                    anchor="start",
+                    weight="bold",
+                    halo=True,
+                    track=f"actor {source['actor_code']}",
+                )
             continue
         col = CLS_COL.get(e["cls"], LINE)
         mk = f"arw-{e['cls'] if e['cls'] in CLS_COL else 'grey'}"
@@ -1064,7 +1238,8 @@ def _render(
                 tx = x + 32
             else:
                 tx = x + 12
-            for i, line in enumerate(_wrap(n["name"], w - (tx - x) - 8, 10)[:2]):
+            label = (n["actor_code"] + " · " if n.get("actor_code") else "") + n["name"]
+            for i, line in enumerate(_wrap(label, w - (tx - x) - 8, 10)[:2]):
                 c.text(tx, y + 19 + i * 12, line, size=10, anchor="start", weight="bold", fill=col)
             c.text(tx, y + h - 8, _cut(n["sub"], 36), size=7.5, anchor="start", fill=MUTED, italic=True)
             continue
@@ -1092,27 +1267,25 @@ def _render(
         _weak_line(c, x + ox, ty + 36, n.get("weak") or [], w - ox - 8)
         if n["exposed"]:
             _globe(c, x + w - 16, y + 15)
-        if n["sensitive"]:
-            _lock(c, x + w - 16, y + 34)
         if n["assets"]:
-            ay = ty + 50
-            c.text(x + ox, ay, "Crown jewels stored here", size=8.5, anchor="start", fill=MUTED, italic=True)
-            for i, a in enumerate(n["assets"]):
+            ay = ty + 50 + 12 * max(0, len(_weak_lines(n["weak"], w - ox - 8)) - 1)
+            c.text(x + ox, ay, "Stored assets", size=8.5, anchor="start", fill=MUTED, italic=True)
+            yy = ay + 10
+            for a in n["assets"]:
                 col = CLS_COL.get(str(a.get("classification")).title(), MUTED)
-                yy = ay + 10 + i * 15
                 c.rect(x + ox, yy, 6, 6, fill=col)
+                lines = _asset_lines(a)
+                for index, line in enumerate(lines):
+                    c.text(x + ox + 10, yy + 6 + index * 11, line, size=8.5, anchor="start")
+                yy += len(lines) * 11
                 hits = a.get("_hits", [])
                 badge_x0 = x + w - 30 - (len(hits) - 1) * 15 if hits else x + w - 26
-                avail = badge_x0 - 10 - (x + ox + 10)
-                name = _cut(f"{a.get('id')} {a.get('name')}", max(8, int(avail / (8.5 * 0.54))))
-                c.text(x + ox + 10, yy + 6, name, size=8.5, anchor="start")
                 for j, s in enumerate(hits):
-                    _badge(c, badge_x0 + j * 15, yy + 3, s, r=6.5)
-                c.text(
-                    x + w - 4, yy + 6, str(a.get("classification"))[:4], size=7.5, anchor="end", fill=col, weight="bold"
-                )
+                    _badge(c, badge_x0 + j * 15, yy + 3, s, col=scenario_colors.get(s, RED), r=6.5)
+                c.text(x + ox + 10, yy + 6, str(a.get("classification")), size=7.5, anchor="start", fill=col)
+                yy += 17
         for i, b in enumerate(n["badges"]):
-            _badge(c, x + w - 18 - i * 19, y + h - 1, b)
+            _badge(c, x + w - 18 - i * 19, y + h - 1, b, col=scenario_colors.get(b, RED))
             c.badges.append((x + w - 26 - i * 19, y + h - 9, x + w - 10 - i * 19, y + h + 7, f"badge {b} on {n['id']}"))
 
     for ch in chips:
@@ -1144,7 +1317,7 @@ def _render(
         INK,
         sw=1.4,
     )
-    c.text(lx + 40, y + 3, "data store (with crown-jewel assets)", size=9, anchor="start")
+    c.text(lx + 40, y + 3, "data store (evidenced asset locations)", size=9, anchor="start")
     y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", CLS_COL["Confidential"], sw=1.6, marker="arw-Confidential")
     c.text(lx + 40, y + 3, "data flow · colour = classification · two heads = bidirectional", size=9, anchor="start")
@@ -1177,30 +1350,27 @@ def _render(
     c.text(
         lx + 40,
         y + 3,
-        "attacker → every exposed process its scenarios reach · dashed = victim (user)",
+        "A1… = attacker; colour follows actor · dashed = victim",
         size=9,
         anchor="start",
     )
     y += 20
     _globe(c, lx + 21, y - 2)
     c.text(lx + 40, y + 3, "⊕ internet-exposed entry point", size=9, anchor="start")
-    y += 18
-    _lock(c, lx + 21, y - 3)
-    c.text(lx + 40, y + 3, "handles sensitive data", size=9, anchor="start")
     y += 20
     _stride_strip(c, lx + 10, y - 9, {"S": 1, "T": 1, "I": 1})
     c.text(lx + 10, y + 20, "STRIDE-per-element: filled = threats found in that class", size=8.5, anchor="start")
     y += 30
-    _weak_line(c, lx + 10, y + 1, [("missing authz", 5, 0), ("injection", 3, 2)], 200)
+    _weak_line(c, lx + 10, y + 1, [("Unsafe Query Construction (SQLi)", 3, 0)], 200)
     c.text(
         lx + 10,
-        y + 16,
-        "dominant weakness classes (§8) · count = threats · colour = worst severity",
+        y + 28,
+        "Up to 3 key causes · High/Critical only",
         size=8.5,
         anchor="start",
         fill=MUTED,
     )
-    y += 26
+    y += 38
     xx = lx + 10
     for s, col in SEV_COL.items():
         c.circle(xx, y - 2, 4.5, fill=col)
@@ -1218,7 +1388,7 @@ def _render(
     c.text(
         lx + 10,
         y + 16,
-        "a data store shows a scenario only at the asset it reaches",
+        "asset badges require linked findings and evidenced storage",
         size=8.5,
         anchor="start",
         fill=MUTED,
@@ -1232,9 +1402,17 @@ def _render(
             who = (s.get("actor") or "Attacker") + (" → User (victim)" if s.get("victim") else "")
             if who != cur:
                 cur = who
-                c.text(lx + 10, y + 3, _cut(who, 52), size=9, anchor="start", weight="bold", fill=RED)
+                c.text(
+                    lx + 10,
+                    y + 3,
+                    _cut(who, 52),
+                    size=9,
+                    anchor="start",
+                    weight="bold",
+                    fill=actor_colors.get(s.get("actor"), RED),
+                )
                 y += 16
-            _badge(c, lx + 20, y - 2, s["n"])
+            _badge(c, lx + 20, y - 2, s["n"], col=actor_colors.get(s.get("actor"), RED))
             c.text(lx + 34, y + 2, _cut(s["title"], 40), size=9, anchor="start")
             if s.get("risk"):
                 c.text(
@@ -1263,32 +1441,41 @@ def _render(
             y += 15
         y += 12
     flows = {f.get("id"): f for f in d.get("data_flows") or [] if isinstance(f, dict)}
-    if edges:
+    if any(e["ids"] for e in edges):
         y = head(y, "Data flows")
         for e in edges:
             for fid in e["ids"]:
                 f = flows.get(fid, {})
                 col = CLS_COL.get(str(f.get("data_classification")).title(), LINE)
                 c.text(lx + 10, y + 3, fid, size=8.5, anchor="start", weight="bold", fill=col)
-                c.text(
-                    lx + 52,
-                    y + 3,
-                    _cut(
-                        f"{f.get('from')} → {f.get('to')} · {f.get('protocol')} · {_cut(f.get('label') or '', 28)}", 50
-                    ),
-                    size=8,
-                    anchor="start",
-                )
-                y += 14
+                src, dst = _flow_endpoints(f)
+                detail = f"{nodes.get(src, {}).get('name', src)} → {nodes.get(dst, {}).get('name', dst)} · {f.get('protocol') or ''} · {f.get('label') or ''}"
+                lines = _wrap(detail, lw - 62, 8)
+                for index, line in enumerate(lines):
+                    c.text(lx + 52, y + 3 + index * 11, line, size=8, anchor="start")
+                y += max(14, 11 * len(lines) + 5)
     if unattached_assets:
         y += 12
-        y = head(y, "Crown jewels (assets)")
-        for a in unattached_assets[:6]:
+        y = head(y, "Assets — location and handling")
+        for a in unattached_assets:
             col = CLS_COL.get(str(a.get("classification")).title(), MUTED)
             c.rect(lx + 10, y - 6, 6, 6, fill=col)
             c.text(lx + 22, y + 1, _cut(f"{a.get('id')} {a.get('name')}", 44), size=8.5, anchor="start")
             c.text(lx + lw - 6, y + 1, str(a.get("classification")), size=7.5, anchor="end", fill=col, weight="bold")
-            y += 14
+            relations = []
+            for ref in a.get("component_refs") or []:
+                if not ref.get("evidence"):
+                    continue
+                owner = nodes.get(ref.get("component_id"), {}).get("name") or ref.get("component_id")
+                verb = {"stored": "stored in", "processed": "processed by", "transmitted": "transmitted by"}.get(
+                    ref.get("relation")
+                )
+                if owner and verb:
+                    relations.append(f"{verb} {owner}")
+            for detail in _wrap("; ".join(relations) or "location not established", lw - 32, 8):
+                y += 11
+                c.text(lx + 22, y + 1, detail, size=8, anchor="start", fill=MUTED)
+            y += 18
     notes = []
     if dropped:
         n = sum(len(v) for v in dropped.values())
@@ -1299,7 +1486,7 @@ def _render(
         notes.append(f"{tid} not placed: {why}")
     if notes:
         y += 12
-        for s in notes[:8]:
+        for s in notes:
             c.text(lx + 10, y + 3, _cut(s, 70), size=8, anchor="start", fill=MUTED, italic=True)
             y += 12
     H = max(height, c.maxy + MARGIN)
@@ -1382,9 +1569,7 @@ def _audit(d, nodes, edges, chips, boundaries):
         return (abs(x - n["x"]) < 0.6 or abs(x - n["x"] - n["w"]) < 0.6) and n["y"] <= y <= n["y"] + n["h"]
 
     def want(rec):
-        src = USER_ID if rec.get("from") == "external" else rec.get("from")
-        dst = f"ext:{rec.get('from')}" if rec.get("to") == "external" else rec.get("to")
-        return src, dst
+        return _flow_endpoints(rec)
 
     for e in edges:
         s, t = nodes[e["src"]], nodes[e["dst"]]
@@ -1426,7 +1611,9 @@ def _audit(d, nodes, edges, chips, boundaries):
             if e["bx"] not in boundaries or not (xs[0] <= e["bx"] <= xs[1]):
                 problems.append(f"{ch['tb']}: {name} does not cross boundary at x={e['bx']}")
             tb = tbs.get(ch["tb"])
-            if tb and (e["src"], e["dst"]) != want(tb):
+            if tb and not any(
+                (flows[fid].get("from"), flows[fid].get("to")) == (tb.get("from"), tb.get("to")) for fid in e["ids"]
+            ):
                 problems.append(f"{ch['tb']}: chip on {name} but boundary is {tb.get('from')}→{tb.get('to')}")
     for n in nodes.values():
         for tid in n.get("tags", []):
@@ -1455,14 +1642,10 @@ def _build(yaml_data, scenarios, actors):
     nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors)
     nodes, edges, dropped = _select_drawn(nodes, edges, d)
     col_x, col_w, zone_boxes, boundaries, chips, height = _layout(nodes, edges, dropped, tb_threats)
-    stores = [n for n in nodes.values() if n["kind"] == "store"]
-    unattached = (
-        []
-        if len(stores) == 1
-        else sorted(
-            [a for a in (d.get("assets") or []) if isinstance(a, dict)],
-            key=lambda a: (CLS_RANK.get(str(a.get("classification")).title(), 9), str(a.get("id"))),
-        )
+    attached = {a.get("id") for n in nodes.values() for a in n.get("assets", [])}
+    unattached = sorted(
+        [a for a in d.get("assets") or [] if isinstance(a, dict) and a.get("id") not in attached],
+        key=lambda a: (CLS_RANK.get(str(a.get("classification")).title(), 9), str(a.get("id"))),
     )
     svg, canvas = _render(
         d,

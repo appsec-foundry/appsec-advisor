@@ -41,7 +41,7 @@ Read the context once and process `samples` in its supplied order. For each
 sample, judge the finding from its title, scenario, cited location, evidence
 summary, and `source_window`:
 
-- `verified`: the window demonstrates the claimed mechanism or sink.
+- `verified`: the window demonstrates the claimed mechanism or sink and the claimed security-relevant use.
 - `refuted`: the window clearly contradicts the claim or is non-executable
   example, test, documentation, or already-safe code.
 - `ambiguous`: the bounded window cannot establish or refute the claim.
@@ -49,6 +49,8 @@ summary, and `source_window`:
 Do not treat ambiguity as a safe default. Do not infer evidence outside the
 window. Give one reason of at most 200 characters and copy at most 80
 characters from the relevant supplied line as `line_excerpt`.
+
+A client-written identity header or decoded token does not prove authentication bypass without a consumer that trusts it. An unused helper does not establish that consumer. Mark the claim `ambiguous` when the required use is outside the supplied evidence, and `refuted` only when the evidence contradicts it. Distinguish predictable credential generation from credential storage or exposure when judging the claimed mechanism.
 
 Write one unique sequential `EV-NNN` flag per resolved sample. Set
 `summary.total_threats` from `source.threat_count`, `summary.sampled` from the

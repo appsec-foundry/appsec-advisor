@@ -331,3 +331,11 @@ def test_editorial_packet_and_gate_targets_are_covered():
         "Bash(python3 /plugin/scripts/editorial_gate.py check)",
     ]:
         assert any(cp._rule_covers(rule, operation) for rule in rules)
+
+
+def test_architecture_evidence_uses_existing_repository_read_and_validator_permissions():
+    entries = cp.load_required(cp.DATA_FILE)
+    rules = [entry["entry"] for entry in entries]
+    assert any(cp._rule_covers(rule, "Read(${REPO_ROOT}/src/roles.ts)") for rule in rules)
+    assert any(cp._rule_covers(rule, "Bash(python3 validate_fragment.py assets)") for rule in rules)
+    assert "asset locations" in " ".join(entry["reason"] for entry in entries)

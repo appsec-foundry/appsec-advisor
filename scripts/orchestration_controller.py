@@ -5675,11 +5675,12 @@ def context_v2_finalize(output_dir: Path) -> dict[str, Any]:
     return _context_v2_finalize(output_dir, cfg)
 
 
-def _bind_finalized_component_fingerprint(output_dir: Path) -> None:
-    """Bind derived data-flow metadata to the finalized component inventory."""
+def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> None:
+    """Reconcile identity integrations and bind flows to the finalized inventory."""
     try:
         flows = json.loads((output_dir / ".data-flows.json").read_text(encoding="utf-8"))
         receipt = json.loads((output_dir / ".component-inventory-finalization.json").read_text(encoding="utf-8"))
+        components = json.loads((output_dir / ".components.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ControllerError(f"cannot bind finalized component fingerprint: {exc}") from exc
     if not isinstance(flows, dict) or not isinstance(receipt, dict):
@@ -5689,7 +5690,22 @@ def _bind_finalized_component_fingerprint(output_dir: Path) -> None:
         raise ControllerError("cannot bind finalized component fingerprint: receipt fingerprint is invalid")
     flows["component_inventory_fingerprint"] = fingerprint
     from _atomic_io import atomic_write_json
+    from discover_identity_providers import reconcile
 
+    try:
+        flows = reconcile(repo_root, components.get("components") or [], flows)
+    except (ValueError, OSError) as exc:
+        raise ControllerError(f"identity-provider reconciliation failed: {exc}") from exc
+    # Validate the complete enriched artifact before replacing the accepted input.
+    _validate_receipt_state(
+        flows, PLUGIN_ROOT / "schemas" / "fragments" / "data-flows.schema.json", "identity integration data flows"
+    )
+    from validate_fragment import architecture_reference_errors, repository_path_errors
+
+    errors = architecture_reference_errors({**flows, "components": components.get("components") or []})
+    errors.extend(repository_path_errors("data-flows", flows, repo_root))
+    if errors:
+        raise ControllerError("identity integration validation failed: " + "; ".join(errors))
     atomic_write_json(output_dir / ".data-flows.json", flows, sort_keys=False)
 
 
@@ -5719,7 +5735,7 @@ def _gate_architecture_stage(
         ("attack-surface-overrides", ".attack-surface-overrides.json"),
     ):
         validate_args = [fragment_type, str(output_dir / name)]
-        if fragment_type == "data-flows":
+        if fragment_type in {"data-flows", "assets"}:
             validate_args.extend(["--repo-root", str(repo_root)])
         _run_script("validate_fragment.py", validate_args)
     if controller_owned_handoff:
@@ -5727,7 +5743,7 @@ def _gate_architecture_stage(
             "finalize_component_inventory.py",
             ["--repo-root", str(repo_root), "--output-dir", str(output_dir)],
         )
-        _bind_finalized_component_fingerprint(output_dir)
+        _bind_finalized_component_fingerprint(output_dir, repo_root)
     _run_script(
         "finalize_component_inventory.py",
         ["--repo-root", str(repo_root), "--output-dir", str(output_dir), "--validate-only"],

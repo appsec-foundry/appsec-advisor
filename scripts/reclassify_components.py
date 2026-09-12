@@ -33,6 +33,7 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import sys
@@ -43,6 +44,57 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _atomic_io import atomic_write_json  # noqa: E402
 from _boundary_adjacency import is_adjacent  # noqa: E402
+
+
+def orm_source_files(components: list, repo_root: Path) -> dict[str, str]:
+    """Find contained executable ORM files claimed by stores, excluding tests and comments."""
+    from source_auth_scanner import _without_js_comments
+
+    root = repo_root.resolve()
+    found, inspected = {}, set()
+    for component in components:
+        if component.get("tier") != "data":
+            continue
+        for pattern in component.get("paths") or []:
+            if not isinstance(pattern, str) or Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+                continue
+            expanded = pattern + "/*" if pattern.endswith("**") else pattern
+            for index, path in enumerate(root.glob(expanded)):
+                if index >= 1000:
+                    break
+                relative = path.relative_to(root).as_posix()
+                if relative in inspected or path.suffix not in {".js", ".ts", ".mjs", ".cjs"}:
+                    continue
+                inspected.add(relative)
+                if re.search(r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", relative):
+                    continue
+                try:
+                    if not path.resolve().is_relative_to(root) or not path.is_file() or path.stat().st_size > 512_000:
+                        continue
+                    source = _without_js_comments(path.read_text(encoding="utf-8", errors="replace"))
+                except (OSError, RuntimeError):
+                    continue
+                strings = list(re.finditer(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|`(?:\\.|[^`\\])*`", source, re.S))
+                imported = next(
+                    (
+                        match
+                        for match in re.finditer(
+                            r"(?:from|require\s*\()\s*['\"](sequelize|typeorm|mongoose)['\"]", source
+                        )
+                        if not any(span.start() <= match.start() < span.end() for span in strings)
+                    ),
+                    None,
+                )
+                executable_source = list(source)
+                for span in strings:
+                    executable_source[span.start() : span.end()] = " " * (span.end() - span.start())
+                executable = re.search(
+                    r"\.(?:define|init|query|model)\s*\(|@(?:Entity|Column)\s*\(|\bnew\s+(?:\w+\.)?(?:Schema|Sequelize|DataSource)\s*\(",
+                    "".join(executable_source),
+                )
+                if imported and executable:
+                    found[relative] = imported.group(1)
+    return found
 
 
 def _glob_to_regex(glob: str) -> re.Pattern[str]:
@@ -158,6 +210,8 @@ def _sync_component_threat_ids(components: list, changes: list[dict]) -> None:
     stays in sync with the mutated threats[]."""
     by_id = {c["id"]: c for c in components if isinstance(c, dict) and c.get("id")}
     for c in changes:
+        if c.get("instance_only"):
+            continue
         old = by_id.get(c["from"])
         new = by_id.get(c["to"])
         tid = c["id"]
@@ -191,6 +245,38 @@ def _primary_component_id(components: list) -> str:
     return ""
 
 
+def _reassign_instance_owner(threat: dict, old: str, new: str) -> None:
+    """Keep overview ownership aligned while retaining the original instance attribution."""
+    if isinstance(threat.get("merged_from"), list):
+        threat["merged_from"] = list(dict.fromkeys(new if cid == old else cid for cid in threat["merged_from"]))
+    for instance in threat.get("instances") or []:
+        if isinstance(instance, dict) and instance.get("component_id") == old:
+            instance.setdefault("original_component_id", old)
+            instance["component_id"] = new
+
+
+def _sync_weakness_owners(data: dict) -> None:
+    """Keep parent weakness scope aligned with the corrected finding provenance."""
+    by_id = {key: t for t in data.get("threats") or [] for key in (t.get("id"), t.get("t_id")) if key}
+    for weakness in data.get("weaknesses") or []:
+        evidence = (weakness.get("observable_backing") or {}).get("practice_evidence") or []
+        linked = {i.get("id") for i in [*(weakness.get("instances") or []), *evidence] if isinstance(i, dict)}
+        findings = [by_id[tid] for tid in linked if tid in by_id]
+        if findings:
+            weakness["affected_components"] = sorted(
+                {
+                    owner
+                    for t in findings
+                    for owner in [
+                        t.get("component") or t.get("component_id"),
+                        *(t.get("merged_from") or []),
+                        *(i.get("component_id") for i in t.get("instances") or [] if isinstance(i, dict)),
+                    ]
+                    if owner
+                }
+            )
+
+
 def reclassify(data: dict) -> tuple[dict, list[dict]]:
     components = data.get("components") or []
     if not isinstance(components, list) or not components:
@@ -213,6 +299,7 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         if isinstance(c, dict) and (c.get("id") or "").strip()
     }
 
+    tiers = {c.get("id"): c.get("tier") for c in components if isinstance(c, dict)}
     changes: list[dict] = []
     threats = data.get("threats") or []
     if not isinstance(threats, list):
@@ -228,14 +315,21 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         # If ANY evidence file matches the current component, accept the
         # current assignment (the threat may have multi-file evidence
         # spanning the component boundary).
-        current_pats = matcher_index.get(current)
+        rendering_sink = str(t.get("cwe") or "").upper() in {"CWE-79", "CWE-80"}
+        application_source = all(re.search(r"\.(?:[cm]?js|tsx?|py|java|cs|rb)$", f) for f in files)
+        app_owners = {cid for f in files for cid in _component_for(f, matchers) if tiers.get(cid) == "application"}
+        storage_control = str(t.get("cwe") or "").upper() in {"CWE-311", "CWE-312", "CWE-922", "CWE-276", "CWE-732"}
+        incompatible_store = tiers.get(current) == "data" and (
+            rendering_sink or (application_source and app_owners and not storage_control)
+        )
+        current_pats = None if incompatible_store else matcher_index.get(current)
         if current_pats and any(any(p.search(f) for p in current_pats) for f in files):
             continue
         # Find candidate components matching at least one evidence file.
         candidate_hits: dict[str, int] = {}
         for f in files:
             for cid in _component_for(f, matchers):
-                if cid == current:
+                if cid == current or ((rendering_sink or incompatible_store) and tiers.get(cid) == "data"):
                     continue
                 candidate_hits[cid] = candidate_hits.get(cid, 0) + 1
         if len(candidate_hits) == 1:
@@ -271,10 +365,13 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
             # do NOT move a legitimately-assigned threat just because its
             # evidence crosses a glob.
             continue
+        _reassign_instance_owner(t, current, new_cid)
         if t.get("component"):
             t["component"] = new_cid
         if t.get("component_id"):
             t["component_id"] = new_cid
+        if t.get("component_name"):
+            t["component_name"] = next(c.get("name") or new_cid for c in components if c.get("id") == new_cid)
         if isinstance(t.get("boundary_refs"), list):
             owned_evidence = {
                 ((entry.get("file") or "").strip(), entry.get("line"))
@@ -324,11 +421,61 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
                 "to": new_cid,
                 "evidence_files": files,
                 "boundary_refs": t.get("boundary_refs"),
+                "component_name": t.get("component_name"),
+                "evidence_flags": flags,
             }
         )
 
+    # Consolidation provenance can still name a datastore even when the primary
+    # finding already belongs to the application. Reconcile those instance sites too.
+    for threat in threats:
+        replacements: dict[str, set[str]] = {}
+        unresolved: set[str] = set()
+        for instance in threat.get("instances") or []:
+            if not isinstance(instance, dict):
+                continue
+            owner = instance.get("component_id")
+            if not owner:
+                local_id = instance.get("local_id") or instance.get("source_ref") or ""
+                matches = [cid for cid in known_ids if local_id.startswith(cid + "-")]
+                owner = max(matches, key=len) if matches else None
+            if tiers.get(owner) != "data":
+                continue
+            probe = {"id": threat.get("id"), "component": owner, "cwe": threat.get("cwe"), "evidence": [instance]}
+            result, moved = reclassify({"components": copy.deepcopy(components), "threats": [probe]})
+            if not moved:
+                unresolved.add(owner)
+                continue
+            new_owner = result["threats"][0]["component"]
+            instance.setdefault("original_component_id", owner)
+            instance["component_id"] = new_owner
+            replacements.setdefault(owner, set()).add(new_owner)
+        if replacements:
+            merged = threat.get("merged_from") or []
+            threat["merged_from"] = sorted(
+                {
+                    target
+                    for owner in merged
+                    for target in (
+                        replacements[owner] if owner in replacements and owner not in unresolved else {owner}
+                    )
+                }
+                | {target for targets in replacements.values() for target in targets}
+            )
+            changes.append(
+                {
+                    "id": threat.get("t_id") or threat.get("id"),
+                    "from": threat.get("component") or threat.get("component_id"),
+                    "to": threat.get("component") or threat.get("component_id"),
+                    "instance_only": True,
+                    "instances": threat["instances"],
+                    "merged_from": threat["merged_from"],
+                }
+            )
+
     if changes:
         _sync_component_threat_ids(components, changes)
+        _sync_weakness_owners(data)
 
     return data, changes
 
@@ -381,7 +528,9 @@ def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
     threats = doc.get("threats")
     if not isinstance(threats, list):
         return 0
-    by_id = {c["id"]: c for c in changes}
+    by_id: dict[str, list[dict]] = {}
+    for change in changes:
+        by_id.setdefault(change["id"], []).append(change)
     n = 0
     for t in threats:
         if not isinstance(t, dict):
@@ -389,19 +538,33 @@ def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
         # RC.J — merged file uses `t_id` for the T-NNN threat id; the
         # `id` field is the F-NNN finding id. Try both keys.
         lookup_id = t.get("t_id") or t.get("id")
-        c = by_id.get(lookup_id)
-        if not c:
+        matching = by_id.get(lookup_id)
+        if not matching:
             continue
+        for instance_change in matching:
+            if instance_change.get("instance_only"):
+                t["instances"] = instance_change["instances"]
+                t["merged_from"] = instance_change["merged_from"]
+        c = next((item for item in matching if not item.get("instance_only")), None)
+        if c is None:
+            n += 1
+            continue
+        _reassign_instance_owner(t, c["from"], c["to"])
         if t.get("component_id"):
             t["component_id"] = c["to"]
         if t.get("component"):
             t["component"] = c["to"]
+        if c.get("component_name"):
+            t["component_name"] = c["component_name"]
+        if c.get("evidence_flags"):
+            t["evidence_flags"] = list(dict.fromkeys([*(t.get("evidence_flags") or []), *c["evidence_flags"]]))
         if c.get("boundary_refs"):
             t["boundary_refs"] = c["boundary_refs"]
         else:
             t.pop("boundary_refs", None)
         n += 1
     if n:
+        _sync_weakness_owners(doc)
         atomic_write_json(path, doc, sort_keys=False)
     return n
 
@@ -454,6 +617,7 @@ def _run_merged_only(output_dir: Path, *, strict: bool, check_only: bool) -> int
         "components": components,
         "trust_boundaries": boundaries,
         "threats": threats,
+        "weaknesses": merged.get("weaknesses") or [],
     }
     on_disk_phantoms = unresolved_phantoms(working)
     working, changes = reclassify(working)

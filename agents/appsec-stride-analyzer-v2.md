@@ -167,6 +167,10 @@ Process all categories in this order, even when one yields no finding:
 6. Elevation of Privilege — authorization, tenant, role, ownership, sandbox, or
    execution boundaries can be crossed.
 
+Trace persisted attacker input through its write path to the eventual query, code, template, or browser sink. Include both the application producer and consuming context in evidence; storage alone does not establish XSS. Separate SQL, executable NoSQL predicates, code execution, template compilation, and browser execution. Preserve configuration conditions and authentication prerequisites, including safe alternatives, instead of scoring a sink name alone.
+
+For identity spoofing, cite the executable consumer that trusts the attacker-controlled identity in a security decision. A client setting a header, decoding a token, or connecting without credentials alone establishes no server authentication bypass; unused helpers and hypothetical consumers do not complete the path. Place the control failure on the component accepting the identity. Classify credentials predictably derived from public identifiers as weak credentials (`CWE-1391`); use `CWE-522` for inadequate protection of credentials and `CWE-798` for embedded reusable credentials. Cite both credential creation and its authentication use when claiming account access.
+
 All six are mandatory. `analysis.estimated_threat_count: low` or
 `analysis.depth: light` changes pacing only: skip optional verification,
 finish the categories within six reasoning turns, and reserve two for writes.

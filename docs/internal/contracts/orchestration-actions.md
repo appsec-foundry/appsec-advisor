@@ -315,6 +315,8 @@ bounded retry validates and redispatches only the affected component. Adding a
 semantic role without one of these enforcement paths is a controller contract
 error.
 
+Before boundary assessment, the architecture handoff reconciles evidenced OAuth/OIDC/SAML client endpoints into `.data-flows.json` through `scripts/discover_identity_providers.py` and binds the finalized component fingerprint. It validates the complete enriched fragment and repository evidence before replacing the accepted artifact. Ambiguous ownership or invalid enrichment blocks this handoff. This reconciliation adds no dispatch, network request, or separate sidecar.
+
 ## Security and schema rules
 
 - Action names and stage names are fixed enums.

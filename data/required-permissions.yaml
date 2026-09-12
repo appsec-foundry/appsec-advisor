@@ -55,7 +55,7 @@ required:
 
   # --- File access — scoped to target repo, output dir, and plugin only ---
   - entry: "Read(${REPO_ROOT}/**)"
-    reason: "agents and deterministic resolvers read scanned-repository evidence and optional data-only inputs such as .appsec/trust-boundaries.yaml"
+    reason: "agents and deterministic resolvers read scanned-repository evidence, including external entity roles, sensitive-data handling, asset locations, and optional data-only inputs such as .appsec/trust-boundaries.yaml"
     category: file
 
   - entry: "Read(${PLUGIN_ROOT}/**)"

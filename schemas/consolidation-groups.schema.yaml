@@ -36,6 +36,9 @@ properties:
             findings across components only when each carries the same non-empty
             value for this field; otherwise it falls back to per-component
             bucketing.
+        require_shared_sink:
+          type: boolean
+          description: Require an explicit shared control scope or the same evidence file and line.
         split_by:
           type: array
           items:

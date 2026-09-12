@@ -5359,6 +5359,7 @@ class TestContextV2ArchitectureAndBoundary:
 
     def test_context_v2_gate_finalizes_inventory_binds_fingerprint_and_writes_checkpoint(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)
+        Path(_cfg(tmp_path)["repo_root"]).mkdir(exist_ok=True)
         for name in (
             ".recon-summary.md",
             ".components.json",
@@ -5368,6 +5369,9 @@ class TestContextV2ArchitectureAndBoundary:
         ):
             (output / name).write_text("{}", encoding="utf-8")
         fingerprint = "sha256:" + "a" * 64
+        (output / ".data-flows.json").write_text(
+            json.dumps({"schema_version": 1, "component_inventory_fingerprint": fingerprint, "data_flows": []})
+        )
         calls: list[tuple[str, list[str]]] = []
 
         def fake_script(name, args, **_kwargs):

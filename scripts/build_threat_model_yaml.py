@@ -2924,6 +2924,18 @@ def main() -> int:
         repo_root=repo_root,
         prior_yaml=prior_yaml,
     )
+    actor_resolution = _load_json(od / ".actors-resolved.json")
+    if actor_resolution is not None:
+        from validate_intermediate import validate_actors_resolved
+
+        valid, errors = validate_actors_resolved(actor_resolution)
+        if not valid:
+            raise ValueError("invalid actor resolution: " + "; ".join(errors[:5]))
+        meta["open_user_registration"] = any(
+            actor.get("heatmap_slug") == "internet-user" and actor.get("collapse_reason") == "open-self-registration"
+            for actor in actor_resolution.get("resolved_actors") or []
+        )
+        meta["open_registration_source"] = "actor-resolution"
 
     threats, threat_warnings = build_threats(merged, register_floor=skill_cfg.get("register_severity_floor", "medium"))
     for w in threat_warnings:
@@ -2951,6 +2963,14 @@ def main() -> int:
             "  DATA_FLOW_WARN: .data-flows.json is absent; retained legacy empty/prior topology. "
             "New Stage-1a runs gate on the sidecar before boundary assessment.\n"
         )
+    external_entities = (sidecar_data_flows if sidecar_data_flows is not None else prior_yaml or {}).get(
+        "external_entities"
+    ) or []
+    from validate_fragment import architecture_reference_errors
+
+    entity_errors = architecture_reference_errors({"data_flows": data_flows, "external_entities": external_entities})
+    if entity_errors:
+        raise ValueError("; ".join(entity_errors))
     if sidecar_data_flows:
         receipt = _load_json(od / ".component-inventory-finalization.json") or {}
         expected = receipt.get("component_inventory_fingerprint")
@@ -3152,6 +3172,7 @@ def main() -> int:
         "abuse_case_analysis": build_initial_abuse_case_analysis(skill_cfg),
         "components": components,
         "data_flows": data_flows,
+        "external_entities": external_entities,
         "assets": assets,
         "attack_surface": attack_surface,
         "trust_boundaries": trust_boundaries,

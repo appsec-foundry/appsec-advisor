@@ -18,7 +18,7 @@ from typing import Any
 import jsonschema
 from _atomic_io import atomic_write_json
 from build_stride_dispatch_manifest import reconcile_inventory
-from validate_fragment import repository_path_errors
+from validate_fragment import fragment_invariant_errors, repository_path_errors
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 COMPONENT_SCHEMA = PLUGIN_ROOT / "schemas" / "fragments" / "components.schema.json"
@@ -30,6 +30,7 @@ FINGERPRINT_FIELDS = (
     "tier",
     "deployment_zones",
     "handles_sensitive_data",
+    "sensitive_data",
 )
 
 
@@ -47,7 +48,9 @@ def _validate(document: Any, schema_path: Path) -> None:
 
 def component_inventory_fingerprint(components: list[dict[str, Any]]) -> str:
     """Fingerprint only fields that can change boundary endpoint semantics."""
-    cards = [{key: row.get(key) for key in FINGERPRINT_FIELDS} for row in components]
+    cards = [
+        {key: row.get(key) for key in FINGERPRINT_FIELDS if key != "sensitive_data" or key in row} for row in components
+    ]
     payload = json.dumps(cards, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -59,18 +62,17 @@ def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[st
     document = _load_json(component_path)
     _validate(document, COMPONENT_SCHEMA)
     original = document["components"]
-    path_errors = repository_path_errors("components", document, repo_root)
-    if path_errors:
-        raise ValueError("component repository path validation failed: " + "; ".join(path_errors))
+    original_ids = [row.get("id") for row in original if isinstance(row, dict)]
     finalized, injected = reconcile_inventory(original, repo_root)
     payload = dict(document)
     payload["components"] = finalized
     _validate(payload, COMPONENT_SCHEMA)
-    path_errors = repository_path_errors("components", payload, repo_root)
+    path_errors = repository_path_errors("components", payload, repo_root) + fragment_invariant_errors(
+        "components", payload
+    )
     if path_errors:
         raise ValueError("reconciled component path validation failed: " + "; ".join(path_errors))
 
-    original_ids = [row.get("id") for row in original if isinstance(row, dict)]
     collapsed = max(0, len(original_ids) + len(injected) - len(finalized))
     receipt = {
         "schema_version": 1,
