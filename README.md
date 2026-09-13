@@ -117,15 +117,21 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
-## What's new (Unreleased)
+## What's new in 0.6.0-beta.3
 
-Figure 1 has been redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths.
+- Figure 1 has been redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths. Actors with equivalent access are grouped while each finding keeps its login and privilege requirements.
 
-- Actor consolidation groups actors with equivalent access while preserving each finding's login and privilege requirements.
-
-- The Management Summary and completion summary highlight the same open threat-modeling questions for your team, linked to weaknesses and findings.
+- The Management Summary and completion summary show up to three open threat-modeling questions that the code cannot settle, linked to the relevant weaknesses and findings. Refuted abuse-case steps are excluded from these questions.
 
 - Worst-case scenarios appear in a compact table with weakness classes and attack-path verification status.
+
+- Headless runs show live progress, token use, and cost. A new `--soft-budget` checks projected spend and warns about overruns without stopping an active run.
+
+- `/appsec-advisor:repo-profile` reports repository size, languages, build manifests, and tracked-versus-untracked content before a scan without using a model or network access.
+
+- Baseline installation and updates use the latest signed AI Secure Coding Baseline release after verifying its signature and checksum.
+
+- Source scans now cover executable NoSQL predicates and input-driven code or template compilation.
 
 ## What's new in 0.6.0-beta.2
 
