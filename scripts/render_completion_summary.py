@@ -2447,6 +2447,15 @@ def _extract_verdict(md_text: str) -> str:
     return _html_to_plain(m.group(1))
 
 
+# Trailing finding-reference clause on a worst-case bullet, e.g.
+# ` *(🔴 [F-006](#f-006) — Hardcoded Signing Key (\`src/auth/keys.ts:21\`), … → [W-004](#w-004))*`.
+# The report keeps it for its links; on the console the anchors are not
+# clickable. The lookahead requires an F-/T-/W-NNN link inside, so an ordinary
+# italic parenthetical is never touched. The non-greedy `)\*` is deliberate:
+# the clause holds `(…)` file locations, and the first `)` followed by `*` is
+# the real terminator.
+_VERDICT_REF_CLAUSE_RE = re.compile(r"\s*\*\((?=[^\n]*\[[FTW]-\d{3}\])[^\n]*?\)\*")
+
 # A worst-case bullet of the report's `### Verdict` (`- **Outcome** — …`) and
 # the bold intro line above the list (`**What an attacker can do today, …:**`).
 _VERDICT_BULLET_RE = re.compile(r"^- \*\*")
@@ -2458,8 +2467,9 @@ def _verdict_console_lines(verdict_md: str, bullets: list[dict]) -> list[str]:
 
     The report keeps the bullets with their finding links; on the console the
     persisted bullets render as `summarize_threat_model.render_worst_case_table`
-    under the intro's own wording. Without persisted bullets the slice stays
-    as it is. Runs of blank lines collapse to one.
+    under the intro's own wording. Without persisted bullets the slice keeps
+    its bullets, minus their finding-reference clauses. Runs of blank lines
+    collapse to one.
     """
     lines = verdict_md.splitlines()
     first = next((i for i, line in enumerate(lines) if _VERDICT_BULLET_RE.match(line)), None)
@@ -2475,7 +2485,8 @@ def _verdict_console_lines(verdict_md: str, bullets: list[dict]) -> list[str]:
         table = summarize_threat_model.render_worst_case_table(bullets, indent="")
         lines = [*lines[:start], *caption, *table, "", *lines[end:]]
     out: list[str] = []
-    for line in lines:
+    for raw in lines:
+        line = _VERDICT_REF_CLAUSE_RE.sub("", raw)
         if line.strip() or (out and out[-1].strip()):
             out.append(line)
     while out and not out[-1].strip():

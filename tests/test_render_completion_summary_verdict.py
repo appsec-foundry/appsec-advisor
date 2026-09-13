@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import summarize_threat_model as stm
 import yaml
 
@@ -169,3 +170,26 @@ def test_completion_summary_swaps_the_bullets_for_the_table(tmp_path):
     assert "F-011" not in verdict_block and "W-003" not in verdict_block and "search.ts" not in verdict_block
     assert "**" not in verdict_block
     assert "\n\n\n" not in verdict_block
+
+
+@pytest.mark.parametrize(
+    "refs",
+    [
+        "🔴 [F-011](#f-011) — Query built from input (`src/db/search.ts:23`) → [W-003](#w-003)",
+        "🟠 [T-204](#t-204), 🔴 [F-107](#f-107) — Unsigned upload (`services/files/upload.go:88`)",
+    ],
+    ids=["finding-and-weakness", "other-ids-and-paths"],
+)
+def test_without_persisted_bullets_the_console_drops_the_reference_clauses(refs):
+    bullet = f"- **Customer data exposed** — Anyone can dump every record. *({refs})* — ✓ verified attack path"
+    lines = rcs._verdict_console_lines(f"🔴 Not production-ready.\n\n{bullet}", [])
+    assert lines == [
+        "🔴 Not production-ready.",
+        "",
+        "- **Customer data exposed** — Anyone can dump every record. — ✓ verified attack path",
+    ]
+
+
+def test_an_italic_aside_without_a_finding_link_stays():
+    bullet = "- **Customer data exposed** — Anyone can dump every record. *(internal network only)*"
+    assert rcs._verdict_console_lines(bullet, []) == [bullet]
