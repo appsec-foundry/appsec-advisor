@@ -13,13 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Figure 1 is completely redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths, with equivalent regular roles grouped for readability.
 
-- The Management Summary and closing message present consistent, finding-linked team questions and identify evidence still awaiting verification.
+- The Management Summary and completion summary show the same selection of up to three open threat-modeling questions for the team, with weakness and finding references and any evidence still awaiting verification.
+
+- Actor consolidation groups self-registered users and public-source readers with anonymous internet attackers when access evidence supports it, while preserving each finding's login and privilege requirements.
 
 - Disproved abuse-case steps are marked `✗ Refuted` in §9, excluding those steps and their chains from open questions.
 
 - The completion summary and `show-threat-model` present worst-case scenarios in a compact table with weakness classes and attack-path verification status.
-
-- The completion summary lists each open team question first, followed by its weakness and finding IDs, without report paths.
 
 - The worst-case list claims no worst-first order and names each scenario's weakness class after "via".
 

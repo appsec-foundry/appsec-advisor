@@ -117,6 +117,16 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
+## What's new (Unreleased)
+
+Figure 1 has been redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths.
+
+- Actor consolidation groups actors with equivalent access while preserving each finding's login and privilege requirements.
+
+- The Management Summary and completion summary highlight the same open threat-modeling questions for your team, linked to weaknesses and findings.
+
+- Worst-case scenarios appear in a compact table with weakness classes and attack-path verification status.
+
 ## What's new in 0.6.0-beta.2
 
 - Findings name the requirements they break, and mitigations quote the blueprint section that prescribes the fix.
