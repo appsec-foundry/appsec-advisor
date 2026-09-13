@@ -191,10 +191,10 @@ def overview_actor_slug(slug: str, meta: dict) -> str:
     return slug
 
 
-def overview_actor_notes(
+def overview_actor_groups(
     yaml_data: dict, attack_paths_data: dict | None = None, attack_taxonomy: dict | None = None
-) -> list[str]:
-    """Explain only folds represented in the model or the selected attack paths.
+) -> list[tuple[str, str]]:
+    """Return source/target actor slugs for represented, evidence-backed folds.
 
     Finding vectors retain the original prerequisites after path actors have
     been projected. Consult only referenced findings when rendering a figure,
@@ -220,12 +220,24 @@ def overview_actor_notes(
             if str(t.get("id") or t.get("t_id") or "").upper().removeprefix("F-").removeprefix("T-") in refs
         ]
     sources.update(t.get("vektor") for t in threats)
+    return [
+        (source, overview_actor_slug(source, meta))
+        for source in ("internet-user", "repo-read")
+        if source in sources and overview_actor_slug(source, meta) != source
+    ]
+
+
+def overview_actor_notes(
+    yaml_data: dict, attack_paths_data: dict | None = None, attack_taxonomy: dict | None = None
+) -> list[str]:
+    """Explain the same actor folds in report prose and legacy diagrams."""
+    groups = dict(overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy))
     notes = []
-    if "internet-user" in sources and overview_actor_slug("internet-user", meta) == "internet-anon":
+    if "internet-user" in groups:
         notes.append(
             "Regular self-registered users are grouped with anonymous internet attackers because registration is open."
         )
-    if "repo-read" in sources and overview_actor_slug("repo-read", meta) == "internet-anon":
+    if "repo-read" in groups:
         notes.append(
             "Repository readers are grouped with anonymous internet attackers because the source repository is public."
         )

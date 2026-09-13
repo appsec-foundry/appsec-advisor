@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Figure 1 is completely redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths, with equivalent regular roles grouped for readability.
+- Figure 1 uses a dynamic column legend and compact actor references, showing all Critical weakness categories per component adding High categories up to five in total, and indicating omitted High categories.
 
 - The Management Summary and completion summary show the same selection of up to three open threat-modeling questions for the team, with weakness and finding references and any evidence still awaiting verification.
 

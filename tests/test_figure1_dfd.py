@@ -196,6 +196,97 @@ def test_geometry_and_semantics_are_clean():
         assert token in svg, token
 
 
+@pytest.mark.parametrize("name", ["Dispatch service", "Archive gateway"])
+def test_legend_uses_diagram_width_and_stays_below_all_nodes(name):
+    model, paths, taxonomy = _model()
+    model["components"][1]["name"] = name
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    svg, state = F._build(model, scenarios, actors)
+    root = ET.fromstring(svg)
+    panels = root.findall("{*}g[@data-legend-section]")
+    assert panels, "Legend sections must be independently placed below the diagram"
+    rightmost = max(n["x"] + n["w"] for n in state["nodes"].values())
+    assert float(root.get("width")) < rightmost + F.LEGEND_W
+    bottom = max(n["y"] + n["h"] for n in state["nodes"].values())
+    for panel in panels:
+        x, y = map(float, re.fullmatch(r"translate\((\S+) (\S+)\)", panel.get("transform")).groups())
+        assert y > bottom
+        assert x >= F.MARGIN
+        assert x + F.LEGEND_W <= float(root.get("width")) - F.MARGIN
+    assert len({p.get("data-legend-column") for p in panels}) >= 2
+    assert F.check_diagram(model, paths, taxonomy)[1] == []
+
+
+def test_legend_balances_heights_and_keeps_small_assets_with_boundaries():
+    sections = [
+        ("notation", 317),
+        ("actors", 98),
+        ("scenarios", 169),
+        ("boundaries", 96),
+        ("flows", 388),
+        ("assets", 114),
+    ]
+    small = F._legend_columns(sections, 3)
+    assert small == (0, 0, 1, 1, 2, 1)
+    large = F._legend_columns([*sections[:-1], ("assets", 570)], 3)
+    assert large != small
+    assert large.count(large[-1]) == 1  # A tall asset block gets its own column.
+    assert F._legend_columns(sections, 3) == small
+
+
+@pytest.mark.parametrize("asset_count,flow_repetitions", [(2, 1), (18, 1), (2, 12)])
+def test_legend_keeps_complete_flows_assets_and_translated_labels(asset_count, flow_repetitions):
+    model, paths, taxonomy = _model()
+    model["assets"] = [
+        {"id": f"A-{index:03d}", "name": f"Record collection {index}", "classification": "Internal"}
+        for index in range(asset_count)
+    ]
+    model["data_flows"][1]["label"] = " ".join(["Signed event payload"] * flow_repetitions)
+    model["meta"]["open_user_registration"] = True
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    svg, state = F._build(model, scenarios, actors, F.overview_actor_groups(model, paths, taxonomy))
+    root = ET.fromstring(svg)
+    panels = {p.get("data-legend-section"): p for p in root.findall("{*}g[@data-legend-section]")}
+    text = lambda p: " ".join(t.text or "" for t in p.iter("{http://www.w3.org/2000/svg}text"))
+    assert model["data_flows"][1]["label"] in text(panels["flows"])
+    for flow in model["data_flows"]:
+        assert text(panels["flows"]).split().count(flow["id"]) == 1
+    for asset in model["assets"]:
+        assert f"{asset['id']} {asset['name']}" in text(panels["assets"])
+    assert "Self-registered users · open registration" in text(panels["actors"])
+    assert all(y1 <= float(root.get("height")) - F.MARGIN for _, _, _, y1, _ in state["canvas"].legend_boxes)
+    assert F._check_geometry(state["nodes"], state["edges"], state["canvas"], state["chips"]) == []
+
+
+def test_legend_omits_empty_sections_and_keeps_evidenced_assets_on_stores():
+    model, _, _ = _model(flows=False)
+    model["trust_boundaries"] = []
+    model["assets"] = [
+        {
+            "id": "A-001",
+            "name": "Audit records",
+            "classification": "Internal",
+            "component_refs": [
+                {"component_id": "db0", "relation": "stored", "evidence": [{"file": "src/store.ts", "line": 4}]}
+            ],
+        }
+    ]
+    svg, state = F._build(model, [], [])
+    panels = ET.fromstring(svg).findall("{*}g[@data-legend-section]")
+    assert [p.get("data-legend-section") for p in panels] == ["notation"]
+    assert state["nodes"]["db0"]["assets"][0]["id"] == "A-001"
+    assert "Audit records" in svg
+
+
+def test_legend_geometry_gate_rejects_overlapping_blocks():
+    model, paths, taxonomy = _model()
+    _, state = F._build(model, *F.scenarios_from_attack_paths(model, paths, taxonomy))
+    canvas = state["canvas"]
+    canvas.legend_boxes[1] = (*canvas.legend_boxes[0][:4], "overlapping section")
+    problems = F._check_geometry(state["nodes"], state["edges"], canvas, state["chips"])
+    assert any(p.startswith("legend overlap:") for p in problems)
+
+
 def test_scenarios_and_actors_come_from_attack_paths():
     y, apd, tax = _model(xss=True)
     scenarios, actors = F.scenarios_from_attack_paths(
@@ -403,12 +494,61 @@ def test_actor_grouping_is_explained_in_standalone_dfd(registration, public_sour
     assert problems == []
     assert svg == F.build_figure1_dfd_svg(model, paths, taxonomy)
     text = " ".join(ET.fromstring(svg).itertext())
-    assert ("because registration is open" in text) == registration
-    assert ("because the source repository is public" in text) == public_source
+    assert ("Self-registered users · open registration" in text) == registration
+    assert ("Repository readers · public source" in text) == public_source
     assert ("Actor grouping" in text) == (registration or public_source)
     actors = F.scenarios_from_attack_paths(model, paths, taxonomy)[1]
     assert {"internet-priv-user", "build-time"} <= {a["slug"] for a in actors}
     assert (model, paths, taxonomy) == original
+
+
+@pytest.mark.parametrize(
+    "label,leading_actors",
+    [
+        ("External caller", ()),
+        ("Public client", ("internet-priv-user",)),
+        ("Internet visitor", ("internet-priv-user", "build-time")),
+    ],
+)
+def test_compact_grouping_references_the_actual_drawn_actor(label, leading_actors):
+    model, paths, taxonomy = _model()
+    model["meta"]["public_source_repo"] = True
+    paths["attack_paths"] = [dict(paths["attack_paths"][0], actor="repo-read")]
+    paths["attack_paths"][:0] = [dict(paths["attack_paths"][0], actor=a) for a in leading_actors]
+    labels = {"internet-anon": {"label": label}}
+    svg, problems = F.check_diagram(model, paths, taxonomy, actor_labels=labels)
+    assert problems == []
+    root = ET.fromstring(svg)
+    panel = root.find("{*}g[@data-legend-section='actors']")
+    assert panel is not None
+    text = " ".join(panel.itertext())
+    actor_code = f"A{len(leading_actors) + 1}"
+    assert actor_code in text.split()
+    assert re.findall(r"\bA\d+\b", text) == [actor_code]
+    assert label not in text
+    assert f"{actor_code} · {label}" in " ".join(root.itertext())
+    assert "Repository readers · public source" in text
+    assert "Self-registered users" not in text
+    assert "because" not in text
+    assert "Login / privileges: per finding" in text
+    icon = panel.find("{*}g")
+    assert "scale(0.5)" in icon.get("transform")
+    assert icon.find("{*}circle") is not None  # Compact version of the actor's person icon.
+    notation = root.find("{*}g[@data-legend-section='notation']")
+    assert notation.find("{*}text").text == "Notation"
+
+
+def test_grouping_hints_require_a_performed_fold_and_a_drawn_target():
+    model, paths, taxonomy = _model()
+    model["meta"].update(open_user_registration=True, public_source_repo=True)
+    model["threats"][0]["vektor"] = "repo-read"
+    paths["attack_paths"] = [dict(paths["attack_paths"][0], actor="internet-priv-user")]
+    svg, problems = F.check_diagram(model, paths, taxonomy)
+    assert problems == []
+    assert ET.fromstring(svg).find("{*}g[@data-legend-section='actors']") is None
+    # A stale grouping supplied to the internal replay path cannot label an absent target.
+    svg, _ = F._build(model, [], [], [("repo-read", "internet-anon")])
+    assert ET.fromstring(svg).find("{*}g[@data-legend-section='actors']") is None
 
 
 def test_roles_and_identity_provider_use_distinct_left_side_nodes():
@@ -572,8 +712,8 @@ def test_uncovered_weakness_causes_and_merged_component_ownership_are_visible():
             }
         )
     _, state = F._build(model, [], [])
-    assert len(state["nodes"]["app0"]["weak"]) == 3
-    assert len(state["nodes"]["app1"]["weak"]) == 3
+    assert len(state["nodes"]["app0"]["weak"]) == 5
+    assert len(state["nodes"]["app1"]["weak"]) == 4
     assert F.check_diagram(model, paths, taxonomy)[1] == []
 
 
@@ -613,7 +753,7 @@ def test_attacker_palette_contains_only_red_and_purple_hues():
         assert saturation > 0.35
 
 
-def test_annotations_filter_medium_findings_deduplicate_and_cap_at_three():
+def test_annotations_filter_medium_findings_deduplicate_and_fill_five():
     model, paths, taxonomy = _model()
     model["threats"] = [
         {"id": f"T-{i:03d}", "component": "app0", "cwe": cwe, "risk": severity}
@@ -626,17 +766,60 @@ def test_annotations_filter_medium_findings_deduplicate_and_cap_at_three():
                 ("CWE-400", "Medium"),
                 ("CWE-79", "Low"),
                 ("CWE-916", "High"),
+                ("CWE-611", "High"),
+                ("CWE-22", "High"),
             ],
             1,
         )
     ]
     rows = F._component_weaknesses(model)["app0"]
-    assert len(rows) == 3
+    assert len(rows) == 5
     assert rows[0] == ("Unsafe Query Construction (SQLi)", 2, 0)
     assert all(rank <= 1 for _label, _count, rank in rows)
     assert not {"Insufficient Resource Limits", "Insecure Output Handling"} & {label for label, _count, _rank in rows}
     assert all(len(label) <= 32 for label, _count, _rank in rows)
     assert F.check_diagram(model, paths, taxonomy)[1] == []
+
+
+@pytest.mark.parametrize("component", ["app0", "db0"])
+@pytest.mark.parametrize("critical_count", [0, 2, 5, 7, 8])
+def test_annotations_keep_all_critical_and_fill_remaining_slots_with_high(component, critical_count):
+    model, paths, taxonomy = _model()
+    cwes = ["CWE-89", "CWE-79", "CWE-78", "CWE-94", "CWE-611", "CWE-22", "CWE-798", "CWE-862"]
+    model["threats"] = [
+        {
+            "id": f"T-{i + 1:03d}",
+            "component": component,
+            "cwe": cwe,
+            "risk": "Critical" if i < critical_count else "High",
+        }
+        for i, cwe in enumerate(cwes)
+    ]
+    model["threats"].append(dict(model["threats"][-1], id="T-099"))
+    if component == "db0":
+        model["assets"][0]["component_refs"] = [
+            {"component_id": component, "relation": "stored", "evidence": [{"file": "schema.sql", "line": 1}]}
+        ]
+    original = copy.deepcopy(model)
+    rows = F._component_weaknesses(model)[component]
+    assert len(rows) == max(5, critical_count)
+    assert sum(rank == 0 for _label, _count, rank in rows) == critical_count
+    assert sum(rank == 1 for _label, _count, rank in rows) == max(0, 5 - critical_count)
+    assert [rank for _label, _count, rank in rows] == sorted(rank for _label, _count, rank in rows)
+    svg, issues = F.check_diagram(model, paths, taxonomy)
+    assert issues == []
+    assert "All Critical · High fills to 5 · +N = omitted High categories" in svg
+    texts = " ".join(node.text or "" for node in ET.fromstring(svg).iter("{http://www.w3.org/2000/svg}text"))
+    for label, _count, _rank in rows:
+        assert label in texts
+    omitted = 8 - max(5, critical_count)
+    if omitted:
+        assert f"+{omitted} more High" in texts
+    else:
+        assert "more High" not in texts
+    assert model == original
+    model["threats"].reverse()
+    assert F._component_weaknesses(model)[component] == rows
 
 
 def test_credential_defects_share_one_generic_weakness_annotation():
@@ -965,15 +1148,15 @@ def test_adjectives_do_not_change_annotation_severity():
     ]
 
 
-def test_annotation_renaming_does_not_change_top_three_selection(monkeypatch):
+def test_annotation_renaming_does_not_change_top_five_selection(monkeypatch):
     model = {
         "threats": [
             {"id": f"T-{i:03d}", "component": "service", "cwe": cwe, "risk": "High"}
-            for i, cwe in enumerate(["CWE-285", "CWE-311", "CWE-327", "CWE-798"], 1)
+            for i, cwe in enumerate(["CWE-285", "CWE-311", "CWE-327", "CWE-798", "CWE-22", "CWE-611"], 1)
         ]
     }
     expected = F._component_weaknesses(model)["service"]
-    assert len(expected) == 3
+    assert len(expected) == 5
     selected = expected[0][0]
     renamed = "Insecure Zulu Handling"
     vocabulary = copy.deepcopy(F.load_weakness_classes())
@@ -1040,7 +1223,8 @@ def test_report_composer_publishes_compact_annotations_without_fallback(tmp_path
     svg = (tmp_path / "report.figure1.svg").read_text()
     assert context.warnings == []
     assert "(report.figure1.svg)" in markdown
-    assert "Up to 3 key causes · High/Critical only" in svg
+    assert "The legend below the diagram" in markdown
+    assert "All Critical · High fills to 5 · +N = omitted High categories" in svg
     assert "Unsafe Query Construction (SQLi)" in svg
     assert "Insufficient Resource Limits" not in svg
     assert not re.search(r"[WT]-\d{3}", svg)

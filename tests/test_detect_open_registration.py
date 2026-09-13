@@ -52,11 +52,13 @@ def test_overview_notes_recover_projected_actors_only_from_referenced_findings()
     }
     paths = {"attack_paths": [{"actor": "internet-anon", "findings": ["F-001"]}]}
     text = " ".join(D.overview_actor_notes(model, paths))
+    assert D.overview_actor_groups(model, paths) == [("internet-user", "internet-anon")]
     assert "registration is open" in text
     assert "repository is public" not in text
     assert D.overview_actor_notes(model, {"attack_paths": []}) == []
     paths["attack_paths"][0]["actor"] = "internet-priv-user"
     assert D.overview_actor_notes(model, paths) == []
+    assert D.overview_actor_groups(model, paths) == []
 
 
 def test_overview_notes_use_the_same_default_actor_as_the_diagram():

@@ -5792,7 +5792,7 @@ def test_render_figure1_svg_prefers_the_data_flow_diagram(tmp_path: Path) -> Non
     assert md.startswith("Data-flow diagram:")
     assert "Architecture tiers top-to-bottom" not in md
     assert not [w for w in ctx.warnings if w.startswith("figure1:")]
-    assert "Notation (DFD)" in (out / "figure1.svg").read_text(encoding="utf-8")
+    assert 'data-legend-section="notation"' in (out / "figure1.svg").read_text(encoding="utf-8")
 
 
 def test_render_figure1_svg_falls_back_to_tier_stack_when_dfd_raises(tmp_path: Path, monkeypatch) -> None:

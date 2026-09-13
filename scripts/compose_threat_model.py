@@ -5932,7 +5932,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
                 "(Internet → Application → Data), the data flows between them, and the attack scenarios "
                 "numbered as in the table below. Each crossing of a dashed trust-boundary line carries the "
                 "`tb-N` id catalogued in [§1 Trust Boundaries](#trust-boundaries) with the verdict on its "
-                "enforcement assumption. The in-figure legend on the right explains the notation."
+                "enforcement assumption. The legend below the diagram explains the notation."
             )
     except Exception as exc:  # noqa: BLE001 — the DFD builder must never break the section
         ctx.warnings.append(

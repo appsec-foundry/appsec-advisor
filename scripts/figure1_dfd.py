@@ -12,7 +12,8 @@ a dashed edge back to the user.
 The layout is computed, never hand-placed: three columns (untrusted, application,
 data), zones stacked per column, nodes ordered by the barycenter of their
 incoming flows, orthogonal edges with one lane per edge, ports spread along the
-node sides. The same input yields byte-identical SVG.
+node sides. Measured legend blocks fill up to three columns below the diagram.
+The same input yields byte-identical SVG.
 
 Public entry point: ``build_figure1_dfd_svg(yaml_data, attack_paths_data,
 attack_taxonomy, meta=None, actor_labels=None) -> str``. Returns "" when there
@@ -37,10 +38,11 @@ import html
 import re
 import sys
 from functools import cache
+from itertools import product
 from pathlib import Path
 
 import yaml
-from detect_open_registration import overview_actor_notes, overview_actor_slug
+from detect_open_registration import overview_actor_groups, overview_actor_slug
 from prepare_trust_boundary_context import boundary_endpoints_valid
 from weakness_classifier import load_weakness_classes
 
@@ -87,6 +89,7 @@ GAP, MARGIN, TOP = 150, 20, 66
 B_OFF = 100  # boundary line offset inside a gap (from gap left)
 LANE0, LANE_STEP = 40, 10  # first lane offset right of the boundary (clear of the chips)
 LEGEND_W = 350
+LEGEND_GAP = 20
 FS = 8.5  # small label font
 ZONE_CAP = 8  # drawn nodes per zone; the rest collapse into one bar
 PORT_STEP = 22  # minimum spacing between ports on one node side
@@ -133,6 +136,7 @@ class _Canvas:
         self.o = []
         self.labels = []  # bboxes for the overlap check: (x0, y0, x1, y1, name)
         self.badges = []
+        self.legend_boxes = []
         self.maxy = 0
 
     def add(self, s):
@@ -210,7 +214,7 @@ def _chip_width(tbid, n):
 
 
 # ---- inputs ---------------------------------------------------------------------------
-MAX_CAUSE_ANNOTATIONS = 3
+CAUSE_ANNOTATION_TARGET = 5
 
 
 def _annotation_vocabulary():
@@ -245,7 +249,11 @@ def _annotation_vocabulary():
 
 
 def _component_weaknesses(model):
-    """At most three short High/Critical causes; the report retains the full register."""
+    return _component_weakness_summary(model)[0]
+
+
+def _component_weakness_summary(model):
+    """Keep all Critical causes; fill to five with High causes from the full register."""
     by_cwe, by_mechanism, priority_groups, tie_break_order, families, qualifiers = _annotation_vocabulary()
     threats = {t.get("id"): t for t in model.get("threats") or [] if isinstance(t, dict)}
     ranks = {
@@ -299,7 +307,7 @@ def _component_weaknesses(model):
         for cid in _affected_components(threat):
             if tid not in covered[cid]:
                 add(cid, label, ranks[tid], {tid}, False)
-    result = {}
+    result, omitted_high = {}, {}
     for cid, causes in rows.items():
         ordered = sorted(
             causes.items(),
@@ -313,13 +321,16 @@ def _component_weaknesses(model):
             ),
         )
         result[cid] = []
-        for label, (rank, ids, _structural) in ordered[:MAX_CAUSE_ANNOTATIONS]:
+        for index, (label, (rank, ids, _structural)) in enumerate(ordered):
+            if index >= CAUSE_ANNOTATION_TARGET and rank != 0:
+                break
             # Qualify after ranking; a mixed or design-only cause stays generic.
             suffixes = {qualifiers[label].get(threats[tid].get("cwe")) for tid in ids}
             if len(suffixes) == 1 and None not in suffixes:
                 label = f"{label} ({suffixes.pop()})"
             result[cid].append((label, len(ids), rank))
-    return result
+        omitted_high[cid] = len(ordered) - len(result[cid])
+    return result, omitted_high
 
 
 def _weak_lines(items, maxw):
@@ -573,7 +584,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     sev = collections.defaultdict(collections.Counter)
     stride = collections.defaultdict(collections.Counter)
     tb_threats = collections.Counter()
-    weak = _component_weaknesses(d)
+    weak, omitted_high = _component_weakness_summary(d)
     for t in d.get("threats") or []:
         for cid in _affected_components(t):
             sev[cid][t.get("effective_severity") or t.get("risk") or t.get("severity")] += 1
@@ -610,6 +621,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "badges": [],
             "assets": [],
             "weak": weak.get(cid, []),
+            "weak_more_high": omitted_high.get(cid, 0),
             "order": len(nodes),
         }
     for s in scenarios:
@@ -633,6 +645,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             PROC_H,
             108
             + 12 * len(_weak_lines(node["weak"], NODE_W - 32))
+            + (12 if node["weak_more_high"] else 0)
             + (24 + sum(11 * len(_asset_lines(a)) + 17 for a in node["assets"]) if node["assets"] else 0),
         )
     # actors: one legitimate user, then the attackers
@@ -670,6 +683,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "color": ACTOR_COLORS[i % len(ACTOR_COLORS)],
             "marker": f"attacker-{i}",
             "actor_code": f"A{i + 1}",
+            "actor_slug": a.get("slug"),
             "order": i + 1,
             "attacker": True,
             "badges": [],
@@ -1150,6 +1164,52 @@ def _orth(pts, r=8.0):
     return d
 
 
+def _legend_columns(sections, ncols):
+    """Balance the fixed set of at most seven sections without splitting a block.
+
+    Preserve source order within each column and use first-appearance order to
+    remove equivalent column permutations. Within one panel gap of the shortest
+    layout, prefer related sections together; then minimize height, imbalance,
+    and finally the column tuple for deterministic ties. Input rows change block
+    heights, never the number of sections searched here.
+    """
+    candidates = []
+    for columns in product(range(ncols), repeat=len(sections)):
+        if list(dict.fromkeys(columns)) != list(range(ncols)):
+            continue
+        heights = [0] * ncols
+        location = {}
+        for (key, height), col in zip(sections, columns):
+            heights[col] += height + LEGEND_GAP
+            location[key] = col
+        related = (("notation", "actors"), ("scenarios", "boundaries"), ("boundaries", "assets"))
+        separation = sum(location[a] != location[b] for a, b in related if a in location and b in location)
+        candidates.append((max(heights), separation, sum(h * h for h in heights), columns))
+    shortest = min(c[0] for c in candidates)
+    eligible = (c for c in candidates if c[0] <= shortest + LEGEND_GAP)
+    return min(eligible, key=lambda c: (c[1], c[0], c[2], c[3]))[3]
+
+
+def _place_legend(canvas, blocks, width, top):
+    """Place measured blocks below the graph without enlarging its width."""
+    ncols = min(3, len(blocks), max(1, int((width + LEGEND_GAP) // (LEGEND_W + LEGEND_GAP))))
+    columns = _legend_columns([(key, block.maxy) for key, block in blocks], ncols)
+    gap = (width - ncols * LEGEND_W) / (ncols - 1) if ncols > 1 else 0
+    bottoms = [top] * ncols
+    for (key, block), col in zip(blocks, columns):
+        x, y = MARGIN + col * (LEGEND_W + gap), bottoms[col]
+        canvas.add(
+            f'<g data-legend-section="{key}" data-legend-column="{col + 1}" transform="translate({x:.1f} {y:.1f})">'
+        )
+        canvas.o.extend(block.o)
+        canvas.add("</g>")
+        canvas.legend_boxes.append((x, y, x + LEGEND_W, y + block.maxy, key))
+        for source, dest in ((block.labels, canvas.labels), (block.badges, canvas.badges)):
+            dest.extend((x0 + x, y0 + y, x1 + x, y1 + y, name) for x0, y0, x1, y1, name in source)
+        bottoms[col] = y + block.maxy + LEGEND_GAP
+        canvas.maxy = max(canvas.maxy, y + block.maxy)
+
+
 def _render(
     d,
     nodes,
@@ -1165,11 +1225,11 @@ def _render(
     height,
     dropped,
     unattached_assets,
-    actor_notes=(),
+    actor_groups=(),
 ):
     actor_colors = {n["name"]: n["color"] for n in nodes.values() if n.get("attacker")}
     scenario_colors = {s["n"]: actor_colors.get(s.get("actor"), RED) for s in scenarios}
-    W = col_x[-1] + col_w[-1] + 30 + LEGEND_W + MARGIN
+    W = col_x[-1] + col_w[-1] + MARGIN
     c = _Canvas()
     c.add("")  # header, filled in once the height is known
     c.add("")
@@ -1388,10 +1448,21 @@ def _render(
         _sev_chips(c, x + ox + 2, ty, n["sev"])
         _stride_strip(c, x + ox, ty + 10, n["stride"])
         _weak_line(c, x + ox, ty + 36, n.get("weak") or [], w - ox - 8)
+        weak_lines = len(_weak_lines(n["weak"], w - ox - 8))
+        if n["weak_more_high"]:
+            c.text(
+                x + ox + 9,
+                ty + 36 + 12 * weak_lines,
+                f"+{n['weak_more_high']} more High",
+                size=8.5,
+                anchor="start",
+                fill=MUTED,
+            )
+            weak_lines += 1
         if n["exposed"]:
             _globe(c, x + w - 16, y + 15)
         if n["assets"]:
-            ay = ty + 50 + 12 * max(0, len(_weak_lines(n["weak"], w - ox - 8)) - 1)
+            ay = ty + 50 + 12 * max(0, weak_lines - 1)
             c.text(x + ox, ay, "Stored assets", size=8.5, anchor="start", fill=MUTED, italic=True)
             yy = ay + 10
             for a in n["assets"]:
@@ -1420,15 +1491,34 @@ def _render(
             chip(cx, cy, tbid, track=False)
             c.badges.append((cx - w / 2, cy - 8, cx + w / 2, cy + 8, f"tag {tbid} on {n['id']}"))
 
-    # legend
-    lx, ly, lw = col_x[-1] + col_w[-1] + 30, TOP - 6, LEGEND_W
+    blocks = _legend_blocks(
+        d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups
+    )
+    _place_legend(c, blocks, W - 2 * MARGIN, max(height, c.maxy + MARGIN) + 10)
+    H = max(height, c.maxy + MARGIN)
+    c.o[0] = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="{FONT}">'
+    )
+    c.o[1] = f'<rect width="{W}" height="{H}" fill="#ffffff"/>'
+    c.add("</svg>")
+    return "\n".join(c.o), c
 
-    def head(y, t):
-        c.rect(lx, y, lw, 20, fill=NAVY, rx=4)
-        c.text(lx + lw / 2, y + 14, t, size=10.5, fill="#ffffff", weight="bold")
-        return y + 30
 
-    y = head(ly, "Notation (DFD)")
+def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups):
+    """Render independent sections at the origin before measuring their heights."""
+    blocks = []
+    lx, lw = 0, LEGEND_W
+    c = None
+
+    def head(key, title):
+        nonlocal c
+        c = _Canvas()
+        blocks.append((key, c))
+        c.rect(lx, 0, lw, 20, fill=NAVY, rx=4)
+        c.text(lx + lw / 2, 14, title, size=10.5, fill="#ffffff", weight="bold")
+        return 30
+
+    y = head("notation", "Notation")
     c.rect(lx + 10, y - 8, 22, 14, fill="#ffffff", stroke=INK, sw=1.4)
     c.text(lx + 40, y + 3, "external entity (actor, third party)", size=9, anchor="start")
     y += 20
@@ -1488,7 +1578,7 @@ def _render(
     c.text(
         lx + 10,
         y + 28,
-        "Up to 3 key causes · High/Critical only",
+        "All Critical · High fills to 5 · +N = omitted High categories",
         size=8.5,
         anchor="start",
         fill=MUTED,
@@ -1518,17 +1608,50 @@ def _render(
     )
     y += 32
 
-    if actor_notes:
-        y = head(y, "Actor grouping")
-        for note in actor_notes:
-            for line in _wrap(note, lw - 20, 9):
-                c.text(lx + 10, y + 3, line, size=9, anchor="start", track="actor grouping")
-                y += 13
-            y += 5
-        y += 8
+    grouped_actors = []
+    group_labels = {
+        "internet-user": "Self-registered users · open registration",
+        "repo-read": "Repository readers · public source",
+    }
+    for node in nodes.values():
+        if not node.get("attacker"):
+            continue
+        sources = [source for source, target in actor_groups if target == node.get("actor_slug")]
+        if sources:
+            grouped_actors.append((node, list(dict.fromkeys(sources))))
+    if grouped_actors:
+        y = head("actors", "Actor grouping")
+        for node, sources in grouped_actors:
+            c.add(f'<g transform="translate({lx + 15} {y + 1}) scale(0.5)">')
+            _person(c, 0, 0, node["color"])
+            c.add("</g>")
+            c.text(
+                lx + 26,
+                y + 3,
+                node["actor_code"],
+                size=9,
+                anchor="start",
+                weight="bold",
+                fill=node["color"],
+                track="actor grouping",
+            )
+            for source in sources:
+                for line in _wrap(group_labels[source], lw - 64, 9):
+                    c.text(lx + 54, y + 3, line, size=9, anchor="start", track="actor grouping")
+                    y += 13
+            y += 6
+        c.text(
+            lx + 54,
+            y + 3,
+            "Login / privileges: per finding",
+            size=8.5,
+            anchor="start",
+            fill=MUTED,
+            track="actor grouping",
+        )
 
     if scenarios:
-        y = head(y, "Attack scenarios — by actor")
+        y = head("scenarios", "Attack scenarios — by actor")
         cur = None
         for s in scenarios:
             who = (s.get("actor") or "Attacker") + (" → User (victim)" if s.get("victim") else "")
@@ -1560,7 +1683,7 @@ def _render(
         y += 8
 
     if tbs:
-        y = head(y, "Trust boundaries — assumption verdicts")
+        y = head("boundaries", "Trust boundaries — assumption verdicts")
         for t in sorted(tbs, key=lambda t: _tb_num(t["id"])):
             g, col = VERDICT.get(t.get("assumption_verdict"), VERDICT["unconfirmed"])
             c.text(lx + 10, y + 3, f"{t['id']} {g}", size=9, anchor="start", weight="bold", fill=col)
@@ -1574,7 +1697,7 @@ def _render(
         y += 12
     flows = {f.get("id"): f for f in d.get("data_flows") or [] if isinstance(f, dict)}
     if any(e["ids"] for e in edges):
-        y = head(y, "Data flows")
+        y = head("flows", "Data flows")
         for e in edges:
             for fid in e["ids"]:
                 f = flows.get(fid, {})
@@ -1588,7 +1711,7 @@ def _render(
                 y += max(14, 11 * len(lines) + 5)
     if unattached_assets:
         y += 12
-        y = head(y, "Assets — location and handling")
+        y = head("assets", "Assets — location and handling")
         for a in unattached_assets:
             col = CLS_COL.get(str(a.get("classification")).title(), MUTED)
             c.rect(lx + 10, y - 6, 6, 6, fill=col)
@@ -1617,17 +1740,11 @@ def _render(
     for tid, why in d.get("_unplaced_tbs", []):
         notes.append(f"{tid} not placed: {why}")
     if notes:
-        y += 12
+        y = head("notes", "Diagram notes")
         for s in notes:
             c.text(lx + 10, y + 3, _cut(s, 70), size=8, anchor="start", fill=MUTED, italic=True)
             y += 12
-    H = max(height, c.maxy + MARGIN)
-    c.o[0] = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="{FONT}">'
-    )
-    c.o[1] = f'<rect width="{W}" height="{H}" fill="#ffffff"/>'
-    c.add("</svg>")
-    return "\n".join(c.o), c
+    return blocks
 
 
 # ---- verification -------------------------------------------------------------------------------
@@ -1687,6 +1804,13 @@ def _check_geometry(nodes, edges, canvas, chips):
             a = labs[i]
             if a[0] < r[2] and r[0] < a[2] and a[1] < r[3] and r[1] < a[3]:
                 problems.append(f"label on node: {a[4]} × {nid}")
+    for i, box in enumerate(canvas.legend_boxes):
+        for other in [*canvas.legend_boxes[i + 1 :], *[(*r, nid) for nid, r in rects.items()]]:
+            if box[0] < other[2] and other[0] < box[2] and box[1] < other[3] and other[1] < box[3]:
+                problems.append(f"legend overlap: {box[4]} × {other[4]}")
+        for p, q, name in segs:
+            if hits(p, q, box[:4]):
+                problems.append(f"segment {name} crosses legend {box[4]}")
     return problems
 
 
@@ -1769,7 +1893,7 @@ def _audit(d, nodes, edges, chips, boundaries):
 
 
 # ---- entry points ---------------------------------------------------------------------------------
-def _build(yaml_data, scenarios, actors, actor_notes=()):
+def _build(yaml_data, scenarios, actors, actor_groups=()):
     d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
     nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors, victim_target)
     nodes, edges, dropped = _select_drawn(nodes, edges, d)
@@ -1794,7 +1918,7 @@ def _build(yaml_data, scenarios, actors, actor_notes=()):
         height,
         dropped,
         unattached,
-        actor_notes,
+        actor_groups,
     )
     return svg, {"d": d, "nodes": nodes, "edges": edges, "chips": chips, "boundaries": boundaries, "canvas": canvas}
 
@@ -1807,7 +1931,7 @@ def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=No
         yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
     )
     svg, _state = _build(
-        yaml_data, scenarios, actors, overview_actor_notes(yaml_data, attack_paths_data, attack_taxonomy)
+        yaml_data, scenarios, actors, overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy)
     )
     return svg
 
@@ -1819,7 +1943,7 @@ def check_diagram(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=No
             yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
         )
     svg, st = _build(
-        yaml_data, scenarios, actors or [], overview_actor_notes(yaml_data, attack_paths_data, attack_taxonomy)
+        yaml_data, scenarios, actors or [], overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy)
     )
     problems = _check_geometry(st["nodes"], st["edges"], st["canvas"], st["chips"]) + _audit(
         st["d"], st["nodes"], st["edges"], st["chips"], st["boundaries"]
