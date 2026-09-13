@@ -114,6 +114,9 @@ def test_stage4_is_one_editorial_pass_with_no_repair_loop():
     assert "secret gate" not in stage4  # the tail is spelled out as commands now
     assert "qa_checks.py" in stage4 and "unmasked_secrets" in stage4
 
+    # Between waves the console stays silent; progress notes are output too.
+    assert "printing nothing, not even wave notes" in stage4
+
     # The removed loop stays removed.
     assert "repair_required" not in stage4
     assert "MAX_REPAIR_ITERATIONS" not in stage4
