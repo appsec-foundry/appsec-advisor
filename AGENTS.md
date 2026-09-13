@@ -119,14 +119,7 @@ reviewed implementation work.
 
 - Run the relevant subset from `CONTRIBUTING.md` → Targeted tests. If the
   repository is already red, capture a baseline and distinguish regressions.
-- Match broader gates to the change's blast radius instead of running them by
-  default. Run `make lint` after changing Python in `scripts/`, `tests/`, or
-  `hooks/`. Run `make test` when a change affects shared runtime behavior or
-  cannot be covered confidently by targeted tests. Run `make check` for
-  cross-cutting changes that span multiple runtime modules or contracts and at
-  release boundaries. Documentation, examples, fixtures, and isolated tests do
-  not require the full suite when their applicable validators and targeted tests
-  pass.
+- Match broader gates to the change's blast radius instead of running them by default. Run `make lint` after changing Python in `scripts/`, `tests/`, or `hooks/`. Use `make validate test-quick` and the relevant `make test-group GROUP=<name>` for bounded implementation changes, adding tests for affected producers and consumers. Run `make check` when a change affects shared runtime behavior, spans multiple runtime modules or contracts, or cannot be covered confidently by targeted tests, and at release boundaries. It includes the complete suite without coverage; do not also run `make test-full` or `make test` unless a separate coverage measurement is needed. `make test` retains the complete coverage gate. Documentation, examples, fixtures, and isolated tests do not require the full suite when their applicable validators and targeted tests pass. Agent and skill Markdown is runtime input, not a documentation-only exception.
 - Add a matching `tests/test_*.py` for each new `scripts/` module and cover core
   behavior and failure paths.
 - For heuristic or scanner changes, use application-agnostic signals, neutral

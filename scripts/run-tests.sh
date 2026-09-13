@@ -5,12 +5,13 @@
 #   scripts/run-tests.sh                # run everything
 #   scripts/run-tests.sh e2e            # only the frozen-run E2E pipeline suite
 #   scripts/run-tests.sh quick          # fast drift guards (no pipeline replay)
+#   scripts/run-tests.sh group report   # shared group (quick/report/scanner/prompts/runtime/incremental/e2e)
 #   scripts/run-tests.sh coverage       # full suite with coverage report
 #   scripts/run-tests.sh <pattern>      # forward as -k <pattern> to pytest
 #   scripts/run-tests.sh help           # show this help
 #
-# Prefers the system Python if `python3 -c "import pytest,yaml,jinja2,jsonschema"`
-# succeeds. Otherwise bootstraps .venv-tests/ from tests/requirements-test.txt.
+# Prefers .venv, then system Python, then .venv-tests. Bootstraps .venv-tests
+# from tests/requirements-test.txt only when no interpreter has the dependencies.
 
 set -euo pipefail
 
@@ -20,14 +21,30 @@ cd "$ROOT"
 VENV="$ROOT/.venv-tests"
 REQ="$ROOT/tests/requirements-test.txt"
 
+mode="${1:-all}"
+shift || true
+
+# Help must not install dependencies or access the network.
+if [[ "$mode" == help || "$mode" == -h || "$mode" == --help ]]; then
+    sed -n '2,/^set /{ /^#/s/^# \{0,1\}//p; }' "$0"
+    exit 0
+fi
+
 # Resolve a Python interpreter that has every runtime dep the suite needs.
 _has_deps() {
-    "$1" -c "import pytest, yaml, jinja2, jsonschema" >/dev/null 2>&1
+    "$1" -c "import pytest, yaml, jinja2, jsonschema; ${2:-pass}" >/dev/null 2>&1
 }
 
-if _has_deps python3; then
+extra_import="pass"
+if [[ "$mode" == coverage ]]; then
+    extra_import="import pytest_cov"
+fi
+
+if [[ -x "$ROOT/.venv/bin/python3" ]] && _has_deps "$ROOT/.venv/bin/python3" "$extra_import"; then
+    PY="$ROOT/.venv/bin/python3"
+elif _has_deps python3 "$extra_import"; then
     PY=python3
-elif [[ -x "$VENV/bin/python3" ]] && _has_deps "$VENV/bin/python3"; then
+elif [[ -x "$VENV/bin/python3" ]] && _has_deps "$VENV/bin/python3" "$extra_import"; then
     PY="$VENV/bin/python3"
 else
     echo ">> bootstrapping test venv at $VENV"
@@ -37,37 +54,24 @@ else
     PY="$VENV/bin/python3"
 fi
 
-mode="${1:-all}"
-shift || true
-
 case "$mode" in
     all|"")
-        exec "$PY" -m pytest tests/ "$@"
+        exec "$PY" scripts/run_tests.py all "$@"
         ;;
-    e2e)
-        exec "$PY" -m pytest tests/test_e2e_pipeline.py -v "$@"
+    group)
+        exec "$PY" scripts/run_tests.py "$@"
         ;;
-    quick)
-        exec "$PY" -m pytest \
-            tests/test_contract_integrity.py \
-            tests/test_schema_integrity.py \
-            tests/test_new_schemas.py \
-            tests/test_runtime_cleanup.py \
-            tests/test_taxonomy_coverage.py \
-            "$@"
+    quick|e2e)
+        exec "$PY" scripts/run_tests.py "$mode" "$@"
         ;;
     coverage)
-        exec "$PY" -m pytest tests/ \
+        exec "$PY" scripts/run_tests.py all \
             --cov=scripts \
             --cov-report=term-missing \
             --cov-report=html:.coverage-html \
             "$@"
         ;;
-    help|-h|--help)
-        grep -E '^#( |$)' "$0" | sed 's/^# \{0,1\}//'
-        exit 0
-        ;;
     *)
-        exec "$PY" -m pytest tests/ -k "$mode" -v "$@"
+        exec "$PY" scripts/run_tests.py all -k "$mode" -v "$@"
         ;;
 esac

@@ -74,23 +74,36 @@ analyze-verify:  ## Full pipeline + structural assertions against ANY repo (reca
 	@./tests/e2e/run-full.sh --repo "$(REPO)" --depth "$(or $(DEPTH),quick)"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fast unit tests (the per-PR safety net — runs in CI too)
+# Test groups and full-suite gates (no LLM)
 # ─────────────────────────────────────────────────────────────────────────────
 
 .PHONY: test
 test:  ## Run the standard pytest suite with coverage (no LLM)
-	@$(PYTHON) -m pytest tests/ -v --tb=short --cov=scripts --cov-report=term-missing; \
+	@$(PYTHON) scripts/run_tests.py all -v --tb=short --cov=scripts --cov-report=term-missing; \
 		status=$$?; rm -rf .coverage-data; exit $$status
 
 .PHONY: coverage
 coverage:  ## Run the suite + write an HTML coverage report to htmlcov/index.html
-	@$(PYTHON) -m pytest tests/ --tb=short --cov=scripts --cov-report=term-missing --cov-report=html; \
+	@$(PYTHON) scripts/run_tests.py all --tb=short --cov=scripts --cov-report=term-missing --cov-report=html; \
 		status=$$?; rm -rf .coverage-data; exit $$status
 	@echo "HTML report: htmlcov/index.html"
 
 .PHONY: test-incremental
 test-incremental:  ## Fast focused subset: incremental-scan reconciliation + 2-run main() E2E (no LLM)
-	@$(PYTHON) -m pytest tests/test_incremental_two_run_e2e.py tests/test_build_threat_model_yaml.py -q
+	@$(PYTHON) scripts/run_tests.py incremental -q
+
+.PHONY: test-full
+test-full:  ## Run the complete pytest suite without coverage (no LLM)
+	@$(PYTHON) scripts/run_tests.py all --tb=short
+
+.PHONY: test-quick
+test-quick:  ## Run shared base drift guards without coverage
+	@$(PYTHON) scripts/run_tests.py quick -q
+
+.PHONY: test-group
+test-group:  ## Run a focused group: make test-group GROUP=report|scanner|prompts|runtime|incremental|e2e
+	@test -n "$(GROUP)" || { echo "ERROR: set GROUP=<test group>; see scripts/run_tests.py --help"; exit 2; }
+	@$(PYTHON) scripts/run_tests.py "$(GROUP)" -q
 
 .PHONY: lint
 lint:  ## Ruff check + format check
@@ -138,18 +151,16 @@ baseline-sync:  ## Re-vendor data/baselines/ from the published baseline: make b
 
 .PHONY: check
 check:  ## Continuous gate: lint, format, config, drift, full test suite (no coverage)
-	@ruff check scripts/ tests/ hooks/
-	@ruff format --check scripts/ tests/ hooks/
-	@python3 scripts/validate_config.py .
-	@python3 scripts/check_fragment_registry.py
-	@python3 scripts/check_target_specificity.py
-	@python3 scripts/check_specs.py
-	@# Run WITHOUT --cov: coverage enables `[tool.coverage.run] patch=["subprocess"]`,
-	@# which instruments every child interpreter. The subprocess-heavy integration
-	@# tests (e.g. test_run_headless_completion spawning run-headless.sh) then crawl and the
-	@# release gate appears to hang. Coverage is enforced separately by `make test` /
-	@# `make coverage` (and the CI coverage job), not on this fast correctness gate.
-	@$(PYTHON) -m pytest tests/ --tb=short
+	@$(MAKE) --no-print-directory lint
+	@$(MAKE) --no-print-directory validate
+	@$(MAKE) --no-print-directory test-full
+
+.PHONY: validate
+validate:  ## Validate config, registry, target neutrality, and requirement bindings without pytest
+	@$(PYTHON) scripts/validate_config.py .
+	@$(PYTHON) scripts/check_fragment_registry.py
+	@$(PYTHON) scripts/check_target_specificity.py
+	@$(PYTHON) scripts/check_specs.py
 
 .PHONY: release-check
 release-check:  ## Release-boundary gate: `check` + version/tag/changelog consistency

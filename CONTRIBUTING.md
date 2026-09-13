@@ -45,18 +45,23 @@ PDF export (mermaid drives a headless Chrome over a local socket) and any write 
 ### Tests
 
 ```bash
-make test                                  # standard suite with coverage
-pytest tests/                              # all tests (uses active venv/PATH python)
-pytest tests/test_agent_definitions.py     # agent frontmatter validation
-pytest tests/test_security_steering.py     # steering hook logic
-pytest tests/test_sarif_validation.py      # SARIF v2.1.0 compliance
+make test-quick                    # shared base drift guards
+make test-group GROUP=report        # focused report and export tests
+make test-full                     # complete suite without coverage
+make check                         # lint, validators, and complete suite
+make test                          # complete suite with coverage
+make coverage                      # complete suite with HTML coverage report
 ```
 
 Test dependencies: `tests/requirements-test.txt` (pytest, pytest-cov, pyyaml, jsonschema, jinja2).
 
+Choose one full-suite command for the required gate. `make check` already includes `make test-full`; running `make test` afterward is only useful when coverage measurement is also required. Focused tests do not use the global coverage threshold.
+
+CI runs lint and validators once, then the complete suite on Python 3.10, 3.11, and 3.12. Only Python 3.12 measures coverage. All pushes to `dev` and `main` and pull requests targeting those branches retain these checks, including documentation changes.
+
 #### Manual full-run (end-to-end) test
 
-Run the manual end-to-end check after changes to renderers, schemas, phase prompts, hooks, or pipeline control flow.
+Run the manual end-to-end check when a change needs evidence from live model behavior or Claude Code integration, such as agent dispatch, phase interaction, or host hook delivery. Deterministic renderer, schema, and scanner changes use the targeted tests and fixture replay below unless they also change that integration. Run the prescribed live checks at release boundaries.
 
 > [!IMPORTANT]
 > This check calls Claude Code and consumes model budget. The synthetic quick fixture typically costs about $0.30–1.00 with API billing or 30–50% of a Pro five-hour usage window. It is not part of the normal CI suite.
@@ -90,24 +95,36 @@ Cross-repository behavior has a separate driver. See the [cross-repository fixtu
 
 #### Targeted tests before finishing a non-trivial change
 
-Run the relevant subset from repo root. For any non-trivial change:
+Select tests by the affected behavior. Include the changed producer, its consumers, and the requirement guards returned by `scripts/check_specs.py --for <path>`. Requirement bindings supply evidence tests, not a complete dependency graph.
+
+| Change | Local checks |
+|---|---|
+| Documentation or examples | Applicable document, example, and contract validators. |
+| Isolated Python behavior | Module and consumer tests, base checks, and `make lint`. |
+| Agent or skill prompts | Base checks, the `prompts` group, and tests for affected behavior. Markdown under `agents/` or `skills/` is runtime input. |
+| Rendering, report structure, or exports | Base checks, the `report` group, and affected producer and consumer tests. Replay a golden fixture for deterministic-tail changes. |
+| Scanner or heuristic | Base checks, the `scanner` group, neutral regression cases, and a golden fixture replay. |
+| Shared runtime behavior or uncertain impact | `make check`. The `runtime` group supports iteration but does not replace this gate. |
+| Release | `make release-check` and the prescribed live E2E checks. |
+
+Base checks for non-trivial implementation changes:
 
 ```bash
-python3 scripts/validate_config.py
-pytest tests/test_contract_integrity.py
-pytest tests/test_schema_integrity.py
-pytest tests/test_runtime_cleanup.py
-pytest tests/test_agent_definitions.py
+make validate test-quick
 ```
 
-For renderer or report-structure changes, also run:
+Run `make lint` whenever Python changes in `scripts/`, `tests/`, or `hooks/`. Use `make check` for changes spanning multiple runtime modules or contracts, or when targeted coverage cannot be bounded confidently. Its full suite includes the base tests, so do not rerun them separately after that gate passes.
+
+The shared groups are `quick`, `report`, `scanner`, `prompts`, `runtime`, `incremental`, and `e2e`. Their file selections live in [`scripts/run_tests.py`](scripts/run_tests.py). They are starting sets; add tests for affected behavior outside the group. The `e2e` group replays a frozen run without model calls.
 
 ```bash
-pytest tests/test_compose_threat_model.py
-pytest tests/test_render_properties.py
-pytest tests/test_final_render_guards.py
-pytest tests/test_sarif_validation.py
+make test-group GROUP=scanner
+python3 scripts/run_tests.py --list report  # inspect the selected files
+python3 scripts/run_tests.py report -x -q   # forward pytest options
+scripts/run-tests.sh group report          # same selection with dependency setup
 ```
+
+`scripts/run-tests.sh quick` and `make test-quick` use the same selection. The wrapper prefers `.venv`, then an installed system interpreter, then `.venv-tests`; it installs test dependencies into `.venv-tests` if needed. Unknown names passed through `group` fail. The legacy `scripts/run-tests.sh <pattern>` form still forwards the pattern to pytest's `-k` option.
 
 #### Deterministic end-to-end (no LLM)
 

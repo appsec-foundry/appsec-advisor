@@ -92,6 +92,17 @@ def test_diagnosis_recommendation_refresh_uses_existing_permissions():
     assert "Read(${PLUGIN_ROOT}/**)" in rules
 
 
+def test_maintainer_test_groups_use_existing_shell_permission():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    for command in (
+        "python3 scripts/run_tests.py quick",
+        "make test-group GROUP=report",
+        "make test-full",
+        "make validate",
+    ):
+        assert any(cp._rule_covers(rule, f"Bash({command})") for rule in rules)
+
+
 def test_evidence_bundle_command_and_artifact_are_covered_by_existing_rules():
     entries = cp.load_required(cp.DATA_FILE)
     rules = [entry["entry"] for entry in entries]
