@@ -151,7 +151,7 @@ Run `/appsec-advisor:create-threat-model` to get:
 
 The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). If the repository contains an LLM or agentic application, it also checks the relevant [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) categories.
 
-**Example:** [Read a thorough assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.md) or browse [more examples](https://github.com/appsec-foundry/appsec-advisor-examples/tree/main/threat-modeler).
+**Example:** [Read a thorough assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b3.md) or browse [more examples](https://github.com/appsec-foundry/appsec-advisor-examples).
 
 ![Threat Model Juice Shop Thorough](docs/images/figure1-example.svg)
 
@@ -212,7 +212,7 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 | Run an existing plugin checkout without interaction | [Non-interactive Mode](docs/headless-mode.md) |
 | Provision the plugin and target for terminal, cron, GitHub Actions, or GitLab CI | [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools) |
 | Package the plugin for an organization | [Internal Plugin Packaging](docs/internal-plugin-packaging.md) |
-| Browse complete report examples | [Threat Modeler Examples](https://github.com/appsec-foundry/appsec-advisor-examples/tree/main/threat-modeler) |
+| Browse complete report examples | [Threat Modeler Examples](https://github.com/appsec-foundry/appsec-advisor-examples) |
 | Develop or contribute | [Contributing](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) |
 | Report a vulnerability | [Security Policy](SECURITY.md) |
 
