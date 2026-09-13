@@ -138,6 +138,102 @@ def test_load_yaml_empty(tmp_path: Path):
     assert resolve_actors._load_yaml(str(p)) == {}
 
 
+@pytest.mark.parametrize("route_path,source", [("/api/users", "gateway.ts"), ("/v2/accounts", "entry.js")])
+@pytest.mark.parametrize(
+    "case,opened,disputed",
+    [
+        ("matched", True, False),
+        ("unmatched", False, True),
+        ("wrong-line", False, True),
+        ("role-gate", False, False),
+        ("management", False, False),
+        ("get", False, False),
+        ("explicit", True, False),
+        ("supporting", True, False),
+        ("candidate", False, True),
+    ],
+)
+def test_registration_owner_precedes_reach_equivalence(
+    plugin_lib, tmp_path, route_path, source, case, opened, disputed
+):
+    repo = tmp_path / "target"
+    repo.mkdir()
+    output = tmp_path / "assessment"
+    output.mkdir()
+    (repo / source).write_text("route registration\nsecond route\n", encoding="utf-8")
+    signals = output / ".recon-signals.json"
+    active = {"has_public_routes", "has_auth_surface"}
+    if case == "supporting":
+        active.add("has_open_self_registration")
+    _write_recon_signals(signals, repo, active)
+    if case == "candidate":
+        doc = json.loads(signals.read_text())
+        doc["signal_evidence"]["has_open_self_registration"] = {
+            "status": "candidate",
+            "locations": [{"file": source, "line": 1}],
+        }
+        signals.write_text(json.dumps(doc))
+    original = signals.read_bytes()
+    route = {
+        "route_id": "R-001",
+        "method": "GET" if case == "get" else "POST",
+        "path": "/auth/sign-up" if case == "explicit" else route_path,
+        "framework": "express",
+        "handler_file": source,
+        "handler_line": 1,
+        "authn_signal": "middleware_present",
+        "authz_signal": "middleware_present" if case == "role-gate" else "unknown",
+        "management_surface": case == "management",
+        "confidence": "high",
+    }
+    (output / ".route-inventory.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "routes": [route],
+                "coverage": {"frameworks_detected": ["express"], "unsupported_route_files": []},
+            }
+        )
+    )
+    findings = (
+        []
+        if case in {"unmatched", "explicit", "candidate"}
+        else [
+            {
+                "local_id": "SAF-001",
+                "check_id": "AUTHZ-008",
+                "source_type": "typescript_source",
+                "file": source,
+                "line": 2 if case == "wrong-line" else 1,
+                "title": "Missing route authentication",
+                "severity": "High",
+            }
+        ]
+    )
+    (output / ".source-auth-findings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2026-09-13T00:00:00Z",
+                "checks_run": 1,
+                "violations": len(findings),
+                "findings": findings,
+            }
+        )
+    )
+    resolve_actors.resolve(str(plugin_lib), str(repo), str(output), signals_path=str(signals), quick_mode=True)
+    result = json.loads((output / ".actors-resolved.json").read_text())
+    actors = {actor["id"]: actor for actor in result["resolved_actors"]}
+    assert bool(actors["ACT-D-02"].get("collapse_reason")) is opened
+    resolution = result["open_registration_resolution"]
+    assert resolution["open"] is opened
+    assert resolution["disputed"] is disputed
+    if opened or disputed:
+        assert resolution["evidence"]
+    assert any(issue["class"] == "open_registration_disputed" for issue in result["run_issues"]) is disputed
+    assert signals.read_bytes() == original
+
+
 def test_load_json(tmp_path: Path):
     p = tmp_path / "x.json"
     p.write_text(json.dumps({"a": 1}))

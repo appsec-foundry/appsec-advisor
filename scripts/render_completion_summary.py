@@ -938,7 +938,7 @@ def build_manual_review_step(
             links += f" (+{topic['hidden']} more)"
         if topic["weakness_id"]:
             links = f"{link(topic['weakness_id'])}: {links}"
-        lines.append(f"- {links} — {topic['question']}")
+        lines.append(f"- {links + ' — ' if links else ''}{topic['question']}")
     if selection["unverified"]:
         shown = ", ".join(link(item["id"]) for item in selection["unverified"][:5])
         if len(selection["unverified"]) > 5:

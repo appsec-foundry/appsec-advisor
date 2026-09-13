@@ -3350,7 +3350,8 @@ def test_an_id_outside_the_catalog_is_not_exported(tmp_path):
     assert out["total"] == 5
 
 
-def test_builder_preserves_named_entities_and_resolved_registration_equivalence(tmp_path):
+@pytest.mark.parametrize("owner", [None, True, False])
+def test_builder_preserves_named_entities_and_resolved_registration_equivalence(tmp_path, owner):
     import yaml
 
     from tests.test_validate_intermediate import _valid_resolved_actors
@@ -3369,6 +3370,13 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
             collapse_reason="open-self-registration",
         )
     )
+    if owner is not None:
+        actors["open_registration_resolution"] = {
+            "open": owner,
+            "disputed": not owner,
+            "reason": "authz-008-route" if owner else "unresolved-candidate",
+            "evidence": [{"file": "roles.ts", "line": 1}],
+        }
     _write_json(tmp_path / ".actors-resolved.json", actors)
     _write_json(
         tmp_path / ".components.json",
@@ -3421,5 +3429,11 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
     model = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     assert model["external_entities"] == [entity]
     assert model["data_flows"][0]["from_entity"] == "ext-operator"
-    assert model["meta"]["open_user_registration"] is True
+    assert model["meta"]["open_user_registration"] is (True if owner is None else owner)
     assert model["meta"]["open_registration_source"] == "actor-resolution"
+    if owner is not None:
+        assert model["meta"]["open_registration_resolution"] == actors["open_registration_resolution"]
+        import match_abuse_cases
+
+        signals = match_abuse_cases._effective_registration_signal({"has_auth_surface"}, tmp_path)
+        assert ("has_open_self_registration" in signals) is owner

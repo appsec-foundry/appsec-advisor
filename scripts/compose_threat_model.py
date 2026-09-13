@@ -9838,7 +9838,7 @@ def _render_ms_open_questions(ctx: RenderContext) -> str:
             refs += f" (+{topic['hidden']} more)"
         if topic["weakness_id"]:
             refs = f"{link(topic['weakness_id'])}: {refs}"
-        out.append(f"- {refs} — {topic['question']}")
+        out.append(f"- {refs + ' — ' if refs else ''}{topic['question']}")
     if selection["unverified"]:
         refs = ", ".join(link(item["id"]) for item in selection["unverified"][:5])
         if len(selection["unverified"]) > 5:

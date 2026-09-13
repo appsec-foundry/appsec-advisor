@@ -138,6 +138,18 @@ def select_open_questions(
         ]
 
     topics: list[dict] = []
+    registration = (yaml_data.get("meta") or {}).get("open_registration_resolution") or {}
+    if registration.get("disputed") is True and registration.get("evidence"):
+        topics.append(
+            {
+                "rank": -1,
+                "order": -1,
+                "question": "Self-registration: can anyone create an account, or does onboarding require approval?",
+                "refs": [],
+                "hidden": 0,
+                "weakness_id": "",
+            }
+        )
 
     def add(
         question: str,
@@ -230,7 +242,7 @@ def select_open_questions(
     used: set[str] = set()
     questions: set[str] = set()
     for topic in sorted(topics, key=lambda item: (item["rank"], item["order"], tuple(r["id"] for r in item["refs"]))):
-        if topic["question"] in questions or all(item["id"] in used for item in topic["refs"]):
+        if topic["question"] in questions or (topic["refs"] and all(item["id"] in used for item in topic["refs"])):
             continue
         selected.append(topic)
         questions.add(topic["question"])

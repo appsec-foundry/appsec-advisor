@@ -2936,6 +2936,10 @@ def main() -> int:
             for actor in actor_resolution.get("resolved_actors") or []
         )
         meta["open_registration_source"] = "actor-resolution"
+        if "open_registration_resolution" in actor_resolution:
+            resolution = actor_resolution["open_registration_resolution"]
+            meta["open_user_registration"] = resolution["open"]
+            meta["open_registration_resolution"] = resolution
 
     threats, threat_warnings = build_threats(merged, register_floor=skill_cfg.get("register_severity_floor", "medium"))
     for w in threat_warnings:

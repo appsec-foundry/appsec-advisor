@@ -47,6 +47,42 @@ properties:
         enum: [full, incremental]
       open_user_registration:
         type: boolean
+      open_registration_resolution:
+        type: object
+        additionalProperties: false
+        required: [open, disputed, reason, evidence]
+        properties:
+          open: {type: boolean}
+          disputed: {type: boolean}
+          reason:
+            type: string
+            enum: [recon-supporting, explicit-registration-post, authz-008-route, unresolved-candidate, not-established]
+          evidence:
+            type: array
+            maxItems: 8
+            uniqueItems: true
+            items:
+              type: object
+              additionalProperties: false
+              required: [file, line]
+              properties:
+                file: {type: string, minLength: 1}
+                line: {type: integer, minimum: 1}
+        allOf:
+          - if:
+              properties: {open: {const: true}}
+            then:
+              properties:
+                disputed: {const: false}
+                reason: {enum: [recon-supporting, explicit-registration-post, authz-008-route]}
+                evidence: {minItems: 1}
+          - if:
+              properties: {disputed: {const: true}}
+            then:
+              properties:
+                open: {const: false}
+                reason: {const: unresolved-candidate}
+                evidence: {minItems: 1}
       enrichment_pass:
         type: object
         additionalProperties: false

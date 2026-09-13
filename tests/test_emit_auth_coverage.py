@@ -39,6 +39,18 @@ def _read_yaml(output_dir: Path):
 
 
 class TestDetectionAndRating:
+    def test_registration_evidence_requires_post_not_user_listing(self):
+        for path in ("/api/users", "/accounts"):
+            data = _yaml(controls=[_ctrl("Password-Based Authentication")])
+            adds, _ = eac.build_auth_coverage(data, _routes(("GET", path)), None)
+            registration = next(row for row in adds if row["control"] == "User Registration")
+            assert registration["kind"] == "lifecycle"
+            assert registration["effectiveness"] == "Missing"
+            adds, _ = eac.build_auth_coverage(data, _routes(("GET", path), ("POST", path)), None)
+            registration = next(row for row in adds if row["control"] == "User Registration")
+            assert registration["kind"] == "mechanism"
+            assert "POST " + path in str(registration)
+
     def test_detected_registration_with_critical_finding_is_unsafe(self):
         data = _yaml(
             controls=[_ctrl("Password-Based Authentication")],

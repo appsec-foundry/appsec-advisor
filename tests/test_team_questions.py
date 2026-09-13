@@ -8,6 +8,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+import pytest
 import team_questions as tq  # noqa: E402
 
 
@@ -101,3 +102,49 @@ def test_model_anchor_inventory_normalizes_public_finding_ids() -> None:
     model = {"threats": [finding(7)], "weaknesses": [weakness(2, "route-by-route-authorization", 7)]}
 
     assert tq.model_anchor_ids(model) == {"f-007", "w-002"}
+
+
+@pytest.mark.parametrize("source", ["onboarding.ts", "routes/accounts.py"])
+def test_disputed_registration_is_shared_without_invented_finding_links(tmp_path, source):
+    from types import SimpleNamespace
+
+    import compose_threat_model as composer
+    import render_completion_summary as completion
+
+    model = {
+        "meta": {
+            "open_registration_resolution": {
+                "open": False,
+                "disputed": True,
+                "reason": "unresolved-candidate",
+                "evidence": [{"file": source, "line": 1}],
+            }
+        }
+    }
+    selected = tq.select_open_questions(model, set())["questions"]
+    assert len(selected) == 1
+    assert selected[0]["refs"] == []
+    question = selected[0]["question"]
+    report = composer._render_ms_open_questions(SimpleNamespace(yaml_data=model))
+    console = completion.build_manual_review_step(model, report, tmp_path / "report.md")
+    assert "- " + question in report
+    assert "- " + question in console
+    assert "-  —" not in report + console
+    assert "#f-" not in report + console
+    model["meta"]["open_registration_resolution"]["disputed"] = False
+    assert tq.select_open_questions(model, set())["questions"] == []
+
+
+def test_disputed_registration_still_respects_three_question_cap():
+    model = {
+        "meta": {"open_registration_resolution": {"disputed": True, "evidence": [{"file": "entry.ts", "line": 1}]}},
+        "threats": [finding(n) for n in range(1, 5)],
+        "weaknesses": [weakness(n, f"mechanism-{n}", n) for n in range(1, 5)],
+    }
+    result = tq.select_open_questions(
+        model,
+        anchors("F-001", "F-002", "F-003", "F-004"),
+        team_questions={f"mechanism-{n}": f"Decision {n}?" for n in range(1, 5)},
+    )
+    assert len(result["questions"]) == 3
+    assert result["questions"][0]["question"].startswith("Self-registration:")

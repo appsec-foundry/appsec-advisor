@@ -66,6 +66,7 @@ _MECHANISMS: list[dict] = [
     },
     {
         "key": "registration",
+        "method": "POST",
         "control": "User Registration",
         "coverage_re": r"regist|sign[\s_-]?up|account creation",
         "route_re": r"/register\b|/signup\b|/sign-up\b|/api/users?\b|/accounts?\b",
@@ -117,10 +118,12 @@ def _existing_covers(controls: list, coverage_re: str) -> bool:
     return False
 
 
-def _route_evidence(routes: list, route_re: str) -> str | None:
+def _route_evidence(routes: list, route_re: str, method: str | None = None) -> str | None:
     rx = re.compile(route_re, re.IGNORECASE)
     for r in routes:
         if not isinstance(r, dict):
+            continue
+        if method and r.get("method") != method:
             continue
         path = str(r.get("path") or "")
         if rx.search(path):
@@ -191,7 +194,7 @@ def build_auth_coverage(yaml_data: dict, routes: list, repo_root: Path | None) -
         if _existing_covers(controls, m["coverage_re"]):
             continue  # analyst already cataloged an equivalent control
 
-        route_ev = _route_evidence(routes, m["route_re"])
+        route_ev = _route_evidence(routes, m["route_re"], m.get("method"))
         repo_ev = _repo_evidence(repo_root, m.get("repo_globs", ()))
         evidence = route_ev or repo_ev
         detected = evidence is not None

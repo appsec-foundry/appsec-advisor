@@ -30,6 +30,12 @@ Failure modes to watch for in PR review:
   fragment → bypasses single-source-of-truth and drifts on rerun.
 - A new ID class introduced without assigning it to the composer or linkifier → that class ships as bare links on every rendered MD.
 
+## Actor registration evidence
+
+Current actor resolutions carry `open_registration_resolution` with an open/disputed decision, reason, and repository file/line evidence; the YAML builder preserves it in `meta`. Reach-equivalence and abuse-case applicability consume this decision without rewriting recon evidence or changing STRIDE severity. Disputed candidates enter the shared team-question selection even when no finding anchor exists. Historical actor artifacts remain readable, and models without actor resolution retain their curated attack-surface fallback.
+
+Generic-route corroboration is limited to the Node/Express JavaScript and TypeScript routes covered by `AUTHZ-008`; Java, Python, Go, .NET, Ruby, PHP, GraphQL mutations, and external identity-provider signup need explicit registration-route or recon evidence. A candidate without sufficient support stays disputed rather than asserting closed registration.
+
 ## §4b. Mitigation synthesis invariant
 
 Every successful canonical YAML rebuild is followed by the deterministic emitter pass and the shared schema, mitigation-quality, and build-completeness gates. The final render-completeness gate requires `meta.enrichment_pass` to match the current model. Canonical writers after enrichment may carry forward only a receipt verified before their mutation; missing or stale receipts remain invalid. The marker is optional in the export schema so prior reports remain readable, but it is mandatory for run completion. Its shape lives in the output schema and its hash algorithm in `scripts/enrichment_pass.py`.
