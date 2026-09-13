@@ -72,9 +72,7 @@ reviewed implementation work.
 
 - Write code comments, docstrings, commits, and repository documents in English.
 - For new or substantively edited Markdown prose, follow `docs/internal/documentation-style.md`. Keep each prose paragraph, including prose in list items, on one source line; separate paragraphs with one blank line; and do not reflow untouched prose solely for formatting. Local contracts override the external style reference.
-- `CHANGELOG.md` contains one short sentence per user-visible change. Fold an
-  unreleased feature and its fixes into one bullet, and omit internal machinery,
-  ordinary refactors, test-only work, doc edits, and routine maintenance.
+- `CHANGELOG.md` records only changes that materially affect users' capabilities, results, workflows, compatibility, or reliability. Omit internal implementation details, minor cosmetic changes, refactors, tests, documentation edits, and routine maintenance. Before adding a bullet, review all `Unreleased` entries and merge changes describing the same user-facing outcome, including fixes to unreleased features. Add a separate bullet only for a distinct relevant outcome. Keep each bullet to one short sentence describing the user impact.
 - Documentation states what something does, when it applies, and what breaks if
   it is wrong. Algorithms, tie-breaking, limits, and fallbacks stay in their
   authoritative technical source.
