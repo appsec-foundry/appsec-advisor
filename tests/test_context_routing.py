@@ -54,6 +54,7 @@ def _context_action(output: Path, *, inputs: list[str] | None = None) -> dict:
             "context_resolver_model": "sonnet",
         },
         "semantic_role": "context_resolver",
+        "task_progress": controller._stage1_task_progress("context_resolver"),
         "dispatch_jobs": [
             {
                 "schema_version": 1,

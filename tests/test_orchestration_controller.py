@@ -3731,6 +3731,7 @@ def test_context_v2_candidate_free_success_runs_to_stage2_handoff_without_agent(
     action = controller.context_v2_post_stride(output)
     assert action["action"] == "run_gate"
     assert action["stage"] == "stage1c"
+    assert action["task_progress"] == {"completed_rows": list(controller.STAGE1_TASK_ROWS)}
     assert "semantic_role" not in action
     assert calls[:5] == [
         "validate_dispatch_manifest.py",
@@ -3979,6 +3980,10 @@ def test_context_v2_after_evidence_skips_triage_agent_and_dispatches_only_root_c
     monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
     action = controller.context_v2_post_evidence(output)
     assert action["semantic_role"] == "post_stride_synthesizer"
+    assert action["task_progress"] == {
+        "completed_rows": list(controller.STAGE1_TASK_ROWS[:-1]),
+        "active_row": controller.STAGE1_TASK_ROWS[-1],
+    }
     assert action["unresolved_decision_keys"] == ["tier_root_causes"]
     assert all(job["semantic_role"] != "triage_validator" for job in action["dispatch_jobs"])
     names = [name for name, _args in calls]
@@ -4255,6 +4260,10 @@ def test_context_v2_dispatches_triage_only_when_deterministic_ranking_fails(tmp_
     monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
     action = controller.context_v2_post_evidence(output)
     assert action["semantic_role"] == "triage_validator"
+    assert action["task_progress"] == {
+        "completed_rows": list(controller.STAGE1_TASK_ROWS[:8]),
+        "active_row": controller.STAGE1_TASK_ROWS[8],
+    }
     assert action["unresolved_decision_keys"] == ["triage_ranking"]
     assert action["dispatch_jobs"][0]["output_artifacts"] == [
         ".triage-flags.json",
@@ -6316,10 +6325,12 @@ class TestStage1TaskRows:
     def test_the_schema_admits_the_longest_row(self):
         schema = json.loads((ROOT / "schemas" / "orchestration-action.schema.json").read_text(encoding="utf-8"))
         spec = schema["properties"]["task_rows"]
+        progress = schema["properties"]["task_progress"]["properties"]["completed_rows"]
         widest = controller._task_rows({"runtime_generation": "context-v2", "mode": "full", "architect_review": True})
 
         assert max(len(row) for row in widest) <= spec["items"]["maxLength"]
         assert len(widest) <= spec["maxItems"]
+        assert len(controller.STAGE1_TASK_ROWS) <= progress["maxItems"]
 
     def test_the_runtime_reads_the_rows_from_the_action(self):
         # A row the session invents is a row a later TaskUpdate no longer matches.
@@ -6328,8 +6339,33 @@ class TestStage1TaskRows:
     def test_the_stage1_runtime_owns_the_row_lifecycle(self):
         text = self.STAGE1_V2.read_text(encoding="utf-8")
 
-        assert "ACTION.task_rows" in text
+        assert "ACTION.task_progress" in text
+        assert "TaskList" in text
+        assert "never infer from `semantic_role`" in text
         assert "in_progress" in text and "completed" in text
+
+    def test_every_stage1_role_maps_to_one_controller_owned_row(self):
+        stage1_roles = set(controller.SEMANTIC_ROLE_REGISTRY) - {"abuse_case_verifier"}
+
+        assert set(controller._STAGE1_TASK_ROW_BY_ROLE) == stage1_roles
+        assert set(controller._STAGE1_TASK_ROW_BY_ROLE.values()) == set(controller.STAGE1_TASK_ROWS)
+
+    def test_task_progress_rejects_a_non_prefix_and_a_role_mismatch(self, tmp_path):
+        action = _semantic_action(tmp_path, [_semantic_job()])
+        action["stage"] = "stage1c"
+        action["task_progress"] = controller._stage1_task_progress("architecture_analyst")
+        assert controller._validate_action(action) == action
+
+        action["task_progress"] = {
+            "completed_rows": [controller.STAGE1_TASK_ROWS[1]],
+            "active_row": controller.STAGE1_TASK_ROWS[2],
+        }
+        with pytest.raises(controller.ControllerError, match="exact ordered prefix"):
+            controller._validate_action(action)
+
+        action["task_progress"] = controller._stage1_task_progress("control_analyst")
+        with pytest.raises(controller.ControllerError, match="does not match the dispatched semantic role"):
+            controller._validate_action(action)
 
     def test_each_stage1_row_carries_its_position_within_its_stage(self):
         # The reader has to see how much of the running stage is left, so a

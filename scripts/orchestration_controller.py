@@ -693,6 +693,8 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
         if action.get("action") != expected_action:
             raise ControllerError(f"renderer profile {renderer_profile!r} requires action {expected_action!r}")
 
+    _validate_stage1_task_progress(action)
+
     semantic_role = action.get("semantic_role")
     if semantic_role is not None and semantic_role not in SEMANTIC_ROLE_REGISTRY:
         raise ControllerError(f"unknown semantic role: {semantic_role!r}")
@@ -2890,6 +2892,73 @@ STAGE1_TASK_ROWS = (
     "Stage 1c [6/6] - Root cause synthesis",
 )
 
+_STAGE1_TASK_ROW_BY_ROLE = {
+    "context_resolver": STAGE1_TASK_ROWS[0],
+    "config_scanner": STAGE1_TASK_ROWS[0],
+    "recon_scanner": STAGE1_TASK_ROWS[0],
+    "actor_discoverer": STAGE1_TASK_ROWS[1],
+    "architecture_analyst": STAGE1_TASK_ROWS[2],
+    "trust_boundary_analyst": STAGE1_TASK_ROWS[3],
+    "control_analyst": STAGE1_TASK_ROWS[4],
+    "stride_analyzer": STAGE1_TASK_ROWS[5],
+    "threat_merger": STAGE1_TASK_ROWS[6],
+    "evidence_verifier": STAGE1_TASK_ROWS[7],
+    "triage_validator": STAGE1_TASK_ROWS[8],
+    "post_stride_synthesizer": STAGE1_TASK_ROWS[9],
+}
+
+
+def _stage1_task_progress(role: str | None = None, *, complete: bool = False) -> dict[str, Any]:
+    """Return the exact task prefix settled before the next Stage-1 action.
+
+    A controller boundary can complete deterministic work without dispatching
+    the role represented by its task row. Carrying the settled prefix in the
+    action keeps the host task list aligned without asking the session to infer
+    skipped rows from the next semantic role.
+    """
+    if complete:
+        if role is not None:
+            raise ControllerError("a completed Stage-1 task transition cannot name an active role")
+        return {"completed_rows": list(STAGE1_TASK_ROWS)}
+    try:
+        active_row = _STAGE1_TASK_ROW_BY_ROLE[str(role)]
+    except KeyError as exc:
+        raise ControllerError(f"semantic role has no Stage-1 task row: {role!r}") from exc
+    active_index = STAGE1_TASK_ROWS.index(active_row)
+    return {
+        "completed_rows": list(STAGE1_TASK_ROWS[:active_index]),
+        "active_row": active_row,
+    }
+
+
+def _validate_stage1_task_progress(action: dict[str, Any]) -> None:
+    """Keep controller-owned task transitions on the Stage-1 row prefix."""
+    progress = action.get("task_progress")
+    owns_stage1_progress = (
+        action.get("stage") == "stage1c"
+        and action.get("instruction_file") == str(THIN_STAGE1_V2_RUNTIME)
+        and action.get("action") in {"dispatch_agent", "dispatch_parallel", "run_gate"}
+    )
+    if not owns_stage1_progress:
+        if progress is not None:
+            raise ControllerError("task_progress is valid only on context-v2 Stage-1 actions")
+        return
+    if not isinstance(progress, dict):
+        raise ControllerError("context-v2 Stage-1 action is missing task_progress")
+    completed = progress.get("completed_rows")
+    if not isinstance(completed, list) or completed != list(STAGE1_TASK_ROWS[: len(completed)]):
+        raise ControllerError("Stage-1 completed task rows must be an exact ordered prefix")
+    active_row = progress.get("active_row")
+    if action.get("action") == "run_gate":
+        if completed != list(STAGE1_TASK_ROWS) or active_row is not None:
+            raise ControllerError("the Stage-1 completion gate must complete every task row")
+        return
+    if len(completed) >= len(STAGE1_TASK_ROWS) or active_row != STAGE1_TASK_ROWS[len(completed)]:
+        raise ControllerError("the active Stage-1 task row must immediately follow the completed prefix")
+    job_rows = {_STAGE1_TASK_ROW_BY_ROLE.get(str(job.get("semantic_role"))) for job in action.get("dispatch_jobs", [])}
+    if job_rows != {active_row}:
+        raise ControllerError("Stage-1 task progress does not match the dispatched semantic role")
+
 
 def _task_rows(cfg: dict[str, Any]) -> list[str]:
     """Every task row the session creates, in creation order.
@@ -3707,6 +3776,7 @@ def _context_v2_dispatch(
         **_context_v2_common(output_dir, cfg),
         "action": "dispatch_agent",
         "semantic_role": role,
+        "task_progress": _stage1_task_progress(role),
         "next_boundary": _checked_next_boundary(next_boundary),
         "dispatch_jobs": [
             {
@@ -4164,6 +4234,7 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
         {
             **_context_v2_common(output_dir, cfg),
             "action": "dispatch_parallel",
+            "task_progress": _stage1_task_progress("recon_scanner"),
             "next_boundary": _checked_next_boundary("context-v2-post-recon"),
             "dispatch_jobs": jobs,
             "artifact_receipts": structured,
@@ -4232,6 +4303,7 @@ def _recon_producer_retry(
     action = {
         **_context_v2_common(output_dir, cfg),
         "action": "dispatch_parallel",
+        "task_progress": _stage1_task_progress("recon_scanner"),
         "next_boundary": _checked_next_boundary("context-v2-post-recon"),
         "dispatch_jobs": jobs,
         "artifact_receipts": structured,
@@ -5060,6 +5132,7 @@ def _context_v2_stride_wave_action(
     action = {
         **_context_v2_common(output_dir, cfg),
         "action": "dispatch_parallel",
+        "task_progress": _stage1_task_progress("stride_analyzer"),
         "next_boundary": _checked_next_boundary("context-v2-post-stride"),
         "dispatch_jobs": jobs,
         "artifact_receipts": structured,
@@ -5544,6 +5617,7 @@ def _context_v2_finalize(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any
         {
             **_context_v2_common(output_dir, cfg),
             "action": "run_gate",
+            "task_progress": _stage1_task_progress(complete=True),
             "receipts": ["Context-v2 Stage-1 artifacts and Stage-2 handoff gates passed", *receipts],
         }
     )

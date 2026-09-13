@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Early STRIDE completion checks no longer start duplicate component analyses.
 
+- Completed scans no longer leave deterministically completed Stage 1 tasks open in Claude Code.
+
 - Abuse case AC-T-001 no longer claims a stored XSS when the matched finding is reflected or DOM-based.
 
 ## 0.6.0-beta.3 (2026-09-12)

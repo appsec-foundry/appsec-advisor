@@ -95,23 +95,13 @@ compact runtime acting on controller actions, and no agent recurses through
 
 - `resolve_config.py` remains the source of truth for flags, paths, modes,
   models, depth, and output settings.
-- `orchestration_controller.py` owns thin-runtime selection, full/rebuild
-  preflight mutations, Stage-1a topology/finalization gate, Stage-1b candidate
-  promotion and coverage gate, Stage-1c post-analysis gates and checkpoint
-  freshness, abuse-case match/finalize, Stage-2 structural preparation,
-  rerender artifact preconditions, fixed next-action classification, and
-  compact dispatch values.
+- `orchestration_controller.py` owns thin-runtime selection, full/rebuild preflight mutations, Stage-1a topology/finalization gate, Stage-1b candidate promotion and coverage gate, Stage-1c post-analysis gates and checkpoint freshness, Stage-1 task transitions, abuse-case match/finalize, Stage-2 structural preparation, rerender artifact preconditions, fixed next-action classification, and compact dispatch values.
 - `prepare-stage2` returns an explicit renderer profile. Default Quick uses only
   the Management Summary specialist, enriched architecture uses both
   specialists, and the full renderer remains the bounded recovery profile.
   Every profile converges on the same controller-owned fragment validation,
   strict compose, prose-fix, and QA-autofix tail before Stage 3.
-- `SKILL-full-runtime.md`, `SKILL-thin-stage1-v2.md`,
-  `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and
-  `SKILL-rerender-runtime.md` own user-visible output, Task lifecycle, and
-  Level-0 producer calls for their modes. `SKILL-thin-stage3.md`,
-  `SKILL-thin-stage4.md`, and `SKILL-thin-completion.md` own the bounded review,
-  repair, release-gate, export, and cleanup calls selected by the controller.
+- `SKILL-full-runtime.md`, `SKILL-thin-stage1-v2.md`, `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and `SKILL-rerender-runtime.md` own user-visible output, apply controller-owned Task lifecycle, and Level-0 producer calls for their modes. `SKILL-thin-stage3.md`, `SKILL-thin-stage4.md`, and `SKILL-thin-completion.md` own the bounded review, repair, release-gate, export, and cleanup calls selected by the controller.
 - `stride_dispatch_waves.py` owns deterministic bounded-wave scheduling,
   persisted two-attempt counters, resume selection, and the selected-component
   completion gate. It never changes component selection or analyzer prompts.
@@ -324,6 +314,7 @@ Before boundary assessment, the architecture handoff reconciles evidenced OAuth/
   the run, already reduced to the rows this invocation has. The session creates
   rows only from it and authors no label of its own, so the subjects a later
   update matches on cannot drift.
+- Every context-v2 Stage-1 action carries `task_progress`. Its `completed_rows` are an exact prefix of the fixed Stage-1 rows, and its optional `active_row` is the next row and matches the dispatched semantic role. The completion gate carries the full prefix and no active row. The session applies these explicit transitions through the host Task tools and never infers skipped rows from a later dispatch.
 - `semantic_role` and every role in `dispatch_jobs` resolve through the
   controller's closed registry to a plugin-owned agent definition, tool set,
   model route, and output contract. Jobs carry the controller-derived

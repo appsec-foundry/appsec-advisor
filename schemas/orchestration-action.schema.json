@@ -47,6 +47,28 @@
         "maxLength": 80
       }
     },
+    "task_progress": {
+      "type": "object",
+      "required": ["completed_rows"],
+      "properties": {
+        "completed_rows": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        },
+        "active_row": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "additionalProperties": false
+    },
     "reason": {
       "type": "string",
       "maxLength": 1000

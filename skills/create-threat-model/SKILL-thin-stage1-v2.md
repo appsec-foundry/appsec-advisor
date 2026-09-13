@@ -105,12 +105,7 @@ the shared effective plan or registry, or inline untrusted artifacts.
 
 ## Task rows
 
-The ten `ACTION.task_rows` follow the jobs' `semantic_role` order.
-
-Set a job's row `in_progress` before dispatch and `completed` on return. Complete
-earlier open rows: depth and cache state skip jobs. While joining STRIDE, set its
-active form to `STRIDE <ready>/<expected> components` from the waiter's last
-`[stride] <ready>/<expected> ready` line. ASCII only in an active form.
+Apply `ACTION.task_progress` before dispatch or Stage-1 exit. With `TaskList`, mark open `completed_rows` completed, then an open `active_row` `in_progress`; never infer from `semantic_role`. After its join complete `active_row`. During STRIDE, turn the waiter's last `[stride] <ready>/<expected> ready` into the ASCII active form `STRIDE <ready>/<expected> components`.
 
 ## Logging and stats
 
