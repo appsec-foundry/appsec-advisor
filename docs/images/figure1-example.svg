@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1182" height="1583" viewBox="0 0 1182 1583" font-family="Helvetica, Arial, sans-serif">
-<rect width="1182" height="1583" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1182" height="1481" viewBox="0 0 1182 1481" font-family="Helvetica, Arial, sans-serif">
+<rect width="1182" height="1481" fill="#ffffff"/>
 <defs><marker id="arw-Restricted" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9c3d3d"/></marker><marker id="arw-Confidential" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b46a38"/></marker><marker id="arw-Internal" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#6f7d8f"/></marker><marker id="arw-Public" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a3aab4"/></marker><marker id="arw-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b3453f"/></marker><marker id="arw-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker><marker id="arw-attacker-0" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b3453f"/></marker></defs>
 <text x="20.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#334d6e" text-anchor="start" font-weight="bold">Figure 1 — Data-flow diagram: trust boundaries, STRIDE-per-element, top attack paths</text>
 <text x="20.0" y="42.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#6b7280" text-anchor="start" font-weight="normal">juice-shop2 · 8 components · 12 data flows · 5 trust boundaries · 68 threats</text>
@@ -355,9 +355,7 @@
 <circle cx="728.0" cy="863.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="728.0" y="866.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
 <circle cx="709.0" cy="863.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
-<text x="709.0" y="866.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
-<circle cx="690.0" cy="863.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
-<text x="690.0" y="866.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">4</text>
+<text x="709.0" y="866.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">4</text>
 <rect x="958.0" y="444.0" width="190.0" height="110.0" rx="0" fill="#ffffff" stroke="none" stroke-width="1"/>
 <path d="M 958.0 444 H 1148.0 M 958.0 554 H 1148.0 M 958.0 444 V 554 M 966.0 444 V 554" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linejoin="round"/>
 <text x="1047.0" y="466.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-08 · marsdb Embedded</text>
@@ -482,50 +480,38 @@
 <text x="10.0" y="301.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">counts on a node = threats per severity · ①–⑨ = attack scenario</text>
 <text x="10.0" y="314.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">asset badges require linked findings and evidenced storage</text>
 </g>
-<g data-legend-section="actors" data-legend-column="1" transform="translate(20.0 1481.0)">
-<rect x="0.0" y="0.0" width="350.0" height="20.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
-<text x="175.0" y="14.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="bold">Actor grouping</text>
-<g transform="translate(15 31) scale(0.5)">
-<circle cx="0.0" cy="0.0" r="5" fill="none" stroke="#b3453f" stroke-width="1.5"/>
-<path d="M -8 16 A 8 8 0 0 1 8 16" fill="none" stroke="#b3453f" stroke-width="1.5" stroke-linejoin="round"/>
-</g>
-<text x="26.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="start" font-weight="bold">A1</text>
-<text x="54.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Self-registered users · open registration</text>
-<text x="54.0" y="46.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Repository readers · public source</text>
-<text x="54.0" y="65.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">Login / privileges: per finding</text>
-</g>
 <g data-legend-section="scenarios" data-legend-column="2" transform="translate(416.0 1144.0)">
 <rect x="0.0" y="0.0" width="350.0" height="20.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
 <text x="175.0" y="14.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="bold">Attack scenarios — by actor</text>
 <text x="10.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="start" font-weight="bold">Internet Attacker</text>
 <circle cx="20.0" cy="44.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="20.0" y="47.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
-<text x="34.0" y="48.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Injection</text>
+<text x="34.0" y="48.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">SQL/NoSQL Injection Exposes Database</text>
 <text x="344.0" y="48.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="end" font-weight="bold">Critical</text>
 <circle cx="20.0" cy="61.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="20.0" y="64.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
-<text x="34.0" y="65.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Auth Bypass</text>
+<text x="34.0" y="65.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">JWT/OAuth Forgery Grants Admin Access</text>
 <text x="344.0" y="65.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="end" font-weight="bold">Critical</text>
 <circle cx="20.0" cy="78.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="20.0" y="81.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
-<text x="34.0" y="82.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Privilege Escalation</text>
+<text x="34.0" y="82.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Mass Assignment Grants Admin Rights</text>
 <text x="344.0" y="82.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="end" font-weight="bold">Critical</text>
 <circle cx="20.0" cy="95.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="20.0" y="98.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">4</text>
-<text x="34.0" y="99.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Secret Exposure</text>
+<text x="34.0" y="99.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Credentials, Tokens and Logs Exposed</text>
 <text x="344.0" y="99.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="end" font-weight="bold">Critical</text>
 <circle cx="20.0" cy="112.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="20.0" y="115.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
-<text x="34.0" y="116.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">RCE</text>
+<text x="34.0" y="116.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Server-Side Eval Enables Host Takeover</text>
 <text x="344.0" y="116.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="end" font-weight="bold">Critical</text>
 <text x="10.0" y="134.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="start" font-weight="bold">Internet Attacker → User (victim)</text>
 <circle cx="20.0" cy="145.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="20.0" y="148.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">6</text>
-<text x="34.0" y="149.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">XSS</text>
+<text x="34.0" y="149.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">XSS Steals Browser Session Tokens</text>
 <text x="344.0" y="149.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#b3453f" text-anchor="end" font-weight="bold">Critical</text>
 <circle cx="20.0" cy="162.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="20.0" y="165.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">7</text>
-<text x="34.0" y="166.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">CSRF</text>
+<text x="34.0" y="166.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">CORS/CSRF Enables Cross-Site Actions</text>
 <text x="344.0" y="166.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#c4a441" text-anchor="end" font-weight="bold">Medium</text>
 </g>
 <g data-legend-section="boundaries" data-legend-column="2" transform="translate(416.0 1333.0)">
@@ -549,48 +535,26 @@
 <g data-legend-section="flows" data-legend-column="3" transform="translate(812.0 1144.0)">
 <rect x="0.0" y="0.0" width="350.0" height="20.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
 <text x="175.0" y="14.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="bold">Data flows</text>
-<text x="10.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#a3aab4" text-anchor="start" font-weight="bold">df-001</text>
-<text x="52.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">User → C-01 · Express.js Backend API · HTTP · Unauthenticated HTTP</text>
-<text x="52.0" y="44.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">requests (page load, API, public routes)</text>
-<text x="10.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-004</text>
-<text x="52.0" y="60.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">User → C-01 · Express.js Backend API · HTTP · Authenticated REST</text>
-<text x="52.0" y="71.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">API requests (basket, orders, profile, challenges)</text>
-<text x="10.0" y="87.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-002</text>
-<text x="52.0" y="87.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">User → C-02 · JWT Authentication and Session Management · HTTP ·</text>
-<text x="52.0" y="98.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">User login with email and password credentials</text>
-<text x="10.0" y="114.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-003</text>
-<text x="52.0" y="114.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">User → C-02 · JWT Authentication and Session Management · HTTP ·</text>
-<text x="52.0" y="125.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">TOTP-based 2FA verify, setup, and disable</text>
-<text x="10.0" y="141.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-005</text>
-<text x="52.0" y="141.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-03 · Angular SPA Web Frontend → C-01 · Express.js Backend API ·</text>
-<text x="52.0" y="152.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">HTTP · Angular SPA REST API calls via HTTP interceptor with JWT</text>
-<text x="52.0" y="163.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">bearer token</text>
-<text x="10.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6f7d8f" text-anchor="start" font-weight="bold">df-006</text>
-<text x="52.0" y="179.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-03 · Angular SPA Web Frontend → C-01 · Express.js Backend API ·</text>
-<text x="52.0" y="190.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">WebSocket · Socket.IO real-time bidirectional event channel</text>
-<text x="10.0" y="206.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-007</text>
-<text x="52.0" y="206.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-01 · Express.js Backend API → C-04 · SQLite Embedded Database ·</text>
-<text x="52.0" y="217.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">SQLite in-process · Sequelize ORM queries to SQLite database (user</text>
-<text x="52.0" y="228.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">data, challenges, orders)</text>
-<text x="10.0" y="244.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#9c3d3d" text-anchor="start" font-weight="bold">df-008</text>
-<text x="52.0" y="244.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-02 · JWT Authentication and Session Management → C-04 · SQLite</text>
-<text x="52.0" y="255.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">Embedded Database · SQLite in-process · User credential lookup and</text>
-<text x="52.0" y="266.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">session data persistence</text>
-<text x="10.0" y="282.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6f7d8f" text-anchor="start" font-weight="bold">df-009</text>
-<text x="52.0" y="282.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-01 · Express.js Backend API → Ollama LLM Inference Service ·</text>
-<text x="52.0" y="293.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">HTTP · LLM inference HTTP request to Ollama on port 11434</text>
-<text x="10.0" y="309.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-010</text>
-<text x="52.0" y="309.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">Google OAuth 2.0 Provider → C-03 · Angular SPA Web Frontend ·</text>
-<text x="52.0" y="320.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">HTTPS redirect · Google OAuth 2.0 implicit flow token redirect</text>
-<text x="52.0" y="331.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">(browser-only, URL fragment)</text>
-<text x="10.0" y="347.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-011</text>
-<text x="52.0" y="347.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-03 · Angular SPA Web Frontend → OAuth profile service ·</text>
-<text x="52.0" y="358.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">www.googleapis.com · HTTPS · OAuth profile request</text>
-<text x="10.0" y="374.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-012</text>
-<text x="52.0" y="374.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-03 · Angular SPA Web Frontend → Google OAuth 2.0 Provider ·</text>
-<text x="52.0" y="385.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">HTTPS · OAuth authorization</text>
+<text x="10.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-001/004</text>
+<text x="68.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">User → C-01 · HTTP · Public/authenticated API</text>
+<text x="10.0" y="49.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-002/003</text>
+<text x="68.0" y="49.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">User → C-02 · HTTP · Login and TOTP</text>
+<text x="10.0" y="65.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-005/006</text>
+<text x="68.0" y="65.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-03 → C-01 · HTTP/WebSocket · API and realtime traffic</text>
+<text x="10.0" y="81.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-007</text>
+<text x="68.0" y="81.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-01 → C-04 · SQLite in-process · Application data</text>
+<text x="10.0" y="97.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#9c3d3d" text-anchor="start" font-weight="bold">df-008</text>
+<text x="68.0" y="97.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-02 → C-04 · SQLite in-process · Credentials and sessions</text>
+<text x="10.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6f7d8f" text-anchor="start" font-weight="bold">df-009</text>
+<text x="68.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-01 → Ollama · HTTP · LLM inference</text>
+<text x="10.0" y="129.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-010</text>
+<text x="68.0" y="129.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">Google OAuth → C-03 · HTTPS redirect · Token callback</text>
+<text x="10.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-011</text>
+<text x="68.0" y="145.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-03 → Google Profile · HTTPS · Profile lookup</text>
+<text x="10.0" y="161.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#b46a38" text-anchor="start" font-weight="bold">df-012</text>
+<text x="68.0" y="161.0" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="start" font-weight="normal">C-03 → Google OAuth · HTTPS · Authorization</text>
 </g>
-<g data-legend-section="assets" data-legend-column="2" transform="translate(416.0 1449.0)">
+<g data-legend-section="assets" data-legend-column="3" transform="translate(812.0 1328.0)">
 <rect x="0.0" y="0.0" width="350.0" height="20.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
 <text x="175.0" y="14.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="bold">Assets — location and handling</text>
 <rect x="10.0" y="24.0" width="6.0" height="6.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
