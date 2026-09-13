@@ -389,6 +389,7 @@ requirements:
       - scripts/apply_prose_fixes.py
       - scripts/compose_threat_model.py
       - scripts/detect_open_registration.py
+      - scripts/detect_public_repo.py
       - scripts/resolve_actors.py
       - scripts/emit_auth_coverage.py
       - scripts/match_abuse_cases.py
@@ -405,6 +406,7 @@ requirements:
       - RA-4
       - RN-5
       - OR-26
+      - RA-10
     documents:
       - agents/shared/prose-style.md
     coverage: partial
@@ -416,6 +418,9 @@ requirements:
       - tests/test_resolve_actors.py::test_registration_owner_precedes_reach_equivalence
       - tests/test_detect_open_registration.py::test_registration_resolution_has_identical_closed_schemas
       - tests/test_detect_open_registration.py::test_registration_inputs_cannot_claim_unavailable_source
+      - tests/test_detect_public_repo.py::test_rebuilt_public_source_grouping_survives_enrichment
+      - tests/test_detect_public_repo.py::test_self_hosted_source_visibility_remains_unknown
+      - tests/test_detect_public_repo.py::test_host_and_license_cannot_distinguish_repository_visibility
       - tests/test_emit_auth_coverage.py::TestDetectionAndRating::test_registration_evidence_requires_post_not_user_listing
       - tests/test_build_threat_model_yaml.py::test_builder_preserves_named_entities_and_resolved_registration_equivalence
       - tests/test_compose_threat_model.py::test_ms_open_questions_match_console_selection_and_follow_top_weaknesses

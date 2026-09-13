@@ -36,6 +36,10 @@ Current actor resolutions carry `open_registration_resolution` with an open/disp
 
 Generic-route corroboration is limited to the Node/Express JavaScript and TypeScript routes covered by `AUTHZ-008`; Java, Python, Go, .NET, Ruby, PHP, GraphQL mutations, and external identity-provider signup need explicit registration-route or recon evidence. A candidate without sufficient support stays disputed rather than asserting closed registration.
 
+## Public-source overview grouping
+
+`meta.public_source_repo` affects overview actor grouping, not finding evidence or severity. Repository-read access folds into anonymous internet access when the flag is true; build-time and privileged access do not. Detection uses local license and source-host metadata without network calls, so a self-hosted public repository may remain unknown and a private repository on a known host may appear public. YAML-only pins remain transient across rebuilds; this verification adds no configuration or organization-profile override source.
+
 ## §4b. Mitigation synthesis invariant
 
 Every successful canonical YAML rebuild is followed by the deterministic emitter pass and the shared schema, mitigation-quality, and build-completeness gates. The final render-completeness gate requires `meta.enrichment_pass` to match the current model. Canonical writers after enrichment may carry forward only a receipt verified before their mutation; missing or stale receipts remain invalid. The marker is optional in the export schema so prior reports remain readable, but it is mandatory for run completion. Its shape lives in the output schema and its hash algorithm in `scripts/enrichment_pass.py`.

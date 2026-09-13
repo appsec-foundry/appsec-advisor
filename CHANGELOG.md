@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Threat-model rebuilds retain deterministic enrichment, and final completion rejects missing or stale enrichment receipts.
+- Threat-model rebuilds retain deterministic enrichment including public-source actor grouping, and final completion rejects missing or stale enrichment receipts.
 - Actor grouping and abuse-case matching use evidenced self-registration, with unclear account-creation routes surfaced as team questions.
 - Generic registration corroboration currently covers Node/Express JavaScript and TypeScript routes; other stacks, GraphQL, and external identity-provider signup still depend on recon evidence and team clarification.
 - Authentication coverage cites registration POST routes instead of user-listing GET routes.
