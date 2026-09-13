@@ -131,6 +131,7 @@ required:
   # sidecars do NOT need their own per-file entries — the /.*  entries cover them.
 
   # --- Shell — one entry covers all commands without per-command maintenance ---
+  # enrichment_pass.py uses this shell rule and the existing OUTPUT_DIR YAML write rule.
   #
   # Why Bash(*) instead of per-command entries:
   #   Claude Code's Bash allow-list matches only the FIRST TOKEN of a simple command.

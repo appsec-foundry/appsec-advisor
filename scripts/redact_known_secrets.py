@@ -195,6 +195,18 @@ def redact_artifacts(output_dir: Path, secrets: dict[str, str]) -> dict:
                 redacted[value] = redacted.get(value, 0) + count
                 file_hits += count
         if file_hits and new_text != text:
+            if path.name == "threat-model.yaml":
+                import yaml
+                from enrichment_pass import EnrichmentContinuation, valid_receipt
+
+                try:
+                    before = yaml.safe_load(text)
+                    after = yaml.safe_load(new_text)
+                    if isinstance(before, dict) and isinstance(after, dict) and valid_receipt(before):
+                        EnrichmentContinuation(before).refresh(after)
+                        new_text = yaml.safe_dump(after, sort_keys=False, allow_unicode=True, width=120)
+                except yaml.YAMLError:
+                    pass  # An undecodable artifact cannot acquire a receipt.
             path.write_text(new_text, encoding="utf-8")
             touched_files.append(path.name)
 

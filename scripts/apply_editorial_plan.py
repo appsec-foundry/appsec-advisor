@@ -188,9 +188,11 @@ def _allowed_paths(name: str, document: Any) -> set[tuple]:
 
 def _apply_structured(name: str, path_obj: Path, actions: list[dict]) -> tuple[int, list[dict], bool]:
     import yaml
+    from enrichment_pass import EnrichmentContinuation
 
     text = path_obj.read_text(encoding="utf-8")
     document = json.loads(text) if name.endswith(".json") else yaml.safe_load(text)
+    continuation = EnrichmentContinuation(document) if name == "threat-model.yaml" else None
     allowed = _allowed_paths(name, document)
 
     applied = 0
@@ -215,6 +217,8 @@ def _apply_structured(name: str, path_obj: Path, actions: list[dict]) -> tuple[i
         applied += 1
 
     if applied:
+        if continuation:
+            continuation.refresh(document)
         rendered = (
             json.dumps(document, indent=2, ensure_ascii=False) + "\n"
             if name.endswith(".json")

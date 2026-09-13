@@ -40,6 +40,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from enrichment_pass import EnrichmentContinuation
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _atomic_io import atomic_write_json  # noqa: E402
@@ -693,8 +694,10 @@ def main(argv: list[str]) -> int:
     # is worthless until the yaml is rewritten AND the report recomposed.
     on_disk_phantoms = unresolved_phantoms(data)
 
+    continuation = EnrichmentContinuation(data)
     data, changes = reclassify(data)
     if changes and not check_only:
+        continuation.refresh(data)
         yaml_path.write_text(
             yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096, default_flow_style=False),
             encoding="utf-8",

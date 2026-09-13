@@ -353,7 +353,10 @@ class TestPostComposeRequirementsExport:
         monkeypatch.setattr(emitter, "validate_threat_model_output", lambda _doc: (True, []))
         return emitter, yaml_path
 
-    def test_complete_stage2_assessment_is_persisted_in_the_yaml(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("receipt_state", ["valid", "missing", "stale"])
+    def test_complete_stage2_assessment_is_persisted_in_the_yaml(self, tmp_path, monkeypatch, receipt_state):
+        from enrichment_pass import stamp, valid_receipt
+
         fragment = """\
 | Requirement | Status | Priority | Evidence |
 | --- | --- | --- | --- |
@@ -362,8 +365,16 @@ class TestPostComposeRequirementsExport:
 | `LM-001`: Logging | ❓ UNVERIFIABLE | SHOULD | not observed |
 """
         emitter, yaml_path = self._run(tmp_path, monkeypatch, fragment=fragment)
+        document = yaml.safe_load(yaml_path.read_text())
+        if receipt_state != "missing":
+            stamp(document)
+        if receipt_state == "stale":
+            document["assets"] = []
+        yaml_path.write_text(yaml.safe_dump(document))
         assert "written" in emitter.emit(tmp_path)
-        compliance = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))["requirements_compliance"]
+        written = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        assert valid_receipt(written) is (receipt_state == "valid")
+        compliance = written["requirements_compliance"]
         assert compliance["total"] == 3
         assert compliance["requirements"][1]["finding_ids"] == ["F-001"]
 

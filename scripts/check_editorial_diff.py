@@ -386,6 +386,14 @@ def verify(snapshot: dict, output_dir: Path) -> list[dict]:
             violations.append({"file": name, "kind": "unparseable", "detail": f"{type(exc).__name__}: {exc}"})
             continue
         paths_of = yaml_editable_paths if name == YAML_NAME else (lambda d, _n=name: fragment_editable_paths(_n, d))
+        if name == YAML_NAME:
+            from enrichment_pass import valid_receipt
+
+            # A checked writer updates the digest, never the completion time.
+            # All other fields still pass the unchanged editorial guard.
+            if isinstance(before, dict) and isinstance(after, dict) and valid_receipt(before) and valid_receipt(after):
+                before["meta"]["enrichment_pass"]["yaml_sha256"] = ""
+                after["meta"]["enrichment_pass"]["yaml_sha256"] = ""
         violations.extend(_compare_structured(name, before, after, paths_of))
     return violations
 

@@ -32,6 +32,8 @@ Failure modes to watch for in PR review:
 
 ## §4b. Mitigation synthesis invariant
 
+Every successful canonical YAML rebuild is followed by the deterministic emitter pass and the shared schema, mitigation-quality, and build-completeness gates. The final render-completeness gate requires `meta.enrichment_pass` to match the current model. Canonical writers after enrichment may carry forward only a receipt verified before their mutation; missing or stale receipts remain invalid. The marker is optional in the export schema so prior reports remain readable, but it is mandatory for run completion. Its shape lives in the output schema and its hash algorithm in `scripts/enrichment_pass.py`.
+
 When P1/P2/P3 threats exist in `threat-model.yaml`, `mitigations[]` MUST be non-empty. An empty register means the model builder skipped mandatory synthesis. `scripts/validate_intermediate.py:validate_threat_model_output` enforces this; a non-zero post-write self-check MUST block Stage 2.
 
 **Canonical field names** — deviating causes silent data loss:

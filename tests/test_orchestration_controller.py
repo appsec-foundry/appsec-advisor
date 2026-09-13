@@ -1403,6 +1403,30 @@ def test_finalize_abuse_blocks_when_canonical_analysis_cannot_be_persisted(tmp_p
         controller.finalize_abuse(output)
 
 
+@pytest.mark.parametrize("directory", ["assessment", "audit-output"])
+def test_abuse_rebuild_reapplies_enrichment_and_quality_gates(tmp_path, monkeypatch, directory):
+    (tmp_path / directory).mkdir()
+    output = _abuse_output(tmp_path / directory)
+    (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(controller, "_run_script", lambda name, *a, **k: calls.append(name) or _completed())
+    monkeypatch.setattr(controller, "_run_external", lambda cmd, **k: calls.append(Path(cmd[1]).name) or _completed())
+
+    controller.finalize_abuse(output)
+
+    assert calls.index("build_threat_model_yaml.py") < calls.index("auto_emitter_pass.sh")
+    assert calls.index("auto_emitter_pass.sh") < calls.index("validate_mitigation_quality.py")
+    assert calls.index("validate_mitigation_quality.py") < calls.index("assert_completeness.py")
+    assert calls.index("assert_completeness.py") < calls.index("abuse_case_gate.py")
+
+
+def test_abuse_without_rebuild_does_not_run_emitters(tmp_path, monkeypatch):
+    output = _abuse_output(tmp_path)
+    monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+    monkeypatch.setattr(controller, "_run_external", lambda *a, **k: pytest.fail("no rebuild needs enrichment"))
+    controller.finalize_abuse(output)
+
+
 def test_finalize_abuse_completes_when_no_release_gate_fires(tmp_path, monkeypatch):
     output = _abuse_output(tmp_path)
     (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
@@ -4768,16 +4792,25 @@ def test_bootstrap_stub_is_upgraded_when_rebuild_succeeds(tmp_path, monkeypatch)
     yaml_path = tmp_path / "threat-model.yaml"
     _write_yaml(yaml_path, {"analysis_version": 3, "_bootstrap": True})
 
-    def _fake_run(cmd, **kwargs):
-        assert "build_threat_model_yaml.py" in " ".join(str(c) for c in cmd)
-        yaml_path.write_text(
-            yaml.safe_dump({"meta": {"analysis_version": 3}, "threats": [], "attack_surface": [{"id": "AS-1"}]}),
-            encoding="utf-8",
-        )
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+    calls = []
 
-    monkeypatch.setattr(controller.subprocess, "run", _fake_run)
+    def _fake_script(name, args, **kwargs):
+        calls.append(name)
+        if name == "build_threat_model_yaml.py":
+            assert kwargs["timeout"] == 600
+            assert kwargs["cwd"] == controller.SCRIPT_DIR
+            yaml_path.write_text(
+                yaml.safe_dump({"meta": {"analysis_version": 3}, "threats": [], "attack_surface": [{"id": "AS-1"}]}),
+                encoding="utf-8",
+            )
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", _fake_script)
+    monkeypatch.setattr(controller, "_run_external", lambda cmd, **kw: calls.append(Path(cmd[1]).name) or _completed())
     assert controller._upgrade_bootstrap_yaml(tmp_path, {"repo_root": str(tmp_path)}) is True
+    assert calls.index("build_threat_model_yaml.py") < calls.index("auto_emitter_pass.sh")
+    assert calls.index("auto_emitter_pass.sh") < calls.index("validate_mitigation_quality.py")
+    assert "assert_completeness.py" in calls
     assert "_bootstrap" not in yaml.safe_load(yaml_path.read_text(encoding="utf-8"))["meta"]
 
 

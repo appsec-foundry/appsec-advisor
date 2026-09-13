@@ -47,6 +47,13 @@ properties:
         enum: [full, incremental]
       open_user_registration:
         type: boolean
+      enrichment_pass:
+        type: object
+        additionalProperties: false
+        required: [completed_at, yaml_sha256]
+        properties:
+          completed_at: {type: string, format: date-time}
+          yaml_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
       open_registration_source:
         type: string
         enum: [actor-resolution]

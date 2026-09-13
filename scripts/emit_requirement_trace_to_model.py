@@ -51,6 +51,7 @@ from build_threat_model_yaml import (
     build_requirements_compliance,
     build_requirements_provenance,
 )
+from enrichment_pass import EnrichmentContinuation
 from validate_intermediate import validate_threat_model_output
 
 
@@ -143,6 +144,7 @@ def emit(output_dir: Path) -> str:
         raise RequirementsComplianceError("configured requirements compliance was not produced")
     provenance = build_requirements_provenance(Path(output_dir), compliance)
 
+    continuation = EnrichmentContinuation(doc)
     changed = 0
     for m in doc.get("mitigations") or []:
         entry = trace.get(str(m.get("id") or "").strip())
@@ -160,6 +162,7 @@ def emit(output_dir: Path) -> str:
         changed += 1
     if not changed:
         return "unchanged"
+    continuation.refresh(doc)
     ok, errors = validate_threat_model_output(doc)
     if not ok:
         raise RequirementsComplianceError("updated threat-model.yaml is invalid: " + "; ".join(errors[:5]))

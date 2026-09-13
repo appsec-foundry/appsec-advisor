@@ -141,3 +141,46 @@ def test_smoke_dry_run_is_noop(tmp_path):
     log_path = tmp_path / ".agent-run.log"
     log = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
     assert "AUTO_EMITTER_START" not in log, "DRY_RUN=true must not run the emitter pass"
+
+
+@pytest.mark.parametrize("route", ["/register", "/auth/signup"])
+def test_repeated_pass_does_not_duplicate_cards_or_controls(tmp_path, route):
+    import json
+
+    import yaml
+    from enrichment_pass import valid_receipt
+
+    data = yaml.safe_load(MINIMAL_YAML)
+    data["threats"] = [
+        {
+            "id": "T-001",
+            "title": "Missing request validation",
+            "risk": "High",
+            "cwe": "CWE-20",
+            "mitigation_title": "Validate request fields",
+            "source": "stride",
+            "remediation": {
+                "steps": ["Validate incoming fields against the request schema."],
+                "verification": "Submit an unexpected field and confirm rejection.",
+            },
+        }
+    ]
+    sidecar = {"routes": [{"method": "POST", "path": route}]}
+    inv_path = tmp_path / ".route-inventory.json"
+    inv_path.write_text(json.dumps(sidecar))
+    path = tmp_path / "threat-model.yaml"
+    path.write_text(yaml.safe_dump(data))
+    models = []
+    for _ in range(2):
+        result = subprocess.run(
+            ["bash", str(SCRIPT), str(tmp_path), str(tmp_path), str(PLUGIN_ROOT), "false"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        models.append(yaml.safe_load(path.read_text()))
+        assert valid_receipt(models[-1])
+    for key in ("threats", "mitigations", "security_controls"):
+        assert len(models[0][key]) == len(models[1][key])
+    assert models[1]["threats"][0]["vektor"]
+    assert json.loads(inv_path.read_text()) == sidecar

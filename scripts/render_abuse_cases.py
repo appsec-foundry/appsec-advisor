@@ -30,6 +30,7 @@ from pathlib import Path
 
 import yaml
 from _atomic_io import atomic_write_text
+from enrichment_pass import EnrichmentContinuation
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 HEADING = "## 9. Abuse Cases"
@@ -448,7 +449,9 @@ def persist_canonical_analysis(output_dir: Path, analysis: dict) -> bool:
         raise ValueError(f"cannot read threat-model.yaml: {exc}") from exc
     if not isinstance(tm, dict):
         raise ValueError("threat-model.yaml must contain a mapping")
+    continuation = EnrichmentContinuation(tm)
     tm["abuse_case_analysis"] = analysis
+    continuation.refresh(tm)
     pending = tm_path.with_name(".threat-model.yaml.abuse.pending")
     atomic_write_text(
         pending,
@@ -816,6 +819,7 @@ def enrich_changelog_with_abuse_cases(output_dir: Path, models: list[dict]) -> N
     else:
         added = sorted(cid for cid, fp in cur if fp not in prior_fps)
 
+    continuation = EnrichmentContinuation(tm)
     latest = changelog[0]
     latest["abuse_case_fingerprints"] = cur_fps
     added_block = latest.get("added")
@@ -823,6 +827,7 @@ def enrich_changelog_with_abuse_cases(output_dir: Path, models: list[dict]) -> N
         added_block = {}
         latest["added"] = added_block
     added_block["abuse_cases"] = added
+    continuation.refresh(tm)
 
     # Re-dump with the SAME params build_threat_model_yaml.py uses, so the file
     # stays byte-consistent with what the builder would have produced.

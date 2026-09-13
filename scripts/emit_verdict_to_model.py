@@ -34,6 +34,7 @@ from pathlib import Path
 
 import yaml
 from _atomic_io import atomic_write_text
+from enrichment_pass import EnrichmentContinuation
 
 
 def build_verdict(output_dir: Path) -> dict | None:
@@ -83,7 +84,9 @@ def emit(output_dir: Path) -> str:
         return "skipped — threat-model.yaml is not a mapping"
     if doc.get("verdict") == verdict:
         return "unchanged"
+    continuation = EnrichmentContinuation(doc)
     doc["verdict"] = verdict
+    continuation.refresh(doc)
     try:
         atomic_write_text(
             yaml_path,

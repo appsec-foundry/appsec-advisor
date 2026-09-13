@@ -200,6 +200,21 @@ requirements:
 
   REQ-FLW-003:
     applies_to:
+      - scripts/enrichment_pass.py
+      - scripts/auto_emitter_pass.sh
+      - scripts/assert_completeness.py
+      - scripts/apply_editorial_plan.py
+      - scripts/check_editorial_diff.py
+      - scripts/backfill_scanner_remediation.py
+      - scripts/hydrate_mitigation_details.py
+      - scripts/emit_general_mitigation_titles.py
+      - scripts/emit_verdict_to_model.py
+      - scripts/emit_requirement_trace_to_model.py
+      - scripts/render_abuse_cases.py
+      - scripts/triage_compute_ranking.py
+      - scripts/reclassify_components.py
+      - scripts/redact_known_secrets.py
+      - data/completeness-contract.yaml
       - scripts/orchestration_controller.py
       - scripts/context_routing.py
       - scripts/validate_intermediate.py
@@ -207,12 +222,17 @@ requirements:
       - schemas/**
     decisions:
       - OR-3
+      - OR-25
       - RA-1
     documents:
       - docs/internal/contracts/orchestration-actions.md
       - docs/internal/contracts/schema-invariants.md
     coverage: partial
     guards:
+      - tests/test_enrichment_pass.py::test_continuation_never_heals_an_unverified_receipt
+      - tests/test_enrichment_pass.py::test_receipt_detects_changed_or_rebuilt_model
+      - tests/test_orchestration_controller.py::test_abuse_rebuild_reapplies_enrichment_and_quality_gates
+      - tests/test_assert_completeness.py::test_render_rejects_model_without_enrichment_receipt
       - tests/test_orchestration_controller.py::TestContextV2ArchitectureAndBoundary::test_post_stage1_fails_closed_on_missing_artifact
       - tests/test_orchestration_controller.py::test_next_action_routes_to_stage1d_when_abuse_verification_never_ran
       - tests/test_compose_threat_model.py::test_schema_violation_raises

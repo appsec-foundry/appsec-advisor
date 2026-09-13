@@ -1496,12 +1496,20 @@ def _run_script(
     *,
     acceptable: tuple[int, ...] = (0,),
     quiet: bool = True,
+    timeout: float | None = None,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    execution_options = {}
+    if timeout is not None:
+        execution_options["timeout"] = timeout
+    if cwd is not None:
+        execution_options["cwd"] = str(cwd)
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_DIR / name), *args],
         text=True,
         capture_output=True,
         check=False,
+        **execution_options,
     )
     if completed.returncode not in acceptable:
         detail = (completed.stderr or completed.stdout).strip()
@@ -2572,6 +2580,24 @@ def _run_auto_emitter_pass(output_dir: Path, cfg: dict[str, Any], receipts: list
     except ControllerError as exc:
         receipts.append("auto_emitter_pass.sh: best-effort failure")
         _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+
+
+def _enrich_and_gate_yaml(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> None:
+    """Every successful rebuild restores enrichment before the same hard gates."""
+    _run_auto_emitter_pass(output_dir, cfg, receipts)
+    # These producers supply the actionability gate and must also run as hard
+    # steps: optional enrichment failures must not masquerade as author defects.
+    _run_script("backfill_scanner_remediation.py", [str(output_dir)])
+    _run_script("hydrate_mitigation_details.py", [str(output_dir)])
+    _run_script(
+        "validate_intermediate.py",
+        ["threat_model_output", str(output_dir / "threat-model.yaml")],
+    )
+    _run_script("validate_mitigation_quality.py", [str(output_dir)])
+    _run_script(
+        "assert_completeness.py",
+        [str(output_dir), "--phase", "build", "--plugin-root", str(PLUGIN_ROOT)],
+    )
 
 
 def _document_fault(producer: str, message: str, errors: list[str] | None = None) -> ControllerError:
@@ -5506,40 +5532,7 @@ def _context_v2_finalize(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any
         "validate_intermediate.py",
         ["threat_model_output", str(output_dir / "threat-model.yaml")],
     )
-    # Context-v2 builds canonical YAML directly instead of passing through the
-    # former post-Stage-1 gate. It still needs the same deterministic enrichment
-    # before the P1/P2 actionability gate: scanner remediation backfill and
-    # mitigation-detail hydration copy concrete steps and verification from
-    # finding producers onto mitigation cards.
-    _run_auto_emitter_pass(output_dir, cfg, receipts)
-    # Re-validate: nine emitters just rewrote the document the check above
-    # cleared, so without this the guarantee covers a model that no longer
-    # exists — `emit_clean_finding_titles` alone rewrites every title. Same
-    # rule as the abuse-case rebuild below: an invalid canonical model must not
-    # reach Stage 2, because everything downstream (threat-model.md, SARIF,
-    # Threat Dragon) is a pure function of it. A failure here is an emitter
-    # defect, and since `clear-abort` exists the run survives the diagnosis.
-    _run_script(
-        "validate_intermediate.py",
-        ["threat_model_output", str(output_dir / "threat-model.yaml")],
-    )
-    # The two emitters that feed the gate below run again here, as hard steps.
-    # `auto_emitter_pass.sh` is deliberately best-effort so a failed enrichment
-    # cannot destroy 25 minutes of Stage 1, and it guards every emitter with
-    # `|| true` — including these two, whose own comments there already say they
-    # supply this gate. A best-effort producer feeding a fail-closed consumer
-    # means a silently skipped hydration surfaces as content findings against
-    # the author instead of as the tooling failure it is: on the delivered
-    # juice-shop model the gate reports 96 INVALID lines without them and passes
-    # with them. Both are idempotent, so repeating them costs nothing and a
-    # second failure aborts naming the producer, which is the true fault.
-    _run_script("backfill_scanner_remediation.py", [str(output_dir)])
-    _run_script("hydrate_mitigation_details.py", [str(output_dir)])
-    _run_script("validate_mitigation_quality.py", [str(output_dir)])
-    _run_script(
-        "assert_completeness.py",
-        [str(output_dir), "--phase", "build", "--plugin-root", str(PLUGIN_ROOT)],
-    )
+    _enrich_and_gate_yaml(output_dir, cfg, receipts)
     atomic_write_text(
         output_dir / ".appsec-checkpoint",
         "phase=10b status=completed need_render=true runtime_generation=context-v2\n",
@@ -6217,7 +6210,7 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
         # abort before the write and leave the previous yaml intact, so those
         # stay best-effort.
         try:
-            _best_effort_script(
+            rebuilt = _best_effort_script(
                 output_dir,
                 "build_threat_model_yaml.py",
                 [
@@ -6237,6 +6230,8 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
                 + _schema_failure_detail(str(exc)),
                 exc.exit_code,
             ) from exc
+        if rebuilt:
+            _enrich_and_gate_yaml(output_dir, cfg, receipts)
     if verdicts.is_file():
         _best_effort_script(
             output_dir,
@@ -6412,16 +6407,11 @@ def _upgrade_bootstrap_yaml(output_dir: Path, cfg: dict[str, Any]) -> bool:
         args += ["--repo-root", repo_root]
     args += ["--plugin-root", str(SCRIPT_DIR.parent)]
     try:
-        proc = subprocess.run(
-            [sys.executable, str(SCRIPT_DIR / "build_threat_model_yaml.py"), *args],
-            cwd=str(SCRIPT_DIR),
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if proc.returncode != 0:
+        _run_script("build_threat_model_yaml.py", args, timeout=600, cwd=SCRIPT_DIR)
+        if _is_bootstrap() is not False:
+            return False
+        _enrich_and_gate_yaml(output_dir, cfg, [])
+    except (ControllerError, OSError, subprocess.SubprocessError):
         return False
     return _is_bootstrap() is False
 

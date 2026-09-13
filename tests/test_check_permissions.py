@@ -103,6 +103,12 @@ def test_maintainer_test_groups_use_existing_shell_permission():
         assert any(cp._rule_covers(rule, f"Bash({command})") for rule in rules)
 
 
+def test_enrichment_receipt_uses_existing_shell_and_output_permissions():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    assert any(cp._rule_covers(rule, "Bash(python3 enrichment_pass.py output)") for rule in rules)
+    assert "Write(${OUTPUT_DIR}/**)" in rules
+
+
 def test_evidence_bundle_command_and_artifact_are_covered_by_existing_rules():
     entries = cp.load_required(cp.DATA_FILE)
     rules = [entry["entry"] for entry in entries]

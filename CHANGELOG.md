@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Threat-model rebuilds retain deterministic enrichment, and final completion rejects missing or stale enrichment receipts.
 - Run-issue fixes use a validated diagnosis from the same run for manual plugin remediation instead of automatically raising agent budgets.
 - An early STRIDE completion check no longer starts the same component analyses again while their wave is still running.
 - A run whose closing message rewrites the completion summary is asked once to show it as printed, so Next Steps and the team questions reach the reader.
