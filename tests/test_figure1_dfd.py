@@ -280,6 +280,47 @@ def test_one_bus_per_attacker_with_stubs():
     assert any("stub does not start on its attacker's bus" in p for p in problems)
 
 
+@pytest.mark.parametrize("variant", [False, True])
+@pytest.mark.parametrize("direction", ["forward", "backward"])
+def test_flow_lanes_separate_opposing_stubs_at_equal_port_heights(variant, direction):
+    names = ("df-063", "df-074") if variant else ("df-021", "df-032")
+    flows = [
+        {"ids": [name], "ys": ys, "yd": yd, "kind": direction, "skip": False, "src": name, "dst": "service"}
+        for name, ys, yd in ((names[0], 50, 100), (names[1], 100, 300))
+    ]
+    if direction == "backward":
+        for edge in flows:
+            edge["ys"], edge["yd"] = edge["yd"], edge["ys"]
+
+    def routed(order):
+        edges = copy.deepcopy(order)
+        for index, edge in enumerate(edges):
+            lane = 140 + index * 10
+            left, right = (edge["ys"], edge["yd"]) if direction == "forward" else (edge["yd"], edge["ys"])
+            edge["pts"] = [(0, left), (lane, left), (lane, right), (250, right)]
+        return edges
+
+    assert any("collinear horizontal overlap" in p for p in F._check_geometry({}, routed(flows), F._Canvas(), []))
+    ordered = F._flow_lane_order(flows)
+    assert ordered == flows[::-1]
+    assert F._check_geometry({}, routed(ordered), F._Canvas(), []) == []
+    flows[1]["ys" if direction == "forward" else "yd"] += 5
+    assert F._flow_lane_order(flows) == flows
+
+
+def test_cyclic_lane_constraints_remain_visible_to_the_geometry_gate():
+    flows = [
+        {"ys": 10, "yd": 20, "kind": "forward", "skip": False},
+        {"ys": 20, "yd": 10, "kind": "forward", "skip": False},
+    ]
+    assert F._flow_lane_order(flows) == flows
+    for index, edge in enumerate(flows):
+        lane = 140 + index * 10
+        edge.update(src="client", dst="service", ids=[f"df-{index + 1:03d}"])
+        edge["pts"] = [(0, edge["ys"]), (lane, edge["ys"]), (lane, edge["yd"]), (250, edge["yd"])]
+    assert any("collinear horizontal overlap" in p for p in F._check_geometry({}, flows, F._Canvas(), []))
+
+
 def test_weakness_line_uses_specific_finding_causes_without_a_parent_registry():
     y, apd, tax = _model()
     svg = _checked()
@@ -400,6 +441,97 @@ def test_roles_and_identity_provider_use_distinct_left_side_nodes():
     assert F.check_diagram(model, paths, taxonomy)[1] == []
     attacker_colors = {state["nodes"][e["src"]]["color"] for e in state["edges"] if e.get("attack")}
     assert len(attacker_colors) == 2
+
+
+def _role_access_model(registration=True, access=True, variant=False):
+    model, paths, taxonomy = _model(xss=True)
+    model["meta"]["open_user_registration"] = registration
+    names = ("Editor", "Reviewer") if variant else ("Reader", "Contributor")
+    ids = ("ext-alpha", "ext-beta") if variant else ("ext-first", "ext-second")
+    model["external_entities"] = [
+        {"id": key, "name": name, "kind": "legitimate-role", **({"access": slug} if access else {})}
+        for key, name, slug in (
+            (ids[0], names[0], "internet-anon"),
+            (ids[1], names[1], "internet-user"),
+            ("ext-operator", "User", "internet-priv-user"),
+            ("ext-auditor", "Member", "internet-priv-user"),
+        )
+    ]
+    model["data_flows"][0]["from_entity"] = ids[0]
+    model["data_flows"][3]["from_entity"] = ids[1]
+    model["data_flows"].append(
+        {
+            "id": "df-011",
+            "from": "spa",
+            "to": "external",
+            "to_entity": ids[1],
+            "protocol": "HTTPS",
+        }
+    )
+    return model, paths, taxonomy, ids
+
+
+@pytest.mark.parametrize("registration", [True, False, None, "false"])
+@pytest.mark.parametrize("access", [True, False])
+@pytest.mark.parametrize("variant", [True, False])
+def test_role_access_projection_remaps_both_flow_ends_without_changing_canonical_model(registration, access, variant):
+    model, paths, taxonomy, ids = _role_access_model(registration, access, variant)
+    before = copy.deepcopy(model)
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    svg, state = F._build(model, scenarios, actors)
+    folded = registration is True and access
+    assert sum(key in state["nodes"] for key in ids) == (1 if folded else 2)
+    assert "ext-operator" in state["nodes"] and "ext-auditor" in state["nodes"]
+    assert (F.USER_ID not in state["nodes"]) is folded
+    flows = {f["id"]: f for f in state["d"]["data_flows"]}
+    if folded:
+        target = next(key for key in ids if key in state["nodes"])
+        assert (
+            flows["df-001"]["from_entity"] == flows["df-004"]["from_entity"] == flows["df-011"]["to_entity"] == target
+        )
+        assert all(edge["dst"] == target for edge in state["edges"] if edge.get("victim"))
+        assert state["nodes"][target]["victim_label"] == "victim of ③"
+        assert "self-registration is open" in " ".join(F.legitimate_role_notes(model))
+        assert "Individual flows may still require login" not in svg
+    assert model == before
+    assert F.check_diagram(model, paths, taxonomy)[1] == []
+
+
+def test_unclassified_role_keeps_the_generic_victim_separate():
+    model, paths, taxonomy, ids = _role_access_model()
+    model["external_entities"].append({"id": "ext-unknown", "name": "Participant", "kind": "legitimate-role"})
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors)
+    assert sum(key in state["nodes"] for key in ids) == 1
+    assert F.USER_ID in state["nodes"]
+    assert all(edge["dst"] == F.USER_ID for edge in state["edges"] if edge.get("victim"))
+    assert F.check_diagram(model, paths, taxonomy)[1] == []
+
+
+def test_equal_regular_access_can_fold_without_open_registration():
+    model, paths, taxonomy, ids = _role_access_model(registration=False)
+    model["external_entities"][0]["access"] = "internet-user"
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors)
+    assert sum(key in state["nodes"] for key in ids) == 1
+    target = next(key for key in ids if key in state["nodes"])
+    assert state["nodes"][target]["name"] == "Authenticated user"
+    assert F.check_diagram(model, paths, taxonomy)[1] == []
+
+
+def test_unnamed_flows_are_not_assigned_to_the_merged_victim_role():
+    model, paths, taxonomy, ids = _role_access_model()
+    model["data_flows"].append({"id": "df-012", "from": "external", "to": "spa", "protocol": "HTTPS"})
+    before = copy.deepcopy(model)
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors)
+    assert F.USER_ID in state["nodes"]
+    assert next(edge for edge in state["edges"] if "df-012" in edge["ids"])["src"] == F.USER_ID
+    assert "victim" not in state["nodes"][F.USER_ID]["sub"]
+    target = next(key for key in ids if key in state["nodes"])
+    assert all(edge["dst"] == target for edge in state["edges"] if edge.get("victim"))
+    assert model == before
+    assert F.check_diagram(model, paths, taxonomy)[1] == []
 
 
 def test_sensitive_marker_is_absent_but_evidenced_asset_storage_remains():

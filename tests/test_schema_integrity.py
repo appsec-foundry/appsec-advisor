@@ -30,6 +30,39 @@ SCHEMAS_DIR = REPO_ROOT / "schemas" / "fragments"
 VALIDATE_PY = REPO_ROOT / "scripts" / "validate_fragment.py"
 
 
+def test_external_entity_access_is_consistent_and_role_only():
+    import yaml
+
+    schema_root = REPO_ROOT / "schemas"
+    schemas = [
+        yaml.safe_load((schema_root / name).read_text())["properties"]["external_entities"]["items"]
+        for name in (
+            "fragments/data-flows.schema.json",
+            "trust-boundary-assessment-input.schema.json",
+            "threat-model.output.schema.yaml",
+        )
+    ]
+    assert schemas[0] == schemas[1] == schemas[2]
+    entity = {
+        "id": "ext-reader",
+        "name": "Reader",
+        "kind": "legitimate-role",
+        "description": "Reads records",
+        "evidence": [{"file": "src/routes.ts", "line": 1}],
+    }
+    vocabulary = yaml.safe_load((REPO_ROOT / "data/posture-actor-labels.yaml").read_text())["actors"]
+    for schema in schemas:
+        validator = jsonschema.Draft202012Validator(schema)
+        assert validator.is_valid(entity)
+        for access in ("internet-anon", "internet-user", "internet-priv-user"):
+            assert access in vocabulary
+            assert validator.is_valid({**entity, "access": access})
+            assert not validator.is_valid({**entity, "access": access, "kind": "identity-provider"})
+            assert not validator.is_valid({**entity, "access": access, "kind": "external-service"})
+        for access in (None, "admin", "repo-read"):
+            assert not validator.is_valid({**entity, "access": access})
+
+
 def _load_validate_fragment_module():
     spec = importlib.util.spec_from_file_location("validate_fragment", VALIDATE_PY)
     module = importlib.util.module_from_spec(spec)

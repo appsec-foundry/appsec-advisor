@@ -32,10 +32,14 @@ published example.
 from __future__ import annotations
 
 import collections
+import copy
 import html
 import re
 import sys
+from functools import cache
+from pathlib import Path
 
+import yaml
 from detect_open_registration import overview_actor_notes, overview_actor_slug
 from prepare_trust_boundary_context import boundary_endpoints_valid
 from weakness_classifier import load_weakness_classes
@@ -490,7 +494,79 @@ def _flow_endpoints(flow):
     )
 
 
-def _build_model(d, scenarios, actors):
+@cache
+def _role_labels():
+    """Load legitimate-role labels from the same vocabulary as attacker labels."""
+    return yaml.safe_load((Path(__file__).resolve().parents[1] / "data/posture-actor-labels.yaml").read_text())[
+        "actors"
+    ]
+
+
+def _project_legitimate_roles(yaml_data):
+    """Fold only explicit regular access, retaining canonical identities in the input.
+
+    One merged regular role may also represent the generic victim. A second
+    regular or unclassified role makes that assignment ambiguous. Privileged
+    roles never merge and never become this default victim target.
+    """
+    d = copy.deepcopy(yaml_data)
+    meta = d.get("meta") or {}
+    groups = collections.defaultdict(list)
+    for entity in d.get("external_entities") or []:
+        if entity.get("kind") == "legitimate-role" and entity.get("access") in ("internet-anon", "internet-user"):
+            groups[overview_actor_slug(entity["access"], meta)].append(entity)
+    groups = {slug: rows for slug, rows in groups.items() if len(rows) > 1}
+    if not groups:
+        return d, USER_ID, []
+    aliases, merged = {}, {}
+    labels = _role_labels()
+    for slug, rows in groups.items():
+        key = min(row["id"] for row in rows)
+        label = labels[slug]
+        prefix = (
+            "open_registration_role"
+            if slug == "internet-anon" and meta.get("open_user_registration") is True
+            else "legitimate_role"
+        )
+        merged[key] = {
+            **next(row for row in rows if row["id"] == key),
+            "name": label[prefix + "_label"],
+            "description": label[prefix + "_subtitle"],
+            "access": slug,
+        }
+        aliases.update({row["id"]: key for row in rows})
+    entities = []
+    seen = set()
+    for entity in d["external_entities"]:
+        key = aliases.get(entity["id"], entity["id"])
+        if key not in seen:
+            entities.append(merged.get(key, entity))
+            seen.add(key)
+    d["external_entities"] = entities
+    for flow in d.get("data_flows") or []:
+        for endpoint in ("from_entity", "to_entity"):
+            if flow.get(endpoint) in aliases:
+                flow[endpoint] = aliases[flow[endpoint]]
+    regular = [
+        row for row in entities if row.get("kind") == "legitimate-role" and row.get("access") != "internet-priv-user"
+    ]
+    victim = regular[0]["id"] if len(regular) == 1 and regular[0]["id"] in merged else USER_ID
+    mixed = any({row["access"] for row in rows} == {"internet-anon", "internet-user"} for rows in groups.values())
+    notes = [
+        "Anonymous and authenticated regular users share one card because self-registration is open."
+        if mixed
+        else "Regular roles with equivalent access share one card."
+    ]
+    notes.append("Individual flows may still require login.")
+    return d, victim, notes
+
+
+def legitimate_role_notes(yaml_data):
+    """Describe actual role grouping for the report caption, not the SVG legend."""
+    return _project_legitimate_roles(yaml_data)[2]
+
+
+def _build_model(d, scenarios, actors, victim_target=USER_ID):
     comps = [c for c in (d.get("components") or []) if isinstance(c, dict) and c.get("id")]
     cnum = {c["id"]: f"C-{i:02d}" for i, c in enumerate(comps, 1)}
     by_cnum = {v: k for k, v in cnum.items()}
@@ -566,7 +642,11 @@ def _build_model(d, scenarios, actors):
         "kind": "ext",
         "name": "User",
         "sub": "legitimate client"
-        + (" · victim of " + " ".join("①②③④⑤⑥⑦⑧⑨"[int(n) - 1] for n in victim_of[:4]) if victim_of else ""),
+        + (
+            " · victim of " + " ".join("①②③④⑤⑥⑦⑧⑨"[int(n) - 1] for n in victim_of[:4])
+            if victim_of and victim_target == USER_ID
+            else ""
+        ),
         "zone": "internet",
         "col": 0,
         "w": EXT_W,
@@ -611,7 +691,11 @@ def _build_model(d, scenarios, actors):
             "order": len(nodes),
             "badges": [],
         }
-    needs_generic_user = victim_of or any(
+    if victim_of and victim_target != USER_ID:
+        nodes[victim_target]["col_rank"] = 0
+        nodes[victim_target]["victim_label"] = "victim of " + " ".join("①②③④⑤⑥⑦⑧⑨"[int(n) - 1] for n in victim_of[:4])
+        nodes[victim_target]["h"] += 12
+    needs_generic_user = (victim_of and victim_target == USER_ID) or any(
         f.get("from") == "external" and not f.get("from_entity") for f in d.get("data_flows") or []
     )
     if not needs_generic_user and any(e.get("kind") == "legitimate-role" for e in d.get("external_entities") or []):
@@ -680,7 +764,7 @@ def _build_model(d, scenarios, actors):
         for dst in hit:
             atk.setdefault((src, dst), []).append(s["n"])
         if s.get("victim"):
-            atk.setdefault((src, USER_ID), []).append(s["n"])
+            atk.setdefault((src, victim_target), []).append(s["n"])
     for (src, dst), ns in atk.items():
         edges.append(
             {
@@ -691,7 +775,7 @@ def _build_model(d, scenarios, actors):
                 "tb": [],
                 "attack": True,
                 "scen": ns,
-                "victim": dst == USER_ID,
+                "victim": dst == victim_target,
             }
         )
     # trust boundaries: chip on the flow that crosses them, else a tag on the guarded node
@@ -765,6 +849,34 @@ def _select_drawn(nodes, edges, d):
 
 
 # ---- layout ----------------------------------------------------------------------------------
+def _flow_lane_order(flows):
+    """Keep opposing horizontal stubs apart when their ports share a height.
+
+    A left stub must turn before a right stub on the same row. Preserve the
+    existing lane order wherever those constraints allow it. Cyclic constraints
+    cannot be resolved by lane ordering; the geometric gate still rejects them.
+    """
+
+    def ports(edge):
+        return (edge["ys"], edge["yd"]) if edge["kind"] == "forward" else (edge["yd"], edge["ys"])
+
+    prerequisites = {id(edge): set() for edge in flows}
+    for left in flows:
+        for right in flows:
+            if left is not right and not left["skip"] and not right["skip"] and ports(left)[0] == ports(right)[1]:
+                prerequisites[id(right)].add(id(left))
+    pending, ordered = list(flows), []
+    while pending:
+        edge = next((edge for edge in pending if not prerequisites[id(edge)]), None)
+        if edge is None:
+            return flows
+        pending.remove(edge)
+        ordered.append(edge)
+        for required in prerequisites.values():
+            required.discard(id(edge))
+    return ordered
+
+
 def _layout(nodes, edges, dropped, tb_threats, ncols=3):
     # 1. sides: L = entering from the left, R = leaving right / intra-column channel
     for e in edges:
@@ -882,13 +994,19 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
         n = nodes[nid]
         for side in ("L", "R"):
             items = sorted(sd[side], key=lambda it: (other(it), it[1].get("ids", [])))
-            k = len(items)
-            for i, (role, e) in enumerate(items):
+            ports = {}
+            for role, e in items:
+                shared_bus = role == "out" and e.get("attack") and e["kind"] == "forward" and not e["skip"]
+                key = ("bus", e["src"]) if shared_bus else id(e)
+                ports.setdefault(key, []).append((role, e))
+            k = len(ports)
+            for i, port in enumerate(ports.values()):
                 yv = n["y"] + n["tagspace"] + (n["h"] - n["tagspace"]) * (i + 1) / (k + 1)
-                if role == "out":
-                    e["ys"] = yv
-                else:
-                    e["yd"] = yv
+                for role, e in port:
+                    if role == "out":
+                        e["ys"] = yv
+                    else:
+                        e["yd"] = yv
 
     # 6. routes
     boundaries = [col_x[g] + col_w[g] + B_OFF for g in range(ncols - 1)]
@@ -900,7 +1018,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
     lanes = {}
     for g, ge in gap_edges.items():
         ge.sort(key=lambda e: (abs(e["yd"] - e["ys"]), e["ys"], e["ids"]))
-        flows = [e for e in ge if not e.get("attack")]
+        flows = _flow_lane_order([e for e in ge if not e.get("attack")])
         for i, e in enumerate(flows):
             lanes[id(e)] = boundaries[g] + LANE0 + i * LANE_STEP
         buses = list(dict.fromkeys(e["src"] for e in ge if e.get("attack")))  # one bus per attacker, right of the flows
@@ -957,7 +1075,8 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
             groups[e["src"]].append(e)
     for src, ge in groups.items():
         s = nodes[src]
-        bus, ys = ge[0]["pts"][1][0], s["cy"]
+        # Use an allocated attack port so the shared trunk cannot overlap a separate victim edge.
+        bus, ys = ge[0]["pts"][1][0], ge[0]["ys"]
         ge.sort(key=lambda e: e["yd"])
         down = [e for e in ge if e["yd"] >= ys]
         up = [e for e in ge if e["yd"] < ys]
@@ -1242,7 +1361,10 @@ def _render(
             label = (n["actor_code"] + " · " if n.get("actor_code") else "") + n["name"]
             for i, line in enumerate(_wrap(label, w - (tx - x) - 8, 10)[:2]):
                 c.text(tx, y + 19 + i * 12, line, size=10, anchor="start", weight="bold", fill=col)
-            c.text(tx, y + h - 8, _cut(n["sub"], 36), size=7.5, anchor="start", fill=MUTED, italic=True)
+            sub_y = y + h - (20 if n.get("victim_label") else 8)
+            c.text(tx, sub_y, _cut(n["sub"], 36), size=7.5, anchor="start", fill=MUTED, italic=True)
+            if n.get("victim_label"):
+                c.text(tx, y + h - 8, n["victim_label"], size=7.5, anchor="start", fill=MUTED, italic=True)
             continue
         crit = n["sev"].get("Critical", 0)
         border = RED if crit else (ORANGE if n["sev"].get("High") else LINE)
@@ -1648,8 +1770,8 @@ def _audit(d, nodes, edges, chips, boundaries):
 
 # ---- entry points ---------------------------------------------------------------------------------
 def _build(yaml_data, scenarios, actors, actor_notes=()):
-    d = dict(yaml_data)  # the builder annotates a shallow copy, never the caller's model
-    nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors)
+    d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
+    nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors, victim_target)
     nodes, edges, dropped = _select_drawn(nodes, edges, d)
     col_x, col_w, zone_boxes, boundaries, chips, height = _layout(nodes, edges, dropped, tb_threats)
     attached = {a.get("id") for n in nodes.values() for a in n.get("assets", [])}

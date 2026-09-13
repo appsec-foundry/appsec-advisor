@@ -24,6 +24,7 @@
           "description",
           "evidence"
         ],
+        "dependentSchemas": {"access": {"properties": {"kind": {"const": "legitimate-role"}}}},
         "properties": {
           "id": {
             "type": "string",
@@ -43,6 +44,7 @@
               "external-service"
             ]
           },
+          "access": {"type": "string", "enum": ["internet-anon", "internet-user", "internet-priv-user"]},
           "description": {
             "type": "string",
             "minLength": 1,

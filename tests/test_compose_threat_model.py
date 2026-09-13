@@ -5673,6 +5673,31 @@ _FIG1_TAX = {
 }
 
 
+@pytest.mark.parametrize("registration", [True, False])
+@pytest.mark.parametrize("access", [True, False])
+@pytest.mark.parametrize("fallback", [True, False])
+def test_figure1_role_grouping_explanation_follows_image_only_when_drawn(
+    tmp_path, monkeypatch, registration, access, fallback
+):
+    ctx = _fig1_ctx(tmp_path)
+    ctx.yaml_data["meta"]["open_user_registration"] = registration
+    ctx.yaml_data["external_entities"] = [
+        {"id": key, "name": name, "kind": "legitimate-role", **({"access": slug} if access else {})}
+        for key, name, slug in (("ext-reader", "Reader", "internet-anon"), ("ext-editor", "Editor", "internet-user"))
+    ]
+    if fallback:
+        monkeypatch.setattr("figure1_dfd.check_diagram", lambda *a, **kw: ("", ["cannot route"]))
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    note = "Anonymous and authenticated regular users share one card because self-registration is open."
+    assert (note in md) is (registration and access and not fallback)
+    if note in md:
+        assert md.index(note) > md.index("](figure1.svg)")
+        assert "Individual flows may still require login." in md
+    svg = (tmp_path / "figure1.svg").read_text()
+    assert note not in svg
+    assert "Individual flows may still require login." not in svg
+
+
 def test_render_figure1_svg_writes_file_and_image_ref(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()

@@ -24,6 +24,10 @@ schema_version: 1
 
 actors:
   internet-anon:
+    legitimate_role_label: "Anonymous user"
+    legitimate_role_subtitle: "no account required"
+    open_registration_role_label: "User"
+    open_registration_role_subtitle: "anonymous or self-registered"
     label: "Anonymous Internet Attacker"
     default_subtitle: "no account or prior foothold"
     role: attacker
@@ -33,6 +37,8 @@ actors:
     fa_icon: "fa:fa-user-secret"
 
   internet-user:
+    legitimate_role_label: "Authenticated user"
+    legitimate_role_subtitle: "regular account"
     label: "Authenticated Internet Attacker"
     default_subtitle: "owns a regular account; logged in"
     role: attacker

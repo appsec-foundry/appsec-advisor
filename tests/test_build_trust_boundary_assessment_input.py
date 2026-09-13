@@ -310,7 +310,8 @@ def test_rejects_unknown_flow_endpoint(tmp_path: Path):
         builder.build(repo, output, "standard")
 
 
-def test_named_external_roles_survive_boundary_input_and_keep_flow_identity(tmp_path):
+@pytest.mark.parametrize("access", [None, "internet-anon", "internet-user", "internet-priv-user"])
+def test_named_external_roles_survive_boundary_input_and_keep_flow_identity(tmp_path, access):
     repo, output, receipt = _setup(tmp_path)
     _write_flows(output, receipt)
     path = output / ".data-flows.json"
@@ -320,6 +321,7 @@ def test_named_external_roles_survive_boundary_input_and_keep_flow_identity(tmp_
             "id": "ext-operator",
             "name": "Operator",
             "kind": "legitimate-role",
+            **({"access": access} if access is not None else {}),
             "description": "Maintains settings",
             "evidence": [{"file": "src/flow.ts", "line": 1}],
         }

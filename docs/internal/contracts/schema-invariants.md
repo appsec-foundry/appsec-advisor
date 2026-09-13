@@ -40,6 +40,12 @@ Generic-route corroboration is limited to the Node/Express JavaScript and TypeSc
 
 `meta.public_source_repo` affects overview actor grouping, not finding evidence or severity. Repository-read access folds into anonymous internet access when the flag is true; build-time and privileged access do not. Detection uses local license and source-host metadata without network calls, so a self-hosted public repository may remain unknown and a private repository on a known host may appear public. YAML-only pins remain transient across rebuilds; this verification adds no configuration or organization-profile override source.
 
+## Legitimate-role access in Figure 1
+
+An external entity may carry `access` only with `kind: legitimate-role`, using `internet-anon`, `internet-user`, or `internet-priv-user` when cited code establishes that access. Boundary assessment and canonical YAML preserve this optional field and the original entity and flow identities. Older entities without access remain valid and distinct.
+
+Figure 1 may combine explicitly classified regular roles with equivalent access, using canonical registration evidence and vocabulary labels. Privileged and unclassified roles remain separate. The figure may assign a generic victim to a unique combined regular role only when no other regular or unclassified role makes that assignment ambiguous. Unnamed flow endpoints retain their generic participant. The report paragraph immediately below the figure explains the actual grouping and retained login requirements; the SVG keeps a short role subtitle instead. A fallback figure that does not combine those roles must not claim that it does. The canonical model retains individual flow identities.
+
 ## §4b. Mitigation synthesis invariant
 
 Every successful canonical YAML rebuild is followed by the deterministic emitter pass and the shared schema, mitigation-quality, and build-completeness gates. The final render-completeness gate requires `meta.enrichment_pass` to match the current model. Canonical writers after enrichment may carry forward only a receipt verified before their mutation; missing or stale receipts remain invalid. The marker is optional in the export schema so prior reports remain readable, but it is mandatory for run completion. Its shape lives in the output schema and its hash algorithm in `scripts/enrichment_pass.py`.

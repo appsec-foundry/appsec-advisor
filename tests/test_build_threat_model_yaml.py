@@ -3351,7 +3351,8 @@ def test_an_id_outside_the_catalog_is_not_exported(tmp_path):
 
 
 @pytest.mark.parametrize("owner", [None, True, False])
-def test_builder_preserves_named_entities_and_resolved_registration_equivalence(tmp_path, owner):
+@pytest.mark.parametrize("access", [None, "internet-anon", "internet-user", "internet-priv-user"])
+def test_builder_preserves_named_entities_and_resolved_registration_equivalence(tmp_path, owner, access):
     import yaml
 
     from tests.test_validate_intermediate import _valid_resolved_actors
@@ -3398,6 +3399,7 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
         "name": "Operator",
         "kind": "legitimate-role",
         "description": "Maintains settings",
+        **({"access": access} if access is not None else {}),
         "evidence": [{"file": "roles.ts", "line": 1}],
     }
     _write_json(

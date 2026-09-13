@@ -5914,8 +5914,9 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     # falls back like a crash does — and both paths leave a RENDER_WARN, so a
     # silent downgrade cannot hide behind a report that still has a Figure 1.
     svg, intro = "", ""
+    role_notes = []
     try:
-        from figure1_dfd import check_diagram
+        from figure1_dfd import check_diagram, legitimate_role_notes
 
         svg, problems = check_diagram(ctx.yaml_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels)
         if problems:
@@ -5925,6 +5926,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             )
             svg = ""
         else:
+            role_notes = legitimate_role_notes(ctx.yaml_data)
             intro = (
                 "Data-flow diagram: external entities, processes and data stores in their trust zones "
                 "(Internet → Application → Data), the data flows between them, and the attack scenarios "
@@ -5978,7 +5980,8 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         src = f"data:image/svg+xml;base64,{b64}"
     else:
         src = ctx.figure_basename
-    return f"{intro}\n\n![Figure 1 - Architecture & Top Threats]({src})"
+    caption = "\n\n" + " ".join(role_notes) if role_notes else ""
+    return f"{intro}\n\n![Figure 1 - Architecture & Top Threats]({src}){caption}"
 
 
 def _figure2_basename(ctx: RenderContext) -> str:
