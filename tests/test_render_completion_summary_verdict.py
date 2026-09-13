@@ -89,7 +89,7 @@ def test_bullet_classes_follow_finding_order_without_repeats(tmp_path):
     assert bullet["classes"] == ["Query Injection", "Path Traversal", "XSS"]
 
 
-def test_rows_carry_rank_mark_outcome_and_first_class_in_one_column():
+def test_rows_carry_mark_outcome_and_first_class_in_one_column():
     rows = stm.render_worst_case_table(
         [
             _bullet("Admin takeover", ["SQL Injection"]),
@@ -98,24 +98,25 @@ def test_rows_carry_rank_mark_outcome_and_first_class_in_one_column():
         ],
         indent="",
     )
-    assert [row[:5] for row in rows[:3]] == ["1    ", "2 ✓  ", "3    "]
-    assert rows[0][5:].startswith("Admin takeover") and rows[1][5:].startswith("Token forgery")
-    assert rows[0].index("SQL Injection") == rows[1].index("Hard-coded Key +1")
-    assert rows[2] == "3    Unclassified outcome"
+    assert [row[:3] for row in rows[:3]] == ["•  ", "✓  ", "•  "]
+    assert rows[0][3:].startswith("Admin takeover") and rows[1][3:].startswith("Token forgery")
+    assert rows[0].index("via SQL Injection") == rows[1].index("via Hard-coded Key +1")
+    assert rows[2] == "•  Unclassified outcome"
     assert rows[3:] == ["", stm.WORST_CASE_LEGEND]
 
 
 def test_legend_only_when_a_path_is_verified():
     assert stm.render_worst_case_table([_bullet("Admin takeover", ["SQL Injection"])]) == [
-        "  1    Admin takeover  SQL Injection"
+        "  •  Admin takeover  via SQL Injection"
     ]
     assert stm.render_worst_case_table([]) == []
 
 
-def test_ranks_stay_aligned_past_nine():
+def test_rows_claim_no_rank():
+    # RA-14: the verdict's bullets carry no severity order, so no row shows a rank.
     rows = stm.render_worst_case_table([_bullet(f"Outcome {n}", ["XSS"]) for n in range(1, 11)], indent="")
-    assert len({row.index("XSS") for row in rows}) == 1
-    assert rows[0].startswith("1 ") and rows[9].startswith("10 ")
+    assert len({row.index("via XSS") for row in rows}) == 1
+    assert all(row[0] in "✓•" for row in rows)
 
 
 def test_no_line_opens_a_markdown_block():
@@ -163,7 +164,7 @@ def test_completion_summary_swaps_the_bullets_for_the_table(tmp_path):
     assert r.returncode == 0, r.stderr
     verdict_block = r.stdout.split("-- Verdict", 1)[1].split("Fix the query layer first.", 1)[0]
     assert "\n  What an attacker can do today, worst first\n" in verdict_block
-    assert f"\n  1 ✓  Customer data exposed  {label}\n" in verdict_block
+    assert f"\n  ✓  Customer data exposed  via {label}\n" in verdict_block
     assert stm.WORST_CASE_LEGEND in verdict_block
     # The sentence, the finding links and their locations stay in the report.
     assert "Anyone can dump every record" not in verdict_block

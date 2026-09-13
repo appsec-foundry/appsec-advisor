@@ -118,6 +118,7 @@ requirements:
       - AC-1
       - AC-2
       - AC-3
+      - AC-8
     documents:
       - docs/org-profiles.md
     coverage: direct
@@ -412,6 +413,7 @@ requirements:
       - RA-10
       - RA-11
       - RA-12
+      - RA-13
     documents:
       - docs/internal/contracts/schema-invariants.md
       - agents/shared/prose-style.md

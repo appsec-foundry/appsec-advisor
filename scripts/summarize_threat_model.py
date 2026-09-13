@@ -465,30 +465,31 @@ def _render_verdict_block(verdict: dict | None) -> list[str]:
     return out
 
 
-WORST_CASE_LEGEND = "✓ attack path verified end-to-end in code"
+WORST_CASE_LEGEND = "✓ attack path verified end-to-end in code; rows without ✓ rest on their findings' own evidence"
 
 
 def render_worst_case_table(bullets: list[dict], indent: str = "  ") -> list[str]:
     """The verdict's worst-case outcomes as one aligned row each.
 
     Shared by the completion summary and this overview so both consoles show
-    the list identically: rank, ✓ for a verified attack path, outcome, and the
-    first weakness class with a `+N` count of the rest. There is no header row
-    and every line starts with the rank or ✓: the completion summary is relayed
+    the list identically: ✓ for a verified attack path or • otherwise, outcome,
+    and "via" the first weakness class with a `+N` count of the rest. No rank:
+    nothing orders the verdict's bullets by severity (RA-14). There is no header
+    row and every line starts with ✓ or •: the completion summary is relayed
     as Markdown, which strips leading blanks and reads a leading `#` as a
     heading. review-threat-model's landing lists finding-level worst cases with
     their fixes — a triage view on another basis — and keeps its own rows.
     """
     if not bullets:
         return []
-    rank_w = len(str(len(bullets)))
     title_w = max(len(b["title"]) for b in bullets)
     rows = []
-    for rank, b in enumerate(bullets, 1):
+    for b in bullets:
         classes = b.get("classes") or []
         weakness = f"{classes[0]} +{len(classes) - 1}" if len(classes) > 1 else "".join(classes[:1])
-        mark = "✓" if b.get("verified_attack_path") else " "
-        rows.append(f"{indent}{rank:<{rank_w}} {mark}  {b['title']:<{title_w}}  {weakness}".rstrip())
+        mark = "✓" if b.get("verified_attack_path") else "•"
+        via = f"via {weakness}" if weakness else ""
+        rows.append(f"{indent}{mark}  {b['title']:<{title_w}}  {via}".rstrip())
     if any(b.get("verified_attack_path") for b in bullets):
         rows += ["", f"{indent}{WORST_CASE_LEGEND}"]
     return rows

@@ -111,3 +111,15 @@ def test_release_gate_valid_values_pass(schema, valid_case):
 def test_unknown_field_rejected(schema, valid_case):
     valid_case["surprise"] = True
     assert _errors(schema, _doc(valid_case))
+
+
+def test_library_claims_no_xss_variant_its_cwe_match_cannot_tell():
+    # CWE-79 alone does not tell stored, reflected and DOM-based XSS apart.
+    variants = ("stored xss", "reflected xss", "dom xss", "dom-based xss", "stored cross-site", "reflected cross-site")
+    doc = yaml.safe_load(LIBRARY_PATH.read_text(encoding="utf-8"))
+    for case in doc["abuse_cases"]:
+        xss_steps = [s for s in case["chain"] if (s.get("finding") or {}).get("cwe") == "CWE-79"]
+        texts = [case["title"], case["attacker"].get("prerequisite", "")] if xss_steps else []
+        texts += [s["label"] for s in xss_steps] + [s["finding"].get("title", "") for s in xss_steps]
+        claimed = [text for text in texts if any(v in " ".join(text.lower().split()) for v in variants)]
+        assert not claimed, (case["id"], claimed)

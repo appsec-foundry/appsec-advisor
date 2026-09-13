@@ -2,8 +2,8 @@
 """Select the open questions shared by the report and completion summary.
 
 Selection is deterministic and presentation-neutral. Callers supply the anchors
-their output can deliver, then render the returned references in their own link
-style. This keeps the console and Management Summary on one rule set without
+their output can deliver, then render the returned references in their own
+reference style. This keeps the console and Management Summary on one rule set without
 letting either renderer infer questions from prose.
 """
 

@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The completion summary and `show-threat-model` present worst-case scenarios in a compact table with weakness classes and attack-path verification status.
 
+- The completion summary lists each open team question first, followed by its weakness and finding IDs, without report paths.
+
+- The worst-case list claims no worst-first order and names each scenario's weakness class after "via".
+
 - `fix-run-issues` now requires a diagnosis from the same run and provides manual remediation guidance instead of automatic plugin edits.
 
 ### Fixed
@@ -28,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Actor grouping, abuse-case matching, and authentication coverage use evidenced self-registration, with unclear registration routes surfaced as team questions.
 
 - Early STRIDE completion checks no longer start duplicate component analyses.
+
+- Abuse case AC-T-001 no longer claims a stored XSS when the matched finding is reflected or DOM-based.
 
 ## 0.6.0-beta.3 (2026-09-12)
 

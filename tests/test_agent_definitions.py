@@ -459,7 +459,7 @@ def test_focused_renderer_line_slices_match_their_owned_contracts():
     ms_slice = "\n".join(renderer_lines[142:375])
     assert "`ms-verdict.json` authoring contract" in ms_slice
     assert "must not assert a precondition the bullets do not all share" in ms_slice
-    assert "What an attacker can do today, worst first:" in ms_slice
+    assert "What an attacker can do today:" in ms_slice
 
 
 # ---------------------------------------------------------------------------

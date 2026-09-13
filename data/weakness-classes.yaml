@@ -523,7 +523,7 @@ class_guidance:
 # `team_question` is the decision the structural fix depends on and that the
 # code alone cannot settle — which cross-user access is intended, who rotates
 # which secret, which endpoints are meant to be public. The completion summary
-# asks it under "Open questions for the team", linked to the register entry and
+# asks it under "Open questions for the team", citing the register entry and
 # its worst instances. A mechanism whose fix is purely mechanical (parameterise
 # the query, encode the output, pick a KDF) carries no question: there is
 # nothing for the team to decide, only work to schedule.

@@ -105,7 +105,7 @@ def test_model_anchor_inventory_normalizes_public_finding_ids() -> None:
 
 
 @pytest.mark.parametrize("source", ["onboarding.ts", "routes/accounts.py"])
-def test_disputed_registration_is_shared_without_invented_finding_links(tmp_path, source):
+def test_disputed_registration_is_shared_without_invented_finding_links(source):
     from types import SimpleNamespace
 
     import compose_threat_model as composer
@@ -126,7 +126,7 @@ def test_disputed_registration_is_shared_without_invented_finding_links(tmp_path
     assert selected[0]["refs"] == []
     question = selected[0]["question"]
     report = composer._render_ms_open_questions(SimpleNamespace(yaml_data=model))
-    console = completion.build_manual_review_step(model, report, tmp_path / "report.md")
+    console = completion.build_manual_review_step(model, report)
     assert "- " + question in report
     assert "- " + question in console
     assert "-  —" not in report + console

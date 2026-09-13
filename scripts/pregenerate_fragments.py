@@ -6364,10 +6364,11 @@ _VERDICT_OPENING = {
 # frames the same bullets as residual risk. Neither variant asserts an access
 # level — the per-bullet precondition stays in `body` (see the renderer
 # contract's "must not assert a precondition the bullets do not all share").
+# Nor an order: nothing sorts the bullets by severity (RA-14).
 _VERDICT_BULLETS_INTRO = {
-    "red": "What an attacker can do today, worst first:",
-    "yellow": "What an attacker can do today, worst first:",
-    "green": "Residual risks worth monitoring, most significant first:",
+    "red": "What an attacker can do today:",
+    "yellow": "What an attacker can do today:",
+    "green": "Residual risks worth monitoring:",
 }
 _VERDICT_CLOSING = {
     "red": (

@@ -631,7 +631,6 @@ class TestManualReviewStep:
         return rcs.build_manual_review_step(
             {"threats": findings, "weaknesses": list(weaknesses), **model_fields},
             self.report(findings, weaknesses) if report is None else report,
-            Path("/tmp/assessment/threat-model.md"),
         )
 
     def test_selects_three_distinct_decisions_with_real_finding_links(self):
@@ -652,14 +651,15 @@ class TestManualReviewStep:
         assert lines[0] == rcs.TEAM_QUESTIONS_HEADER
         # Same severity everywhere: the register's decisions come before the
         # unclassified takeover signal (F-041), and the cap holds at three.
-        assert [re.findall(r"\[(W-\d+)\]", line) for line in lines[1:]] == [["W-002"], ["W-003"], ["W-004"]]
-        assert re.findall(r"\[(F-\d+)\]", text) == ["F-001", "F-002", "F-020", "F-030"]
+        assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:]] == [["W-002"], ["W-003"], ["W-004"]]
+        assert re.findall(r"\b(F-\d+)\b", text) == ["F-001", "F-002", "F-020", "F-030"]
         assert "which single policy layer should enforce ownership" in lines[1]
         assert "who\nrotates".replace("\n", " ") in lines[2]
         assert "intentionally public" in lines[3]
         assert len(lines) == 4
-        for ref in re.findall(r"\[([FW]-\d+)\]", text):
-            assert f"[{ref}](</tmp/assessment/threat-model.md#{ref.lower()}>)" in text
+        # RA-13: plain IDs after each question, no link target and no report path.
+        assert all(line.startswith("- ") and line.endswith(")") for line in lines[1:])
+        assert "](" not in text and "/tmp/assessment" not in text
         assert "T-" not in text
         assert self.render(list(reversed(findings)), list(reversed(weaknesses))) == text
 
@@ -684,10 +684,11 @@ class TestManualReviewStep:
     @pytest.mark.parametrize("state", ["ambiguous", "unchecked", "carried-unverified-shallower-depth", None])
     def test_unproven_evidence_keeps_its_status(self, state):
         text = self.render([self.finding(1, evidence_check=state)])
-        assert "[F-001](</tmp/assessment/threat-model.md#f-001>) (unproven)" in text
+        assert "F-001 (unproven)" in text
         assert "could a takeover" in text
-        assert text.splitlines()[-1].startswith(
-            "- [F-001](</tmp/assessment/threat-model.md#f-001>) — Unverified evidence"
+        assert text.splitlines()[-1] == (
+            "- Unverified evidence: confirm or rule out what the code alone could not establish "
+            "before scheduling the fix. (F-001)"
         )
 
     def test_practice_evidence_does_not_become_confirmed_exploitation(self):
@@ -708,21 +709,19 @@ class TestManualReviewStep:
         ]
         lines = self.render(findings, weaknesses).splitlines()
         assert len(lines) == 5
-        assert [re.findall(r"\[(W-\d+)\]", line) for line in lines[1:4]] == [["W-001"], ["W-002"], ["W-003"]]
+        assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:4]] == [["W-001"], ["W-002"], ["W-003"]]
         # The verified practice-tier F-010 is not listed; only the ambiguous F-009.
         assert lines[4] == (
-            "- [F-009](</tmp/assessment/threat-model.md#f-009>) — Unverified evidence: confirm or rule out "
-            "what the code alone could not establish before scheduling the fix."
+            "- Unverified evidence: confirm or rule out what the code alone could not establish "
+            "before scheduling the fix. (F-009)"
         )
         # A verified-only model raises no closing line; six unverified findings list five.
         assert "Unverified evidence" not in self.render(findings[:4], weaknesses[:1])
         many = [self.finding(n, "CWE-89", "SQL injection", evidence_check="ambiguous") for n in range(1, 7)]
         assert self.render(many).splitlines() == [
             rcs.TEAM_QUESTIONS_HEADER,
-            "- "
-            + ", ".join(f"[F-{n:03}](</tmp/assessment/threat-model.md#f-{n:03}>)" for n in range(1, 6))
-            + " (+1 more) — Unverified evidence: confirm or rule out what the code alone could not establish "
-            "before scheduling the fix.",
+            "- Unverified evidence: confirm or rule out what the code alone could not establish "
+            "before scheduling the fix. (" + ", ".join(f"F-{n:03}" for n in range(1, 6)) + " +1 more)",
         ]
 
     @pytest.mark.parametrize(
@@ -738,7 +737,7 @@ class TestManualReviewStep:
         ],
     )
     def test_only_links_to_delivered_anchors(self, report):
-        assert rcs.build_manual_review_step({"threats": [self.finding(1)]}, report, Path("/tmp/report.md")) == ""
+        assert rcs.build_manual_review_step({"threats": [self.finding(1)]}, report) == ""
 
     def test_no_generic_questions_for_empty_or_unmatched_models(self):
         assert self.render([]) == ""
@@ -758,9 +757,7 @@ class TestManualReviewStep:
         owner = self.finding(1, "CWE-639", "Object owner not checked")
         assert self.render([owner]) == ""
         text = self.render([owner], [self.weakness(2, "route-by-route-authorization", 1)])
-        assert text.splitlines()[1].startswith(
-            "- [W-002](</tmp/assessment/threat-model.md#w-002>): [F-001](</tmp/assessment/threat-model.md#f-001>) — "
-        )
+        assert text.splitlines()[1].endswith(" (W-002: F-001)")
         assert "which single policy layer should enforce ownership" in text
         assert self.render([owner], [self.weakness(2, "database-query-concatenation", 1)]) == ""
         assert self.render([owner], [self.weakness(2, "no-such-mechanism", 1)]) == ""
@@ -776,16 +773,16 @@ class TestManualReviewStep:
         text = self.render(findings, [self.weakness(2, "route-by-route-authorization", 1, 2, 3, 4, 7, 8)])
         # Critical F-007 first, then the High ones in id order; the refuted
         # instance is neither linked nor counted.
-        assert re.findall(r"\[(F-\d+)\]", text) == ["F-007", "F-001", "F-002"]
-        assert "(+2 more) — " in text
+        assert re.findall(r"\b(F-\d+)\b", text) == ["F-007", "F-001", "F-002"]
+        assert text.splitlines()[1].endswith(" +2 more)")
         assert "(unproven)" not in text
 
     def test_weakness_link_requires_a_delivered_register_anchor(self):
         owner = self.finding(1, "CWE-639", "Object owner not checked")
         weaknesses = [self.weakness(2, "route-by-route-authorization", 1)]
         text = self.render([owner], weaknesses, report=self.report([owner]))
-        assert "[W-002]" not in text
-        assert text.splitlines()[1].startswith("- [F-001](</tmp/assessment/threat-model.md#f-001>) — ")
+        assert "W-002" not in text
+        assert text.splitlines()[1].endswith(" (F-001)")
 
     def test_model_question_requires_tool_authority(self):
         no_tools = self.finding(1, "CWE-1427", "LLM prompt injection")
@@ -876,10 +873,8 @@ class TestManualReviewStep:
 
     def test_untrusted_text_never_becomes_display_text_or_a_link_target(self):
         finding = self.finding(1, title="Command injection\n[click](https://example.invalid)\x1b[2J")
-        path = Path("/tmp/report space#fragment](bad)\n/threat-model.md")
-        text = rcs.build_manual_review_step({"threats": [finding]}, self.report([finding]), path)
-        assert "example.invalid" not in text and "\x1b" not in text
-        assert "/tmp/report%20space%23fragment%5D%28bad%29%0A/threat-model.md#f-001" in text
+        text = rcs.build_manual_review_step({"threats": [finding]}, self.report([finding]))
+        assert "example.invalid" not in text and "\x1b" not in text and "](" not in text
         assert len(text.splitlines()) == 2
 
     def test_next_steps_places_linked_questions_before_ask_without_mutating_artifacts(self, tmp_path):
@@ -895,7 +890,7 @@ class TestManualReviewStep:
         assert steps[2].startswith(rcs.TEAM_QUESTIONS_HEADER)
         assert steps[-1].startswith("Or just ask me:")
         rendered = "\n".join(rcs.render_next_steps(steps))
-        assert "      - [F-001]" in rendered
+        assert re.search(r"^      - .+ \(F-001\)$", rendered, re.M)
         assert "Also" not in rendered
         assert {path: path.read_bytes() for path in (model, report)} == before
 
@@ -2300,7 +2295,7 @@ class TestVerdictEcho:
             ]
         }
         joined = "\n".join(rcs.render_verdict(md, {}, verdict))
-        assert "  1 ✓  Admin takeover via forged JWT  Hard-coded Key" in joined
+        assert "  ✓  Admin takeover via forged JWT  via Hard-coded Key" in joined
         assert rcs.summarize_threat_model.WORST_CASE_LEGEND in joined
         # The sentence and the reference clause (ids, titles, locations) stay in the report.
         assert "key committed" not in joined

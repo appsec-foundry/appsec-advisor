@@ -189,9 +189,9 @@ sentence the reader trusts for all of them. Juice-shop 2026-08-22 shipped
 exactly that: the intro claimed unauthenticated reach while two of six bullets
 read "any logged-in user" and "any customer" in their own bodies. Each bullet
 already carries its own precondition in `body`; leave it there. Write a neutral
-frame — on red or yellow "What an attacker can do today, worst first:", on
-green "Residual risks worth monitoring, most significant first:" — or omit the
-key; it is optional, and the deterministic default is the same neutral pair.
+frame that claims no order — on red or yellow "What an attacker can do today:",
+on green "Residual risks worth monitoring:" — or omit the key; it is optional,
+and the deterministic default is the same neutral pair.
 A uniform precondition is allowed only when EVERY bullet genuinely shares it.
 
 The frame names what the bullets ARE, so do not spend `opening` on a second

@@ -6280,7 +6280,7 @@ def test_ms_top_weaknesses_table_and_ordering():
     assert "Weak Cryptography**" in out
 
 
-def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(tmp_path: Path, monkeypatch) -> None:
+def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(monkeypatch) -> None:
     finding = {
         "id": "T-001",
         "title": "Object owner not checked",
@@ -6333,11 +6333,7 @@ def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(tmp
     report_questions = compose._render_ms_open_questions(_Ctx())
     top_weaknesses = compose._render_ms_top_weaknesses(_Ctx())
     report = top_weaknesses + report_questions + '\n<a id="f-001"></a>\n<a id="f-002"></a>\n<a id="w-001"></a>\n'
-    console_questions = completion.build_manual_review_step(
-        _Ctx.yaml_data,
-        report,
-        tmp_path / "threat-model.md",
-    )
+    console_questions = completion.build_manual_review_step(_Ctx.yaml_data, report)
 
     assert report_questions.startswith("### Open Questions for the Team\n\n")
     assert "The code cannot settle these points." in report_questions
@@ -6345,12 +6341,18 @@ def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(tmp
         assert value in report_questions
         assert value in console_questions
 
-    def normalize_links(line: str) -> str:
-        return re.sub(r"\]\((?:<[^>]+>|#[^)]+)\)", "]", line)
+    # RA-13: same bullets, references and question; the console only puts the question first, unlinked.
+    def references(line: str) -> list[str]:
+        return re.findall(r"\b[WF]-\d{3,}\b|\(unproven\)|\+\d+ more", line)
 
-    assert [normalize_links(line) for line in report_questions.splitlines() if line.startswith("- ")] == [
-        normalize_links(line) for line in console_questions.splitlines() if line.startswith("- ")
+    report_bullets = [line for line in report_questions.splitlines() if line.startswith("- ")]
+    console_bullets = [line for line in console_questions.splitlines() if line.startswith("- ")]
+    assert report_bullets and [references(line) for line in report_bullets] == [
+        references(line) for line in console_bullets
     ]
+    for report_line, console_line in zip(report_bullets, console_bullets, strict=True):
+        question = report_line.split(" — ", 1)[1] if " — " in report_line else report_line[2:]
+        assert console_line.startswith(f"- {question}")
 
     monkeypatch.setattr(compose, "_render_by_id", lambda _ctx, _env, _sid, section: section["heading"])
     monkeypatch.setattr(compose, "_render_ai_exposure", lambda _ctx, _env: "")

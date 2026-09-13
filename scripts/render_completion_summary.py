@@ -67,7 +67,6 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import quote
 
 import _severity_rollup  # sibling script — see extract_metrics()
 import completion_relay  # sibling script — records the printed summary for the closing Stop
@@ -914,7 +913,6 @@ mechanism_team_questions = _team_questions.mechanism_team_questions
 def build_manual_review_step(
     yaml_data: dict,
     report_text: str,
-    report_path: Path,
     *,
     team_questions: Optional[dict[str, str]] = None,
 ) -> str:
@@ -926,24 +924,21 @@ def build_manual_review_step(
     )
     if not selection["questions"] and not selection["unverified"]:
         return ""
-    target = quote(str(report_path.absolute()), safe="/:")
 
-    def link(item_id: str, *, unproven_label: bool = False) -> str:
-        return f"[{item_id}](<{target}#{item_id.lower()}>)" + (" (unproven)" if unproven_label else "")
-
+    # Question first, plain IDs after it: a terminal prints a Markdown link's target beside its text (RA-13).
     lines = [TEAM_QUESTIONS_HEADER]
     for topic in selection["questions"]:
-        links = ", ".join(link(item["id"], unproven_label=item["unproven"]) for item in topic["refs"])
+        refs = ", ".join(item["id"] + (" (unproven)" if item["unproven"] else "") for item in topic["refs"])
         if topic["hidden"] > 0:
-            links += f" (+{topic['hidden']} more)"
+            refs += f" +{topic['hidden']} more"
         if topic["weakness_id"]:
-            links = f"{link(topic['weakness_id'])}: {links}"
-        lines.append(f"- {links + ' — ' if links else ''}{topic['question']}")
+            refs = f"{topic['weakness_id']}: {refs}" if refs else topic["weakness_id"]
+        lines.append(f"- {topic['question']}" + (f" ({refs})" if refs else ""))
     if selection["unverified"]:
-        shown = ", ".join(link(item["id"]) for item in selection["unverified"][:5])
+        refs = ", ".join(item["id"] for item in selection["unverified"][:5])
         if len(selection["unverified"]) > 5:
-            shown += f" (+{len(selection['unverified']) - 5} more)"
-        lines.append(f"- {shown} — {_team_questions.UNVERIFIED_QUESTION}")
+            refs += f" +{len(selection['unverified']) - 5} more"
+        lines.append(f"- {_team_questions.UNVERIFIED_QUESTION} ({refs})")
     return "\n".join(lines)
 
 
@@ -992,9 +987,8 @@ def build_next_steps(
     if sum(sev.values()):
         lines.append("Triage the findings — /appsec-advisor:review-threat-model")
 
-    report_path = output_dir / "threat-model.md"
     manual_review = build_manual_review_step(
-        _load_yaml(output_dir / "threat-model.yaml"), _load_text(report_path), report_path
+        _load_yaml(output_dir / "threat-model.yaml"), _load_text(output_dir / "threat-model.md")
     )
     if manual_review:
         lines.append(manual_review)
