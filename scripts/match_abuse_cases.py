@@ -794,8 +794,9 @@ def cmd_list_inconclusive(args: argparse.Namespace) -> int:
     Run AFTER `finalize` (needs `chain_verdict`). Output is the escalation
     work-list for the skill's sonnet re-verify pass. Capped at `--max` so the
     escalation cost stays bounded; the cap drop is logged to stderr. A chain
-    capped only by `refuted` steps is settled — a re-read of the same mismatch
-    cannot change it — and is not listed (AC-6).
+    with a `refuted` step is settled — a re-read of the same mismatch cannot
+    change it, and that step caps the chain whatever its other steps show — so
+    it is not listed (AC-6).
     """
     out_dir = Path(args.output_dir)
     verdicts_path = out_dir / ".abuse-case-verdicts.json"
@@ -824,7 +825,7 @@ def cmd_list_inconclusive(args: argparse.Namespace) -> int:
 
     def open_work(verdict: dict) -> bool:
         steps = {s.get("verdict") for s in verdict.get("step_verdicts") or [] if isinstance(s, dict)}
-        return _INCONCLUSIVE in steps or _REFUTED not in steps
+        return _REFUTED not in steps
 
     inconclusive = sorted(
         v.get("abuse_case_id")

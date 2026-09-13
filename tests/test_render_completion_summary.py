@@ -854,6 +854,20 @@ class TestManualReviewStep:
                     {"finding_id": "F-002", "verdict": "refuted", "unverified": False},
                 ]
             },
+            # One refuted step settles the chain, its open steps included.
+            {
+                "steps": [
+                    {"finding_id": "F-001", "verdict": "refuted", "unverified": False},
+                    {"finding_id": "F-002", "verdict": "inconclusive", "unverified": False},
+                ]
+            },
+            {
+                "steps": [
+                    {"finding_id": "F-002", "verdict": "inconclusive", "unverified": False},
+                    {"finding_id": "F-001", "verdict": "confirmed", "unverified": False},
+                    {"finding_id": "F-001", "verdict": "refuted", "unverified": False},
+                ]
+            },
         ],
     )
     def test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses(self, overrides):

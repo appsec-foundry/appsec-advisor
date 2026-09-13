@@ -604,12 +604,19 @@ def test_list_inconclusive_no_verdicts_file_is_empty(tmp_path: Path, capsys):
 
 
 def test_list_inconclusive_skips_chains_settled_by_refutation(tmp_path: Path, capsys):
-    # AC-6: re-verifying a refuted pairing cannot change it. An open step, or a
-    # chain with no recorded step verdicts, stays on the work-list.
+    # AC-6: re-verifying a refuted pairing cannot change it, and that step caps
+    # the chain whatever its open steps show. A chain without a refuted step,
+    # or with no recorded step verdicts, stays on the work-list.
     steps = {
         "AC-T-001": [{"step": 1, "verdict": "confirmed"}, {"step": 2, "verdict": "refuted"}],
         "AC-T-002": [{"step": 1, "verdict": "refuted"}, {"step": 2, "verdict": "inconclusive"}],
         "AC-T-003": [],
+        "AC-T-004": [
+            {"step": 1, "verdict": "inconclusive"},
+            {"step": 2, "verdict": "confirmed"},
+            {"step": 3, "verdict": "refuted"},
+        ],
+        "AC-T-005": [{"step": 1, "verdict": "confirmed"}, {"step": 2, "verdict": "inconclusive"}],
     }
     doc = {
         "schema_version": 1,
@@ -620,7 +627,7 @@ def test_list_inconclusive_skips_chains_settled_by_refutation(tmp_path: Path, ca
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(doc))
     _write_matches(tmp_path, [(cid, "candidate") for cid in steps])
     mac.main(["list-inconclusive", "--output-dir", str(tmp_path)])
-    assert capsys.readouterr().out.split() == ["AC-T-002", "AC-T-003"]
+    assert capsys.readouterr().out.split() == ["AC-T-003", "AC-T-005"]
 
 
 # ---------------------------------------------------------------------------

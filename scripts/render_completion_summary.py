@@ -1061,13 +1061,15 @@ def build_manual_review_step(
 
     # 1. An inconclusive investigation can seed a question. A verifier that ran
     # out of budget cannot (unverified steps belong to scan recovery), and a
-    # refuted step cannot either: it is the answer, not the question.
+    # refuted step cannot either: it is the answer, not the question. One
+    # refuted step settles the whole chain, so its open steps ask nothing.
     analysis = yaml_data.get("abuse_case_analysis") or {}
     for case in analysis.get("cases", []) if analysis.get("status") == "completed" else []:
         if (
             case.get("chain_verdict") != "inconclusive"
             or not case.get("verification_complete")
             or case.get("unverified_steps")
+            or any(isinstance(step, dict) and step.get("verdict") == "refuted" for step in case.get("steps") or [])
         ):
             continue
         unresolved = [
