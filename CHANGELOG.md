@@ -11,27 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The Management Summary and completion summary show the same "Open questions for the team", linked to each Weakness Register entry and its worst findings, and close with the findings whose evidence is still unverified.
-- An abuse-case step the verifier establishes as a wrong pairing is reported as `✗ Refuted` in §9 instead of `? Inconclusive`, and neither it nor its chain surfaces as an open question.
-- The completion summary and `show-threat-model` list the worst-case scenarios as a compact table: outcome, weakness class, and ✓ for a verified attack path.
+- Figure 1 is completely redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths, with equivalent regular roles grouped for readability.
+
+- The Management Summary and closing message present consistent, finding-linked team questions and identify evidence still awaiting verification.
+
+- Disproved abuse-case steps are marked `✗ Refuted` in §9, excluding those steps and their chains from open questions.
+
+- The completion summary and `show-threat-model` present worst-case scenarios in a compact table with weakness classes and attack-path verification status.
+
+- `fix-run-issues` now requires a diagnosis from the same run and provides manual remediation guidance instead of automatic plugin edits.
 
 ### Fixed
 
-- Threat-model rebuilds retain deterministic enrichment including public-source actor grouping, and final completion rejects missing or stale enrichment receipts.
-- Actor grouping and abuse-case matching use evidenced self-registration, with unclear account-creation routes surfaced as team questions.
-- Generic registration corroboration currently covers Node/Express JavaScript and TypeScript routes; other stacks, GraphQL, and external identity-provider signup still depend on recon evidence and team clarification.
-- Authentication coverage cites registration POST routes instead of user-listing GET routes.
-- Figure 1 combines evidenced regular roles with equivalent access, including an unambiguous shared victim card, while keeping privileged or unclassified roles separate and preserving canonical flow identities.
-- Run-issue fixes use a validated diagnosis from the same run for manual plugin remediation instead of automatically raising agent budgets.
-- An early STRIDE completion check no longer starts the same component analyses again while their wave is still running.
-- A run whose closing message rewrites the completion summary is asked once to show it as printed, so Next Steps and the team questions reach the reader.
+- Threat-model rebuilds preserve automatically derived model details, including actor grouping for public source access.
+
+- Actor grouping, abuse-case matching, and authentication coverage use evidenced self-registration, with unclear registration routes surfaced as team questions.
+
+- Early STRIDE completion checks no longer start duplicate component analyses.
 
 ## 0.6.0-beta.3 (2026-09-12)
 
 ### Added
 
 - The completion summary includes up to three finding-linked manual threat modeling questions about deployment assumptions, business decisions, and unresolved attack chains under Next Steps.
-- Figure 1 shows evidenced roles, external services including detected OAuth/OIDC/SAML identity integrations, data flows, asset locations, up to three short High/Critical causes per component from a shared repository-independent vocabulary, and distinguishable red/purple attacker paths, with actor groupings explained in the report and figure when registration or source access is public.
 - A headless run shows what it has spent so far, measured against `--soft-budget`, warns once at 80 % and at 100 % of it, and ends with a table of what each phase cost. Where the spend cannot be measured the run says so instead of showing a figure, and no warning stops a run. The end-of-run cost table states that it covers the whole run including sub-agents, and the `Models` line says that the roles behind each model are sub-agent dispatches billed in that table.
 - A run can declare a cost budget with `--soft-budget <usd>`, or `guardrails.soft_budget_usd` in an organization profile. It steers rather than caps: an invocation whose projected cost cannot fit is refused before it spends anything, and a run that overruns still finishes. Headless runs derive the hard `--hard-budget` cut at 1.25 times that value unless it is given. `--max-cost`, `max_cost_usd`, and `--max-budget` remain as deprecated spellings.
 
