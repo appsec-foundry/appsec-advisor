@@ -106,6 +106,7 @@ NOISE_EXACT = {
     ".compose-stats.json",
     ".session-agent-map",
     ".assessment-summary-emitted",
+    ".completion-summary.json",
     ".assessment-owner-sid",
     ".stage1-resume-count",
 }

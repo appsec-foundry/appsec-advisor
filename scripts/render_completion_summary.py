@@ -70,6 +70,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 import _severity_rollup  # sibling script — see extract_metrics()
+import completion_relay  # sibling script — records the printed summary for the closing Stop
 import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
 import stamp_threat_model  # sibling script — owns which deliverables get stamped
 import summarize_threat_model  # sibling script — owns the worst-case table both consoles print
@@ -2801,7 +2802,11 @@ def main(argv: list[str] | None = None) -> int:
     _stamp_slug_if_configured(args.output_dir)
 
     if not args.no_print:
-        print(render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root), end="")
+        summary = render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root)
+        print(summary, end="")
+        # The reader gets the orchestrator's closing message, not this stdout;
+        # the outermost Stop holds that message to this record.
+        completion_relay.persist(args.output_dir, summary)
     return 0
 
 

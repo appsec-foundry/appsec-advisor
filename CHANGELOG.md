@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Run-issue fixes use a validated diagnosis from the same run for manual plugin remediation instead of automatically raising agent budgets.
 - An early STRIDE completion check no longer starts the same component analyses again while their wave is still running.
+- A run whose closing message rewrites the completion summary is asked once to show it as printed, so Next Steps and the team questions reach the reader.
 
 ## 0.6.0-beta.3 (2026-09-12)
 

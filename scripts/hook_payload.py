@@ -72,6 +72,12 @@ class HookEvent:
     tool_input: dict = field(default_factory=dict)
     tool_response: Any = ""
     is_error: bool = False
+    #: ``Stop``/``SubagentStop``: the host is already continuing because a Stop
+    #: hook blocked the previous attempt to stop.
+    stop_hook_active: bool = False
+    #: ``Stop``/``SubagentStop``: the closing assistant message, on hosts that
+    #: send it. A headless session persists no transcript to fall back on.
+    last_assistant_message: str = ""
     #: Keys the event should carry and does not, or carries with a wrong type.
     problems: tuple[str, ...] = ()
 
@@ -119,5 +125,8 @@ def parse(payload: object, event_name: str = "") -> HookEvent:
         # tool through its own event. Kept because a host that does send it
         # must still be believed.
         is_error=bool(payload.get("is_error", False)),
+        stop_hook_active=payload.get("stop_hook_active") is True,
+        # A closing message is a whole reply, not an identifier.
+        last_assistant_message=_text(payload, "last_assistant_message", 1_000_000),
         problems=_problems(payload, name),
     )

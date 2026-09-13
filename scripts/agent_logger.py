@@ -30,6 +30,8 @@ Events logged:
   MAX_TURNS     — agent hit its maxTurns limit (logged as ERROR)
   ASSESSMENT_SUMMARY — final summary (duration, mode, threat counts, tokens, cost, models)
   ASSESSMENT_FILES   — all files written during the assessment (full paths, deduplicated)
+  SUMMARY_NOT_RELAYED — the outermost Stop returned the turn once because the closing
+                  message dropped completion-summary lines (see completion_relay.py)
 
 Performance-diagnostic note (added 2026-05-23): FILE_READ / GREP_RUN / GLOB_RUN /
 BASH_OK were added to close the visibility gap — previously only ~15% of tool calls
@@ -3257,6 +3259,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     run_still_owned = _run_lock_is_ours(sid)
     if event_name == "Stop" and not run_still_owned:
         clear_terminal_active_tool_calls(session_transcript=transcript)
+        relay_decision = _review_summary_relay(event, sid)
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
         try:
             with open(sentinel, "x") as fh:  # atomic O_CREAT|O_EXCL
@@ -3274,6 +3277,28 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
             # The summary was the markers' last reader; left in place they would
             # keep tracing every later session in this repository.
             _clear_run_markers()
+        return relay_decision
+    return None
+
+
+def _review_summary_relay(event: hook_payload.HookEvent, sid: str) -> dict | None:
+    """Return the Stop decision that sends a rewritten completion summary back once.
+
+    The outermost Stop is the first point that sees the message the reader
+    gets; ``completion_relay`` owns the rule and the record the summary script
+    left.
+    """
+    try:
+        import completion_relay  # noqa: PLC0415 — off the per-tool-call path
+
+        message = event.last_assistant_message or completion_relay.final_message(event.session_transcript)
+        missing = completion_relay.review_final_message(_output_dir(), sid, message, retry=event.stop_hook_active)
+    except Exception:
+        return None  # never crash a hook
+    if not missing:
+        return None
+    _write("WARN ", "SUMMARY_NOT_RELAYED", f"missing_lines={len(missing)}  first={missing[0][:120]}", sid)
+    return {"decision": "block", "reason": completion_relay.RETRY_INSTRUCTION}
 
 
 _USAGE_TOKEN_KEYS = (
@@ -3667,7 +3692,10 @@ def main() -> None:
 
     # Stop / SubagentStop
     if event_name in ("Stop", "SubagentStop") or "stop_reason" in data:
-        handle_stop(data, sid, event_name)
+        decision = handle_stop(data, sid, event_name)
+        if decision:
+            # The host reads a Stop decision from stdout.
+            sys.stdout.write(json.dumps(decision))
         return
 
     # PreToolUse — captures Agent spawns at all session depths

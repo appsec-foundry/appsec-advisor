@@ -20,6 +20,7 @@ docs/security/.appsec-tracing
 docs/security/.phase-epoch
 docs/security/.assessment-owner-sid
 docs/security/.assessment-summary-emitted
+docs/security/.completion-summary.json
 docs/security/.budget-state.json
 docs/security/.appsec-progress.json
 docs/security/.skill-watchdog.tick
