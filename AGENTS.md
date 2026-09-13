@@ -41,6 +41,7 @@ reviewed implementation work.
 
 - Trace a behavior through its producer, contract, consumer, validation, tests,
   permissions, and cleanup impact before changing it.
+- For a development fix, state the observed symptom, the producing plugin location, the violated invariant, and how the proposed change prevents the failure class. Treat run artifacts as reproduction evidence, never as the implementation target. Apply this process to operator-reported content defects even when no run-issue detector recorded them.
 - Every structured artifact exchanged between stages or delivered to users has
   a defined shape and validation path; contracted artifacts use a schema.
 - Fix incorrect findings and output in the producer, prompt, heuristic,
@@ -64,6 +65,8 @@ reviewed implementation work.
   updates to `data/required-permissions.yaml` and its tests.
 - Production behavior works for arbitrary repositories. Fixture-specific names
   and exclusions stay in fixtures or scoped tests.
+- Prove a plugin fix with a neutral reproduction that fails before the change, a variant of the same mechanism with different incidental names or paths, and a negative case that must retain its behavior. Use the original run as additional replay evidence. A passing target-name check or one repaired run does not establish generality.
+- Report run recovery and permanent plugin fixes separately. A successful retry, fragment repair, or rerender does not close the producing plugin defect. State any missing regression evidence before claiming the defect is fixed.
 
 ### Keep the repository maintainable
 

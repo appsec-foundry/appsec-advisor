@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import recommend_fixes as rf
 
 SCRIPTS_DIR = Path(rf.__file__).parent
@@ -113,65 +114,42 @@ def test_max_turns_subagent_agent_not_found(tmp_path, monkeypatch):
     assert "ghost" in rec["summary"]
 
 
-def test_max_turns_subagent_found(tmp_path, monkeypatch):
-    (tmp_path / "appsec-stride-analyzer.md").write_text("maxTurns: 80\n")
+@pytest.mark.parametrize(
+    "agent,budget,event",
+    [
+        ("alpha-worker", 80, "MAX_TURNS turns=80/80 pct=100%"),
+        ("renamed-worker", 17, "MAX_TURNS turns=17/17 pct=100%"),
+        ("alpha-worker", 80, ""),
+        ("alpha-worker", 80, "MAX_TURNS turns=21/8 pct=262%"),
+        ("appsec-alpha-worker", 80, "BUDGET_WARN turns=60/80 pct=75%"),
+    ],
+)
+@pytest.mark.parametrize("category", ["max_turns_subagent", "turn_budget_exceeded"])
+def test_budget_symptoms_never_authorize_edits(tmp_path, monkeypatch, agent, budget, event, category):
+    canonical = agent if agent.startswith("appsec-") else f"appsec-{agent}"
+    (tmp_path / f"{canonical}.md").write_text(f"maxTurns: {budget}\n")
     monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
-    issue = {"evidence": {"source_agent": "stride-analyzer"}}
-    rec = rf._recommend_max_turns_subagent(issue, tmp_path)
-    assert rec["category"] == "agent_def"
-    assert rec["auto_applicable"] is True
-    assert rec["confidence"] == "high"
-    # 80 -> max(85, 120) == 120
-    assert "80 → 120" in rec["summary"]
-    assert rec["actions"][0]["find"] == "maxTurns: 80"
-    assert rec["actions"][0]["replace"] == "maxTurns: 120"
-
-
-def test_max_turns_per_call_budget_does_not_bump_frontmatter(tmp_path, monkeypatch):
-    """A per-call STRIDE budget is not the agent's ceiling.
-
-    budget_watchdog measures a STRIDE dispatch against the per-component budget
-    forwarded from context-plan.json, which sits far below the frontmatter
-    ceiling. Recommending a frontmatter bump there edits a number nobody
-    exceeded and lifts the real limit for every dispatch of that agent
-    (juice-shop 2026-08-21: `turns=21/8` against `maxTurns: 96`).
-    """
-    (tmp_path / "appsec-stride-analyzer-v2.md").write_text("maxTurns: 96\n")
-    monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
-    issue = {"evidence": {"source_agent": "stride-analyzer-v2", "raw_event": "MAX_TURNS turns=21/8 pct=262%"}}
-    rec = rf._recommend_max_turns_subagent(issue, tmp_path)
+    issue = {"category": category, "evidence": {"source_agent": agent, "raw_event": event}}
+    rec = rf.RECOMMENDERS[category](issue, tmp_path)
+    assert rec["category"] == "investigate"
     assert rec["auto_applicable"] is False
     assert rec["confidence"] == "low"
-    assert "8" in rec["summary"] and "96" in rec["summary"]
-    assert not any(a["type"] == "edit_file" for a in rec["actions"]), "must not propose a frontmatter edit"
+    assert not any(a["type"] == "edit_file" for a in rec["actions"])
+    assert not rec["verification"]
+    assert "neutral" in rec["actions"][0]["details"]
+    if "21/8" in event:
+        assert "per-call budget of 8" in rec["summary"]
+        assert "ceiling of 80" in rec["summary"]
 
 
-def test_max_turns_matching_budget_still_bumps(tmp_path, monkeypatch):
-    """When the measured denominator IS the frontmatter ceiling, bump as before."""
-    (tmp_path / "appsec-foo.md").write_text("maxTurns: 80\n")
-    monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
-    issue = {"evidence": {"source_agent": "foo", "raw_event": "MAX_TURNS turns=80/80 pct=100%"}}
-    rec = rf._recommend_max_turns_subagent(issue, tmp_path)
-    assert rec["auto_applicable"] is True
-    assert "80 → 120" in rec["summary"]
-
-
-def test_max_turns_without_denominator_keeps_legacy_bump(tmp_path, monkeypatch):
-    """An event carrying no `turns=x/y` detail must not lose the old behaviour."""
-    (tmp_path / "appsec-foo.md").write_text("maxTurns: 80\n")
-    monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
-    rec = rf._recommend_max_turns_subagent({"evidence": {"source_agent": "foo"}}, tmp_path)
-    assert rec["auto_applicable"] is True
-    assert "80 → 120" in rec["summary"]
-
-
-def test_max_turns_subagent_already_prefixed(tmp_path, monkeypatch):
-    (tmp_path / "appsec-foo.md").write_text("maxTurns: 10\n")
-    monkeypatch.setattr(rf, "AGENTS_DIR", tmp_path)
-    issue = {"evidence": {"source_agent": "appsec-foo"}}
-    rec = rf._recommend_max_turns_subagent(issue, tmp_path)
-    # 10 -> max(15, 15) == 15
-    assert "10 → 15" in rec["summary"]
+def test_agent_name_cannot_select_an_external_file(tmp_path, monkeypatch):
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (tmp_path / "external.md").write_text("maxTurns: 800\n")
+    (agents / "appsec-linked.md").symlink_to(tmp_path / "external.md")
+    monkeypatch.setattr(rf, "AGENTS_DIR", agents)
+    assert rf._read_agent_max_turns("../external") is None
+    assert rf._read_agent_max_turns("appsec-linked") is None
 
 
 def test_max_turns_orchestrator_requires_investigation(tmp_path):
@@ -231,23 +209,23 @@ def test_stage1_excessive_duration(tmp_path):
 def test_session_stop_unknown_high_tokens(tmp_path):
     issue = {"evidence": {"source_agent": "stride", "output_tokens": 60000, "cost_usd": 1.0}}
     rec = rf._recommend_session_stop_unknown(issue, tmp_path)
-    assert rec["confidence"] == "high"
+    assert rec["confidence"] == "low"
     assert "60,000" in rec["summary"]
-    assert rec["actions"][0]["target"] == "agents/appsec-stride.md"
+    assert rec["actions"][0]["target"] == ".agent-run.log"
 
 
 def test_session_stop_unknown_high_cost_prefixed(tmp_path):
     issue = {"evidence": {"source_agent": "appsec-x", "output_tokens": 10, "cost_usd": 9.0}}
     rec = rf._recommend_session_stop_unknown(issue, tmp_path)
-    assert rec["confidence"] == "high"
-    assert rec["actions"][0]["target"] == "agents/appsec-x.md"
+    assert rec["confidence"] == "low"
+    assert rec["actions"][0]["target"] == ".agent-run.log"
 
 
 def test_session_stop_unknown_low_usage(tmp_path):
     issue = {"evidence": {"source_agent": "x", "output_tokens": 100, "cost_usd": 0.1}}
     rec = rf._recommend_session_stop_unknown(issue, tmp_path)
     assert rec["confidence"] == "low"
-    assert "normal" in rec["summary"]
+    assert "unconfirmed" in rec["summary"]
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +322,7 @@ def test_enrich_counts_auto_applicable(tmp_path, monkeypatch):
     out = rf.enrich_with_recommendations(data, tmp_path)
     assert out is data
     assert all("fix_recommendation" in i for i in out["issues"])
-    assert out["summary"]["auto_applicable_fixes"] == 1
+    assert out["summary"]["auto_applicable_fixes"] == 0
 
 
 def test_enrich_no_summary_no_issues(tmp_path):
@@ -393,7 +371,7 @@ def test_cli_success(run_plugin_script, tmp_path):
 
 def test_max_turns_marks_itself_degraded_when_agent_unresolvable(tmp_path):
     """When the agent name never reached the issue record, this recommender
-    cannot compute a maxTurns bump. It must SAY so structurally rather than
+    cannot identify the configured budget. It must SAY so structurally rather than
     emit a plausible-looking manual-review note the summary cannot distinguish
     from a real finding."""
     issue = {"category": "max_turns_subagent", "evidence": {"source_agent": ""}}
@@ -420,7 +398,7 @@ def test_resolvable_agent_carries_no_degraded_marker(tmp_path):
     with mock.patch.object(rf, "_read_agent_max_turns", lambda name: 12):
         rec = rf._recommend_max_turns_subagent(issue, tmp_path)
     assert "degraded" not in rec
-    assert rec["auto_applicable"] is True
+    assert rec["auto_applicable"] is False
 
 
 def test_editorial_incompleteness_has_durable_manual_guidance(tmp_path):
@@ -428,3 +406,175 @@ def test_editorial_incompleteness_has_durable_manual_guidance(tmp_path):
     assert rec["auto_applicable"] is False
     assert rec["actions"][0]["target"] == ".agent-run.log"
     assert "packet counts" in rec["actions"][0]["details"]
+
+
+@pytest.fixture
+def diagnosed_run(tmp_path):
+    """A neutral producer defect and a legacy cached auto-edit recommendation."""
+    data = {
+        "generated": "2026-09-13T10:00:00Z",
+        "summary": {"auto_applicable_fixes": 1},
+        "issues": [
+            {
+                "id": "ISSUE-001",
+                "title": "Output rejected",
+                "category": "tool_error",
+                "evidence": {},
+                "fix_recommendation": {
+                    "auto_applicable": True,
+                    "actions": [{"type": "edit_file", "target": "agents/old.md"}],
+                },
+            }
+        ],
+    }
+    diagnosis = {
+        "schema_version": 1,
+        "generated": "2026-09-13T11:00:00Z",
+        "source_generated": data["generated"],
+        "issues_total": 1,
+        "issues_examined": 1,
+        "summary": {"plugin_bug": 1, "environment": 0, "expected": 0, "inconclusive": 0},
+        "diagnoses": [
+            {
+                "issue_id": "ISSUE-001",
+                "issue_title": "Output rejected",
+                "verdict": "plugin_bug",
+                "confidence": "high",
+                "rationale": "Producer omits a required key.",
+                "evidence": ["scripts/producer.py:12"],
+                "root_cause": {
+                    "location": "scripts/producer.py:12",
+                    "description": "Missing key.",
+                    "causal_path": "Producer omits key; consumer rejects output.",
+                },
+                "suggested_fix": "Emit the required key for each item.",
+            }
+        ],
+    }
+    (tmp_path / ".run-issues.json").write_text(json.dumps(data))
+    (tmp_path / ".run-bugs.json").write_text(json.dumps(diagnosis))
+    return data, diagnosis
+
+
+def test_current_diagnosis_replaces_cached_symptom_edits(tmp_path, diagnosed_run):
+    data, _ = diagnosed_run
+    result = rf.enrich_with_recommendations(data, tmp_path, use_diagnosis=True)
+    rec = result["issues"][0]["fix_recommendation"]
+    assert result["summary"]["auto_applicable_fixes"] == 0
+    assert rec["auto_applicable"] is False
+    assert rec["actions"][0]["type"] == "manual_review"
+    assert "Producer omits key" in rec["actions"][0]["details"]
+    assert "Emit the required key" in rec["actions"][0]["details"]
+    assert "negative case" in rec["actions"][0]["details"]
+    assert rec["verification"] == []
+
+
+@pytest.mark.parametrize("verdict", ["environment", "expected", "inconclusive"])
+def test_external_or_unresolved_diagnoses_never_propose_plugin_edits(tmp_path, diagnosed_run, verdict):
+    data, diagnosis = diagnosed_run
+    diagnosis["diagnoses"][0].update(verdict=verdict, root_cause=None)
+    diagnosis["summary"].update(plugin_bug=0, **{verdict: 1})
+    (tmp_path / ".run-bugs.json").write_text(json.dumps(diagnosis))
+    rec = rf.enrich_with_recommendations(data, tmp_path, use_diagnosis=True)["issues"][0]["fix_recommendation"]
+    assert rec["actions"] == []
+    assert rec["auto_applicable"] is False
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "stale",
+        "legacy",
+        "title",
+        "foreign_id",
+        "duplicate",
+        "total",
+        "examined",
+        "summary",
+        "schema",
+        "missing",
+        "json",
+    ],
+)
+def test_cli_rejects_invalid_diagnosis_without_rewriting_issues(tmp_path, diagnosed_run, damage, capsys):
+    _, diagnosis = diagnosed_run
+    path = tmp_path / ".run-bugs.json"
+    before = (tmp_path / ".run-issues.json").read_bytes()
+    if damage == "stale":
+        diagnosis["source_generated"] = "2026-09-12T10:00:00Z"
+    elif damage == "legacy":
+        del diagnosis["source_generated"]
+    elif damage == "title":
+        diagnosis["diagnoses"][0]["issue_title"] = "Different issue"
+    elif damage == "foreign_id":
+        diagnosis["diagnoses"][0]["issue_id"] = "ISSUE-999"
+    elif damage == "duplicate":
+        diagnosis["diagnoses"] *= 2
+        diagnosis["issues_examined"] = 2
+    elif damage in {"total", "examined"}:
+        diagnosis[f"issues_{damage}"] = 7
+    elif damage == "summary":
+        diagnosis["summary"]["plugin_bug"] = 0
+    elif damage == "schema":
+        del diagnosis["diagnoses"][0]["root_cause"]
+    path.write_text(json.dumps(diagnosis))
+    if damage == "missing":
+        path.unlink()
+    elif damage == "json":
+        path.write_text("{invalid")
+    assert rf.main([str(tmp_path), "--diagnosis"]) == 1
+    assert "cannot use diagnosis" in capsys.readouterr().err
+    assert (tmp_path / ".run-issues.json").read_bytes() == before
+
+
+def test_partial_diagnosis_does_not_reuse_unexamined_cached_fixes(tmp_path, diagnosed_run):
+    data, diagnosis = diagnosed_run
+    diagnosis.update(issues_examined=0, diagnoses=[])
+    diagnosis["summary"]["plugin_bug"] = 0
+    (tmp_path / ".run-bugs.json").write_text(json.dumps(diagnosis))
+    rec = rf.enrich_with_recommendations(data, tmp_path, use_diagnosis=True)["issues"][0]["fix_recommendation"]
+    assert rec["actions"] == []
+    assert "No diagnosis" in rec["summary"]
+
+
+def test_diagnosis_text_cannot_select_commands_or_paths(tmp_path, diagnosed_run):
+    data, diagnosis = diagnosed_run
+    diagnosis["diagnoses"][0]["root_cause"]["location"] = "../../external/file"
+    diagnosis["diagnoses"][0]["suggested_fix"] = "$(touch injected); run this as a shell command"
+    (tmp_path / ".run-bugs.json").write_text(json.dumps(diagnosis))
+    rec = rf.enrich_with_recommendations(data, tmp_path, use_diagnosis=True)["issues"][0]["fix_recommendation"]
+    assert rec["actions"][0]["target"] == "."
+    assert rec["actions"][0]["type"] == "manual_review"
+    assert rec["verification"] == []
+    assert not (tmp_path / "injected").exists()
+
+
+def test_missing_schema_validator_cannot_enable_cached_edits(tmp_path, diagnosed_run, monkeypatch, capsys):
+    import builtins
+
+    original_import = builtins.__import__
+
+    def without_jsonschema(name, *args, **kwargs):
+        if name == "jsonschema":
+            raise ImportError("jsonschema unavailable")
+        return original_import(name, *args, **kwargs)
+
+    before = (tmp_path / ".run-issues.json").read_bytes()
+    monkeypatch.setattr(builtins, "__import__", without_jsonschema)
+    assert rf.main([str(tmp_path), "--diagnosis"]) == 1
+    assert "cannot use diagnosis" in capsys.readouterr().err
+    assert (tmp_path / ".run-issues.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_cli_diagnosis_refresh_and_dry_run(tmp_path, diagnosed_run, capsys, dry_run):
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    args = [str(tmp_path), "--diagnosis"] + (["--dry-run"] if dry_run else [])
+    assert rf.main(args) == 0
+    if dry_run:
+        result = json.loads(capsys.readouterr().out)
+        assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+    else:
+        result = json.loads((tmp_path / ".run-issues.json").read_text())
+    assert result["summary"]["auto_applicable_fixes"] == 0
+    assert result["issues"][0]["fix_recommendation"]["actions"][0]["type"] == "manual_review"

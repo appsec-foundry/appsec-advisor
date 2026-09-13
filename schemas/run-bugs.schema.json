@@ -15,6 +15,11 @@
       "type": "string",
       "description": "ISO 8601 UTC timestamp (Z suffix)."
     },
+    "source_generated": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Exact generated value from the diagnosed .run-issues.json. Required when recommendations consume this diagnosis; older diagnoses remain renderable."
+    },
     "issues_total": {
       "type": "integer",
       "minimum": 0,
@@ -63,7 +68,7 @@
         "verdict": {
           "type": "string",
           "enum": ["plugin_bug", "environment", "expected", "inconclusive"],
-          "description": "plugin_bug = a defect in this repository's own code/prompts/contracts. environment = model, API, sandbox, or target-repository cause outside the plugin. expected = the pipeline behaved as designed and the issue is informational. inconclusive = evidence did not settle it."
+          "description": "plugin_bug = a defect in this repository's own code/prompts/contracts. environment = an external cause after checking the plugin's prompting, validation, routing, and error handling. expected = the pipeline behaved as designed and the issue is informational. inconclusive = evidence did not settle it."
         },
         "confidence": {
           "type": "string",
@@ -113,7 +118,7 @@
         },
         "suggested_fix": {
           "type": ["string", "null"],
-          "description": "Free-text repair direction. Advisory only — nothing in the pipeline applies it."
+          "description": "Advisory producer fix direction with the violated invariant and proposed neutral reproduction, incidental-name/path variant, and negative case. The recommendation consumer displays it for manual development; this text never selects commands or write targets."
         }
       },
       "allOf": [

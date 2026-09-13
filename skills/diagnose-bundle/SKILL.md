@@ -73,10 +73,7 @@ entry** (a finding sidecar that is `0 B`, missing, or implausibly large), then:
    scrubbed `last error` (schema enum names, function names, event names) across
    `scripts/`, `schemas/`, `agents/`. The `<str>`/`<path>` placeholders are
    redactions — match on the unredacted skeleton around them.
-3. **Known-bug history.** Check the auto-memory index
-   (`MEMORY.md`) for a prior occurrence of this signature
-   (e.g. schema-drift FATALs, STRIDE inline-shortcut → empty output, budget-flag
-   poisoning). A match is strong evidence and usually carries the fix location.
+3. **Known-bug history.** Check the auto-memory index (`MEMORY.md`) for prior occurrences. Use a match as a search lead and verify its mechanism in current code; similar symptoms do not establish the same cause.
 
 ## Step 5 — Report (print, do not write files)
 
@@ -88,6 +85,9 @@ ROOT CAUSE    <hypothesis, tied to the last_error + an inventory/counts anomaly>
 EVIDENCE      <the bundle fact(s)> + <repo file:line or memory entry>
 CHECK NEXT    <the producer file/function to read to confirm>
 REPRO         <smallest way to reproduce — e.g. threat_fixture replay, a crafted sidecar, a unit test>
+INVARIANT     <the plugin rule the producer violates, independent of run identifiers>
+FIX           <producer change that prevents the failure class; separate any run recovery>
+REGRESSION    <neutral reproduction, incidental-name/path variant, and negative case; proposed, not executed>
 CONFIDENCE    high | medium | low  (low if the bundle underdetermines the cause)
 ```
 

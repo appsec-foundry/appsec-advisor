@@ -410,7 +410,7 @@ Agents read the repository and make the security judgments. Python checks their 
 | `/appsec-advisor:threat-model-health` | Check whether the model is fresh, stale, missing, or blocked. |
 | `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without a threat model. |
 | `/appsec-advisor:clean-run-state` | Remove stale state after an interrupted run. |
-| `/appsec-advisor:fix-run-issues` | Apply safe fixes or show repair guidance for the previous run. |
+| `/appsec-advisor:fix-run-issues` | Show manual plugin-fix guidance from a validated diagnosis of the previous run. |
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
 | `/appsec-advisor:check-permissions` | Check or update permissions for unattended runs. |
 

@@ -84,6 +84,14 @@ def test_controller_command_and_paths_are_covered_by_existing_rules():
     assert "Write(${OUTPUT_DIR}/**)" in rules
 
 
+def test_diagnosis_recommendation_refresh_uses_existing_permissions():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    assert any(cp._rule_covers(rule, "Bash(python3 recommend_fixes.py --diagnosis)") for rule in rules)
+    assert "Read(${OUTPUT_DIR}/.*)" in rules
+    assert "Write(${OUTPUT_DIR}/.*)" in rules
+    assert "Read(${PLUGIN_ROOT}/**)" in rules
+
+
 def test_evidence_bundle_command_and_artifact_are_covered_by_existing_rules():
     entries = cp.load_required(cp.DATA_FILE)
     rules = [entry["entry"] for entry in entries]

@@ -23,15 +23,10 @@ categories get a default ``investigate`` recommendation rather than
 being silently dropped, and adding a new category only requires
 appending one entry to ``RECOMMENDERS``.
 
-Auto-applicable categories (in scope for the fix-run-issues skill):
-
-  * ``max_turns_subagent``        bump <agent>.md maxTurns by 50%
-  * ``max_turns_orchestrator``    require a bounded-runtime investigation
-  * (more added as patterns prove safe through repeated production runs)
-
-All other categories return ``auto_applicable: False`` with a manual
-remediation guide. The skill prints those for the user but does not
-attempt to apply them.
+Symptom recommendations are investigation guidance, never automatic edits.
+The CLI's --diagnosis mode consumes a schema-valid diagnosis tied to the current
+issue snapshot and replaces symptom advice with manual root-cause guidance.
+Diagnosis text never selects commands or write targets.
 """
 
 from __future__ import annotations
@@ -53,7 +48,11 @@ AGENTS_DIR = PLUGIN_ROOT / "agents"
 
 def _read_agent_max_turns(agent_name: str) -> int | None:
     """Return current `maxTurns:` from agents/<agent_name>.md frontmatter."""
+    if not re.fullmatch(r"appsec-[a-z0-9]+(?:-[a-z0-9]+)*", agent_name):
+        return None
     path = AGENTS_DIR / f"{agent_name}.md"
+    if not path.resolve().is_relative_to(AGENTS_DIR.resolve()):
+        return None
     if not path.is_file():
         return None
     try:
@@ -96,103 +95,44 @@ def _event_turn_budget(issue: dict) -> int | None:
 
 
 def _recommend_max_turns_subagent(issue: dict, output_dir: Path) -> dict:
-    """Sub-agent hit MAX_TURNS → bump its maxTurns by 50%."""
+    """A budget crossing establishes a symptom, not a need for more turns."""
     src = (issue["evidence"].get("source_agent") or "").strip()
-    # Map log "source" (short name) to canonical agent name. The logger
-    # writes the short name (e.g. "stride-analyzer-v2") in the source field;
-    # the agent file is "appsec-stride-analyzer-v2.md".
     agent_name = src if src.startswith("appsec-") else f"appsec-{src}"
     current = _read_agent_max_turns(agent_name)
-    if current is None:
-        return {
-            "category": "investigate",
-            "auto_applicable": False,
-            "confidence": "low",
-            "risk_level": "low",
-            # This recommender could not do its job because ITS OWN input was
-            # absent — not because the finding resists automation. That is a
-            # defect in the pipeline that produced the issue, so mark it and
-            # let the aggregator surface it instead of shipping a plausible-
-            # looking but useless recommendation.
-            "degraded": "missing_recommender_input",
-            "summary": f"Sub-agent {src!r} hit MAX_TURNS but the agent file could not be located.",
-            "rationale": "Could not read agents/<agent>.md to compute a bump.",
-            "actions": [
-                {
-                    "type": "manual_review",
-                    "target": "agents/",
-                    "details": f"Locate the agent file for source {src!r} and bump its maxTurns by ~50%.",
-                }
-            ],
-            "verification": [],
-        }
     measured = _event_turn_budget(issue)
-    if measured is not None and measured != current:
-        return {
-            "category": "investigate",
-            "auto_applicable": False,
-            "confidence": "low",
-            "risk_level": "low",
-            "summary": (
-                f"{src} exceeded a per-call budget of {measured} turns, not its "
-                f"maxTurns ceiling of {current} — do not bump the agent file."
-            ),
-            "rationale": (
-                f"budget_watchdog measured against {measured}, a per-component budget from "
-                f"context-plan.json (scripts/build_stride_dispatch_manifest.py: "
-                f"_component_turn_budget / CHEAP_STRIDE_TURNS), while the harness ceiling in "
-                f"agents/{agent_name}.md is {current}. Nothing was killed at {current}, so "
-                f"raising it neither addresses this event nor changes the screening behaviour — "
-                f"it only lifts the real limit for every dispatch of this agent. Decide instead "
-                f"whether the component deserved a larger budget."
-            ),
-            "actions": [
-                {
-                    "type": "manual_review",
-                    "target": "scripts/build_stride_dispatch_manifest.py",
-                    "details": (
-                        f"Budget {measured} came from _component_turn_budget. Either raise that "
-                        f"component's budget or accept the overshoot; leave "
-                        f"agents/{agent_name}.md at maxTurns: {current}."
-                    ),
-                }
-            ],
-            "verification": [],
-        }
-    suggested = max(current + 5, int(current * 1.5))
-    return {
-        "category": "agent_def",
-        "auto_applicable": True,
-        "confidence": "high",
+    rec = {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "low",
         "risk_level": "low",
-        "summary": f"Bump {agent_name} maxTurns: {current} → {suggested}",
+        "summary": f"Investigate {src!r} turn usage (measured budget: {measured}; maxTurns: {current}).",
         "rationale": (
-            f"M2.8/M2.9 pattern: same fix worked for qa-reviewer (80→120) and "
-            f"orchestrator (75→120). Rule of thumb: bump by 50% on first "
-            f"MAX_TURNS event for any agent. Cost impact: agent may use up to "
-            f"{suggested - current} more tool-calls per dispatch, but only when "
-            f"genuinely needed."
+            "A budget event does not establish a plugin root cause or legitimate need for more turns. "
+            "Inspect the producing prompt, context routing, repeated reads, retries, and publication work. "
+            "Increase a limit only when measured useful work requires it; never adjust a test ceiling "
+            "as a substitute for a regression test."
         ),
         "actions": [
             {
-                "type": "edit_file",
-                "target": f"agents/{agent_name}.md",
-                "find": f"maxTurns: {current}",
-                "replace": f"maxTurns: {suggested}",
-            },
-            {
-                "type": "edit_file",
-                "target": "tests/test_agent_definitions.py",
-                "find": f'"{agent_name}":  {current}',
-                "replace": f'"{agent_name}": {suggested}',
-                "fallback_find": f'"{agent_name}": {current}',
-                "fallback_replace": f'"{agent_name}": {suggested}',
-            },
+                "type": "manual_review",
+                "target": ".agent-run.log",
+                "details": (
+                    "Trace measured usage to the plugin producer and its contract. Propose a neutral "
+                    "reproduction, an incidental-name/path variant, and a negative case before developing a fix."
+                ),
+            }
         ],
-        "verification": [
-            "python3 -m pytest tests/test_agent_definitions.py -v",
-        ],
+        "verification": [],
     }
+    if current is None:
+        rec["degraded"] = "missing_recommender_input"
+        rec["summary"] = f"Sub-agent {src!r} reported a budget event but its agent definition is unavailable."
+    elif measured is not None and measured != current:
+        rec["summary"] = (
+            f"{src} exceeded a per-call budget of {measured} turns, not its "
+            f"maxTurns ceiling of {current} — do not bump the agent file."
+        )
+    return rec
 
 
 def _recommend_max_turns_orchestrator(issue: dict, output_dir: Path) -> dict:
@@ -305,50 +245,30 @@ def _recommend_stage1_excessive_duration(issue: dict, output_dir: Path) -> dict:
 
 
 def _recommend_session_stop_unknown(issue: dict, output_dir: Path) -> dict:
-    """SESSION_STOP with stop_reason=unknown — usually budget exhaustion."""
+    """Unknown stop reasons require lifecycle evidence, regardless of usage."""
     ev = issue["evidence"]
     src = ev.get("source_agent", "?")
     cost = ev.get("cost_usd", 0.0)
     out_tokens = ev.get("output_tokens", 0)
-    if out_tokens > 50_000 or cost > 5.0:
-        return {
-            "category": "investigate",
-            "auto_applicable": False,
-            "confidence": "high",
-            "risk_level": "medium",
-            "summary": (
-                f"Agent {src} hit SESSION_STOP with reason=unknown after "
-                f"{out_tokens:,} output tokens (cost ${cost:.2f}). "
-                "This is almost certainly turn-budget exhaustion."
-            ),
-            "rationale": (
-                "stop_reason=unknown combined with high output-token count is the "
-                "hallmark of MAX_TURNS without an explicit MAX_TURNS event. Bump the "
-                "agent's maxTurns or move expensive work to a dedicated sub-agent. "
-                "Compare with the M2.9 pattern (orchestrator 75→120)."
-            ),
-            "actions": [
-                {
-                    "type": "manual_review",
-                    "target": f"agents/{src if src.startswith('appsec-') else 'appsec-' + src}.md",
-                    "details": "Bump maxTurns by 50% if not already at the maximum acceptable for the workload.",
-                },
-            ],
-            "verification": [],
-        }
     return {
         "category": "investigate",
         "auto_applicable": False,
         "confidence": "low",
         "risk_level": "low",
-        "summary": f"Agent {src} ended with reason=unknown — token usage normal.",
-        "rationale": "Low token count suggests this was an early bail-out, not budget exhaustion.",
+        "summary": (
+            f"Agent {src} ended with reason=unknown after {out_tokens:,} output tokens "
+            f"(cost ${cost:.2f}); the cause is unconfirmed."
+        ),
+        "rationale": (
+            "Token usage and cost do not establish why a call stopped. Inspect the call lifecycle, "
+            "host return, measured turn budget, and plugin error handling before proposing a producer fix."
+        ),
         "actions": [
             {
                 "type": "manual_review",
                 "target": ".agent-run.log",
-                "details": "Read the lines BEFORE SESSION_STOP for the actual cause.",
-            },
+                "details": "Correlate SESSION_STOP with the call's terminal evidence; do not infer a need for more turns.",
+            }
         ],
         "verification": [],
     }
@@ -904,17 +824,98 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
 }
 
 
-def enrich_with_recommendations(data: dict, output_dir: Path) -> dict:
+def _current_diagnoses(data: dict, output_dir: Path) -> dict[str, dict]:
+    """Validate the diagnostic snapshot before using its advisory prose.
+
+    Old sidecars remain renderable but cannot guide fixes without source identity.
+    Partial examination is valid; duplicate, foreign, or stale entries are not.
+    """
+    import jsonschema
+
+    diagnosis = json.loads((output_dir / ".run-bugs.json").read_text(encoding="utf-8"))
+    schema = json.loads((PLUGIN_ROOT / "schemas/run-bugs.schema.json").read_text(encoding="utf-8"))
+    try:
+        jsonschema.Draft202012Validator(schema).validate(diagnosis)
+    except jsonschema.ValidationError as exc:
+        raise ValueError("diagnosis failed run-bugs schema validation") from exc
+    if not data.get("generated") or diagnosis.get("source_generated") != data["generated"]:
+        raise ValueError("diagnosis does not identify the current issue snapshot; run diagnose-run again")
+    issues = data.get("issues") or []
+    titles = {issue["id"]: issue["title"] for issue in issues}
+    entries = diagnosis["diagnoses"]
+    if len(titles) != len(issues) or diagnosis["issues_total"] != len(issues):
+        raise ValueError("diagnosis issue total or source IDs do not match")
+    if diagnosis["issues_examined"] != len(entries):
+        raise ValueError("diagnosis examination count does not match")
+    index = {}
+    counts = dict.fromkeys(diagnosis["summary"], 0)
+    for entry in entries:
+        issue_id = entry["issue_id"]
+        if issue_id in index or titles.get(issue_id) != entry["issue_title"]:
+            raise ValueError("diagnosis contains a duplicate or unmatched issue")
+        index[issue_id] = entry
+        counts[entry["verdict"]] += 1
+    if counts != diagnosis["summary"]:
+        raise ValueError("diagnosis verdict counts do not match")
+    return index
+
+
+def _recommend_from_diagnosis(diagnosis: dict | None) -> dict:
+    """Keep model-authored locations and suggestions in display-only details."""
+    rec = {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "low",
+        "risk_level": "low",
+        "summary": "No diagnosis for this issue; investigate before developing a plugin fix.",
+        "rationale": "The diagnosis may cover only a subset of recorded issues.",
+        "actions": [],
+        "verification": [],
+    }
+    if diagnosis is None:
+        return rec
+    verdict = diagnosis["verdict"]
+    rec.update(
+        summary=f"Diagnosis: {verdict} — {diagnosis['issue_title']}",
+        confidence=diagnosis["confidence"],
+        rationale=diagnosis["rationale"],
+    )
+    if verdict == "plugin_bug":
+        root = diagnosis["root_cause"]
+        rec["actions"] = [
+            {
+                "type": "manual_review",
+                "target": ".",
+                "details": (
+                    f"Producer: {root['location']}. Defect: {root['description']}. "
+                    f"Causal path: {root['causal_path']}. "
+                    f"Proposed direction (unverified): {diagnosis.get('suggested_fix') or 'Not supplied'}. "
+                    "Re-read the current plugin source and applicable contracts before editing. "
+                    "Demonstrate a failing neutral reproduction, an incidental-name/path variant, "
+                    "and a negative case. Report run recovery separately from the permanent plugin fix."
+                ),
+            }
+        ]
+    elif verdict in {"environment", "expected"}:
+        rec["category"] = "no_fix"
+    return rec
+
+
+def enrich_with_recommendations(data: dict, output_dir: Path, *, use_diagnosis: bool = False) -> dict:
     """Add `fix_recommendation` to every issue in `data['issues']` and
     update `summary['auto_applicable_fixes']` to count high-confidence
     auto-applicable recommendations.
 
     Mutates `data` in place AND returns it (so callers can chain).
     """
+    diagnoses = _current_diagnoses(data, output_dir) if use_diagnosis else None
     auto_count = 0
     for issue in data.get("issues") or []:
         cat = issue.get("category", "")
-        rec = RECOMMENDERS.get(cat, _recommend_default)(issue, output_dir)
+        if diagnoses is not None:
+            rec = _recommend_from_diagnosis(diagnoses.get(issue.get("id")))
+        else:
+            rec = RECOMMENDERS.get(cat, _recommend_default)(issue, output_dir)
         issue["fix_recommendation"] = rec
         if rec.get("auto_applicable") and rec.get("confidence") == "high":
             auto_count += 1
@@ -929,6 +930,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = argparse.ArgumentParser(prog="recommend_fixes.py", description=__doc__.splitlines()[0])
     p.add_argument("output_dir", type=Path)
+    p.add_argument(
+        "--diagnosis", action="store_true", help="Require a valid current-run diagnosis for manual fix guidance"
+    )
+    p.add_argument("--dry-run", action="store_true", help="Print enriched JSON without writing the issue file")
     args = p.parse_args(argv)
 
     issues_path = args.output_dir / ".run-issues.json"
@@ -941,7 +946,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: cannot parse {issues_path}: {exc}", file=sys.stderr)
         return 1
 
-    data = enrich_with_recommendations(data, args.output_dir)
+    try:
+        data = enrich_with_recommendations(data, args.output_dir, use_diagnosis=args.diagnosis)
+    except (OSError, ValueError, KeyError, TypeError, ImportError) as exc:
+        print(f"error: cannot use diagnosis: {exc}", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        print(json.dumps(data, indent=2))
+        return 0
 
     try:
         issues_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")

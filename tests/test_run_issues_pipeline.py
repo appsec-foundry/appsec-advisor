@@ -210,7 +210,7 @@ class TestPhaseDurationParsing:
 
 
 class TestRecommender:
-    def test_max_turns_subagent_is_auto_applicable(self):
+    def test_max_turns_subagent_requires_investigation(self):
         issue = {
             "category": "max_turns_subagent",
             "severity": "error",
@@ -218,11 +218,10 @@ class TestRecommender:
             "evidence": {"source_agent": "stride-analyzer-v2"},
         }
         rec_dict = rec._recommend_max_turns_subagent(issue, Path("/tmp"))
-        assert rec_dict["auto_applicable"] is True
-        assert rec_dict["confidence"] == "high"
-        assert rec_dict["category"] == "agent_def"
-        # Should compute a bumped value (current 31 → ≥46)
-        assert any("maxTurns" in (a.get("find") or "") for a in rec_dict["actions"])
+        assert rec_dict["auto_applicable"] is False
+        assert rec_dict["confidence"] == "low"
+        assert rec_dict["category"] == "investigate"
+        assert not any(a["type"] == "edit_file" for a in rec_dict["actions"])
 
     def test_session_stop_unknown_is_manual(self):
         issue = {
@@ -233,7 +232,7 @@ class TestRecommender:
         }
         rec_dict = rec._recommend_session_stop_unknown(issue, Path("/tmp"))
         assert rec_dict["auto_applicable"] is False
-        assert rec_dict["confidence"] == "high"
+        assert rec_dict["confidence"] == "low"
 
     def test_stage1_excessive_duration_is_high_alert(self):
         issue = {
@@ -289,8 +288,8 @@ class TestEnrichment:
             ],
         }
         rec.enrich_with_recommendations(data, Path("/tmp"))
-        assert data["summary"]["auto_applicable_fixes"] == 1
-        assert data["issues"][0]["fix_recommendation"]["auto_applicable"] is True
+        assert data["summary"]["auto_applicable_fixes"] == 0
+        assert data["issues"][0]["fix_recommendation"]["auto_applicable"] is False
         assert data["issues"][1]["fix_recommendation"]["auto_applicable"] is False
 
 
@@ -319,7 +318,7 @@ class TestCli:
         out = json.loads((output_dir / ".run-issues.json").read_text())
         assert out["run_status"] == "issues"
         # Auto-recommendation should have run automatically
-        assert out["issues"][0]["fix_recommendation"]["auto_applicable"] is True
+        assert out["issues"][0]["fix_recommendation"]["auto_applicable"] is False
 
     def test_aggregator_handles_missing_logs(self, output_dir):
         # No .agent-run.log, no .hook-events.log — must succeed cleanly

@@ -16,8 +16,7 @@ skill turns them into *causes* — "`scripts/merge_threats.py:412` writes a
 component id the renderer cannot resolve" — by dispatching the
 `appsec-run-diagnostician` agent against this repository's own code.
 
-It never fixes anything. `/appsec-advisor:fix-run-issues` remains the only
-writing path.
+It never fixes anything. `/appsec-advisor:fix-run-issues` consumes the validated current-run diagnosis for manual plugin-fix guidance. Development fixes follow the repository's `AGENTS.md` and require generic regression evidence.
 
 The run itself does not do this work: the diagnostician is a sub-agent, so its
 wall-clock and tokens would land in the run's own duration and cost figures and

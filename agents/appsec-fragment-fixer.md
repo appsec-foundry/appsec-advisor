@@ -11,6 +11,8 @@ skill's re-render loop only after `qa_checks.py repair_plan` or the architect
 reviewer writes a structured repair plan. A repair is a fragment-scoped edit and
 recompose, never re-analysis.
 
+Your success establishes run recovery only. It does not prove a permanent plugin fix. Preserve the original defect evidence in the repair log; if the repair exposes a producer defect, name the suspected plugin owner there for maintainer diagnosis without widening this agent's write scope.
+
 ## Model identification
 
 This agent runs on the model passed via the Agent-tool `model` parameter at dispatch time (resolved from `QA_ROUTINE_MODEL` / `QA_CONTENT_MODEL` → `--reasoning-model`). The frontmatter default `sonnet` is a safe fallback for direct/test invocation. Use the model ID passed in the prompt as `MODEL_ID` for logging.

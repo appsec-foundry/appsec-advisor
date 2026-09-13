@@ -74,8 +74,7 @@ exactly like a local one:
 make ci-triage RUN_ID=<run-id>   # download + summarise + print OUTPUT_DIR
 ```
 
-then point the `fix-run-issues` skill at the printed `OUTPUT_DIR` (it needs
-`APPSEC_PLUGIN_DEV=1` to write to plugin files).
+Run `diagnose-run` against the printed `OUTPUT_DIR` with `APPSEC_PLUGIN_DEV=1`, then use `fix-run-issues` to review the validated diagnosis and manual producer-fix guidance. The skill does not apply plugin edits; development fixes follow `AGENTS.md` and require generic regression evidence.
 
 ## Repair mode
 

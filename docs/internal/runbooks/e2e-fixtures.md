@@ -151,14 +151,7 @@ gh run list --workflow fixture-e2e-dispatch.yml -L 10   # find the red run
 make ci-triage RUN_ID=<run id>                          # fetch + summarise
 ```
 
-`make ci-triage` wraps `scripts/ci_triage.sh` and serves this workflow and
-`threat-model-dispatch.yml` alike: it downloads the `fixture-e2e-*` /
-`threat-model-*` artifacts into `.appsec-ci/` (gitignored), prints one line
-per fixture with its exit code and failure kind, and prints the `OUTPUT_DIR` to
-export for each failure. From there the normal
-`fix-run-issues` skill applies — it reads `$OUTPUT_DIR/.run-issues.json` and its
-`fix_recommendation` entries, and needs `APPSEC_PLUGIN_DEV=1` to write to plugin
-files.
+`make ci-triage` wraps `scripts/ci_triage.sh` for this workflow and `threat-model-dispatch.yml`. It downloads the `fixture-e2e-*` / `threat-model-*` artifacts into `.appsec-ci/` (gitignored), prints each fixture's exit code and failure kind, and prints the `OUTPUT_DIR` for each failure. Run `diagnose-run` against that directory with `APPSEC_PLUGIN_DEV=1`, then use `fix-run-issues` to review the validated diagnosis and manual producer-fix guidance. The skill does not apply plugin edits; development fixes follow `AGENTS.md` and require generic regression evidence.
 
 This is the default loop when you are at your machine. Repair mode below is the
 asynchronous fallback, not a replacement for it.
