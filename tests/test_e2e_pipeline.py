@@ -220,8 +220,8 @@ def test_report_and_figure_explain_actual_actor_groupings(e2e_run, monkeypatch, 
         assert ("because the source repository is public" in text) == public_source
         assert ("Each finding retains its login and privilege requirements." in text) == (registration or public_source)
     if not fallback:
-        assert ("Self-registered users · open registration" in svg_text) == registration
-        assert ("Repository readers · public source" in svg_text) == public_source
+        assert ("Self-registered users" in svg_text) == registration
+        assert ("Public-source readers" in svg_text) == public_source
         assert ("Login / privileges: per finding" in svg_text) == (registration or public_source)
     assert "it is shown distinctly" not in markdown
     assert "| Privileged User |" in markdown

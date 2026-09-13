@@ -30,6 +30,33 @@ SCHEMAS_DIR = REPO_ROOT / "schemas" / "fragments"
 VALIDATE_PY = REPO_ROOT / "scripts" / "validate_fragment.py"
 
 
+def test_figure1_optional_labels_are_bounded_across_artifact_schemas():
+    import yaml
+
+    roots = [
+        yaml.safe_load((REPO_ROOT / "schemas" / p).read_text())
+        for p in (
+            "fragments/data-flows.schema.json",
+            "trust-boundary-assessment-input.schema.json",
+            "threat-model.output.schema.yaml",
+        )
+    ]
+    flow_schemas = [r["$defs"]["data_flow"] for r in roots[:2]] + [roots[2]["properties"]["data_flows"]["items"]]
+    for flow_schema in flow_schemas:
+        assert "diagram_label" not in flow_schema["required"]
+        validator = jsonschema.Draft202012Validator(flow_schema["properties"]["diagram_label"])
+        assert validator.is_valid("Authenticated event delivery")
+        for value in ("", None, 123, "x" * 49, "line\nbreak", "line\tbreak"):
+            assert not validator.is_valid(value)
+    schema = json.loads((SCHEMAS_DIR / "security-posture-attack-paths.schema.json").read_text())
+    path_schema = schema["properties"]["attack_paths"]["items"]
+    assert "scenario_title" not in path_schema["required"]
+    validator = jsonschema.Draft202012Validator(path_schema["properties"]["scenario_title"])
+    assert validator.is_valid("Template Injection Reads Private Records")
+    for value in ("", "Injection", None, "x" * 61, "two lines\nwith text"):
+        assert not validator.is_valid(value)
+
+
 def test_external_entity_access_is_consistent_and_role_only():
     import yaml
 

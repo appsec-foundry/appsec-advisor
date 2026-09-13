@@ -5673,6 +5673,30 @@ _FIG1_TAX = {
 }
 
 
+@pytest.mark.parametrize("finding", ["F-001", "T-001", "F-002", "T-017"])
+def test_figure1_authored_title_survives_loading_unless_membership_expands(tmp_path, finding):
+    ctx = _fig1_ctx(tmp_path)
+    ctx.fragments_dir.mkdir()
+    title = "SQL Injection Reads Private Records"
+    path = dict(
+        _FIG1_APD["attack_paths"][0],
+        scenario_title=title,
+        description="Untrusted input reaches a database query.",
+        impact=["customer-data-exfiltration"],
+    )
+    fragment = {"schema_version": 1, "actors": ["internet-anon"], "attack_paths": [path]}
+    (ctx.fragments_dir / "security-posture-attack-paths.json").write_text(json.dumps(fragment))
+    ctx.yaml_data["threats"] = [{"id": finding, "component": "api", "risk": "Critical", "cwe": "CWE-89"}]
+    taxonomy = compose._load_attack_class_taxonomy()
+    loaded = compose._load_attack_paths_fragment(ctx, taxonomy, ctx.yaml_data["threats"])
+    unchanged = finding in {"F-001", "T-001"}
+    assert (loaded["attack_paths"][0].get("scenario_title") == title) is unchanged
+    compose._render_figure1_svg(ctx, loaded, taxonomy)
+    svg = (tmp_path / "figure1.svg").read_text()
+    assert (title in svg) is unchanged
+    assert "data-legend-section" in svg  # Primary audited renderer, not the fallback.
+
+
 @pytest.mark.parametrize("registration", [True, False])
 @pytest.mark.parametrize("access", [True, False])
 @pytest.mark.parametrize("fallback", [True, False])

@@ -385,6 +385,9 @@ requirements:
   REQ-RPT-003:
     applies_to:
       - agents/appsec-architecture-analyst.md
+      - agents/appsec-threat-renderer.md
+      - data/attack-class-taxonomy.yaml
+      - schemas/fragments/security-posture-attack-paths.schema.json
       - scripts/build_trust_boundary_assessment_input.py
       - agents/shared/prose-style.md
       - agents/shared/prose-samples.md
@@ -454,6 +457,14 @@ requirements:
       - tests/test_figure1_dfd.py::test_equal_regular_access_can_fold_without_open_registration
       - tests/test_figure1_dfd.py::test_unnamed_flows_are_not_assigned_to_the_merged_victim_role
       - tests/test_figure1_dfd.py::test_flow_lanes_separate_opposing_stubs_at_equal_port_heights
+      - tests/test_figure1_dfd.py::test_nearly_aligned_flow_ports_avoid_micro_jogs
+      - tests/test_figure1_dfd.py::test_intra_column_arrow_tips_have_a_straight_approach
+      - tests/test_figure1_dfd.py::test_flow_legend_groups_drawn_edges_and_keeps_all_flow_meanings
+      - tests/test_figure1_dfd.py::test_flow_legends_accept_arbitrary_protocols_without_catalogs
+      - tests/test_figure1_dfd.py::test_scenario_title_is_preserved_without_inventing_mechanisms
+      - tests/test_figure1_dfd.py::test_actor_grouping_is_explained_inside_its_node
+      - tests/test_compose_threat_model.py::test_figure1_authored_title_survives_loading_unless_membership_expands
+      - tests/test_schema_integrity.py::test_figure1_optional_labels_are_bounded_across_artifact_schemas
       - tests/test_figure1_dfd.py::test_cyclic_lane_constraints_remain_visible_to_the_geometry_gate
       - tests/test_compose_threat_model.py::test_figure1_role_grouping_explanation_follows_image_only_when_drawn
       - tests/test_schema_integrity.py::test_external_entity_access_is_consistent_and_role_only

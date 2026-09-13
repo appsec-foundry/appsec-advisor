@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Figure 1 uses a dynamic column legend and compact actor references, showing all Critical weakness categories per component adding High categories up to five in total, and indicating omitted High categories.
+- Figure 1 shows clearer scenario titles, compact grouped data flows, smoother arrows, actor-grouping notes inside actor cards, and all Critical weakness categories with High categories filling up to five annotations per component.
 
 - The Management Summary and completion summary show the same selection of up to three open threat-modeling questions for the team, with weakness and finding references and any evidence still awaiting verification.
 

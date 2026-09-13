@@ -333,7 +333,7 @@ Renders as the Figure 2 attack-paths table in §1. **Author EXACTLY this schema*
     {
       "class": "injection",
       "actor": "internet-anon",
-      "target": "data",
+      "target": "data", "scenario_title": "<mechanism and action or consequence, 10–60 chars>",
       "description": "<ONE generic sentence about the class as a whole, 30–280 chars — CWE-cluster level, not a per-vector walkthrough>",
       "findings": ["F-001", "F-014"],
       "impact": ["customer-data-exfiltration"]
@@ -350,7 +350,7 @@ Renders as the Figure 2 attack-paths table in §1. **Author EXACTLY this schema*
 - `impact[]` (business-impact slug from `data/business-impact-taxonomy.yaml`, 1–4, most severe first): `full-admin-takeover` · `full-server-compromise` · `customer-data-exfiltration` · `customer-session-hijack`.
 - `findings[]` (optional but expected, 1–12 `F-NNN`/`T-NNN` ids): the findings that belong to this class — this is HOW the entry "maps to ≥1 Critical/High finding". `attack_chains[]` (optional, up to 5 `cc-NN` ids): compound chains that materialise the class.
 
-Each `attack_paths[]` entry must map to ≥1 Critical or High finding via `findings[]`. Derive the list from your STRIDE analysis — do not invent paths not evidenced by findings. Omit a class entirely when it has no findings (do NOT emit it with an empty list); omit the whole file if no High/Critical findings exist (the section renders nothing).
+Each `attack_paths[]` entry must map to ≥1 Critical or High finding via `findings[]`. Derive the list from your STRIDE analysis — do not invent paths not evidenced by findings. Author `scenario_title` for Figure 1 as plain text naming the evidenced mechanism and action or consequence, ideally within 40 characters. Cover the linked findings rather than naming only one member of a broader group. Do not infer admin access, token theft, CORS involvement, or a vulnerability subtype from the class alone. Omit a class entirely when it has no findings; omit the whole file if no High/Critical findings exist.
 
 ### `requirements-compliance.md` authoring contract
 

@@ -131,6 +131,8 @@ ORM setters, query construction, and rendering execute in application components
 
 When validated actor resolution establishes open self-registration, overview diagrams combine anonymous and regular authenticated internet access. Findings retain their authentication prerequisites and privileged actors remain separate. Attacker arrows share their source actor's colour and identifier; data-flow identifiers resolve to the corresponding legend entries.
 
+Figure 1 names an evidenced attack mechanism and action or consequence through optional `attack_paths[].scenario_title`; older fragments retain descriptive class labels. The title must cover the referenced findings without inventing a subtype or impact. A title authored for a narrower finding set cannot describe a path expanded during reconciliation. Optional `data_flows[].diagram_label` summarizes the flow purpose while the canonical `label`, endpoints, protocol, direction, classification, and evidence remain intact through the architecture handoff and YAML export. Protocol names are not restricted to a display catalogue. The legend groups the identities on each drawn edge and uses the component IDs already displayed in the diagram. Distinct payloads and protocols remain distinguishable; longer legacy text remains readable. Applied attacker groupings are explained inside the receiving actor card, including the retained per-finding login and privilege requirements. Asset location and handling may share a legend column with data flows.
+
 ## §4h. Trust-boundary catalogue and finding-reference invariant
 
 Trust zones and trust boundaries are different objects. A diagram may draw a

@@ -3308,6 +3308,11 @@ def _reconcile_attack_path_membership(data: dict, taxonomy: dict, threats: list[
         cur_set = set(cur)
         missing = [f for f in sorted(set(fids)) if f not in cur_set]
         if missing:
+            # A title authored for a narrower finding set may misdescribe the expanded path.
+            # Namespace aliases alone do not change the title's evidence scope.
+            authored_refs = {_normalize_tid_to_fid(f) for f in cur_set}
+            if any(_normalize_tid_to_fid(f) not in authored_refs for f in missing):
+                ap.pop("scenario_title", None)
             ap["findings"] = sorted(cur_set | set(missing))
             merged_any = True
             gap_log.append(

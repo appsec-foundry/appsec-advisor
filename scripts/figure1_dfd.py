@@ -93,6 +93,7 @@ LEGEND_GAP = 20
 FS = 8.5  # small label font
 ZONE_CAP = 8  # drawn nodes per zone; the rest collapse into one bar
 PORT_STEP = 22  # minimum spacing between ports on one node side
+INTRA_STUB, INTRA_STEP = 28, 14  # space for an arrowhead plus a rounded corner; parallel lane spacing
 BAR_H = 24
 COLUMN = {"client": 0, "application": 1, "build": 1, "data": 2, "third-party": 0}
 ZONE_ORDER = {"client": 0, "application": 0, "build": 1, "data": 0, "third-party": 1}
@@ -126,6 +127,44 @@ def _cut(s, n):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _legend_wrap(text, width, size):
+    """Wrap complete legend text, including long identifiers, within its column."""
+    limit = max(1, int(width / (size * 0.54)))
+    lines = []
+    for line in _wrap(text, width, size):
+        while len(line) > limit:
+            lines.append(line[:limit])
+            line = line[limit:]
+        if line:
+            lines.append(line)
+    return lines
+
+
+def _flow_ids_label(ids):
+    return ids[0] + "".join("/" + fid.removeprefix("df-") for fid in ids[1:])
+
+
+def _flow_legend_detail(entries, nodes, edge):
+    """Keep endpoints compact and protocol/payload associations intact per edge."""
+
+    def endpoint(key):
+        node = nodes.get(key, {})
+        name = node.get("name", key)
+        return name.split(" · ", 1)[0] if node.get("kind") != "ext" else name
+
+    by_protocol = collections.OrderedDict()
+    for flow in entries:
+        protocol = flow.get("protocol") or ""
+        label = flow.get("diagram_label") or flow.get("label") or ""
+        labels = by_protocol.setdefault(protocol, [])
+        if label and label not in labels:
+            labels.append(label)
+    payloads = [" · ".join(p for p in (protocol, " / ".join(labels)) if p) for protocol, labels in by_protocol.items()]
+    direction = "↔" if edge.get("bidi") else "→"
+    route = f"{endpoint(edge['src'])} {direction} {endpoint(edge['dst'])}"
+    return " · ".join(part for part in (route, "; ".join(payloads)) if part)
+
+
 def _tb_num(tbid):
     m = re.search(r"(\d+)$", str(tbid))
     return int(m.group(1)) if m else 0
@@ -137,6 +176,7 @@ class _Canvas:
         self.labels = []  # bboxes for the overlap check: (x0, y0, x1, y1, name)
         self.badges = []
         self.legend_boxes = []
+        self.label_owners = {}  # Tracked in-node labels must remain inside their owner.
         self.maxy = 0
 
     def add(self, s):
@@ -444,7 +484,12 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
         scenarios.append(
             {
                 "n": str(idx + 1),
-                "title": cl.get("short_label") or cl.get("label") or slug or "attack",
+                "title": ap.get("scenario_title")
+                or cl.get("diagram_label")
+                or cl.get("label")
+                or cl.get("short_label")
+                or slug
+                or "attack",
                 "actor": actor_name(actor),
                 "actor_slug": actor,
                 "victim": victim,
@@ -891,6 +936,30 @@ def _flow_lane_order(flows):
     return ordered
 
 
+def _intra_channel(count):
+    return INTRA_STUB + INTRA_STEP * (count - 1) + 8 if count else 0
+
+
+def _align_flow_ports(nodes, edges, sides):
+    """Remove sub-corner-sized jogs only where the destination port has clearance."""
+    for edge in edges:
+        if edge.get("attack") or edge["kind"] == "intra" or edge["skip"]:
+            continue
+        if not 0 < abs(edge["yd"] - edge["ys"]) <= 8:
+            continue
+        node = nodes[edge["dst"]]
+        side = "L" if edge["kind"] == "forward" else "R"
+        height = edge["ys"]
+        if not node["y"] + node["tagspace"] + PORT_STEP / 2 <= height <= node["y"] + node["h"] - PORT_STEP / 2:
+            continue
+        if any(
+            other is not edge and abs(height - other["ys" if role == "out" else "yd"]) < PORT_STEP
+            for role, other in sides[edge["dst"]][side]
+        ):
+            continue
+        edge["yd"] = height
+
+
 def _layout(nodes, edges, dropped, tb_threats, ncols=3):
     # 1. sides: L = entering from the left, R = leaving right / intra-column channel
     for e in edges:
@@ -923,7 +992,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
         n["h"] = max(n["h"], n["tagspace"] + PORT_STEP * (k + 1))
     # 3. column widths (right-side channel for intra edges), gap widths (one lane per edge)
     intra_per_col = collections.Counter(nodes[e["src"]]["col"] for e in edges if e["kind"] == "intra")
-    col_w = [COL_W + (14 * intra_per_col[c] + 4 if intra_per_col[c] else 0) for c in range(ncols)]
+    col_w = [COL_W + _intra_channel(intra_per_col[c]) for c in range(ncols)]
     n_lanes = collections.Counter()
     for e in edges:
         if e["kind"] == "intra":
@@ -1022,6 +1091,8 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
                     else:
                         e["yd"] = yv
 
+    _align_flow_ports(nodes, edges, sides)
+
     # 6. routes
     boundaries = [col_x[g] + col_w[g] + B_OFF for g in range(ncols - 1)]
     gap_edges = collections.defaultdict(list)
@@ -1045,7 +1116,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
         if e["kind"] == "intra":
             j = chan_used[s["col"]]
             chan_used[s["col"]] += 1
-            cx = col_x[s["col"]] + ZONE_PAD + NODE_W + 10 + j * 14
+            cx = col_x[s["col"]] + ZONE_PAD + NODE_W + INTRA_STUB + j * INTRA_STEP
             e["pts"] = [(s["x"] + s["w"], e["ys"]), (cx, e["ys"]), (cx, e["yd"]), (t["x"] + t["w"], e["yd"])]
             e["bx"] = None
         elif e["kind"] == "forward" and not e["skip"]:
@@ -1182,7 +1253,7 @@ def _legend_columns(sections, ncols):
         for (key, height), col in zip(sections, columns):
             heights[col] += height + LEGEND_GAP
             location[key] = col
-        related = (("notation", "actors"), ("scenarios", "boundaries"), ("boundaries", "assets"))
+        related = (("scenarios", "boundaries"), ("flows", "assets"))
         separation = sum(location[a] != location[b] for a, b in related if a in location and b in location)
         candidates.append((max(heights), separation, sum(h * h for h in heights), columns))
     shortest = min(c[0] for c in candidates)
@@ -1335,7 +1406,7 @@ def _render(
     intra_n = collections.Counter(nodes[e["src"]]["col"] for e in edges if e["kind"] == "intra")
 
     def _chan(col):  # width of the intra-column channel that sits right of the nodes in `col`
-        return 14 * intra_n[col] + 4 if intra_n[col] else 0
+        return _intra_channel(intra_n[col])
 
     for e in edges:
         if e.get("attack"):
@@ -1412,6 +1483,9 @@ def _render(
         x, y, w, h = n["x"], n["y"], n["w"], n["h"]
         if n["kind"] == "ext":
             col = n["color"]
+            if n.get("group_lines"):
+                c.label_owners[f"actor grouping {n['actor_code']}"] = n["id"]
+                c.add(f'<g data-actor-grouping="{n["actor_code"]}">')
             c.rect(x, y, w, h, fill="#ffffff", stroke=col, sw=1.8)
             if n["zone"] == "internet":
                 _person(c, x + 16, y + 20, col)
@@ -1422,7 +1496,20 @@ def _render(
             for i, line in enumerate(_wrap(label, w - (tx - x) - 8, 10)[:2]):
                 c.text(tx, y + 19 + i * 12, line, size=10, anchor="start", weight="bold", fill=col)
             sub_y = y + h - (20 if n.get("victim_label") else 8)
-            c.text(tx, sub_y, _cut(n["sub"], 36), size=7.5, anchor="start", fill=MUTED, italic=True)
+            if n.get("group_lines"):
+                for i, line in enumerate(n["group_lines"]):
+                    c.text(
+                        tx,
+                        sub_y - 10 * (len(n["group_lines"]) - 1 - i),
+                        line,
+                        size=7.5,
+                        anchor="start",
+                        fill=MUTED,
+                        track=f"actor grouping {n['actor_code']}",
+                    )
+                c.add("</g>")
+            else:
+                c.text(tx, sub_y, _cut(n["sub"], 36), size=7.5, anchor="start", fill=MUTED, italic=True)
             if n.get("victim_label"):
                 c.text(tx, y + h - 8, n["victim_label"], size=7.5, anchor="start", fill=MUTED, italic=True)
             continue
@@ -1608,48 +1695,6 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     )
     y += 32
 
-    grouped_actors = []
-    group_labels = {
-        "internet-user": "Self-registered users · open registration",
-        "repo-read": "Repository readers · public source",
-    }
-    for node in nodes.values():
-        if not node.get("attacker"):
-            continue
-        sources = [source for source, target in actor_groups if target == node.get("actor_slug")]
-        if sources:
-            grouped_actors.append((node, list(dict.fromkeys(sources))))
-    if grouped_actors:
-        y = head("actors", "Actor grouping")
-        for node, sources in grouped_actors:
-            c.add(f'<g transform="translate({lx + 15} {y + 1}) scale(0.5)">')
-            _person(c, 0, 0, node["color"])
-            c.add("</g>")
-            c.text(
-                lx + 26,
-                y + 3,
-                node["actor_code"],
-                size=9,
-                anchor="start",
-                weight="bold",
-                fill=node["color"],
-                track="actor grouping",
-            )
-            for source in sources:
-                for line in _wrap(group_labels[source], lw - 64, 9):
-                    c.text(lx + 54, y + 3, line, size=9, anchor="start", track="actor grouping")
-                    y += 13
-            y += 6
-        c.text(
-            lx + 54,
-            y + 3,
-            "Login / privileges: per finding",
-            size=8.5,
-            anchor="start",
-            fill=MUTED,
-            track="actor grouping",
-        )
-
     if scenarios:
         y = head("scenarios", "Attack scenarios — by actor")
         cur = None
@@ -1668,7 +1713,9 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
                 )
                 y += 16
             _badge(c, lx + 20, y - 2, s["n"], col=actor_colors.get(s.get("actor"), RED))
-            c.text(lx + 34, y + 2, _cut(s["title"], 40), size=9, anchor="start")
+            title_lines = _legend_wrap(s["title"], lw - 94, 9)
+            for i, line in enumerate(title_lines):
+                c.text(lx + 34, y + 2 + i * 12, line, size=9, anchor="start", track=f"scenario {s['n']}")
             if s.get("risk"):
                 c.text(
                     lx + lw - 6,
@@ -1678,8 +1725,9 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
                     anchor="end",
                     fill=SEV_COL.get(s["risk"], MUTED),
                     weight="bold",
+                    track=f"scenario severity {s['n']}",
                 )
-            y += 17
+            y += max(17, 12 * len(title_lines) + 5)
         y += 8
 
     if tbs:
@@ -1699,16 +1747,40 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     if any(e["ids"] for e in edges):
         y = head("flows", "Data flows")
         for e in edges:
-            for fid in e["ids"]:
-                f = flows.get(fid, {})
-                col = CLS_COL.get(str(f.get("data_classification")).title(), LINE)
-                c.text(lx + 10, y + 3, fid, size=8.5, anchor="start", weight="bold", fill=col)
+            if not e["ids"]:
+                continue
+            entries = [flows.get(fid, {}) for fid in e["ids"]]
+            fid_label = _flow_ids_label(e["ids"])
+            # The SVG title keeps the full inventory available on hover, while
+            # the visible legend uses authored summaries and existing C-NN IDs.
+            c.add(f'<g data-flow-ids="{_esc(" ".join(e["ids"]))}">')
+            details = []
+            for fid, f in zip(e["ids"], entries):
                 src, dst = _flow_endpoints(f)
-                detail = f"{nodes.get(src, {}).get('name', src)} → {nodes.get(dst, {}).get('name', dst)} · {f.get('protocol') or ''} · {f.get('label') or ''}"
-                lines = _wrap(detail, lw - 62, 8)
-                for index, line in enumerate(lines):
-                    c.text(lx + 52, y + 3 + index * 11, line, size=8, anchor="start")
-                y += max(14, 11 * len(lines) + 5)
+                details.append(
+                    f"{fid}: {nodes.get(src, {}).get('name', src)} → {nodes.get(dst, {}).get('name', dst)} · {f.get('protocol') or ''} · {f.get('label') or ''} · {f.get('data_classification') or ''} · {f.get('direction') or ''}"
+                )
+            c.add(f"<title>{_esc(chr(10).join(details))}</title>")
+            id_lines = _legend_wrap(fid_label.replace("/", "/ "), 66, 8)
+            if _tw(fid_label, 8) <= 66:
+                id_lines = [fid_label]
+            for i, line in enumerate(id_lines):
+                c.text(
+                    lx + 10,
+                    y + 3 + i * 11,
+                    line,
+                    size=8,
+                    anchor="start",
+                    weight="bold",
+                    fill=CLS_COL.get(e.get("cls"), LINE),
+                    track=f"flow ids {fid_label}",
+                )
+            detail = _flow_legend_detail(entries, nodes, e)
+            lines = _legend_wrap(detail, lw - 88, 8)
+            for i, line in enumerate(lines):
+                c.text(lx + 82, y + 3 + i * 11, line, size=8, anchor="start", track=f"flow detail {fid_label}")
+            y += max(14, 11 * max(len(lines), len(id_lines)) + 5)
+            c.add("</g>")
     if unattached_assets:
         y += 12
         y = head("assets", "Assets — location and handling")
@@ -1802,6 +1874,10 @@ def _check_geometry(nodes, edges, canvas, chips):
                 problems.append(f"label overlap: {a[4]} × {b[4]}")
         for nid, r in rects.items():
             a = labs[i]
+            if canvas.label_owners.get(a[4]) == nid:
+                if not (r[0] <= a[0] <= a[2] <= r[2] and r[1] <= a[1] <= a[3] <= r[3]):
+                    problems.append(f"label outside owner: {a[4]} × {nid}")
+                continue
             if a[0] < r[2] and r[0] < a[2] and a[1] < r[3] and r[1] < a[3]:
                 problems.append(f"label on node: {a[4]} × {nid}")
     for i, box in enumerate(canvas.legend_boxes):
@@ -1896,6 +1972,18 @@ def _audit(d, nodes, edges, chips, boundaries):
 def _build(yaml_data, scenarios, actors, actor_groups=()):
     d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
     nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors, victim_target)
+    group_labels = {"internet-user": "Self-registered users", "repo-read": "Public-source readers"}
+    for node in nodes.values():
+        if not node.get("attacker"):
+            continue
+        sources = dict.fromkeys(source for source, target in actor_groups if target == node.get("actor_slug"))
+        labels = [group_labels[source] for source in sources if source in group_labels]
+        if labels:
+            notes = ["Includes:", *labels, "Login / privileges: per finding"]
+            node["group_lines"] = [line for note in notes for line in _legend_wrap(note, node["w"] - 40, 7.5)]
+            title = f"{node['actor_code']} · {node['name']}"
+            title_height = 12 * min(2, len(_wrap(title, node["w"] - 40, 10)))
+            node["h"] = max(node["h"], 24 + title_height + 10 * len(node["group_lines"]))
     nodes, edges, dropped = _select_drawn(nodes, edges, d)
     col_x, col_w, zone_boxes, boundaries, chips, height = _layout(nodes, edges, dropped, tb_threats)
     attached = {a.get("id") for n in nodes.values() for a in n.get("assets", [])}

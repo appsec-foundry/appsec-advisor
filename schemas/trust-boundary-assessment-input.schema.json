@@ -343,6 +343,10 @@
         "from_entity": {"type": "string", "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 100},
         "to_entity": {"type": "string", "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 100},
         "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "diagram_label": {
+          "type": "string", "minLength": 1, "maxLength": 48, "pattern": "^[^\\r\\n\\t]+$",
+          "description": "Short plain-text purpose or payload for Figure 1, preserving authentication or direction distinctions. Omit repeated endpoint names and protocol. The full label remains authoritative; optional for older inventories."
+        },
         "protocol": {"type": "string", "minLength": 1, "maxLength": 80},
         "data_classification": {"type": "string", "minLength": 1, "maxLength": 80},
         "direction": {"type": "string", "enum": ["unidirectional", "bidirectional", "request-response"]},

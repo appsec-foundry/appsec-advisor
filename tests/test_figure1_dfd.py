@@ -20,6 +20,109 @@ import pytest
 _GLYPHS = ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
 
 
+@pytest.mark.parametrize("title", ["Template Injection Reads Private Records", "Forged Tokens Impersonate Other Users"])
+def test_scenario_title_is_preserved_without_inventing_mechanisms(title):
+    model, paths, taxonomy = _model()
+    paths["attack_paths"][0]["scenario_title"] = title
+    before = copy.deepcopy((model, paths, taxonomy))
+    svg, problems = F.check_diagram(model, paths, taxonomy)
+    assert problems == []
+    assert title in svg
+    assert (model, paths, taxonomy) == before
+
+
+@pytest.mark.parametrize("endpoint,label", [("app0", "Signed event delivery"), ("app1", "Inventory updates")])
+def test_flow_legend_groups_drawn_edges_and_keeps_all_flow_meanings(endpoint, label):
+    model, paths, taxonomy = _model()
+    for flow in model["data_flows"][1:3]:
+        flow["to"] = endpoint
+        flow["label"] = "A complete description retained in the canonical model"
+    model["data_flows"][1]["diagram_label"] = label
+    model["data_flows"][2]["diagram_label"] = "Live notifications"
+    before = copy.deepcopy(model)
+    svg, problems = F.check_diagram(model, paths, taxonomy)
+    assert problems == []
+    panel = ET.fromstring(svg).find("{*}g[@data-legend-section='flows']")
+    text = " ".join(t.text or "" for t in panel.iter("{http://www.w3.org/2000/svg}text"))
+    assert "df-002/003" in text
+    assert label in text and "Live notifications" in text
+    assert "HTTP" in text and "WebSocket" in text
+    assert "Service 0" not in text and "Web SPA" not in text
+    assert model == before
+
+
+def test_actor_grouping_is_explained_inside_its_node():
+    model, paths, taxonomy = _model()
+    model["meta"].update(open_user_registration=True, public_source_repo=True)
+    paths["attack_paths"][0]["actor"] = "repo-read"
+    svg, problems = F.check_diagram(model, paths, taxonomy)
+    assert problems == []
+    root = ET.fromstring(svg)
+    assert root.find("{*}g[@data-legend-section='actors']") is None
+    node = root.find("{*}g[@data-actor-grouping='A1']")
+    assert node is not None
+    text = " ".join(node.itertext())
+    assert "Self-registered users" in text and "Public-source readers" in text
+    assert "Login / privileges: per finding" in text
+
+
+def test_actor_note_geometry_still_rejects_overflow_and_foreign_nodes():
+    canvas = F._Canvas()
+    canvas.label_owners["note"] = "actor"
+    canvas.labels = [(10, 10, 80, 20, "note")]
+    nodes = {"actor": dict(id="actor", x=0, y=0, w=100, h=40)}
+    assert F._check_geometry(nodes, [], canvas, []) == []
+    nodes["actor"]["w"] = 50
+    assert any("outside owner" in p for p in F._check_geometry(nodes, [], canvas, []))
+    nodes["actor"]["w"] = 100
+    nodes["foreign"] = dict(id="foreign", x=20, y=10, w=100, h=40)
+    assert any("label on node: note × foreign" in p for p in F._check_geometry(nodes, [], canvas, []))
+
+
+def test_long_legacy_flow_labels_and_grouped_ids_remain_visible():
+    model, paths, taxonomy = _model()
+    flows = []
+    for index in range(1, 9):
+        flows.append(dict(model["data_flows"][1], id=f"df-{index:03d}", label="LongUnbrokenPayloadName" * 4))
+    model["data_flows"] = flows
+    svg, problems = F.check_diagram(model, paths, taxonomy)
+    assert problems == []
+    panel = ET.fromstring(svg).find("{*}g[@data-legend-section='flows']")
+    text = "".join(t.text or "" for t in panel.iter("{http://www.w3.org/2000/svg}text"))
+    assert "LongUnbrokenPayloadName" * 4 in text
+    assert "df-001/002/003/004/005/006/007/008" in text.replace(" ", "")
+
+
+@pytest.mark.parametrize("compact", [True, False])
+@pytest.mark.parametrize(
+    "protocol,purpose",
+    [
+        ("OIDC / HTTPS", "Identity claims and login"),
+        ("MCP / stdio", "Tool calls and results"),
+        ("MCP / Streamable HTTP", "Tool calls and resource reads"),
+        ("TCP / binary frames", "Binary telemetry"),
+        ("Unix domain socket", "Local worker messages"),
+        ("UDP", "Sensor measurements"),
+        ("gRPC / HTTP/2", "Inventory synchronization"),
+        ("CustomWire-v42", "Proprietary device commands"),
+    ],
+)
+def test_flow_legends_accept_arbitrary_protocols_without_catalogs(protocol, purpose, compact):
+    model, paths, taxonomy = _model()
+    flow = dict(model["data_flows"][1], protocol=protocol, label=purpose, direction="bidirectional")
+    if compact:
+        flow["diagram_label"] = purpose
+        flow["label"] = "Complete canonical evidence-backed purpose of this connection"
+    model["data_flows"] = [flow]
+    before = copy.deepcopy(model)
+    svg, problems = F.check_diagram(model, paths, taxonomy)
+    assert problems == []
+    panel = ET.fromstring(svg).find("{*}g[@data-legend-section='flows']")
+    text = " ".join(t.text or "" for t in panel.iter("{http://www.w3.org/2000/svg}text"))
+    assert protocol in text and purpose in text and "↔" in text
+    assert model == before
+
+
 def _model(*, app=3, stores=1, flows=True, exposed=("app0",), xss=False, intra=False, big=0):
     comps = [
         {
@@ -249,11 +352,14 @@ def test_legend_keeps_complete_flows_assets_and_translated_labels(asset_count, f
     panels = {p.get("data-legend-section"): p for p in root.findall("{*}g[@data-legend-section]")}
     text = lambda p: " ".join(t.text or "" for t in p.iter("{http://www.w3.org/2000/svg}text"))
     assert model["data_flows"][1]["label"] in text(panels["flows"])
+    grouped_ids = " ".join(group.get("data-flow-ids") for group in panels["flows"].findall("{*}g[@data-flow-ids]"))
     for flow in model["data_flows"]:
-        assert text(panels["flows"]).split().count(flow["id"]) == 1
+        assert grouped_ids.split().count(flow["id"]) == 1
+        assert flow["id"] in " ".join(panels["flows"].itertext())
     for asset in model["assets"]:
         assert f"{asset['id']} {asset['name']}" in text(panels["assets"])
-    assert "Self-registered users · open registration" in text(panels["actors"])
+    assert "actors" not in panels
+    assert "Self-registered users" in text(root.find("{*}g[@data-actor-grouping]"))
     assert all(y1 <= float(root.get("height")) - F.MARGIN for _, _, _, y1, _ in state["canvas"].legend_boxes)
     assert F._check_geometry(state["nodes"], state["edges"], state["canvas"], state["chips"]) == []
 
@@ -336,6 +442,44 @@ def test_boundary_on_a_flow_is_a_chip_and_without_a_flow_a_tag():
 def test_intra_column_flow_uses_the_channel_and_is_verified():
     svg = _checked(intra=True)
     assert 'transform="rotate(-90' in svg  # rotated df-007 label along the channel
+
+
+@pytest.mark.parametrize("offset", [3, -5, 20])
+@pytest.mark.parametrize("names", [("sender", "receiver"), ("gateway", "archive")])
+def test_nearly_aligned_flow_ports_avoid_micro_jogs(offset, names):
+    nodes = {
+        name: dict(id=name, col=col, zone="application", order=col, w=190, h=100 + col * (72 + offset * 2))
+        for col, name in enumerate(names)
+    }
+    edge = dict(src=names[0], dst=names[1], ids=["df-081"], tb=[])
+    F._layout(nodes, [edge], {}, {}, ncols=2)
+    delta = edge["yd"] - edge["ys"]
+    assert delta == (offset if abs(offset) > 8 else 0)
+
+
+@pytest.mark.parametrize("occupied,attack,skip", [(True, False, False), (False, True, False), (False, False, True)])
+def test_port_alignment_retains_spacing_and_special_routes(occupied, attack, skip):
+    nodes = {"sink": dict(y=0, h=100, tagspace=0)}
+    edge = dict(src="source", dst="sink", ys=50, yd=55, kind="forward", attack=attack, skip=skip)
+    sides = {"sink": {"L": [("in", edge)]}}
+    if occupied:
+        sides["sink"]["L"].append(("in", dict(yd=30)))
+    F._align_flow_ports(nodes, [edge], sides)
+    assert edge["yd"] == 55
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_intra_column_arrow_tips_have_a_straight_approach(reverse):
+    model, paths, taxonomy = _model(intra=True)
+    if reverse:
+        flow = model["data_flows"][-1]
+        flow["from"], flow["to"] = flow["to"], flow["from"]
+    _, state = F._build(model, *F.scenarios_from_attack_paths(model, paths, taxonomy))
+    edge = next(e for e in state["edges"] if e["ids"] == ["df-007"])
+    points = F._trim(edge["pts"])
+    assert abs(points[1][0] - points[0][0]) >= 24
+    assert abs(points[-1][0] - points[-2][0]) >= 24
+    assert F.check_diagram(model, paths, taxonomy)[1] == []
 
 
 def test_attack_edges_follow_the_scenarios():
@@ -494,9 +638,9 @@ def test_actor_grouping_is_explained_in_standalone_dfd(registration, public_sour
     assert problems == []
     assert svg == F.build_figure1_dfd_svg(model, paths, taxonomy)
     text = " ".join(ET.fromstring(svg).itertext())
-    assert ("Self-registered users · open registration" in text) == registration
-    assert ("Repository readers · public source" in text) == public_source
-    assert ("Actor grouping" in text) == (registration or public_source)
+    assert ("Self-registered users" in text) == registration
+    assert ("Public-source readers" in text) == public_source
+    assert ("Includes:" in text) == (registration or public_source)
     actors = F.scenarios_from_attack_paths(model, paths, taxonomy)[1]
     assert {"internet-priv-user", "build-time"} <= {a["slug"] for a in actors}
     assert (model, paths, taxonomy) == original
@@ -519,21 +663,19 @@ def test_compact_grouping_references_the_actual_drawn_actor(label, leading_actor
     svg, problems = F.check_diagram(model, paths, taxonomy, actor_labels=labels)
     assert problems == []
     root = ET.fromstring(svg)
-    panel = root.find("{*}g[@data-legend-section='actors']")
+    panel = root.find("{*}g[@data-actor-grouping]")
     assert panel is not None
     text = " ".join(panel.itertext())
     actor_code = f"A{len(leading_actors) + 1}"
     assert actor_code in text.split()
     assert re.findall(r"\bA\d+\b", text) == [actor_code]
-    assert label not in text
+    assert label in text
     assert f"{actor_code} · {label}" in " ".join(root.itertext())
-    assert "Repository readers · public source" in text
+    assert "Public-source readers" in text
     assert "Self-registered users" not in text
     assert "because" not in text
     assert "Login / privileges: per finding" in text
-    icon = panel.find("{*}g")
-    assert "scale(0.5)" in icon.get("transform")
-    assert icon.find("{*}circle") is not None  # Compact version of the actor's person icon.
+    assert panel.find("{*}circle") is not None  # The note belongs to the actual actor icon.
     notation = root.find("{*}g[@data-legend-section='notation']")
     assert notation.find("{*}text").text == "Notation"
 
@@ -546,9 +688,11 @@ def test_grouping_hints_require_a_performed_fold_and_a_drawn_target():
     svg, problems = F.check_diagram(model, paths, taxonomy)
     assert problems == []
     assert ET.fromstring(svg).find("{*}g[@data-legend-section='actors']") is None
+    assert ET.fromstring(svg).find("{*}g[@data-actor-grouping]") is None
     # A stale grouping supplied to the internal replay path cannot label an absent target.
     svg, _ = F._build(model, [], [], [("repo-read", "internet-anon")])
     assert ET.fromstring(svg).find("{*}g[@data-legend-section='actors']") is None
+    assert ET.fromstring(svg).find("{*}g[@data-actor-grouping]") is None
 
 
 def test_roles_and_identity_provider_use_distinct_left_side_nodes():

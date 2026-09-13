@@ -3418,6 +3418,7 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
                     "direction": "request-response",
                     "data_classification": "Public",
                     "label": "Settings request",
+                    "diagram_label": "Settings updates",
                     "provenance": "architecture",
                     "evidence": [{"file": "roles.ts", "line": 1}],
                 }
@@ -3431,6 +3432,7 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
     model = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
     assert model["external_entities"] == [entity]
     assert model["data_flows"][0]["from_entity"] == "ext-operator"
+    assert model["data_flows"][0]["diagram_label"] == "Settings updates"
     assert model["meta"]["open_user_registration"] is (True if owner is None else owner)
     assert model["meta"]["open_registration_source"] == "actor-resolution"
     if owner is not None:
