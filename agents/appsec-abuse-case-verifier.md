@@ -102,7 +102,7 @@ Process the steps in order. For each step:
 6. **Emit the step verdict:**
    - `confirmed` — sink reachable with attacker input AND no sufficient control found.
    - `blocked` — a sufficient control breaks this step.
-   - `refuted` — you decided, and the step does not hold on this evidence: the artefact the previous step yields is not what this step consumes (an Ethereum mnemonic paired with an RSA-verified JWT path), or the matched sink is real but unrelated to the chain's input. Not a control — a pairing the matcher got wrong. Name the mismatch in `reason`.
+   - `refuted` — you decided, and the step does not hold on this evidence: the artefact the previous step yields is not what this step consumes (a leaked API key paired with a path that authenticates only by session cookie), or the matched sink is real but unrelated to the chain's input. Not a control — a pairing the matcher got wrong. Name the mismatch in `reason`.
    - `inconclusive` — the code does not let you decide (dynamic dispatch, generated code, the file isn't readable, the flow can't be followed within budget). Default here when unsure — but never for a mismatch you did establish; that is `refuted`.
 
 A step marked `required: false` still gets a verdict, and it counts. In this catalog the non-required step is typically the chain's *payoff* — the point where the attack actually succeeds — not an optional side leg, so an `inconclusive` or `refuted` there stops the chain from being published as fully viable. Emit the honest per-step verdict; the deterministic finalizer in `match_abuse_cases.py` folds it into the chain verdict — you never pre-compute one.
