@@ -71,6 +71,7 @@ import apply_prose_fixes as _prose_formatter
 import inline_code_formatter as _inline_code_formatter
 import jinja2
 import requirements_trace
+import team_questions as _team_questions
 import yaml
 from _atomic_io import atomic_write_text
 from _boundary_criticality import exposure_of, rating_of, tier_of
@@ -9817,6 +9818,36 @@ def _render_ms_top_weaknesses(ctx: RenderContext) -> str:
     return "\n".join(out)
 
 
+def _render_ms_open_questions(ctx: RenderContext) -> str:
+    """Render the shared team-question selection inside the Management Summary."""
+    selection = _team_questions.select_open_questions(
+        ctx.yaml_data,
+        _team_questions.model_anchor_ids(ctx.yaml_data),
+    )
+    if not selection["questions"] and not selection["unverified"]:
+        return ""
+
+    def link(item_id: str, *, unproven: bool = False) -> str:
+        rendered = f"[{item_id}](#{item_id.lower()})"
+        return rendered + (" (unproven)" if unproven else "")
+
+    out = [_team_questions.REPORT_HEADING, "", _team_questions.REPORT_INTRO, ""]
+    for topic in selection["questions"]:
+        refs = ", ".join(link(item["id"], unproven=item["unproven"]) for item in topic["refs"])
+        if topic["hidden"] > 0:
+            refs += f" (+{topic['hidden']} more)"
+        if topic["weakness_id"]:
+            refs = f"{link(topic['weakness_id'])}: {refs}"
+        out.append(f"- {refs} — {topic['question']}")
+    if selection["unverified"]:
+        refs = ", ".join(link(item["id"]) for item in selection["unverified"][:5])
+        if len(selection["unverified"]) > 5:
+            refs += f" (+{len(selection['unverified']) - 5} more)"
+        out.append(f"- {refs} — {_team_questions.UNVERIFIED_QUESTION}")
+    out.append("")
+    return "\n".join(out)
+
+
 def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     # Explicit composition ensures the canonical subsection order is enforced.
     # `security_posture_at_a_glance` is rendered between `verdict` and
@@ -9847,6 +9878,10 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # the reader sees "what is systemically wrong" before the per-finding view.
         # Computed from weaknesses[]; renders nothing when the register is empty.
         "top_weaknesses",
+        # The same deterministic selection used by the completion summary.
+        # This slot follows Top Weaknesses when present and still surfaces
+        # unresolved attack-chain or deployment questions without a register.
+        "open_questions_for_team",
         # security_posture_at_a_glance renders "### Security Posture & Top Threats"
         # (Figure 1 + Figure 2 heatmap + the Top Threats table).
         "security_posture_at_a_glance",
@@ -9884,6 +9919,11 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             tw_ms = _render_ms_top_weaknesses(ctx)
             if tw_ms.strip():
                 parts.append(tw_ms.rstrip())
+            continue
+        if sid == "open_questions_for_team":
+            questions_ms = _render_ms_open_questions(ctx)
+            if questions_ms.strip():
+                parts.append(questions_ms.rstrip())
             continue
         sec = sections.get(sid)
         if sec is None:
@@ -12872,9 +12912,11 @@ def _is_bare_finding_ref_line(line: str) -> bool:
     this module, plus ``linkify_anchors`` / ``_annotate_id_refs`` in qa_checks)
     skip these lines so their `[F-NNN](#f-nnn)` links stay compact.
 
-    Three contexts (user 2026-07-15, 2026-07-31):
+    Four contexts (user 2026-07-15, 2026-07-31, 2026-09-13):
       • MS "Top Weaknesses" proof run — the single weakness dot owns the bullet's
         severity signal (`… _Proven by [F-NNN], …._`).
+      • MS "Open Questions for the Team" bullets — the linked W/F ids are the
+        same compact evidence references the console prints.
       • Critical Attack Tree findings pointer — the tree leaves above already
         carry each finding's id + title, so the pointer is a bare jump-index.
       • §1 Trust Boundaries catalogue row (carries its `<a id="tb-N">` declaration
@@ -12883,6 +12925,8 @@ def _is_bare_finding_ref_line(line: str) -> bool:
         stacked characters. The renderer emits the severity dot itself.
     """
     if "_Proven by " in line and "](#w-" in line:
+        return True
+    if line.startswith("- [") and " — " in line and (line.rstrip().endswith("?") or " — Unverified evidence: " in line):
         return True
     if "full detail in" in line and "#8-findings-register" in line:
         return True
@@ -18202,6 +18246,10 @@ def render(
         ((yaml_data.get("meta") or {}).get("assessment_depth") or "").strip().lower() == "quick"
     )
     _has_authored_walkthroughs = (not _skip_attack_walkthroughs) and severity_counts["critical"] >= 1
+    _open_questions = _team_questions.select_open_questions(
+        yaml_data,
+        _team_questions.model_anchor_ids(yaml_data),
+    )
 
     ctx = RenderContext(
         output_dir=output_dir,
@@ -18242,6 +18290,7 @@ def render(
             # the hoisted P4 verdict table so pre-register runs / clean repos with
             # no register render nothing (goldens unchanged).
             "has_weakness_register": bool(yaml_data.get("weaknesses")),
+            "has_open_questions": bool(_open_questions["questions"] or _open_questions["unverified"]),
             # Optional MS "Architectural Anti-Patterns" callout — true when the
             # threat-renderer authored ms-anti-patterns.json (gated on presence;
             # the renderer also self-gates defensively).

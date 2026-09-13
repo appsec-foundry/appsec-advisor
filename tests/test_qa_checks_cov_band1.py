@@ -526,6 +526,62 @@ def test_ms_structure_missing_subsection(tmp_path: Path):
     assert any("Operational Strengths" in i for i in report.issues)
 
 
+def _write_question_model(tmp_path: Path) -> None:
+    (tmp_path / "threat-model.yaml").write_text(
+        """threats:
+  - id: T-001
+    title: Object owner not checked
+    cwe: CWE-639
+    risk: Critical
+    source: stride
+    evidence_tier: confirmed-exploitable
+    evidence_check: verified
+    evidence:
+      - file: src/orders.ts
+        line: 12
+weaknesses:
+  - id: W-001
+    mechanism_id: route-by-route-authorization
+    instances:
+      - id: T-001
+""",
+        encoding="utf-8",
+    )
+
+
+def test_ms_structure_requires_selected_team_questions_in_the_canonical_slot(tmp_path: Path):
+    _write_question_model(tmp_path)
+    src = _GOOD_MS.replace(
+        "### Security Posture & Top Threats",
+        "### Top Weaknesses\nbody\n"
+        "### Open Questions for the Team\n"
+        "The code cannot settle these points.\n"
+        "- [W-001](#w-001): [F-001](#f-001) — Which policy owns authorization?\n"
+        "### Security Posture & Top Threats",
+    ).replace("## 1. Overview", '<a id="w-001"></a>\n<a id="f-001"></a>\n## 1. Overview')
+    md = _md(tmp_path, src)
+
+    report, _ = qa.check_ms_structure(md)
+
+    assert report.ok == 1, report.issues
+
+
+def test_ms_structure_flags_a_missing_or_misplaced_selected_question_block(tmp_path: Path):
+    _write_question_model(tmp_path)
+    anchored = _GOOD_MS.replace("## 1. Overview", '<a id="w-001"></a>\n<a id="f-001"></a>\n## 1. Overview')
+    missing = _md(tmp_path, anchored)
+    report, _ = qa.check_ms_structure(missing)
+    assert any("missing deterministic sub-section" in issue for issue in report.issues)
+
+    misplaced_text = anchored.replace(
+        "### Top Mitigations\nbody\n",
+        "### Top Mitigations\nbody\n### Open Questions for the Team\nbody\n",
+    )
+    misplaced = _md(tmp_path, misplaced_text)
+    report, _ = qa.check_ms_structure(misplaced)
+    assert any("directly after" in issue for issue in report.issues)
+
+
 def test_ms_structure_critical_attack_tree_required(tmp_path: Path):
     # 2 criticals via risk distribution, no Critical Attack Tree section.
     src = "**Risk Distribution:** Critical: 2 · High: 1 · Medium: 0 · Low: 0 · **Total: 3**\n\n" + _GOOD_MS

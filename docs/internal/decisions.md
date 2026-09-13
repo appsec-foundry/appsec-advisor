@@ -210,7 +210,7 @@ Removing an entry means listing it here in the same change.
 | AC-4 | A promoted component resolves against the component registry, never a hardcoded name; overlapping globs resolve to the most specific owner | `test_promoted_component_resolves_against_the_registry_not_a_hardcoded_name`, `test_overlapping_globs_resolve_to_the_most_specific_owner` | see TA-1 |
 | AC-5 | Source-probe evidence wins when the verifier omits a file — an omission is not a refutation | `test_source_probe_evidence_wins_when_verifier_omits_a_file` | `scripts/promote_verified_abuse_cases.py` |
 | AC-6 | A step verdict distinguishes a settled mismatch (`refuted`) from open work (`inconclusive`); both cap the chain at `inconclusive`, only the latter becomes a team question | `test_finalize_refuted_step_caps_the_chain_like_inconclusive`, `test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses` | `scripts/match_abuse_cases.py` → `finalize_verdict`; `agents/appsec-abuse-case-verifier.md` step 6 |
-| AC-7 | Team questions come from the register's `mechanism_guidance.team_question`, never from CWE membership alone; a mechanism with a purely mechanical fix carries no question | `test_weakness_questions_come_from_mechanism_guidance_not_cwe_membership` | `data/weakness-classes.yaml`; `scripts/render_completion_summary.py` → `build_manual_review_step` |
+| AC-7 | Team questions come from the register's `mechanism_guidance.team_question`, never from CWE membership alone; a mechanism with a purely mechanical fix carries no question | `test_weakness_questions_come_from_mechanism_guidance_not_cwe_membership` | `data/weakness-classes.yaml`; `scripts/team_questions.py` → `select_open_questions` |
 
 ## Requirements mapping
 

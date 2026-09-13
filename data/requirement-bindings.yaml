@@ -375,6 +375,9 @@ requirements:
       - scripts/walkthrough_renderer.py
       - scripts/qa_checks.py
       - scripts/render_completion_summary.py
+      - scripts/team_questions.py
+      - data/sections-contract.yaml
+      - data/weakness-classes.yaml
     decisions:
       - RA-4
       - RN-5
@@ -384,6 +387,11 @@ requirements:
     guards:
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_no_generic_questions_for_empty_or_unmatched_models
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses
+      - tests/test_team_questions.py::test_selector_caps_questions_but_keeps_unverified_evidence_line
+      - tests/test_compose_threat_model.py::test_ms_open_questions_match_console_selection_and_follow_top_weaknesses
+      - tests/test_compose_threat_model.py::test_ms_open_questions_are_omitted_when_the_selector_returns_none
+      - tests/test_compose_threat_model.py::test_toc_keeps_management_summary_subsections_out_of_the_short_form
+      - tests/test_qa_checks_cov_band1.py::test_ms_structure_requires_selected_team_questions_in_the_canonical_slot
       - tests/test_reference_format.py::test_strip_trailing_locator_all_forms
       - tests/test_reference_format.py::test_linkify_full_form_basename_and_backticked
       - tests/test_agent_definitions.py::TestProseStyleAnchor::test_prose_style_file_exists

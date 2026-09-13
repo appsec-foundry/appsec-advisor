@@ -41,6 +41,7 @@ def _load_module(name: str, path: Path):
 
 
 compose = _load_module("compose_threat_model", SCRIPT_PATH)
+completion = _load_module("render_completion_summary", REPO_ROOT / "scripts" / "render_completion_summary.py")
 # The §1 catalogue is delivered as fixed-layout HTML, so a few tests assert the
 # composer's cells survive qa's inline-markdown → HTML conversion unchanged.
 qa = _load_module("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
@@ -119,6 +120,15 @@ def test_toc_emits_numbering_gap_note(tmp_path: Path) -> None:
     rendered, _ = compose.render(CONTRACT, out)
     assert "Section numbering is non-contiguous" in rendered
     assert "§7 is not present in this report" in rendered
+
+
+def test_toc_keeps_management_summary_subsections_out_of_the_short_form(tmp_path: Path) -> None:
+    contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+    section = contract["sections"]["management_summary"]
+    ctx = SimpleNamespace(contract=contract, eval_context={}, fragments_dir=tmp_path)
+
+    assert "open_questions_for_team" in {item["id"] for item in section["optional_subsections"]}
+    assert compose._toc_children_for_section(ctx, "management_summary", section) == []
 
 
 def test_architecture_diagrams_are_regenerated_at_the_composition_boundary(tmp_path: Path) -> None:
@@ -2549,12 +2559,13 @@ def test_attack_tree_findings_pointer_dedups_and_skips_non_leaves() -> None:
 
 
 def test_is_bare_finding_ref_line() -> None:
-    """The bare-finding-ref predicate matches exactly the two contexts that list
-    undotted, untitled `[F-NNN]` ids (MS Top Weaknesses proof run + Critical
-    Attack Tree findings pointer) and nothing else."""
+    """The bare-finding-ref predicate matches the contracted compact contexts."""
     f = compose._is_bare_finding_ref_line
     # Top Weaknesses proof run.
     assert f("- 🔴 **[W-001](#w-001) — X** (Critical) — d. _Proven by [F-013](#f-013)._")
+    # Open team questions shared with the console.
+    assert f("- [W-001](#w-001): [F-013](#f-013) — Which policy should own authorization?")
+    assert f("- [F-014](#f-014) — Unverified evidence: confirm or rule it out before scheduling the fix.")
     # Critical Attack Tree findings pointer.
     assert f("**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001)")
     # Normal contexts keep their enrichment.
@@ -4726,6 +4737,13 @@ def test_global_finding_dot_pass_dots_bare_link_and_is_idempotent(tmp_path: Path
     assert compose._prepend_finding_severity_dots(ctx, once) == once
 
 
+def test_global_finding_dot_pass_keeps_open_question_refs_compact(tmp_path: Path) -> None:
+    ctx = _dot_ctx(tmp_path, [{"id": "T-001", "effective_severity": "Critical", "title": "X"}])
+    line = "- [W-001](#w-001): [F-001](#f-001) — Which policy should own authorization?"
+
+    assert compose._prepend_finding_severity_dots(ctx, line) == line
+
+
 def test_global_finding_dot_pass_tolerates_nbsp_separator(tmp_path: Path) -> None:
     # Table cells emit `🔴&nbsp;[F-001]`; the pass must recognise the existing
     # dot (separated by &nbsp;) and NOT prepend a duplicate.
@@ -6235,6 +6253,95 @@ def test_ms_top_weaknesses_table_and_ordering():
     assert out.index("W-003") < out.index("W-007")
     # Title's " safeguards in ..." tail is stripped.
     assert "Weak Cryptography**" in out
+
+
+def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(tmp_path: Path, monkeypatch) -> None:
+    finding = {
+        "id": "T-001",
+        "title": "Object owner not checked",
+        "cwe": "CWE-639",
+        "risk": "Critical",
+        "source": "stride",
+        "evidence_tier": "confirmed-exploitable",
+        "evidence_check": "verified",
+        "evidence": [{"file": "src/orders.ts", "line": 12}],
+    }
+    unverified = {
+        **finding,
+        "id": "T-002",
+        "title": "Query construction remains ambiguous",
+        "cwe": "CWE-89",
+        "evidence_check": "ambiguous",
+        "evidence": [{"file": "src/search.ts", "line": 24}],
+    }
+    weakness = {
+        "id": "W-001",
+        "title": "Route-by-route authorization",
+        "severity": "Critical",
+        "severity_basis": "confirmed",
+        "mechanism_id": "route-by-route-authorization",
+        "instances": [{"id": "T-001"}],
+    }
+
+    class _Ctx:
+        yaml_data = {"threats": [finding, unverified], "weaknesses": [weakness]}
+        contract = {
+            "sections": {
+                "verdict": {"heading": "### Verdict", "fragment_type": "computed"},
+                "security_posture_at_a_glance": {
+                    "heading": "### Security Posture & Top Threats",
+                    "fragment_type": "computed",
+                },
+                "mitigations": {"heading": "### Top Mitigations", "fragment_type": "computed"},
+                "operational_strengths": {
+                    "heading": "### Operational Strengths",
+                    "fragment_type": "computed",
+                },
+            }
+        }
+        eval_context = {"check_requirements": False}
+
+        @staticmethod
+        def severity_emoji(_severity):
+            return "🔴"
+
+    report_questions = compose._render_ms_open_questions(_Ctx())
+    top_weaknesses = compose._render_ms_top_weaknesses(_Ctx())
+    report = top_weaknesses + report_questions + '\n<a id="f-001"></a>\n<a id="f-002"></a>\n<a id="w-001"></a>\n'
+    console_questions = completion.build_manual_review_step(
+        _Ctx.yaml_data,
+        report,
+        tmp_path / "threat-model.md",
+    )
+
+    assert report_questions.startswith("### Open Questions for the Team\n\n")
+    assert "The code cannot settle these points." in report_questions
+    for value in ("W-001", "F-001", "which single policy layer should enforce ownership"):
+        assert value in report_questions
+        assert value in console_questions
+
+    def normalize_links(line: str) -> str:
+        return re.sub(r"\]\((?:<[^>]+>|#[^)]+)\)", "]", line)
+
+    assert [normalize_links(line) for line in report_questions.splitlines() if line.startswith("- ")] == [
+        normalize_links(line) for line in console_questions.splitlines() if line.startswith("- ")
+    ]
+
+    monkeypatch.setattr(compose, "_render_by_id", lambda _ctx, _env, _sid, section: section["heading"])
+    monkeypatch.setattr(compose, "_render_ai_exposure", lambda _ctx, _env: "")
+    management_summary = compose._render_management_summary(_Ctx(), None, {})
+    assert (
+        management_summary.index("### Top Weaknesses")
+        < management_summary.index("### Open Questions for the Team")
+        < management_summary.index("### Security Posture & Top Threats")
+    )
+
+
+def test_ms_open_questions_are_omitted_when_the_selector_returns_none() -> None:
+    class _Ctx:
+        yaml_data = {"threats": [], "weaknesses": []}
+
+    assert compose._render_ms_open_questions(_Ctx()) == ""
 
 
 def test_weakness_remediation_rollup_is_deduped():

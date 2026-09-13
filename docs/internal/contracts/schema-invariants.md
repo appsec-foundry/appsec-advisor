@@ -6,7 +6,7 @@ authoritative source for the §4a–§4h details.
 
 ## §4a. Cross-reference labelling invariant
 
-Reader-facing references normally render as `[ID](#anchor) — <short-title>`. This applies to `T-NNN`, `F-NNN`, `M-NNN`, `W-NNN`, `TH-NN`, and the `C-NN` / deprecated `AF-NNN` classes covered by the composer. Use a shorter form only where the layout or sentence already provides the meaning: declaration sites, ID columns, headings, narrow tables, inline citations, the Verdict citation form, Top Weaknesses proof lists, and the Critical Attack Tree findings pointer. These exceptions are deliberate and must stay narrow; ordinary table and list references need a title.
+Reader-facing references normally render as `[ID](#anchor) — <short-title>`. This applies to `T-NNN`, `F-NNN`, `M-NNN`, `W-NNN`, `TH-NN`, and the `C-NN` / deprecated `AF-NNN` classes covered by the composer. Use a shorter form only where the layout or sentence already provides the meaning: declaration sites, ID columns, headings, narrow tables, inline citations, the Verdict citation form, Top Weaknesses proof lists, Open Questions for the Team bullets shared with the console, and the Critical Attack Tree findings pointer. These exceptions are deliberate and must stay narrow; ordinary table and list references need a title.
 
 Three things must stay aligned for the invariant to hold:
 
@@ -21,7 +21,7 @@ Three things must stay aligned for the invariant to hold:
    - The idempotent suffix regex matches `[FTM]-` AND `TH-`, so existing un-suffixed `[F-NNN](#f-nnn)` / `[TH-NN](#th-nn)` links gain `— Title` on rerun.
 
 3. **Tests pin the invariant.**
-   `tests/test_qa_checks.py:TestCrossReferenceLabellingInvariant` and `tests/test_p4_cross_reference_coverage.py:TestCrossReferenceTitleCoverageEndToEnd` cover ordinary QA-owned references. Composer and QA tests cover compact citations, inline labels, the weakness register, §7 rewrites, Top Weaknesses, and the Critical Attack Tree pointer. Removing or broadening an exception requires an explicit migration justification.
+   `tests/test_qa_checks.py:TestCrossReferenceLabellingInvariant` and `tests/test_p4_cross_reference_coverage.py:TestCrossReferenceTitleCoverageEndToEnd` cover ordinary QA-owned references. Composer and QA tests cover compact citations, inline labels, the weakness register, §7 rewrites, Top Weaknesses, Open Questions for the Team, and the Critical Attack Tree pointer. Removing or broadening an exception requires an explicit migration justification.
 
 Failure modes to watch for in PR review:
 - A schema PR that drops `title` from `threats[].required` → bare links

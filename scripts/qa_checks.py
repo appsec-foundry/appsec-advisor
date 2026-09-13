@@ -47,11 +47,14 @@ Markdown. This prevents a clean pre-autofix result from being reused after the
 document changed and avoids the duplicate `all` detector pass.
 
 `ms_structure` validates that `## Management Summary` is unnumbered and
-contains exactly these sub-sections, in this order:
+contains its required sub-sections in canonical order and places the optional
+team-question block directly after Top Weaknesses:
 
     ### Verdict (with a red HTML <blockquote …>)
-    ### Top Findings
-    ### Mitigations
+    ### Top Weaknesses (optional)
+    ### Open Questions for the Team (optional)
+    ### Security Posture & Top Threats
+    ### Top Mitigations
     ### Operational Strengths
 
 Safe auto-repairs (numeric-prefix strip, legacy-name rename) are applied in
@@ -95,6 +98,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import _safe_cond
+import team_questions as _team_questions
 from _atomic_io import atomic_write_text
 from check_reference_format import lint_text as _reference_format_lint
 from perimeter_patterns import PERIMETER_ABSENCE_PATTERNS as _PERIMETER_ABSENCE_PATTERNS
@@ -1235,6 +1239,17 @@ _MS_REQUIRED_SUBSECTIONS: tuple[str, ...] = (
     "Operational Strengths",
 )
 
+_MS_CANONICAL_SUBSECTION_ORDER: tuple[str, ...] = (
+    "Verdict",
+    "Top Weaknesses",
+    "Open Questions for the Team",
+    "Security Posture & Top Threats",
+    "Top Mitigations",
+    "AI / LLM Exposure",
+    "Requirements Compliance",
+    "Operational Strengths",
+)
+
 # Forbidden MS sub-section heading patterns — these were observed in drifted
 # outputs (numbered 1.1–1.5 layout, legacy section names). We only flag; the
 # auto-repair here is limited to stripping numeric prefixes off otherwise
@@ -1405,12 +1420,46 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
         if required not in names:
             report.issues.append(f"Management Summary missing required sub-section '### {required}' — rerun required")
 
-    # --- Check 2: order of the required sub-sections matches canonical order.
+    # --- Check 2: required and known optional sub-sections match canonical order.
     if all(r in names for r in _MS_REQUIRED_SUBSECTIONS):
-        observed = [n for n in names if n in _MS_REQUIRED_SUBSECTIONS]
-        if observed != list(_MS_REQUIRED_SUBSECTIONS):
+        observed = [name for name in names if name in _MS_CANONICAL_SUBSECTION_ORDER]
+        expected = [name for name in _MS_CANONICAL_SUBSECTION_ORDER if name in observed]
+        if observed != expected:
+            report.issues.append(f"Management Summary sub-section order is {observed}, expected {expected}")
+
+    # The selector shared with the completion summary decides whether the
+    # deterministic block belongs in this report. This catches a missing or
+    # stale block without asking an LLM to reconstruct it.
+    expected_questions: bool | None = None
+    try:
+        model_path = md_path.with_name("threat-model.yaml")
+        if model_path.is_file():
+            model = _fast_yaml_load(model_path.read_text(encoding="utf-8")) or {}
+            selection = _team_questions.select_open_questions(
+                model,
+                _team_questions.visible_anchor_ids(text),
+            )
+            expected_questions = bool(selection["questions"] or selection["unverified"])
+    except Exception:
+        expected_questions = None
+    question_count = names.count("Open Questions for the Team")
+    if expected_questions is True and question_count == 0:
+        report.issues.append(
+            "Management Summary missing deterministic sub-section '### Open Questions for the Team' — rerun required"
+        )
+    elif expected_questions is False and question_count:
+        report.issues.append(
+            "Management Summary contains '### Open Questions for the Team' although the shared selector returned none"
+        )
+    if question_count > 1:
+        report.issues.append("Management Summary contains duplicate '### Open Questions for the Team' sub-sections")
+    if question_count == 1:
+        question_index = names.index("Open Questions for the Team")
+        expected_previous = "Top Weaknesses" if "Top Weaknesses" in names else "Verdict"
+        if question_index == 0 or names[question_index - 1] != expected_previous:
             report.issues.append(
-                f"Management Summary sub-section order is {observed}, expected {list(_MS_REQUIRED_SUBSECTIONS)}"
+                "Management Summary must place '### Open Questions for the Team' directly after "
+                f"'### {expected_previous}'"
             )
 
     # --- Check 3: Verdict contains the red HTML blockquote.

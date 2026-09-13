@@ -352,6 +352,8 @@ sections:
       - mitigations
       - operational_strengths
     optional_subsections:
+      - { id: top_weaknesses,              condition: "has_weakness_register" }
+      - { id: open_questions_for_team,      condition: "has_open_questions" }
       - { id: architectural_anti_patterns, condition: "has_anti_patterns" }
       # ai_exposure_ms is a deep-only callout preserved on downgrade — see the
       # authoritative `preserve_on_downgrade:` block at the end of this file
@@ -376,6 +378,24 @@ sections:
       - "^Follow-up Actions$"
       - "^Overall Security Rating$"
       - "^⚠ Worst Case Scenarios$"
+
+  # Deterministic executive view of the highest-ranked weakness-register
+  # entries. The special Management Summary composer renders it only when the
+  # canonical model contains weaknesses.
+  top_weaknesses:
+    heading: "### Top Weaknesses"
+    heading_numbered: false
+    fragment_type: computed
+    conditional: "has_weakness_register"
+
+  # Deterministic questions selected from threat-model.yaml by the same module
+  # that supplies the completion summary. It follows Top Weaknesses and is
+  # absent when neither a team decision nor unverified evidence remains.
+  open_questions_for_team:
+    heading: "### Open Questions for the Team"
+    heading_numbered: false
+    fragment_type: computed
+    conditional: "has_open_questions"
 
   # -- Weakness Register (pre-Findings, unnumbered) -----------------------
   # Computed from `weaknesses[]`. Each W-NNN is an evidence-backed root-cause
