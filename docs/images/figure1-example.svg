@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1182" height="1478" viewBox="0 0 1182 1478" font-family="Helvetica, Arial, sans-serif">
-<rect width="1182" height="1478" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1182" height="1475" viewBox="0 0 1182 1475" font-family="Helvetica, Arial, sans-serif">
+<rect width="1182" height="1475" fill="#ffffff"/>
 <defs><marker id="arw-Restricted" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9c3d3d"/></marker><marker id="arw-Confidential" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b46a38"/></marker><marker id="arw-Internal" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#6f7d8f"/></marker><marker id="arw-Public" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#a3aab4"/></marker><marker id="arw-red" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b3453f"/></marker><marker id="arw-grey" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#94a3b8"/></marker><marker id="arw-attacker-0" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#b3453f"/></marker></defs>
 <text x="20.0" y="26.0" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#334d6e" text-anchor="start" font-weight="bold">Figure 1 — Data-flow diagram: trust boundaries, STRIDE-per-element, top attack paths</text>
 <text x="20.0" y="42.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#6b7280" text-anchor="start" font-weight="normal">juice-shop2 · 8 components · 12 data flows · 5 trust boundaries · 68 threats</text>
@@ -467,12 +467,14 @@
 <g data-legend-section="actors" data-legend-column="1" transform="translate(20.0 1373.0)">
 <rect x="0.0" y="0.0" width="350.0" height="20.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
 <text x="175.0" y="14.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#ffffff" text-anchor="middle" font-weight="bold">Actor grouping</text>
-<circle cx="18.0" cy="31.0" r="5" fill="none" stroke="#b3453f" stroke-width="1.5"/>
-<path d="M 10 47 A 8 8 0 0 1 26 47" fill="none" stroke="#b3453f" stroke-width="1.5" stroke-linejoin="round"/>
-<text x="34.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="start" font-weight="bold">A1 · Internet Attacker</text>
-<text x="34.0" y="50.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Self-registered users · open registration</text>
-<text x="34.0" y="63.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Repository readers · public source</text>
-<text x="34.0" y="82.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">Login / privileges: per finding</text>
+<g transform="translate(15 31) scale(0.5)">
+<circle cx="0.0" cy="0.0" r="5" fill="none" stroke="#b3453f" stroke-width="1.5"/>
+<path d="M -8 16 A 8 8 0 0 1 8 16" fill="none" stroke="#b3453f" stroke-width="1.5" stroke-linejoin="round"/>
+</g>
+<text x="26.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="start" font-weight="bold">A1</text>
+<text x="54.0" y="33.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Self-registered users · open registration</text>
+<text x="54.0" y="46.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Repository readers · public source</text>
+<text x="54.0" y="65.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">Login / privileges: per finding</text>
 </g>
 <g data-legend-section="scenarios" data-legend-column="2" transform="translate(416.0 1036.0)">
 <rect x="0.0" y="0.0" width="350.0" height="20.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
