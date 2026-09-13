@@ -11,6 +11,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import agent_lifecycle
 import build_abuse_case_contexts as abuse_contexts
 import build_architecture_analysis_context as architecture_context
 import build_post_stride_contexts as post_stride_contexts
@@ -20,6 +21,7 @@ import cutoff_cause
 import orchestration_controller as controller
 import pytest
 import stride_dispatch_waves as stride_waves
+import wait_agent_calls
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -3474,6 +3476,145 @@ def test_post_stride_rejects_unjoined_wave_without_redispatch(
     assert {path.name: path.read_bytes() for path in (output / ".stride-attempts").iterdir()} == attempts_before
     assert (output / ".context-routing-plan.json").read_bytes() == context_before
     assert not (output / ".agent-run.log").exists() or "RUN_ABORTED" not in (output / ".agent-run.log").read_text()
+
+
+def _launch_producer(output: Path, job_id: str, agent_type: str) -> str:
+    """Register a plugin call the way the hooks do: spawned, then launched asynchronously."""
+    call_id = "toolu_" + re.sub(r"[^A-Za-z0-9]", "_", job_id)
+    agent_lifecycle.register_call(
+        output,
+        {
+            "agent_call_id": call_id,
+            "session_id": "sid00001",
+            "agent": agent_type.rsplit(":", 1)[-1],
+            "agent_type": agent_type,
+            "model": "sonnet",
+            "description": job_id,
+            "background": False,
+            "action_id": "stage1c:join-test",
+            "job_id": job_id,
+            "max_turns": 40,
+        },
+    )
+    agent_lifecycle.acknowledge_background_call(output, call_id)
+    return call_id
+
+
+@pytest.mark.parametrize(
+    ("command", "boundary", "job_id", "agent_type"),
+    [
+        (
+            "context-v2-post-merge",
+            "context_v2_post_merge",
+            "phase9-merge-review",
+            "appsec-advisor:appsec-threat-merger",
+        ),
+        ("context-v2-post-recon", "context_v2_post_recon", "phase2-recon", "appsec-advisor:appsec-recon-scanner"),
+        (
+            "context-v2-prepare-stride",
+            "context_v2_prepare_stride",
+            "phase8-controls",
+            "appsec-advisor:appsec-control-analyst",
+        ),
+    ],
+)
+def test_a_boundary_called_before_its_producer_stopped_rejects_without_abort(
+    tmp_path, monkeypatch, capsys, command, boundary, job_id, agent_type
+):
+    """OR-14. A running producer may still rewrite the output the boundary would judge.
+
+    The threat merger writes a draft, validates it, and rewrites it before it
+    stops. A boundary called in between judged the draft and aborted the run over
+    a document the merger then corrected, and the retry restarted all of Stage 1.
+    """
+    output = _write_context_v2_config(tmp_path)
+    _launch_producer(output, job_id, agent_type)
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    monkeypatch.setattr(controller, boundary, lambda _output: pytest.fail("the boundary judged a running producer"))
+
+    assert controller.main([command, "--output-dir", str(output)]) == 3
+    result = json.loads(capsys.readouterr().out)
+    assert result["action"] == "reject"
+    assert job_id in result["reason"]
+    assert "wait_agent_calls.py" in result["reason"]
+    log = output / ".agent-run.log"
+    assert not log.exists() or "RUN_ABORTED" not in log.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("shape", ["finished", "stopped_unsettled", "past_deadline", "unreadable_lifecycle"])
+def test_the_boundary_judges_output_once_the_join_would_stop_waiting(tmp_path, monkeypatch, shape):
+    """A stopped child no longer holds the boundary, and a stop that is never
+    recorded holds it only until the join's own deadline, so no boundary livelocks."""
+    output = _write_context_v2_config(tmp_path)
+    call_id = _launch_producer(output, "phase9-merge-review", "appsec-advisor:appsec-threat-merger")
+    path = agent_lifecycle.state_path(output)
+    if shape == "finished":
+        agent_lifecycle.finish_call(output, call_id)
+    elif shape == "stopped_unsettled":
+        agent_lifecycle.note_child_stop(output, call_id)
+    elif shape == "past_deadline":
+        state = json.loads(path.read_text(encoding="utf-8"))
+        age = wait_agent_calls.DEFAULT_DEADLINE_MINUTES * 60 + 1
+        for key in ("spawned_at", "running_at", "launch_acknowledged_at"):
+            if key in state["calls"][0]:
+                state["calls"][0][key] -= age
+        path.write_text(json.dumps(state), encoding="utf-8")
+        assert wait_agent_calls.joined_calls(output, None), "the aged state must stay readable"
+    else:
+        path.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    monkeypatch.setattr(controller, "context_v2_post_merge", lambda _output: {"action": "judged"})
+    monkeypatch.setattr(controller, "_emit", lambda action: action)
+
+    assert controller.main(["context-v2-post-merge", "--output-dir", str(output)]) == {"action": "judged"}
+
+
+@pytest.mark.parametrize(
+    ("command", "boundary", "job_id", "agent_type"),
+    [
+        (
+            "context-v2-post-stride",
+            "context_v2_post_stride",
+            "stride:api:attempt-1",
+            "appsec-advisor:appsec-stride-analyzer-v2",
+        ),
+        ("finalize-abuse", "finalize_abuse", "phase10c-abuse-AC-T-001", "appsec-advisor:appsec-abuse-case-verifier"),
+    ],
+)
+def test_wave_boundaries_keep_their_own_join_authority(tmp_path, monkeypatch, command, boundary, job_id, agent_type):
+    """The STRIDE and abuse wave joins validate their results and settle past a
+    child whose stop was never recorded; the lifecycle join must not hold them."""
+    output = _write_context_v2_config(tmp_path)
+    _launch_producer(output, job_id, agent_type)
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    monkeypatch.setattr(controller, boundary, lambda _output: {"action": "judged"})
+    monkeypatch.setattr(controller, "_emit", lambda action: action)
+
+    assert controller.main([command, "--output-dir", str(output)]) == {"action": "judged"}
+
+
+def test_the_merge_race_rejects_until_the_merger_stops_and_then_still_validates(tmp_path, monkeypatch, capsys):
+    """Replays the aborted run: the merger's self-validation draft omits one group."""
+    output = _write_context_v2_config(tmp_path)
+    (output / ".merge-candidates.json").write_text(json.dumps(_merge_candidates("G-aaaaaaaa")), encoding="utf-8")
+    payload = (output / ".merge-candidates.json").read_bytes()
+    controller._write_merge_review_context(output, json.loads(payload), payload)
+    draft = {"version": 2, "generated_at": "2026-09-13T16:45:56Z", "model": "sonnet", "decisions": []}
+    (output / ".merge-decisions.json").write_text(json.dumps(draft), encoding="utf-8")
+    call_id = _launch_producer(output, "phase9-merge-review", "appsec-advisor:appsec-threat-merger")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    argv = ["context-v2-post-merge", "--output-dir", str(output)]
+
+    assert controller.main(argv) == 3
+    assert json.loads(capsys.readouterr().out)["action"] == "reject"
+
+    # Once the merger has stopped, an invalid document still ends the run.
+    agent_lifecycle.finish_call(output, call_id)
+    assert controller.main(argv) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["action"] == "abort"
+    assert "omits candidate groups" in result["reason"]
 
 
 def test_post_stride_retries_only_unfinished_component_after_deadline(active_stride_wave):

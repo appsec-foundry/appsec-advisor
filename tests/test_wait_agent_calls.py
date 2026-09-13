@@ -13,7 +13,15 @@ import pytest
 import wait_agent_calls as wac
 
 SKILL_DIR = Path(__file__).resolve().parents[1] / "skills" / "create-threat-model"
-POST_STAGE1_RUNTIMES = ("SKILL-thin-stage2.md", "SKILL-thin-stage3.md", "SKILL-thin-stage4.md")
+# Runtimes whose dispatches this join owns (OR-24). Stage 1 joins its STRIDE
+# waves with wait_stride_progress.py and every other dispatch here; Stage 1d
+# dispatches only the abuse wave, which wait_abuse_progress.py joins.
+LIFECYCLE_JOINED_RUNTIMES = (
+    "SKILL-thin-stage1-v2.md",
+    "SKILL-thin-stage2.md",
+    "SKILL-thin-stage3.md",
+    "SKILL-thin-stage4.md",
+)
 
 
 def _iso(epoch: float) -> str:
@@ -169,14 +177,34 @@ def test_the_join_reads_state_the_real_lifecycle_writes(tmp_path):
     assert _join(tmp_path, since) == 0
 
 
-@pytest.mark.parametrize("runtime", POST_STAGE1_RUNTIMES)
-def test_every_post_stage1_runtime_that_dispatches_agents_joins_them(runtime):
+@pytest.mark.parametrize("runtime", LIFECYCLE_JOINED_RUNTIMES)
+def test_every_runtime_that_dispatches_agents_joins_them(runtime):
+    """OR-24. Stage 1 names no agent type; its dispatches come from `dispatch_jobs[]`.
+
+    Without this join the Stage-1 orchestrator joined recon, architecture, and
+    the other single jobs with the STRIDE waiter, which cannot see them, so each
+    step idled a full waiter slice after its agent had finished.
+    """
     text = (SKILL_DIR / runtime).read_text(encoding="utf-8")
-    if re.search(r"appsec-advisor:appsec-[a-z-]+", text):
+    if re.search(r"appsec-advisor:appsec-[a-z-]+|dispatch_jobs\[\]", text):
         assert "scripts/wait_agent_calls.py" in text, f"{runtime} dispatches agents but never joins them"
 
 
-@pytest.mark.parametrize("runtime", POST_STAGE1_RUNTIMES)
+@pytest.mark.parametrize("shape", ["running", "stopped", "done", "past_deadline"])
+def test_still_waiting_is_the_rule_the_join_and_the_boundaries_share(shape):
+    """OR-14 rejects a boundary exactly while this join would still wait."""
+    now = 2_000_000_000
+    deadline = wac.DEFAULT_DEADLINE_MINUTES * 60
+    call = {
+        "running": _call("toolu_running", now - 30),
+        "stopped": _call("toolu_stopped", now - 30, stopped_at=now - 5),
+        "done": _call("toolu_done", now - 30, state="done"),
+        "past_deadline": _call("toolu_stale", now - deadline - 1),
+    }[shape]
+    assert wac.still_waiting([call], now, deadline) == ([call] if shape == "running" else [])
+
+
+@pytest.mark.parametrize("runtime", LIFECYCLE_JOINED_RUNTIMES)
 def test_runtime_join_commands_use_real_flags(runtime):
     accepted = set(re.findall(r"--[a-z-]+", wac.build_parser().format_help()))
     text = (SKILL_DIR / runtime).read_text(encoding="utf-8")

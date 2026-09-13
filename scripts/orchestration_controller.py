@@ -70,6 +70,7 @@ import telemetry_consistency  # noqa: E402
 import validate_intermediate as intermediate_contract  # noqa: E402
 import validate_recon_summary as recon_summary_contract  # noqa: E402
 import validate_threat_modeling_context as context_document_contract  # noqa: E402
+import wait_agent_calls  # noqa: E402
 from event_log import format_line  # noqa: E402
 
 ACTION_SCHEMA = PLUGIN_ROOT / "schemas" / "orchestration-action.schema.json"
@@ -478,10 +479,11 @@ class ControllerError(RuntimeError):
 class CallError(ControllerError):
     """Malformed invocation or unmet sequencing precondition; the run is intact.
 
-    Missing receipt verification and an unfinished STRIDE join are corrected
-    before repeating the boundary. They reject with exit code 3 and no
-    RUN_ABORTED. Invalid artifacts, contracts, and stale receipts remain
-    terminal errors rather than sequencing preconditions.
+    Missing receipt verification, an unfinished STRIDE join, and a producer of
+    the latest dispatch that is still running are corrected before repeating
+    the boundary. They reject with exit code 3 and no RUN_ABORTED. Invalid
+    artifacts, contracts, and stale receipts remain terminal errors rather
+    than sequencing preconditions.
     """
 
     def __init__(self, message: str):
@@ -7007,6 +7009,37 @@ _SEMANTIC_RETURN_COMMANDS = frozenset(
 )
 
 
+#: Semantic boundaries after a wave whose own join validates the results: the
+#: STRIDE wave join (OR-14) and the abuse wave join. Both settle past a child
+#: whose stop was never recorded, so the lifecycle join must not hold them.
+_WAVE_JOINED_COMMANDS = frozenset({"context-v2-post-stride", "finalize-abuse"})
+
+
+def _require_joined_dispatch(output_dir: Path, command: str) -> None:
+    """Reject a boundary while a producer of the latest dispatch still runs (OR-14).
+
+    A boundary judges what its producer wrote, and a running producer may still
+    rewrite it: the threat merger writes a draft, validates it, and rewrites it
+    before it stops. Judged in between, that draft aborted a run. The rule is the
+    join's own, so a boundary refuses exactly while ``wait_agent_calls.py`` would
+    still wait, and an unrecorded stop holds it no longer than the join's
+    deadline. An unreadable lifecycle proves nothing and lets the boundary run.
+    """
+    if command in _WAVE_JOINED_COMMANDS:
+        return
+    calls = wait_agent_calls.joined_calls(output_dir, None)
+    if not calls:
+        return
+    _action_id, latest = telemetry_consistency.latest_action_calls(calls)
+    waiting = wait_agent_calls.still_waiting(latest, time.time(), wait_agent_calls.DEFAULT_DEADLINE_MINUTES * 60)
+    if waiting:
+        jobs = ", ".join(sorted(str(call.get("job_id") or call.get("agent_type")) for call in waiting))
+        raise CallError(
+            f"dispatched producer still running: {jobs}; join it with wait_agent_calls.py "
+            f"before repeating {command}; do not re-dispatch it"
+        )
+
+
 def _check_returned_call_telemetry(output_dir: Path) -> None:
     """Report where accepted output, lifecycle, budget, and stage stats disagree.
 
@@ -7078,6 +7111,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command in _SEMANTIC_RETURN_COMMANDS:
+            _require_joined_dispatch(Path(args.output_dir), args.command)
             _check_returned_call_telemetry(Path(args.output_dir))
             _require_receipt_verification(Path(args.output_dir))
         if args.command == "route":

@@ -14,7 +14,7 @@ reaches console text, an Agent description, or a task row.
   its explicit model.
   Never wait for one STRIDE job before launching the next.
   Pass no `run_in_background`; the Agent schema rejects it.
-- Do not end your turn after dispatching; join STRIDE below and wait for foreground jobs.
+- Do not end your turn after dispatching.
 - Description: `STRIDE (<dispatch_jobs[].analysis_depth>): <dispatch_jobs[].component_id>`.
 - Returns carry status and blockers; filesystem is authoritative.
   Never re-dispatch an agent that already returned.
@@ -45,18 +45,17 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
   verify-receipts --output-dir "$OUTPUT_DIR" --action-id <context_plan.action_id>
 ```
 
-Join the current STRIDE wave (Bash timeout `600000`, no `run_in_background`):
+Join each dispatch (Bash timeout `600000`, no `run_in_background`). A STRIDE wave:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
-  "$OUTPUT_DIR" <dispatch_jobs count> --plugin-root "$CLAUDE_PLUGIN_ROOT" \
-  --interval 20 --rounds 24 \
+  "$OUTPUT_DIR" <dispatch_jobs count> \
   --component <dispatch_jobs[0].component_id> [...]
 ```
 
-Exit `75`: repeat unchanged. `0`/`1`: call `context-v2-post-stride`. `2`: abort. On an in-flight `reject`, join again before repeating the boundary. Never re-dispatch or end here.
+Exit `75`: repeat unchanged; `2`: abort; else call `context-v2-post-stride`. Any other dispatch: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_agent_calls.py" "$OUTPUT_DIR" --since "$WAVE_START_ISO"`, repeating `75`. On an in-flight `reject`, join again before repeating the boundary. Never re-dispatch, poll, or end here.
 
-`context-v2-begin` opens the chain. After dispatched jobs return, invoke the
+`context-v2-begin` opens the chain. After the join, invoke the
 action's `next_boundary` verbatim. Never derive it from run shape or re-invoke
 a boundary whose dispatch already ran.
 `context-v2-finalize` ends it.

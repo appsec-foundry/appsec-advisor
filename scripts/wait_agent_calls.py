@@ -3,16 +3,23 @@
 
 Claude Code launches every Agent call asynchronously. A runtime that only says
 "wait for" an agent therefore ends the orchestrator's turn while the agent
-runs, and that turn fills with log polling and status prose. Stage 1 joins its
-fan-outs with wait_stride_progress.py and wait_abuse_progress.py; this waiter
-joins every later dispatch: the Stage-2 renderers and repair fixer, the
-Stage-3 QA reviewer and fixer, and the Stage-4 editorial waves.
+runs, and that turn fills with log polling and status prose. STRIDE and abuse
+fan-outs have their own result-validating waiters, wait_stride_progress.py and
+wait_abuse_progress.py; this waiter joins every other dispatch (OR-24): the
+Stage-1 single jobs such as recon, architecture, and the threat merger, the
+Stage-2 renderers and repair fixer, the Stage-3 QA reviewer and fixer, and the
+Stage-4 editorial waves. The STRIDE waiter reads only STRIDE progress, so a
+single job joined with it idles a full slice after its agent has finished.
 
 Completion is read from the call lifecycle, never from an agent's files: a
-renderer rewrites its fragment in place, so a file proves nothing, while
+renderer rewrites its fragment in place and the threat merger rewrites its
+decisions after validating a draft, so a file proves nothing, while
 SubagentStop is the single terminal boundary of an async call (see
 agent_lifecycle.acknowledge_background_call). The waiter only reads that
-state; settling a call stays the hooks' job.
+state; settling a call stays the hooks' job. ``still_waiting`` is the one rule
+for which calls still hold a join: the controller rejects a context-v2
+boundary on the same rule (OR-14), so a boundary never judges output that its
+producer may still rewrite.
 
 Exit codes: 0 every joined call finished; 75 calls are still running when this
 slice ends, so repeat the identical command; 1 the join cannot see the calls,
@@ -34,6 +41,7 @@ import agent_lifecycle
 PENDING_EXIT_CODE = 75
 PLUGIN_AGENT_PREFIX = "appsec-advisor:"
 UNOBSERVED_ROUNDS = 3
+DEFAULT_DEADLINE_MINUTES = 60
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--since", default="", help="ISO-8601 time taken just before the dispatch")
     parser.add_argument("--interval", type=int, default=20)
     parser.add_argument("--rounds", type=int, default=24)
-    parser.add_argument("--deadline-minutes", type=int, default=60)
+    parser.add_argument("--deadline-minutes", type=int, default=DEFAULT_DEADLINE_MINUTES)
     return parser
 
 
@@ -74,6 +82,16 @@ def joined_calls(output_dir: Path, since: float | None) -> list[dict] | None:
     ]
 
 
+def is_live(call: dict) -> bool:
+    """A running call whose child has not stopped; a stopped child being settled no longer holds a join."""
+    return call.get("state") == "running" and not call.get("stopped_at")
+
+
+def still_waiting(calls: list[dict], now: float, deadline_seconds: float) -> list[dict]:
+    """The live calls a join still waits for; a call past the deadline never holds one."""
+    return [call for call in calls if is_live(call) and now - call.get("spawned_at", 0) <= deadline_seconds]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
@@ -101,9 +119,8 @@ def main(argv: list[str] | None = None) -> int:
             observed = True
             unobserved = 0
             now = time.time()
-            # A stopped child whose outcome is still being settled no longer holds the join.
-            live = [call for call in calls if call.get("state") == "running" and not call.get("stopped_at")]
-            waiting = [call for call in live if now - call.get("spawned_at", 0) <= deadline]
+            live = [call for call in calls if is_live(call)]
+            waiting = still_waiting(live, now, deadline)
             if not waiting:
                 if live:
                     names = ", ".join(sorted({str(call.get("agent_type")) for call in live}))

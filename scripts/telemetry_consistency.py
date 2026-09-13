@@ -53,8 +53,12 @@ def _dispatched_jobs_by_action(output_dir: Path) -> dict[str, set[str]]:
     return actions
 
 
-def _latest_action_calls(calls: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
-    """Return the action ID and the calls of the most recently spawned action."""
+def latest_action_calls(calls: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    """Return the action ID and the calls of the most recently spawned action.
+
+    The controller's join precondition selects its calls here too (OR-14), so
+    the boundary and this check always mean the same dispatch.
+    """
     if not calls:
         return "", []
     # Persisted order breaks the tie: several calls can be spawned inside one
@@ -151,7 +155,7 @@ def check_returned_calls(output_dir: str | Path) -> list[dict[str, str]]:
     dispatched = _dispatched_jobs_by_action(output_dir)
     if not dispatched:
         return []
-    action_id, action_calls = _latest_action_calls(calls)
+    action_id, action_calls = latest_action_calls(calls)
     accepted_jobs = dispatched.get(action_id, set())
     candidates = [call for call in action_calls if str(call.get("job_id") or "") in accepted_jobs]
     if not candidates:
