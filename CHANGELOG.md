@@ -13,13 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Report and completion summaries highlight up to three open questions about deployment, business decisions, or unresolved attack chains.
+- The Management Summary and completion summary give developers concrete starting points for manual threat modeling through up to three open questions about deployment assumptions, business decisions, or unresolved attack chains, with references to findings.
 - Cost budgets via `--soft-budget` or organization profiles, with spending warnings and per-phase cost totals in headless runs.
 - `/appsec-advisor:repo-profile` shows repository size, languages, and build manifests before a scan, without model calls or network access.
 
 ### Changed
 
-- Architecture diagrams use clearer labels and grouped data flows, while scenario summaries show attack-path verification status.
+- Figure 1 presents attack scenarios, grouped data flows, actor context, and Critical/High weakness annotations in a clearer architecture overview.
+- Scenario summaries show attack-path verification status in a compact table.
 - Actor grouping accounts for self-registration and public access while preserving login and privilege requirements.
 - `fix-run-issues` requires a diagnosis from the affected run and provides manual remediation guidance.
 - Threat model examples moved to the companion `appsec-advisor-examples` repository.
