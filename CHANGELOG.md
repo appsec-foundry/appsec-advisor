@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Figure 1 presents attack scenarios, grouped data flows, actor context, and Critical/High weakness annotations in a clearer architecture overview.
+- Figure 1 has been completely redesigned to show attack scenarios, grouped data flows, actors, and Critical/High weaknesses in a clearer architecture overview.
 - Scenario summaries show attack-path verification status in a compact table.
 - Actor grouping accounts for self-registration and public access while preserving login and privilege requirements.
 - `fix-run-issues` requires a diagnosis from the affected run and provides manual remediation guidance.
