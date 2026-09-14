@@ -102,9 +102,9 @@ Decisions are stored separately from the generated model and survive reassessmen
 
 ## Example report: OWASP Juice Shop
 
-The [OWASP Juice Shop example](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
+The [OWASP Juice Shop example](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b3.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.
 
-![Threat Model Juice Shop Thorough](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.figure1.svg)
+![Threat Model Juice Shop Thorough](https://raw.githubusercontent.com/appsec-foundry/appsec-advisor-examples/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b3.figure1.svg)
 
 ## What it checks
 
@@ -221,13 +221,13 @@ Thorough increases both component coverage and per-component analysis depth.
 
 ### Measured cost by depth
 
-The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session on 0.5.2-dev. The linked thorough sample is a later 0.6.0-beta.2 run and is shown for report structure, not for the cost figure beside it. Results vary with repository, cache state, and model routing.
+The following OWASP Juice Shop runs used a Sonnet 4.6 Claude Code session on 0.5.2-dev. The linked thorough sample is a later 0.6.0-beta.3 run and is shown for report structure, not for the cost figure beside it. Results vary with repository, cache state, and model routing.
 
 | Mode | Best fit | Review depth | Measured API cost and time |
 |---|---|---|---|
-| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; no abuse-case validation or final model-based QA | $15.06 and 97 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-quick-v0.5.2.md)) |
-| **Standard** *(default)* | Normal security reviews | Full analysis, abuse-case validation, and QA | $25.39 and 124 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-standard-v0.5.2.md)) |
-| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $35.15 and about 138 minutes ([sample](../examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.md)) |
+| **Quick** `--assessment-depth quick` | Early feedback and low-risk changes | Reduced analysis; no abuse-case validation or final model-based QA | $15.06 and 97 minutes ([sample](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-quick-v0.5.2.md)) |
+| **Standard** *(default)* | Normal security reviews | Full analysis, abuse-case validation, and QA | $25.39 and 124 minutes |
+| **Thorough** `--assessment-depth thorough` | High-risk services and major releases | Deeper component and architecture review | $35.15 and about 138 minutes ([sample](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b3.md)) |
 
 The standard run included one STRIDE retry. Cost follows the number and complexity of analyzed components more closely than raw repository size.
 
@@ -270,14 +270,17 @@ Headless runs default to 4.6 and accept `scripts/run-headless.sh --model <id>`. 
 
 | Interactive | Headless / CI | Effect |
 |---|---|---|
+| `--soft-budget <usd>` | `--soft-budget <usd>` | Steers the run. An invocation that cannot fit does not start; a run that overruns still finishes and reports the overrun. |
 | Unsupported | `--max-duration` | Maximum runtime enforced by the host wrapper. |
-| Unsupported | `--max-budget` | Maximum API spend enforced by the host wrapper. |
+| Unsupported | `--hard-budget` | Maximum API spend enforced by the host wrapper. It kills the session and loses the report, so it sits above the soft budget as a backstop. |
 
 ```text
-./scripts/run-headless.sh --full --max-duration 1800 --max-budget 5
+./scripts/run-headless.sh --full --max-duration 1800 --soft-budget 30
 ```
 
-Cost limits require an `ANTHROPIC_API_KEY`; time limits also work with Claude subscriptions.
+A soft budget is not a cap. It is honoured by refusing a run that cannot fit and, from a later change, by dropping optional work; the run always finishes. Under subscription billing the figures are price-table valuations of token counts rather than money billed.
+
+The hard cut requires an `ANTHROPIC_API_KEY`; the soft budget and time limits also work with Claude subscriptions.
 
 ## Repo-local context
 
@@ -407,7 +410,7 @@ Agents read the repository and make the security judgments. Python checks their 
 | `/appsec-advisor:threat-model-health` | Check whether the model is fresh, stale, missing, or blocked. |
 | `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without a threat model. |
 | `/appsec-advisor:clean-run-state` | Remove stale state after an interrupted run. |
-| `/appsec-advisor:fix-run-issues` | Apply safe fixes or show repair guidance for the previous run. |
+| `/appsec-advisor:fix-run-issues` | Show manual plugin-fix guidance from a validated diagnosis of the previous run. |
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
 | `/appsec-advisor:check-permissions` | Check or update permissions for unattended runs. |
 

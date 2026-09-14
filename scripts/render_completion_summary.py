@@ -37,6 +37,10 @@ Flags:
     --write-threatdragon / --no-write-threatdragon
     --check-requirements / --no-check-requirements
     --architect-review / --no-architect-review
+                                Fallbacks only: when ``.skill-config.json``
+                                exists, its ``_RUN_SWITCHES`` win, because
+                                the exports and the stamp already read it
+                                and the summary must describe the same run.
     --reasoning-model {opus-cheap,sonnet,opus,sonnet-economy,haiku-economy}
                                 Used only to decide whether the "re-run
                                 with --reasoning-model opus" Next Steps
@@ -65,8 +69,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 import _severity_rollup  # sibling script — see extract_metrics()
+import completion_relay  # sibling script — records the printed summary for the closing Stop
 import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
 import stamp_threat_model  # sibling script — owns which deliverables get stamped
+import summarize_threat_model  # sibling script — owns the worst-case table both consoles print
+import team_questions as _team_questions
 from _atomic_io import atomic_write_text
 
 BANNER_WIDTH = 62
@@ -104,6 +111,35 @@ def _load_json_object(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+# What the run requested. Presentation switches (--verbose, --quiet,
+# --plugin-dev) are deliberately absent: they belong to the invocation, so a
+# caller can re-render a finished run with more or less detail.
+_RUN_SWITCHES: tuple[str, ...] = (
+    "write_yaml",
+    "write_sarif",
+    "write_pentest_tasks",
+    "write_threatdragon",
+    "write_pdf",
+    "write_html",
+    "check_requirements",
+    "architect_review",
+    "skip_qa",
+)
+
+
+def resolved_run_switches(output_dir: Path) -> dict[str, bool]:
+    """The run's requested switches from the resolved ``.skill-config.json``.
+
+    Exports and the slug stamp read that file; a summary rebuilt from argv
+    alone reported a different run than the files on disk — deliverables that
+    exist listed as not requested, PDF/HTML never listed because no flag
+    carries them. Only keys the config holds are returned, so argv still fills
+    in for an invocation without one.
+    """
+    config = _load_json_object(output_dir / ".skill-config.json")
+    return {key: bool(config[key]) for key in _RUN_SWITCHES if key in config}
 
 
 def _has_cost_signal(output_dir: Path) -> bool:
@@ -602,7 +638,12 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
                 recorded = rec.get("dispatch_count")
                 if not (isinstance(recorded, int) and recorded > 0):
                     recorded = rec.get("recorded_dispatch_count")
-                stats["recorded_dispatches"] += recorded if isinstance(recorded, int) and recorded > 0 else 1
+                if isinstance(recorded, int) and recorded > 0:
+                    stats["recorded_dispatches"] += recorded
+                elif not str(rec.get("agent") or "").startswith("deterministic:"):
+                    # A `deterministic:` row ran no agent, so it covers no
+                    # dispatch; counting it as one hid an unrecorded agent.
+                    stats["recorded_dispatches"] += 1
                 stats["stage_rows"].append(
                     (
                         rec.get("stage"),
@@ -816,14 +857,89 @@ def extract_costs(output_dir: Path, plugin_root: Path) -> Optional[dict]:
     if r.returncode >= 2 or not r.stdout:
         return None
     try:
-        return json.loads(r.stdout)
+        parsed = json.loads(r.stdout)
     except json.JSONDecodeError:
         return None
+    return _add_unpriced_tokens(parsed, output_dir, plugin_root)
+
+
+def _add_unpriced_tokens(parsed: object, output_dir: Path, plugin_root: Path) -> Optional[dict]:
+    """Attach the token figure `SESSION_STOP` alone cannot see.
+
+    ``verify_run_costs`` reads only ``SESSION_STOP``, which carries usage only
+    where the host persists a transcript for the session that emitted it. Where
+    it does not, it reports zeros or fails outright with "No SESSION_STOP
+    entries with token data found" — and this summary then said "not captured"
+    or nothing at all for a run whose sub-agents demonstrably spent hundreds of
+    thousands of tokens, contradicting the phase banner that counts them from
+    the stage stats. One source answers both.
+
+    Kept beside ``totals`` rather than inside it: this is a different quantity,
+    sub-agents only and with no split into the four token classes, and no
+    consumer of ``verify_run_costs`` totals may add it to one of theirs. See
+    ``cost_running_total.stage_stats_residual_tokens``.
+    """
+    if not isinstance(parsed, dict):
+        return None
+    totals = parsed.get("totals")
+    if isinstance(totals, dict) and any(
+        totals.get(key) for key in ("total_tokens", "in", "out", "cache_write", "cache_read")
+    ):
+        return parsed
+    scripts_dir = str(plugin_root / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import cost_running_total  # type: ignore
+
+        running = cost_running_total.aggregate_running_total(Path(output_dir))
+    except Exception:  # noqa: BLE001 — an unreadable log must not cost the summary
+        return parsed
+    unpriced = running.get("unpriced_tokens") or 0
+    if running.get("status") == "ok" and unpriced > 0:
+        parsed["unpriced_tokens"] = int(unpriced)
+    return parsed
 
 
 # ---------------------------------------------------------------------------
 # Next Steps — conditional rules over the run's state
 # ---------------------------------------------------------------------------
+
+
+TEAM_QUESTIONS_HEADER = _team_questions.CONSOLE_HEADER
+mechanism_team_questions = _team_questions.mechanism_team_questions
+
+
+def build_manual_review_step(
+    yaml_data: dict,
+    report_text: str,
+    *,
+    team_questions: Optional[dict[str, str]] = None,
+) -> str:
+    """Render the shared question selection as a console Next Steps item."""
+    selection = _team_questions.select_open_questions(
+        yaml_data,
+        _team_questions.visible_anchor_ids(report_text),
+        team_questions=team_questions,
+    )
+    if not selection["questions"] and not selection["unverified"]:
+        return ""
+
+    # Question first, plain IDs after it: a terminal prints a Markdown link's target beside its text (RA-13).
+    lines = [TEAM_QUESTIONS_HEADER]
+    for topic in selection["questions"]:
+        refs = ", ".join(item["id"] + (" (unproven)" if item["unproven"] else "") for item in topic["refs"])
+        if topic["hidden"] > 0:
+            refs += f" +{topic['hidden']} more"
+        if topic["weakness_id"]:
+            refs = f"{topic['weakness_id']}: {refs}" if refs else topic["weakness_id"]
+        lines.append(f"- {topic['question']}" + (f" ({refs})" if refs else ""))
+    if selection["unverified"]:
+        refs = ", ".join(item["id"] for item in selection["unverified"][:5])
+        if len(selection["unverified"]) > 5:
+            refs += f" +{len(selection['unverified']) - 5} more"
+        lines.append(f"- {_team_questions.UNVERIFIED_QUESTION} ({refs})")
+    return "\n".join(lines)
 
 
 def build_next_steps(
@@ -839,21 +955,17 @@ def build_next_steps(
     section — the runtime is compact and the summary is deterministic, so the
     conditions live here with the code that applies them.
 
-    Returns a capped 5-item list of MUTUALLY ALTERNATIVE actions: read the
-    report, *or* triage it, *or* ask it a question. None of them requires the
-    one before, which is also why every entry must be an action the reader can
-    actually take. Anything purely informational belongs in `build_run_notes`,
-    not here.
+    Returns up to five actions: read, triage, settle the open questions with
+    the team, inspect an actionable architect review, or ask about the model.
+    Informational notices belong in `build_run_notes`.
 
-    An action that ADDS to reading the report rather than replacing it belongs
-    in `build_follow_ups`. Uploading the SARIF and re-running deeper used to sit
-    in this list, where they read as a choice against reading the report —
-    which is not a choice anyone makes.
+    Technical follow-ups such as SARIF upload and a deeper re-run belong in
+    `build_follow_ups`. The team questions stay here: they are the decisions a
+    code-derived model cannot make, linked to the findings that raise them.
 
     Entry 0 is the report step and stays first (it is the one most readers
     want), and the ask step stays last — it is the open-ended fallback, and it
-    is the only multi-line entry, so anything after it would be separated from
-    the first bullet by its example block. Each entry is a self-contained
+    follows the team questions. Each entry is a self-contained
     imperative and starts capitalised; the list carries no conjunctions, so
     nothing has to read on from the entry above it.
 
@@ -874,6 +986,12 @@ def build_next_steps(
     # independently of this pipeline, so it fits any follow-up session.
     if sum(sev.values()):
         lines.append("Triage the findings — /appsec-advisor:review-threat-model")
+
+    manual_review = build_manual_review_step(
+        _load_yaml(output_dir / "threat-model.yaml"), _load_text(output_dir / "threat-model.md")
+    )
+    if manual_review:
+        lines.append(manual_review)
 
     # Asking is the non-mutating default exploration path and must stay visible
     # rather than sink into an easy-to-miss footer. Show the question, NOT
@@ -917,10 +1035,7 @@ def build_next_steps(
     # before, and it cannot carry it from inside the lead-in once the questions
     # sit on their own lines.
     #
-    # This entry stays LAST: it is the only multi-line step, so a bullet after
-    # it would be cut off from the top of the list by the example block. Last
-    # among a handful of bullets is still in view, and it is where the
-    # open-ended fallback belongs anyway.
+    # Keep the open-ended fallback last, after the focused review questions.
     #
     # The examples follow the findings, and lead with orientation before action,
     # mirroring the two entries above (read it, then triage it). On a clean run
@@ -1314,8 +1429,11 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
         if (total_tokens or 0) <= 0 and not cache_write and not cache_read and totals.get("cost", 0) <= 0:
             # Hook log captured no token data for the orchestrator session
             # (rare — usually means SESSION_STOP fired without a usage block).
-            lines.append("  Tokens / Cost       : not captured by Claude Code hooks")
-            lines.append("                        Run /usage in the chat for the actual figure.")
+            if cost.get("unpriced_tokens"):
+                lines.extend(_unpriced_token_lines(cost["unpriced_tokens"]))
+            else:
+                lines.append("  Tokens / Cost       : not captured by Claude Code hooks")
+                lines.append("                        Run /usage in the chat for the actual figure.")
         else:
             # Hook data is available — render the measured numbers verbatim.
             lines.append(
@@ -1350,9 +1468,24 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
                 lines.append(f"    Billing           : {billing}")
                 lines.append("    Note              : measured from orchestrator hook stream; for the authoritative")
                 lines.append("                        per-run figure, run /usage in the chat.")
+    elif isinstance(cost, dict) and cost.get("unpriced_tokens"):
+        # `verify_run_costs` could not total the run at all — on a host whose
+        # SESSION_STOP carries no usage that is every run. The sub-agent figure
+        # is still measured, and reporting nothing here while the phase banner
+        # reports it is the divergence this branch exists to close.
+        lines.extend(_unpriced_token_lines(cost["unpriced_tokens"]))
     elif cost is None:
         lines.append("  Tokens/Cost         : unavailable (verify_run_costs.py failed)")
     return lines
+
+
+def _unpriced_token_lines(unpriced: int) -> list[str]:
+    """The token readout for a run whose classes and cost cannot be known."""
+    return [
+        f"  Tokens (sub-agents) : {unpriced:,} total",
+        "  Cost                : not priceable — this host reports no per-call token classes",
+        "                        The orchestrator's own spend is not included.",
+    ]
 
 
 # Every optional deliverable a run can request: config flag → label → filename.
@@ -1726,7 +1859,7 @@ def render_next_steps(
     notes: Optional[list[str]] = None,
     follow_ups: Optional[list[str]] = None,
 ) -> list[str]:
-    """Bullet the steps — they are alternatives, not a sequence.
+    """Bullet the actions without implying an execution order.
 
     A numbered 1-2-3 list reads as "do all three, in this order". Reading the
     report, triaging it, and asking it a question are none of that: each is a
@@ -1866,6 +1999,21 @@ def _summary_qa(output_dir: Path, cfg: dict) -> str:
     return status.replace("_", " ")
 
 
+# Plain words for the editorial pass's `outcome` (render_editorial_receipt.py
+# build_status). Its `status` stays `pass` for every outcome because the pass
+# never blocks release, so printing status alone said "pass" beside a receipt
+# reporting that the pass produced nothing.
+_ARCHITECT_OUTCOME_WORDS = {
+    "applied": "rewrote {applied} block(s)",
+    "partial": "partial — rewrote {applied} block(s)",
+    "unchanged": "edits proposed, none applied",
+    "no_change": "no change needed",
+    "incomplete": "incomplete — no validated result",
+    "failed": "incomplete — no validated result",
+    "reverted": "reverted — original wording kept",
+}
+
+
 def _summary_architect(output_dir: Path, cfg: dict) -> str:
     if not cfg.get("architect_review"):
         return "skipped"
@@ -1873,9 +2021,18 @@ def _summary_architect(output_dir: Path, cfg: dict) -> str:
     if status_path.is_file():
         try:
             data = json.loads(status_path.read_text(encoding="utf-8"))
-            return str(data.get("status") or "recorded").replace("_", " ")
         except (OSError, json.JSONDecodeError):
             return "status unreadable"
+        if not isinstance(data, dict):
+            return "status unreadable"
+        outcome = str(data.get("outcome") or "")
+        if outcome in _ARCHITECT_OUTCOME_WORDS:
+            try:
+                applied = int(data.get("edits_applied") or 0)
+            except (TypeError, ValueError):
+                applied = 0
+            return _ARCHITECT_OUTCOME_WORDS[outcome].format(applied=applied)
+        return (outcome or str(data.get("status") or "recorded")).replace("_", " ")
     if (output_dir / ".architect-review.md").is_file():
         return "completed"
     return "not recorded"
@@ -1971,7 +2128,7 @@ def render_summary(
         lines.extend(render_files(output_dir, cfg))
         return "\n".join(lines) + "\n"
 
-    lines.extend(render_verdict(md_text, cfg))
+    lines.extend(render_verdict(md_text, cfg, summarize_threat_model.persisted_verdict(yaml_data, plugin_root)))
     if change:
         lines.extend(render_change_summary(change))
         lines.extend(render_threat_delta(change))
@@ -2073,42 +2230,70 @@ def _extract_verdict(md_text: str) -> str:
     return _html_to_plain(m.group(1))
 
 
-# Trailing finding-reference clause on a worst-case-outcome bullet, e.g.
-# ` *(🔴 [F-006](#f-006) — Hardcoded Cryptographic Key (\`lib/insecurity.ts:21\`),
-# … → [W-004](#w-004))*`. The lookahead requires at least one F-/T-/W-NNN link
-# inside, so an ordinary italic parenthetical is never touched. Non-greedy `)\*`
-# is deliberate: the clause itself contains `(…)` file locations, and the first
-# `)` followed by `*` is the real terminator.
+# Trailing finding-reference clause on a worst-case bullet, e.g.
+# ` *(🔴 [F-006](#f-006) — Hardcoded Signing Key (\`src/auth/keys.ts:21\`), … → [W-004](#w-004))*`.
+# The report keeps it for its links; on the console the anchors are not
+# clickable. The lookahead requires an F-/T-/W-NNN link inside, so an ordinary
+# italic parenthetical is never touched. The non-greedy `)\*` is deliberate:
+# the clause holds `(…)` file locations, and the first `)` followed by `*` is
+# the real terminator.
 _VERDICT_REF_CLAUSE_RE = re.compile(r"\s*\*\((?=[^\n]*\[[FTW]-\d{3}\])[^\n]*?\)\*")
 
+# A worst-case bullet of the report's `### Verdict` (`- **Outcome** — …`) and
+# the bold intro line above the list (`**What an attacker can do today, …:**`).
+_VERDICT_BULLET_RE = re.compile(r"^- \*\*")
+_VERDICT_INTRO_RE = re.compile(r"^\*\*([^*]+?):\*\*$")
 
-def _strip_verdict_refs(text: str) -> str:
-    """Drop the per-bullet finding-reference clauses from the console verdict.
 
-    The report keeps them — a reader in `threat-model.md` follows the links.
-    On the console they are pure noise: the anchors are not clickable and each
-    bullet carries three-plus of them, burying the one sentence that matters.
-    Only the clause is removed; any trailing marker after it (e.g.
-    `— ✓ verified attack path`) stays.
+def _verdict_console_lines(verdict_md: str, bullets: list[dict]) -> list[str]:
+    """The verdict slice with its bullet list swapped for the shared worst-case table.
+
+    The report keeps the bullets with their finding links; on the console the
+    persisted bullets render as `summarize_threat_model.render_worst_case_table`
+    under the intro's own wording. Without persisted bullets the slice keeps
+    its bullets, minus their finding-reference clauses. Runs of blank lines
+    collapse to one.
     """
-    return "\n".join(_VERDICT_REF_CLAUSE_RE.sub("", ln) for ln in text.splitlines())
+    lines = verdict_md.splitlines()
+    first = next((i for i, line in enumerate(lines) if _VERDICT_BULLET_RE.match(line)), None)
+    if bullets and first is not None:
+        end = first
+        while end < len(lines) and (_VERDICT_BULLET_RE.match(lines[end]) or not lines[end].strip()):
+            end += 1
+        start, caption = first, []
+        intro = next((i for i in range(first - 1, -1, -1) if lines[i].strip()), None)
+        match = _VERDICT_INTRO_RE.match(lines[intro].strip()) if intro is not None else None
+        if match:
+            start, caption = intro, [match.group(1), ""]
+        table = summarize_threat_model.render_worst_case_table(bullets, indent="")
+        lines = [*lines[:start], *caption, *table, "", *lines[end:]]
+    out: list[str] = []
+    for raw in lines:
+        line = _VERDICT_REF_CLAUSE_RE.sub("", raw)
+        if line.strip() or (out and out[-1].strip()):
+            out.append(line)
+    while out and not out[-1].strip():
+        out.pop()
+    return out
 
 
-def render_verdict(md_text: str, cfg: dict) -> list[str]:
+def render_verdict(md_text: str, cfg: dict, verdict: dict | None = None) -> list[str]:
     """Console `-- Verdict --` block: the report's headline verdict.
 
     Shown by default so the user sees the assessment's bottom line without
     opening `threat-model.md`. Suppressed when `cfg["quiet"]` is set
-    (the skill's `--quiet` flag).
+    (the skill's `--quiet` flag). `verdict` is the model's persisted verdict
+    (`summarize_threat_model.persisted_verdict`); its bullets replace the
+    report's bullet list with the worst-case table.
     """
     if cfg.get("quiet"):
         return []
-    verdict = _strip_verdict_refs(_extract_verdict(md_text))
-    if not verdict:
+    verdict_md = _extract_verdict(md_text)
+    if not verdict_md:
         return []
     lines = ["", f"  -- Verdict {SECTION_RULE[:48]}", ""]
-    for ln in verdict.splitlines():
-        lines.append(f"  {ln}" if ln.strip() else "")
+    for line in _verdict_console_lines(verdict_md, (verdict or {}).get("bullets") or []):
+        lines.append(f"  {line}" if line.strip() else "")
     return lines
 
 
@@ -2179,7 +2364,7 @@ _YAML_DERIVED_EXPORTS: tuple[tuple[str, str, str], ...] = (
 
 
 def _export_deliverables_if_configured(output_dir: Path) -> None:
-    """Produce the requested yaml-derived exports before the summary reports them.
+    """Produce the requested deterministic exports before the summary reports them.
 
     ``orchestration_controller._export_if_configured`` is the primary anchor,
     but it fires only when the mandatory ``next`` gate returns
@@ -2223,6 +2408,15 @@ def _export_deliverables_if_configured(output_dir: Path) -> None:
             )
         except (OSError, subprocess.SubprocessError):
             continue
+    # Pentest tasks take their own argv (merged findings, dialect, target URL),
+    # so the controller keeps them outside the mirrored table; delegate to its
+    # producer rather than mirror that argv here too.
+    try:
+        import orchestration_controller
+
+        orchestration_controller._export_pentest_tasks_if_configured(output_dir, cfg)
+    except (ImportError, OSError, subprocess.SubprocessError):
+        pass
 
 
 def _stamp_slug_if_configured(output_dir: Path) -> None:
@@ -2377,6 +2571,7 @@ def main(argv: list[str] | None = None) -> int:
         "verbose": args.verbose,
         "quiet": args.quiet,
     }
+    cfg.update(resolved_run_switches(args.output_dir))
 
     if args.mode == "dry-run":
         print(render_dry_run(args.output_dir, args.repo_root), end="")
@@ -2403,7 +2598,11 @@ def main(argv: list[str] | None = None) -> int:
     _stamp_slug_if_configured(args.output_dir)
 
     if not args.no_print:
-        print(render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root), end="")
+        summary = render_summary(args.output_dir, args.repo_root, cfg, args.plugin_root)
+        print(summary, end="")
+        # The reader gets the orchestrator's closing message, not this stdout;
+        # the outermost Stop holds that message to this record.
+        completion_relay.persist(args.output_dir, summary)
     return 0
 
 

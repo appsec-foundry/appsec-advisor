@@ -36,10 +36,13 @@
 #                           (implied by --trust-mode untrusted)
 #   --restore-from <path>   Unsupported because incremental mode is unavailable
 #   --max-duration <sec>    Abort the run if it exceeds <sec> seconds
-#   --max-budget <usd>      Stop when estimated cost exceeds this amount
+#   --soft-budget <usd>     Steer the run to this cost; it still finishes
+#   --hard-budget <usd>     Kill the session at this cost (API billing only)
 #   --clean-cache           Delete cache & transient files (keeps the model); exits
 #   --clean-all             Delete everything in <output-dir> (with confirmation); exits
-#   --force                 Skip confirmation for --clean-all (auto in CI)
+#   --force                 Skip confirmation for --clean-all (auto in CI), and
+#                           with --full/--rebuild discard a completed Stage 1
+#                           the run would otherwise offer to render
 #   --model <model>         Override the session model (default: claude-sonnet-4-6, economy)
 #   --reasoning-model <t>   Reasoning tier for STRIDE/triage/merger: opus,
 #                           opus-cheap, sonnet, sonnet-economy
@@ -47,7 +50,7 @@
 #   --evidence-verifier-cap <n>  Limit Phase-10a non-Critical verification work
 #   --json                  Echo the raw `claude -p` result object on stdout
 #                           (the run's token/cost readout is printed either way)
-#   --verbose               Show the full real-time hook event log on stderr
+#   --verbose               Add the raw event stream to the live phase progress
 #   --quiet                 Suppress live progress (default = milestone events)
 #
 # Skill selection:
@@ -109,12 +112,19 @@ Options:
   --no-qa                    Skip Stage-3 QA reviewer (faster CI runs)
   --restore-from <path>      Unsupported because incremental mode is unavailable
   --max-duration <seconds>   Abort the run if it exceeds the given duration
-  --max-budget <usd>         Stop when estimated cost exceeds this amount
+  --soft-budget <usd>        Steer the run to this cost. A run that cannot fit
+                             does not start; a run that overruns still finishes.
+  --hard-budget <usd>        Kill the session at this cost, losing the report
+                             (API billing only). Defaults to 1.25 x the soft
+                             budget when only --soft-budget is given.
   --clean-cache              Delete cache & transient files in \$OUTPUT_DIR; keeps
                              the threat model and audit logs. Exits without running.
   --clean-all                Delete everything in \$OUTPUT_DIR (interactive confirm
                              unless --force / CI=true). Exits without running.
-  --force                    Skip the interactive confirmation for --clean-all
+  --force                    Skip the interactive confirmation for --clean-all.
+                             With --full or --rebuild it also discards a
+                             completed Stage 1 that the run would otherwise
+                             offer to render with --rerender.
   --model <model>            Override the session model (default: claude-sonnet-4-6, economy)
   --reasoning-model <tier>   Reasoning tier for STRIDE/triage/merger:
                              opus, opus-cheap, sonnet, sonnet-economy
@@ -125,7 +135,8 @@ Options:
                                repo-owned agent configuration before Claude starts.
   --strict-urls               Require APPSEC_URL_ALLOWLIST for remote related-repo fetches
   --json                     Echo the raw claude result object on stdout
-  --verbose                  Show the full real-time hook event log on stderr
+  --verbose                  Add the raw event stream (hook events, agent log)
+                             to the live phase progress on stderr
   --quiet                    Suppress live progress output (default shows
                              milestone events: phases, agent spawns, heartbeat)
 
@@ -202,6 +213,8 @@ SKILL_FLAGS=""
 REQUIREMENTS_INFO=""
 REQUIREMENTS_SRC=""
 MAX_BUDGET=""
+HARD_BUDGET_EXPLICIT=0
+SOFT_BUDGET=""
 MODEL=""
 REASONING_TIER=""
 EMIT_RAW_JSON=0
@@ -269,9 +282,15 @@ while [ $# -gt 0 ]; do
         --dry-run)
             DRY_RUN_REQUESTED=1
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
-        --max-wall-time|--max-cost)
+        --max-wall-time)
             UNSUPPORTED_RUNTIME_OPTION="$1"
             SKILL_FLAGS="$SKILL_FLAGS $1 ${2:-}"; shift 2 ;;
+        --soft-budget|--max-cost)
+            case "${2:-}" in
+                ''|*[!0-9.]*|*.*.*|.) die "$1 expects a positive amount in USD (e.g. 30)" ;;
+            esac
+            SOFT_BUDGET="$2"
+            SKILL_FLAGS="$SKILL_FLAGS --soft-budget $2"; shift 2 ;;
         --rerender)
             RUNTIME_MODE_ARGS="$RUNTIME_MODE_ARGS --rerender"
             SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
@@ -325,7 +344,15 @@ while [ $# -gt 0 ]; do
         --clean-all)
             CLEAN_MODE="all"; shift ;;
         --force)
-            CLEAN_FORCE=1; shift ;;
+            # Two consumers, one flag: it skips the --clean-all confirmation
+            # here, and it is the skill-only override the controller demands
+            # when a completed Stage 1 is about to be discarded ("repeat
+            # --rebuild --force"). Swallowing it made that instruction
+            # unreachable headless — the abort recommended a flag that never
+            # left this parser. Cleanup mode exits long before dispatch, so
+            # forwarding it costs nothing there.
+            CLEAN_FORCE=1
+            SKILL_FLAGS="$SKILL_FLAGS $1"; shift ;;
         --requirements)
             # --requirements [<src>] — enable requirements, optionally from an
             # http(s):// URL or a local file path. Consume the next token as the
@@ -350,8 +377,8 @@ while [ $# -gt 0 ]; do
             warn "--requirements-url is deprecated — use --requirements <url>"
             SKILL_FLAGS="$SKILL_FLAGS --requirements $2"
             REQUIREMENTS_INFO="enabled → $2"; REQUIREMENTS_SRC="$2"; shift 2 ;;
-        --max-budget)
-            MAX_BUDGET="$2"; shift 2 ;;
+        --hard-budget|--max-budget)
+            MAX_BUDGET="$2"; HARD_BUDGET_EXPLICIT=1; shift 2 ;;
         --model)
             MODEL="$2"; shift 2 ;;
         --reasoning-model)
@@ -403,7 +430,7 @@ if [ "$SKILL" = "create-threat-model" ]; then
         die "--dry-run is not supported by the compact runtime. No scan was started."
     fi
     case "$UNSUPPORTED_RUNTIME_OPTION" in
-        --max-wall-time|--max-cost)
+        --max-wall-time)
             die "$UNSUPPORTED_RUNTIME_OPTION is not supported by the compact runtime. Use a host-level limit instead." ;;
         ?*)
             die "$UNSUPPORTED_RUNTIME_OPTION is not supported by the compact runtime. Use --full, --rebuild, or --rerender." ;;
@@ -442,16 +469,32 @@ if [ -z "$MODEL" ]; then
     info "Economy default: session model '$MODEL' (use --model to override)"
 fi
 
+# ── Hard backstop derived from the soft budget ──────────────────────
+# The two budgets do different jobs. --soft-budget steers the run and never
+# kills it; --hard-budget is the host's cut and always kills, leaving no report
+# beyond what --rerender can salvage from a completed Stage 1. The backstop must
+# therefore sit above the band the soft mechanism is allowed to use (a 10 %
+# target, 20 % declared as the failure point) plus a margin, because the two
+# sides count differently: the soft side values tokens with the plugin's price
+# table, the hard side is whatever the CLI itself counts. Hence 1.25 ×. See
+# specs/changes/a-cost-budget-steers-the-run.
+if [ -n "$SOFT_BUDGET" ] && [ -z "$MAX_BUDGET" ]; then
+    MAX_BUDGET="$(awk -v b="$SOFT_BUDGET" 'BEGIN { printf "%.2f", b * 1.25 }')"
+    info "Hard backstop derived from --soft-budget \$$SOFT_BUDGET: \$$MAX_BUDGET (override with --hard-budget)"
+fi
+
 # ── API billing mode adjustments ────────────────────────────────────
 if [ "$BILLING_MODE" = "api" ]; then
     # Warn if spending is uncapped — easy to run up unexpected charges.
     if [ -z "$MAX_BUDGET" ]; then
-        warn "API billing mode active with no budget cap — consider --max-budget <usd>"
+        warn "API billing mode active with no budget cap — consider --soft-budget <usd>"
     fi
 else
-    # Subscription mode: budget cap flag is not supported; drop it with a warning.
+    # Subscription mode: the host's cut is not available; drop it. Only say so
+    # when the operator asked for it — a derived backstop is not their doing.
     if [ -n "$MAX_BUDGET" ]; then
-        warn "--max-budget is only effective in API billing mode (ANTHROPIC_API_KEY unset); ignoring"
+        [ "$HARD_BUDGET_EXPLICIT" = "1" ] && \
+            warn "--hard-budget is only effective in API billing mode (ANTHROPIC_API_KEY unset); ignoring"
         MAX_BUDGET=""
     fi
 fi
@@ -476,13 +519,19 @@ fi
 # This catches automatic incremental selection from an existing baseline before
 # the headless Claude process is started and before this wrapper creates output.
 if [ "$SKILL" = "create-threat-model" ] && [ -z "$CLEAN_MODE" ]; then
+    # The budget and the depth decide admission too, so they have to reach the
+    # same read-only owner. Without them the wrapper would admit a run the
+    # controller refuses one step later, after the output directory exists.
+    ADMISSION_BUDGET_ARGS=""
+    [ -n "$SOFT_BUDGET" ] && ADMISSION_BUDGET_ARGS="--soft-budget $SOFT_BUDGET"
+    [ -n "$ASSESSMENT_DEPTH" ] && ADMISSION_BUDGET_ARGS="$ADMISSION_BUDGET_ARGS --assessment-depth $ASSESSMENT_DEPTH"
     set +e
     if [ -n "$RUNTIME_MODE_ARGS" ]; then
         ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
-            route -- $RUNTIME_MODE_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
+            route -- $RUNTIME_MODE_ARGS $ADMISSION_BUDGET_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
     else
         ADMISSION_RESULT="$(python3 "$PLUGIN_DIR/scripts/orchestration_controller.py" \
-            route -- --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
+            route -- $ADMISSION_BUDGET_ARGS --repo "$REPO_PATH" --output "$OUTPUT_PATH")"
     fi
     ADMISSION_EXIT=$?
     set -e
@@ -584,6 +633,13 @@ if [ "$SKILL" = "create-threat-model" ]; then
 
     [ "$NO_QA" = "1" ]   && PROMPT="$PROMPT --no-qa"
 
+    # The wrapper's --verbose is the skill's --verbose too. The resolved config
+    # gates the run summary's detail on it (per-stage timings, agent roster,
+    # token/cost); consuming the flag for the console tails alone left the two
+    # views on different settings, and the detail unreachable outside an
+    # interactive invocation.
+    [ -n "$VERBOSE" ]    && PROMPT="$PROMPT $VERBOSE"
+
     # Append remaining flags
     PROMPT="$PROMPT$SKILL_FLAGS"
 
@@ -632,6 +688,11 @@ if [ -n "$MAX_DURATION" ]; then
 fi
 
 # Export env-vars the skill/orchestrator can pick up
+# The host's own cut, for the live view only. It is passed to `claude` above and
+# enforced by the host, which kills the session where it stands and leaves no
+# report — so it is worth seeing approach, and this is the only way it reaches
+# the watchdog: it is a launch flag, not part of the resolved config.
+[ -n "$MAX_BUDGET" ] && export APPSEC_HARD_BUDGET_USD="$MAX_BUDGET"
 # Headless marker: this run has no interactive user, so the skill must SKIP the
 # interactive orchestrator-model prompt (AskUserQuestion would block/error) and
 # proceed on the current session model. The compact full runtime owns the
@@ -643,6 +704,17 @@ export APPSEC_HEADLESS=1
 # `timeout ${MAX_DURATION}s` wrapper above, so headless callers that care about
 # a wall-clock cap must pass --max-duration (CI always does).
 export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
+# Run identity, minted HERE rather than inside the Claude session. The lock is
+# released by run id: `acquire_lock.release_lock` refuses a lock whose
+# heartbeat is still fresh unless the caller names the run that holds it, and a
+# killed run's last heartbeat is always fresh. Without a run id this wrapper
+# knows to be its own, the terminator below reported `held-by-other` and left
+# the lock behind, so a retry inside the stale window hit LOCK_BLOCKED — with
+# `lock_prompt_needed=false` under APPSEC_HEADLESS, that is a dead stop. The
+# controller prefers this value when it takes the lock, so the id in the lock
+# file and the id the terminator passes are the same string. A concurrent run
+# in the same output directory writes a different id and is still protected.
+export APPSEC_RUN_ID="run-$(date +%s)-$$"
 [ "$NO_QA" = "1" ]         && export APPSEC_SKIP_QA=1
 [ "$CI_MODE" = "1" ]       && export APPSEC_CI_MODE=1
 [ -n "$FAIL_ON" ]          && export APPSEC_FAIL_ON="$FAIL_ON"
@@ -664,6 +736,13 @@ MODEL_LINEUP=""
     ${REASONING_TIER:+--reasoning "$REASONING_TIER"} \
     --depth "${ASSESSMENT_DEPTH:-standard}" 2>/dev/null || printf '%s' "$MODEL")"
 [ -n "$MODEL_LINEUP" ]     && echo "  Models     : $MODEL_LINEUP"
+# The roles behind each model are sub-agent dispatches, and a role that carries
+# no pin of its own inherits the session tier — so a run without an override
+# lists the session model twice over and looks like it has fewer models than it
+# uses. Naming the end-of-run table here closes that loop: what is listed is
+# what gets billed, and a missing model there means missing spend, not a
+# sub-agent the accounting skipped.
+[ -n "$MODEL_LINEUP" ]     && echo "               each role is a sub-agent dispatch on that model; the end-of-run cost table bills exactly these"
 echo "  Context    : $CONTEXT_INFO"
 echo "  Plugin     : $PLUGIN_DIR"
 [ -n "$REPO_PATH" ]        && echo "  Repository : $REPO_PATH"
@@ -674,7 +753,8 @@ echo "  Plugin     : $PLUGIN_DIR"
 # requirements source is a readable local file. Fails soft for URLs / config.
 [ -n "$REQUIREMENTS_SRC" ] && [ -f "$REQUIREMENTS_SRC" ] && \
     python3 "$SCRIPT_DIR/run_summary.py" requirements "$REQUIREMENTS_SRC" 2>/dev/null || true
-[ -n "$MAX_BUDGET" ]       && echo "  Budget cap : \$$MAX_BUDGET"
+[ -n "$SOFT_BUDGET" ]      && echo "  Soft budget: \$$SOFT_BUDGET (steers; the run still finishes)"
+[ -n "$MAX_BUDGET" ]       && echo "  Hard cut   : \$$MAX_BUDGET (kills the session)"
 [ -n "$CATEGORY_FILTER" ]  && echo "  Category   : $CATEGORY_FILTER"
 [ -n "$VERBOSE" ]          && echo "  Verbose    : real-time hook event log on stderr"
 echo ""
@@ -696,16 +776,10 @@ case "$MODEL" in
 esac
 
 # ── Execute ─────────────────────────────────────────────────────────
-TAIL_PID=""
 TAIL_RUN_PID=""
 PROGRESS_PID=""
 
 cleanup_tails() {
-    if [ -n "$TAIL_PID" ]; then
-        kill "$TAIL_PID" 2>/dev/null || true
-        wait "$TAIL_PID" 2>/dev/null || true
-        TAIL_PID=""
-    fi
     if [ -n "$TAIL_RUN_PID" ]; then
         kill "$TAIL_RUN_PID" 2>/dev/null || true
         wait "$TAIL_RUN_PID" 2>/dev/null || true
@@ -775,18 +849,25 @@ if [ -n "$VERBOSE" ]; then
     # that pile up and duplicate stderr output on the next verbose run.
     trap 'cleanup_headless_runtime' EXIT INT TERM HUP
 
-    # APPSEC_VERBOSE=1 makes agent_logger.py emit compact `[appsec] ▶ …`
-    # progress lines to stderr. These are distinct from the raw log lines
-    # tailed below, so they complement each other (they do NOT duplicate).
+    # Verbose is the default view PLUS the raw stream, not a replacement for
+    # it. Without the renderer the operator who asked for the most detail gets
+    # the least orientation: no phase banners, no roadmap, no wall-clock
+    # anchors — only raw lines like `step=watchdog`.
+    start_progress_monitor
+
+    # APPSEC_VERBOSE=1 makes agent_logger.py mirror every line it appends to
+    # `.hook-events.log` to stderr as `[appsec] …`, plus the steering-hook
+    # diagnostics that reach no log file at all. That mirror already IS the raw
+    # `.hook-events.log` stream, so tailing the file on top of it would print
+    # each of its lines twice.
     export APPSEC_VERBOSE=1
 
-    # Start tailing both log files in background — real-time output to stderr
-    tail -f "$LOG_FILE" >&2 &
-    TAIL_PID=$!
+    # `.agent-run.log` has no such mirror: agents append to it directly, and
+    # log_event.py's stderr line is a compact summary, not the canonical line.
     tail -f "$RUN_LOG_FILE" >&2 &
     TAIL_RUN_PID=$!
 
-    info "Starting Claude Code in headless mode (verbose: tailing $LOG_FILE and $RUN_LOG_FILE)..."
+    info "Starting Claude Code in headless mode (verbose: live phase progress plus the raw event stream)..."
 elif [ -z "$QUIET" ]; then
     # Default: lightweight live progress (milestone events only) so the run
     # isn't a silent black box. Use --verbose for the full firehose, --quiet
@@ -830,9 +911,21 @@ RESULT_CAPTURE="$RESULT_DIR/.headless-result.json"
 #      back to the hook-log figure and label it an estimate. That figure covers
 #      the host session only, so it is a lower bound and must never be shown
 #      as if it were the run's cost.
+print_phase_costs() {
+    _phase_table=$(python3 "$SCRIPT_DIR/cost_running_total.py" "$RESULT_DIR" \
+        --format phases 2>/dev/null || true)
+    [ -n "$_phase_table" ] || return 0
+    echo ""
+    printf '%s\n' "$_phase_table"
+}
+
 print_usage_summary() {
     [ -n "$RESULT_CAPTURE" ] || return 0
     if python3 "$SCRIPT_DIR/headless_usage.py" "$RESULT_CAPTURE" 2>/dev/null; then
+        # The model table is exact and covers the whole run; the phase table
+        # below it is the floor the live view accumulated, and answers the one
+        # question the exact figure cannot — which phase spent it.
+        print_phase_costs
         return 0
     fi
     _usage_est=$(python3 "$SCRIPT_DIR/cost_running_total.py" "$RESULT_DIR" \
@@ -843,6 +936,7 @@ print_usage_summary() {
     warn "Token usage & cost — ESTIMATE (the run did not exit cleanly, so no result object)."
     echo "  Host session only, from .hook-events.log — sub-agent spend is NOT included (lower bound)."
     printf '%s\n' "$_usage_est"
+    print_phase_costs
 }
 
 # The capture is wrapper-owned scratch, not a run artifact: it is read out by
@@ -863,18 +957,18 @@ discard_capture_if_consumed() {
 # trap cleanup still runs and we can surface the real exit code.
 set +e
 
-# Run claude in its OWN process group and wait on it, rather than as a
-# blocking foreground command. Two reasons:
+# Run claude in its OWN session and wait on it, rather than as a blocking
+# foreground command. Two reasons:
 #   1. As a foreground child, terminal Ctrl-C reaches claude but bash *defers*
 #      its own INT trap until the child returns — so the parent can never
 #      escalate (a second/third Ctrl-C does nothing). Backgrounding + `wait`
 #      lets the trap fire immediately.
-#   2. `set -m` puts claude in its own process group (PGID == $!), so the
-#      terminal does NOT auto-deliver SIGINT to it; we forward signals
-#      explicitly via the trap. That gives us full control over escalation
-#      (graceful INT → TERM → KILL) and lets us signal the whole claude tree
-#      with `kill -<sig> -$CLAUDE_PID`.
-# stdin is redirected from /dev/null so the backgrounded group never blocks
+#   2. The child leads its own process group (PGID == $!), so the terminal
+#      does NOT auto-deliver SIGINT to it; we forward signals explicitly via
+#      the trap. That gives us full control over escalation (graceful
+#      INT → TERM → KILL) and lets us signal the whole claude tree with
+#      `kill -<sig> -$CLAUDE_PID`.
+# stdin is redirected from /dev/null so the backgrounded session never blocks
 # on a terminal read (SIGTTIN).
 CLAUDE_PID=""
 SIGINT_COUNT=0
@@ -927,26 +1021,42 @@ on_terminate() {
     start_escalation_watchdog
 }
 
-# Print a paste-ready re-run command, choosing --resume vs --rebuild from what
-# the resume-guard actually allows (an interrupt before Stage-1 checkpoints
-# cannot resume → point at --rebuild instead). Reused by both the Ctrl-C abort
-# path and the non-zero-exit failure path so the hint is never only on one.
+# Print a paste-ready re-run command, choosing --rerender vs --rebuild from
+# what the run left on disk. A run killed between the Stage-1 gate and the
+# report keeps `phase=10b status=completed need_render=true` — Stage 1 is the
+# expensive part, it is validated, and --rerender turns it into a report
+# without re-analyzing anything. Recommending --rebuild there threw that away,
+# and the controller refuses --rebuild on exactly that checkpoint, so the hint
+# also walked into an abort. Reused by both the Ctrl-C abort path and the
+# non-zero-exit failure path so the hint is never only on one.
 print_recovery_hint() {
     _rh_dir="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
     if [ "$SKILL" != "create-threat-model" ]; then
-        warn "Check intermediate files or run with --resume to continue."
+        warn "Check the intermediate files in $_rh_dir; this run cannot be continued."
         return
     fi
     _rerun_cmd() {  # $1 = mode flag to append
         _cmd="$0"
         for _a in $ORIG_ARGS; do
             case "$_a" in
-                --resume|--full|--rebuild|--rerender|--incremental) ;;
+                --resume|--full|--rebuild|--rerender|--incremental|--force) ;;
                 *) _cmd="$_cmd $_a" ;;
             esac
         done
         printf '%s %s\n' "$_cmd" "$1"
     }
+    # Same three tokens the controller's own need-render guard reads, matched
+    # independently so their order in the checkpoint line stays irrelevant.
+    _rh_cp="$_rh_dir/.appsec-checkpoint"
+    if [ -f "$_rh_cp" ] \
+            && grep -q 'phase=10b' "$_rh_cp" \
+            && grep -q 'status=completed' "$_rh_cp" \
+            && grep -q 'need_render=true' "$_rh_cp"; then
+        warn "Stage 1 finished before the run stopped — render it instead of re-analyzing:"
+        printf '    %s\n' "$(_rerun_cmd --rerender)"
+        printf '    %s   (discards the validated Stage-1 artifacts)\n' "$(_rerun_cmd '--rebuild --force')"
+        return
+    fi
     warn "This runtime does not resume incomplete analysis — start fresh:"
     printf '    %s\n' "$(_rerun_cmd --rebuild)"
 }
@@ -955,14 +1065,38 @@ print_recovery_hint() {
 # forward or escalate first, but once the wrapper exits no live marker remains.
 trap 'cleanup_headless_runtime' EXIT
 
-set -m
+# Start claude in its own session so PID == PGID == SID and a single
+# negative-PID signal reaches the whole tree. `set -m` did this only when a
+# controlling terminal was present; under nohup, systemd, cron or a CI runner
+# it failed with "can't access tty", left the child in this shell's process
+# group, and every `kill -<sig> -$CLAUDE_PID` below then addressed a process
+# group that does not exist — the interrupt was reported as forwarded and the
+# whole escalation ladder was a silent no-op. The launcher also restores the
+# SIGINT/SIGQUIT dispositions the shell marks ignored for asynchronous
+# children, which would otherwise swallow the forwarded interrupt. python3 is
+# already a hard prerequisite of this wrapper. `setsid` is the primitive, not
+# the binary, so this behaves the same on Linux and macOS; a process that is
+# already a group leader keeps its own group instead.
+# Mirrors scripts/run-interruptible.sh; keep the two in sync.
+SESSION_LAUNCHER='
+import os
+import signal
+import sys
+
+for name in ("SIGINT", "SIGQUIT", "SIGTERM", "SIGHUP"):
+    signal.signal(getattr(signal, name), signal.SIG_DFL)
+try:
+    os.setsid()
+except OSError:
+    os.setpgrp()
+os.execvp(sys.argv[1], sys.argv[1:])
+'
 if [ -n "$RESULT_CAPTURE" ]; then
-    "$@" < /dev/null > "$RESULT_CAPTURE" &
+    python3 -c "$SESSION_LAUNCHER" "$@" < /dev/null > "$RESULT_CAPTURE" &
 else
-    "$@" < /dev/null &
+    python3 -c "$SESSION_LAUNCHER" "$@" < /dev/null &
 fi
 CLAUDE_PID=$!
-set +m
 
 trap 'on_interrupt' INT
 trap 'on_terminate' TERM HUP
@@ -1024,6 +1158,7 @@ if [ "$SIGINT_COUNT" -gt 0 ]; then
     python3 "$PLUGIN_DIR/scripts/terminate_run.py" \
         --output-dir "${RESULT_DIR:-${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}}" \
         --outcome interrupt --reason "operator interrupt (exit $EXIT_CODE)" \
+        --run-id "$APPSEC_RUN_ID" \
         --repo-root "${REPO_PATH:-.}" --depth "${ASSESSMENT_DEPTH:-standard}" \
         >/dev/null 2>&1 || true
     echo ""
@@ -1035,6 +1170,26 @@ fi
 
 # ── Parse duration and files from log ──────────────────────────────
 RESULT_DIR="${OUTPUT_PATH:-"${REPO_PATH:-.}/docs/security"}"
+
+# ── Foreign output directory (the lock was refused) ────────────────
+# `acquire_lock.lock_held_by_live_other_run` is the rule a run that was refused
+# the lock asks before writing anything into a directory that is not its own.
+# The terminator asks it; nothing below did. A LOCK_BLOCKED run therefore read
+# the HOLDER's artifacts as its own: it ran the compose backstop inside a
+# mid-flight directory, reported the holder's not-yet-composed report as its
+# own fail-closed failure, and printed a fresh-run command that collides again
+# on the next attempt (2026-09-05 insecure-python-app). This run produced
+# nothing and owns nothing here, so it stops before touching any of it.
+if python3 -c "import sys;sys.path.insert(0,sys.argv[1]);import acquire_lock,pathlib;sys.exit(0 if acquire_lock.lock_held_by_live_other_run(pathlib.Path(sys.argv[2])/'.appsec-lock',sys.argv[3]) else 1)" \
+        "$PLUGIN_DIR/scripts" "$RESULT_DIR" "$APPSEC_RUN_ID" 2>/dev/null; then
+    warn "$RESULT_DIR is held by another assessment — this run made no changes there."
+    warn "Wait for it to finish, or scan into a different --output directory."
+    echo ""
+    print_usage_summary
+    discard_capture_if_consumed
+    exit "$EXIT_CODE"
+fi
+
 ASSESSMENT_DURATION=""
 LOG_FILE="$RESULT_DIR/.hook-events.log"
 if [ -f "$LOG_FILE" ]; then
@@ -1156,7 +1311,8 @@ else
         # A controller abort already wrote its own verdict; that one stands.
         python3 "$PLUGIN_DIR/scripts/terminate_run.py" \
             --output-dir "$RESULT_DIR" --outcome failure \
-            --reason "wrapper exit $EXIT_CODE" --repo-root "${REPO_PATH:-.}" \
+            --reason "wrapper exit $EXIT_CODE" --run-id "$APPSEC_RUN_ID" \
+            --repo-root "${REPO_PATH:-.}" \
             --depth "${ASSESSMENT_DEPTH:-standard}" >/dev/null 2>&1 || true
         python3 "$PLUGIN_DIR/scripts/render_completion_summary.py" \
             --issues-only --output-dir "$RESULT_DIR" --repo-root "${REPO_PATH:-.}" \
@@ -1171,6 +1327,19 @@ fi
 # Token/cost readout on both paths — a failed run still spent the tokens.
 echo ""
 print_usage_summary
+
+# ── Cost baseline from the exact figure ────────────────────────────
+# The in-run write (`persist_run_baseline.py` from the skill) refuses a cost
+# that is only a floor, and on a host that reports no per-call token classes
+# every in-run figure is one — so the baseline would never gain a cost and every
+# later run would project parametrically. The result object carries the host's
+# own `total_cost_usd` with sub-agents included, but only exists once the
+# session has exited. Written here, and only for a run that delivered: an
+# interrupted or refused run must not teach the next projection what it costs.
+if [ "$EXIT_CODE" -eq 0 ] && [ -n "$RESULT_CAPTURE" ] && [ -s "$RESULT_CAPTURE" ] && [ -d "$RESULT_DIR" ]; then
+    python3 "$PLUGIN_DIR/scripts/persist_run_baseline.py" \
+        --output-dir "$RESULT_DIR" --cost-from-result "$RESULT_CAPTURE" --quiet 2>/dev/null || true
+fi
 
 # ── Exact-value secret redaction ───────────────────────────────────
 # Pattern-based masking (upstream + postscan below) only neutralises a secret

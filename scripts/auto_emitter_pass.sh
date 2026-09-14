@@ -15,7 +15,7 @@
 # Contract: idempotent + best-effort — any
 # emitter failure falls back to the pre-script YAML rather than aborting the run
 # after 25+ minutes of Stage 1. NOT re-run inside the Re-Render Loop.
-set -u
+set -uo pipefail
 
 OUTPUT_DIR="${1:?OUTPUT_DIR required}"
 REPO_ROOT="${2:?REPO_ROOT required}"
@@ -177,6 +177,7 @@ if [ "$DRY_RUN" = "false" ]; then
     # rendered markdown (it re-reads real source files for §8 evidence), so both
     # artifacts are clean by construction. Idempotent and best-effort.
     python3 "$CLAUDE_PLUGIN_ROOT/scripts/secret_scan.py" --mask "$OUTPUT_DIR/threat-model.yaml" 2>&1 || true
+    python3 "$CLAUDE_PLUGIN_ROOT/scripts/enrichment_pass.py" "$OUTPUT_DIR" 2>&1 || exit "$?"
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   skill  AUTO_EMITTER_END"
   } | tee -a "$OUTPUT_DIR/.agent-run.log" >&2
 fi

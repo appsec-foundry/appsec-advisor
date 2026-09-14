@@ -89,7 +89,7 @@ meta-commentary as noise.
 `🔧 Building …` status line above and the pipeline's own output, the **only**
 two lines you may emit are: (1) the single `PREFLIGHT_STATUS` line that
 the controller tells you to print after config resolution (e.g.
-`📋 Existing threat model found — computing the incremental delta …`), and then
+`📋 Existing threat model found — preparing a full re-assessment …`), and then
 (2) the `Threat Model — Pre-flight` summary. Nothing may appear between them.
 
 **Sanctioned exception 1 — the interactive orchestrator-model prompt.** When the

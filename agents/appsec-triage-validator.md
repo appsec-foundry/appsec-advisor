@@ -86,6 +86,9 @@ When the environment variable `APPSEC_TRIAGE_DETERMINISTIC=1` is set, Step 6 is 
 **Mandatory invocation when the flag is set:**
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+REPO_ROOT="<REPO_ROOT from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 APPSEC_TRIAGE_DETERMINISTIC=1 python3 "$CLAUDE_PLUGIN_ROOT/scripts/triage_compute_ranking.py" \
     "$OUTPUT_DIR" --repo-root "$REPO_ROOT" --bootstrap-yaml 2>&1
 RANK_EXIT=$?
@@ -429,6 +432,8 @@ After the final write and before the console summary, use one Bash tool call:
 
 ```bash
 set -e
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" triage_flags "$OUTPUT_DIR/.triage-flags.json"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" threats_merged "$OUTPUT_DIR/.threats-merged.json"
 ```

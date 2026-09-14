@@ -41,6 +41,7 @@ def _load_module(name: str, path: Path):
 
 
 compose = _load_module("compose_threat_model", SCRIPT_PATH)
+completion = _load_module("render_completion_summary", REPO_ROOT / "scripts" / "render_completion_summary.py")
 # The §1 catalogue is delivered as fixed-layout HTML, so a few tests assert the
 # composer's cells survive qa's inline-markdown → HTML conversion unchanged.
 qa = _load_module("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
@@ -119,6 +120,15 @@ def test_toc_emits_numbering_gap_note(tmp_path: Path) -> None:
     rendered, _ = compose.render(CONTRACT, out)
     assert "Section numbering is non-contiguous" in rendered
     assert "§7 is not present in this report" in rendered
+
+
+def test_toc_keeps_management_summary_subsections_out_of_the_short_form(tmp_path: Path) -> None:
+    contract = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
+    section = contract["sections"]["management_summary"]
+    ctx = SimpleNamespace(contract=contract, eval_context={}, fragments_dir=tmp_path)
+
+    assert "open_questions_for_team" in {item["id"] for item in section["optional_subsections"]}
+    assert compose._toc_children_for_section(ctx, "management_summary", section) == []
 
 
 def test_architecture_diagrams_are_regenerated_at_the_composition_boundary(tmp_path: Path) -> None:
@@ -2549,12 +2559,13 @@ def test_attack_tree_findings_pointer_dedups_and_skips_non_leaves() -> None:
 
 
 def test_is_bare_finding_ref_line() -> None:
-    """The bare-finding-ref predicate matches exactly the two contexts that list
-    undotted, untitled `[F-NNN]` ids (MS Top Weaknesses proof run + Critical
-    Attack Tree findings pointer) and nothing else."""
+    """The bare-finding-ref predicate matches the contracted compact contexts."""
     f = compose._is_bare_finding_ref_line
     # Top Weaknesses proof run.
     assert f("- 🔴 **[W-001](#w-001) — X** (Critical) — d. _Proven by [F-013](#f-013)._")
+    # Open team questions shared with the console.
+    assert f("- [W-001](#w-001): [F-013](#f-013) — Which policy should own authorization?")
+    assert f("- [F-014](#f-014) — Unverified evidence: confirm or rule it out before scheduling the fix.")
     # Critical Attack Tree findings pointer.
     assert f("**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001)")
     # Normal contexts keep their enrichment.
@@ -4726,6 +4737,13 @@ def test_global_finding_dot_pass_dots_bare_link_and_is_idempotent(tmp_path: Path
     assert compose._prepend_finding_severity_dots(ctx, once) == once
 
 
+def test_global_finding_dot_pass_keeps_open_question_refs_compact(tmp_path: Path) -> None:
+    ctx = _dot_ctx(tmp_path, [{"id": "T-001", "effective_severity": "Critical", "title": "X"}])
+    line = "- [W-001](#w-001): [F-001](#f-001) — Which policy should own authorization?"
+
+    assert compose._prepend_finding_severity_dots(ctx, line) == line
+
+
 def test_global_finding_dot_pass_tolerates_nbsp_separator(tmp_path: Path) -> None:
     # Table cells emit `🔴&nbsp;[F-001]`; the pass must recognise the existing
     # dot (separated by &nbsp;) and NOT prepend a duplicate.
@@ -5655,6 +5673,55 @@ _FIG1_TAX = {
 }
 
 
+@pytest.mark.parametrize("finding", ["F-001", "T-001", "F-002", "T-017"])
+def test_figure1_authored_title_survives_loading_unless_membership_expands(tmp_path, finding):
+    ctx = _fig1_ctx(tmp_path)
+    ctx.fragments_dir.mkdir()
+    title = "SQL Injection Reads Private Records"
+    path = dict(
+        _FIG1_APD["attack_paths"][0],
+        scenario_title=title,
+        description="Untrusted input reaches a database query.",
+        impact=["customer-data-exfiltration"],
+    )
+    fragment = {"schema_version": 1, "actors": ["internet-anon"], "attack_paths": [path]}
+    (ctx.fragments_dir / "security-posture-attack-paths.json").write_text(json.dumps(fragment))
+    ctx.yaml_data["threats"] = [{"id": finding, "component": "api", "risk": "Critical", "cwe": "CWE-89"}]
+    taxonomy = compose._load_attack_class_taxonomy()
+    loaded = compose._load_attack_paths_fragment(ctx, taxonomy, ctx.yaml_data["threats"])
+    unchanged = finding in {"F-001", "T-001"}
+    assert (loaded["attack_paths"][0].get("scenario_title") == title) is unchanged
+    compose._render_figure1_svg(ctx, loaded, taxonomy)
+    svg = (tmp_path / "figure1.svg").read_text()
+    assert (title in svg) is unchanged
+    assert "data-legend-section" in svg  # Primary audited renderer, not the fallback.
+
+
+@pytest.mark.parametrize("registration", [True, False])
+@pytest.mark.parametrize("access", [True, False])
+@pytest.mark.parametrize("fallback", [True, False])
+def test_figure1_role_grouping_explanation_follows_image_only_when_drawn(
+    tmp_path, monkeypatch, registration, access, fallback
+):
+    ctx = _fig1_ctx(tmp_path)
+    ctx.yaml_data["meta"]["open_user_registration"] = registration
+    ctx.yaml_data["external_entities"] = [
+        {"id": key, "name": name, "kind": "legitimate-role", **({"access": slug} if access else {})}
+        for key, name, slug in (("ext-reader", "Reader", "internet-anon"), ("ext-editor", "Editor", "internet-user"))
+    ]
+    if fallback:
+        monkeypatch.setattr("figure1_dfd.check_diagram", lambda *a, **kw: ("", ["cannot route"]))
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    note = "Anonymous and authenticated regular users share one card because self-registration is open."
+    assert (note in md) is (registration and access and not fallback)
+    if note in md:
+        assert md.index(note) > md.index("](figure1.svg)")
+        assert "Individual flows may still require login." in md
+    svg = (tmp_path / "figure1.svg").read_text()
+    assert note not in svg
+    assert "Individual flows may still require login." not in svg
+
+
 def test_render_figure1_svg_writes_file_and_image_ref(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
@@ -5739,6 +5806,45 @@ def test_render_figure1_svg_skill_config_false_is_file_reference(tmp_path: Path)
     (out / ".skill-config.json").write_text('{"embed_figures": false}', encoding="utf-8")
     md = compose._render_figure1_svg(_fig1_ctx(out), _FIG1_APD, _FIG1_TAX)
     assert "](figure1.svg)" in md and "data:image" not in md
+
+
+def test_render_figure1_svg_prefers_the_data_flow_diagram(tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = _fig1_ctx(out)
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert md.startswith("Data-flow diagram:")
+    assert "Architecture tiers top-to-bottom" not in md
+    assert not [w for w in ctx.warnings if w.startswith("figure1:")]
+    assert 'data-legend-section="notation"' in (out / "figure1.svg").read_text(encoding="utf-8")
+
+
+def test_render_figure1_svg_falls_back_to_tier_stack_when_dfd_raises(tmp_path: Path, monkeypatch) -> None:
+    def boom(*_a, **_k):
+        raise KeyError("pts")
+
+    monkeypatch.setattr("figure1_dfd.check_diagram", boom)
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = _fig1_ctx(out)
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert md.startswith("Architecture tiers top-to-bottom")
+    assert (out / "figure1.svg").is_file()
+    assert [w for w in ctx.warnings if w.startswith("figure1: data-flow diagram builder failed (KeyError")]
+
+
+def test_render_figure1_svg_falls_back_when_dfd_fails_its_self_check(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "figure1_dfd.check_diagram", lambda *_a, **_k: ("<svg>bad</svg>", ["edge df-001 crosses node api"])
+    )
+    out = tmp_path / "out"
+    out.mkdir()
+    ctx = _fig1_ctx(out)
+    md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert md.startswith("Architecture tiers top-to-bottom")
+    assert "bad" not in (out / "figure1.svg").read_text(encoding="utf-8")
+    warns = [w for w in ctx.warnings if w.startswith("figure1: data-flow diagram failed its self-check")]
+    assert warns and "edge df-001 crosses node api" in warns[0]
 
 
 # ---------------------------------------------------------------------------
@@ -6196,6 +6302,97 @@ def test_ms_top_weaknesses_table_and_ordering():
     assert out.index("W-003") < out.index("W-007")
     # Title's " safeguards in ..." tail is stripped.
     assert "Weak Cryptography**" in out
+
+
+def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(monkeypatch) -> None:
+    finding = {
+        "id": "T-001",
+        "title": "Object owner not checked",
+        "cwe": "CWE-639",
+        "risk": "Critical",
+        "source": "stride",
+        "evidence_tier": "confirmed-exploitable",
+        "evidence_check": "verified",
+        "evidence": [{"file": "src/orders.ts", "line": 12}],
+    }
+    unverified = {
+        **finding,
+        "id": "T-002",
+        "title": "Query construction remains ambiguous",
+        "cwe": "CWE-89",
+        "evidence_check": "ambiguous",
+        "evidence": [{"file": "src/search.ts", "line": 24}],
+    }
+    weakness = {
+        "id": "W-001",
+        "title": "Route-by-route authorization",
+        "severity": "Critical",
+        "severity_basis": "confirmed",
+        "mechanism_id": "route-by-route-authorization",
+        "instances": [{"id": "T-001"}],
+    }
+
+    class _Ctx:
+        yaml_data = {"threats": [finding, unverified], "weaknesses": [weakness]}
+        contract = {
+            "sections": {
+                "verdict": {"heading": "### Verdict", "fragment_type": "computed"},
+                "security_posture_at_a_glance": {
+                    "heading": "### Security Posture & Top Threats",
+                    "fragment_type": "computed",
+                },
+                "mitigations": {"heading": "### Top Mitigations", "fragment_type": "computed"},
+                "operational_strengths": {
+                    "heading": "### Operational Strengths",
+                    "fragment_type": "computed",
+                },
+            }
+        }
+        eval_context = {"check_requirements": False}
+
+        @staticmethod
+        def severity_emoji(_severity):
+            return "🔴"
+
+    report_questions = compose._render_ms_open_questions(_Ctx())
+    top_weaknesses = compose._render_ms_top_weaknesses(_Ctx())
+    report = top_weaknesses + report_questions + '\n<a id="f-001"></a>\n<a id="f-002"></a>\n<a id="w-001"></a>\n'
+    console_questions = completion.build_manual_review_step(_Ctx.yaml_data, report)
+
+    assert report_questions.startswith("### Open Questions for the Team\n\n")
+    assert "The code cannot settle these points." in report_questions
+    for value in ("W-001", "F-001", "which single policy layer should enforce ownership"):
+        assert value in report_questions
+        assert value in console_questions
+
+    # RA-13: same bullets, references and question; the console only puts the question first, unlinked.
+    def references(line: str) -> list[str]:
+        return re.findall(r"\b[WF]-\d{3,}\b|\(unproven\)|\+\d+ more", line)
+
+    report_bullets = [line for line in report_questions.splitlines() if line.startswith("- ")]
+    console_bullets = [line for line in console_questions.splitlines() if line.startswith("- ")]
+    assert report_bullets and [references(line) for line in report_bullets] == [
+        references(line) for line in console_bullets
+    ]
+    for report_line, console_line in zip(report_bullets, console_bullets, strict=True):
+        question = report_line.split(" — ", 1)[1] if " — " in report_line else report_line[2:]
+        assert console_line.startswith(f"- {question}")
+
+    monkeypatch.setattr(compose, "_render_by_id", lambda _ctx, _env, _sid, section: section["heading"])
+    monkeypatch.setattr(compose, "_render_ai_exposure", lambda _ctx, _env: "")
+    management_summary = compose._render_management_summary(_Ctx(), None, {})
+    assert (
+        management_summary.index("### Top Weaknesses")
+        < management_summary.index("### Open Questions for the Team")
+        < management_summary.index("### Security Posture & Top Threats")
+    )
+
+
+def test_ms_open_questions_are_omitted_when_the_selector_returns_none() -> None:
+    class _Ctx:
+        yaml_data = {"threats": [], "weaknesses": []}
+
+    assert compose._render_ms_open_questions(_Ctx()) == ""
 
 
 def test_weakness_remediation_rollup_is_deduped():

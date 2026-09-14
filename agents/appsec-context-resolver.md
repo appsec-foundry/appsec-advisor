@@ -54,11 +54,12 @@ must not increase the tool-call allowance.
 **Print now:** `[context-resolver] ▶ Starting  (model: <MODEL_ID>)`
 **Print now:** `[context-resolver] ▶ Step 1/5 — Identifying repository…`
 
-`REPO_ROOT` is propagated by the orchestrator (mandatory env variable). If unset (only when invoked directly for testing), fall back to `git rev-parse --show-toplevel 2>/dev/null || pwd`.
+`REPO_ROOT` comes from your dispatch prompt as text, not as an environment variable, so assign it in every command that uses it. Only when invoked directly for testing without one, fall back to `git rev-parse --show-toplevel 2>/dev/null || pwd`.
 
 Run the following via Bash to derive `REPO_ID` from the remote URL or directory name:
 
 ```bash
+REPO_ROOT="<REPO_ROOT from the dispatch>"
 git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null \
   || basename "$REPO_ROOT"
 ```
@@ -74,6 +75,7 @@ git -C "$REPO_ROOT" config --get remote.origin.url 2>/dev/null \
 Find the plugin-level config file. `config.local.json` overrides `config.json` when present (it is git-ignored and intended for sensitive local settings such as `rest_url`). Use `$CLAUDE_PLUGIN_ROOT` if set (preferred), otherwise fall back to a filesystem search:
 
 ```bash
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   if [ -f "$CLAUDE_PLUGIN_ROOT/config.local.json" ]; then
     echo "$CLAUDE_PLUGIN_ROOT/config.local.json"
@@ -136,6 +138,7 @@ Find the plugin config file at `$CLAUDE_PLUGIN_ROOT/skills/audit-security-requir
 Determine the plugin cache path for requirements:
 
 ```bash
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 if [ -n "$CLAUDE_PLUGIN_ROOT" ]; then
   REQUIREMENTS_CACHE="$CLAUDE_PLUGIN_ROOT/.cache/requirements.yaml"
 else
@@ -344,7 +347,13 @@ Check whether `docs/known-threats.yaml` exists in the repository root.
 
 If it exists, read the full file (up to 200 lines). This file contains team-provided known threats — prior pentest findings, accepted risks, or threats the team wants the assessment to explicitly address. Store the content **verbatim** for inclusion in the output. Do not summarize or filter — the threat IDs, statuses, and component mappings are used by the STRIDE analyzer and QA reviewer.
 
-Validate the complete input with `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" known_threats "$REPO_ROOT/docs/known-threats.yaml"`. Invalid team-provided threats are a blocking input error; log the validation failure and stop without writing `.threat-modeling-context.md` so they cannot be silently dropped or passed downstream as partial YAML.
+Validate the complete input. Invalid team-provided threats are a blocking input error; log the validation failure and stop without writing `.threat-modeling-context.md` so they cannot be silently dropped or passed downstream as partial YAML:
+
+```bash
+REPO_ROOT="<REPO_ROOT from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" known_threats "$REPO_ROOT/docs/known-threats.yaml"
+```
 
 Print:
 - If found and valid: `[context-resolver]   ↳ Known threats: found — <n> entries (<n> open, <n> accepted, <n> mitigated)`
@@ -368,6 +377,9 @@ This step has two distinct sub-steps with different purposes:
 Run them via Bash. Stage 1 builds the register from `docs/related-repos.yaml` (declared deep-read) + filesystem-sibling/`.gitmodules` discovery only — `--recon-summary` is intentionally **omitted** because `.recon-summary.md` does not exist yet. The controller rebuilds the register after recon to merge Category 25:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+REPO_ROOT="<REPO_ROOT from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/load_related_repos.py" \
     --repo-root "$REPO_ROOT" \
     --output    "$OUTPUT_DIR/.related-repos-loaded.json"
@@ -400,6 +412,7 @@ The `threat_model` field accepts three forms:
 - HTTP/HTTPS URL: fetch with `curl -sf --max-time 10`.
 
 ```bash
+REPO_ROOT="<REPO_ROOT from the dispatch>"
 tm_field="<entry.threat_model>"
 if echo "$tm_field" | grep -qE '^https?://'; then
   # HTTP fetch
@@ -494,6 +507,7 @@ This sub-step annotates the C4 diagram and trust boundaries — it does NOT perf
 3. `WORKSPACE_ROOT` is the same as `$HOME` or `/`, OR contains zero or one sibling directories.
 
 ```bash
+REPO_ROOT="<REPO_ROOT from the dispatch>"
 WORKSPACE_ROOT="$(dirname "$REPO_ROOT")"
 CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
 SIBLING_COUNT=$(find "$WORKSPACE_ROOT" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
@@ -514,6 +528,7 @@ When `SKIP_SUBSTEP_B=false`, proceed with B1-B4 below.
 **B1 — Identify workspace root.**
 
 ```bash
+REPO_ROOT="<REPO_ROOT from the dispatch>"
 WORKSPACE_ROOT="$(dirname "$REPO_ROOT")"
 CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
 ```
@@ -521,6 +536,9 @@ CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
 **B2 — Probe sibling directories.** List all sibling directories and check each for `docs/security/threat-model.yaml`. Skip any repo already in the declared list from Sub-step A.
 
 ```bash
+REPO_ROOT="<REPO_ROOT from the dispatch>"
+WORKSPACE_ROOT="$(dirname "$REPO_ROOT")"
+CURRENT_REPO_NAME="$(basename "$REPO_ROOT")"
 for dir in "$WORKSPACE_ROOT"/*/; do
   sibling="$(basename "$dir")"
   [ "$sibling" = "$CURRENT_REPO_NAME" ] && continue
@@ -536,6 +554,7 @@ done
 **B3 — Probe `.gitmodules` paths.** If `.gitmodules` exists at `REPO_ROOT`, parse each submodule `path` and check for `<path>/docs/security/threat-model.yaml`. Skip repos already in the declared list.
 
 ```bash
+REPO_ROOT="<REPO_ROOT from the dispatch>"
 if [ -f "$REPO_ROOT/.gitmodules" ]; then
   grep 'path = ' "$REPO_ROOT/.gitmodules" | sed 's/.*path = //' | while read -r subpath; do
     tm="$REPO_ROOT/$subpath/docs/security/threat-model.yaml"
@@ -728,6 +747,8 @@ Immediately after writing `.threat-modeling-context.md`, the **next tool call**
 must be:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_threat_modeling_context.py" \
   --repair-missing-headings "$OUTPUT_DIR/.threat-modeling-context.md"
 ```

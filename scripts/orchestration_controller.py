@@ -55,6 +55,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PLUGIN_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import acquire_lock  # noqa: E402
 import budget_watchdog  # noqa: E402
 import check_permissions  # noqa: E402
 import context_routing  # noqa: E402
@@ -69,6 +70,7 @@ import telemetry_consistency  # noqa: E402
 import validate_intermediate as intermediate_contract  # noqa: E402
 import validate_recon_summary as recon_summary_contract  # noqa: E402
 import validate_threat_modeling_context as context_document_contract  # noqa: E402
+import wait_agent_calls  # noqa: E402
 from event_log import format_line  # noqa: E402
 
 ACTION_SCHEMA = PLUGIN_ROOT / "schemas" / "orchestration-action.schema.json"
@@ -274,6 +276,7 @@ _FULL_INTERMEDIATE_NAMES = {
     ".recon-summary.md",
     ".appsec-checkpoint",
     ".assessment-summary-emitted",
+    ".completion-summary.json",
     ".phase-epoch",
     ".session-agent-map",
     ".prior-findings-index.json",
@@ -326,6 +329,7 @@ _REBUILD_NAMES = {
     ".phase-epoch",
     ".session-agent-map",
     ".assessment-summary-emitted",
+    ".completion-summary.json",
     ".recon-patterns.json",
     ".compose-stats.json",
     ".context-resolver.stdout",
@@ -439,7 +443,7 @@ _DISPATCH_KEYS = (
     "skip_abuse_case_verification",
     "max_repair_iterations",
     "max_wall_time_seconds",
-    "max_cost_usd",
+    "soft_budget_usd",
 )
 _DISPATCH_EXTRA_KEYS = (
     "abuse_verifier_model_alias",
@@ -473,15 +477,13 @@ class ControllerError(RuntimeError):
 
 
 class CallError(ControllerError):
-    """The invocation itself is malformed; the run behind it is intact.
+    """Malformed invocation or unmet sequencing precondition; the run is intact.
 
-    Raised only while reading a command's own arguments, before anything is
-    read from or written to the run. Nothing has happened that a corrected
-    second call would repeat, so this ends the call and not the run: the
-    controller answers `reject` with exit code 3 and writes no `RUN_ABORTED`.
-    Everything a command learns from disk — a changed artifact, an invalid
-    contract, a stale receipt — is a statement about the run and stays a
-    terminal abort.
+    Missing receipt verification, an unfinished STRIDE join, and a producer of
+    the latest dispatch that is still running are corrected before repeating
+    the boundary. They reject with exit code 3 and no RUN_ABORTED. Invalid
+    artifacts, contracts, and stale receipts remain terminal errors rather
+    than sequencing preconditions.
     """
 
     def __init__(self, message: str):
@@ -690,6 +692,8 @@ def _validate_action_semantics(action: dict[str, Any]) -> None:
         expected_action = "dispatch_parallel" if renderer_profile == "parallel" else "dispatch_agent"
         if action.get("action") != expected_action:
             raise ControllerError(f"renderer profile {renderer_profile!r} requires action {expected_action!r}")
+
+    _validate_stage1_task_progress(action)
 
     semantic_role = action.get("semantic_role")
     if semantic_role is not None and semantic_role not in SEMANTIC_ROLE_REGISTRY:
@@ -1202,7 +1206,10 @@ def _emit(action: dict[str, Any]) -> int:
             _open_receipt_verification(Path(action["dispatch_values"]["output_dir"]), action)
     except ControllerError as exc:
         action = _failure_action(exc)
-    print(json.dumps(action, indent=2, sort_keys=True))
+    # One compact line: every action lands in the orchestrator's context and the
+    # indentation alone was 17 % of it. No field may be dropped from it, though —
+    # the effective-plan binding hashes the printed action (context_routing._action_basis).
+    print(json.dumps(action, sort_keys=True, separators=(",", ":")))
     return int(action.get("exit_code", 0)) if action["action"] in {"abort", "reject"} else 0
 
 
@@ -1271,14 +1278,32 @@ def clear_abort(output_dir: Path, reason: str) -> dict[str, Any]:
     )
 
 
+def _headless_session() -> bool:
+    """Whether this run has an operator who can answer a question.
+
+    The one authority on it. Every interactive decision the runtime may take is
+    resolved here and carried in the action, because the runtime reads the
+    action, not the environment: an instruction that says "skip the question
+    under APPSEC_HEADLESS=1" asks it to condition on something it cannot see.
+    """
+    return os.environ.get("APPSEC_HEADLESS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _failure_action(exc: ControllerError) -> dict[str, Any]:
-    """Answer a malformed call with `reject`, everything else with `abort`."""
-    return {
+    """Reject call/precondition errors; abort on invalid run state."""
+    action = {
         "schema_version": 1,
         "action": "reject" if isinstance(exc, CallError) else "abort",
         "reason": _cap_reason(str(exc)),
         "exit_code": exc.exit_code,
     }
+    # A held lock is the single abort the runtime may answer with a question
+    # instead of stopping — only the operator knows whether the holder is a live
+    # session. Whether anyone is there to be asked is decided here, so a headless
+    # run stops on the exit code rather than printing a menu into a log.
+    if "LOCK_BLOCKED" in action["reason"]:
+        action["lock_prompt_needed"] = not _headless_session()
+    return action
 
 
 def _resolve(argv: list[str]) -> dict[str, Any]:
@@ -1295,16 +1320,47 @@ def _unsupported_runtime_reason(cfg: dict[str, Any]) -> str | None:
     if cfg.get("resume"):
         return "--resume is not implemented by the compact runtime"
     if cfg.get("mode") == "incremental" or cfg.get("incremental"):
-        return "incremental scans are not implemented by the compact runtime"
+        # A bare rerun over an existing model resolves to an incremental scan
+        # without the user asking for one, so the refusal names that cause.
+        return (
+            "incremental scans are not implemented by the compact runtime, and the existing "
+            f"threat model at {cfg.get('output_dir') or 'the output directory'} selects one "
+            "unless a mode flag is given; pass --full to reassess it with its history preserved"
+        )
     if cfg.get("max_wall_time_seconds"):
         return "--max-wall-time is not implemented by the compact runtime"
-    if cfg.get("max_cost_usd"):
-        return "--max-cost is not implemented by the compact runtime"
     if os.environ.get("APPSEC_LIVE_PHASE") == "1" or cfg.get("live_phase"):
         return "APPSEC_LIVE_PHASE=1 is not implemented by the compact runtime"
     if cfg.get("mode") not in {"full", "rebuild", "rerender"}:
         return f"mode {cfg.get('mode')!r} is not implemented by the compact runtime"
     return None
+
+
+def _budget_admission_reason(cfg: dict[str, Any]) -> str | None:
+    """Explain why a declared soft budget cannot hold this invocation.
+
+    Read-only and evidence-based: it refuses on a measured previous run of the
+    same shape or on a budget below what the depth costs before any component
+    is analyzed. A first run against an unknown repository is admitted, because
+    the component count that drives the cost is not known until recon has run.
+    """
+    budget = cfg.get("soft_budget_usd")
+    if not budget:
+        return None
+    scripts_dir = str(PLUGIN_ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import project_run_cost  # type: ignore
+    except ImportError:
+        return None
+    projection = project_run_cost.project(
+        cfg.get("output_dir") or ".",
+        str(cfg.get("mode") or "full"),
+        str(cfg.get("assessment_depth") or "standard"),
+        float(budget),
+    )
+    return None if projection["fits"] else str(projection["reason"])
 
 
 def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
@@ -1319,6 +1375,12 @@ def _runtime_for(cfg: dict[str, Any]) -> tuple[str, Path]:
             f"unsupported invocation: {unsupported}; no run state was changed and no agent was dispatched. "
             "Use --full or --rebuild for a new analysis, or --rerender for existing Stage-1 artifacts. "
             "The legacy runtime has been removed."
+        )
+    budget_reason = _budget_admission_reason(cfg)
+    if budget_reason:
+        raise ControllerError(
+            f"declared budget cannot hold this run: {budget_reason}; no run state was changed and no agent "
+            "was dispatched. Raise --soft-budget, or lower --assessment-depth."
         )
     if cfg.get("mode") in {"full", "rebuild"} and not cfg.get("rerender"):
         return "thin-full", THIN_RUNTIME
@@ -1438,12 +1500,20 @@ def _run_script(
     *,
     acceptable: tuple[int, ...] = (0,),
     quiet: bool = True,
+    timeout: float | None = None,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    execution_options = {}
+    if timeout is not None:
+        execution_options["timeout"] = timeout
+    if cwd is not None:
+        execution_options["cwd"] = str(cwd)
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_DIR / name), *args],
         text=True,
         capture_output=True,
         check=False,
+        **execution_options,
     )
     if completed.returncode not in acceptable:
         detail = (completed.stderr or completed.stdout).strip()
@@ -1612,12 +1682,19 @@ def _checkpoint_needs_render(output_dir: Path) -> bool:
     return fields.get("phase") == "10b" and fields.get("status") == "completed" and fields.get("need_render") == "true"
 
 
-def _need_render_recovery_reason(output_dir: Path) -> str:
-    """Describe the supported single-runtime recovery."""
+def _need_render_recovery_reason(mode: str) -> str:
+    """Describe the supported single-runtime recovery.
+
+    ``mode`` names the invocation that would have wiped the checkpoint, so the
+    discard instruction repeats what the operator actually typed. Both full and
+    rebuild reach here: their cleanup lists both remove the Stage-1 artifacts,
+    and a run killed between the Stage-1 gate and the report is the one case
+    where those artifacts are complete, validated, and worth a render.
+    """
     return (
         "Stage 1 is complete (phase=10b need_render=true), but --resume is not supported. "
         "Use --rerender to render the validated Stage-1 artifacts, or repeat "
-        "--rebuild --force to discard them and start again."
+        f"--{mode} --force to discard them and start again."
     )
 
 
@@ -1629,23 +1706,28 @@ def _boundary_budget_abort_reason(cfg: dict[str, Any]) -> str:
     )
 
 
-def _activate_markers(cfg: dict[str, Any]) -> None:
-    temp = Path(os.environ.get("TMPDIR") or "/tmp")
-    uid = os.getuid()
-    if cfg.get("verbose"):
-        (temp / f".appsec-verbose-{uid}").touch()
-    if cfg.get("tracing"):
-        (temp / f".appsec-tracing-{uid}").touch()
+_RUN_MARKERS = {"verbose": ".appsec-verbose", "tracing": ".appsec-tracing"}
 
 
-def _deactivate_markers() -> None:
-    temp = Path(os.environ.get("TMPDIR") or "/tmp")
-    uid = os.getuid()
-    for name in (f".appsec-verbose-{uid}", f".appsec-tracing-{uid}"):
+def _activate_markers(cfg: dict[str, Any], output_dir: Path) -> None:
+    """Make the run-mode markers match cfg: present when on, absent when off.
+
+    They live in the output directory because their reader, agent_logger.py,
+    runs in the Claude Code process, whose TMPDIR need not match this shell's
+    (a sandboxed shell gets /tmp/claude-<uid>). Removing an off marker keeps
+    one left by an earlier run from switching the mode back on.
+    """
+    for key, name in _RUN_MARKERS.items():
+        if cfg.get(key):
+            (output_dir / name).touch()
+        else:
+            (output_dir / name).unlink(missing_ok=True)
+
+
+def _deactivate_markers(output_dir: Path) -> None:
+    for name in _RUN_MARKERS.values():
         try:
-            (temp / name).unlink()
-        except FileNotFoundError:
-            pass
+            (output_dir / name).unlink()
         except OSError:
             pass
 
@@ -2131,6 +2213,20 @@ def _rerender_missing_artifacts(output_dir: Path) -> list[str]:
     return missing
 
 
+def _run_id_for_this_run() -> str:
+    """Return the stable per-run token written into the lock file.
+
+    ``APPSEC_RUN_ID`` comes first because a caller that outlives the Claude
+    session — ``scripts/run-headless.sh`` — needs to know the id in advance:
+    it is the only thing that lets it release its own lock after killing the
+    session, and ``acquire_lock.release_lock`` refuses a lock whose heartbeat
+    is still fresh unless the caller names the run holding it. The resolution
+    order itself lives with the lock format, so the hooks that read the id back
+    cannot drift from the writer.
+    """
+    return acquire_lock.current_run_id(f"run-{int(time.time())}-{os.getpid()}")
+
+
 def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
     """Prepare the compact rerender path without touching Stage-1 artifacts."""
     output_dir = Path(cfg["output_dir"]).resolve()
@@ -2156,11 +2252,7 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
             "exit_code": 2,
         }
 
-    cfg["run_id"] = (
-        os.environ.get("CLAUDE_CODE_SESSION_ID")
-        or os.environ.get("CLAUDE_SESSION_ID")
-        or f"run-{int(time.time())}-{os.getpid()}"
-    )
+    cfg["run_id"] = _run_id_for_this_run()
     try:
         _run_script("check_state.py", [str(output_dir), "--auto-clean"])
         lock = _run_script(
@@ -2168,7 +2260,7 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
             [str(output_dir / ".appsec-lock"), f"--run-id={cfg['run_id']}"],
         )
         config_path = _persist_config(cfg, output_dir)
-        _activate_markers(cfg)
+        _activate_markers(cfg, output_dir)
         _run_script(
             "acquire_lock.py",
             [
@@ -2184,7 +2276,7 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
             (output_dir / ".appsec-lock").unlink()
         except OSError:
             pass
-        _deactivate_markers()
+        _deactivate_markers(output_dir)
         if isinstance(exc, ControllerError):
             raise
         raise ControllerError(f"rerender preflight filesystem operation failed: {exc}") from exc
@@ -2228,11 +2320,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     # Stable per-run token so a Stage-1 agent's own lock acquisition can
     # re-acquire this controller-held lock re-entrantly instead of
     # false-blocking on it.
-    cfg["run_id"] = (
-        os.environ.get("CLAUDE_CODE_SESSION_ID")
-        or os.environ.get("CLAUDE_SESSION_ID")
-        or f"run-{int(time.time())}-{os.getpid()}"
-    )
+    cfg["run_id"] = _run_id_for_this_run()
     output_dir.mkdir(parents=True, exist_ok=True)
     existing_names = {path.name for path in output_dir.iterdir()}
     if cfg["mode"] == "rebuild":
@@ -2253,13 +2341,17 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             for name in existing_names
         )
 
-    if cfg["mode"] == "rebuild" and _checkpoint_needs_render(output_dir) and not force:
+    if cfg["mode"] in {"full", "rebuild"} and _checkpoint_needs_render(output_dir) and not force:
         return {
             "schema_version": 1,
             "action": "abort",
-            "mode": "rebuild",
-            "reason": _need_render_recovery_reason(output_dir),
-            "exit_code": 0,
+            "mode": cfg["mode"],
+            "reason": _need_render_recovery_reason(cfg["mode"]),
+            # Non-zero like every other abort that analyzes nothing. At 0 this
+            # declined run looked green to CI whenever an earlier run had left
+            # a threat-model.md behind: the wrapper's artifact gate only asks
+            # whether a report exists, and the stale one does.
+            "exit_code": 2,
         }
 
     receipts: list[str] = []
@@ -2316,7 +2408,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         )
 
         config_path = _persist_config(cfg, output_dir)
-        _activate_markers(cfg)
+        _activate_markers(cfg, output_dir)
         _run_script(
             "acquire_lock.py",
             [
@@ -2327,6 +2419,19 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
                 "--step=stage1-dispatch",
             ],
         )
+        # The run-start marker, written here rather than by the runtime.
+        # `_scope_to_current_run` scopes issue aggregation to it, and the
+        # runtime wrote it in §4 — after the interactive steps. A run that
+        # stopped before §4 left the PREVIOUS run's epoch in place (the wipe
+        # preserves the file), so its run issues were scoped to that run and
+        # reported its events as their own: a headless run that stopped at §2b
+        # was told its top issue was a controller abort from five hours earlier
+        # (2026-09-05 insecure-python-app). Preflight is the earliest point the
+        # run exists and the last one no model can skip; the prepasses below
+        # already read the marker too.
+        from _atomic_io import atomic_write_text  # noqa: PLC0415
+
+        atomic_write_text(output_dir / ".scan-start-epoch", f"{int(time.time())}")
         _capture_business_context(cfg, receipts)
         _prepasses(cfg, receipts)
         _fetch_requirements(cfg)
@@ -2335,7 +2440,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             (output_dir / ".appsec-lock").unlink()
         except OSError:
             pass
-        _deactivate_markers()
+        _deactivate_markers(output_dir)
         if isinstance(exc, ControllerError):
             raise
         raise ControllerError(f"preflight filesystem operation failed: {exc}") from exc
@@ -2358,9 +2463,19 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     # repo-size recommendation (covers BOTH a Sonnet-5 and an Opus session), and
     # the run is interactive (forced false under APPSEC_HEADLESS=1).
     _orch_rec = cfg.get("orchestrator_recommended_model", "")
-    _headless = os.environ.get("APPSEC_HEADLESS", "").strip().lower() in ("1", "true", "yes", "on")
+    _headless = _headless_session()
     _orch_prompt_needed = bool(
         session_model and _orch_rec and not resolve_config._same_model(session_model, _orch_rec) and not _headless
+    )
+    # The business-context question is the runtime's other interactive step, and
+    # it is decided here for the same reason. §2b used to tell the runtime to
+    # skip it "when APPSEC_HEADLESS=1" — an environment variable the runtime
+    # cannot read — so an unattended run printed the question, ended its turn
+    # waiting for an answer nobody could give, and died at the artifact gate
+    # with no Stage 1 (2026-09-05 insecure-python-app). Every condition the
+    # question depends on is resolved here, so the runtime has one field to read.
+    _context_prompt_needed = bool(
+        not _headless and not cfg.get("skip_business_context") and not cfg.get("business_context_source")
     )
     # When the interactive prompt will handle the model choice, drop the passive
     # session cost callout + orchestrator recommendation line from the box (they
@@ -2421,6 +2536,7 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         "orchestrator_recommended_model": _orch_rec,
         "orchestrator_recommendation_reason": cfg.get("orchestrator_recommendation_reason", ""),
         "orchestrator_prompt_needed": _orch_prompt_needed,
+        "business_context_prompt_needed": _context_prompt_needed,
         "receipts": receipts,
     }
 
@@ -2468,6 +2584,24 @@ def _run_auto_emitter_pass(output_dir: Path, cfg: dict[str, Any], receipts: list
     except ControllerError as exc:
         receipts.append("auto_emitter_pass.sh: best-effort failure")
         _append_event(output_dir, "ORCHESTRATION_GATE_WARN", str(exc), level="WARN")
+
+
+def _enrich_and_gate_yaml(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> None:
+    """Every successful rebuild restores enrichment before the same hard gates."""
+    _run_auto_emitter_pass(output_dir, cfg, receipts)
+    # These producers supply the actionability gate and must also run as hard
+    # steps: optional enrichment failures must not masquerade as author defects.
+    _run_script("backfill_scanner_remediation.py", [str(output_dir)])
+    _run_script("hydrate_mitigation_details.py", [str(output_dir)])
+    _run_script(
+        "validate_intermediate.py",
+        ["threat_model_output", str(output_dir / "threat-model.yaml")],
+    )
+    _run_script("validate_mitigation_quality.py", [str(output_dir)])
+    _run_script(
+        "assert_completeness.py",
+        [str(output_dir), "--phase", "build", "--plugin-root", str(PLUGIN_ROOT)],
+    )
 
 
 def _document_fault(producer: str, message: str, errors: list[str] | None = None) -> ControllerError:
@@ -2757,6 +2891,73 @@ STAGE1_TASK_ROWS = (
     "Stage 1c [5/6] - Finding triage",
     "Stage 1c [6/6] - Root cause synthesis",
 )
+
+_STAGE1_TASK_ROW_BY_ROLE = {
+    "context_resolver": STAGE1_TASK_ROWS[0],
+    "config_scanner": STAGE1_TASK_ROWS[0],
+    "recon_scanner": STAGE1_TASK_ROWS[0],
+    "actor_discoverer": STAGE1_TASK_ROWS[1],
+    "architecture_analyst": STAGE1_TASK_ROWS[2],
+    "trust_boundary_analyst": STAGE1_TASK_ROWS[3],
+    "control_analyst": STAGE1_TASK_ROWS[4],
+    "stride_analyzer": STAGE1_TASK_ROWS[5],
+    "threat_merger": STAGE1_TASK_ROWS[6],
+    "evidence_verifier": STAGE1_TASK_ROWS[7],
+    "triage_validator": STAGE1_TASK_ROWS[8],
+    "post_stride_synthesizer": STAGE1_TASK_ROWS[9],
+}
+
+
+def _stage1_task_progress(role: str | None = None, *, complete: bool = False) -> dict[str, Any]:
+    """Return the exact task prefix settled before the next Stage-1 action.
+
+    A controller boundary can complete deterministic work without dispatching
+    the role represented by its task row. Carrying the settled prefix in the
+    action keeps the host task list aligned without asking the session to infer
+    skipped rows from the next semantic role.
+    """
+    if complete:
+        if role is not None:
+            raise ControllerError("a completed Stage-1 task transition cannot name an active role")
+        return {"completed_rows": list(STAGE1_TASK_ROWS)}
+    try:
+        active_row = _STAGE1_TASK_ROW_BY_ROLE[str(role)]
+    except KeyError as exc:
+        raise ControllerError(f"semantic role has no Stage-1 task row: {role!r}") from exc
+    active_index = STAGE1_TASK_ROWS.index(active_row)
+    return {
+        "completed_rows": list(STAGE1_TASK_ROWS[:active_index]),
+        "active_row": active_row,
+    }
+
+
+def _validate_stage1_task_progress(action: dict[str, Any]) -> None:
+    """Keep controller-owned task transitions on the Stage-1 row prefix."""
+    progress = action.get("task_progress")
+    owns_stage1_progress = (
+        action.get("stage") == "stage1c"
+        and action.get("instruction_file") == str(THIN_STAGE1_V2_RUNTIME)
+        and action.get("action") in {"dispatch_agent", "dispatch_parallel", "run_gate"}
+    )
+    if not owns_stage1_progress:
+        if progress is not None:
+            raise ControllerError("task_progress is valid only on context-v2 Stage-1 actions")
+        return
+    if not isinstance(progress, dict):
+        raise ControllerError("context-v2 Stage-1 action is missing task_progress")
+    completed = progress.get("completed_rows")
+    if not isinstance(completed, list) or completed != list(STAGE1_TASK_ROWS[: len(completed)]):
+        raise ControllerError("Stage-1 completed task rows must be an exact ordered prefix")
+    active_row = progress.get("active_row")
+    if action.get("action") == "run_gate":
+        if completed != list(STAGE1_TASK_ROWS) or active_row is not None:
+            raise ControllerError("the Stage-1 completion gate must complete every task row")
+        return
+    if len(completed) >= len(STAGE1_TASK_ROWS) or active_row != STAGE1_TASK_ROWS[len(completed)]:
+        raise ControllerError("the active Stage-1 task row must immediately follow the completed prefix")
+    job_rows = {_STAGE1_TASK_ROW_BY_ROLE.get(str(job.get("semantic_role"))) for job in action.get("dispatch_jobs", [])}
+    if job_rows != {active_row}:
+        raise ControllerError("Stage-1 task progress does not match the dispatched semantic role")
 
 
 def _task_rows(cfg: dict[str, Any]) -> list[str]:
@@ -3575,6 +3776,7 @@ def _context_v2_dispatch(
         **_context_v2_common(output_dir, cfg),
         "action": "dispatch_agent",
         "semantic_role": role,
+        "task_progress": _stage1_task_progress(role),
         "next_boundary": _checked_next_boundary(next_boundary),
         "dispatch_jobs": [
             {
@@ -3868,7 +4070,7 @@ def _recon_skip(output_dir: Path, cfg: dict[str, Any]) -> bool:
         )
     except ControllerError:
         return False
-    if not cfg.get("recon_reuse_eligible"):
+    if not cfg.get("reuse_recon_eligible"):
         return False
     args = [
         "check-fingerprint",
@@ -4032,6 +4234,7 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
         {
             **_context_v2_common(output_dir, cfg),
             "action": "dispatch_parallel",
+            "task_progress": _stage1_task_progress("recon_scanner"),
             "next_boundary": _checked_next_boundary("context-v2-post-recon"),
             "dispatch_jobs": jobs,
             "artifact_receipts": structured,
@@ -4100,6 +4303,7 @@ def _recon_producer_retry(
     action = {
         **_context_v2_common(output_dir, cfg),
         "action": "dispatch_parallel",
+        "task_progress": _stage1_task_progress("recon_scanner"),
         "next_boundary": _checked_next_boundary("context-v2-post-recon"),
         "dispatch_jobs": jobs,
         "artifact_receipts": structured,
@@ -4625,12 +4829,20 @@ def _context_v2_stride_wave_action(
     status = claim_payload.get("status")
     if status == "complete":
         return None
-    # ``in_flight`` carries the wave already issued, so a boundary that is
-    # re-read answers with that dispatch instead of ending the run. The replay
-    # guard below then recognizes the identical action and skips the side
-    # effect that would delete what the first dispatch produced.
+    # ``in_flight`` lets preparation recover the action it already issued. The
+    # replay guard below skips deletion of existing producer output. Advancing
+    # an unjoined wave is a sequencing error, not another dispatch admission.
     if status not in {"claimed", "in_flight"} or (status == "in_flight" and "wave" not in claim_payload):
         raise ControllerError(f"STRIDE wave claim returned unsupported status: {status!r}")
+    if status == "in_flight" and not initialize:
+        # Re-reading preparation may recover an undelivered dispatch. The
+        # successor boundary must instead join the existing producers: returning
+        # their action here launches the same jobs again under attempt-1.
+        raise CallError(
+            "STRIDE wave is still in flight: join the current action's components with "
+            "wait_stride_progress.py before repeating context-v2-post-stride; "
+            "do not re-dispatch its agents or re-run context-v2-prepare-stride"
+        )
     wave = claim_payload.get("wave")
     claimed_components = wave.get("components") if isinstance(wave, dict) else None
     if not isinstance(claimed_components, list) or not claimed_components:
@@ -4920,6 +5132,7 @@ def _context_v2_stride_wave_action(
     action = {
         **_context_v2_common(output_dir, cfg),
         "action": "dispatch_parallel",
+        "task_progress": _stage1_task_progress("stride_analyzer"),
         "next_boundary": _checked_next_boundary("context-v2-post-stride"),
         "dispatch_jobs": jobs,
         "artifact_receipts": structured,
@@ -5394,40 +5607,7 @@ def _context_v2_finalize(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any
         "validate_intermediate.py",
         ["threat_model_output", str(output_dir / "threat-model.yaml")],
     )
-    # Context-v2 builds canonical YAML directly instead of passing through the
-    # former post-Stage-1 gate. It still needs the same deterministic enrichment
-    # before the P1/P2 actionability gate: scanner remediation backfill and
-    # mitigation-detail hydration copy concrete steps and verification from
-    # finding producers onto mitigation cards.
-    _run_auto_emitter_pass(output_dir, cfg, receipts)
-    # Re-validate: nine emitters just rewrote the document the check above
-    # cleared, so without this the guarantee covers a model that no longer
-    # exists — `emit_clean_finding_titles` alone rewrites every title. Same
-    # rule as the abuse-case rebuild below: an invalid canonical model must not
-    # reach Stage 2, because everything downstream (threat-model.md, SARIF,
-    # Threat Dragon) is a pure function of it. A failure here is an emitter
-    # defect, and since `clear-abort` exists the run survives the diagnosis.
-    _run_script(
-        "validate_intermediate.py",
-        ["threat_model_output", str(output_dir / "threat-model.yaml")],
-    )
-    # The two emitters that feed the gate below run again here, as hard steps.
-    # `auto_emitter_pass.sh` is deliberately best-effort so a failed enrichment
-    # cannot destroy 25 minutes of Stage 1, and it guards every emitter with
-    # `|| true` — including these two, whose own comments there already say they
-    # supply this gate. A best-effort producer feeding a fail-closed consumer
-    # means a silently skipped hydration surfaces as content findings against
-    # the author instead of as the tooling failure it is: on the delivered
-    # juice-shop model the gate reports 96 INVALID lines without them and passes
-    # with them. Both are idempotent, so repeating them costs nothing and a
-    # second failure aborts naming the producer, which is the true fault.
-    _run_script("backfill_scanner_remediation.py", [str(output_dir)])
-    _run_script("hydrate_mitigation_details.py", [str(output_dir)])
-    _run_script("validate_mitigation_quality.py", [str(output_dir)])
-    _run_script(
-        "assert_completeness.py",
-        [str(output_dir), "--phase", "build", "--plugin-root", str(PLUGIN_ROOT)],
-    )
+    _enrich_and_gate_yaml(output_dir, cfg, receipts)
     atomic_write_text(
         output_dir / ".appsec-checkpoint",
         "phase=10b status=completed need_render=true runtime_generation=context-v2\n",
@@ -5437,6 +5617,7 @@ def _context_v2_finalize(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any
         {
             **_context_v2_common(output_dir, cfg),
             "action": "run_gate",
+            "task_progress": _stage1_task_progress(complete=True),
             "receipts": ["Context-v2 Stage-1 artifacts and Stage-2 handoff gates passed", *receipts],
         }
     )
@@ -5575,11 +5756,12 @@ def context_v2_finalize(output_dir: Path) -> dict[str, Any]:
     return _context_v2_finalize(output_dir, cfg)
 
 
-def _bind_finalized_component_fingerprint(output_dir: Path) -> None:
-    """Bind derived data-flow metadata to the finalized component inventory."""
+def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> None:
+    """Reconcile identity integrations and bind flows to the finalized inventory."""
     try:
         flows = json.loads((output_dir / ".data-flows.json").read_text(encoding="utf-8"))
         receipt = json.loads((output_dir / ".component-inventory-finalization.json").read_text(encoding="utf-8"))
+        components = json.loads((output_dir / ".components.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ControllerError(f"cannot bind finalized component fingerprint: {exc}") from exc
     if not isinstance(flows, dict) or not isinstance(receipt, dict):
@@ -5589,7 +5771,22 @@ def _bind_finalized_component_fingerprint(output_dir: Path) -> None:
         raise ControllerError("cannot bind finalized component fingerprint: receipt fingerprint is invalid")
     flows["component_inventory_fingerprint"] = fingerprint
     from _atomic_io import atomic_write_json
+    from discover_identity_providers import reconcile
 
+    try:
+        flows = reconcile(repo_root, components.get("components") or [], flows)
+    except (ValueError, OSError) as exc:
+        raise ControllerError(f"identity-provider reconciliation failed: {exc}") from exc
+    # Validate the complete enriched artifact before replacing the accepted input.
+    _validate_receipt_state(
+        flows, PLUGIN_ROOT / "schemas" / "fragments" / "data-flows.schema.json", "identity integration data flows"
+    )
+    from validate_fragment import architecture_reference_errors, repository_path_errors
+
+    errors = architecture_reference_errors({**flows, "components": components.get("components") or []})
+    errors.extend(repository_path_errors("data-flows", flows, repo_root))
+    if errors:
+        raise ControllerError("identity integration validation failed: " + "; ".join(errors))
     atomic_write_json(output_dir / ".data-flows.json", flows, sort_keys=False)
 
 
@@ -5619,7 +5816,7 @@ def _gate_architecture_stage(
         ("attack-surface-overrides", ".attack-surface-overrides.json"),
     ):
         validate_args = [fragment_type, str(output_dir / name)]
-        if fragment_type == "data-flows":
+        if fragment_type in {"data-flows", "assets"}:
             validate_args.extend(["--repo-root", str(repo_root)])
         _run_script("validate_fragment.py", validate_args)
     if controller_owned_handoff:
@@ -5627,7 +5824,7 @@ def _gate_architecture_stage(
             "finalize_component_inventory.py",
             ["--repo-root", str(repo_root), "--output-dir", str(output_dir)],
         )
-        _bind_finalized_component_fingerprint(output_dir)
+        _bind_finalized_component_fingerprint(output_dir, repo_root)
     _run_script(
         "finalize_component_inventory.py",
         ["--repo-root", str(repo_root), "--output-dir", str(output_dir), "--validate-only"],
@@ -6089,7 +6286,7 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
         # abort before the write and leave the previous yaml intact, so those
         # stay best-effort.
         try:
-            _best_effort_script(
+            rebuilt = _best_effort_script(
                 output_dir,
                 "build_threat_model_yaml.py",
                 [
@@ -6109,6 +6306,8 @@ def finalize_abuse(output_dir: Path) -> dict[str, Any]:
                 + _schema_failure_detail(str(exc)),
                 exc.exit_code,
             ) from exc
+        if rebuilt:
+            _enrich_and_gate_yaml(output_dir, cfg, receipts)
     if verdicts.is_file():
         _best_effort_script(
             output_dir,
@@ -6284,16 +6483,11 @@ def _upgrade_bootstrap_yaml(output_dir: Path, cfg: dict[str, Any]) -> bool:
         args += ["--repo-root", repo_root]
     args += ["--plugin-root", str(SCRIPT_DIR.parent)]
     try:
-        proc = subprocess.run(
-            [sys.executable, str(SCRIPT_DIR / "build_threat_model_yaml.py"), *args],
-            cwd=str(SCRIPT_DIR),
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if proc.returncode != 0:
+        _run_script("build_threat_model_yaml.py", args, timeout=600, cwd=SCRIPT_DIR)
+        if _is_bootstrap() is not False:
+            return False
+        _enrich_and_gate_yaml(output_dir, cfg, [])
+    except (ControllerError, OSError, subprocess.SubprocessError):
         return False
     return _is_bootstrap() is False
 
@@ -6889,6 +7083,37 @@ _SEMANTIC_RETURN_COMMANDS = frozenset(
 )
 
 
+#: Semantic boundaries after a wave whose own join validates the results: the
+#: STRIDE wave join (OR-14) and the abuse wave join. Both settle past a child
+#: whose stop was never recorded, so the lifecycle join must not hold them.
+_WAVE_JOINED_COMMANDS = frozenset({"context-v2-post-stride", "finalize-abuse"})
+
+
+def _require_joined_dispatch(output_dir: Path, command: str) -> None:
+    """Reject a boundary while a producer of the latest dispatch still runs (OR-14).
+
+    A boundary judges what its producer wrote, and a running producer may still
+    rewrite it: the threat merger writes a draft, validates it, and rewrites it
+    before it stops. Judged in between, that draft aborted a run. The rule is the
+    join's own, so a boundary refuses exactly while ``wait_agent_calls.py`` would
+    still wait, and an unrecorded stop holds it no longer than the join's
+    deadline. An unreadable lifecycle proves nothing and lets the boundary run.
+    """
+    if command in _WAVE_JOINED_COMMANDS:
+        return
+    calls = wait_agent_calls.joined_calls(output_dir, None)
+    if not calls:
+        return
+    _action_id, latest = telemetry_consistency.latest_action_calls(calls)
+    waiting = wait_agent_calls.still_waiting(latest, time.time(), wait_agent_calls.DEFAULT_DEADLINE_MINUTES * 60)
+    if waiting:
+        jobs = ", ".join(sorted(str(call.get("job_id") or call.get("agent_type")) for call in waiting))
+        raise CallError(
+            f"dispatched producer still running: {jobs}; join it with wait_agent_calls.py "
+            f"before repeating {command}; do not re-dispatch it"
+        )
+
+
 def _check_returned_call_telemetry(output_dir: Path) -> None:
     """Report where accepted output, lifecycle, budget, and stage stats disagree.
 
@@ -6960,6 +7185,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command in _SEMANTIC_RETURN_COMMANDS:
+            _require_joined_dispatch(Path(args.output_dir), args.command)
             _check_returned_call_telemetry(Path(args.output_dir))
             _require_receipt_verification(Path(args.output_dir))
         if args.command == "route":

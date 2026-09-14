@@ -1,6 +1,6 @@
 # appsec-advisor
 
-[![Version](https://img.shields.io/badge/version-0.6.0--beta.2-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.6.0--beta.3-orange.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-5A67D8.svg)](https://docs.claude.com/en/docs/claude-code)
 [![Threat modeling](https://img.shields.io/badge/threat%20modeling-code--derived-5A67D8)](docs/threat-modeler.md)
@@ -117,6 +117,16 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
+## What's new in 0.6.0-beta.3
+
+- Figure 1 has been redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths. Actors with equivalent access are grouped while each finding keeps its login and privilege requirements.
+- The Management Summary and completion summary show up to three open threat-modeling questions that the code cannot settle, linked to the relevant weaknesses and findings. Refuted abuse-case steps are excluded from these questions.
+- Worst-case scenarios appear in a compact table with weakness classes and attack-path verification status.
+- Headless runs show live progress, token use, and cost. A new `--soft-budget` checks projected spend and warns about overruns without stopping an active run.
+- `/appsec-advisor:repo-profile` reports repository size, languages, build manifests, and tracked-versus-untracked content before a scan without using a model or network access.
+- Baseline installation and updates use the latest signed AI Secure Coding Baseline release after verifying its signature and checksum.
+- Source scans now cover executable NoSQL predicates and input-driven code or template compilation.
+
 ## What's new in 0.6.0-beta.2
 
 - Findings name the requirements they break, and mitigations quote the blueprint section that prescribes the fix.
@@ -151,9 +161,9 @@ Run `/appsec-advisor:create-threat-model` to get:
 
 The report links findings to the [OWASP Top 10:2025](https://owasp.org/Top10/2025/). If the repository contains an LLM or agentic application, it also checks the relevant [OWASP LLM](https://genai.owasp.org/llm-top-10/) and [Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) categories.
 
-**Example:** [Read a thorough assessment of OWASP Juice Shop](examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.md) or browse [more examples](examples/threat-modeler/README.md).
+**Example:** [Read a thorough assessment of OWASP Juice Shop](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b3.md) or browse [more examples](https://github.com/appsec-foundry/appsec-advisor-examples).
 
-![Threat Model Juice Shop Thorough](./examples/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b2.figure1.svg)
+![Threat Model Juice Shop Thorough](docs/images/figure1-example.svg)
 
 Assessments consume model tokens and usually take tens of minutes; thorough runs may exceed an hour. The [Threat Modeler reference](docs/threat-modeler.md#assessment-depth--cost-control) covers depth, focused scans, repository context, measured costs, and limits.
 
@@ -209,9 +219,10 @@ See [Internal Plugin Packaging](docs/internal-plugin-packaging.md) and [Organiza
 | Add repository context or trust-boundary declarations | [Repo-local context](docs/threat-modeler.md#repo-local-context) |
 | Configure models, cost, logging, or organization settings | [Configuration](docs/configuration.md) and [Model Selection](docs/model-selection.md) |
 | Configure requirements audits | [Requirements Audit](docs/security-requirements-audit-skill.md) |
-| Run without interaction or integrate with CI | [Non-interactive Mode](docs/headless-mode.md) |
+| Run an existing plugin checkout without interaction | [Non-interactive Mode](docs/headless-mode.md) |
+| Provision the plugin and target for terminal, cron, GitHub Actions, or GitLab CI | [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools) |
 | Package the plugin for an organization | [Internal Plugin Packaging](docs/internal-plugin-packaging.md) |
-| Browse complete report examples | [Threat Modeler Examples](examples/threat-modeler/README.md) |
+| Browse complete report examples | [Threat Modeler Examples](https://github.com/appsec-foundry/appsec-advisor-examples) |
 | Develop or contribute | [Contributing](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) |
 | Report a vulnerability | [Security Policy](SECURITY.md) |
 
@@ -225,6 +236,7 @@ The main directories are `agents/`, `skills/`, `scripts/`, `schemas/`, `template
 
 ### Companion repositories
 
+- [appsec-advisor-tools](https://github.com/appsec-foundry/appsec-advisor-tools) provides a launcher and CI templates for unattended assessments. It provisions the plugin and target, then delegates the assessment to this plugin's headless runner.
 - [appsec-advisor-packaging-template](https://github.com/appsec-foundry/appsec-advisor-packaging-template) builds organization-specific plugin packages from pinned upstream releases.
 - [aiscb](https://github.com/appsec-foundry/aiscb) contains the secure-coding rules bundled by the plugin.
 

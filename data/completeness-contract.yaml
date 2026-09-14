@@ -43,6 +43,12 @@ invariants:
     fix_hint: "emit_finding_fix_mitigations.py / build_mitigations fallback should link every Critical/High finding"
 
   # ── render phase (threat-model.md) ───────────────────────────────────────
+  - id: render_enrichment_current
+    phase: render
+    severity: fail
+    when: "always"
+    fix_hint: "run the emitter pass after the last rebuild; subsequent YAML writers must preserve a verified receipt"
+
   - id: conditional_fragment_present
     phase: render
     severity: fail

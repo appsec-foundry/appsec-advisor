@@ -5,6 +5,10 @@ Stage 2; incompatible options are rejected before run-state mutation.
 
 ## 1. Prepare
 
+Each Bash call is a fresh shell: start every command with
+`CLAUDE_PLUGIN_ROOT=<plugin root the router resolved>` on its own line, plus
+the §2 values it uses.
+
 Run one Bash call, forwarding the invocation arguments as separate arguments.
 Use the second form only when the invocation contains the skill-only `--force`
 flag:
@@ -113,7 +117,12 @@ Emit this handoff banner:
 ```
 
 Read `SKILL-thin-stage2.md` in full and follow it. Do not load any Stage-1
-runtime.
+runtime. When a stage runtime says to start the heartbeat, run `python3
+"$CLAUDE_PLUGIN_ROOT/scripts/skill_watchdog.py" "$OUTPUT_DIR" --plugin-root
+"$CLAUDE_PLUGIN_ROOT" --heartbeat-interval 60` with `run_in_background: true`
+and keep its task id. The final heartbeat is `python3
+"$CLAUDE_PLUGIN_ROOT/scripts/acquire_lock.py" "$OUTPUT_DIR/.appsec-lock"
+--heartbeat --phase=skill`; then stop the watchdog with `TaskStop`.
 
 After the renderer returns, and again before the completion summary, run:
 

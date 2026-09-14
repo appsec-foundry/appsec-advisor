@@ -873,3 +873,81 @@ def test_stage_relative_images_does_not_overwrite_existing(tmp_path: Path) -> No
     (work / "figure1.svg").write_text("KEEP")  # e.g. already produced by mermaid stage
     assert ep.stage_relative_images("![x](figure1.svg)", src, work) == 0
     assert (work / "figure1.svg").read_text() == "KEEP"
+
+
+# ---------------------------------------------------------------------------
+# Wide Figure 1 → landscape page
+# ---------------------------------------------------------------------------
+
+_FIG1_HTML = (
+    '<p>before</p>\n<h3 id="security-posture--top-threats">Security Posture &amp; Top Threats</h3>\n'
+    "<p><strong>Figure 1 - Architecture &amp; Top Threats</strong></p>\n"
+    "<p>Data-flow diagram: intro.</p>\n"
+    '<p><img src="{src}" alt="Figure 1 - Architecture &amp; Top Threats" /></p>\n'
+    "<p><strong>Figure 2 - Risk Flow</strong></p>\n"
+    '<p><img src="figure2.svg" alt="Figure 2 - Risk Flow" /></p>'
+)
+
+
+def _svg_data_uri(w: int, h: int) -> str:
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}"></svg>'
+    import base64
+
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+
+
+def test_wrap_wide_figure1_moves_heading_caption_intro_and_image_to_landscape(tmp_path: Path) -> None:
+    out = ep._wrap_wide_figure1(_FIG1_HTML.format(src=_svg_data_uri(1540, 856)), tmp_path)
+    m = re.search(r'<div class="figure-landscape">\n(.*?)\n</div>', out, re.DOTALL)
+    assert m, out
+    region = m.group(1)
+    assert region.startswith('<h3 id="security-posture--top-threats">')
+    assert "Figure 1 - Architecture" in region and "Data-flow diagram: intro." in region
+    assert region.rstrip().endswith("</p>") and 'alt="Figure 1' in region
+    assert "Figure 2" not in region
+    assert out.startswith("<p>before</p>\n<div")
+    assert out.count("figure-landscape") == 1
+
+
+def test_wrap_wide_figure1_keeps_a_tall_figure_in_portrait(tmp_path: Path) -> None:
+    html = _FIG1_HTML.format(src=_svg_data_uri(760, 1100))
+    assert ep._wrap_wide_figure1(html, tmp_path) == html
+
+
+def test_wrap_wide_figure1_keeps_a_figure_that_fits_the_portrait_column(tmp_path: Path) -> None:
+    # The tier-stack fallback is 760 px wide: portrait shows it at ~1:1, so a
+    # landscape page would cost a page turn for nothing.
+    html = _FIG1_HTML.format(src=_svg_data_uri(760, 559))
+    assert ep._wrap_wide_figure1(html, tmp_path) == html
+
+
+def test_svg_dimensions_are_attribute_order_independent(tmp_path: Path) -> None:
+    (tmp_path / "f.svg").write_text('<svg height="500" xmlns="http://www.w3.org/2000/svg" width="1200"></svg>')
+    assert ep._svg_dimensions("f.svg", tmp_path) == (1200.0, 500.0)
+    assert ep._svg_dimensions("data:image/svg+xml,%3Csvg%20width%3D%2210%22%20height%3D%225%22%3E", tmp_path) == (
+        10.0,
+        5.0,
+    )
+
+
+def test_wrap_wide_figure1_reads_a_file_reference(tmp_path: Path) -> None:
+    (tmp_path / "threat-model.figure1.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1540" height="856"></svg>', encoding="utf-8"
+    )
+    out = ep._wrap_wide_figure1(_FIG1_HTML.format(src="threat-model.figure1.svg"), tmp_path)
+    assert 'class="figure-landscape"' in out
+
+
+def test_wrap_wide_figure1_is_a_noop_without_dimensions_or_figure(tmp_path: Path) -> None:
+    html = _FIG1_HTML.format(src="missing.svg")
+    assert ep._wrap_wide_figure1(html, tmp_path) == html
+    assert ep._wrap_wide_figure1("<p>no figure</p>", tmp_path) == "<p>no figure</p>"
+
+
+def test_print_css_declares_the_landscape_figure_page() -> None:
+    css = PRINT_CSS.read_text(encoding="utf-8")
+    assert re.search(r"@page landscape\s*\{[^}]*size:\s*A4 landscape", css)
+    assert re.search(r"\.figure-landscape\s*\{[^}]*page:\s*landscape", css)
+    # WeasyPrint keeps `page: auto` content on the page it is already on, so
+    # the body needs its own named page for portrait to resume after the figure.
+    assert re.search(r"\bbody\s*\{[^}]*page:\s*main", css) and re.search(r"@page main\s*\{[^}]*size:\s*A4\s*;", css)

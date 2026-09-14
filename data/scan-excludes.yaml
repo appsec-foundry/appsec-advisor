@@ -388,6 +388,8 @@ file_patterns:
   - ".appsec-checkpoint"
   - ".appsec-lock"
   - ".appsec-progress.json"
+  - ".appsec-tracing"
+  - ".appsec-verbose"
   - ".config-scan-findings.json"
   - ".headless-result.json"
   - ".hook-events.log"

@@ -12,6 +12,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -21,6 +22,52 @@ import detect_open_registration as D  # noqa: E402
 detect = D.detect
 
 
+@pytest.mark.parametrize("registration", [False, True])
+@pytest.mark.parametrize("public_source", [False, True])
+def test_overview_notes_explain_only_enabled_folds(registration, public_source):
+    model = {
+        "meta": {"open_user_registration": registration, "public_source_repo": public_source},
+        "threats": [{"vektor": a} for a in ("internet-user", "repo-read", "internet-priv-user", "build-time")],
+    }
+    text = " ".join(D.overview_actor_notes(model))
+    assert ("because registration is open" in text) == registration
+    assert ("because the source repository is public" in text) == public_source
+    assert ("login and privilege requirements" in text) == (registration or public_source)
+
+
+def test_overview_notes_require_a_represented_actor_and_confirmed_metadata():
+    model = {"meta": {"open_user_registration": True, "public_source_repo": True}}
+    assert D.overview_actor_notes(model) == []
+    model["threats"] = [{"vektor": "internet-priv-user"}, {"vektor": "build-time"}]
+    assert D.overview_actor_notes(model) == []
+    model["threats"] = [{"vektor": "internet-user"}, {"vektor": "repo-read"}]
+    model["meta"] = {"open_user_registration": "false", "public_source_repo": "false"}
+    assert D.overview_actor_notes(model) == []
+
+
+def test_overview_notes_recover_projected_actors_only_from_referenced_findings():
+    model = {
+        "meta": {"open_user_registration": True, "public_source_repo": True},
+        "threats": [{"id": "T-001", "vektor": "internet-user"}, {"id": "T-002", "vektor": "repo-read"}],
+    }
+    paths = {"attack_paths": [{"actor": "internet-anon", "findings": ["F-001"]}]}
+    text = " ".join(D.overview_actor_notes(model, paths))
+    assert D.overview_actor_groups(model, paths) == [("internet-user", "internet-anon")]
+    assert "registration is open" in text
+    assert "repository is public" not in text
+    assert D.overview_actor_notes(model, {"attack_paths": []}) == []
+    paths["attack_paths"][0]["actor"] = "internet-priv-user"
+    assert D.overview_actor_notes(model, paths) == []
+    assert D.overview_actor_groups(model, paths) == []
+
+
+def test_overview_notes_use_the_same_default_actor_as_the_diagram():
+    model = {"meta": {"public_source_repo": True}}
+    paths = {"attack_paths": [{"class": "source-secret"}]}
+    taxonomy = {"classes": [{"id": "source-secret", "default_actor": "repo-read"}]}
+    assert "repository is public" in " ".join(D.overview_actor_notes(model, paths, taxonomy))
+
+
 def _route(path, method="POST", authn="unknown", authz="unknown", mgmt=False):
     return {
         "method": method,
@@ -28,6 +75,11 @@ def _route(path, method="POST", authn="unknown", authz="unknown", mgmt=False):
         "authn_signal": authn,
         "authz_signal": authz,
         "management_surface": mgmt,
+        "route_id": "R-001",
+        "framework": "express",
+        "confidence": "high",
+        "handler_file": "src/entry.ts",
+        "handler_line": 7,
     }
 
 
@@ -68,14 +120,14 @@ class TestAttackSurfacePrimary:
 
 class TestRouteInventoryFallback:
     def test_post_api_users_from_inventory(self):
-        # The juice-shop case: not in attack_surface, present in inventory with
-        # authn_signal=middleware_present (registerAdminChallenge) — must still
-        # be detected as open registration.
+        # Generic account creation needs an exact missing-auth finding.
         data = {"attack_surface": []}
         routes = [_route("/api/Users", authn="middleware_present")]
-        ok, reason = detect(data, routes)
+        finding = {"check_id": "AUTHZ-008", "file": "src/entry.ts", "line": 7}
+        ok, reason = detect(data, routes, [finding])
         assert ok is True
-        assert "/api/Users" in reason
+        assert reason == "authz-008-route"
+        assert detect(data, routes)[0] is False
 
     def test_fallback_not_used_when_attack_surface_has_entry(self):
         data = {"attack_surface": [{"entry_point": "POST /signup", "auth_required": False}]}
@@ -85,7 +137,7 @@ class TestRouteInventoryFallback:
         assert "attack_surface" not in reason.lower() or "/signup" in reason
 
     def test_signup_and_register_paths_match(self):
-        for p in ("/auth/register", "/rest/user/register", "/signup", "/accounts"):
+        for p in ("/auth/register", "/rest/user/register", "/signup", "/sign-up"):
             ok, _ = detect({"attack_surface": []}, [_route(p)])
             assert ok is True, p
 
@@ -143,7 +195,13 @@ class TestCli:
     def test_main_uses_route_inventory_and_repairs_non_dict_meta(self, tmp_path, capsys):
         _write_yaml(tmp_path, {"meta": "not-a-dict", "attack_surface": []})
         (tmp_path / ".route-inventory.json").write_text(
-            json.dumps({"routes": [_route("/api/Users", authn="middleware_present")]}),
+            json.dumps(
+                {
+                    "version": 1,
+                    "routes": [_route("/register", authn="middleware_present")],
+                    "coverage": {"frameworks_detected": ["express"], "unsupported_route_files": []},
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -162,3 +220,100 @@ class TestCli:
         data = _read_yaml(tmp_path)
         assert data["meta"]["open_user_registration"] is False
         assert "open_user_registration=False" in capsys.readouterr().out
+
+
+def test_authoritative_actor_resolution_precedes_legacy_route_guess():
+    assert (
+        detect(
+            {
+                "meta": {"open_user_registration": True, "open_registration_source": "actor-resolution"},
+                "attack_surface": [],
+            }
+        )[0]
+        is True
+    )
+    assert (
+        detect(
+            {
+                "meta": {"open_user_registration": False, "open_registration_source": "actor-resolution"},
+                "attack_surface": [{"entry_point": "POST /users", "auth_required": False}],
+            }
+        )[0]
+        is False
+    )
+
+
+def test_overview_projection_preserves_privileged_actor_and_unknown_registration():
+    assert D.overview_actor_slug("internet-user", {"open_user_registration": True}) == "internet-anon"
+    assert D.overview_actor_slug("internet-priv-user", {"open_user_registration": True}) == "internet-priv-user"
+    assert D.overview_actor_slug("internet-user", {}) == "internet-user"
+
+
+@pytest.mark.parametrize(
+    "field,value", [("file", "other.ts"), ("line", 8), ("line", None), ("line", True), ("check_id", "AUTHZ-009")]
+)
+def test_generic_registration_requires_exact_finding_identity(field, value):
+    finding = {"check_id": "AUTHZ-008", "file": "src/entry.ts", "line": 7, field: value}
+    result = D.resolve_open_registration({}, [_route("/accounts")], [finding])
+    assert result["open"] is False
+    assert result["disputed"] is True
+
+
+@pytest.mark.parametrize("gate", ["present", "middleware_present", "decorator_present"])
+def test_explicit_registration_does_not_override_a_role_gate(gate):
+    assert D.resolve_open_registration({}, [_route("/register", authz=gate)], [])["open"] is False
+
+
+def test_registration_resolution_is_input_preserving_and_order_independent():
+    import copy
+
+    routes = [_route("/register"), {**_route("/auth/signup"), "handler_file": "other.ts"}]
+    before = copy.deepcopy(routes)
+    result = D.resolve_open_registration({}, routes, [])
+    assert result == D.resolve_open_registration({}, routes[::-1], [])
+    assert routes == before
+
+
+@pytest.mark.parametrize(
+    "problem", ["missing-file", "escaping-symlink", "beyond-eof", "invalid-schema", "malformed-json"]
+)
+def test_registration_inputs_cannot_claim_unavailable_source(tmp_path, problem):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "out"
+    out.mkdir()
+    source = repo / "entry.ts"
+    source.write_text("route\n")
+    route = {**_route("/register"), "handler_file": "entry.ts", "handler_line": 1}
+    if problem == "missing-file":
+        route["handler_file"] = "absent.ts"
+    elif problem == "escaping-symlink":
+        (tmp_path / "outside.ts").write_text("route\n")
+        (repo / "escape.ts").symlink_to(tmp_path / "outside.ts")
+        route["handler_file"] = "escape.ts"
+    elif problem == "beyond-eof":
+        route["handler_line"] = 100
+    elif problem == "invalid-schema":
+        route["method"] = "EXECUTE"
+    doc = {"version": 1, "routes": [route], "coverage": {"frameworks_detected": [], "unsupported_route_files": []}}
+    (out / ".route-inventory.json").write_text("[broken" if problem == "malformed-json" else json.dumps(doc))
+    assert D.load_registration_inputs(out, repo) == ([], [])
+
+
+def test_registration_resolution_has_identical_closed_schemas():
+    from jsonschema import Draft202012Validator
+
+    root = Path(__file__).resolve().parents[1] / "schemas"
+    actor_schema = yaml.safe_load((root / "actors-resolved.schema.yaml").read_text())["properties"][
+        "open_registration_resolution"
+    ]
+    model_schema = yaml.safe_load((root / "threat-model.output.schema.yaml").read_text())["properties"]["meta"][
+        "properties"
+    ]["open_registration_resolution"]
+    assert actor_schema == model_schema
+    validator = Draft202012Validator(actor_schema)
+    result = D.resolve_open_registration({}, [_route("/register")], [])
+    assert validator.is_valid(result)
+    assert not validator.is_valid({**result, "disputed": True})
+    assert not validator.is_valid({**result, "evidence": []})
+    assert not validator.is_valid({**result, "uncontracted": True})

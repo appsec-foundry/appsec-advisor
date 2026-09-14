@@ -155,7 +155,7 @@ presets:
     quality: { qa_review: auto }
     context:
       document_ids: [sso]
-    guardrails: { max_wall_time: 1h, max_cost_usd: 20, tracing: true }
+    guardrails: { max_wall_time: 1h, soft_budget_usd: 20, tracing: true }
 ```
 
 `llm_context.documents` declares organization Markdown sources.
@@ -258,7 +258,7 @@ Every session opens with a short status banner:
 
 1. **Identity** — plugin name and version (or your `headline`) plus `help` when packaged.
 2. **Threat model** — findings, age, drift, and the one skill that state calls for.
-3. **Coding baseline** — only when the expected baseline is missing or mismatched.
+3. **Coding baseline** — the loaded id and scope, or what is missing or mismatched. Where the AI Secure Coding Baseline installer's own startup hook already prints the baseline status, the line appears only when something needs a decision.
 
 There are no status glyphs. Commands sit on the domain they act on. Two fields
 customize the banner, and one turns it off:
@@ -298,12 +298,7 @@ the code with it.
 
 ## Secure-coding baseline
 
-A secure-coding baseline is an instruction file the coding assistant loads
-before it writes code, so an organization's rules apply on every prompt rather
-than only on the ones that mention security. The plugin ships one — the
-[AI Secure Coding Baseline](https://github.com/appsec-foundry/aiscb),
-id `aisec-0.1` — installs it with `/appsec-advisor:install-baseline`, and the session
-banner flags it when it is missing or mismatched.
+A secure-coding baseline is an instruction file the coding assistant loads before it writes code, so an organization's rules apply on every prompt rather than only on the ones that mention security. The plugin ships one, the [AI Secure Coding Baseline](https://github.com/appsec-foundry/aiscb). `/appsec-advisor:install-baseline` installs its latest signed release once the release signature and checksum verify against the key the plugin carries, and the session banner flags the baseline when it is missing or mismatched.
 
 Use the `baseline:` block to ship your own instead:
 
@@ -350,7 +345,7 @@ it is why `baseline.file` is validated at package time rather than at install
 time on somebody's laptop.
 
 The convention is `<name>-<version>[+<derivative>]`. A derivative of the
-configured id (`aisec-0.1+acme`, your adaptation of the published baseline)
+configured id (`aiscb-0.1.14+acme`, your adaptation of the published baseline)
 counts as installed and is reported with its suffix, so a reader can see the
 adaptation. A *newer* version of the same baseline counts as loaded and is
 reported as ahead of the id you declared — a baseline is published on its own
@@ -362,7 +357,7 @@ two rule sets should apply is a decision, not a repair. Both fail an enforcing
 check, because in neither case are the rules you declared the ones in context.
 
 Declaring any source replaces the plugin's default baseline everywhere —
-banner, verify, and what install writes. The upstream URL and the upstream
+banner, verify, and what install writes. The upstream release source and the upstream
 bundled copy both carry the upstream id, which your own id check would refuse,
 so packaging clears them rather than leaving a source that can only fail.
 Ship a `file:` if your users need to install without reaching your server.

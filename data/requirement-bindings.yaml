@@ -65,6 +65,8 @@ requirements:
     coverage: partial
     guards:
       - tests/test_merge_threats.py::TestWeaknessRegister::test_known_vuln_becomes_vulnerability_management_weakness
+      - tests/test_merge_threats.py::TestConsolidateByGroup::test_distinct_sql_sinks_in_one_component_stay_separate
+      - tests/test_merge_threats.py::TestConsolidateByGroup::test_distinct_xss_sinks_need_explicit_shared_control
 
   REQ-MOD-002:
     applies_to:
@@ -116,6 +118,7 @@ requirements:
       - AC-1
       - AC-2
       - AC-3
+      - AC-8
     documents:
       - docs/org-profiles.md
     coverage: direct
@@ -134,12 +137,14 @@ requirements:
       - agents/appsec-stride-analyzer-v2.md
       - schemas/related-repos.schema.yaml
       - scripts/slice_cross_repo_for_component.py
+      - scripts/discover_identity_providers.py
     decisions:
       - FE-4
     documents: []
     coverage: partial
     guards:
       - tests/test_agent_definitions.py::test_cross_repo_mismatch_requires_target_evidence
+      - tests/test_discover_identity_providers.py::test_client_integrations_are_generic_and_evidenced
       - tests/test_build_threat_modeling_context.py::test_supplied_reference_document_is_admitted_as_fenced_and_named_data
 
   REQ-MOD-009:
@@ -148,14 +153,17 @@ requirements:
       - scripts/_severity_rollup.py
       - scripts/build_posture_verdict.py
       - scripts/compose_threat_model.py
+      - scripts/render_completion_summary.py
       - schemas/stride.schema.yaml
       - schemas/threats-merged.schema.yaml
     decisions:
       - FE-1
       - WK-4
     documents: []
-    coverage: advisory
-    guards: []
+    coverage: partial
+    guards:
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_unproven_evidence_keeps_its_status
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_practice_evidence_does_not_become_confirmed_exploitation
 
   REQ-ARC-001:
     applies_to:
@@ -193,6 +201,21 @@ requirements:
 
   REQ-FLW-003:
     applies_to:
+      - scripts/enrichment_pass.py
+      - scripts/auto_emitter_pass.sh
+      - scripts/assert_completeness.py
+      - scripts/apply_editorial_plan.py
+      - scripts/check_editorial_diff.py
+      - scripts/backfill_scanner_remediation.py
+      - scripts/hydrate_mitigation_details.py
+      - scripts/emit_general_mitigation_titles.py
+      - scripts/emit_verdict_to_model.py
+      - scripts/emit_requirement_trace_to_model.py
+      - scripts/render_abuse_cases.py
+      - scripts/triage_compute_ranking.py
+      - scripts/reclassify_components.py
+      - scripts/redact_known_secrets.py
+      - data/completeness-contract.yaml
       - scripts/orchestration_controller.py
       - scripts/context_routing.py
       - scripts/validate_intermediate.py
@@ -200,15 +223,21 @@ requirements:
       - schemas/**
     decisions:
       - OR-3
+      - OR-25
       - RA-1
     documents:
       - docs/internal/contracts/orchestration-actions.md
       - docs/internal/contracts/schema-invariants.md
     coverage: partial
     guards:
+      - tests/test_enrichment_pass.py::test_continuation_never_heals_an_unverified_receipt
+      - tests/test_enrichment_pass.py::test_receipt_detects_changed_or_rebuilt_model
+      - tests/test_orchestration_controller.py::test_abuse_rebuild_reapplies_enrichment_and_quality_gates
+      - tests/test_assert_completeness.py::test_render_rejects_model_without_enrichment_receipt
       - tests/test_orchestration_controller.py::TestContextV2ArchitectureAndBoundary::test_post_stage1_fails_closed_on_missing_artifact
       - tests/test_orchestration_controller.py::test_next_action_routes_to_stage1d_when_abuse_verification_never_ran
       - tests/test_compose_threat_model.py::test_schema_violation_raises
+      - tests/test_schema_integrity.py::test_external_entity_access_is_consistent_and_role_only
       - tests/test_compose_threat_model.py::test_cli_exit_1_on_missing_fragment
       - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_boundary_after_an_unverified_dispatch_rejects
       - tests/test_orchestration_controller.py::TestReceiptVerificationIsEnforced::test_a_changed_artifact_still_aborts_the_run
@@ -339,32 +368,76 @@ requirements:
       - scripts/export_threat_dragon.py
       - scripts/export_html.py
       - scripts/export_pdf.py
+      - scripts/render_completion_summary.py
     decisions:
       - RA-3
     documents:
       - docs/internal/contracts/schema-invariants.md
     coverage: partial
     guards:
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_only_links_to_delivered_anchors
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_selects_three_distinct_decisions_with_real_finding_links
       - tests/test_compose_depth_scoped_crossrefs.py::TestSection6BackLink::test_every_emitted_anchor_is_injectable
       - tests/test_export_threat_dragon.py::test_title_carries_the_report_anchor_not_the_yaml_id
+      - tests/test_export_threat_dragon.py::test_named_external_entities_keep_identity_and_public_boundary_flag
+      - tests/test_figure1_dfd.py::test_roles_and_identity_provider_use_distinct_left_side_nodes
 
   REQ-RPT-003:
     applies_to:
+      - agents/appsec-architecture-analyst.md
+      - agents/appsec-threat-renderer.md
+      - data/attack-class-taxonomy.yaml
+      - schemas/fragments/security-posture-attack-paths.schema.json
+      - scripts/build_trust_boundary_assessment_input.py
       - agents/shared/prose-style.md
       - agents/shared/prose-samples.md
       - scripts/_lib_manifest.py
       - scripts/inline_code_formatter.py
       - scripts/apply_prose_fixes.py
       - scripts/compose_threat_model.py
+      - scripts/detect_open_registration.py
+      - scripts/detect_public_repo.py
+      - scripts/resolve_actors.py
+      - scripts/emit_auth_coverage.py
+      - scripts/match_abuse_cases.py
+      - scripts/figure1_dfd.py
+      - scripts/figure1_svg.py
+      - data/posture-actor-labels.yaml
       - scripts/walkthrough_renderer.py
       - scripts/qa_checks.py
+      - scripts/render_completion_summary.py
+      - scripts/team_questions.py
+      - data/sections-contract.yaml
+      - data/weakness-classes.yaml
     decisions:
       - RA-4
       - RN-5
+      - OR-26
+      - RA-10
+      - RA-11
+      - RA-12
+      - RA-13
     documents:
+      - docs/internal/contracts/schema-invariants.md
       - agents/shared/prose-style.md
     coverage: partial
     guards:
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_no_generic_questions_for_empty_or_unmatched_models
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses
+      - tests/test_team_questions.py::test_selector_caps_questions_but_keeps_unverified_evidence_line
+      - tests/test_team_questions.py::test_disputed_registration_is_shared_without_invented_finding_links
+      - tests/test_resolve_actors.py::test_registration_owner_precedes_reach_equivalence
+      - tests/test_detect_open_registration.py::test_registration_resolution_has_identical_closed_schemas
+      - tests/test_detect_open_registration.py::test_registration_inputs_cannot_claim_unavailable_source
+      - tests/test_detect_public_repo.py::test_rebuilt_public_source_grouping_survives_enrichment
+      - tests/test_detect_public_repo.py::test_self_hosted_source_visibility_remains_unknown
+      - tests/test_detect_public_repo.py::test_host_and_license_cannot_distinguish_repository_visibility
+      - tests/test_emit_auth_coverage.py::TestDetectionAndRating::test_registration_evidence_requires_post_not_user_listing
+      - tests/test_build_threat_model_yaml.py::test_builder_preserves_named_entities_and_resolved_registration_equivalence
+      - tests/test_compose_threat_model.py::test_ms_open_questions_match_console_selection_and_follow_top_weaknesses
+      - tests/test_compose_threat_model.py::test_ms_open_questions_are_omitted_when_the_selector_returns_none
+      - tests/test_compose_threat_model.py::test_toc_keeps_management_summary_subsections_out_of_the_short_form
+      - tests/test_qa_checks_cov_band1.py::test_ms_structure_requires_selected_team_questions_in_the_canonical_slot
       - tests/test_reference_format.py::test_strip_trailing_locator_all_forms
       - tests/test_reference_format.py::test_linkify_full_form_basename_and_backticked
       - tests/test_agent_definitions.py::TestProseStyleAnchor::test_prose_style_file_exists
@@ -376,6 +449,26 @@ requirements:
       - tests/test_inline_code_formatter.py::test_structured_vocabulary_terminates_on_cycles
       - tests/test_qa_checks_cov_band3.py::test_inline_code_format_scans_table_and_blockquote_but_skips_opaque_markdown
       - tests/test_e2e_pipeline.py::test_composed_report_has_no_inline_code_residue
+      - tests/test_e2e_pipeline.py::test_report_and_figure_explain_actual_actor_groupings
+      - tests/test_detect_open_registration.py::test_overview_notes_require_a_represented_actor_and_confirmed_metadata
+      - tests/test_figure1_svg.py::test_actor_grouping_remains_visible_when_card_subtitles_are_hidden
+      - tests/test_figure1_dfd.py::test_role_access_projection_remaps_both_flow_ends_without_changing_canonical_model
+      - tests/test_figure1_dfd.py::test_unclassified_role_keeps_the_generic_victim_separate
+      - tests/test_figure1_dfd.py::test_equal_regular_access_can_fold_without_open_registration
+      - tests/test_figure1_dfd.py::test_unnamed_flows_are_not_assigned_to_the_merged_victim_role
+      - tests/test_figure1_dfd.py::test_flow_lanes_separate_opposing_stubs_at_equal_port_heights
+      - tests/test_figure1_dfd.py::test_nearly_aligned_flow_ports_avoid_micro_jogs
+      - tests/test_figure1_dfd.py::test_intra_column_arrow_tips_have_a_straight_approach
+      - tests/test_figure1_dfd.py::test_flow_legend_groups_drawn_edges_and_keeps_all_flow_meanings
+      - tests/test_figure1_dfd.py::test_flow_legends_accept_arbitrary_protocols_without_catalogs
+      - tests/test_figure1_dfd.py::test_scenario_title_is_preserved_without_inventing_mechanisms
+      - tests/test_figure1_dfd.py::test_actor_grouping_is_explained_inside_its_node
+      - tests/test_compose_threat_model.py::test_figure1_authored_title_survives_loading_unless_membership_expands
+      - tests/test_schema_integrity.py::test_figure1_optional_labels_are_bounded_across_artifact_schemas
+      - tests/test_figure1_dfd.py::test_cyclic_lane_constraints_remain_visible_to_the_geometry_gate
+      - tests/test_compose_threat_model.py::test_figure1_role_grouping_explanation_follows_image_only_when_drawn
+      - tests/test_schema_integrity.py::test_external_entity_access_is_consistent_and_role_only
+      - tests/test_build_trust_boundary_assessment_input.py::test_named_external_roles_survive_boundary_input_and_keep_flow_identity
 
   REQ-RPT-005:
     applies_to:
@@ -460,6 +553,7 @@ requirements:
       - scripts/redact_known_secrets.py
     decisions:
       - TR-8
+      - TR-9
     documents:
       - README.md
     coverage: direct

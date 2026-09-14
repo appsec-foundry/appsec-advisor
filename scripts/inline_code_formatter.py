@@ -11,7 +11,8 @@ The recognizer is intentionally evidence-led:
 * balanced calls, member chains, subscripts, paths, assignments, command-line
   flags, payload literals, regexes, and globs carry structural code evidence;
 * ambiguous package names are formatted only when a repository manifest or a
-  validated structured artifact names them;
+  code-bearing structured field names them — a word or symbol backticked in
+  model-authored prose is formatting, not code evidence;
 * existing code spans, links, HTML, and other opaque Markdown regions are left
   byte-for-byte unchanged.
 
@@ -150,6 +151,11 @@ _SQL_FRAGMENT_RE = re.compile(
 )
 _ANGLE_PLACEHOLDER_RE = re.compile(r"(?<![\w`<])(?P<token><[a-z][a-z0-9_-]*>)(?![\w`])")
 _BACKTICK_CONTENT_RE = re.compile(r"`([^`\n]+)`")
+# A span harvested from model prose joins a document-wide vocabulary, so it must
+# read as code without its context. One `to` (a query parameter) and one `/` in
+# finding prose once wrapped every bare "to" and "/" of a report — 405 and 67
+# times (juice-shop 2026-09-11).
+_CODE_SIGNAL_RE = re.compile(r"[_./\\$:()\[\]{}<>=@#%&*+?!|~]|\d|[a-z][A-Z]")
 _LINKED_TITLE_TAIL_RE = re.compile(r"\]\(#(?:f|t|m|th)-\d+\)\s*[—–-]\s[^\n|]*?(?=<br/?>|\||$)")
 
 # Single-word protocol identifiers are otherwise indistinguishable from prose.
@@ -444,10 +450,15 @@ def _regex_candidates(text: str, known_tokens: frozenset[str]) -> Iterator[CodeC
 def _known_token_pattern(tokens: tuple[str, ...]) -> re.Pattern[str] | None:
     """Compile one bounded alternation for evidence-backed identifiers."""
 
+    # A token without a letter (`)`, `/`, `401`) is punctuation or a number in
+    # prose, whichever structured field it came from.
     safe = tuple(
         token
         for token in tokens
-        if 0 < len(token) <= _MAX_KNOWN_TOKEN_LENGTH and "`" not in token and "\n" not in token
+        if 0 < len(token) <= _MAX_KNOWN_TOKEN_LENGTH
+        and "`" not in token
+        and "\n" not in token
+        and re.search(r"[A-Za-z]", token)
     )
     if not safe:
         return None
@@ -600,6 +611,13 @@ _STRUCTURED_CODE_KEYS = frozenset(
 )
 
 
+def _is_code_shaped(token: str) -> bool:
+    """Whether ``token`` reads as code on its own: a letter plus a code signal."""
+
+    core = token.rstrip(_TRAILING_PUNCTUATION)
+    return bool(re.search(r"[A-Za-z]", core)) and bool(_CODE_SIGNAL_RE.search(core))
+
+
 def structured_vocabulary(
     value: Any,
     *,
@@ -644,7 +662,8 @@ def structured_vocabulary(
         if not isinstance(node, str) or len(node) > _MAX_STRUCTURED_STRING_LENGTH:
             continue
         for match in _BACKTICK_CONTENT_RE.finditer(node):
-            add_token(match.group(1))
+            if key in _STRUCTURED_CODE_KEYS or _is_code_shaped(match.group(1)):
+                add_token(match.group(1))
         if key in _STRUCTURED_CODE_KEYS:
             stripped = node.strip()
             if "\n" not in node and stripped:

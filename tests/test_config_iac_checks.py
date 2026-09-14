@@ -5,9 +5,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import build_threat_model_yaml as b
+import merge_threats as mt
 import yaml
 
 CHECKS_PATH = Path(__file__).parent.parent / "data" / "config-iac-checks.yaml"
+SCHEMA_PATH = Path(__file__).parent.parent / "schemas" / "threat-model.output.schema.yaml"
 
 
 def _load_checks() -> list[dict]:
@@ -31,6 +34,42 @@ def test_every_check_regex_compiles():
             re.compile(pat)
         except re.error as e:  # pragma: no cover - failure path
             raise AssertionError(f"{c.get('id')} pattern does not compile: {e}")
+
+
+def test_every_check_titles_its_violation_not_its_desired_state():
+    """A config finding is titled with the defect. The check `name` states the
+    desired state ("... present and committed") and reads as a pass."""
+    schema = yaml.safe_load(SCHEMA_PATH.read_text(encoding="utf-8"))
+    rule = schema["properties"]["threats"]["items"]["properties"]["title"]
+    pattern = re.compile(rule["pattern"])
+    for c in _load_checks():
+        title = c.get("violation_title")
+        assert isinstance(title, str) and title.strip(), f"{c['id']} has no violation_title"
+        assert title != c["name"], f"{c['id']} repeats its desired-state name"
+        assert pattern.match(title), f"{c['id']}: {title!r} breaks the threat title pattern"
+        assert rule["minLength"] <= len(title) <= rule["maxLength"], f"{c['id']}: {title!r} length"
+        assert b._clean_title(title) == title, f"{c['id']}: {title!r} is rewritten by the title cleaner"
+
+
+def test_violation_title_joins_the_same_consolidation_group_as_the_check_name():
+    """Consolidation groups select config findings partly by title pattern,
+    written against the check names. Titling a finding with its violation must
+    not move its check into, out of, or between groups."""
+    groups = mt._load_consolidation_groups()
+    for c in _load_checks():
+
+        def group(title: str, check: dict = c) -> str | None:
+            threat = {
+                "cwe": check["cwe"],
+                "title": title,
+                "evidence": {"file": check["file_pattern"], "line": 1},
+                "config_check_id": check["id"],
+                "source": "config-scan",
+            }
+            match = mt._match_consolidation_group(threat, groups)
+            return match["id"] if match else None
+
+        assert group(c["violation_title"]) == group(c["name"]), c["id"]
 
 
 def test_category_inventory_covers_surface_alternatives():

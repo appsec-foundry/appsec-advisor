@@ -6,7 +6,7 @@ authoritative source for the §4a–§4h details.
 
 ## §4a. Cross-reference labelling invariant
 
-Reader-facing references normally render as `[ID](#anchor) — <short-title>`. This applies to `T-NNN`, `F-NNN`, `M-NNN`, `W-NNN`, `TH-NN`, and the `C-NN` / deprecated `AF-NNN` classes covered by the composer. Use a shorter form only where the layout or sentence already provides the meaning: declaration sites, ID columns, headings, narrow tables, inline citations, the Verdict citation form, Top Weaknesses proof lists, and the Critical Attack Tree findings pointer. These exceptions are deliberate and must stay narrow; ordinary table and list references need a title.
+Reader-facing references normally render as `[ID](#anchor) — <short-title>`. This applies to `T-NNN`, `F-NNN`, `M-NNN`, `W-NNN`, `TH-NN`, and the `C-NN` / deprecated `AF-NNN` classes covered by the composer. Use a shorter form only where the layout or sentence already provides the meaning: declaration sites, ID columns, headings, narrow tables, inline citations, the Verdict citation form, Top Weaknesses proof lists, Open Questions for the Team bullets shared with the console, and the Critical Attack Tree findings pointer. These exceptions are deliberate and must stay narrow; ordinary table and list references need a title.
 
 Three things must stay aligned for the invariant to hold:
 
@@ -21,7 +21,7 @@ Three things must stay aligned for the invariant to hold:
    - The idempotent suffix regex matches `[FTM]-` AND `TH-`, so existing un-suffixed `[F-NNN](#f-nnn)` / `[TH-NN](#th-nn)` links gain `— Title` on rerun.
 
 3. **Tests pin the invariant.**
-   `tests/test_qa_checks.py:TestCrossReferenceLabellingInvariant` and `tests/test_p4_cross_reference_coverage.py:TestCrossReferenceTitleCoverageEndToEnd` cover ordinary QA-owned references. Composer and QA tests cover compact citations, inline labels, the weakness register, §7 rewrites, Top Weaknesses, and the Critical Attack Tree pointer. Removing or broadening an exception requires an explicit migration justification.
+   `tests/test_qa_checks.py:TestCrossReferenceLabellingInvariant` and `tests/test_p4_cross_reference_coverage.py:TestCrossReferenceTitleCoverageEndToEnd` cover ordinary QA-owned references. Composer and QA tests cover compact citations, inline labels, the weakness register, §7 rewrites, Top Weaknesses, Open Questions for the Team, and the Critical Attack Tree pointer. Removing or broadening an exception requires an explicit migration justification.
 
 Failure modes to watch for in PR review:
 - A schema PR that drops `title` from `threats[].required` → bare links
@@ -30,7 +30,25 @@ Failure modes to watch for in PR review:
   fragment → bypasses single-source-of-truth and drifts on rerun.
 - A new ID class introduced without assigning it to the composer or linkifier → that class ships as bare links on every rendered MD.
 
+## Actor registration evidence
+
+Current actor resolutions carry `open_registration_resolution` with an open/disputed decision, reason, and repository file/line evidence; the YAML builder preserves it in `meta`. Reach-equivalence and abuse-case applicability consume this decision without rewriting recon evidence or changing STRIDE severity. Disputed candidates enter the shared team-question selection even when no finding anchor exists. Historical actor artifacts remain readable, and models without actor resolution retain their curated attack-surface fallback.
+
+Generic-route corroboration is limited to the Node/Express JavaScript and TypeScript routes covered by `AUTHZ-008`; Java, Python, Go, .NET, Ruby, PHP, GraphQL mutations, and external identity-provider signup need explicit registration-route or recon evidence. A candidate without sufficient support stays disputed rather than asserting closed registration.
+
+## Public-source overview grouping
+
+`meta.public_source_repo` affects overview actor grouping, not finding evidence or severity. Repository-read access folds into anonymous internet access when the flag is true; build-time and privileged access do not. Detection uses local license and source-host metadata without network calls, so a self-hosted public repository may remain unknown and a private repository on a known host may appear public. YAML-only pins remain transient across rebuilds; this verification adds no configuration or organization-profile override source.
+
+## Legitimate-role access in Figure 1
+
+An external entity may carry `access` only with `kind: legitimate-role`, using `internet-anon`, `internet-user`, or `internet-priv-user` when cited code establishes that access. Boundary assessment and canonical YAML preserve this optional field and the original entity and flow identities. Older entities without access remain valid and distinct.
+
+Figure 1 may combine explicitly classified regular roles with equivalent access, using canonical registration evidence and vocabulary labels. Privileged and unclassified roles remain separate. The figure may assign a generic victim to a unique combined regular role only when no other regular or unclassified role makes that assignment ambiguous. Unnamed flow endpoints retain their generic participant. The report paragraph immediately below the figure explains the actual grouping and retained login requirements; the SVG keeps a short role subtitle instead. A fallback figure that does not combine those roles must not claim that it does. The canonical model retains individual flow identities.
+
 ## §4b. Mitigation synthesis invariant
+
+Every successful canonical YAML rebuild is followed by the deterministic emitter pass and the shared schema, mitigation-quality, and build-completeness gates. The final render-completeness gate requires `meta.enrichment_pass` to match the current model. Canonical writers after enrichment may carry forward only a receipt verified before their mutation; missing or stale receipts remain invalid. The marker is optional in the export schema so prior reports remain readable, but it is mandatory for run completion. Its shape lives in the output schema and its hash algorithm in `scripts/enrichment_pass.py`.
 
 When P1/P2/P3 threats exist in `threat-model.yaml`, `mitigations[]` MUST be non-empty. An empty register means the model builder skipped mandatory synthesis. `scripts/validate_intermediate.py:validate_threat_model_output` enforces this; a non-zero post-write self-check MUST block Stage 2.
 
@@ -100,6 +118,20 @@ while W links to its supporting findings.
 Every W-NNN has a required `title` of at most 80 characters. It is the short,
 reader-facing heading and must not contain CWE IDs, source paths, routes, or
 code snippets; `statement` holds the explanatory detail instead.
+
+## Architecture identity and evidence
+
+Optional `external_entities[]` travels from `.data-flows.json` through boundary-assessment input into the canonical export. Entity IDs are unique and distinct from component IDs. A flow's `from_entity` or `to_entity` resolves in this registry and requires the corresponding endpoint to remain `external`. Boundary adjacency and exposure continue to use canonical component/external endpoints. Missing legacy identities stay generic; consumers must not invent a role or provider.
+
+At the controller-owned architecture handoff, `scripts/discover_identity_providers.py` reconciles concrete outbound OAuth/OIDC/SAML client calls and declarative client endpoints with finalized components and data flows. Generated entities and flows carry contained source evidence and satisfy the existing data-flow schema before publication. Explicit internal identity-server topology takes precedence. Ambiguous component ownership blocks the handoff; dependency names, unused URLs, disabled configuration blocks, and unknown dynamic addresses do not create external entities. Deployment activation remains qualified, and discovery never fetches an endpoint or emits a security finding. The renderer consumes the reconciled inventory without performing discovery.
+
+`components[].sensitive_data[]` provides category, observed or declared basis, handling, and contained repository evidence. The legacy `handles_sensitive_data` Boolean remains a conservative analysis-selection signal. Figure 1 does not display a sensitive-data-handling marker. `assets[].component_refs[]` records an evidenced storage, processing, or transmission relation to a known component. Classification and a single-store topology do not establish where an asset is stored.
+
+ORM setters, query construction, and rendering execute in application components. A data store may cite a storage schema, but executable ORM source also requires an application owner independent of its framework label. A database engine is not an XSS sink. SQL-injection and XSS findings share a consolidated card only when the same sink or an explicit common control scope establishes the shared defect. Instance provenance retains the originating component and scenario. Figure 1 annotates each component with all short, evidenced Critical causes and adds High causes up to five annotations in total. More than five Critical causes remain fully visible. A compact count identifies omitted High categories without counting their individual findings. Annotations use consistent security-mechanism terms such as `Insecure Output Handling` and `Improper Client Trust`. They omit register IDs, full titles, and finding lists; the report retains the concrete mechanisms and complete register. Asset storage labels require evidenced storage relationships, and the data-flow legend resolves the IDs displayed on edges. Its counts need not sum to the number of unique findings across components.
+
+When validated actor resolution establishes open self-registration, overview diagrams combine anonymous and regular authenticated internet access. Findings retain their authentication prerequisites and privileged actors remain separate. Attacker arrows share their source actor's colour and identifier; data-flow identifiers resolve to the corresponding legend entries.
+
+Figure 1 names an evidenced attack mechanism and action or consequence through optional `attack_paths[].scenario_title`; older fragments retain descriptive class labels. The title must cover the referenced findings without inventing a subtype or impact. A title authored for a narrower finding set cannot describe a path expanded during reconciliation. Optional `data_flows[].diagram_label` summarizes the flow purpose while the canonical `label`, endpoints, protocol, direction, classification, and evidence remain intact through the architecture handoff and YAML export. Protocol names are not restricted to a display catalogue. The legend groups the identities on each drawn edge and uses the component IDs already displayed in the diagram. Distinct payloads and protocols remain distinguishable; longer legacy text remains readable. Applied attacker groupings are explained inside the receiving actor card, including the retained per-finding login and privilege requirements. Asset location and handling may share a legend column with data flows.
 
 ## §4h. Trust-boundary catalogue and finding-reference invariant
 

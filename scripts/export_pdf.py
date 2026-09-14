@@ -33,6 +33,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -42,6 +43,7 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
 
 try:
     from _atomic_io import atomic_write_text
@@ -688,6 +690,73 @@ _EMOJI_FALLBACKS: dict[str, tuple[str, str]] = {
 
 _SVG_BLOCK_RE = re.compile(r"<svg\b.*?</svg>", re.DOTALL | re.IGNORECASE)
 
+# The Figure 1 region as pandoc emits it: an optional section heading, the bold
+# caption paragraph, the intro paragraph(s), and the image paragraph whose alt
+# text names the figure. Matching on the caption/alt text — not on the image
+# path — covers both the file reference and the base64 data URI that
+# `--embed-resources` / `--embed-figures` produce.
+_FIGURE1_REGION_RE = re.compile(
+    r"(?:<h[2-4][^>]*>(?:(?!</h[2-4]>).)*</h[2-4]>\s*)?"
+    r"<p><strong>Figure 1\b.*?</strong></p>"
+    r"(?:(?!<p><img\b).)*?"
+    r'<p><img\s+src="(?P<src>[^"]*)"[^>]*\balt="Figure 1\b[^"]*"[^>]*/?>\s*</p>',
+    re.DOTALL | re.IGNORECASE,
+)
+_SVG_TAG_RE = re.compile(r"<svg\b[^>]*>", re.IGNORECASE)
+_SVG_WIDTH_RE = re.compile(r'\bwidth="(?P<v>[0-9.]+)(?:px)?"', re.IGNORECASE)
+_SVG_HEIGHT_RE = re.compile(r'\bheight="(?P<v>[0-9.]+)(?:px)?"', re.IGNORECASE)
+# A figure goes landscape only when portrait would shrink it: wider than the
+# ~680 px the portrait text column shows at 1:1 (180 mm at 96 dpi), and at
+# least this much wider than tall so the landscape page's extra width buys
+# more than its lower height costs (A4: 267 mm × 168 mm of content in
+# landscape against 180 mm × 253 mm in portrait).
+_LANDSCAPE_MIN_WIDTH_PX = 900
+_LANDSCAPE_MIN_ASPECT = 1.25
+
+
+def _svg_dimensions(src: str, base_dir: Path) -> Optional[tuple[float, float]]:
+    """Intrinsic width/height of an SVG image source (data URI or relative file)."""
+    try:
+        if src.startswith("data:"):
+            header, _, payload = src.partition(",")
+            if "svg" not in header:
+                return None
+            raw = base64.b64decode(payload) if ";base64" in header else unquote(payload).encode("utf-8")
+            head = raw[:4096].decode("utf-8", errors="replace")
+        else:
+            if re.match(r"^[a-z][a-z0-9+.-]*://", src) or src.startswith("/") or not src.lower().endswith(".svg"):
+                return None
+            with open(base_dir / src, encoding="utf-8", errors="replace") as fh:
+                head = fh.read(4096)
+    except (OSError, ValueError):
+        return None
+    tag = _SVG_TAG_RE.search(head)
+    mw = _SVG_WIDTH_RE.search(tag.group(0)) if tag else None
+    mh = _SVG_HEIGHT_RE.search(tag.group(0)) if tag else None
+    if not (mw and mh):
+        return None
+    w, h = float(mw.group("v")), float(mh.group("v"))
+    return (w, h) if w > 0 and h > 0 else None
+
+
+def _wrap_wide_figure1(html: str, base_dir: Path) -> str:
+    """Put a wide Figure 1 (with its heading, caption and intro) on a landscape page.
+
+    The data-flow diagram is about twice as wide as the portrait text column;
+    scaled to fit it becomes unreadable. Wrapping the region in
+    ``<div class="figure-landscape">`` switches WeasyPrint to the ``landscape``
+    named page (print.css), which also keeps the caption on the same page as
+    the image instead of stranding it at the bottom of the previous one. A
+    tall figure (the tier-stack fallback grows in height) stays in portrait.
+    """
+    m = _FIGURE1_REGION_RE.search(html)
+    if not m:
+        return html
+    dims = _svg_dimensions(m.group("src"), base_dir)
+    if not dims or dims[0] < _LANDSCAPE_MIN_WIDTH_PX or dims[0] < _LANDSCAPE_MIN_ASPECT * dims[1]:
+        return html
+    return html[: m.start()] + '<div class="figure-landscape">\n' + m.group(0) + "\n</div>" + html[m.end() :]
+
 
 def _replace_unsupported_emoji(html: str) -> str:
     """Swap emoji WeasyPrint can't render for colored DejaVu-safe glyphs.
@@ -791,11 +860,13 @@ def md_to_html(md_path: Path, html_path: Path, css_path: Path, title: str) -> No
     #  - inject content-aware <colgroup> widths (gfm drops pipe-table dash hints)
     #  - wrap the title block into a dedicated cover page
     #  - tag the TOC list so print CSS can add target-counter page numbers
+    #  - move a wide Figure 1 onto a landscape page
     try:
         html_text = html_path.read_text(encoding="utf-8")
         html_text = _inject_table_colgroups(html_text)
         html_text = _wrap_cover_page(html_text)
         html_text = _wrap_toc(html_text)
+        html_text = _wrap_wide_figure1(html_text, html_path.parent)
         html_path.write_text(html_text, encoding="utf-8")
     except OSError:
         pass

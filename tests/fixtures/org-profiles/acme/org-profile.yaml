@@ -94,7 +94,7 @@ presets:
       attack_walkthroughs: disabled
     guardrails:
       max_wall_time: 30m
-      max_cost_usd: 5
+      soft_budget_usd: 5
       max_resumes: 0
       tracing: true
       verbose_report: false
@@ -122,7 +122,7 @@ presets:
       attack_walkthroughs: auto
     guardrails:
       max_wall_time: 1h
-      max_cost_usd: 20
+      soft_budget_usd: 20
       max_resumes: 1
       tracing: true
       verbose_report: false
@@ -151,7 +151,7 @@ presets:
       attack_walkthroughs: auto
     guardrails:
       max_wall_time: 3h
-      max_cost_usd: 80
+      soft_budget_usd: 80
       max_resumes: 1
       tracing: true
       verbose_report: true
@@ -187,7 +187,7 @@ presets:
       generate_pentest_verification_tasks: true
     guardrails:
       max_wall_time: 3h
-      max_cost_usd: 80
+      soft_budget_usd: 80
       max_resumes: 1
       tracing: true
       verbose_report: true

@@ -238,6 +238,72 @@ def test_ordinary_changes_need_no_proposal():
     assert check_specs.unapproved_changes(["scripts/merge_threats.py", "README.md"]) == []
 
 
+def register_text() -> str:
+    return check_specs.REGISTER.read_text(encoding="utf-8")
+
+
+def register_rows() -> list[str]:
+    return [line for line in register_text().splitlines() if check_specs.DECISION_ROW_RE.match(line)]
+
+
+def with_base(monkeypatch, base: str) -> None:
+    """Compare the live register against a doctored base of itself."""
+    monkeypatch.setattr(check_specs, "_file_at", lambda ref, path: base)
+
+
+def register_problems() -> list[str]:
+    return check_specs.unapproved_changes([check_specs.REGISTER_PATH], "HEAD")
+
+
+def test_adding_a_decision_needs_no_proposal(monkeypatch):
+    with_base(monkeypatch, register_text().replace(register_rows()[-1] + "\n", ""))
+    assert register_problems() == []
+
+
+def test_changing_a_decision_needs_a_proposal(monkeypatch):
+    row = register_rows()[0]
+    rid = check_specs.DECISION_ROW_RE.match(row).group(1)
+    with_base(monkeypatch, register_text().replace(row, row + " and something wider"))
+    problems = register_problems()
+    assert problems and f"{rid} changed or removed" in problems[0]
+
+
+def test_removing_a_decision_needs_a_proposal(monkeypatch):
+    with_base(monkeypatch, register_text() + "\n| ZZ-9 | A retired rule | — | — |\n")
+    problems = register_problems()
+    assert problems and "ZZ-9 changed or removed" in problems[0]
+
+
+def without_the_entry_rule(text: str) -> str:
+    """The register as it read before its entry rule was added."""
+    return "\n".join(line for line in text.splitlines() if not line.startswith("**Adding a decision:**"))
+
+
+@pytest.mark.parametrize(
+    "doctor",
+    [lambda text: "A rule that was dropped.\n" + text, without_the_entry_rule],
+    ids=["rule-dropped", "rule-added"],
+)
+def test_changing_the_registers_own_rules_needs_a_proposal(monkeypatch, doctor):
+    with_base(monkeypatch, doctor(register_text()))
+    assert register_problems() == [
+        "docs/internal/decisions.md: the rules around its entries changed, with no proposal under specs/changes/"
+    ]
+
+
+def test_the_register_is_held_when_no_base_revision_can_be_read():
+    assert check_specs.unapproved_changes([check_specs.REGISTER_PATH]) == [
+        "docs/internal/decisions.md: cannot be compared against a base revision, with no proposal under specs/changes/"
+    ]
+
+
+def test_the_catalog_is_held_for_any_change(monkeypatch):
+    with_base(monkeypatch, register_text())
+    assert check_specs.unapproved_changes(["specs/requirements.md"], "HEAD") == [
+        "specs/requirements.md changed with no proposal under specs/changes/"
+    ]
+
+
 def test_changed_against_unknown_ref_reports_and_exits_two(capsys):
     assert check_specs.main(["--changed-against", "no-such-ref-xyz"]) == 2
     assert capsys.readouterr().err

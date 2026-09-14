@@ -147,7 +147,7 @@ Author `ms-verdict.json` **exactly once**. Do **NOT** re-open or rewrite an MS f
 After authoring the MS fragment, run the compactness gate **once**:
 
 ```bash
-OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"; CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_ms_compactness.py" "$OUTPUT_DIR"
 ```
 
@@ -158,8 +158,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_ms_compactness.py" "$OUTPUT_DIR"
   else, then re-run the gate once to confirm. Never rewrite a field the gate did
   not flag.
 
-The gate catches only runaway prose (budgets sit above the soft targets), so a
-disciplined first write passes immediately — that is the expected path.
+The gate catches runaway prose (budgets sit above the soft targets) and broken MS
+fragment schema limits, so a disciplined first write passes immediately.
 
 ### `ms-verdict.json` authoring contract
 
@@ -189,9 +189,9 @@ sentence the reader trusts for all of them. Juice-shop 2026-08-22 shipped
 exactly that: the intro claimed unauthenticated reach while two of six bullets
 read "any logged-in user" and "any customer" in their own bodies. Each bullet
 already carries its own precondition in `body`; leave it there. Write a neutral
-frame — on red or yellow "What an attacker can do today, worst first:", on
-green "Residual risks worth monitoring, most significant first:" — or omit the
-key; it is optional, and the deterministic default is the same neutral pair.
+frame that claims no order — on red or yellow "What an attacker can do today:",
+on green "Residual risks worth monitoring:" — or omit the key; it is optional,
+and the deterministic default is the same neutral pair.
 A uniform precondition is allowed only when EVERY bullet genuinely shares it.
 
 The frame names what the bullets ARE, so do not spend `opening` on a second
@@ -201,7 +201,7 @@ hand over.
 
 **Forbidden legacy keys** (they were the 2026-06-05 parallel-render drift): `verdict_label`, `verdict_color`, `worst_case_scenarios`, `closing_prose`, `verdict_prose`. The ONLY top-level keys are the five above. Do not cite exact severity counts in `opening` (the composer injects the authoritative `**Risk distribution:** …` line). Run the MS compactness gate after authoring (see "MS prose — single-pass discipline").
 
-**Management-language hard gate.** A product owner must understand the verdict without security training. `opening` is at most 52 words; each bullet body is **one sentence, aim for 16 words and never exceed 20** (the gate rejects 21+); `closing` is at most 220 characters. A body must **add what the `title` does not already say** — who reaches it, what they walk away with. Restating the title in other words and padding with a generic consequence clause ("granting complete control over all user accounts and data") is the failure mode this budget exists to prevent; cut the clause rather than the fact. Never use security acronyms or implementation vocabulary in `opening`, `title`, `body`, or `closing`: for example `JWT`, `RSA`, `SQL`, `XSS`, `XML`, `API`, `endpoint`, `middleware`, `localStorage`, `HttpOnly`, `sandbox`, file paths, line numbers, code, or backticks. Say "account takeover", "customer data exposed", "server takeover", "active login stolen", or "unapproved discounts" instead. `refs` are audit provenance only: the renderer deliberately hides IDs, finding titles, locations, and abuse-case IDs in this block. Every reference must directly support the scenario; never pad a bullet with a loosely related Critical finding. The renderer shows only the plain-language badge `✓ verified attack path` when a referenced finding anchors a fully viable chain.
+**Management-language hard gate.** A product owner must understand the verdict without security training. `opening` is at most 52 words; each bullet body is **one sentence, aim for 20 words and never exceed 26** (the gate rejects 27+); `closing` is at most 220 characters. A body must **add what the `title` does not already say** — the weakness class, who reaches it, what they walk away with. Name the class in plain words, optionally followed by its standard term in parentheses: "database query injection (SQL injection)", "stored cross-site scripting (XSS)", "path traversal in archive upload (zip slip)", "mass assignment on account update", "hard-coded token signing key". Restating the title in other words and padding with a generic consequence clause ("granting complete control over all user accounts and data") is the failure mode this budget exists to prevent; cut the clause rather than the fact. `opening`, `title`, and `closing` state outcomes and name no weakness class: "account takeover", "customer data exposed", "server takeover", "active login stolen", "unapproved discounts". No field uses technology or implementation vocabulary — for example `JWT`, `RSA`, `API`, `endpoint`, `middleware`, `localStorage`, `HttpOnly`, `sandbox` — nor file paths, line numbers, code, backticks, config keys, library names, or CWE/CVE numbers. `refs` are audit provenance only: the renderer deliberately hides IDs, finding titles, locations, and abuse-case IDs in this block. Every reference must directly support the scenario; never pad a bullet with a loosely related Critical finding. The renderer shows only the plain-language badge `✓ verified attack path` when a referenced finding anchors a fully viable chain.
 
 ### `ms-anti-patterns.json` authoring contract (OPTIONAL — architecture anti-patterns)
 
@@ -333,7 +333,7 @@ Renders as the Figure 2 attack-paths table in §1. **Author EXACTLY this schema*
     {
       "class": "injection",
       "actor": "internet-anon",
-      "target": "data",
+      "target": "data", "scenario_title": "<mechanism and action or consequence, 10–60 chars>",
       "description": "<ONE generic sentence about the class as a whole, 30–280 chars — CWE-cluster level, not a per-vector walkthrough>",
       "findings": ["F-001", "F-014"],
       "impact": ["customer-data-exfiltration"]
@@ -350,7 +350,7 @@ Renders as the Figure 2 attack-paths table in §1. **Author EXACTLY this schema*
 - `impact[]` (business-impact slug from `data/business-impact-taxonomy.yaml`, 1–4, most severe first): `full-admin-takeover` · `full-server-compromise` · `customer-data-exfiltration` · `customer-session-hijack`.
 - `findings[]` (optional but expected, 1–12 `F-NNN`/`T-NNN` ids): the findings that belong to this class — this is HOW the entry "maps to ≥1 Critical/High finding". `attack_chains[]` (optional, up to 5 `cc-NN` ids): compound chains that materialise the class.
 
-Each `attack_paths[]` entry must map to ≥1 Critical or High finding via `findings[]`. Derive the list from your STRIDE analysis — do not invent paths not evidenced by findings. Omit a class entirely when it has no findings (do NOT emit it with an empty list); omit the whole file if no High/Critical findings exist (the section renders nothing).
+Each `attack_paths[]` entry must map to ≥1 Critical or High finding via `findings[]`. Derive the list from your STRIDE analysis — do not invent paths not evidenced by findings. Author `scenario_title` for Figure 1 as plain text naming the evidenced mechanism and action or consequence, ideally within 40 characters. Cover the linked findings rather than naming only one member of a broader group. Do not infer admin access, token theft, CORS involvement, or a vulnerability subtype from the class alone. Omit a class entirely when it has no findings; omit the whole file if no High/Critical findings exist.
 
 ### `requirements-compliance.md` authoring contract
 

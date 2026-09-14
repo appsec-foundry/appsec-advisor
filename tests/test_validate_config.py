@@ -169,6 +169,42 @@ class TestMainConfig:
         }
         assert validate_config._validate_main_config(data, "test") == []
 
+    def test_baseline_release_source_ok(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "baseline": {
+                "id": "aiscb-0.1.14",
+                "release": {"repository": "appsec-foundry/aiscb", "allowed_signers": ["aiscb-release ssh-ed25519 A"]},
+                "fallback_file": "data/baselines/secure-coding-baseline.md",
+            },
+        }
+        assert validate_config._validate_main_config(data, "test") == []
+
+    def test_baseline_release_needs_a_repository_and_a_key(self, validate_config):
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "baseline": {
+                "id": "aiscb-0.1.14",
+                "release": {"repository": "https://github.com/x", "allowed_signers": []},
+            },
+        }
+        errors = validate_config._validate_main_config(data, "test")
+        assert any("baseline.release.repository" in e for e in errors)
+        assert any("baseline.release.allowed_signers" in e for e in errors)
+
+    def test_baseline_release_beside_a_url_rejected(self, validate_config):
+        """A URL wins over the release, so the signature would go unchecked without anyone noticing."""
+        data = {
+            "external_context": {"enabled": False, "rest_url": None},
+            "baseline": {
+                "id": "aiscb-0.1.14",
+                "url": "https://example.invalid/baseline.md",
+                "release": {"repository": "appsec-foundry/aiscb", "allowed_signers": ["aiscb-release ssh-ed25519 A"]},
+            },
+        }
+        errors = validate_config._validate_main_config(data, "test")
+        assert any("cannot be combined" in e for e in errors)
+
     def test_organization_profile_disabled_ok(self, validate_config):
         data = {
             "external_context": {"enabled": False, "rest_url": None},

@@ -332,6 +332,59 @@ class TestAiExposure:
         pf.gen_ai_exposure(d)
         assert "T-008" not in capsys.readouterr().err
 
+    def test_a_non_llm_prompt_is_not_llm_prose(self, capsys):
+        """A bare "prompt" also names download, password and command prompts.
+        Only LLM-specific phrases put a threat's own prose on the LLM surface."""
+        d = {
+            "components": [{"id": "api", "name": "API Server"}],
+            "threats": [
+                {
+                    "id": "T-048",
+                    "title": "Open Redirect — src/auth/redirect.ts:12",
+                    "component": "api",
+                    "impact_description": "Victims land on a page that shows malicious download prompts.",
+                    "risk": "Medium",
+                },
+                {
+                    "id": "T-049",
+                    "title": "Coupon Executor Runs Without an Approval Step — src/chat/tools.ts:40",
+                    "component": "api",
+                    "impact_description": "A prompt injection in the chat reaches the coupon tool unreviewed.",
+                    "risk": "High",
+                },
+            ],
+        }
+        pf.gen_ai_exposure(d)
+        err = capsys.readouterr().err
+        assert "T-048" not in err
+        assert "T-049" in err
+
+    @pytest.mark.parametrize(
+        "impact,categorised",
+        [
+            ("Each login prompts the server to keep another token in memory.", False),
+            ("Each call is forwarded to a metered language model API.", True),
+        ],
+    )
+    def test_weak_rule_gate_reads_llm_specific_phrases_only(self, impact, categorised):
+        """A weak keyword ("unbounded") needs LLM context. A non-LLM "prompts"
+        in its prose is not that context; a language-model phrase is."""
+        d = {
+            "components": [{"id": "api", "name": "API Server"}],
+            "threats": [
+                {
+                    "id": "T-060",
+                    "title": "Unbounded Request Handling — src/api/handler.ts:22",
+                    "component": "api",
+                    "impact_description": impact,
+                    "risk": "High",
+                }
+            ],
+        }
+        out = pf.gen_ai_exposure(d)
+        refs = set() if out is None else {f["ref"] for r in json.loads(out)["ai_risks"] for f in r["findings"]}
+        assert ("T-060" in refs) is categorised
+
     def test_categorises_and_excludes_noise(self):
         out = pf.gen_ai_exposure(self._LLM_YAML)
         assert out is not None
@@ -1081,6 +1134,41 @@ class TestSecurityArchitectureCWEMapping:
         md = pf.gen_security_architecture(self._data(threats))
         sec_7_12 = self._h3_section(md, "6.12", "6.13")
         assert "F-300" not in sec_7_12, "F-300 has nothing to do with real-time controls"
+
+
+class TestSection612Surfaces:
+    """§6.12 collapses to "Not applicable" only when the model has no real-time,
+    LLM, GraphQL or gRPC surface. The stub used to claim "no AI/LLM surfaces"
+    beside a Socket.IO server and LLM findings (juice-shop 2026-09-11)."""
+
+    @staticmethod
+    def _section(yaml_data: dict) -> str:
+        md = pf.gen_security_architecture_v2({"security_controls": [], **yaml_data})
+        return md.split("### 6.12 ", 1)[1].split("### 6.13 ", 1)[0]
+
+    def test_realtime_component_gets_a_block_instead_of_the_stub(self):
+        section = self._section(
+            {"components": [{"id": "realtime-service", "name": "Socket.IO Real-Time Event Server"}], "threats": []}
+        )
+        assert "_Not applicable" not in section
+        assert "#### 6.12.1 Real-Time Channel Security" in section
+
+    def test_llm_tagged_finding_is_an_llm_surface(self):
+        threat = {
+            "id": "T-1",
+            "title": "Prompt Injection (routes/chat.ts:1)",
+            "cwe": "CWE-74",
+            "owasp_llm_ids": ["LLM01"],
+        }
+        section = self._section({"components": [{"id": "api", "name": "API Server"}], "threats": [threat]})
+        assert "_Not applicable" not in section
+        assert "LLM Integration Security" in section
+
+    def test_stub_claims_only_what_was_checked(self):
+        section = self._section({"components": [{"id": "api", "name": "API Server"}], "threats": []})
+        assert "§6.12 LOCKED" in section
+        assert "_Not applicable — no finding routed to this category" in section
+        assert "recon scan" not in section
 
 
 class TestSystemContextDiagram:

@@ -32,9 +32,12 @@ SURFACE_MAX_BYTES_RATCHET = {
     # a second possible `finalize-abuse` action, more text than the branch it
     # replaces. See the note in data/context-budgets.yaml.
     "thin_stage1d_runtime": 4000,
-    "thin_stage2_runtime": 3600,
-    "thin_stage3_runtime": 8000,
-    "thin_stage4_runtime": 3600,
+    # 3600 -> 3800, 8000 -> 8200, 3600 -> 3800 (2026-09-12): the post-Stage-1d
+    # runtimes join their asynchronous agent calls with wait_agent_calls.py.
+    # See the notes in data/context-budgets.yaml.
+    "thin_stage2_runtime": 3800,
+    "thin_stage3_runtime": 8200,
+    "thin_stage4_runtime": 3800,
     "thin_completion_runtime": 6000,
     "shared_threat_analysis_kernel": 16000,
     "architecture_analyst_role": 12000,

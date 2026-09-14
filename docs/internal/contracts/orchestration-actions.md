@@ -1,8 +1,6 @@
 # Orchestration Action Contract
 
-`scripts/orchestration_controller.py` is the deterministic control plane for
-the single full/rebuild and rerender runtimes. Its stdout is validated against
-`schemas/orchestration-action.schema.json` before the skill consumes it.
+`scripts/orchestration_controller.py` is the deterministic control plane for the single full/rebuild and rerender runtimes. Its stdout is one compact JSON line, validated against `schemas/orchestration-action.schema.json` before the skill consumes it. The printed action is the exact action the effective plan binds, so no field may be dropped from it to save context.
 
 ## Control-plane invariants
 
@@ -56,9 +54,12 @@ A run that does not finish cleanly still reaches one terminal state.
 `scripts/terminate_run.py` is that single terminator: it records `RUN_ABORTED`
 unless a controller verdict already stands, closes the checkpoint, terminalizes
 remaining calls, removes live markers, aggregates run issues, and releases the
-lock when the run owns it. A lock whose holder is alive under a different run
-ID is never released. The headless wrapper calls it on operator interrupt and
-on a failed exit.
+lock when the run owns it. All of that is scoped to the run that owns the
+directory: when the lock is held by a live run under a different run ID, the
+terminator changes nothing there — not the lock, and not the checkpoint, live
+markers or run issues that are the holder's state. The headless wrapper calls
+it on operator interrupt and on a failed exit, and `LOCK_BLOCKED` is a failed
+exit.
 
 Each context-v2 boundary that runs after a producer returned first cross-checks
 the surfaces describing the calls of the most recent dispatch action: accepted
@@ -94,23 +95,13 @@ compact runtime acting on controller actions, and no agent recurses through
 
 - `resolve_config.py` remains the source of truth for flags, paths, modes,
   models, depth, and output settings.
-- `orchestration_controller.py` owns thin-runtime selection, full/rebuild
-  preflight mutations, Stage-1a topology/finalization gate, Stage-1b candidate
-  promotion and coverage gate, Stage-1c post-analysis gates and checkpoint
-  freshness, abuse-case match/finalize, Stage-2 structural preparation,
-  rerender artifact preconditions, fixed next-action classification, and
-  compact dispatch values.
+- `orchestration_controller.py` owns thin-runtime selection, full/rebuild preflight mutations, Stage-1a topology/finalization gate, Stage-1b candidate promotion and coverage gate, Stage-1c post-analysis gates and checkpoint freshness, Stage-1 task transitions, abuse-case match/finalize, Stage-2 structural preparation, rerender artifact preconditions, fixed next-action classification, and compact dispatch values.
 - `prepare-stage2` returns an explicit renderer profile. Default Quick uses only
   the Management Summary specialist, enriched architecture uses both
   specialists, and the full renderer remains the bounded recovery profile.
   Every profile converges on the same controller-owned fragment validation,
   strict compose, prose-fix, and QA-autofix tail before Stage 3.
-- `SKILL-full-runtime.md`, `SKILL-thin-stage1-v2.md`,
-  `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and
-  `SKILL-rerender-runtime.md` own user-visible output, Task lifecycle, and
-  Level-0 producer calls for their modes. `SKILL-thin-stage3.md`,
-  `SKILL-thin-stage4.md`, and `SKILL-thin-completion.md` own the bounded review,
-  repair, release-gate, export, and cleanup calls selected by the controller.
+- `SKILL-full-runtime.md`, `SKILL-thin-stage1-v2.md`, `SKILL-thin-stage1d.md`, `SKILL-thin-stage2.md`, and `SKILL-rerender-runtime.md` own user-visible output, apply controller-owned Task lifecycle, and Level-0 producer calls for their modes. `SKILL-thin-stage3.md`, `SKILL-thin-stage4.md`, and `SKILL-thin-completion.md` own the bounded review, repair, release-gate, export, and cleanup calls selected by the controller.
 - `stride_dispatch_waves.py` owns deterministic bounded-wave scheduling,
   persisted two-attempt counters, resume selection, and the selected-component
   completion gate. It never changes component selection or analyzer prompts.
@@ -242,13 +233,7 @@ budget described below. Other producer failures follow the boundary-specific
 behavior in the table, and a deterministic producer's invalid output is never
 retried.
 
-Every dispatching action carries `next_boundary`, the command the caller must
-invoke once those jobs return. The caller invokes it verbatim and never derives
-the successor from the run's shape: quick depth skips actor discovery, so the
-boundary after recon differs by depth. Re-invoking a boundary whose semantic
-dispatch already ran repeats that dispatch without preparing its outputs a
-second time; only a changed action under the same job identity is rejected as a
-replay and aborts the run.
+Every dispatching action carries `next_boundary`, the command the caller must invoke once those jobs return. The caller invokes it verbatim and never derives the successor from the run's shape: quick depth skips actor discovery, so the boundary after recon differs by depth. Re-reading a dispatch-producing boundary returns the same action without preparing its outputs a second time; this does not authorize starting an already dispatched job again. A changed action under the same job identity is rejected as a replay and aborts the run. An early `context-v2-post-stride` call while its active wave remains unjoined returns `reject` with exit code 3 and no dispatch jobs. The caller joins the current wave before repeating that successor boundary; the existing deadline and retry budget remain authoritative.
 
 The generation is the default for eligible full/rebuild runs. `prepare` returns
 the plugin-owned `SKILL-thin-stage1-v2.md` instruction path, and the compact
@@ -314,6 +299,8 @@ bounded retry validates and redispatches only the affected component. Adding a
 semantic role without one of these enforcement paths is a controller contract
 error.
 
+Before boundary assessment, the architecture handoff reconciles evidenced OAuth/OIDC/SAML client endpoints into `.data-flows.json` through `scripts/discover_identity_providers.py` and binds the finalized component fingerprint. It validates the complete enriched fragment and repository evidence before replacing the accepted artifact. Ambiguous ownership or invalid enrichment blocks this handoff. This reconciliation adds no dispatch, network request, or separate sidecar.
+
 ## Security and schema rules
 
 - Action names and stage names are fixed enums.
@@ -327,6 +314,7 @@ error.
   the run, already reduced to the rows this invocation has. The session creates
   rows only from it and authors no label of its own, so the subjects a later
   update matches on cannot drift.
+- Every context-v2 Stage-1 action carries `task_progress`. Its `completed_rows` are an exact prefix of the fixed Stage-1 rows, and its optional `active_row` is the next row and matches the dispatched semantic role. The completion gate carries the full prefix and no active row. The session applies these explicit transitions through the host Task tools and never infers skipped rows from a later dispatch.
 - `semantic_role` and every role in `dispatch_jobs` resolve through the
   controller's closed registry to a plugin-owned agent definition, tool set,
   model route, and output contract. Jobs carry the controller-derived
@@ -353,11 +341,7 @@ error.
   A structured receipt records the relative path, schema identity, SHA-256,
   record count, and successful validation status from the exact validated
   bytes.
-- A command that rejects its own arguments answers `reject` with exit code 3,
-  writes no `RUN_ABORTED`, and leaves the run untouched; the caller corrects the
-  call and repeats it. Everything a command learns from disk — a changed
-  artifact, an invalid contract, a stale receipt — answers `abort`, ends the
-  run, and is never repeated.
+- A command with invalid arguments or an unmet sequencing precondition answers `reject` with exit code 3 and writes no `RUN_ABORTED`; the caller corrects the arguments, completes receipt verification, or joins the current STRIDE wave or a still-running call of the latest dispatch before repeating it. Invalid artifacts, contracts, and stale receipts answer `abort`, end the run, and are never repeated.
 - Receipt creation validates and hashes one exact byte snapshot. Before returning a dispatch, the controller freezes the emitted action hash, plan hash, plan-receipt hash, and complete receipt set in `.pending-dispatch.json`, validated by `schemas/pending-dispatch.schema.json`; failure to persist that state aborts the emission. Immediately before Agent dispatch, the thin runtime calls `verify-receipts` once. `--action-id` resolves the frozen emitted expectation rather than the mutable effective plan; `--receipt PATH SHA256` echoes the same complete set and stays accepted. Exactly one of the two forms is allowed. Naming one path twice with the same fingerprint verifies it once rather than failing. A missing validator, unreadable artifact, byte change, or one path carrying two fingerprints fails closed.
 - The completed verification is recorded in `.receipt-verification.json`, validated by `schemas/receipt-verification.schema.json`, and binds the same action, plan, plan receipt, and receipt-set fingerprints. A boundary after an unverified plan-bound dispatch answers `reject`, while missing, malformed, or stale controller state aborts as invalid disk state. The orchestrator verifies and repeats only the ordinary unverified boundary; it never reconstructs or repairs verification state.
 - Before returning a semantic dispatch, the controller removes prior bytes for
@@ -394,7 +378,12 @@ schema-incompatible generation and requires a new full or rebuild run.
 
 Full and rebuild use `SKILL-full-runtime.md`; rerender uses
 `SKILL-rerender-runtime.md`. Incremental, resume, dry-run, `--max-wall-time`,
-`--max-cost`, and `APPSEC_LIVE_PHASE=1` are unsupported until they have bounded
+and `APPSEC_LIVE_PHASE=1` are unsupported until they have bounded
 controller implementations. The router resolves these invocations without
 creating their output directory, then aborts before dispatch or run-state
 mutation with the supported alternatives.
+
+`--soft-budget` is admitted rather than refused. The router compares it against
+the cost of the last run of the same mode and depth and, for a mode that
+analyzes source, against the depth's floor; a budget that cannot hold the run
+aborts on the same read-only path, before the output directory exists.

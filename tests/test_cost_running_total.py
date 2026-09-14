@@ -15,6 +15,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -462,3 +463,272 @@ class TestSubagentUsage:
         result = crt.aggregate_running_total(tmp_path)
         assert result["cost_is_floor"] is True
         assert "≥$" in crt.format_banner(result)
+
+
+# ---------------------------------------------------------------------------
+# Stage stats — the token source that survives a host reporting no per-call usage
+# ---------------------------------------------------------------------------
+
+
+def _stage_record(name: str, tokens: int, call_ids: list[str], recorded_at: str = "2026-05-01T10:30:00Z") -> str:
+    return (
+        json.dumps(
+            {
+                "stage": 1,
+                "name": name,
+                "tokens": tokens,
+                "recorded_at": recorded_at,
+                "dispatch_event_ids": [f"call:{cid}" for cid in call_ids],
+            }
+        )
+        + "\n"
+    )
+
+
+def _usage_line(call_id: str, out_tokens: int, ts: str = "2026-05-01T10:05:00Z") -> str:
+    return (
+        f"{ts}  [abc]  INFO   recon-scanner  AGENT_USAGE  "
+        f"agent_call_id={call_id}  model=sonnet  in=0  out={out_tokens}  cache_write=0  cache_read=0\n"
+    )
+
+
+def _spawn_line(call_id: str, ts: str = "2026-05-01T10:04:00Z") -> str:
+    return f"{ts}  [abc]  INFO   recon-scanner  AGENT_SPAWN  agent_call_id={call_id}  model=sonnet\n"
+
+
+class TestStageStatsAreTheFallbackUsageSource:
+    """The rule: a call's tokens are counted once, from the best source that
+    covers it. ``AGENT_USAGE`` is priced and wins; the stage stats fill the
+    calls it does not reach and stay unpriced, because they carry no split into
+    the four token classes whose prices differ fiftyfold."""
+
+    def test_a_call_only_the_stage_stats_cover_is_counted_and_unpriced(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(_stage_record("recon_scanner", 5000, ["toolu_a"]))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 5000
+        assert result["unpriced_calls"] == 1
+        # The call has a usage source now, so it is no longer unaccounted for.
+        assert result["unmetered_agents"] == 0
+        # Unpriced means unpriced: no token class and no cost may move.
+        assert result["subagent_cost"] == 0.0
+        assert result["subagent_snapshot"].total() == 0
+
+    def test_a_call_the_host_reported_is_not_counted_twice(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a") + _usage_line("toolu_a", 5000))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(_stage_record("recon_scanner", 5000, ["toolu_a"]))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 0
+        assert result["subagent_snapshot"].total() == 5000
+
+    def test_a_half_covered_wave_contributes_only_its_remainder(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(
+            _spawn_line("toolu_a") + _spawn_line("toolu_b") + _usage_line("toolu_a", 4000),
+        )
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(
+            _stage_record("stride_analyzer", 10_000, ["toolu_a", "toolu_b"])
+        )
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        # The wave's 10k less the 4k the host already reported for toolu_a.
+        assert result["unpriced_tokens"] == 6000
+        assert result["unmetered_agents"] == 0
+
+    def test_a_record_reporting_nothing_leaves_its_calls_unmetered(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(_stage_record("Abuse Case Verification", 0, ["toolu_a"]))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 0
+        # Zero tokens is not evidence that the call was free.
+        assert result["unmetered_agents"] == 1
+
+    def test_a_record_naming_no_call_is_ignored(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(_stage_record("qa", 900, []))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 0
+        assert result["unmetered_agents"] == 1
+
+    def test_a_record_outside_the_run_window_is_ignored(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(
+            _stage_record("recon_scanner", 5000, ["toolu_a"], recorded_at="2026-05-01T09:00:00Z")
+        )
+
+        result = crt.aggregate_subagent_usage(agent_log, "2026-05-01T10:00:00Z", "2026-05-01T11:00:00Z")
+        assert result["unpriced_tokens"] == 0
+
+    def test_a_run_without_stage_stats_is_unchanged(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a") + _usage_line("toolu_a", 1000))
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 0
+        assert result["subagent_count"] == 1
+
+    def test_malformed_stage_stats_never_break_the_total(self, tmp_path):
+        crt = _load()
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(_spawn_line("toolu_a"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(
+            "not json\n" + json.dumps(["not", "an", "object"]) + "\n" + _stage_record("recon", 700, ["toolu_a"])
+        )
+
+        result = crt.aggregate_subagent_usage(agent_log)
+        assert result["unpriced_tokens"] == 700
+
+    def test_unpriced_tokens_reach_the_total_but_never_a_class_or_the_cost(self, tmp_path):
+        crt = _load()
+        _write_run(tmp_path)
+        agent_log = tmp_path / ".agent-run.log"
+        agent_log.write_text(agent_log.read_text() + _spawn_line("toolu_a", "2026-05-01T10:15:00Z"))
+        (tmp_path / crt.STAGE_STATS_FILENAME).write_text(
+            _stage_record("recon_scanner", 8000, ["toolu_a"], recorded_at="2026-05-01T10:16:00Z")
+        )
+
+        before = crt.aggregate_running_total(tmp_path)
+        (tmp_path / crt.STAGE_STATS_FILENAME).unlink()
+        without = crt.aggregate_running_total(tmp_path)
+
+        assert before["total_tokens"] == without["total_tokens"] + 8000
+        for field in ("in_tokens", "out_tokens", "cache_write", "cache_read", "cost_usd"):
+            assert before[field] == without[field]
+        assert before["cost_is_floor"] is True
+
+    def test_a_run_with_only_unpriced_tokens_reports_no_cost_rather_than_zero(self, tmp_path):
+        crt = _load()
+        result = {
+            "status": "ok",
+            "total_tokens": 366_902,
+            "cost_usd": 0.0,
+            "unpriced_tokens": 366_902,
+            "cost_is_floor": True,
+        }
+        banner = crt.format_banner(result)
+        # "≥$0.00" would read as "this run was nearly free".
+        assert "$0.00" not in banner
+        assert "cost n/a" in banner
+
+
+class TestPhaseTable:
+    """The end-of-run "where did it go" block, built from the PHASE_COST lines
+    the watchdog writes at every checkpoint phase change."""
+
+    def _log(self, tmp_path, body: str) -> Path:
+        (tmp_path / ".agent-run.log").write_text(body)
+        return tmp_path / ".agent-run.log"
+
+    def test_rows_carry_duration_and_floor_cost(self, tmp_path):
+        crt = _load()
+        log = self._log(
+            tmp_path,
+            "2026-09-05T17:40:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=8  duration=6m12s  delta=≥$3.01  total=≥$5.66\n"
+            "2026-09-05T18:00:14Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=9  duration=24m10s  delta=≥$12.40  total=≥$18.06\n",
+        )
+        table = crt.format_phase_table(log)
+        assert "phase 8" in table and "6m12s" in table and "≥$3.01" in table
+        assert "phase 9" in table and "24m10s" in table and "≥$12.40" in table
+
+    def test_a_phase_without_metered_usage_shows_its_duration_only(self, tmp_path):
+        crt = _load()
+        log = self._log(
+            tmp_path,
+            "2026-09-05T17:40:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=2  duration=6m12s\n",
+        )
+        table = crt.format_phase_table(log)
+        assert "phase 2" in table and "6m12s" in table
+        assert "$" not in table
+
+    def test_no_boundary_no_frame(self, tmp_path):
+        """A run that ended before its first phase boundary has nothing to say;
+        an empty header would read as "no phase cost anything"."""
+        crt = _load()
+        assert crt.format_phase_table(self._log(tmp_path, "")) == ""
+        assert crt.format_phase_table(tmp_path / "absent.log") == ""
+
+    def test_cli_prints_the_table(self, tmp_path):
+        self._log(
+            tmp_path,
+            "2026-09-05T18:00:14Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=9  duration=24m10s  delta=≥$12.40  total=≥$18.06\n",
+        )
+        out = subprocess.run(
+            [sys.executable, str(SCRIPT), str(tmp_path), "--format", "phases"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert "Cost by phase" in out and "phase 9" in out
+
+
+def test_usage_source_absent_is_exposed_for_the_live_view(populated_run_dir):
+    """Mid-run every reading is a floor because sub-agents report at completion.
+    This flag means something else — the host reports no per-call usage at all —
+    and is the only one of the two that must hide the figure."""
+    crt = _load()
+    result = crt.aggregate_running_total(populated_run_dir)
+    assert result["usage_source_absent"] is False
+    (populated_run_dir / ".agent-run.log").write_text(
+        (populated_run_dir / ".agent-run.log").read_text()
+        + "2026-05-01T10:06:00Z  [abc12345]  WARN   threat-analyst  TELEMETRY_MISMATCH"
+        "   code=usage_source_absent  job_id=-  agent_type=-\n"
+    )
+    assert crt.aggregate_running_total(populated_run_dir)["usage_source_absent"] is True
+
+
+def test_phase_table_is_scoped_to_the_current_run(tmp_path):
+    """`.agent-run.log` is append-only and `--rebuild` keeps it: without the
+    bound, a rebuilt run reports the phases of the run before it as its own."""
+    crt = _load()
+    (tmp_path / ".agent-run.log").write_text(
+        "2026-09-05T10:00:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+        "          phase=2  duration=9m00s  delta=≥$1.00  total=≥$1.00\n"
+        "2026-09-06T04:30:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+        "          phase=8  duration=6m12s  delta=≥$3.01  total=≥$5.66\n"
+    )
+    (tmp_path / ".scan-start-epoch").write_text(str(int(datetime(2026, 9, 6, 4, 0, tzinfo=timezone.utc).timestamp())))
+    out = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_path), "--format", "phases"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "phase 8" in out
+    assert "phase 2" not in out
+
+
+def test_the_phase_table_closes_with_the_soft_budget(tmp_path):
+    """Floor against budget, both marked `≥`: the exact result-object figure is
+    a different scope and must not be compared with a budget the run was steered
+    by on partial information."""
+    crt = _load()
+    (tmp_path / ".agent-run.log").write_text(
+        "2026-09-06T04:30:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+        "          phase=9  duration=24m10s  delta=≥$12.40  total=≥$18.06\n"
+    )
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"soft_budget_usd": 25.0}))
+    table = crt.format_phase_table(tmp_path / ".agent-run.log")
+    assert "run ≥$18.06 of the $25.00 soft budget (≥72%)" in table
+
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard"}))
+    assert "soft budget" not in crt.format_phase_table(tmp_path / ".agent-run.log")

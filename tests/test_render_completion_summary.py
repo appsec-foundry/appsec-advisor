@@ -599,6 +599,317 @@ class TestCostExtraction:
 # ---------------------------------------------------------------------------
 
 
+class TestManualReviewStep:
+    @staticmethod
+    def finding(number, cwe="CWE-78", title="Command injection in task runner", **overrides):
+        return {
+            "id": f"T-{number:03}",
+            "title": title,
+            "cwe": cwe,
+            "risk": "Critical",
+            "source": "stride",
+            "evidence_tier": "confirmed-exploitable",
+            "evidence_check": "verified",
+            "evidence": [{"file": "src/worker.ts", "line": 12}],
+            **overrides,
+        }
+
+    @staticmethod
+    def weakness(number, mechanism_id, *instances):
+        return {
+            "id": f"W-{number:03}",
+            "mechanism_id": mechanism_id,
+            "instances": [{"id": f"T-{n:03}"} for n in instances],
+        }
+
+    @staticmethod
+    def report(findings, weaknesses=()):
+        anchors = [t["id"].replace("T-", "F-").lower() for t in findings] + [w["id"].lower() for w in weaknesses]
+        return "\n".join(f'<a id="{anchor}"></a>' for anchor in anchors)
+
+    def render(self, findings, weaknesses=(), report=None, **model_fields):
+        return rcs.build_manual_review_step(
+            {"threats": findings, "weaknesses": list(weaknesses), **model_fields},
+            self.report(findings, weaknesses) if report is None else report,
+        )
+
+    def test_selects_three_distinct_decisions_with_real_finding_links(self):
+        findings = [
+            self.finding(41),
+            self.finding(1, "CWE-639", "Object owner not checked"),
+            self.finding(2, "CWE-862", "Missing ownership check on bulk update"),
+            self.finding(20, "CWE-321", "Hardcoded JWT signing key"),
+            self.finding(30, "CWE-306", "Unauthenticated admin console"),
+        ]
+        weaknesses = [
+            self.weakness(2, "route-by-route-authorization", 1, 2),
+            self.weakness(3, "secrets-committed-to-source", 20),
+            self.weakness(4, "missing-endpoint-authentication", 30),
+        ]
+        text = self.render(findings, weaknesses)
+        lines = text.splitlines()
+        assert lines[0] == rcs.TEAM_QUESTIONS_HEADER
+        # Same severity everywhere: the register's decisions come before the
+        # unclassified takeover signal (F-041), and the cap holds at three.
+        assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:]] == [["W-002"], ["W-003"], ["W-004"]]
+        assert re.findall(r"\b(F-\d+)\b", text) == ["F-001", "F-002", "F-020", "F-030"]
+        assert "which single policy layer should enforce ownership" in lines[1]
+        assert "who\nrotates".replace("\n", " ") in lines[2]
+        assert "intentionally public" in lines[3]
+        assert len(lines) == 4
+        # RA-13: plain IDs after each question, no link target and no report path.
+        assert all(line.startswith("- ") and line.endswith(")") for line in lines[1:])
+        assert "](" not in text and "/tmp/assessment" not in text
+        assert "T-" not in text
+        assert self.render(list(reversed(findings)), list(reversed(weaknesses))) == text
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"evidence_check": "refuted"},
+            {"risk": "Low", "effective_severity": "Critical"},
+            {"risk": "Informational"},
+            {"source": "architecture-coverage"},
+            {"status": "PASS"},
+            {"_status": "resolved"},
+            {"_status": "dormant"},
+            {"evidence": []},
+            {"evidence": "not a source location"},
+            {"id": "T-001](https://example.invalid)"},
+        ],
+    )
+    def test_excludes_unsupported_or_non_actionable_findings(self, overrides):
+        assert self.render([self.finding(1, **overrides)]) == ""
+
+    @pytest.mark.parametrize("state", ["ambiguous", "unchecked", "carried-unverified-shallower-depth", None])
+    def test_unproven_evidence_keeps_its_status(self, state):
+        text = self.render([self.finding(1, evidence_check=state)])
+        assert "F-001 (unproven)" in text
+        assert "could a takeover" in text
+        assert text.splitlines()[-1] == (
+            "- Unverified evidence: confirm or rule out what the code alone could not establish "
+            "before scheduling the fix. (F-001)"
+        )
+
+    def test_practice_evidence_does_not_become_confirmed_exploitation(self):
+        text = self.render([self.finding(1, evidence_tier="insecure-practice")])
+        assert "(unproven)" in text
+        # The insecure state is observed and verified: nothing left to confirm.
+        assert "Unverified evidence" not in text
+
+    def test_unverified_findings_close_the_block_outside_the_question_cap(self):
+        findings = [self.finding(n, "CWE-639", "Object owner not checked") for n in range(1, 5)]
+        findings.append(self.finding(9, "CWE-89", "SQL injection in invoice search", evidence_check="ambiguous"))
+        findings.append(self.finding(10, "CWE-328", "Unsalted MD5 password hash", evidence_tier="insecure-practice"))
+        weaknesses = [
+            self.weakness(1, "route-by-route-authorization", 1),
+            self.weakness(2, "secrets-committed-to-source", 2),
+            self.weakness(3, "missing-endpoint-authentication", 3),
+            self.weakness(4, "build-pipeline-mutable-refs", 4),
+        ]
+        lines = self.render(findings, weaknesses).splitlines()
+        assert len(lines) == 5
+        assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:4]] == [["W-001"], ["W-002"], ["W-003"]]
+        # The verified practice-tier F-010 is not listed; only the ambiguous F-009.
+        assert lines[4] == (
+            "- Unverified evidence: confirm or rule out what the code alone could not establish "
+            "before scheduling the fix. (F-009)"
+        )
+        # A verified-only model raises no closing line; six unverified findings list five.
+        assert "Unverified evidence" not in self.render(findings[:4], weaknesses[:1])
+        many = [self.finding(n, "CWE-89", "SQL injection", evidence_check="ambiguous") for n in range(1, 7)]
+        assert self.render(many).splitlines() == [
+            rcs.TEAM_QUESTIONS_HEADER,
+            "- Unverified evidence: confirm or rule out what the code alone could not establish "
+            "before scheduling the fix. (" + ", ".join(f"F-{n:03}" for n in range(1, 6)) + " +1 more)",
+        ]
+
+    @pytest.mark.parametrize(
+        "report",
+        [
+            "",
+            "[F-001](#f-001)",
+            '<!-- <a id="f-001"></a> -->',
+            '```html\n<a id="f-001"></a>\n```',
+            '~~~html\n<a id="f-001"></a>\n~~~',
+            '  ```html\n  <a id="f-001"></a>\n  ```',
+            '`<a id="f-001"></a>`',
+        ],
+    )
+    def test_only_links_to_delivered_anchors(self, report):
+        assert rcs.build_manual_review_step({"threats": [self.finding(1)]}, report) == ""
+
+    def test_no_generic_questions_for_empty_or_unmatched_models(self):
+        assert self.render([]) == ""
+        assert self.render([self.finding(1, "CWE-89", "SQL injection in invoice search")]) == ""
+
+    def test_build_time_execution_does_not_imply_application_takeover(self):
+        finding = self.finding(1, evidence=[{"file": ".github/workflows/package.yml", "line": 20}])
+        assert self.render([finding]) == ""
+        text = self.render([finding], [self.weakness(6, "build-pipeline-mutable-refs", 1)])
+        assert "Who can change build inputs or publish artifacts" in text
+        assert "takeover" not in text
+
+    def test_weakness_questions_come_from_mechanism_guidance_not_cwe_membership(self):
+        # AC-7: the same CWE-639 finding asks nothing on its own, asks the
+        # register's question under the mechanism that carries one, and stays
+        # silent under a mechanism whose fix is mechanical.
+        owner = self.finding(1, "CWE-639", "Object owner not checked")
+        assert self.render([owner]) == ""
+        text = self.render([owner], [self.weakness(2, "route-by-route-authorization", 1)])
+        assert text.splitlines()[1].endswith(" (W-002: F-001)")
+        assert "which single policy layer should enforce ownership" in text
+        assert self.render([owner], [self.weakness(2, "database-query-concatenation", 1)]) == ""
+        assert self.render([owner], [self.weakness(2, "no-such-mechanism", 1)]) == ""
+        questions = rcs.mechanism_team_questions()
+        assert set(questions) >= {"route-by-route-authorization", "secrets-committed-to-source"}
+        assert "database-query-concatenation" not in questions
+        assert all(q.endswith("?") and "\n" not in q for q in questions.values())
+
+    def test_weakness_line_links_three_worst_instances_and_counts_the_rest(self):
+        findings = [self.finding(n, "CWE-862", "Missing ownership check", risk="High") for n in range(1, 5)]
+        findings.append(self.finding(7, "CWE-639", "Object owner not checked"))
+        findings.append(self.finding(8, "CWE-639", "Refuted owner check", evidence_check="refuted"))
+        text = self.render(findings, [self.weakness(2, "route-by-route-authorization", 1, 2, 3, 4, 7, 8)])
+        # Critical F-007 first, then the High ones in id order; the refuted
+        # instance is neither linked nor counted.
+        assert re.findall(r"\b(F-\d+)\b", text) == ["F-007", "F-001", "F-002"]
+        assert text.splitlines()[1].endswith(" +2 more)")
+        assert "(unproven)" not in text
+
+    def test_weakness_link_requires_a_delivered_register_anchor(self):
+        owner = self.finding(1, "CWE-639", "Object owner not checked")
+        weaknesses = [self.weakness(2, "route-by-route-authorization", 1)]
+        text = self.render([owner], weaknesses, report=self.report([owner]))
+        assert "W-002" not in text
+        assert text.splitlines()[1].endswith(" (F-001)")
+
+    def test_model_question_requires_tool_authority(self):
+        no_tools = self.finding(1, "CWE-1427", "LLM prompt injection")
+        assert self.render([no_tools]) == ""
+        tools = {**no_tools, "evidence_summary": "The language model invokes a purchase tool without approval."}
+        assert "which business decisions need authorization outside the assistant?" in self.render([tools])
+
+    def test_ssrf_question_does_not_assert_process_takeover(self):
+        text = self.render([self.finding(1, "CWE-918", "Unrestricted URL fetching")])
+        assert "Server-side requests" in text
+        assert "takeover" not in text
+
+    @staticmethod
+    def chain_analysis(**overrides):
+        return {
+            "status": "completed",
+            "cases": [
+                {
+                    "chain_verdict": "inconclusive",
+                    "verification_complete": True,
+                    "unverified_steps": [],
+                    "matched_finding_ids": ["F-001", "F-002"],
+                    "steps": [
+                        {"finding_id": "F-001", "verdict": "confirmed", "unverified": False},
+                        {"finding_id": "F-002", "verdict": "inconclusive", "unverified": False},
+                    ],
+                    **overrides,
+                }
+            ],
+        }
+
+    def test_unresolved_investigated_chain_gets_priority_without_becoming_a_finding(self):
+        findings = [self.finding(1), self.finding(2, "CWE-89", "SQL injection in invoice search")]
+        text = self.render(findings, abuse_case_analysis=self.chain_analysis())
+        assert "Unproven attack chain" in text.splitlines()[1]
+        assert "F-001" in text.splitlines()[1] and "F-002" in text.splitlines()[1]
+        assert "Critical" not in text
+        assert "takeover" not in text  # Already addressed by the chain question.
+
+    def test_multiple_inconclusive_chains_are_stable_and_do_not_repeat_the_question(self):
+        findings = [self.finding(n) for n in range(1, 5)]
+        analysis = self.chain_analysis()
+        analysis["cases"].append(
+            self.chain_analysis(
+                matched_finding_ids=["F-003", "F-004"],
+                steps=[{"finding_id": "F-004", "verdict": "inconclusive", "unverified": False}],
+            )["cases"][0]
+        )
+        text = self.render(findings, abuse_case_analysis=analysis)
+        assert text.count("Unproven attack chain") == 1
+        analysis["cases"].reverse()
+        assert self.render(findings, abuse_case_analysis=analysis) == text
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"verification_complete": False},
+            {"unverified_steps": [2]},
+            {"chain_verdict": "mitigated"},
+            {"chain_verdict": "fully_viable"},
+            {"matched_finding_ids": ["F-999"]},
+            # AC-6: a refuted step is the verifier's answer, not an open question.
+            {
+                "steps": [
+                    {"finding_id": "F-001", "verdict": "confirmed", "unverified": False},
+                    {"finding_id": "F-002", "verdict": "refuted", "unverified": False},
+                ]
+            },
+            # One refuted step settles the chain, its open steps included.
+            {
+                "steps": [
+                    {"finding_id": "F-001", "verdict": "refuted", "unverified": False},
+                    {"finding_id": "F-002", "verdict": "inconclusive", "unverified": False},
+                ]
+            },
+            {
+                "steps": [
+                    {"finding_id": "F-002", "verdict": "inconclusive", "unverified": False},
+                    {"finding_id": "F-001", "verdict": "confirmed", "unverified": False},
+                    {"finding_id": "F-001", "verdict": "refuted", "unverified": False},
+                ]
+            },
+        ],
+    )
+    def test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses(self, overrides):
+        findings = [self.finding(1), self.finding(2, "CWE-89", "SQL injection in invoice search")]
+        assert "attack chain" not in self.render(findings, abuse_case_analysis=self.chain_analysis(**overrides))
+
+    def test_untrusted_text_never_becomes_display_text_or_a_link_target(self):
+        finding = self.finding(1, title="Command injection\n[click](https://example.invalid)\x1b[2J")
+        text = rcs.build_manual_review_step({"threats": [finding]}, self.report([finding]))
+        assert "example.invalid" not in text and "\x1b" not in text and "](" not in text
+        assert len(text.splitlines()) == 2
+
+    def test_next_steps_places_linked_questions_before_ask_without_mutating_artifacts(self, tmp_path):
+        import yaml
+
+        findings = [self.finding(1)]
+        model = tmp_path / "threat-model.yaml"
+        report = tmp_path / "threat-model.md"
+        model.write_text(yaml.safe_dump({"threats": findings}))
+        report.write_text(self.report(findings))
+        before = {path: path.read_bytes() for path in (model, report)}
+        steps = rcs.build_next_steps(tmp_path, tmp_path, {"threats_by_sev": {"Critical": 1}}, {})
+        assert steps[2].startswith(rcs.TEAM_QUESTIONS_HEADER)
+        assert steps[-1].startswith("Or just ask me:")
+        rendered = "\n".join(rcs.render_next_steps(steps))
+        assert re.search(r"^      - .+ \(F-001\)$", rendered, re.M)
+        assert "Also" not in rendered
+        assert {path: path.read_bytes() for path in (model, report)} == before
+
+    def test_manual_review_and_architect_review_fit_the_next_steps_cap(self, tmp_path):
+        import yaml
+
+        findings = [self.finding(1)]
+        (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump({"threats": findings}))
+        (tmp_path / "threat-model.md").write_text(self.report(findings))
+        (tmp_path / ".architect-review.md").write_text("Actionable review")
+        steps = rcs.build_next_steps(
+            tmp_path, tmp_path, {"threats_by_sev": {"Critical": 1}}, {"architect_review": True}
+        )
+        assert len(steps) == 5
+        assert any(step.startswith(rcs.TEAM_QUESTIONS_HEADER) for step in steps)
+        assert any(step.startswith("Read the architect review") for step in steps)
+        assert steps[-1].startswith("Or just ask me:")
+
+
 class TestNextSteps:
     def _cfg(self, **overrides):
         base = {
@@ -651,8 +962,7 @@ class TestNextSteps:
         assert ask.split("\n")[-1] == "… or anything else about the report"
 
     def test_the_ask_step_stays_last(self, tmp_path):
-        # It is the only multi-line entry, so a bullet after it would be cut
-        # off from the top of the list by its example block.
+        # The open-ended question examples follow the focused actions.
         cfg = self._cfg(architect_review=True)
         (tmp_path / ".architect-review.md").write_text("x", encoding="utf-8")
         (tmp_path / ".architect-status.json").write_text('{"technical_defects": 3}', encoding="utf-8")
@@ -1252,6 +1562,18 @@ class TestRunStatisticsStageRows:
         assert stats["total_secs_from_stages"] == 120
         assert len(stats["stage_rows"]) == 2
 
+    def test_deterministic_row_covers_no_dispatch(self, tmp_path: Path):
+        """A zero-token `deterministic:` row ran no agent. Counting it as one
+        dispatch hid an unrecorded agent (juice-shop 2026-09-11 showed 22 of 23
+        where 21 of 23 agents were recorded)."""
+        (tmp_path / ".stage-stats.jsonl").write_text(
+            '{"stage": 1, "agent": "x:stride", "model": "sonnet", "duration_ms": 1000, "dispatch_count": 3}\n'
+            '{"stage": 3, "agent": "deterministic:qa_checks.py", "model": "none", "duration_ms": 0, "tokens": 0}\n'
+        )
+        (tmp_path / ".agent-run.log").write_text("")
+        stats = rcs.extract_run_statistics(tmp_path, {})
+        assert stats["recorded_dispatches"] == 3
+
     def test_wall_seconds_file(self, tmp_path: Path):
         (tmp_path / ".scan-wall-seconds").write_text("450\n")
         (tmp_path / ".agent-run.log").write_text("")
@@ -1481,6 +1803,35 @@ class TestRenderRunStatistics:
         cost = {"totals": {"total_tokens": 0, "cost": 0}, "billing": "api"}
         out = "\n".join(rcs.render_run_statistics(stats, cost, verbose=True))
         assert "not captured by Claude Code hooks" in out
+
+    def test_subagent_tokens_are_reported_when_session_stop_carried_none(self):
+        """`verify_run_costs` reads only SESSION_STOP. Where the host persists no
+        transcript for the emitting session it carries nothing, and this summary
+        said "not captured" for a run whose sub-agents spent hundreds of
+        thousands of tokens — while the phase banner counted them. One figure."""
+        stats = {
+            "assess_secs": None,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": 10,
+            "wall_secs": 10,
+            "timing": {"net_compute_secs": 10, "wall_secs": 10, "standby_secs": 0, "stages": []},
+        }
+        # Both shapes this host produces: totals that are zero, and a
+        # verify_run_costs that could not total the run at all.
+        for cost in (
+            {"totals": {"total_tokens": 0, "cost": 0}, "billing": "api", "unpriced_tokens": 366902},
+            {"error": "No SESSION_STOP entries with token data found", "unpriced_tokens": 366902},
+        ):
+            out = "\n".join(rcs.render_run_statistics(stats, cost, verbose=True))
+            assert "366,902" in out
+            assert "not captured by Claude Code hooks" not in out
+            # Sub-agents only, and no cost may be implied from it.
+            assert "not priceable" in out
+            assert "orchestrator's own spend is not included" in out
 
     def test_cost_none_unavailable_line(self):
         stats = {
@@ -1931,31 +2282,36 @@ class TestVerdictEcho:
     def test_render_verdict_absent_section_omits_block(self):
         assert rcs.render_verdict("# Threat Model\n\n## 1. Scope\nbody\n", {}) == []
 
-    def test_render_verdict_drops_per_bullet_finding_refs(self):
+    def test_render_verdict_swaps_bullets_for_the_worst_case_table(self):
         md = _VERDICT_MD.replace(
             "- **Admin takeover via forged JWT** — key committed at lib/insecurity.ts:23.\n",
             "- **Admin takeover via forged JWT** — key committed. "
             "*(🔴 [F-006](#f-006) — Hardcoded Key (`lib/insecurity.ts:23`), "
             "🔴 [F-008](#f-008) — Insecure JWT → [W-004](#w-004))* — ✓ verified attack path\n",
         )
-        joined = "\n".join(rcs.render_verdict(md, {}))
-        # The bullet's own sentence and any trailing marker survive …
-        assert "Admin takeover via forged JWT" in joined
-        assert "✓ verified attack path" in joined
-        # … but the reference clause goes in full — ids, titles, locations.
-        assert "F-006" not in joined
-        assert "W-004" not in joined
+        verdict = {
+            "bullets": [
+                {"title": "Admin takeover via forged JWT", "classes": ["Hard-coded Key"], "verified_attack_path": True}
+            ]
+        }
+        joined = "\n".join(rcs.render_verdict(md, {}, verdict))
+        assert "  ✓  Admin takeover via forged JWT  via Hard-coded Key" in joined
+        assert rcs.summarize_threat_model.WORST_CASE_LEGEND in joined
+        # The sentence and the reference clause (ids, titles, locations) stay in the report.
+        assert "key committed" not in joined
+        assert "F-006" not in joined and "W-004" not in joined
         assert "lib/insecurity.ts:23" not in joined
+        # Lines outside the bullet list are untouched.
+        assert "**Risk distribution:** 🔴 Critical: 24" in joined
+        assert "Rotate the key before production." in joined
 
-    def test_strip_verdict_refs_leaves_plain_italic_parenthetical(self):
-        line = "Total findings *(including design risks)* remain unchanged."
-        assert rcs._strip_verdict_refs(line) == line
+    def test_render_verdict_without_persisted_bullets_keeps_the_report_lines(self):
+        joined = "\n".join(rcs.render_verdict(_VERDICT_MD, {}))
+        assert "- **Admin takeover via forged JWT** — key committed at lib/insecurity.ts:23." in joined
 
-    def test_strip_verdict_refs_is_idempotent(self):
-        line = "- **X** — Y. *([T-015](#t-015) — RCE)*"
-        once = rcs._strip_verdict_refs(line)
-        assert once == "- **X** — Y."
-        assert rcs._strip_verdict_refs(once) == once
+    def test_render_verdict_collapses_blank_runs(self):
+        body = rcs.render_verdict(_VERDICT_MD.replace("\n\n", "\n\n\n\n"), {})[3:]
+        assert body and all(a or b for a, b in zip(body, body[1:]))
 
     def _output_dir_with_verdict(self, tmp_path: Path) -> Path:
         (tmp_path / "threat-model.md").write_text(_VERDICT_MD)
@@ -2233,3 +2589,13 @@ class TestRequestedDeliverablesAreReported:
         assert gated - skill_owned == produced, (
             "every gated deliverable needs a deterministic producer or an explicit exemption"
         )
+
+
+class TestHeadlessWrapperForwardsVerbose:
+    """`run-headless.sh` consumes `--verbose` for its own console tails. It has
+    to forward it to the skill as well, or the detail this module gates on the
+    resolved `verbose` flag is unreachable outside an interactive run."""
+
+    def test_verbose_reaches_the_skill_prompt(self):
+        body = (REPO_ROOT / "scripts" / "run-headless.sh").read_text(encoding="utf-8")
+        assert 'PROMPT="$PROMPT $VERBOSE"' in body

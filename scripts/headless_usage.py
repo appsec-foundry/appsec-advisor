@@ -159,6 +159,11 @@ def format_table(usage: dict[str, Any]) -> str:
 
     Indentation matches the surrounding run-headless summary blocks (two spaces
     for the heading, four for rows).
+
+    The heading names sub-agent coverage because the table cannot show it: a run
+    whose sub-agents all inherit the session tier prints a single model row, and
+    that reads as "only the orchestrator was counted". Saying what the numbers
+    span is the difference between a complete figure and one that looks partial.
     """
     models = usage["models"]
     headers = ["model"] + [label for _, label in _COLUMNS] + ["cost"]
@@ -177,7 +182,10 @@ def format_table(usage: dict[str, Any]) -> str:
             out += "  " + cells[i].rjust(widths[i])
         return "    " + out.rstrip()
 
-    lines = ["  Token usage & cost — Claude Code accounting, same source as /cost", _line(headers)]
+    lines = [
+        "  Token usage & cost — the whole run incl. sub-agents; Claude Code accounting, same source as /cost",
+        _line(headers),
+    ]
     lines.extend(_line(r) for r in rows)
     if len(rows) != 1:
         # A single-model run needs no separator: its row and the total are equal.

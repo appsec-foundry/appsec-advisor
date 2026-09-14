@@ -77,6 +77,7 @@ or attack technique does not make an actor distinct.
 **Print:** `[actor-discoverer] Step 1/3 — Checking discovery cache…`
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 if [ -f "$OUTPUT_DIR/.actors-discovered.json" ]; then
   python3 -c "
 import json, sys
@@ -229,6 +230,8 @@ Before writing, re-check each proposal:
 Immediately after writing `.actors-discovered.json`, run:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
   actors_discovered "$OUTPUT_DIR/.actors-discovered.json"
 ```

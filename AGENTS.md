@@ -41,12 +41,14 @@ reviewed implementation work.
 
 - Trace a behavior through its producer, contract, consumer, validation, tests,
   permissions, and cleanup impact before changing it.
+- For a development fix, state the observed symptom, the producing plugin location, the violated invariant, and how the proposed change prevents the failure class. Treat run artifacts as reproduction evidence, never as the implementation target. Apply this process to operator-reported content defects even when no run-issue detector recorded them.
 - Every structured artifact exchanged between stages or delivered to users has
   a defined shape and validation path; contracted artifacts use a schema.
 - Fix incorrect findings and output in the producer, prompt, heuristic,
   renderer, or deterministic enforcer that creates them.
 - Do not hide a defect by patching a rendered report, weakening schemas or QA,
   or changing fixture expectations. Do not ship LLM-authored placeholders.
+- Do not respond to a failure by blindly raising budgets, timeouts, retry counts, or size limits. Diagnose the root cause from logs and measured usage first. Fix unnecessary work or faulty behavior at its source. Increase a limit only when evidence shows that legitimate work requires it. Document that evidence and verify the previously failing case.
 - A renderer or QA autofix normalizes only what its contract assigns to it.
 - Change report structure atomically across the section registry, templates,
   schemas, producers, composer, QA, and tests.
@@ -63,14 +65,14 @@ reviewed implementation work.
   updates to `data/required-permissions.yaml` and its tests.
 - Production behavior works for arbitrary repositories. Fixture-specific names
   and exclusions stay in fixtures or scoped tests.
+- Prove a plugin fix with a neutral reproduction that fails before the change, a variant of the same mechanism with different incidental names or paths, and a negative case that must retain its behavior. Use the original run as additional replay evidence. A passing target-name check or one repaired run does not establish generality.
+- Report run recovery and permanent plugin fixes separately. A successful retry, fragment repair, or rerender does not close the producing plugin defect. State any missing regression evidence before claiming the defect is fixed.
 
 ### Keep the repository maintainable
 
 - Write code comments, docstrings, commits, and repository documents in English.
 - For new or substantively edited Markdown prose, follow `docs/internal/documentation-style.md`. Keep each prose paragraph, including prose in list items, on one source line; separate paragraphs with one blank line; and do not reflow untouched prose solely for formatting. Local contracts override the external style reference.
-- `CHANGELOG.md` contains one short sentence per user-visible change. Fold an
-  unreleased feature and its fixes into one bullet, and omit internal machinery,
-  ordinary refactors, test-only work, doc edits, and routine maintenance.
+- `CHANGELOG.md` records only changes that materially affect users' capabilities, results, workflows, compatibility, or reliability. Omit internal implementation details, minor cosmetic changes, refactors, tests, documentation edits, and routine maintenance. Before adding a bullet, review all `Unreleased` entries and merge changes describing the same user-facing outcome, including fixes to unreleased features. Add a separate bullet only for a distinct relevant outcome. Keep each bullet to one short sentence describing the user impact.
 - Documentation states what something does, when it applies, and what breaks if
   it is wrong. Algorithms, tie-breaking, limits, and fallbacks stay in their
   authoritative technical source.
@@ -115,14 +117,7 @@ reviewed implementation work.
 
 - Run the relevant subset from `CONTRIBUTING.md` → Targeted tests. If the
   repository is already red, capture a baseline and distinguish regressions.
-- Match broader gates to the change's blast radius instead of running them by
-  default. Run `make lint` after changing Python in `scripts/`, `tests/`, or
-  `hooks/`. Run `make test` when a change affects shared runtime behavior or
-  cannot be covered confidently by targeted tests. Run `make check` for
-  cross-cutting changes that span multiple runtime modules or contracts and at
-  release boundaries. Documentation, examples, fixtures, and isolated tests do
-  not require the full suite when their applicable validators and targeted tests
-  pass.
+- Match broader gates to the change's blast radius instead of running them by default. Run `make lint` after changing Python in `scripts/`, `tests/`, or `hooks/`. Use `make validate test-quick` and the relevant `make test-group GROUP=<name>` for bounded implementation changes, adding tests for affected producers and consumers. Run `make check` when a change affects shared runtime behavior, spans multiple runtime modules or contracts, or cannot be covered confidently by targeted tests, and at release boundaries. It includes the complete suite without coverage; do not also run `make test-full` or `make test` unless a separate coverage measurement is needed. `make test` retains the complete coverage gate. Documentation, examples, fixtures, and isolated tests do not require the full suite when their applicable validators and targeted tests pass. Agent and skill Markdown is runtime input, not a documentation-only exception.
 - Add a matching `tests/test_*.py` for each new `scripts/` module and cover core
   behavior and failure paths.
 - For heuristic or scanner changes, use application-agnostic signals, neutral

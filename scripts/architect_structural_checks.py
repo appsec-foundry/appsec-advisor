@@ -570,6 +570,9 @@ def _already_triage_flagged(threat: dict[str, Any]) -> bool:
 
 
 def check_cvss_risk(threats_merged_path: Path) -> dict[str, Any]:
+    # FE-1's single permit decision; imported lazily as in merge_threats.
+    from validate_intermediate import cvss_v4_permitted
+
     merged = _load_json(threats_merged_path) or {}
     threats = merged.get("threats", []) if isinstance(merged, dict) else []
 
@@ -616,9 +619,11 @@ def check_cvss_risk(threats_merged_path: Path) -> dict[str, Any]:
                 )
             continue
 
-        # Dimension D4.b: Qualitative Critical with no CVSS and not an
-        # architectural_violation, sourced from stride → flag.
-        if risk == "Critical" and source == "stride" and not arch_violation:
+        # Dimension D4.b: a Critical finding (effective severity) that FE-1 lets
+        # carry a CVSS vector — STRIDE-sourced, eligible CWE, an evidence line —
+        # but carries none, and is not an architectural violation → flag. An
+        # ineligible CWE or a finding without a line has no CVSS by contract.
+        if _threat_severity(t) == "Critical" and source == "stride" and not arch_violation and cvss_v4_permitted(t):
             if _already_triage_flagged(t):
                 continue
             findings.append(

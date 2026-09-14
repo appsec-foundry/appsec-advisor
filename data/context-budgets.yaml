@@ -63,13 +63,26 @@ surfaces:
     max_bytes: 4000
   thin_stage2_runtime:
     path: skills/create-threat-model/SKILL-thin-stage2.md
-    max_bytes: 3600
+    # 3600 -> 3800 (2026-09-12): the runtime joins its asynchronous renderer
+    # and repair calls with wait_agent_calls.py instead of leaving the wait to
+    # the orchestrator, whose turn then filled with log polling and status
+    # prose (run 65f6ccdc: 111 messages during the render, none during the
+    # waiter-joined STRIDE waves). The join adds 268 bytes (3112 -> 3380)
+    # where 128 remained under the headroom guard; 3800 is the smallest
+    # 200-byte step that holds it (88.9%).
+    max_bytes: 3800
   thin_stage3_runtime:
     path: skills/create-threat-model/SKILL-thin-stage3.md
-    max_bytes: 8000
+    # 8000 -> 8200 (2026-09-12): the QA-reviewer and fixer join, for the same
+    # reason as thin_stage2_runtime. It adds 256 bytes (7052 -> 7308) where
+    # 148 remained under the guard; smallest 200-byte step (89.1%).
+    max_bytes: 8200
   thin_stage4_runtime:
     path: skills/create-threat-model/SKILL-thin-stage4.md
-    max_bytes: 3600
+    # 3600 -> 3800 (2026-09-12): the editorial-wave join, for the same reason
+    # as thin_stage2_runtime. It adds 194 bytes (3207 -> 3401) where 33
+    # remained under the guard; smallest 200-byte step (89.5%).
+    max_bytes: 3800
   thin_completion_runtime:
     path: skills/create-threat-model/SKILL-thin-completion.md
     max_bytes: 6000

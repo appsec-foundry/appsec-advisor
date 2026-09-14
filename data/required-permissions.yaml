@@ -35,6 +35,8 @@
 # compound commands / pipelines / VAR=$(...) chains still prompt. A single
 # Bash(*) is the only way to keep an interactive run prompt-free. It is wide
 # open by design; the guards above are what bound the blast radius.
+# Maintainer commands such as scripts/run_tests.py and make test-group use
+# the existing Bash(*) rule; test selection adds no permission entries.
 #
 # Placeholders expanded at check-time:
 #   ${OUTPUT_DIR}   — from --output-dir / $OUTPUT_DIR / <repo>/docs/security
@@ -55,7 +57,7 @@ required:
 
   # --- File access — scoped to target repo, output dir, and plugin only ---
   - entry: "Read(${REPO_ROOT}/**)"
-    reason: "agents and deterministic resolvers read scanned-repository evidence and optional data-only inputs such as .appsec/trust-boundaries.yaml"
+    reason: "agents and deterministic resolvers read scanned-repository evidence, including external entity roles, sensitive-data handling, asset locations, and optional data-only inputs such as .appsec/trust-boundaries.yaml"
     category: file
 
   - entry: "Read(${PLUGIN_ROOT}/**)"
@@ -67,15 +69,15 @@ required:
     category: file
 
   - entry: "Read(${OUTPUT_DIR}/**)"
-    reason: "agents re-read non-dotfile artifacts and subdirectory sidecars under OUTPUT_DIR"
+    reason: "agents read bounded .dispatch-context/editorial/blocks-<batch>.json packets and other subdirectory artifacts under OUTPUT_DIR"
     category: file
 
   - entry: "Read(${OUTPUT_DIR}/.*)"
-    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.recon-summary.md, finalized components/data flows, immutable boundary input, candidates, canonical boundaries, coverage/diagnostics, .stride-*.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents re-read direct dotfile sidecars under OUTPUT_DIR (.run-issues.json and .run-bugs.json for diagnosis-bound recommendations, .recon-summary.md, finalized components/data flows, immutable boundary input, candidates, canonical boundaries, coverage/diagnostics, .stride-*.json, etc.); Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"
-    reason: "deterministic preparers, context projectors, build_stride_evidence_bundles.py, compose_threat_model.py, fragment writers, and annotators write under OUTPUT_DIR, including bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
+    reason: "deterministic preparers, context projectors, build_stride_evidence_bundles.py, compose_threat_model.py, fragment writers, and annotators write under OUTPUT_DIR, including run-bound .dispatch-context/editorial/plan-<batch>.json packets and gate comparison receipts, bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"
@@ -95,7 +97,7 @@ required:
     category: file
 
   - entry: "Edit(${PLUGIN_ROOT}/**)"
-    reason: "fix-run-issues skill applies edit_file actions to plugin agent/config files via the Edit tool (targets resolved relative to $CLAUDE_PLUGIN_ROOT)"
+    reason: "explicit maintainer development edits plugin source after root-cause and contract review; fix-run-issues currently emits manual guidance only"
     category: file
 
   - entry: "Read(${REPO_ROOT}/.eval-out/**)"
@@ -129,6 +131,7 @@ required:
   # sidecars do NOT need their own per-file entries — the /.*  entries cover them.
 
   # --- Shell — one entry covers all commands without per-command maintenance ---
+  # enrichment_pass.py uses this shell rule and the existing OUTPUT_DIR YAML write rule.
   #
   # Why Bash(*) instead of per-command entries:
   #   Claude Code's Bash allow-list matches only the FIRST TOKEN of a simple command.
@@ -143,5 +146,5 @@ required:
   #   containment boundary. Real containment lives in the guard scripts — see the
   #   header comment at the top of this file.
   - entry: "Bash(*)"
-    reason: "all shell commands used by agents, compact runtime instructions, deterministic orchestration_controller.py, config_iac_scanner.py, build_threat_modeling_context.py, build_stride_evidence_bundles.py, validate_recon_summary.py, validate_threat_modeling_context.py, and prepare_trust_boundary_context.py invocations, mitigation-quality gates, and scripts; per-command entries cannot cover compound commands and variable-assignment chains — see comment above"
+    reason: "all shell commands used by agents, recommend_fixes.py --diagnosis recommendation refresh, compact runtime instructions, deterministic editorial_gate.py prepare/check/close, build_editorial_context.py, apply_editorial_plan.py, orchestration_controller.py, config_iac_scanner.py, build_threat_modeling_context.py, build_stride_evidence_bundles.py, validate_recon_summary.py, validate_threat_modeling_context.py, and prepare_trust_boundary_context.py invocations, mitigation-quality gates, and scripts; per-command entries cannot cover compound commands and variable-assignment chains — see comment above"
     category: shell

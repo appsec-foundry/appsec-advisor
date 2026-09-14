@@ -86,6 +86,24 @@ def test_validate_receipt_rejects_post_boundary_drift(tmp_path: Path):
         finalizer.validate_receipt(output)
 
 
+def test_finalizer_separates_orm_logic_from_store_before_receipting(tmp_path):
+    repo, output = tmp_path / "repo", tmp_path / "out"
+    repo.mkdir()
+    output.mkdir()
+    (repo / "models").mkdir()
+    (repo / "models/account.ts").write_text(
+        "import { DataTypes } from 'sequelize'; db.define('Account', {name: DataTypes.STRING});"
+    )
+    _write_components(output, [_component("store", tier="data", framework="sequelize", paths=["models/**"])])
+    first, receipt = finalizer.finalize(repo, output)
+    assert receipt["injected_component_ids"] == ["sequelize-data-access"]
+    assert first["components"][0]["tier"] == "data"
+    assert first["components"][0]["framework"] is None
+    assert first["components"][1]["tier"] == "application"
+    assert first["components"][1]["paths"] == ["models/account.ts"]
+    assert finalizer.finalize(repo, output)[0] == first
+
+
 def test_validate_receipt_rejects_false_injected_component_claim(tmp_path: Path):
     repo = tmp_path / "repo"
     output = tmp_path / "out"
@@ -156,3 +174,37 @@ def test_validate_receipt_rechecks_paths_against_repository(tmp_path: Path):
 
     with pytest.raises(ValueError, match="matches no repository entry"):
         finalizer.validate_receipt(output, repo)
+
+
+def test_existing_auth_inventory_adds_login_handler_before_finalization(tmp_path):
+    (tmp_path / "routes").mkdir()
+    (tmp_path / "routes/login.ts").write_text("export function login() {}\n")
+    (tmp_path / "routes/token.ts").write_text("export const token = true\n")
+    rows = [_component("auth", paths=["routes/token.ts"])]
+    result, injected = manifest.reconcile_inventory(rows, tmp_path)
+    assert not injected
+    assert "routes/login.ts" in result[0]["paths"]
+    assert manifest.reconcile_inventory(result, tmp_path)[0] == result
+
+
+def test_embedded_document_store_is_not_covered_by_sql_store(tmp_path):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"marsdb": "1.0"}}))
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data/documents.ts").write_text(
+        "import Engine from 'marsdb'\nconst records = new Engine.Collection('records')\n"
+    )
+    rows = [_component("database", framework="sqlite", tier="data", paths=["data/sqlite.db"])]
+    result, injected = manifest.reconcile_inventory(rows, tmp_path)
+    assert [c["framework"] for c in injected] == ["marsdb"]
+    assert len(result) == 2
+    assert manifest.reconcile_inventory(result, tmp_path)[1] == []
+    (tmp_path / "data/documents.ts").write_text("// import Engine from 'marsdb'\n// new Engine.Collection('records')\n")
+    assert manifest.reconcile_inventory(rows, tmp_path)[1] == []
+
+
+def test_orm_cannot_be_finalized_as_database_engine(tmp_path):
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models/account.ts").write_text("export const account = true\n")
+    _write_components(tmp_path, [_component("database", tier="data", framework="sequelize", paths=["models/**"])])
+    with pytest.raises(ValueError, match="ORM"):
+        finalizer.finalize(tmp_path, tmp_path)

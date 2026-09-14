@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import _url_guard  # noqa: E402
 import baseline_check as bc  # noqa: E402
+import baseline_release as br  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 PLUGIN_ROOT = HERE.parent
@@ -248,6 +249,7 @@ def _baseline_block(config: dict, loaded: dict, *, check_updates: bool) -> dict:
         "configured_id": _text(config.get("id")),
         "name": _text(config.get("name")),
         "url": _text(config.get("url")),
+        "release": _text((config.get("release") or {}).get("repository")),
         "loaded_status": _text(loaded.get("status")),
         "loaded_id": "",
         "loaded_scopes": bc.scope_text(loaded.get("scopes")),
@@ -255,7 +257,7 @@ def _baseline_block(config: dict, loaded: dict, *, check_updates: bool) -> dict:
         "state": "not-checked",
         "note": "",
     }
-    matches = loaded.get("matches") or loaded.get("newer") or loaded.get("other") or []
+    matches = loaded.get("matches") or loaded.get("newer") or loaded.get("other") or loaded.get("switched_off") or []
     if matches and isinstance(matches[0], dict):
         block["loaded_id"] = _text(matches[0].get("id"))
 
@@ -266,13 +268,18 @@ def _baseline_block(config: dict, loaded: dict, *, check_updates: bool) -> dict:
         return block
 
     url = _text(config.get("url"))
-    if not url:
+    release = None if url else config.get("release")
+    if not url and not release:
         block["state"] = "unknown"
         block["note"] = "this build names no baseline URL to compare against"
         return block
     try:
-        document = _fetch(url).decode("utf-8", errors="replace")
-    except FetchError as exc:
+        if release:
+            # No minimum: an older or renamed release is a state to report here.
+            document = br.fetch_latest(release, None).text
+        else:
+            document = _fetch(url).decode("utf-8", errors="replace")
+    except (FetchError, br.ReleaseError) as exc:
         block["state"] = "unknown"
         block["note"] = str(exc)
         return block
@@ -354,7 +361,8 @@ def rows(data: dict) -> list[tuple[str, str]]:
         configured = baseline["configured_id"] or "?"
         name = f" — {baseline['name']}" if baseline["name"] else ""
         out.append(("Baseline", f"{configured}{name}{_state_suffix(baseline, 'published_id')}"))
-        out.append(("Baseline source", baseline["url"] or "no URL configured in this build"))
+        release = f"{baseline['release']}, latest signed release" if baseline.get("release") else ""
+        out.append(("Baseline source", baseline["url"] or release or "no URL configured in this build"))
         out.append(("Baseline loaded", _loaded_text(baseline)))
     else:
         out.append(("Baseline", "not configured in this build"))
@@ -389,4 +397,6 @@ def _loaded_text(baseline: dict) -> str:
         return f"{line}, ahead of the configured id"
     if status == "other":
         return f"{line}, not the configured baseline"
+    if status == "switched_off":
+        return f"{line}, switched off by AISCB_DISABLE=1"
     return line

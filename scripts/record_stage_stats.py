@@ -27,15 +27,19 @@ This under-reports actual wall time by ~50% in observed multi-dispatch runs
 (2026-05-23 juice-shop: Stage 2 reported 8m06s, actual wall 15m58s).
 
 When ``--subagent-type`` and ``--since-iso`` are provided, the helper parses
-``.hook-events.log`` and derives two additional fields:
+``.hook-events.log`` and derives additional fields:
 
   * ``dispatch_count`` — number of ``AGENT_SPAWN`` events for this subagent
     in the stage window. ``> 1`` means the skill re-dispatched the agent.
   * ``wall_secs_observed`` — seconds from the first ``AGENT_SPAWN`` to the
     last call-matched ``AGENT_DONE`` or ``AGENT_FAILED``. Covers all dispatches.
+  * ``resolved_model`` — the release(s) the host reported those dispatches ran
+    on (``AGENT_USAGE``), comma-joined. ``--model`` is the alias the runtime
+    passed to the Agent tool, which names no release.
 
-Both are omitted when the args are not passed or ``.hook-events.log`` is
-absent (back-compat with pre-existing call sites).
+They are omitted when the args are not passed or ``.hook-events.log`` is
+absent (back-compat with pre-existing call sites), and ``resolved_model`` also
+when no dispatch reported a release.
 
 Usage
 -----
@@ -146,6 +150,7 @@ def _derive_dispatch_stats(
     spawn_times: dict[str, str] = {}
     spawn_event_ids: set[str] = set()
     terminal_times: dict[str, str] = {}
+    resolved_models: set[str] = set()
     legacy_spawn_times: list[str] = []
     legacy_terminal_times: list[str] = []
     subagent_types = {value.strip() for value in (subagent_type or "").split(",") if value.strip()}
@@ -173,6 +178,10 @@ def _derive_dispatch_stats(
                         spawn_event_ids.add(f"call:{call_id}")
                     elif event in {"AGENT_DONE", "AGENT_FAILED"} and call_id in spawn_times:
                         terminal_times[call_id] = ts
+                    elif event == "AGENT_USAGE" and call_id in spawn_times:
+                        resolved = re.search(r"\bresolved_model=([^\s]+)", detail)
+                        if resolved:
+                            resolved_models.add(resolved.group(1))
                     continue
                 match = legacy_match or _match_hook_event(raw)
                 if match is None or match.group("subagent") not in subagent_types:
@@ -197,11 +206,14 @@ def _derive_dispatch_stats(
     except ValueError:
         return None
     wall_secs = max(0, int((t1 - t0).total_seconds()))
-    return {
+    derived: dict = {
         "dispatch_count": len(spawn_event_ids),
         "dispatch_event_ids": sorted(spawn_event_ids),
         "wall_secs_observed": wall_secs,
     }
+    if resolved_models:
+        derived["resolved_model"] = ",".join(sorted(resolved_models))
+    return derived
 
 
 def _existing_stage_keys(path: Path) -> set[tuple[int, str]]:
@@ -323,6 +335,10 @@ def _merge_accumulate(existing: dict, incoming: dict) -> dict:
             **(existing.get("accumulation_digests") or {}),
             **incoming["accumulation_digests"],
         }
+    if incoming.get("resolved_model"):
+        merged_models = set(filter(None, str(existing.get("resolved_model") or "").split(",")))
+        merged_models.update(filter(None, str(incoming["resolved_model"]).split(",")))
+        existing["resolved_model"] = ",".join(sorted(merged_models))
     existing["recorded_dispatch_count"] = int(existing.get("recorded_dispatch_count") or 1) + 1
     existing["recorded_at"] = incoming.get("recorded_at") or existing.get("recorded_at")
     # Carry forward a name/model only if the existing row lacks one.

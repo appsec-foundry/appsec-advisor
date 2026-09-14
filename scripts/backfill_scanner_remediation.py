@@ -46,6 +46,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from enrichment_pass import EnrichmentContinuation
 
 # Check libraries keyed by check id. source-auth-checks.yaml holds AUTHZ-* and
 # INJ-* entries; crypto-checks.yaml holds CRYPTO-*; config-iac-checks.yaml holds
@@ -174,8 +175,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     plugin_root = Path(__file__).resolve().parent.parent
     checks = _load_check_index(plugin_root)
+    continuation = EnrichmentContinuation(data)
     count = backfill(data, checks)
     if count:
+        continuation.refresh(data)
         yaml_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096), encoding="utf-8")
     print(f"backfill_scanner_remediation: backfilled remediation on {count} scanner threat(s)")
     return 0

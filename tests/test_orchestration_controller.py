@@ -11,6 +11,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import agent_lifecycle
 import build_abuse_case_contexts as abuse_contexts
 import build_architecture_analysis_context as architecture_context
 import build_post_stride_contexts as post_stride_contexts
@@ -19,6 +20,8 @@ import context_routing
 import cutoff_cause
 import orchestration_controller as controller
 import pytest
+import stride_dispatch_waves as stride_waves
+import wait_agent_calls
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -150,10 +153,19 @@ def test_route_rejects_unsupported_special_paths(monkeypatch, tmp_path, key):
 
 def test_rerender_with_deadline_is_rejected(monkeypatch, tmp_path):
     cfg = _cfg(tmp_path, "rerender")
-    cfg.update({"rerender": True, "max_cost_usd": 1})
+    cfg.update({"rerender": True, "max_wall_time_seconds": 60})
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    with pytest.raises(controller.ControllerError, match="--max-cost"):
+    with pytest.raises(controller.ControllerError, match="--max-wall-time"):
         controller.route([])
+
+
+def test_rerender_under_a_soft_budget_is_admitted(monkeypatch, tmp_path):
+    """A rerender rebuilds the report from existing artifacts and costs a
+    fraction of an analysis, so the analysis floor must not refuse it."""
+    cfg = _cfg(tmp_path, "rerender")
+    cfg.update({"rerender": True, "soft_budget_usd": 5})
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    assert controller.route([])["action"] == "load_runtime"
 
 
 def test_compact_rerender_prepare_verifies_artifacts_and_dispatches_stage2(monkeypatch, tmp_path):
@@ -191,13 +203,49 @@ def test_compact_rerender_prepare_fails_before_lock_when_artifacts_are_missing(m
     assert ".threats-merged.json" in action["reason"]
 
 
-@pytest.mark.parametrize("key", ["max_wall_time_seconds", "max_cost_usd"])
-def test_route_rejects_deadline_paths(monkeypatch, tmp_path, key):
+def test_route_rejects_deadline_paths(monkeypatch, tmp_path):
     cfg = _cfg(tmp_path)
-    cfg[key] = 60
+    cfg["max_wall_time_seconds"] = 60
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
     with pytest.raises(controller.ControllerError, match="unsupported invocation"):
         controller.route([])
+
+
+def test_route_refuses_a_budget_below_what_the_depth_costs(monkeypatch, tmp_path):
+    """The refusal is the point of admission: it happens before the run has
+    spent anything, and it names the two numbers it compared."""
+    cfg = _cfg(tmp_path)
+    cfg.update({"soft_budget_usd": 3, "assessment_depth": "standard"})
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    with pytest.raises(controller.ControllerError, match="declared budget cannot hold this run"):
+        controller.route([])
+
+
+def test_route_refuses_a_budget_below_the_measured_cost_of_the_last_run(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.update({"soft_budget_usd": 20, "assessment_depth": "standard"})
+    cache = Path(cfg["output_dir"]) / ".appsec-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "baseline.json").write_text(
+        json.dumps({"last_run_cost_usd": 29.59, "last_run_mode": "full", "last_run_depth": "standard"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    with pytest.raises(controller.ControllerError, match=r"cost \$29.59"):
+        controller.route([])
+
+
+def test_route_admits_a_budget_the_last_run_fits_into(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path)
+    cfg.update({"soft_budget_usd": 35, "assessment_depth": "standard"})
+    cache = Path(cfg["output_dir"]) / ".appsec-cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "baseline.json").write_text(
+        json.dumps({"last_run_cost_usd": 29.59, "last_run_mode": "full", "last_run_depth": "standard"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    assert controller.route([])["action"] == "load_runtime"
 
 
 def test_route_rejects_pre_cutover_generation(monkeypatch, tmp_path):
@@ -222,7 +270,6 @@ def test_route_rejects_live_phase(monkeypatch, tmp_path):
         ["--resume"],
         ["--dry-run"],
         ["--full", "--max-wall-time", "30m"],
-        ["--full", "--max-cost", "5"],
     ],
 )
 def test_unsupported_modes_fail_before_output_mutation(monkeypatch, tmp_path, arguments, capsys):
@@ -230,6 +277,36 @@ def test_unsupported_modes_fail_before_output_mutation(monkeypatch, tmp_path, ar
     monkeypatch.chdir(tmp_path)
 
     code = controller.main(["route", "--", *arguments, "--repo", str(tmp_path), "--output", str(output)])
+
+    assert code == 2
+    assert json.loads(capsys.readouterr().out)["action"] == "abort"
+    assert not output.exists()
+
+
+def test_an_existing_model_without_a_mode_flag_is_refused_before_output_mutation(monkeypatch, tmp_path, capsys):
+    """A bare rerun resolves to an automatic incremental scan; the refusal names the model that selected it."""
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "threat-model.yaml").write_text("meta:\n  assessment_depth: standard\nthreats: []\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = controller.main(["route", "--", "--repo", str(tmp_path), "--output", str(output)])
+
+    assert code == 2
+    action = json.loads(capsys.readouterr().out)
+    assert action["action"] == "abort"
+    assert "existing threat model" in action["reason"]
+    assert "--full" in action["reason"]
+    assert sorted(path.name for path in output.iterdir()) == ["threat-model.yaml"]
+
+
+def test_a_budget_refusal_creates_no_output(monkeypatch, tmp_path, capsys):
+    output = tmp_path / "not-created"
+    monkeypatch.chdir(tmp_path)
+
+    code = controller.main(
+        ["route", "--", "--full", "--soft-budget", "3", "--repo", str(tmp_path), "--output", str(output)]
+    )
 
     assert code == 2
     assert json.loads(capsys.readouterr().out)["action"] == "abort"
@@ -364,7 +441,51 @@ def test_rebuild_need_render_recommends_supported_recovery_before_wipe(monkeypat
     assert "--resume is not supported" in action["reason"]
     assert "--rerender" in action["reason"]
     assert "--rebuild --force" in action["reason"]
+    assert action["exit_code"] != 0
     assert (output / "threat-model.yaml").exists()
+
+
+def test_full_need_render_recommends_the_render_before_the_wipe(monkeypatch, tmp_path):
+    """`--full` clears the same Stage-1 artifacts `--rebuild` does, so the
+    guard that offers the render has to cover it. It did not, and `--full` is
+    both the default recovery advice and the auto-selected mode on a depth
+    increase — the completed Stage 1 was discarded without a word."""
+    cfg = _cfg(tmp_path, "full")
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    (output / ".appsec-checkpoint").write_text(
+        "phase=10b status=completed need_render=true runtime_generation=context-v2\n",
+        encoding="utf-8",
+    )
+    (output / ".stride-api.json").write_text("{}", encoding="utf-8")
+    (output / ".fragments").mkdir()
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+
+    action = controller.prepare(["--full"])
+
+    assert action["action"] == "abort"
+    assert action["mode"] == "full"
+    assert "--rerender" in action["reason"]
+    assert "--full --force" in action["reason"], "the discard hint must name the mode that was typed"
+    # A run that analyzed nothing must not read as green: the wrapper's
+    # artifact gate only asks whether a report exists, and a prior run's
+    # threat-model.md sits happily beside a newer Stage-1 checkpoint.
+    assert action["exit_code"] != 0
+    assert (output / ".stride-api.json").exists()
+    assert (output / ".fragments").is_dir()
+
+
+def test_the_lock_run_id_can_be_set_by_the_caller(monkeypatch):
+    """The wrapper outlives the Claude session and has to release the lock
+    after killing it. `release_lock` refuses a lock whose heartbeat is still
+    fresh unless the caller names the holding run, so the caller must be able
+    to decide the id before the run takes the lock."""
+    monkeypatch.setenv("APPSEC_RUN_ID", "run-from-the-wrapper")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "session-id")
+    assert controller._run_id_for_this_run() == "run-from-the-wrapper"
+
+    monkeypatch.delenv("APPSEC_RUN_ID")
+    assert controller._run_id_for_this_run() == "session-id"
 
 
 def test_rebuild_cleanup_preserves_audit_logs(monkeypatch, tmp_path):
@@ -600,6 +721,92 @@ def test_lock_failure_happens_before_intermediate_cleanup(monkeypatch, tmp_path)
     with pytest.raises(controller.ControllerError):
         controller.prepare(["--full"])
     assert (output / ".stride-api.json").read_text() == "active run"
+
+
+# ── The blocked-lock question is decided here, not in the runtime ────────────
+#
+# A headless run printed the full "Held lock" menu into its log and then died at
+# the controller gate (2026-09-05). The runtime was told to skip the question
+# "under APPSEC_HEADLESS=1" — a condition it cannot evaluate, because it reads
+# the action, never the environment. The decision now rides in the action.
+
+
+def _lock_error(reason: str = "acquire_lock.py failed with exit 1: LOCK_BLOCKED: held") -> Exception:
+    return controller.ControllerError(reason, 3)
+
+
+def test_a_blocked_lock_invites_the_question_when_an_operator_can_answer(monkeypatch):
+    monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+
+    action = controller._failure_action(_lock_error())
+
+    assert action["lock_prompt_needed"] is True
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " 1 "])
+def test_a_headless_run_is_never_asked(monkeypatch, value):
+    monkeypatch.setenv("APPSEC_HEADLESS", value)
+
+    action = controller._failure_action(_lock_error())
+
+    assert action["lock_prompt_needed"] is False
+    assert action["exit_code"] == 3, "the runtime stops on the exit code instead"
+
+
+@pytest.mark.parametrize("value", ["0", "", "no", "off", "false"])
+def test_an_unset_or_negative_flag_keeps_the_question(monkeypatch, value):
+    monkeypatch.setenv("APPSEC_HEADLESS", value)
+
+    assert controller._failure_action(_lock_error())["lock_prompt_needed"] is True
+
+
+def test_the_field_appears_on_no_other_abort(monkeypatch):
+    """Only a held lock is answerable by a question. Every other abort is final,
+    and a field suggesting otherwise would invite a menu where none applies."""
+    monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+
+    other = controller._failure_action(controller.ControllerError("preflight found 3 findings", 2))
+    rejected = controller._failure_action(controller.CallError("unknown flag --nope"))
+
+    assert "lock_prompt_needed" not in other
+    assert "lock_prompt_needed" not in rejected
+
+
+def test_a_truncated_reason_still_carries_the_decision(monkeypatch):
+    """`_cap_reason` elides the middle of an over-long reason. LOCK_BLOCKED sits
+    in the head, so the gate must survive the truncation that reaches the
+    operator — the shape where a substring check silently starts failing."""
+    monkeypatch.setenv("APPSEC_HEADLESS", "1")
+    long_reason = "acquire_lock.py failed with exit 1: LOCK_BLOCKED: held\n" + ("receipt line\n" * 400)
+
+    action = controller._failure_action(controller.ControllerError(long_reason, 3))
+
+    assert len(action["reason"]) <= controller._MAX_ACTION_REASON
+    assert action["lock_prompt_needed"] is False
+
+
+def test_the_emitted_action_validates_with_the_field(monkeypatch, capsys):
+    """The action schema forbids unknown properties: an unvalidatable field would
+    replace the abort with a meta-error about the controller."""
+    monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+
+    exit_code = controller._emit(controller._failure_action(_lock_error()))
+    emitted = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 3
+    assert emitted["lock_prompt_needed"] is True
+
+
+def test_the_runtime_reads_the_field_instead_of_the_environment():
+    """Drift guard on the instruction the fix exists for: §1a must gate on the
+    action. The environment variable stays named elsewhere (§2a, as background
+    to a field) — this asserts only that the lock section no longer asks the
+    runtime to read it."""
+    runtime = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
+    section = runtime.split("### 1a.")[1].split("### 2")[0]
+
+    assert "ACTION.lock_prompt_needed" in section
+    assert "APPSEC_HEADLESS" not in section
 
 
 def test_next_action_rehydrates_from_filesystem(tmp_path):
@@ -1196,6 +1403,30 @@ def test_finalize_abuse_blocks_when_canonical_analysis_cannot_be_persisted(tmp_p
 
     with pytest.raises(controller.ControllerError, match="canonical analysis"):
         controller.finalize_abuse(output)
+
+
+@pytest.mark.parametrize("directory", ["assessment", "audit-output"])
+def test_abuse_rebuild_reapplies_enrichment_and_quality_gates(tmp_path, monkeypatch, directory):
+    (tmp_path / directory).mkdir()
+    output = _abuse_output(tmp_path / directory)
+    (output / ".abuse-case-verdicts.json").write_text("{}", encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(controller, "_run_script", lambda name, *a, **k: calls.append(name) or _completed())
+    monkeypatch.setattr(controller, "_run_external", lambda cmd, **k: calls.append(Path(cmd[1]).name) or _completed())
+
+    controller.finalize_abuse(output)
+
+    assert calls.index("build_threat_model_yaml.py") < calls.index("auto_emitter_pass.sh")
+    assert calls.index("auto_emitter_pass.sh") < calls.index("validate_mitigation_quality.py")
+    assert calls.index("validate_mitigation_quality.py") < calls.index("assert_completeness.py")
+    assert calls.index("assert_completeness.py") < calls.index("abuse_case_gate.py")
+
+
+def test_abuse_without_rebuild_does_not_run_emitters(tmp_path, monkeypatch):
+    output = _abuse_output(tmp_path)
+    monkeypatch.setattr(controller, "_run_script", lambda *a, **k: _completed())
+    monkeypatch.setattr(controller, "_run_external", lambda *a, **k: pytest.fail("no rebuild needs enrichment"))
+    controller.finalize_abuse(output)
 
 
 def test_finalize_abuse_completes_when_no_release_gate_fires(tmp_path, monkeypatch):
@@ -3156,6 +3387,263 @@ def test_context_v2_prepare_stride_twice_repeats_one_wave_without_clearing_it(tm
     } == context_before
 
 
+@pytest.fixture
+def active_stride_wave(tmp_path, monkeypatch):
+    output = _write_context_v2_config(tmp_path, stride_concurrency=3)
+    cfg = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+    components = []
+    for component_id in ("api", "worker", "store"):
+        bundle_dir = output / ".dispatch-context" / component_id
+        bundle_dir.mkdir(parents=True)
+        (bundle_dir / "evidence-bundle.json").write_text(
+            json.dumps({"component": {"id": component_id}, "source_slices": []}), encoding="utf-8"
+        )
+        components.append(
+            {
+                "component_id": component_id,
+                "focus_paths": [],
+                "exclude_paths": [],
+                "max_turns": 22,
+                "evidence_bundle_path": f".dispatch-context/{component_id}/evidence-bundle.json",
+            }
+        )
+    manifest = {"context_version": 2, "components": components}
+    (output / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    real_run_script = controller._run_script
+
+    def run_script(name, args, **kwargs):
+        if name == "stride_dispatch_waves.py":
+            return real_run_script(name, args, **kwargs)
+        if name == "validate_dispatch_manifest.py":
+            return _completed()
+        pytest.fail(f"unexpected downstream script: {name}")
+
+    monkeypatch.setattr(controller, "_run_script", run_script)
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    monkeypatch.setattr(controller, "_context_v2_taxonomy_slice", _taxonomy_stub)
+    action = controller._context_v2_stride_wave_action(output, cfg, manifest, initialize=True)
+    controller.context_routing.resolve_action(
+        action, output, semantic_roles=controller.SEMANTIC_ROLE_REGISTRY, model_keys=controller.SEMANTIC_ROLE_MODEL_KEYS
+    )
+    return output, cfg, manifest, action
+
+
+def _write_wave_result(output, component_id, *, partial=False):
+    path = output / stride_waves.attempt_artifact(component_id, 1)
+    path.write_text(
+        json.dumps(
+            {
+                "component_id": component_id,
+                "component_name": component_id,
+                "started_at": "2026-01-01T00:00:00Z",
+                "analyzed_at": "2026-01-01T00:01:00Z",
+                "partial": partial,
+                "skipped_categories": [],
+                "threats": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("completed_count", [0, 2])
+@pytest.mark.parametrize("begin_join", [False, True])
+def test_post_stride_rejects_unjoined_wave_without_redispatch(
+    active_stride_wave, monkeypatch, capsys, completed_count, begin_join
+):
+    """A partial third result must not redispatch its two completed siblings."""
+    output, _cfg_value, _manifest, action = active_stride_wave
+    component_ids = [job["component_id"] for job in action["dispatch_jobs"]]
+    for component_id in component_ids[:completed_count]:
+        _write_wave_result(output, component_id)
+    _write_wave_result(output, component_ids[-1], partial=True)
+    status = stride_waves.load_wait_status(output, component_ids, begin=begin_join)
+    assert status["status"] == ("pending" if begin_join else "unstarted")
+    plan_before = (output / stride_waves.PLAN_NAME).read_bytes()
+    attempts_before = {path.name: path.read_bytes() for path in (output / ".stride-attempts").iterdir()}
+    context_before = (output / ".context-routing-plan.json").read_bytes()
+    # Receipt admission has its own integration tests; exercise the actual CLI
+    # rejection and wave completion gate with no mocked scheduling decisions.
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    monkeypatch.setattr(sys, "argv", ["controller", "context-v2-post-stride", "--output-dir", str(output)])
+
+    assert controller.main() == 3
+    result = json.loads(capsys.readouterr().out)
+    assert result["action"] == "reject"
+    assert "wait_stride_progress.py" in result["reason"]
+    assert "dispatch_jobs" not in result
+    assert (output / stride_waves.PLAN_NAME).read_bytes() == plan_before
+    assert {path.name: path.read_bytes() for path in (output / ".stride-attempts").iterdir()} == attempts_before
+    assert (output / ".context-routing-plan.json").read_bytes() == context_before
+    assert not (output / ".agent-run.log").exists() or "RUN_ABORTED" not in (output / ".agent-run.log").read_text()
+
+
+def _launch_producer(output: Path, job_id: str, agent_type: str) -> str:
+    """Register a plugin call the way the hooks do: spawned, then launched asynchronously."""
+    call_id = "toolu_" + re.sub(r"[^A-Za-z0-9]", "_", job_id)
+    agent_lifecycle.register_call(
+        output,
+        {
+            "agent_call_id": call_id,
+            "session_id": "sid00001",
+            "agent": agent_type.rsplit(":", 1)[-1],
+            "agent_type": agent_type,
+            "model": "sonnet",
+            "description": job_id,
+            "background": False,
+            "action_id": "stage1c:join-test",
+            "job_id": job_id,
+            "max_turns": 40,
+        },
+    )
+    agent_lifecycle.acknowledge_background_call(output, call_id)
+    return call_id
+
+
+@pytest.mark.parametrize(
+    ("command", "boundary", "job_id", "agent_type"),
+    [
+        (
+            "context-v2-post-merge",
+            "context_v2_post_merge",
+            "phase9-merge-review",
+            "appsec-advisor:appsec-threat-merger",
+        ),
+        ("context-v2-post-recon", "context_v2_post_recon", "phase2-recon", "appsec-advisor:appsec-recon-scanner"),
+        (
+            "context-v2-prepare-stride",
+            "context_v2_prepare_stride",
+            "phase8-controls",
+            "appsec-advisor:appsec-control-analyst",
+        ),
+    ],
+)
+def test_a_boundary_called_before_its_producer_stopped_rejects_without_abort(
+    tmp_path, monkeypatch, capsys, command, boundary, job_id, agent_type
+):
+    """OR-14. A running producer may still rewrite the output the boundary would judge.
+
+    The threat merger writes a draft, validates it, and rewrites it before it
+    stops. A boundary called in between judged the draft and aborted the run over
+    a document the merger then corrected, and the retry restarted all of Stage 1.
+    """
+    output = _write_context_v2_config(tmp_path)
+    _launch_producer(output, job_id, agent_type)
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    monkeypatch.setattr(controller, boundary, lambda _output: pytest.fail("the boundary judged a running producer"))
+
+    assert controller.main([command, "--output-dir", str(output)]) == 3
+    result = json.loads(capsys.readouterr().out)
+    assert result["action"] == "reject"
+    assert job_id in result["reason"]
+    assert "wait_agent_calls.py" in result["reason"]
+    log = output / ".agent-run.log"
+    assert not log.exists() or "RUN_ABORTED" not in log.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("shape", ["finished", "stopped_unsettled", "past_deadline", "unreadable_lifecycle"])
+def test_the_boundary_judges_output_once_the_join_would_stop_waiting(tmp_path, monkeypatch, shape):
+    """A stopped child no longer holds the boundary, and a stop that is never
+    recorded holds it only until the join's own deadline, so no boundary livelocks."""
+    output = _write_context_v2_config(tmp_path)
+    call_id = _launch_producer(output, "phase9-merge-review", "appsec-advisor:appsec-threat-merger")
+    path = agent_lifecycle.state_path(output)
+    if shape == "finished":
+        agent_lifecycle.finish_call(output, call_id)
+    elif shape == "stopped_unsettled":
+        agent_lifecycle.note_child_stop(output, call_id)
+    elif shape == "past_deadline":
+        state = json.loads(path.read_text(encoding="utf-8"))
+        age = wait_agent_calls.DEFAULT_DEADLINE_MINUTES * 60 + 1
+        for key in ("spawned_at", "running_at", "launch_acknowledged_at"):
+            if key in state["calls"][0]:
+                state["calls"][0][key] -= age
+        path.write_text(json.dumps(state), encoding="utf-8")
+        assert wait_agent_calls.joined_calls(output, None), "the aged state must stay readable"
+    else:
+        path.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    monkeypatch.setattr(controller, "context_v2_post_merge", lambda _output: {"action": "judged"})
+    monkeypatch.setattr(controller, "_emit", lambda action: action)
+
+    assert controller.main(["context-v2-post-merge", "--output-dir", str(output)]) == {"action": "judged"}
+
+
+@pytest.mark.parametrize(
+    ("command", "boundary", "job_id", "agent_type"),
+    [
+        (
+            "context-v2-post-stride",
+            "context_v2_post_stride",
+            "stride:api:attempt-1",
+            "appsec-advisor:appsec-stride-analyzer-v2",
+        ),
+        ("finalize-abuse", "finalize_abuse", "phase10c-abuse-AC-T-001", "appsec-advisor:appsec-abuse-case-verifier"),
+    ],
+)
+def test_wave_boundaries_keep_their_own_join_authority(tmp_path, monkeypatch, command, boundary, job_id, agent_type):
+    """The STRIDE and abuse wave joins validate their results and settle past a
+    child whose stop was never recorded; the lifecycle join must not hold them."""
+    output = _write_context_v2_config(tmp_path)
+    _launch_producer(output, job_id, agent_type)
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    monkeypatch.setattr(controller, boundary, lambda _output: {"action": "judged"})
+    monkeypatch.setattr(controller, "_emit", lambda action: action)
+
+    assert controller.main([command, "--output-dir", str(output)]) == {"action": "judged"}
+
+
+def test_the_merge_race_rejects_until_the_merger_stops_and_then_still_validates(tmp_path, monkeypatch, capsys):
+    """Replays the aborted run: the merger's self-validation draft omits one group."""
+    output = _write_context_v2_config(tmp_path)
+    (output / ".merge-candidates.json").write_text(json.dumps(_merge_candidates("G-aaaaaaaa")), encoding="utf-8")
+    payload = (output / ".merge-candidates.json").read_bytes()
+    controller._write_merge_review_context(output, json.loads(payload), payload)
+    draft = {"version": 2, "generated_at": "2026-09-13T16:45:56Z", "model": "sonnet", "decisions": []}
+    (output / ".merge-decisions.json").write_text(json.dumps(draft), encoding="utf-8")
+    call_id = _launch_producer(output, "phase9-merge-review", "appsec-advisor:appsec-threat-merger")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(controller, "_require_receipt_verification", lambda _output: None)
+    argv = ["context-v2-post-merge", "--output-dir", str(output)]
+
+    assert controller.main(argv) == 3
+    assert json.loads(capsys.readouterr().out)["action"] == "reject"
+
+    # Once the merger has stopped, an invalid document still ends the run.
+    agent_lifecycle.finish_call(output, call_id)
+    assert controller.main(argv) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["action"] == "abort"
+    assert "omits candidate groups" in result["reason"]
+
+
+def test_post_stride_retries_only_unfinished_component_after_deadline(active_stride_wave):
+    output, cfg, manifest, action = active_stride_wave
+    component_ids = [job["component_id"] for job in action["dispatch_jobs"]]
+    for component_id in component_ids[:-1]:
+        _write_wave_result(output, component_id)
+    _write_wave_result(output, component_ids[-1], partial=True)
+    stride_waves.load_wait_status(output, component_ids, begin=True, now=1)
+
+    retry = controller._context_v2_stride_wave_action(output, cfg, manifest, initialize=False)
+
+    assert retry["action"] == "dispatch_parallel"
+    assert [(job["component_id"], job["attempt"]) for job in retry["dispatch_jobs"]] == [(component_ids[-1], 2)]
+    assert retry["dispatch_jobs"][0]["output_artifacts"] == [stride_waves.attempt_artifact(component_ids[-1], 2)]
+
+
+def test_post_stride_advances_after_pending_component_finishes(active_stride_wave):
+    output, cfg, manifest, action = active_stride_wave
+    component_ids = [job["component_id"] for job in action["dispatch_jobs"]]
+    stride_waves.load_wait_status(output, component_ids, begin=True)
+    for component_id in component_ids:
+        _write_wave_result(output, component_id)
+
+    assert controller._context_v2_stride_wave_action(output, cfg, manifest, initialize=False) is None
+    plan = json.loads((output / stride_waves.PLAN_NAME).read_text())
+    assert all(attempt == 1 for attempt in plan["attempts"].values())
+
+
 def test_context_v2_prepare_stride_rejects_bundle_escape_after_external_gate(tmp_path, monkeypatch):
     output = _write_context_v2_config(tmp_path)
     (output / ".stride-analyst-context.json").write_text("{}", encoding="utf-8")
@@ -3243,6 +3731,7 @@ def test_context_v2_candidate_free_success_runs_to_stage2_handoff_without_agent(
     action = controller.context_v2_post_stride(output)
     assert action["action"] == "run_gate"
     assert action["stage"] == "stage1c"
+    assert action["task_progress"] == {"completed_rows": list(controller.STAGE1_TASK_ROWS)}
     assert "semantic_role" not in action
     assert calls[:5] == [
         "validate_dispatch_manifest.py",
@@ -3491,6 +3980,10 @@ def test_context_v2_after_evidence_skips_triage_agent_and_dispatches_only_root_c
     monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
     action = controller.context_v2_post_evidence(output)
     assert action["semantic_role"] == "post_stride_synthesizer"
+    assert action["task_progress"] == {
+        "completed_rows": list(controller.STAGE1_TASK_ROWS[:-1]),
+        "active_row": controller.STAGE1_TASK_ROWS[-1],
+    }
     assert action["unresolved_decision_keys"] == ["tier_root_causes"]
     assert all(job["semantic_role"] != "triage_validator" for job in action["dispatch_jobs"])
     names = [name for name, _args in calls]
@@ -3767,6 +4260,10 @@ def test_context_v2_dispatches_triage_only_when_deterministic_ranking_fails(tmp_
     monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
     action = controller.context_v2_post_evidence(output)
     assert action["semantic_role"] == "triage_validator"
+    assert action["task_progress"] == {
+        "completed_rows": list(controller.STAGE1_TASK_ROWS[:8]),
+        "active_row": controller.STAGE1_TASK_ROWS[8],
+    }
     assert action["unresolved_decision_keys"] == ["triage_ranking"]
     assert action["dispatch_jobs"][0]["output_artifacts"] == [
         ".triage-flags.json",
@@ -3991,6 +4488,23 @@ def test_emit_rewrites_invalid_action_to_abort(capsys):
     assert code == 2
 
 
+def test_emit_prints_the_whole_action_as_one_compact_line(capsys):
+    action = {
+        "schema_version": 1,
+        "action": "complete",
+        "mode": "full",
+        "stage": "complete",
+        "instruction_file": str(controller.THIN_COMPLETION_RUNTIME),
+        "config_path": "/tmp/.skill-config.json",
+        "dispatch_values": {},
+    }
+    assert controller._emit(copy.deepcopy(action)) == 0
+    out = capsys.readouterr().out
+    assert out.count("\n") == 1 and out.endswith("\n")
+    assert ": " not in out and "\n " not in out
+    assert json.loads(out) == controller._validate_action(copy.deepcopy(action))
+
+
 def test_main_route_end_to_end(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(controller, "_resolve", lambda argv: _cfg(tmp_path))
     code = controller.main(["route", "--", "--full"])
@@ -4068,7 +4582,7 @@ def test_post_lock_oserror_is_wrapped_and_releases_lock(monkeypatch, tmp_path):
     output.mkdir(parents=True)
     repo.mkdir()
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
-    monkeypatch.setattr(controller, "_activate_markers", lambda cfg: None)
+    monkeypatch.setattr(controller, "_activate_markers", lambda cfg, output_dir: None)
 
     def run(name, args, **kwargs):
         if name == "acquire_lock.py":
@@ -4088,20 +4602,24 @@ def test_post_lock_oserror_is_wrapped_and_releases_lock(monkeypatch, tmp_path):
 # --- verbose/tracing markers ---------------------------------------------------
 
 
-def test_markers_activate_then_deactivate(monkeypatch, tmp_path):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    uid = controller.os.getuid()
-    controller._activate_markers({"verbose": True, "tracing": True})
-    assert (tmp_path / f".appsec-verbose-{uid}").exists()
-    assert (tmp_path / f".appsec-tracing-{uid}").exists()
-    controller._deactivate_markers()
-    assert not (tmp_path / f".appsec-verbose-{uid}").exists()
-    assert not (tmp_path / f".appsec-tracing-{uid}").exists()
+def test_markers_activate_then_deactivate(tmp_path):
+    controller._activate_markers({"verbose": True, "tracing": True}, tmp_path)
+    assert (tmp_path / ".appsec-verbose").exists()
+    assert (tmp_path / ".appsec-tracing").exists()
+    controller._deactivate_markers(tmp_path)
+    assert not (tmp_path / ".appsec-verbose").exists()
+    assert not (tmp_path / ".appsec-tracing").exists()
 
 
-def test_deactivate_markers_is_idempotent(monkeypatch, tmp_path):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-    controller._deactivate_markers()  # nothing to remove → no error
+def test_deactivate_markers_is_idempotent(tmp_path):
+    controller._deactivate_markers(tmp_path)  # nothing to remove → no error
+
+
+@pytest.mark.parametrize("key", ["verbose", "tracing"])
+def test_activate_markers_removes_a_marker_an_earlier_run_left(tmp_path, key):
+    (tmp_path / f".appsec-{key}").write_text("")
+    controller._activate_markers({key: False}, tmp_path)
+    assert not (tmp_path / f".appsec-{key}").exists()
 
 
 # --- _fetch_requirements arg modes ---------------------------------------------
@@ -4424,16 +4942,25 @@ def test_bootstrap_stub_is_upgraded_when_rebuild_succeeds(tmp_path, monkeypatch)
     yaml_path = tmp_path / "threat-model.yaml"
     _write_yaml(yaml_path, {"analysis_version": 3, "_bootstrap": True})
 
-    def _fake_run(cmd, **kwargs):
-        assert "build_threat_model_yaml.py" in " ".join(str(c) for c in cmd)
-        yaml_path.write_text(
-            yaml.safe_dump({"meta": {"analysis_version": 3}, "threats": [], "attack_surface": [{"id": "AS-1"}]}),
-            encoding="utf-8",
-        )
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+    calls = []
 
-    monkeypatch.setattr(controller.subprocess, "run", _fake_run)
+    def _fake_script(name, args, **kwargs):
+        calls.append(name)
+        if name == "build_threat_model_yaml.py":
+            assert kwargs["timeout"] == 600
+            assert kwargs["cwd"] == controller.SCRIPT_DIR
+            yaml_path.write_text(
+                yaml.safe_dump({"meta": {"analysis_version": 3}, "threats": [], "attack_surface": [{"id": "AS-1"}]}),
+                encoding="utf-8",
+            )
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", _fake_script)
+    monkeypatch.setattr(controller, "_run_external", lambda cmd, **kw: calls.append(Path(cmd[1]).name) or _completed())
     assert controller._upgrade_bootstrap_yaml(tmp_path, {"repo_root": str(tmp_path)}) is True
+    assert calls.index("build_threat_model_yaml.py") < calls.index("auto_emitter_pass.sh")
+    assert calls.index("auto_emitter_pass.sh") < calls.index("validate_mitigation_quality.py")
+    assert "assert_completeness.py" in calls
     assert "_bootstrap" not in yaml.safe_load(yaml_path.read_text(encoding="utf-8"))["meta"]
 
 
@@ -4607,7 +5134,7 @@ class TestContextV2ReconWave:
         assert (output / ".threat-modeling-context.md").read_text(encoding="utf-8") != "stale\n"
 
     def test_begin_reuses_recon_when_the_fingerprint_is_unchanged(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
+        output = _context_v2_run(tmp_path, reuse_recon_eligible=True)
         (tmp_path / "repo" / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
@@ -4622,7 +5149,7 @@ class TestContextV2ReconWave:
         assert "recon_scanner" not in roles
 
     def test_begin_does_not_reuse_legacy_free_form_recon_evidence(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
+        output = _context_v2_run(tmp_path, reuse_recon_eligible=True)
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         legacy = _valid_recon_signals()
         legacy["schema_version"] = 1
@@ -4636,7 +5163,7 @@ class TestContextV2ReconWave:
         assert "recon_scanner" in roles
 
     def test_begin_runs_recon_when_the_fingerprint_check_fails(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
+        output = _context_v2_run(tmp_path, reuse_recon_eligible=True)
         (output / ".recon-summary.md").write_text("prior\n", encoding="utf-8")
 
         def fake_script(name, args, **kwargs):
@@ -4652,7 +5179,7 @@ class TestContextV2ReconWave:
         assert "recon_scanner" in roles
 
     def test_begin_continues_deterministically_when_the_wave_is_empty(self, tmp_path, monkeypatch):
-        output = _context_v2_run(tmp_path, recon_reuse_eligible=True)
+        output = _context_v2_run(tmp_path, reuse_recon_eligible=True)
         (output / ".recon-summary.md").write_text(_valid_recon_summary(), encoding="utf-8")
         (output / ".recon-signals.json").write_text(json.dumps(_valid_recon_signals()), encoding="utf-8")
         (output / ".threat-modeling-context.md").write_text(_valid_threat_modeling_context(), encoding="utf-8")
@@ -5138,6 +5665,7 @@ class TestContextV2ArchitectureAndBoundary:
 
     def test_context_v2_gate_finalizes_inventory_binds_fingerprint_and_writes_checkpoint(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)
+        Path(_cfg(tmp_path)["repo_root"]).mkdir(exist_ok=True)
         for name in (
             ".recon-summary.md",
             ".components.json",
@@ -5147,6 +5675,9 @@ class TestContextV2ArchitectureAndBoundary:
         ):
             (output / name).write_text("{}", encoding="utf-8")
         fingerprint = "sha256:" + "a" * 64
+        (output / ".data-flows.json").write_text(
+            json.dumps({"schema_version": 1, "component_inventory_fingerprint": fingerprint, "data_flows": []})
+        )
         calls: list[tuple[str, list[str]]] = []
 
         def fake_script(name, args, **_kwargs):
@@ -5794,10 +6325,12 @@ class TestStage1TaskRows:
     def test_the_schema_admits_the_longest_row(self):
         schema = json.loads((ROOT / "schemas" / "orchestration-action.schema.json").read_text(encoding="utf-8"))
         spec = schema["properties"]["task_rows"]
+        progress = schema["properties"]["task_progress"]["properties"]["completed_rows"]
         widest = controller._task_rows({"runtime_generation": "context-v2", "mode": "full", "architect_review": True})
 
         assert max(len(row) for row in widest) <= spec["items"]["maxLength"]
         assert len(widest) <= spec["maxItems"]
+        assert len(controller.STAGE1_TASK_ROWS) <= progress["maxItems"]
 
     def test_the_runtime_reads_the_rows_from_the_action(self):
         # A row the session invents is a row a later TaskUpdate no longer matches.
@@ -5806,8 +6339,33 @@ class TestStage1TaskRows:
     def test_the_stage1_runtime_owns_the_row_lifecycle(self):
         text = self.STAGE1_V2.read_text(encoding="utf-8")
 
-        assert "ACTION.task_rows" in text
+        assert "ACTION.task_progress" in text
+        assert "TaskList" in text
+        assert "never infer from `semantic_role`" in text
         assert "in_progress" in text and "completed" in text
+
+    def test_every_stage1_role_maps_to_one_controller_owned_row(self):
+        stage1_roles = set(controller.SEMANTIC_ROLE_REGISTRY) - {"abuse_case_verifier"}
+
+        assert set(controller._STAGE1_TASK_ROW_BY_ROLE) == stage1_roles
+        assert set(controller._STAGE1_TASK_ROW_BY_ROLE.values()) == set(controller.STAGE1_TASK_ROWS)
+
+    def test_task_progress_rejects_a_non_prefix_and_a_role_mismatch(self, tmp_path):
+        action = _semantic_action(tmp_path, [_semantic_job()])
+        action["stage"] = "stage1c"
+        action["task_progress"] = controller._stage1_task_progress("architecture_analyst")
+        assert controller._validate_action(action) == action
+
+        action["task_progress"] = {
+            "completed_rows": [controller.STAGE1_TASK_ROWS[1]],
+            "active_row": controller.STAGE1_TASK_ROWS[2],
+        }
+        with pytest.raises(controller.ControllerError, match="exact ordered prefix"):
+            controller._validate_action(action)
+
+        action["task_progress"] = controller._stage1_task_progress("control_analyst")
+        with pytest.raises(controller.ControllerError, match="does not match the dispatched semantic role"):
+            controller._validate_action(action)
 
     def test_each_stage1_row_carries_its_position_within_its_stage(self):
         # The reader has to see how much of the running stage is left, so a
@@ -6464,3 +7022,100 @@ def test_prepare_abuse_distinguishes_an_empty_candidate_set(tmp_path, monkeypatc
     receipts = " ".join(action["receipts"])
     assert "no candidates to verify" in receipts
     assert "budget-critical" not in receipts
+
+
+# ----------------------------------------------------------------------------
+# The business-context question is a controller decision, like the lock question
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("headless", "extra", "expected"),
+    [
+        (False, {}, True),
+        (True, {}, False),
+        (False, {"skip_business_context": True}, False),
+        (False, {"business_context_source": "docs/business-context.md"}, False),
+        (True, {"skip_business_context": True}, False),
+    ],
+)
+def test_the_business_context_question_is_decided_by_the_controller(tmp_path, monkeypatch, headless, extra, expected):
+    """Every reason not to ask is resolved here and shipped as one field.
+
+    The runtime cannot read `APPSEC_HEADLESS`, so an instruction to skip the
+    question under it never fired: an unattended run printed the question and
+    ended its turn with no Stage 1.
+    """
+    if headless:
+        monkeypatch.setenv("APPSEC_HEADLESS", "1")
+    else:
+        monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+    cfg = _cfg(tmp_path) | extra
+    Path(cfg["output_dir"]).mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "plan\n")
+
+    action = controller.prepare(["--full"])
+
+    assert controller._validate_action(action) == action
+    assert action["business_context_prompt_needed"] is expected
+
+
+def test_the_runtime_reads_the_context_field_instead_of_the_environment():
+    """Drift guard on the instruction the fix exists for: §2b must gate on the
+    action, and so must the mode file it hands off to."""
+    base = ROOT / "skills" / "create-threat-model"
+    section = (base / "SKILL-full-runtime.md").read_text(encoding="utf-8").split("### 2b.")[1].split("## 3.")[0]
+
+    assert "ACTION.business_context_prompt_needed" in section
+    assert "APPSEC_HEADLESS" not in section
+
+    mode_file = (base / "modes" / "business-context.md").read_text(encoding="utf-8")
+    assert "business_context_prompt_needed" in mode_file
+    assert "APPSEC_HEADLESS" not in mode_file
+
+
+def test_preflight_writes_the_run_start_marker(tmp_path, monkeypatch):
+    """The marker scopes issue aggregation, so a run that stops early must still
+    own it. The runtime wrote it in §4 — after the interactive steps — so a run
+    that stopped before §4 kept the previous run's epoch and reported that run's
+    events as its own.
+    """
+    import time
+
+    monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+    cfg = _cfg(tmp_path)
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    stale = "1000000000"
+    (output / ".scan-start-epoch").write_text(stale, encoding="utf-8")
+
+    seen = {}
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(
+        controller,
+        "_prepasses",
+        lambda cfg, receipts: seen.update(at_prepass=(output / ".scan-start-epoch").read_text()),
+    )
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "plan\n")
+
+    controller.prepare(["--full"])
+
+    written = (output / ".scan-start-epoch").read_text().strip()
+    assert written != stale, "a later run must not inherit the previous run's start epoch"
+    assert int(written) >= int(time.time()) - 300
+    assert seen["at_prepass"] == written, "the prepasses must already see this run's marker"
+
+
+def test_the_runtime_no_longer_writes_the_run_start_marker():
+    """One producer for the marker. Both writing it would let the later write
+    move the run boundary after the prepasses already read the earlier one."""
+    runtime = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
+    assert ".scan-start-epoch" not in runtime

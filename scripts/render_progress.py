@@ -83,6 +83,80 @@ def _kv(detail: str, key: str) -> str:
     return m.group(1) if m else ""
 
 
+def _strip_ids(detail: str, *keys: str) -> str:
+    """Drop opaque correlation ids from a detail before it is displayed.
+
+    ``agent_call_id=toolu_…`` and ``action_id=stage1c:<hash>`` identify nothing
+    a reader can act on, but they cost ~35 columns each and push the part that
+    does carry meaning (component, counts, stop reason) past the right edge of
+    the terminal. They stay in the log for correlation; only the live view is
+    trimmed. ``job_id`` is stripped only from the component-scoped step lines,
+    where ``log_event.py`` prepends ``component=`` and ``attempt=`` alongside it
+    and the id repeats both; on a warning line it is kept, being the only
+    locator such a line has.
+    """
+    for key in keys:
+        detail = re.sub(rf"\s*\b{re.escape(key)}=[^\s]+", "", detail)
+    return detail.strip()
+
+
+# Lifecycle failure reasons are contract tokens. They stay verbatim in the log,
+# where aggregation and correlation read them; the live view is read by a person
+# watching a run, and a token names the internal state rather than what happened
+# to the agent on the line above it.
+_REASON_PROSE = {
+    "outer_session_terminal": "the run ended while it was still working",
+    "join_deadline_expired": "did not return before the wave's join window closed",
+    "superseded_without_return": "replaced by a newer dispatch of the same job",
+    "agent_tool_error": "the Agent tool returned an error",
+    "terminal_before_spawn": "its end arrived before its start (hook events out of order)",
+    "post_before_spawn": "its result arrived before its start (hook events out of order)",
+    "outcome_unobserved": "it stopped, but this host reported no result for it",
+}
+
+
+#: Reasons that describe the host rather than the call that carries them. A
+#: host either reports call outcomes or it does not, so such a reason is equally
+#: true of every call in the run and repeating it turns the one line an operator
+#: needs to read into one per agent. Shown on the first terminal line, dropped
+#: afterwards — the log keeps every occurrence for correlation. Every other
+#: reason distinguishes this call from its siblings and is always shown.
+_RUN_LEVEL_REASONS = frozenset({"outcome_unobserved"})
+
+
+def _terminal_subject(detail: str, shown_reasons: set[str] | None = None) -> str:
+    """Parenthesised suffix for an agent's terminal line: which call ended.
+
+    The lifecycle detail of ``AGENT_DONE`` / ``AGENT_FAILED`` repeats the
+    dispatch parameters (``agent_type``, ``model``, ``background``,
+    ``action_id``, ``description``) that the spawn line two lines up already
+    showed, and carries no outcome of its own. Only two things matter here:
+    *which* of several parallel calls of the same agent ended — its component
+    or job — and why it stopped. The reason carries an ``AGENT_FAILED``
+    explanation (``agent_lifecycle.event_detail``), so it is read to the end of
+    its field rather than to the next space, and never dropped.
+
+    ``shown_reasons`` carries the run-level reasons already rendered; pass the
+    same set across one render so ``_RUN_LEVEL_REASONS`` appear once.
+    """
+    subject = _kv(detail, "component_id") or _kv(detail, "job_id")
+    m = re.search(r"\b(?:stop_)?reason=(.*?)(?=\s{2,}|$)", detail)
+    reason = m.group(1).strip() if m else ""
+    if reason in _RUN_LEVEL_REASONS and shown_reasons is not None:
+        if reason in shown_reasons:
+            reason = ""
+        else:
+            shown_reasons.add(reason)
+    # The terminal sweep appends the host's error code to this token for a child
+    # the model API refused (agent_logger._settle_swept_calls).
+    if reason.startswith("subagent_api_error:"):
+        reason = f"the model API stopped it ({reason.split(':', 1)[1]})"
+    else:
+        reason = _REASON_PROSE.get(reason, reason)
+    parts = [p for p in (subject, f"reason: {reason}" if reason else "") if p]
+    return f" ({', '.join(parts)})" if parts else ""
+
+
 def _agent_tag(model: str, depth: str = "") -> str:
     """Parenthesised suffix for an agent line: model, plus the STRIDE tier.
 
@@ -127,8 +201,16 @@ def main() -> int:
     status_shown = False  # a transient \r heartbeat line is on screen
     last_perm = None  # datetime of the last permanent (scrolling) line
     last_pct_shown = None  # last RUN_PROGRESS percentage given a permanent line
+    last_pct_seen = None  # most recent RUN_PROGRESS reading, shown on the tick
     spawned_calls: set[str] = set()
     terminal_calls: set[str] = set()
+    run_level_notices: set[str] = set()  # run-level telemetry codes already shown once
+    run_level_reasons: set[str] = set()  # run-level terminal reasons already shown once
+    stride_calls: dict[str, str] = {}  # STRIDE analyzer call id -> the component it analyses
+    stride_components: set[str] = set()  # components dispatched so far
+    stride_finished: set[str] = set()  # …of those, the ones a call completed
+    seen_ts = ""  # timestamp of the duplicate-suppression bucket below
+    seen_in_ts: set[tuple[str, str, str]] = set()
     _CLEAR = "\r\033[K"  # carriage-return + clear-to-end-of-line
 
     # Heartbeats are pure liveness — on a TTY they update one in-place status
@@ -147,6 +229,27 @@ def main() -> int:
         out.flush()
         last_perm = cur_when
 
+    def stride_tally() -> str:
+        """``STRIDE 3/5 components done``, or empty before the first dispatch.
+
+        Phase 9 runs the analyzers in parallel for ~20 minutes and interleaves
+        their spawn and completion lines, so the count of finished components is
+        the one number that says how far the phase has come. It is derived from
+        the dispatch lifecycle this view already renders, which makes it
+        independent of the watchdog's ``STRIDE_PROGRESS`` mirror — that one
+        counts artifact *files* and stays silent whenever ``.appsec-checkpoint``
+        does not read exactly ``phase=9``.
+
+        Counted per component and only on a completion. Counting calls and
+        treating any terminal event as progress let a wave of four report
+        ``4/4 components done`` on the very line saying one had failed, and
+        ``5/5`` once its retry had finished — a number larger than the number of
+        components, on a phase that had lost one.
+        """
+        if not stride_components:
+            return ""
+        return f"STRIDE {len(stride_finished)}/{len(stride_components)} components done"
+
     def heartbeat(line: str) -> None:
         """Show liveness without flooding the console."""
         nonlocal status_shown
@@ -162,6 +265,27 @@ def main() -> int:
         if not parsed:
             continue
         ts, comp, event, detail = parsed
+        # `log_event.py` mirrors PHASE_START / PHASE_END into `.hook-events.log`
+        # from the same `format_line` call that writes `.agent-run.log`, and
+        # run-headless.sh tails both files — so a mirrored event arrives twice,
+        # carrying the same timestamp. Render the first copy and drop the
+        # second: two identical lines within one second produce two identical
+        # banners and no additional information.
+        #
+        # The component is deliberately not part of the key. A mirror is
+        # byte-identical only in its detail: the `.agent-run.log` copy carries
+        # the writing component and a blank session, so keying on it let every
+        # `agent_logger`-mirrored event through twice — the assessment summary
+        # among them. Two distinct producers emitting one event with identical
+        # detail in the same second would have to agree on the call id or
+        # component the detail names, which is what makes the detail sufficient.
+        dup_key = (event, detail)
+        if ts != seen_ts:
+            seen_ts, seen_in_ts = ts, {dup_key}
+        elif dup_key in seen_in_ts:
+            continue
+        else:
+            seen_in_ts.add(dup_key)
         when = _parse_ts(ts)
         cur_when = when
         cur_clock = _clock(when)
@@ -225,6 +349,11 @@ def main() -> int:
             if inferred_phase and inferred_phase != cur_phase:
                 cur_phase = inferred_phase
                 phase_start = when
+            if call_id and "stride-analyzer" in agent_name:
+                # A retry is a new call for a component already counted.
+                component = _kv(detail, "component_id") or call_id
+                stride_calls[call_id] = component
+                stride_components.add(component)
             w(f"    ↳ {agent_name}{_agent_tag(model, depth)}: {task}")
 
         elif event == "AGENT_INVOKE":
@@ -242,7 +371,12 @@ def main() -> int:
             agent_name = agent.split(":")[-1] if agent else "agent"
             mark = "✓" if event == "AGENT_DONE" else "⚠"
             state = "done" if event == "AGENT_DONE" else "failed"
-            w(f"    {mark} {agent_name} {state} — {detail}")
+            tail = _terminal_subject(detail, run_level_reasons)
+            if call_id and call_id in stride_calls:
+                if event == "AGENT_DONE":
+                    stride_finished.add(stride_calls[call_id])
+                tail += f"   [{stride_tally()}]"
+            w(f"    {mark} {agent_name} {state}{tail}")
 
         elif event == "SCAN_END":
             # Publication milestone, not a lifecycle terminal: the producer has
@@ -255,7 +389,7 @@ def main() -> int:
 
         elif event in ("STEP_START", "STEP_END"):
             mark = "·" if event == "STEP_START" else "✓"
-            w(f"      {mark} {detail}")
+            w(f"      {mark} {_strip_ids(detail, 'agent_call_id', 'action_id', 'job_id')}")
 
         elif event == "STRIDE_PROGRESS":
             files = _kv(detail, "stride_files")
@@ -265,7 +399,17 @@ def main() -> int:
             total_el = _mins(run_start, when)
             if cur_phase:
                 phase_el = _mins(phase_start, when) if phase_start else "?"
-                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}   [+{total_el} total]")
+                tally = stride_tally() if cur_phase.startswith("9/") else ""
+                tally = f", {tally}" if tally else ""
+                # The percentage rides this line rather than scrolling one of
+                # its own: the watchdog emits HEARTBEAT and RUN_PROGRESS in the
+                # same second of the same loop, and `.hook-events.log` is tailed
+                # first, so the heartbeat always took the throttle slot and the
+                # repeated reading was never shown. Two runs measured on
+                # 2026-09-06 put two and nine percentage lines on screen for
+                # 20 and 190 emitted readings.
+                pct_tag = f" · ~{last_pct_seen}%" if last_pct_seen else ""
+                heartbeat(f"    · still in Phase {cur_phase} — {phase_el}{tally}{pct_tag}   [+{total_el} total]")
             else:
                 step = _kv(detail, "step") or "startup"
                 heartbeat(f"    · starting up ({step}) — +{total_el}")
@@ -283,20 +427,39 @@ def main() -> int:
             # here, so show the phase we tracked from them.
             if cur_phase:
                 detail = re.sub(r"\bphase=\S+", f"phase={cur_phase.split('/')[0]}", detail)
-            # The percentage is phase-granular: it sits flat for the whole of a
-            # long phase (Phase 9 / STRIDE runs ~20m). Only a *changed* reading
-            # earns a permanent line; the repeats carry no new progress and go
-            # through the heartbeat channel instead. They can't be dropped —
-            # the watchdog emits no HEARTBEAT of its own, so this line is the
-            # run's only liveness signal during those flat stretches.
+            # Only a *changed* reading earns a permanent line — inside Phase 9
+            # that is one step per finished component, elsewhere one per phase
+            # boundary. An unchanged repeat is dropped here and carried by the
+            # heartbeat line above instead, which is the one line that survives
+            # the throttle.
             m_pct = re.match(r"~(\d+)%", detail)
             pct = m_pct.group(1) if m_pct else None
-            line = f"    ◷ progress · {detail}"
+            last_pct_seen = pct or last_pct_seen
             if pct is None or pct != last_pct_shown:
                 last_pct_shown = pct
-                w(line)
+                w(f"    ◷ progress · {detail}")
+        elif event == "PHASE_COST":
+            # Boundary line: the phase named here is over. `delta≥` is what it
+            # spent, `total≥` the run so far — both floors, both only present
+            # when the host metered the window.
+            phase = _kv(detail, "phase")
+            duration = _kv(detail, "duration")
+            delta = _kv(detail, "delta")
+            total = _kv(detail, "total")
+            if delta and total:
+                spend = f" · +{delta} (run {total})"
+            elif total:  # nothing was metered when the phase opened
+                spend = f" · run {total}"
             else:
-                heartbeat(line)
+                spend = ""
+            w(f"    ✓ Phase {phase} done — {duration}{spend}")
+        elif event == "RUN_BUDGET_WARN":
+            scope = _kv(detail, "scope")
+            used, budget, pct = _kv(detail, "used"), _kv(detail, "budget"), _kv(detail, "pct")
+            label = "soft budget" if scope == "soft" else "hard cut (the host stops the run there)"
+            w(f"    ⚠ cost {label} — {used} of {budget} ({pct})")
+        elif event == "RUN_BUDGET_UNWATCHED":
+            w(f"    ⚠ budget not watchable — {detail}")
         elif event in ("STRIDE_STALE", "STRIDE_CANARY_TIMEOUT", "STRIDE_COMPONENT_TIMEOUT"):
             w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
         elif event == "SUBSTEP2_IDLE":
@@ -313,7 +476,7 @@ def main() -> int:
             # as plain progress so ⚠ and ⛔ keep meaning "look at this now".
             # The event itself is unchanged in the log and in run issues, and
             # MAX_TURNS — an agent that actually died — still carries a glyph.
-            w(f"   budget · {detail}")
+            w(f"   budget · {_strip_ids(detail, 'agent_call_id')}")
         elif event in (
             "MAX_TURNS",
             "AGENT_ERROR",
@@ -321,7 +484,16 @@ def main() -> int:
             "TELEMETRY_MISMATCH",
             "HOOK_PAYLOAD_UNEXPECTED",
         ):
-            w(f"    ⚠ {event.lower().replace('_', ' ')} — {detail}")
+            # A telemetry finding about the run rather than about one call
+            # (`job_id=-`) is equally true at every later boundary. The log keeps
+            # each one for correlation; repeating it on screen turns the single
+            # line an operator needs to read into twenty they learn to skip.
+            if event == "TELEMETRY_MISMATCH" and _kv(detail, "job_id") == "-":
+                code = _kv(detail, "code")
+                if code in run_level_notices:
+                    continue
+                run_level_notices.add(code)
+            w(f"    ⚠ {event.lower().replace('_', ' ')} — {_strip_ids(detail, 'agent_call_id', 'action_id')}")
         elif event == "PARALLEL_STRIDE_RESOLVED":
             w(f"   config · {detail}")
         elif event == "ROUTE_INVENTORY_PREPASS":

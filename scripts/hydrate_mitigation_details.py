@@ -34,6 +34,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from enrichment_pass import EnrichmentContinuation
 
 _NON_FIX_KINDS = {"review", "investigate", "accept_risk"}
 _DETAIL_FIELDS = ("code_example", "verification", "reference")
@@ -237,8 +238,10 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(data, dict):
         print("hydrate_mitigation_details: yaml root is not a mapping — skipping", file=sys.stderr)
         return 0
+    continuation = EnrichmentContinuation(data)
     count = hydrate(data)
     if count:
+        continuation.refresh(data)
         yaml_path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096), encoding="utf-8")
     print(f"hydrate_mitigation_details: hydrated {count} mitigation card(s)")
     return 0

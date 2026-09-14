@@ -268,6 +268,23 @@ def test_a_build_without_a_baseline_is_refused(repo: Path, home: Path, config: d
         rb.remove("project", repo, home, dict(config, enabled=False))
 
 
+def test_an_aiscb_installation_is_left_to_its_installer(repo: Path, home: Path, config: dict):
+    """Its link, import and hooks belong together; removing one piece leaves the rest behind."""
+    data = home / ".local" / "share" / "aiscb"
+    data.mkdir(parents=True)
+    (data / "secure-coding-baseline.md").write_text(BASELINE_TEXT, encoding="utf-8")
+    link = home / ".claude" / "secure-coding-baseline.md"
+    link.symlink_to(data / "secure-coding-baseline.md")
+    instructions = home / ".claude" / "CLAUDE.md"
+    instructions.write_text(f"@{link}\n", encoding="utf-8")
+
+    with pytest.raises(rb.RemoveError, match="aiscb installation"):
+        rb.remove("user", repo, home, config, delete_file=True)
+
+    assert link.is_symlink()
+    assert instructions.read_text(encoding="utf-8") == f"@{link}\n"
+
+
 # ---------- the risks the caller has to be told about --------------------
 
 

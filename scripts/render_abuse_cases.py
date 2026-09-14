@@ -30,6 +30,7 @@ from pathlib import Path
 
 import yaml
 from _atomic_io import atomic_write_text
+from enrichment_pass import EnrichmentContinuation
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 HEADING = "## 9. Abuse Cases"
@@ -181,6 +182,8 @@ def _step_status_icon(verdict: str, controls_found: list) -> str:
         return "✓"
     if verdict == "confirmed":
         return "◐" if controls_found else "⚠"
+    if verdict == "refuted":
+        return "✗"
     return "?"  # inconclusive / unknown
 
 
@@ -269,7 +272,7 @@ def render_case(
     unfinalized verifier freeze a wrong link into the chain — e.g. a
     mass-assignment step echoed back as the IDOR finding (juice-shop 2026-07-13).
     Matcher-first keeps the identity deterministic and reproducible while the
-    per-step icon stays honest ("?" when unverified, ⚠/◐/✓ once a verifier verdict
+    per-step icon stays honest ("?" when unverified, ⚠/◐/✓/✗ once a verifier verdict
     exists). When neither source binds a finding the row renders without a link.
     RC-2026-06 / RC-2026-07.
     """
@@ -316,7 +319,7 @@ def render_case(
         if ev.get("file"):
             loc = f"{ev['file']}:{ev['line']}" if ev.get("line") else str(ev["file"])
         semantic_verdict = str(sv.get("verdict") or "inconclusive")
-        if semantic_verdict not in {"confirmed", "blocked", "inconclusive"}:
+        if semantic_verdict not in {"confirmed", "blocked", "refuted", "inconclusive"}:
             semantic_verdict = "inconclusive"
         evidence_ref = None
         if ev.get("file"):
@@ -446,7 +449,9 @@ def persist_canonical_analysis(output_dir: Path, analysis: dict) -> bool:
         raise ValueError(f"cannot read threat-model.yaml: {exc}") from exc
     if not isinstance(tm, dict):
         raise ValueError("threat-model.yaml must contain a mapping")
+    continuation = EnrichmentContinuation(tm)
     tm["abuse_case_analysis"] = analysis
+    continuation.refresh(tm)
     pending = tm_path.with_name(".threat-model.yaml.abuse.pending")
     atomic_write_text(
         pending,
@@ -603,7 +608,8 @@ _LEGEND = (
     "_Verdict: ⚠ Fully viable — no effective control blocks this chain · "
     "◐ Partially blocked — at least one step has a compensating control but the "
     "chain is not fully closed · ✓ Mitigated — chain is broken at a verified step · "
-    "? Inconclusive — could not be verified end-to-end._"
+    "? Inconclusive — could not be verified end-to-end. "
+    "Step: ✗ Refuted — the matched pairing does not hold on the code._"
 )
 
 
@@ -813,6 +819,7 @@ def enrich_changelog_with_abuse_cases(output_dir: Path, models: list[dict]) -> N
     else:
         added = sorted(cid for cid, fp in cur if fp not in prior_fps)
 
+    continuation = EnrichmentContinuation(tm)
     latest = changelog[0]
     latest["abuse_case_fingerprints"] = cur_fps
     added_block = latest.get("added")
@@ -820,6 +827,7 @@ def enrich_changelog_with_abuse_cases(output_dir: Path, models: list[dict]) -> N
         added_block = {}
         latest["added"] = added_block
     added_block["abuse_cases"] = added
+    continuation.refresh(tm)
 
     # Re-dump with the SAME params build_threat_model_yaml.py uses, so the file
     # stays byte-consistent with what the builder would have produced.

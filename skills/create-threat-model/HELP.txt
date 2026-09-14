@@ -46,7 +46,9 @@ OUTPUT
   --logo <path|url>            Cover logo: local file path or http(s) URL
                                (org-profile branding.* sets these org-wide;
                                these flags override per run)
-  --verbose                    Append a Run Statistics section to the report
+  --verbose                    Detailed console summary — adds the per-stage
+                               timings, agent roster and token/cost block to
+                               the run statistics
   --quiet                      Compact console summary — only repository, run,
                                results, outputs and warnings (omits the verdict,
                                change summary, next steps, and run statistics)
@@ -165,8 +167,15 @@ MODES
   report history.
 
   Rejected before any run state changes or any agent is dispatched:
-  --incremental, --pr-mode, --resume, --dry-run, --max-wall-time, --max-cost
+  --incremental, --pr-mode, --resume, --dry-run, --max-wall-time
   and APPSEC_LIVE_PHASE=1.
+
+  --soft-budget <usd>          Steer the run to this cost. A run whose projected
+                               cost cannot fit does not start; a run that
+                               overruns still finishes. Not a cap. Under a
+                               subscription the figures are price-table
+                               valuations of tokens, not money billed.
+                               (--max-cost is the deprecated spelling.)
 
   --no-qa                      Skip the Stage 3 QA reviewer (implied by quick)
   --no-confirm / --yes         Skip interactive confirmation prompts

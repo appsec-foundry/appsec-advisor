@@ -84,6 +84,31 @@ def test_controller_command_and_paths_are_covered_by_existing_rules():
     assert "Write(${OUTPUT_DIR}/**)" in rules
 
 
+def test_diagnosis_recommendation_refresh_uses_existing_permissions():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    assert any(cp._rule_covers(rule, "Bash(python3 recommend_fixes.py --diagnosis)") for rule in rules)
+    assert "Read(${OUTPUT_DIR}/.*)" in rules
+    assert "Write(${OUTPUT_DIR}/.*)" in rules
+    assert "Read(${PLUGIN_ROOT}/**)" in rules
+
+
+def test_maintainer_test_groups_use_existing_shell_permission():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    for command in (
+        "python3 scripts/run_tests.py quick",
+        "make test-group GROUP=report",
+        "make test-full",
+        "make validate",
+    ):
+        assert any(cp._rule_covers(rule, f"Bash({command})") for rule in rules)
+
+
+def test_enrichment_receipt_uses_existing_shell_and_output_permissions():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    assert any(cp._rule_covers(rule, "Bash(python3 enrichment_pass.py output)") for rule in rules)
+    assert "Write(${OUTPUT_DIR}/**)" in rules
+
+
 def test_evidence_bundle_command_and_artifact_are_covered_by_existing_rules():
     entries = cp.load_required(cp.DATA_FILE)
     rules = [entry["entry"] for entry in entries]
@@ -319,3 +344,23 @@ def test_shipped_settings_is_covered_by_yaml():
         f"Bash entries in .claude/settings.json not covered by data/required-permissions.yaml: "
         f"{unexplained}. Either add them to the YAML or remove them from settings.json."
     )
+
+
+def test_editorial_packet_and_gate_targets_are_covered():
+    entries = cp.load_required(cp.DATA_FILE)
+    rules = [cp.expand_entry(e["entry"], Path("/repo"), Path("/repo/out"), plugin_dir=Path("/plugin")) for e in entries]
+    for operation in [
+        "Read(/repo/out/.dispatch-context/editorial/blocks-0001.json)",
+        "Write(/repo/out/.dispatch-context/editorial/plan-0001.json)",
+        "Write(/repo/out/.dispatch-context/editorial/gate-baseline.json)",
+        "Bash(python3 /plugin/scripts/editorial_gate.py check)",
+    ]:
+        assert any(cp._rule_covers(rule, operation) for rule in rules)
+
+
+def test_architecture_evidence_uses_existing_repository_read_and_validator_permissions():
+    entries = cp.load_required(cp.DATA_FILE)
+    rules = [entry["entry"] for entry in entries]
+    assert any(cp._rule_covers(rule, "Read(${REPO_ROOT}/src/roles.ts)") for rule in rules)
+    assert any(cp._rule_covers(rule, "Bash(python3 validate_fragment.py assets)") for rule in rules)
+    assert "asset locations" in " ".join(entry["reason"] for entry in entries)

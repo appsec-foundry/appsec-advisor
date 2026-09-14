@@ -4269,6 +4269,17 @@ def test_linkify_anchors_skips_top_weaknesses_proof_titles(tmp_path: Path):
     assert "F-014](#f-014) — H2 Database Console" in normal_line
 
 
+def test_qa_enrichment_keeps_open_question_refs_identical_to_console_refs(tmp_path: Path):
+    line = "- [W-001](#w-001): [F-013](#f-013), [F-014](#f-014) — Which policy should own authorization?"
+    md = _write_tw_pair(tmp_path, f"## Management Summary\n\n### Open Questions for the Team\n\n{line}\n")
+
+    _report, linked = qa.linkify_anchors(md)
+    md.write_text(linked, encoding="utf-8")
+    qa._annotate_id_refs(md)
+
+    assert line in md.read_text(encoding="utf-8")
+
+
 def test_enrichment_skips_attack_tree_findings_pointer(tmp_path: Path):
     """The Critical Attack Tree findings pointer lists bare `[F-NNN]` ids; neither
     the dot retrofit nor the title-suffix pass may decorate them (the tree above

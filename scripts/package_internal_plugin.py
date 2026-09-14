@@ -273,7 +273,7 @@ def _org_profile_baseline(build: Path) -> dict:
 
     Like the banner, this is read at build time so the SessionStart hook stays
     free of a YAML dependency. Declaring any source *replaces* the plugin's
-    default baseline rather than merging with it: the upstream URL and the
+    default baseline rather than merging with it: the upstream source and the
     upstream bundled copy both carry the upstream id, which the organization's
     own id check would refuse anyway, so keeping them would only produce a
     confusing failure. ``file`` is rewritten to the packaged profile path,
@@ -303,7 +303,7 @@ def _org_profile_baseline(build: Path) -> dict:
         # it would head the banner and both skills with the upstream product
         # name over the organization's own rules. Cleared, the generic default
         # applies until the profile sets one.
-        for key in ("url", "git", "fallback_file", "name"):
+        for key in ("url", "git", "release", "fallback_file", "name"):
             resolved.setdefault(key, None)
     return resolved
 

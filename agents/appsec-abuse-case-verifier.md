@@ -50,6 +50,7 @@ export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 **Logging contract — use the canonical emitter `scripts/log_event.py`, NEVER hand-roll a log line.** `log_event.py` delegates to `event_log.format_line` (the single source of truth for the line format) — it stamps the real UTC time and the correct column widths for you, so the timestamp can never be wrong or literal. Emit every event with one of these exact Bash calls (pass `--agent abuse-case-verifier` so the component column is correct):
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent abuse-case-verifier
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent abuse-case-verifier
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<AC-ID> started (model: <MODEL_ID>)" --agent abuse-case-verifier
@@ -101,9 +102,10 @@ Process the steps in order. For each step:
 6. **Emit the step verdict:**
    - `confirmed` — sink reachable with attacker input AND no sufficient control found.
    - `blocked` — a sufficient control breaks this step.
-   - `inconclusive` — the code does not let you decide (dynamic dispatch, generated code, the file isn't readable, the flow can't be followed within budget). Default here when unsure.
+   - `refuted` — you decided, and the step does not hold on this evidence: the artefact the previous step yields is not what this step consumes (a leaked API key paired with a path that authenticates only by session cookie), or the matched sink is real but unrelated to the chain's input. Not a control — a pairing the matcher got wrong. Name the mismatch in `reason`.
+   - `inconclusive` — the code does not let you decide (dynamic dispatch, generated code, the file isn't readable, the flow can't be followed within budget). Default here when unsure — but never for a mismatch you did establish; that is `refuted`.
 
-A step marked `required: false` still gets a verdict, and it counts. In this catalog the non-required step is typically the chain's *payoff* — the point where the attack actually succeeds — not an optional side leg, so an `inconclusive` there stops the chain from being published as fully viable. Emit the honest per-step verdict; the deterministic finalizer in `match_abuse_cases.py` folds it into the chain verdict — you never pre-compute one.
+A step marked `required: false` still gets a verdict, and it counts. In this catalog the non-required step is typically the chain's *payoff* — the point where the attack actually succeeds — not an optional side leg, so an `inconclusive` or `refuted` there stops the chain from being published as fully viable. Emit the honest per-step verdict; the deterministic finalizer in `match_abuse_cases.py` folds it into the chain verdict — you never pre-compute one.
 
 ## Budget discipline — write-first, never return empty
 
@@ -119,7 +121,13 @@ You have 28 turns. Spend them on decisions, not repeated source acquisition. The
 
 **Turn budget guard.** If you reach ~20 turns and any step is still undecided, STOP searching and finalize the file now: write your best partial conclusions, leave still-undecided steps `inconclusive` **with a concrete reason** (e.g. `"could not resolve handler precedence within budget"`, never an empty excerpt), and exit. Never burn the last turns on search at the cost of writing the file.
 
-If `python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"` returns zero when you start, immediately write the pre-seeded verdict file (every step `inconclusive`, reason: `budget-critical`, finding ids from the matcher) and exit — do not search.
+When you start, run the budget check below. If it returns zero, immediately write the pre-seeded verdict file (every step `inconclusive`, reason: `budget-critical`, finding ids from the matcher) and exit — do not search.
+
+```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"
+```
 
 ## Output — exactly one file
 

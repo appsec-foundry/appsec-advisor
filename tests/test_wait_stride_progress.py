@@ -263,3 +263,91 @@ def test_every_state_transition_is_still_reported(tmp_path, monkeypatch, capsys)
     out = capsys.readouterr().out
     for expected in ("0/2 ready", "1/2 ready", "2/2 ready"):
         assert out.count(expected) == 1, f"transition to {expected} must survive deduplication"
+
+
+def test_component_step_changes_do_not_report_a_round(tmp_path, monkeypatch, capsys):
+    root = _make_root_with_progress(tmp_path)
+    monkeypatch.setattr(wsp.time, "sleep", lambda s: None)
+    steps = iter(
+        [
+            (1, "[stride] 0/2 ready\n  - api [1/9 loading context plan]\n  - web [1/9 loading context plan]\n"),
+            (1, "[stride] 0/2 ready\n  - api [3/9 sampling paths]\n  - web [2/9 reading sources]\n"),
+            (1, ""),
+            (1, "[stride] 0/2 ready\n  - api [5/9 category 2/6]\n  - web [4/9 category 1/6]\n"),
+        ]
+    )
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: next(steps))
+
+    wsp.main([str(tmp_path), "2", "--rounds", "4", "--plugin-root", str(root)])
+    out = capsys.readouterr().out
+    assert out.count("STRIDE progress poll") == 1
+    assert out.count("[stride] 0/2 ready") == 1
+    assert "loading context plan" not in out and "sampling paths" not in out
+    # Only the last component state reaches the caller, once, at the end.
+    assert out.count("  - api [5/9 category 2/6]") == 1
+    assert out.rstrip("\n").endswith("  - web [4/9 category 1/6]")
+
+
+def test_last_component_state_is_printed_when_the_join_returns_early(tmp_path, monkeypatch, capsys):
+    root = _make_root_with_progress(tmp_path)
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (0, "[stride] 2/2 ready\n  - api done\n  - web done\n"))
+
+    assert wsp.main([str(tmp_path), "2", "--plugin-root", str(root)]) == 0
+    out = capsys.readouterr().out
+    assert out.count("[stride] 2/2 ready") == 1
+    assert out.count("  - api done") == 1 and out.count("  - web done") == 1
+
+
+# ---------------------------------------------------------------------------
+# A complete wave joins only once its analyzers stopped
+#
+# juice-shop 2026-09-11: ci-cd-pipeline wrote its final artifact at 07:55:34,
+# the join returned and the next boundary moved the claim at 07:55:41, and the
+# analyzer's closing progress and log calls were rejected until it stopped.
+# ---------------------------------------------------------------------------
+
+
+def _complete_wave(tmp_path, monkeypatch, live_rounds):
+    (tmp_path / ".dispatch-waves.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(wsp, "_run_progress", lambda *a, **k: (0, ""))
+    monkeypatch.setattr(wsp, "_wave_status", lambda _out, _components: "complete")
+    monkeypatch.setattr(wsp, "_live_wave_calls", lambda _out, _components: next(live_rounds))
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(wsp.time, "time", lambda: clock["now"])
+    slept = []
+
+    def fake_sleep(seconds):
+        slept.append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(wsp.time, "sleep", fake_sleep)
+    return slept
+
+
+def test_complete_wave_waits_for_live_analyzers_to_stop(tmp_path, monkeypatch):
+    root = _make_root_with_progress(tmp_path)
+    slept = _complete_wave(tmp_path, monkeypatch, iter([[{"component_id": "ci-cd"}], []]))
+
+    assert wsp.main([str(tmp_path), "1", "--plugin-root", str(root), "--component", "ci-cd"]) == 0
+    assert slept == [20]
+
+
+def test_settle_window_bounds_a_call_that_never_stops(tmp_path, monkeypatch):
+    root = _make_root_with_progress(tmp_path)
+    live = [{"component_id": "ci-cd"}]
+    slept = _complete_wave(tmp_path, monkeypatch, iter(lambda: live, None))
+
+    rc = wsp.main([str(tmp_path), "1", "--plugin-root", str(root), "--component", "ci-cd", "--settle-seconds", "30"])
+    assert rc == 0
+    assert slept == [20, 20]
+
+
+def test_live_wave_calls_select_this_waves_unstopped_analyzers(tmp_path, monkeypatch):
+    calls = [
+        {"component_id": "ci-cd", "agent_call_id": "a"},
+        {"component_id": "ci-cd", "agent_call_id": "b", "stopped_at": "2026-09-11T07:55:49Z"},
+        {"component_id": "web3", "agent_call_id": "c"},
+    ]
+    monkeypatch.setattr(wsp.agent_lifecycle, "running_calls", lambda _out: calls)
+
+    assert [call["agent_call_id"] for call in wsp._live_wave_calls(tmp_path, ["ci-cd"])] == ["a"]

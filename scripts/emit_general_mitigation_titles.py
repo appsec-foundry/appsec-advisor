@@ -62,6 +62,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from enrichment_pass import EnrichmentContinuation
 
 # Class-level remediation titles keyed on the addressed finding's CWE. Each is a
 # clear, general "what to do" — the per-finding specifics live in the block body.
@@ -317,8 +318,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{m.get('id')}: [{cwe or '—'}] {original!r} -> {generalize_title(original, cwe)!r}")
         return 0
 
+    continuation = EnrichmentContinuation(data)
     n = apply(data)
     if n:
+        continuation.refresh(data)
         tmp = yaml_path.with_suffix(".yaml.tmp")
         tmp.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=4096), encoding="utf-8")
         tmp.replace(yaml_path)

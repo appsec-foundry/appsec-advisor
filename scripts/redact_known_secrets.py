@@ -82,7 +82,10 @@ _MIN_VALUE_LEN = 8
 # Each row links to the threat(s) referenced…" puts a keyword within a clause
 # of ordinary prose. An assignment position cannot occur mid-sentence, so this
 # test cannot fire on prose at all.
-_CREDENTIAL_ASSIGNMENT_RE = re.compile(rf"(?i)(?:\b|_)(?:{CREDENTIAL_KEYWORDS})[\"']?\s*[=:]\s*[\"']?$")
+# ``[ \t]*`` rather than ``\s*`` for the same reason as the scanner's twin
+# pattern: an assignment does not span a line break, and a keyword sitting at
+# the end of one line would otherwise claim the next line's first token.
+_CREDENTIAL_ASSIGNMENT_RE = re.compile(rf"(?i)(?:\b|_)(?:{CREDENTIAL_KEYWORDS})[\"']?[ \t]*[=:][ \t]*[\"']?$")
 
 
 def _is_word_shaped(value: str) -> bool:
@@ -192,6 +195,18 @@ def redact_artifacts(output_dir: Path, secrets: dict[str, str]) -> dict:
                 redacted[value] = redacted.get(value, 0) + count
                 file_hits += count
         if file_hits and new_text != text:
+            if path.name == "threat-model.yaml":
+                import yaml
+                from enrichment_pass import EnrichmentContinuation, valid_receipt
+
+                try:
+                    before = yaml.safe_load(text)
+                    after = yaml.safe_load(new_text)
+                    if isinstance(before, dict) and isinstance(after, dict) and valid_receipt(before):
+                        EnrichmentContinuation(before).refresh(after)
+                        new_text = yaml.safe_dump(after, sort_keys=False, allow_unicode=True, width=120)
+                except yaml.YAMLError:
+                    pass  # An undecodable artifact cannot acquire a receipt.
             path.write_text(new_text, encoding="utf-8")
             touched_files.append(path.name)
 

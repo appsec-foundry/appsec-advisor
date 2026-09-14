@@ -243,6 +243,7 @@ Before finishing, run only:
 
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" \
   trust-boundary-candidates \
   "$OUTPUT_DIR/.trust-boundary-candidates.json" \

@@ -360,6 +360,26 @@ def test_org_baseline_replaces_the_upstream_source(tmp_path):
     assert baseline["git"] is None
 
 
+def test_org_baseline_clears_the_upstream_release_source(tmp_path):
+    """A signed upstream release is still the upstream baseline: left in place it
+    would be fetched and refused by the organization's id check."""
+    build = tmp_path / "build"
+    write_profile(
+        build,
+        "organization:\n  id: acme\nbaseline:\n  id: acme-sec-1.0\n  url: https://git.acme.internal/baseline.md\n",
+    )
+    upstream = {
+        **UPSTREAM_BASELINE["baseline"],
+        "url": None,
+        "release": {"repository": "appsec-foundry/aiscb", "allowed_signers": ["k"]},
+    }
+    (build / "config.json").write_text(json.dumps({"baseline": upstream}), encoding="utf-8")
+    pkg.patch_config(build)
+    baseline = json.loads((build / "config.json").read_text())["baseline"]
+    assert baseline["release"] is None
+    assert baseline["url"] == "https://git.acme.internal/baseline.md"
+
+
 def test_org_baseline_without_a_name_does_not_inherit_the_upstream_one(tmp_path):
     """The display name heads the banner and both skills: the organization's own
     rules must not appear under the plugin's product name."""

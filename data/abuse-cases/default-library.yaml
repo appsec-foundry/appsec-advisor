@@ -16,15 +16,15 @@ schema_version: 1
 
 abuse_cases:
   - id: AC-T-001
-    title: Account Takeover via Stored XSS + Token Hijacking
+    title: Account Takeover via XSS + Token Hijacking
     source: mandatory
     detail_level: standard
     attacker:
       actor_id: external-attacker
       initial_access: unauthenticated
       prerequisite: >-
-        Attacker can submit content that is later rendered to other users
-        (e.g. feedback, comments, profile fields).
+        Attacker can get markup rendered in a victim's session, through stored
+        content (e.g. feedback, comments, profile fields) or a crafted link.
     goal: >-
       Obtain persistent authenticated access as an arbitrary user without
       valid credentials.
@@ -32,10 +32,10 @@ abuse_cases:
       required_signals: [has_auth_surface, has_client_storage]
     chain:
       - step: 1
-        label: Stored XSS sink renders attacker markup
+        label: XSS sink renders attacker markup
         grants: script_execution_in_victim_session
         finding:
-          title: Stored XSS renders attacker-controlled markup
+          title: XSS renders attacker-controlled markup
           cwe: CWE-79
           stride: Information Disclosure
           severity: High

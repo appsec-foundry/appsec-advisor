@@ -239,6 +239,29 @@ class TestFormatTable:
         assert "/cost" in table
         assert "subscription" in table
 
+    def test_heading_states_that_sub_agents_are_covered(self):
+        """Without this the table looks partial, because it cannot show what it
+        counted: sub-agents that inherit the session tier leave no row of their
+        own, so a complete run can print one model and read as orchestrator-only."""
+        table = hu.format_table(hu.extract_usage(_result_obj()))
+        assert "sub-agents" in table
+
+    def test_single_model_run_still_claims_whole_run_coverage(self):
+        """The one-row case is exactly where the doubt arises, so the claim must
+        survive the branch that drops the separator and the total row."""
+        obj = _result_obj(
+            modelUsage={
+                "claude-sonnet-4-6-20260101": {
+                    "outputTokens": 38_221,
+                    "costUSD": 3.41,
+                    "canonicalModel": "claude-sonnet-4-6",
+                }
+            }
+        )
+        table = hu.format_table(hu.extract_usage(obj))
+        assert "total" not in table
+        assert "sub-agents" in table
+
 
 # ---------------------------------------------------------------------------
 # CLI

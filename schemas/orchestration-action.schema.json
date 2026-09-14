@@ -47,6 +47,28 @@
         "maxLength": 80
       }
     },
+    "task_progress": {
+      "type": "object",
+      "required": ["completed_rows"],
+      "properties": {
+        "completed_rows": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        },
+        "active_row": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "additionalProperties": false
+    },
     "reason": {
       "type": "string",
       "maxLength": 1000
@@ -77,6 +99,14 @@
       "maxLength": 1000
     },
     "orchestrator_prompt_needed": {
+      "type": "boolean"
+    },
+    "lock_prompt_needed": {
+      "$comment": "Set on a LOCK_BLOCKED abort only. false means no operator can answer (headless run): stop on exit_code, do not ask, do not delete the lock.",
+      "type": "boolean"
+    },
+    "business_context_prompt_needed": {
+      "$comment": "Whether the runtime asks the business-context question at §2b. false covers all three reasons not to ask — headless, --skip-context, or a source already captured from --context — so the runtime never has to read the environment to find out.",
       "type": "boolean"
     },
     "config_path": {
@@ -112,7 +142,7 @@
           "estimate_total_pretty",
           "invocation_args",
           "keep_runtime_files",
-          "max_cost_usd",
+          "soft_budget_usd",
           "max_repair_iterations",
           "max_stride_components",
           "max_wall_time_seconds",

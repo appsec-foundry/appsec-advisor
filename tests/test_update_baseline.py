@@ -9,7 +9,9 @@ command has to leave it alone instead.
 
 *No silent downgrade.* Neither an unreachable source nor a newly published
 version may end with older text on disk. The first must change nothing, the
-second must stop and say what changed.
+second must stop and say what changed. A signed release is the one source whose
+newer version is installed rather than reported, and it too leaves a copy that
+is ahead of it alone.
 
 *No install.* A machine with no baseline, or with somebody else's, is reported
 rather than converted.
@@ -20,6 +22,7 @@ the fetch.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -239,6 +242,45 @@ def test_a_policy_deployment_is_not_this_command_s(config: dict):
     assert any("administrator" in note for note in notes)
 
 
+def aiscb_user_install(home: Path, text: str) -> Path:
+    """A static aiscb user install: its copy in the data directory, linked and imported."""
+    data = home / ".local" / "share" / "aiscb"
+    data.mkdir(parents=True)
+    copy = data / "secure-coding-baseline.md"
+    copy.write_text(text, encoding="utf-8")
+    (data / "install.py").write_text("# installer\n", encoding="utf-8")
+    (home / ".claude" / "secure-coding-baseline.md").symlink_to(copy)
+    (home / ".claude" / "CLAUDE.md").write_text("@~/.claude/secure-coding-baseline.md\n", encoding="utf-8")
+    return copy
+
+
+def test_a_copy_in_an_aiscb_installation_is_left_to_its_installer(repo: Path, home: Path, config: dict):
+    """That installer verifies and replaces its own files; the report names its command."""
+    copy = aiscb_user_install(home, EDITED_TEXT)
+
+    steps, code = ub.update(repo, home, config, offline=True)
+
+    assert code == 0
+    assert copy.read_text(encoding="utf-8") == EDITED_TEXT
+    assert any(f"python3 {copy.parent / 'install.py'} --update" in step for step in steps)
+
+
+def test_a_switched_off_aiscb_install_is_not_updated(repo: Path, home: Path, config: dict, monkeypatch):
+    copy = aiscb_user_install(home, EDITED_TEXT)
+    helper = copy.parent / "show-baseline-version.py"
+    helper.write_text("# helper\n", encoding="utf-8")
+    hook = {"hooks": [{"type": "command", "command": f"python3 {helper} --session-context --part 0"}]}
+    (home / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [hook]}}), encoding="utf-8")
+    (home / ".claude" / "CLAUDE.md").unlink()
+    monkeypatch.setenv("AISCB_DISABLE", "1")
+
+    steps, code = ub.update(repo, home, config, offline=True)
+
+    assert code == 0
+    assert "switched off" in steps[0]
+    assert copy.read_text(encoding="utf-8") == EDITED_TEXT
+
+
 def test_an_unreachable_source_does_not_touch_the_copy(
     installed: Path, repo: Path, home: Path, config: dict, monkeypatch
 ):
@@ -300,6 +342,89 @@ def test_a_derivative_of_the_configured_id_still_updates(
 
     assert code == 0
     assert installed.read_text(encoding="utf-8") == derived
+
+
+# ---------- a signed release moves forward --------------------------------
+
+NEWER_TEXT = "# Test Baseline\n\n`baseline-id: test-1.1`\n\n- Newer rules.\n"
+
+
+def from_releases(config: dict) -> dict:
+    return {**config, "url": "", "release": {"repository": "example-org/baseline", "allowed_signers": ["k"]}}
+
+
+def serve_release(monkeypatch, text: str) -> list[str]:
+    """Serve ``text`` as the latest verified release; returns the minimums asked for."""
+    asked: list[str] = []
+
+    def fetch_latest(release, minimum):
+        asked.append(minimum)
+        return ub.br.Release(text, bc.find_ids(text)[0], "example-org/baseline release, signature verified")
+
+    monkeypatch.setattr(ub.br, "fetch_latest", fetch_latest)
+    return asked
+
+
+def test_a_newer_signed_release_replaces_the_installed_copy(
+    installed: Path, repo: Path, home: Path, config: dict, monkeypatch
+):
+    asked = serve_release(monkeypatch, NEWER_TEXT)
+
+    steps, code = ub.update(repo, home, from_releases(config))
+
+    assert code == 0
+    assert installed.read_text(encoding="utf-8") == NEWER_TEXT
+    assert asked == ["test-1.0"], "the configured id is the floor the release is held to"
+
+
+def test_a_copy_ahead_of_the_build_still_moves_to_a_newer_release(repo: Path, home: Path, config: dict, monkeypatch):
+    target = repo / config["install_filename"]
+    target.write_text(NEWER_TEXT, encoding="utf-8")
+    (repo / "CLAUDE.md").write_text(f"@{config['install_filename']}\n", encoding="utf-8")
+    newest = NEWER_TEXT.replace("test-1.1", "test-1.2")
+    serve_release(monkeypatch, newest)
+
+    steps, code = ub.update(repo, home, from_releases(config))
+
+    assert code == 0
+    assert target.read_text(encoding="utf-8") == newest
+
+
+def test_a_signed_release_never_downgrades_a_newer_copy(repo: Path, home: Path, config: dict, monkeypatch):
+    target = repo / config["install_filename"]
+    target.write_text(NEWER_TEXT.replace("test-1.1", "test-1.3"), encoding="utf-8")
+    (repo / "CLAUDE.md").write_text(f"@{config['install_filename']}\n", encoding="utf-8")
+    serve_release(monkeypatch, NEWER_TEXT)
+
+    steps, code = ub.update(repo, home, from_releases(config))
+
+    assert code == 0
+    assert "test-1.3" in target.read_text(encoding="utf-8")
+    assert any("ahead of test-1.1" in step for step in steps)
+
+
+def test_a_release_that_does_not_verify_changes_nothing(
+    installed: Path, repo: Path, home: Path, config: dict, monkeypatch
+):
+    def fetch_latest(release, minimum):
+        raise ub.br.ReleaseError("the manifest signature is not from a trusted release key")
+
+    monkeypatch.setattr(ub.br, "fetch_latest", fetch_latest)
+
+    with pytest.raises(ub.UpdateError, match="trusted release key"):
+        ub.update(repo, home, from_releases(config))
+
+    assert installed.read_text(encoding="utf-8") == BASELINE_TEXT
+
+
+def test_offline_does_not_follow_releases(installed: Path, repo: Path, home: Path, config: dict):
+    """``--offline`` reads the bundled copy, which never carries a newer id."""
+    installed.write_text(NEWER_TEXT, encoding="utf-8")
+
+    steps, code = ub.update(repo, home, from_releases(config), offline=True)
+
+    assert code == 0
+    assert installed.read_text(encoding="utf-8") == NEWER_TEXT
 
 
 # ---------- CLI -----------------------------------------------------------

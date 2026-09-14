@@ -1100,7 +1100,9 @@ def _finding_id(raw_id: Any) -> str:
 
 def _check_export_trace_invariants(data: dict) -> list[str]:
     """Validate cross-field references and trace summaries in the final export."""
-    errors: list[str] = []
+    from validate_fragment import architecture_reference_errors
+
+    errors: list[str] = architecture_reference_errors(data)
     threats = [row for row in (data.get("threats") or []) if isinstance(row, dict)]
     mitigations = [row for row in (data.get("mitigations") or []) if isinstance(row, dict)]
     components = [row for row in (data.get("components") or []) if isinstance(row, dict)]

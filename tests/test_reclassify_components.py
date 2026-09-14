@@ -84,6 +84,64 @@ def test_glob_specificity_exact_beats_broad():
     assert rc._glob_specificity("server.ts") > rc._glob_specificity("**")
 
 
+def test_orm_application_owns_logic_but_store_retains_at_rest_protection(tmp_path):
+    import copy
+
+    components = [
+        {"id": "store", "tier": "data", "paths": ["models/**"], "threat_ids": ["T-001", "T-002"]},
+        {"id": "models", "tier": "application", "paths": ["models/**"]},
+        {"id": "api", "tier": "application", "paths": ["routes/**"]},
+    ]
+    model = {
+        "components": components,
+        "weaknesses": [{"id": "W-001", "affected_components": ["api", "store"], "instances": [{"id": "T-003"}]}],
+        "threats": [
+            {"id": "T-001", "component": "store", "cwe": "CWE-916", "evidence": [{"file": "models/account.ts"}]},
+            {"id": "T-002", "component": "store", "cwe": "CWE-312", "evidence": [{"file": "models/card.ts"}]},
+            {
+                "id": "T-003",
+                "component": "api",
+                "cwe": "CWE-915",
+                "evidence": [{"file": "routes/update.ts"}],
+                "merged_from": ["api", "store"],
+                "instances": [{"local_id": "store-001", "file": "models/account.ts", "line": 3}],
+            },
+        ],
+    }
+    merged_path = tmp_path / ".threats-merged.json"
+    merged_path.write_text(json.dumps(model))
+    result, changes = rc.reclassify(model)
+    assert [t["component"] for t in result["threats"]] == ["models", "store", "api"]
+    assert result["threats"][2]["merged_from"] == ["api", "models"]
+    assert result["threats"][2]["instances"][0]["original_component_id"] == "store"
+    assert "T-003" not in components[1].get("threat_ids", [])
+    assert any(c.get("instance_only") for c in changes)
+    assert result["weaknesses"][0]["affected_components"] == ["api", "models"]
+    assert rc._sync_threats_merged(tmp_path, changes) == 2
+    mirrored = json.loads(merged_path.read_text())
+    assert mirrored["threats"] == result["threats"]
+    assert mirrored["weaknesses"] == result["weaknesses"]
+    before = copy.deepcopy(result)
+    assert rc.reclassify(result)[1] == []
+    assert result == before
+
+
+def test_orm_source_detection_excludes_comments_tests_and_outside_links(tmp_path):
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    signal = "import { DataTypes } from 'sequelize'; db.define('Account', {name: DataTypes.STRING});"
+    (model_dir / "account.ts").write_text(signal)
+    (model_dir / "comment.ts").write_text("// " + signal)
+    (model_dir / "documentation.ts").write_text(f"const example = `{signal}`;")
+    (model_dir / "unused.ts").write_text("import { DataTypes } from 'sequelize'; const example = 'db.define()';")
+    (model_dir / "account.test.ts").write_text(signal)
+    (model_dir / "schema.sql").write_text("CREATE TABLE Account (name TEXT);")
+    (model_dir / "outside.ts").symlink_to("/etc/passwd")
+    assert rc.orm_source_files([{"tier": "data", "paths": ["models/**"]}], tmp_path) == {
+        "models/account.ts": "sequelize"
+    }
+
+
 def test_unresolved_phantoms_reports_when_unresolvable():
     # A phantom whose evidence matches NO glob AND with no usable primary
     # (here: components have ids but the threat has no evidence file at all)
@@ -482,3 +540,23 @@ def test_main_cli_subprocess(run_plugin_script, tmp_path):
     result = run_plugin_script("reclassify_components.py", str(tmp_path), check=False)
     assert result.returncode == 0
     assert "reclassify_components:" in result.stdout
+
+
+def test_xss_in_orm_setter_moves_to_matching_application_owner():
+    data = {
+        "components": [
+            {"id": "database", "tier": "data", "paths": ["models/**"]},
+            {"id": "api", "tier": "application", "paths": ["models/**", "routes/**"]},
+        ],
+        "threats": [
+            {"id": "T-001", "component": "database", "cwe": "CWE-79", "evidence": {"file": "models/item.ts", "line": 4}}
+        ],
+    }
+    data["threats"][0]["merged_from"] = ["database", "api"]
+    data["threats"][0]["instances"] = [{"file": "models/item.ts", "line": 4, "component_id": "database"}]
+    result, changes = rc.reclassify(data)
+    assert result["threats"][0]["component"] == "api"
+    assert changes[0]["from"] == "database"
+    assert result["threats"][0]["merged_from"] == ["api"]
+    assert result["threats"][0]["instances"][0]["component_id"] == "api"
+    assert result["threats"][0]["instances"][0]["original_component_id"] == "database"

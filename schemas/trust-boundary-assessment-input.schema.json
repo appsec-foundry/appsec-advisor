@@ -46,6 +46,75 @@
         }
       }
     },
+    "external_entities": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "description",
+          "evidence"
+        ],
+        "dependentSchemas": {"access": {"properties": {"kind": {"const": "legitimate-role"}}}},
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "maxLength": 100
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "legitimate-role",
+              "identity-provider",
+              "external-service"
+            ]
+          },
+          "access": {"type": "string", "enum": ["internet-anon", "internet-user", "internet-priv-user"]},
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "file",
+                "line"
+              ],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512,
+                  "not": {
+                    "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+                  }
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "data_flows": {"type": "array", "maxItems": 500, "items": {"$ref": "#/$defs/data_flow"}},
     "signals": {
       "type": "array",
@@ -271,7 +340,13 @@
         "id": {"type": "string", "pattern": "^df-[0-9]{3,}$"},
         "from": {"$ref": "#/$defs/endpoint"},
         "to": {"$ref": "#/$defs/endpoint"},
+        "from_entity": {"type": "string", "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 100},
+        "to_entity": {"type": "string", "pattern": "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 100},
         "label": {"type": "string", "minLength": 1, "maxLength": 120},
+        "diagram_label": {
+          "type": "string", "minLength": 1, "maxLength": 48, "pattern": "^[^\\r\\n\\t]+$",
+          "description": "Short plain-text purpose or payload for Figure 1, preserving authentication or direction distinctions. Omit repeated endpoint names and protocol. The full label remains authoritative; optional for older inventories."
+        },
         "protocol": {"type": "string", "minLength": 1, "maxLength": 80},
         "data_classification": {"type": "string", "minLength": 1, "maxLength": 80},
         "direction": {"type": "string", "enum": ["unidirectional", "bidirectional", "request-response"]},

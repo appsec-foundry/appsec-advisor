@@ -52,6 +52,10 @@ Do not independently read the catalog, inventory files, evaluate patterns, or
 author JSON. In one Bash call run:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+REPO_ROOT="<REPO_ROOT from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+ASSESSMENT_DEPTH="<ASSESSMENT_DEPTH from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/config_iac_scanner.py" \
   --repo-root "$REPO_ROOT" \
   --output "$OUTPUT_DIR/.config-scan-findings.json" \
@@ -185,6 +189,8 @@ Immediately after writing `.config-scan-findings.json`, run:
 
 ```bash
 set -e
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/normalize_config_scan.py" "$OUTPUT_DIR/.config-scan-findings.json"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" \
   config_scan_findings "$OUTPUT_DIR/.config-scan-findings.json"

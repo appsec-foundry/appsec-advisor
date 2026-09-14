@@ -38,6 +38,7 @@ Follow `shared/logging-standard.md` (agent: `appsec-eval-judge`, model: `<MODEL_
 
 ```bash
 OUT_DIR="<OUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUT_DIR" info AGENT_START "eval judge <MODE> <DIMENSION> started (model: <MODEL_ID>)" --agent appsec-eval-judge
 date +%s
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUT_DIR" step-start "<message>" --agent appsec-eval-judge

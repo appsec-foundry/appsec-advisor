@@ -769,6 +769,11 @@ $defs:
       max_wall_time:
         type: ["string", "null"]
         pattern: "^[0-9]+(s|m|h)?$"
+      soft_budget_usd:
+        type: ["number", "null"]
+        minimum: 0
+      # Deprecated spelling of soft_budget_usd. Still accepted; the new key
+      # wins when a profile carries both.
       max_cost_usd:
         type: ["number", "null"]
         minimum: 0

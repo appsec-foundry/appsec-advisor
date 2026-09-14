@@ -114,6 +114,7 @@ Run these in parallel where possible:
 
 1. **Directory structure** — run via Bash:
    ```bash
+   REPO_ROOT="<REPO_ROOT from the dispatch>"
    find "$REPO_ROOT" -maxdepth 3 -type d \
      ! -path '*/.git/*' ! -path '*/node_modules/*' ! -path '*/vendor/*' \
      ! -path '*/.git' ! -path '*/node_modules' ! -path '*/vendor' \
@@ -168,6 +169,10 @@ Run these in parallel where possible:
 > **Findings are capped per category** (40 examples each) to keep this file's Read from bloating your context — a recon pre-pass is a *signal*, not an exhaustive list. Each category's `count` is the **true** total and a `findings_truncated` field records how many were dropped; treat the listed findings as representative and re-grep on demand if you need more from a high-`count` category.
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+REPO_ROOT="<REPO_ROOT from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+SCAN_MANIFEST="<SCAN_MANIFEST from the dispatch, or false>"
 if [ -f "$OUTPUT_DIR/.recon-patterns.json" ]; then
   echo "[recon-scanner]   ↳ Deterministic pre-pass already ran (orchestrator Step 0); reading .recon-patterns.json"
 elif [ "${SCAN_MANIFEST:-false}" = "true" ]; then
@@ -207,6 +212,8 @@ Parse the JSON output and feed each category directly into the corresponding `.r
 **Build `EXCLUDE_GLOB` once at the start of this step** — the exclusion policy lives in `data/scan-excludes.yaml` (managed by `scripts/scan_excludes.py`). Run this Bash call as the first action of Step 3 and cache the result:
 
 ```bash
+REPO_ROOT="<REPO_ROOT from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 # Default exclusions (no opt-ins):
 EXCLUDE_GLOB=$(python3 "$CLAUDE_PLUGIN_ROOT/scripts/scan_excludes.py" glob --repo-root "$REPO_ROOT")
 
@@ -651,6 +658,7 @@ This category identifies two types of external dependencies that cross repositor
 **In the SAME Bash turn that kicks off the batch's Grep calls, also emit one `SCAN_START` log line per category** to `$OUTPUT_DIR/.agent-run.log`. These log lines are the mechanism that makes per-category progress live-visible to users running with `--verbose` or `run-headless.sh --verbose` (the `tail -f` loop on `.agent-run.log` surfaces each category as it starts):
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 { \
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  SCAN_START   [1/26] Auth & session" ; \
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  SCAN_START   [2/26] Authorization" ; \
@@ -663,6 +671,7 @@ Batch these log lines (one Bash call per Grep batch, not one call per category).
 After each batch of Grep calls completes, still emit the existing summary: `[recon-scanner]   Categories <n>-<m> complete — <total> files analyzed`, and log it as `SCAN_END`:
 
 ```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   recon-scanner  SCAN_END   Categories <n>-<m> complete (<total> files analyzed)" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
 ```
 
@@ -722,7 +731,14 @@ Particular care required for §7.9 OAuth / OIDC and §7.10 SPA / BFF:
 - §7.9 must be present even when the codebase has NO server-side OAuth — the template's "Frontend integrations" bullet point covers the SPA-only case. Use `RECON_PATTERNS_JSON.categories["9"]` as the baseline for frontend and backend OAuth/OIDC evidence; a non-empty `oauth-oidc-surface` finding means the section must enumerate the integration even when no server callback exists.
 - §7.10 is anti-pattern oriented. Use `RECON_PATTERNS_JSON.categories["10"]` as the baseline; a `spa-without-bff-candidate`, `spa-client-side-role-trust`, or `spa-withcredentials-token-mix` finding must be named explicitly with its `anti_pattern` value in the observations.
 - Cat 29 mobile findings are also anti-pattern oriented. Route them into existing sections, but do not lose the label: `Mobile WebView bridge`, `Mobile TLS trust disabled`, `Mobile token in app storage`, `Mobile cleartext network policy`, `Mobile IPC boundary exposed`, and `Mobile deep-link trust boundary` are architecture signals, not just implementation smells.
-- Immediately after writing `.recon-summary.md`, the **next tool call** must be `python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_recon_summary.py" "$OUTPUT_DIR/.recon-summary.md" --repo-root "$REPO_ROOT" --normalize-key-files`. Do not write `.recon-signals.json` or print completion statistics before this exits 0. If it fails, correct the summary and run the same validator again. The normalizer may only delete unverifiable `Key files` entries and replace an empty list with `none detected`; it never creates a path or line claim. This check uses the same heading and repository-evidence contract as the controller's post-recon gate.
+- Immediately after writing `.recon-summary.md`, the **next tool call** must be the validator below. Do not write `.recon-signals.json` or print completion statistics before it exits 0. If it fails, correct the summary and run the same validator again. The normalizer may only delete unverifiable `Key files` entries and replace an empty list with `none detected`; it never creates a path or line claim. This check uses the same heading and repository-evidence contract as the controller's post-recon gate.
+
+  ```bash
+  OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+  REPO_ROOT="<REPO_ROOT from the dispatch>"
+  CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+  python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_recon_summary.py" "$OUTPUT_DIR/.recon-summary.md" --repo-root "$REPO_ROOT" --normalize-key-files
+  ```
 - LEGACY top-level numbering ("## Section 1 — Technology Stack", "## Section 4 — Authentication and Authorization", "## Section 7 — Security Controls Assessment", "## Section 9 — Component List") is FORBIDDEN — the legacy schema collapsed §7.1-§7.32 into a single bullet block and lost the per-mechanism granularity that Phase 8 IAM coverage depends on. Always emit the template's structured §7.1-§7.32 headings as separate H3 blocks.
 
 ### Signals block — mandatory (Actor-Layer input)
@@ -791,9 +807,17 @@ When Cat 29 contains any `mobile-app-surface` finding, emit a deterministic comp
 **Granularity, not a hard cap.** There is **no fixed limit** on the number of hints — downstream STRIDE-component selection is criteria-derived (exposure / ci-cd / crown-jewel), so under-enumerating here silently drops attack surface. The guidance is about *granularity*: list **major deployable units** (a service, the frontend SPA, the data tier, the auth surface, the CI/CD pipeline, a distinct worker/queue), NOT every file or module. Split one service into sub-pieces **only** when they sit behind different trust boundaries. As a sanity check, ~10 units is the typical ceiling for a single repo — if you are about to emit **more than 10**, you are most likely over-decomposing: reconsider granularity first. If after that you still have >10 genuinely-distinct deployable units (a real microservice estate), emit them all **and** add this line to `.recon-summary.md`'s notes so the breadth is visible rather than silently truncated: `RECON_INVENTORY_LARGE: <n> deployable units (>10) — STRIDE merge/turn-budget may be stressed`.
 
 **VALIDATION — HARD GATE.** Immediately after writing `.recon-signals.json`, the
-**next tool call** must be
-`python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" recon_signals "$OUTPUT_DIR/.recon-signals.json" --repo-root "$REPO_ROOT"`.
-Do not print the completion banner before it exits 0. It re-checks every
+**next tool call** must be the command below; do not print the completion
+banner before it exits 0.
+
+```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+REPO_ROOT="<REPO_ROOT from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_intermediate.py" recon_signals "$OUTPUT_DIR/.recon-signals.json" --repo-root "$REPO_ROOT"
+```
+
+ It re-checks every
 `signal_evidence` location against the current repository. When it rejects a
 location, delete that location — never replace it with a guessed path or line,
 and never adjust a path's spelling or capitalization to make it resolve. If

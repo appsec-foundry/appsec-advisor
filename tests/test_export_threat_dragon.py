@@ -1194,3 +1194,44 @@ def test_cli_runs_against_the_legacy_compose_fixture(tmp_path: Path):
     assert doc["detail"]["threatTop"] == len(source["threats"])
     assert len(_all_threats(doc)) == len(source["threats"])
     assert all(t["title"].startswith("[F-") for t in _all_threats(doc))
+
+
+def test_named_external_entities_keep_identity_and_public_boundary_flag():
+    data = {
+        "components": [{"id": "api", "name": "API", "tier": "application"}],
+        "external_entities": [
+            {"id": "ext-operator", "name": "Operator", "kind": "legitimate-role"},
+            {"id": "ext-idp", "name": "Identity Provider", "kind": "identity-provider"},
+        ],
+        "data_flows": [
+            {"id": "df-001", "from": "external", "from_entity": "ext-operator", "to": "api"},
+            {"id": "df-002", "from": "api", "to": "external", "to_entity": "ext-idp"},
+        ],
+        "trust_boundaries": [
+            {
+                "id": "tb-1",
+                "from": "external",
+                "to": "api",
+                "confidence": "confirmed",
+                "resolution_status": "resolved",
+                "exposure": "internet-facing",
+            }
+        ],
+    }
+    doc, _ = etd.build_threat_dragon(data)
+    assert _node(doc, "ext-operator")["data"]["name"] == "Operator"
+    assert _node(doc, "ext-idp")["data"]["type"] == "tm.Actor"
+    assert _flows(doc)[0]["source"]["cell"] == "ext-operator"
+    assert _flows(doc)[0]["data"]["isPublicNetwork"] is True
+
+
+def test_invalid_external_reference_is_reported_without_reusing_a_component():
+    for entity_ref in ("api", ["ext-missing"]):
+        data = {
+            "components": [{"id": "api", "name": "API", "tier": "application"}],
+            "external_entities": [{"id": "api", "name": "Collision"}],
+            "data_flows": [{"id": "df-001", "from": "external", "from_entity": entity_ref, "to": "api"}],
+        }
+        doc, warnings = etd.build_threat_dragon(data)
+        assert _flows(doc) == []
+        assert any("unresolved endpoint" in warning for warning in warnings)

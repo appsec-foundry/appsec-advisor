@@ -23,13 +23,46 @@ snapshot in the log therefore charges the run for everything that followed it.
 The window closes at the last event a pipeline role wrote to `.agent-run.log`,
 plus a grace window for the snapshot that reports it.
 
-**Some agents never report usage.** The abuse-case verifiers run through a host
-path that returns no per-call usage, logged as `TELEMETRY_MISMATCH
-code=usage_source_absent`. Their spend is missing from every total. When
-`cost_is_floor` is set, the figure is a lower bound and the banner prints `≥`.
+**Some agents never report usage.** `AGENT_USAGE` exists only where the host
+answered the call itself, through a child transcript or a synchronous Agent
+return carrying `usage`. A headless session persists no transcript, and a host
+that promotes the call to async returns a launch acknowledgement instead; when
+both hold, no call has hook-visible usage, logged as `TELEMETRY_MISMATCH
+code=usage_source_absent`.
+
+Calls that source does not reach are counted from `.stage-stats.jsonl`, whose
+number comes from the `<usage>` block the host renders to the orchestrator. It
+is the same quantity — on a run where both exist it equals the sum of `in + out
++ cache_write + cache_read` of the calls a record names, exactly — but it
+carries no split into those four classes, and a `cache_read` token is priced at
+a fiftieth of an output token. Those tokens are therefore counted in
+`total_tokens` and left out of every class column and out `cost_usd`, reported
+as `unpriced_tokens`. When they or an uncovered spawn are present,
+`cost_is_floor` is set: the banner prints `≥`, or `cost n/a` when nothing at all
+could be priced.
+
+The exact figure for a headless run is the result object of `claude -p
+--output-format json`: `total_cost_usd` with sub-agents included, priced by the
+models actually billed. It exists only once the session has exited, so
+`run-headless.sh` writes it into the run baseline (`persist_run_baseline.py
+--cost-from-result`) after the run, and only for a run that delivered.
 
 Never compare figures across scopes. A run-to-run comparison is only valid when
 both numbers came from the same window and the same set of sessions.
+
+## While the run is going
+
+The live progress line carries the running figure as `out=<tokens> cost≥$<usd>`, refreshed every five minutes and at every phase boundary.
+
+It is always a floor and says so with `≥`, because sub-agents report at completion and whatever is in flight is missing from it. It is left out entirely, rather than shown small, when the host has reported no session cost yet or when `usage_source_absent` was logged for the run — that state alone computes $0.19 for a run costing tens of dollars.
+
+Output tokens, not `total_tokens`: the total is ~94 % cache reads, which track context re-reads rather than work and are priced at a fiftieth of an output token. The split by model belongs at the end of the run, where `headless_usage.py` prints it from the exact result object.
+
+A declared soft budget is shown beside the figure as `cost≥$15.96/$25.00 (≥64 %)`, read from `soft_budget_usd` in the resolved config. The hard cut is a `claude --max-budget-usd` launch flag and reaches no file, so `run-headless.sh` exports it as `APPSEC_HARD_BUDGET_USD`. Crossing 80 % or 100 % of the soft budget, or 80 % of the hard cut, logs `RUN_BUDGET_WARN` once per threshold.
+
+No threshold stops a run. The figure is a floor, so one it has not reached may already be behind us, and the soft budget steers rather than caps. Where nothing can be measured, a declared budget logs `RUN_BUDGET_UNWATCHED` once: from there only the host's cut applies, and it kills the session where it stands.
+
+Every checkpoint phase change writes `PHASE_COST` with that phase's duration and its share of the floor. `cost_running_total.py --format phases` turns those lines into the cost-by-phase table printed under the model table, which answers what the exact figure cannot: which phase spent it. The delta is omitted when nothing was metered as the phase opened, since the difference would then be the whole run so far charged to one phase.
 
 ## Baseline
 

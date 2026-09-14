@@ -12,7 +12,9 @@ Triggered by: PreToolUse, PostToolUse, SubagentStart, Stop, SubagentStop
 Events logged:
   AGENT_SPAWN   — any Agent tool call is about to start (PreToolUse, all depths)
   AGENT_RUNNING — the admitted Agent call is running under its tool_use_id
-  AGENT_DONE    — one foreground return or validated background join succeeded
+  AGENT_DONE    — one foreground return or validated background join succeeded,
+                  or, with reason=outcome_unobserved, one call whose child
+                  stopped while no surface reported how it ended
   AGENT_FAILED  — one call failed, expired, was superseded, or was terminally cleaned
   AGENT_USAGE   — SubagentStop usage bound through agent_id to the Agent call
   CONTEXT_READY — context resolver wrote .threat-modeling-context.md (size)
@@ -28,6 +30,8 @@ Events logged:
   MAX_TURNS     — agent hit its maxTurns limit (logged as ERROR)
   ASSESSMENT_SUMMARY — final summary (duration, mode, threat counts, tokens, cost, models)
   ASSESSMENT_FILES   — all files written during the assessment (full paths, deduplicated)
+  SUMMARY_NOT_RELAYED — the outermost Stop returned the turn once because the closing
+                  message dropped completion-summary lines (see completion_relay.py)
 
 Performance-diagnostic note (added 2026-05-23): FILE_READ / GREP_RUN / GLOB_RUN /
 BASH_OK were added to close the visibility gap — previously only ~15% of tool calls
@@ -124,59 +128,63 @@ _PRICING = _load_pricing()
 # ---------------------------------------------------------------------------
 # Verbose mode — mirror log lines to stderr for real-time terminal output
 # ---------------------------------------------------------------------------
+# Run-mode markers live in the output directory, never under $TMPDIR: the
+# controller writes them from its Bash shell (sandboxed: TMPDIR=/tmp/claude-<uid>)
+# while these hooks run in the Claude Code process, which may have no TMPDIR at
+# all. Both sides resolve the output directory alike.
+VERBOSE_MARKER = ".appsec-verbose"
+TRACING_MARKER = ".appsec-tracing"
+
+
 def _is_verbose() -> bool:
     """Check whether verbose logging is enabled.
 
     Enabled by any of:
       - Environment variable APPSEC_VERBOSE=1 (or any truthy value)
       - config.json logging.verbose: true
-      - Per-user marker file at ${TMPDIR:-/tmp}/.appsec-verbose-<uid>
-        (written by the create-threat-model skill when --verbose is passed;
-        hooks cannot inherit env vars set by Bash tool calls inside a Claude
-        Code session, so a filesystem marker is the only way for a skill
-        to flip verbose mode on for the duration of its own run)
+      - Marker ``<output dir>/.appsec-verbose``, written by the controller for
+        a run started with --verbose (hooks cannot inherit env vars set by Bash
+        tool calls inside a Claude Code session)
     """
     env = os.environ.get("APPSEC_VERBOSE", "").strip()
     if env and env not in ("0", "false", "no"):
         return True
     if _load_config().get("logging", {}).get("verbose", False):
         return True
-    tmpdir = os.environ.get("TMPDIR", "/tmp")
-    try:
-        uid = os.getuid()
-    except AttributeError:
-        uid = 0
-    marker = os.path.join(tmpdir, f".appsec-verbose-{uid}")
-    return os.path.exists(marker)
-
-
-_VERBOSE = _is_verbose()
+    return _marker_exists(VERBOSE_MARKER)
 
 
 # ---------------------------------------------------------------------------
 # Tracing mode — per-agent token/turn breakdown to .appsec-trace.log
 # ---------------------------------------------------------------------------
 def _is_tracing() -> bool:
-    """Check whether --tracing mode is active.
+    """Check whether tracing is active.
 
-    Enabled by:
-      - Environment variable APPSEC_TRACING=1 (or any truthy value)
-      - Per-user marker file at ${TMPDIR:-/tmp}/.appsec-tracing-<uid>
-        (written by the create-threat-model skill when --tracing is passed)
+    ``APPSEC_TRACING`` decides when set: 0/false/no/off turns tracing off even
+    for a traced run, any other value turns it on. Otherwise the marker
+    ``<output dir>/.appsec-tracing`` decides; the controller writes it for a
+    run resolved with tracing on and removes it for one resolved off.
     """
-    env = os.environ.get("APPSEC_TRACING", "").strip()
-    if env and env not in ("0", "false", "no"):
-        return True
-    tmpdir = os.environ.get("TMPDIR", "/tmp")
+    env = os.environ.get("APPSEC_TRACING", "").strip().lower()
+    if env:
+        return env not in ("0", "false", "no", "off")
+    return _marker_exists(TRACING_MARKER)
+
+
+def _marker_exists(name: str) -> bool:
     try:
-        uid = os.getuid()
-    except AttributeError:
-        uid = 0
-    marker = os.path.join(tmpdir, f".appsec-tracing-{uid}")
-    return os.path.exists(marker)
+        return os.path.exists(os.path.join(_output_dir(), name))
+    except OSError:
+        return False
 
 
-_TRACING = _is_tracing()
+def _clear_run_markers() -> None:
+    """Remove the run-mode markers once the run's closing summary is written."""
+    for name in (VERBOSE_MARKER, TRACING_MARKER):
+        try:
+            os.remove(os.path.join(_output_dir(), name))
+        except OSError:
+            pass
 
 
 def _existing_output_root(start: str) -> str | None:
@@ -252,6 +260,11 @@ def _trace_path() -> str:
     log_dir = _output_dir()
     os.makedirs(log_dir, exist_ok=True)
     return os.path.join(log_dir, ".appsec-trace.log")
+
+
+# Evaluated once per hook process, after _output_dir() is defined.
+_VERBOSE = _is_verbose()
+_TRACING = _is_tracing()
 
 
 # --------------------------------------------------------------------------
@@ -903,22 +916,59 @@ def _record_tool_end(data: dict) -> int:
     return started_at
 
 
-def clear_terminal_active_tool_calls(output_dir: str | Path | None = None) -> None:
+def _settle_swept_calls(destination: str, session_transcript: str) -> list[agent_lifecycle.LifecycleEvent]:
+    """Usage and API-error outcome of running calls whose child transcript exists."""
+    events: list[agent_lifecycle.LifecycleEvent] = []
+    if not session_transcript:
+        return events
+    for call in agent_lifecycle.running_calls(destination):
+        transcript = _child_transcript(session_transcript, str(call.get("runtime_agent_id") or ""))
+        if not transcript:
+            continue
+        call_id = str(call["agent_call_id"])
+        usage = _usage_from_transcript(transcript)
+        if usage:
+            events += agent_lifecycle.record_call_usage(
+                destination,
+                call_id,
+                usage,
+                tool_uses=_tool_uses_from_transcript(transcript),
+                resolved_model=_resolved_model_from_transcript(transcript),
+            )
+        error = _api_error_from_transcript(transcript)
+        if error:
+            events += agent_lifecycle.fail_call(destination, call_id, f"subagent_api_error:{error}")
+    return events
+
+
+def clear_terminal_active_tool_calls(output_dir: str | Path | None = None, session_transcript: str = "") -> None:
     """Remove live-only call state after the outer session has terminated.
 
     Sub-agent PreToolUse hooks do not reliably receive matching PostToolUse
     events. Their markers are useful while the run is live, but retaining them
     after the terminal outer Stop or controller abort makes preserved-runtime
     diagnostics report work that can no longer be active.
+
+    A call still running here never got its SubagentStop — a child the API
+    refused sends none. Given the outer ``session_transcript`` its own
+    transcript is still readable, so such a call first gets its real usage and,
+    when an API error ended it, that error as its reason
+    (``_settle_swept_calls``). Every other call fails as
+    ``outer_session_terminal``.
     """
     destination = os.fspath(output_dir) if output_dir is not None else _output_dir()
     try:
-        events = agent_lifecycle.fail_all_running(destination, "outer_session_terminal")
+        settled = _settle_swept_calls(destination, session_transcript)
+    except Exception:
+        settled = []
+    try:
+        events = settled + agent_lifecycle.fail_all_running(destination, "outer_session_terminal")
         agent_lifecycle.append_events(destination, events)
-        if events:
+        failed = [event for event in events if event.event == "AGENT_FAILED"]
+        if failed:
             from budget_watchdog import close_call
 
-            for event in events:
+            for event in failed:
                 close_call(str(event.call.get("agent_call_id") or ""), destination)
     except Exception:
         pass
@@ -1289,15 +1339,45 @@ def _write_trace_summary(sid: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _run_lock_owner_sid() -> str:
-    """Return the persisted run owner without applying a heartbeat-age test."""
+def _run_lock_is_ours(sid: str) -> bool:
+    """Return whether this run still holds the lock, without a heartbeat test.
+
+    The comparison is delegated because the lock's third line carries the *run
+    id*, which equals a session id only when the controller had no
+    ``APPSEC_RUN_ID`` to prefer. Reading it as a session id made every headless
+    run report an unowned lock.
+    """
+    from acquire_lock import lock_is_owned_by_this_run  # noqa: PLC0415 — off the per-tool-call path
+
     try:
-        lock_path = os.path.join(_output_dir(), ".appsec-lock")
-        with open(lock_path, encoding="utf-8") as fh:
-            lines = fh.read().splitlines()
-        return lines[2].strip()[:8] if len(lines) >= 3 else ""
-    except (OSError, IndexError):
-        return ""
+        return lock_is_owned_by_this_run(Path(_output_dir()) / ".appsec-lock", sid)
+    except OSError:
+        return False
+
+
+def _agent_in_run_scope(agent_type: str, sid: str) -> bool:
+    """Whether an Agent call belongs in the run's lifecycle and budget state.
+
+    A plugin agent always does. Any other agent — a user's own subagent, a fork —
+    is part of a run only while that run holds its lock. The output directory is
+    resolved from the working tree, so a session that keeps working in the
+    repository after the run would otherwise write its agents into the finished
+    run's logs, where a completion summary counts them as dispatches and the
+    cost window stretches to cover them.
+    """
+    return bool(_short_agent_name(agent_type)) or _run_lock_is_ours(sid)
+
+
+def _call_is_registered(call_id: str) -> bool:
+    """Whether the lifecycle holds this Agent call at all."""
+    if not call_id:
+        return False
+    try:
+        state = json.loads(agent_lifecycle.state_path(_output_dir()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    calls = state.get("calls") if isinstance(state, dict) else None
+    return any(isinstance(call, dict) and call.get("agent_call_id") == call_id for call in calls or [])
 
 
 def _write_assessment_summary(sid: str) -> None:
@@ -2426,7 +2506,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
         return
 
     lifecycle_events: list[agent_lifecycle.LifecycleEvent] = []
-    if event.is_agent_call:
+    if event.is_agent_call and _agent_in_run_scope(str(event.tool_input.get("subagent_type") or ""), sid):
         inp = event.tool_input
         subtype = str(inp.get("subagent_type") or "unknown")
         params = _agent_params(str(inp.get("prompt") or ""))
@@ -2591,6 +2671,8 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
 
     inp = event.tool_input
     subtype = inp.get("subagent_type", "unknown")
+    if not _agent_in_run_scope(str(subtype), sid):
+        return
     desc = _plain_log_text(inp.get("description", ""))
     bg = inp.get("run_in_background", False)
     bg_tag = " [bg]" if bg else "     "
@@ -2757,6 +2839,93 @@ def _tool_uses_from_transcript(transcript_path: str) -> int:
     return len(tool_ids)
 
 
+def _resolved_model_from_transcript(transcript_path: str) -> str:
+    """The model the host actually served a transcript's session on, or ``""``.
+
+    An Agent call names an alias (``opus``); only the assistant records say which
+    release answered, and pricing differs by release. The most frequent model
+    wins so one odd turn cannot relabel a session. The host's synthetic error
+    records name no model and are skipped.
+    """
+    if not transcript_path:
+        return ""
+    counts: dict[str, int] = {}
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if not raw.lstrip().startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except ValueError:
+                    continue
+                msg = obj.get("message") if isinstance(obj, dict) else None
+                if not isinstance(msg, dict) or msg.get("role") != "assistant":
+                    continue
+                model = msg.get("model")
+                if isinstance(model, str) and model and not model.startswith("<"):
+                    counts[model] = counts.get(model, 0) + 1
+    except OSError:
+        return ""
+    return max(counts, key=lambda model: counts[model]) if counts else ""
+
+
+def _api_error_from_transcript(transcript_path: str) -> str:
+    """The host's error code when an API error ended the transcript, or ``""``.
+
+    A child the API refuses — output over the token maximum, an overload — never
+    reaches SubagentStop. Its transcript ends on a synthetic assistant record
+    flagged ``isApiErrorMessage`` that carries the code, the only place the
+    reason survives.
+    """
+    if not transcript_path:
+        return ""
+    last = ""
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                if not raw.lstrip().startswith("{"):
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(obj, dict) or obj.get("type") != "assistant":
+                    continue
+                last = str(obj.get("error") or "unknown") if obj.get("isApiErrorMessage") is True else ""
+    except OSError:
+        return ""
+    if not last:
+        return ""
+    return last if re.fullmatch(r"[a-z0-9_]{1,64}", last) else "unknown"
+
+
+def _child_transcript(session_transcript: str, runtime_agent_id: str) -> str:
+    """The transcript the host keeps for one child of a session, when it exists.
+
+    SubagentStop names it as ``agent_transcript_path``. A child that died on an
+    API error never sends that event, so the terminal sweep derives the path
+    from the host layout ``<session transcript>/subagents/agent-<id>.jsonl``
+    (see tests/fixtures/hook-payloads) and accepts it only when its records name
+    the same agent.
+    """
+    if not session_transcript or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", runtime_agent_id or ""):
+        return ""
+    candidate = Path(session_transcript).with_suffix("") / "subagents" / f"agent-{runtime_agent_id}.jsonl"
+    try:
+        with candidate.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                try:
+                    obj = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(obj, dict) and obj.get("agentId"):
+                    return str(candidate) if obj["agentId"] == runtime_agent_id else ""
+    except OSError:
+        return ""
+    return str(candidate)
+
+
 def _transcript_diagnosis(path: str) -> str:
     """Why a transcript yielded nothing, in terms the next reader can act on."""
     if not path:
@@ -2834,7 +3003,15 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     cr = usage.get("cache_read_input_tokens", 0)
     has_usage = bool(usage)  # False when neither the payload nor the transcript had usage
 
-    if event_name == "SubagentStop" and not has_usage:
+    # A child that is no call of this run leaves no lifecycle or usage trace in
+    # the run's logs — see _agent_in_run_scope.
+    foreign_child = (
+        event_name == "SubagentStop"
+        and bool(event.agent_id)
+        and not _agent_in_run_scope(event.agent_type, sid)
+        and agent_lifecycle.call_by_runtime_agent_id(_output_dir(), event.agent_id) is None
+    )
+    if event_name == "SubagentStop" and not has_usage and not foreign_child:
         # "no usage data" alone cannot be acted on: the path may be absent from
         # the payload, name a file the host has not written, or hold records
         # this parser does not recognize. Say which — a completed call that
@@ -2850,7 +3027,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
             sid,
         )
 
-    runtime_agent_id = event.agent_id if event_name == "SubagentStop" else ""
+    runtime_agent_id = event.agent_id if event_name == "SubagentStop" and not foreign_child else ""
     if runtime_agent_id:
         agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, event.agent_type)
     tool_uses = _tool_uses_from_transcript(transcript) if runtime_agent_id and transcript else 0
@@ -2871,7 +3048,13 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
             pass
     if has_usage and runtime_agent_id:
         try:
-            events = agent_lifecycle.record_runtime_usage(_output_dir(), runtime_agent_id, usage, tool_uses=tool_uses)
+            events = agent_lifecycle.record_runtime_usage(
+                _output_dir(),
+                runtime_agent_id,
+                usage,
+                tool_uses=tool_uses,
+                resolved_model=_resolved_model_from_transcript(transcript),
+            )
             agent_lifecycle.append_events(_output_dir(), events)
             if not events:
                 _write(
@@ -2882,7 +3065,7 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                 )
         except agent_lifecycle.LifecycleError:
             pass
-    elif has_usage:
+    elif has_usage and not foreign_child:
         _write(
             "WARN ",
             "AGENT_USAGE_UNATTRIBUTED",
@@ -2912,15 +3095,29 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
             else:
                 # The child has stopped — that is what this event proves — but
                 # how it ended is unknown. Recording a failure here turned every
-                # completed headless call into `AGENT_FAILED`. Leave the outcome
-                # to the Agent PostToolUse, which knows whether the tool call
-                # succeeded; terminal cleanup still fails it if none arrives.
-                _write(
-                    "INFO ",
-                    "AGENT_OUTCOME_DEFERRED",
-                    f"agent_call_id={runtime_call['agent_call_id']}  reason=stop_reason_unavailable",
-                    sid,
-                )
+                # completed headless call into `AGENT_FAILED`, so the outcome
+                # goes to the Agent PostToolUse, which knows whether the tool
+                # call succeeded. Only when that return has already arrived and
+                # was a launch acknowledgement is there nobody left to ask, and
+                # then this event terminalizes instead of deferring to a past
+                # one. See `agent_lifecycle.note_child_stop`.
+                settle_here = agent_lifecycle.note_child_stop(_output_dir(), runtime_call["agent_call_id"])
+                if settle_here:
+                    agent_lifecycle.append_events(
+                        _output_dir(),
+                        agent_lifecycle.finish_call(
+                            _output_dir(),
+                            runtime_call["agent_call_id"],
+                            agent_lifecycle.OUTCOME_UNOBSERVED,
+                        ),
+                    )
+                else:
+                    _write(
+                        "INFO ",
+                        "AGENT_OUTCOME_DEFERRED",
+                        f"agent_call_id={runtime_call['agent_call_id']}  reason=stop_reason_unavailable",
+                        sid,
+                    )
             # The budget retires either way: the child is no longer running, so
             # later parent tools must not be charged to it.
             from budget_watchdog import close_call
@@ -3057,11 +3254,12 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
     # on the same event always loses — summary runs at most once.
     # Current Claude Code releases also emit `Stop` inside sub-agent sessions,
     # all with the parent's session_id. While the run lock is still owned by
-    # this session, that event cannot be the completed outer assessment. The
+    # this run, that event cannot be the completed outer assessment. The
     # happy path releases the lock before its final Stop.
-    run_still_owned = bool(sid and _run_lock_owner_sid() == sid[:8])
+    run_still_owned = _run_lock_is_ours(sid)
     if event_name == "Stop" and not run_still_owned:
-        clear_terminal_active_tool_calls()
+        clear_terminal_active_tool_calls(session_transcript=transcript)
+        relay_decision = _review_summary_relay(event, sid)
         sentinel = os.path.join(os.path.dirname(_log_path()), ".assessment-summary-emitted")
         try:
             with open(sentinel, "x") as fh:  # atomic O_CREAT|O_EXCL
@@ -3076,6 +3274,31 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                 _write_assessment_summary(sid)
             except Exception:
                 pass
+            # The summary was the markers' last reader; left in place they would
+            # keep tracing every later session in this repository.
+            _clear_run_markers()
+        return relay_decision
+    return None
+
+
+def _review_summary_relay(event: hook_payload.HookEvent, sid: str) -> dict | None:
+    """Return the Stop decision that sends a rewritten completion summary back once.
+
+    The outermost Stop is the first point that sees the message the reader
+    gets; ``completion_relay`` owns the rule and the record the summary script
+    left.
+    """
+    try:
+        import completion_relay  # noqa: PLC0415 — off the per-tool-call path
+
+        message = event.last_assistant_message or completion_relay.final_message(event.session_transcript)
+        missing = completion_relay.review_final_message(_output_dir(), sid, message, retry=event.stop_hook_active)
+    except Exception:
+        return None  # never crash a hook
+    if not missing:
+        return None
+    _write("WARN ", "SUMMARY_NOT_RELAYED", f"missing_lines={len(missing)}  first={missing[0][:120]}", sid)
+    return {"decision": "block", "reason": completion_relay.RETRY_INSTRUCTION}
 
 
 _USAGE_TOKEN_KEYS = (
@@ -3106,6 +3329,12 @@ def _agent_return_usage(value: object) -> tuple[dict[str, int], int | None] | No
         return None
     tool_uses = value.get("totalToolUseCount")
     return counters, tool_uses if isinstance(tool_uses, int) and not isinstance(tool_uses, bool) else None
+
+
+def _resolved_model_from_return(value: object) -> str:
+    """The release an Agent return reports the call ran on (``resolvedModel``), or ``""``."""
+    model = value.get("resolvedModel") if isinstance(value, dict) else None
+    return model if isinstance(model, str) else ""
 
 
 def _call_has_usage(call_id: str) -> bool:
@@ -3155,6 +3384,8 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
     # --- Agent invocation ---
     if tool == "Agent":
         subtype = inp.get("subagent_type", "unknown")
+        if not _agent_in_run_scope(str(subtype), sid) and not _call_is_registered(event.tool_use_id):
+            return
         desc = _plain_log_text(inp.get("description", ""))
         bg = inp.get("run_in_background", False)
         bg_tag = " [bg]" if bg else "     "
@@ -3176,7 +3407,13 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
                 try:
                     agent_lifecycle.append_events(
                         _output_dir(),
-                        agent_lifecycle.record_call_usage(_output_dir(), call_id, returned[0], tool_uses=returned[1]),
+                        agent_lifecycle.record_call_usage(
+                            _output_dir(),
+                            call_id,
+                            returned[0],
+                            tool_uses=returned[1],
+                            resolved_model=_resolved_model_from_return(resp),
+                        ),
                     )
                 except agent_lifecycle.LifecycleError:
                     pass
@@ -3407,6 +3644,8 @@ def handle_subagent_start(data: dict, sid: str) -> None:
     event = _hook_event(data, "SubagentStart", sid)
     runtime_agent_id = event.agent_id
     agent_type = event.agent_type
+    if not _agent_in_run_scope(agent_type, sid):
+        return
     try:
         call = agent_lifecycle.bind_runtime_agent_start(_output_dir(), runtime_agent_id, agent_type)
     except agent_lifecycle.LifecycleError as exc:
@@ -3453,7 +3692,10 @@ def main() -> None:
 
     # Stop / SubagentStop
     if event_name in ("Stop", "SubagentStop") or "stop_reason" in data:
-        handle_stop(data, sid, event_name)
+        decision = handle_stop(data, sid, event_name)
+        if decision:
+            # The host reads a Stop decision from stdout.
+            sys.stdout.write(json.dumps(decision))
         return
 
     # PreToolUse — captures Agent spawns at all session depths

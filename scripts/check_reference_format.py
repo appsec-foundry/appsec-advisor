@@ -14,6 +14,10 @@ This linter flags the deviations the producer historically shipped:
   B. Un-backticked parens locator:   ``[F-NNN](#f-nnn) — title (routes/x.ts:9)``
   C. Em-dash locator after a ref:    ``[F-NNN](#f-nnn) — title — routes/x.ts:9``
 
+Form C is a locator that ends the reference (trailing punctuation aside); a title
+that merely starts with a filename (``— settings.json exposes …``) is prose. An
+extension ends at a token boundary, so ``app.json`` is never read as ``app.js``.
+
 It is REFERENCE-ADJACENT: it only inspects the text immediately after an
 ``[ID](#anchor)`` link, so prose file mentions, URLs, and code spans elsewhere
 are never false-positives.
@@ -28,16 +32,17 @@ import re
 import sys
 from pathlib import Path
 
-_EXT = r"(?:ts|tsx|js|jsx|mjs|cjs|yml|yaml|html|json|java|py|rb|go|php|sh|sql|xml|env)"
+_EXT = r"(?:ts|tsx|js|jsx|mjs|cjs|yml|yaml|html|json|java|py|rb|go|php|sh|sql|xml|env)(?!\w)"
 _LOC = r"[\w./\\-]+\." + _EXT + r"(?::\d+(?:-\d+)?)?"
 
 # A link whose visible text is more than a bare ID (carries a separator/title).
 _ID_IN_LINK = re.compile(r"\[([FTM]-\d+)\s*[—–-][^\]]*\]\(#[ftm]-\d+\)")
 # A reference link, capturing the trailing segment up to a cell/line boundary.
 _REF = re.compile(r"\[([FTM]-\d+)\]\(#[ftm]-\d+\)([^\n|]*?)(?=$|\n|\||<br/?>|\[)", re.M)
-# Un-backticked parens locator and em-dash locator inside that trailing segment.
+# Un-backticked parens locator and em-dash locator inside that trailing segment;
+# the em-dash form must end the segment.
 _PAREN_LOC = re.compile(r"\((?!`)(" + _LOC + r")\)")
-_EMDASH_LOC = re.compile(r"—\s*(?!`)(" + _LOC + r")")
+_EMDASH_LOC = re.compile(r"—\s*(?!`)(" + _LOC + r")(?=[\s,;.)*_…→]*$)")
 
 # A `**Reference:** <value>` line (§9 mitigation cards). The value must be a
 # titled Markdown link `[title](url)` — never a bare `CWE-NNN` (unlinked) or a

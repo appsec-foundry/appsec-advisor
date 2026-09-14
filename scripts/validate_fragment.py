@@ -39,20 +39,25 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
 
 
+def _model_components(output_dir: Path) -> Any:
+    """The ``components`` of ``threat-model.yaml``; ``None`` when it cannot be read."""
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    return data.get("components") if isinstance(data, dict) else None
+
+
 def _normalize_ms_component_refs(output_dir: Path, fragments_dir: Path) -> None:
     """Repair slug component ids in MS fragments exactly as compose does.
 
     Best-effort: without a readable threat-model.yaml there is no slug -> C-NN
     mapping to apply, and the fragments are validated as they stand.
     """
-    yaml_path = output_dir / "threat-model.yaml"
-    if not yaml_path.is_file():
-        return
-    try:
-        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return
-    _ms_component_refs.normalize_ms_fragments(fragments_dir, data.get("components"))
+    _ms_component_refs.normalize_ms_fragments(fragments_dir, _model_components(output_dir))
 
 
 # Map fragment type → schema file. This is the single source of truth for
@@ -207,6 +212,29 @@ def repository_evidence_errors(
     return errors
 
 
+def _orm_application_ownership_errors(components: list, repo_root: Path) -> list[str]:
+    """An imported ORM plus executable model/query code requires an application owner.
+
+    Inspect bounded, contained JS/TS source claimed by data-tier components.
+    Comments, tests, dependency declarations, and engine initialization alone
+    do not establish this contradiction. Storage may still cite the schema.
+    """
+    from reclassify_components import _glob_to_regex, orm_source_files
+
+    owners = [
+        _glob_to_regex(path)
+        for component in components
+        if isinstance(component, dict) and component.get("tier") == "application"
+        for path in component.get("paths") or []
+        if _safe_repository_relative(path)
+    ]
+    return [
+        f"{relative}: executable ORM code needs an application component owner; the datastore may only cite its storage schema"
+        for relative in orm_source_files(components, repo_root)
+        if not any(owner.search(relative) for owner in owners)
+    ]
+
+
 def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> list[str]:
     """Validate repository-backed paths that JSON Schema cannot resolve."""
     try:
@@ -224,6 +252,12 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
                 continue
             component_id = str(component.get("id") or "<unknown>")
             errors.extend(_tier_contradiction_errors(component, component_id))
+            for item in component.get("sensitive_data") or []:
+                errors.extend(
+                    repository_evidence_errors(
+                        item.get("evidence"), root, label=f"component {component_id} sensitive data"
+                    )
+                )
             paths = component.get("paths", [])
             for raw in paths if isinstance(paths, list) else []:
                 canonical = _safe_repository_relative(raw)
@@ -231,6 +265,8 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
                     errors.append(f"component {component_id} has an unsafe or non-canonical path/glob: {raw!r}")
                 elif not _repository_pattern_matches(root, canonical):
                     errors.append(f"component {component_id} path/glob matches no repository entry: {canonical!r}")
+        if isinstance(components, list):
+            errors.extend(_orm_application_ownership_errors(components, root))
     elif fragment_type == "data-flows":
         flows = data.get("data_flows", []) if isinstance(data, dict) else []
         for flow in flows if isinstance(flows, list) else []:
@@ -239,6 +275,56 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
             flow_id = str(flow.get("id") or "<unknown>")
             evidence = flow.get("evidence", [])
             errors.extend(repository_evidence_errors(evidence, root, label=f"data flow {flow_id} evidence"))
+        for entity in data.get("external_entities") or []:
+            errors.extend(
+                repository_evidence_errors(entity.get("evidence"), root, label=f"entity {entity.get('id')} evidence")
+            )
+    elif fragment_type == "assets":
+        for asset in data.get("assets") or []:
+            for reference in asset.get("component_refs") or []:
+                errors.extend(
+                    repository_evidence_errors(
+                        reference.get("evidence"), root, label=f"asset {asset.get('id')} location"
+                    )
+                )
+    return errors
+
+
+def architecture_reference_errors(data: dict) -> list[str]:
+    """Validate optional identities; schema-invalid shapes remain validation errors."""
+
+    def rows(value):
+        return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+    errors = []
+    entities = rows(data.get("external_entities"))
+    entity_ids = [e["id"] for e in entities if isinstance(e.get("id"), str)]
+    if len(entity_ids) != len(set(entity_ids)):
+        errors.append("external_entities contains duplicate IDs")
+    for flow in rows(data.get("data_flows")):
+        for side in ("from", "to"):
+            ref = flow.get(f"{side}_entity")
+            if ref is not None and (ref not in entity_ids or flow.get(side) != "external"):
+                errors.append(f"{flow.get('id')}: {side}_entity must resolve and its endpoint must be external")
+    if "components" in data:
+        components = [c for c in rows(data.get("components")) if isinstance(c.get("id"), str)]
+        component_ids = {c["id"] for c in components}
+        if component_ids.intersection(entity_ids):
+            errors.append("external entity IDs must not collide with component IDs")
+        tiers = {c["id"]: c.get("tier") for c in components}
+        for threat in rows(data.get("threats")):
+            if (
+                str(threat.get("cwe") or "").upper() in {"CWE-79", "CWE-80"}
+                and isinstance(threat.get("component"), str)
+                and tiers.get(threat["component"]) == "data"
+            ):
+                errors.append(
+                    f"{threat.get('id')}: XSS requires an application or rendering component; a data store is not an XSS sink"
+                )
+        for asset in rows(data.get("assets")):
+            for ref in rows(asset.get("component_refs")):
+                if ref.get("component_id") not in sorted(component_ids):
+                    errors.append(f"asset {asset.get('id')}: unknown component {ref.get('component_id')}")
     return errors
 
 
@@ -276,6 +362,8 @@ def fragment_invariant_errors(
     """
     if fragment_type == "trust-boundary-candidates":
         return _trust_boundary_candidate_errors(data, context)
+    if fragment_type == "data-flows" and isinstance(data, dict):
+        return architecture_reference_errors(data)
     return []
 
 
@@ -409,9 +497,22 @@ def _tier_contradiction_errors(component: dict, component_id: str) -> list[str]:
     about where a component belongs stays the analyst's.
     """
     tier = str(component.get("tier") or "").strip().lower()
+    framework = str(component.get("framework") or "").strip().lower()
+    if tier == "data" and framework in {
+        "sequelize",
+        "typeorm",
+        "prisma",
+        "sqlalchemy",
+        "hibernate",
+        "jpa",
+        "mongoose",
+        "knex",
+    }:
+        return [
+            f"component {component_id}: ORM framework {framework!r} executes in the application tier; model the storage engine separately"
+        ]
     if tier != "client":
         return []
-    framework = str(component.get("framework") or "").strip().lower()
     if framework not in _SERVER_SIDE_RENDERERS:
         return []
     return [
@@ -502,6 +603,57 @@ def _fragment_type_for_file(path: Path) -> str | None:
     # Fallback: strip ".json" and check if the stem matches a schema name.
     stem = name.removesuffix(".json")
     return _STEM_TO_TYPE.get(stem)
+
+
+#: Fragment types the Management Summary renderer authors
+#: (`agents/appsec-ms-renderer.md`). Its gate judges only these, because the
+#: renderer can re-author nothing else; every other fragment stays a finding of
+#: the pre-render gate below.
+MS_RENDERER_FRAGMENT_TYPES = (
+    "verdict",
+    "critical-attack-tree",
+    "security-posture-attack-paths",
+    "anti-patterns",
+    "ai-exposure",
+)
+
+
+def _describe_schema_error(error: jsonschema.ValidationError) -> str:
+    """The field path and its violation; a length violation states both sizes."""
+    where = "/".join(str(part) for part in error.absolute_path) or "<root>"
+    if error.validator in {"maxLength", "minLength"} and isinstance(error.instance, str):
+        bound = "max" if error.validator == "maxLength" else "min"
+        return f"{where} is {len(error.instance)} chars ({bound} {error.validator_value})"
+    message = error.message if len(error.message) <= 200 else error.message[:199] + "…"
+    return f"{where}: {message}"
+
+
+def ms_renderer_schema_errors(output_dir: Path) -> list[str]:
+    """Schema violations in the MS renderer's fragments, judged as the pre-render gate judges them.
+
+    The renderer reaches this through ``validate_ms_compactness.py``, so a broken
+    schema limit is corrected in its own turn instead of by a fragment-fixer
+    dispatch and a second compose. It applies the gate's slug -> C-NN repair in
+    memory and the gate's schema check, nothing stricter, and rewrites no file.
+    Unreadable JSON stays the pre-render gate's finding.
+    """
+    fragments_dir = output_dir / ".fragments"
+    cmap = _ms_component_refs.slug_to_cnn_map(_model_components(output_dir))
+    errors: list[str] = []
+    for fragment_type in MS_RENDERER_FRAGMENT_TYPES:
+        name = _FRAGMENT_FILENAMES[fragment_type]
+        try:
+            data = json.loads((fragments_dir / name).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        list_key = _ms_component_refs.MS_FRAGMENT_LIST_KEYS.get(name)
+        if list_key:
+            _ms_component_refs.normalize_fragment_data(data, list_key, cmap)
+        schema = _load_schema(fragment_type)
+        validator = jsonschema.validators.validator_for(schema)(schema)
+        for error in sorted(validator.iter_errors(data), key=lambda e: [str(part) for part in e.absolute_path]):
+            errors.append(f"{name}: {_describe_schema_error(error)}")
+    return errors
 
 
 def run_pre_render_gate(

@@ -16,13 +16,20 @@ Two layers here:
 
 Adding a supported host version means dropping its sanitized fixture into the
 directory; every case below then runs against it.
+
+The replay table exists because fixtures alone were not enough: on 2026-09-05
+three event meanings changed under the plugin between 05:17Z and 07:22Z, each
+fixed where it surfaced, while nothing asserted what has to hold whatever the
+events mean. That is what the run-shaped invariants below pin (`OR-22`).
 """
 
 from __future__ import annotations
 
 import io
 import json
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -106,9 +113,10 @@ class Run:
 
     ACTION_ID = "stage1:a"
 
-    def __init__(self, host: dict, tmp_path: Path) -> None:
+    def __init__(self, host: dict, tmp_path: Path, monkeypatch) -> None:
         self.events = host["events"]
         self.tmp_path = tmp_path
+        self.monkeypatch = monkeypatch
         self.parent = _transcript(
             tmp_path / "parent.jsonl", stop_reason="tool_use", inp=900_000, out=40_000, tool_uses=2
         )
@@ -140,6 +148,9 @@ class Run:
         if "agent_transcript_path" in payload:
             payload["agent_transcript_path"] = self.parent
         payload.update(overrides)
+        self._send(payload)
+
+    def _send(self, payload: dict) -> None:
         stdin = sys.stdin
         sys.stdin = io.StringIO(json.dumps(payload))
         try:
@@ -147,12 +158,63 @@ class Run:
         finally:
             sys.stdin = stdin
 
+    def parent_stop(self) -> None:
+        """The parent session's turn ends.
+
+        The fixtures carry no `Stop` payload because it is about the session,
+        not about one Agent call — which is exactly why its meaning could change
+        underneath the plugin without any fixture noticing.
+        """
+        self._send(
+            {
+                "session_id": self.events["SubagentStop"]["session_id"],
+                "transcript_path": self.parent,
+                "cwd": str(self.tmp_path),
+                "hook_event_name": "Stop",
+                "stop_hook_active": False,
+            }
+        )
+
+    #: The run id `run-headless.sh` exports, in its real shape. A run id that
+    #: happens to look like a session id is the one shape the reader that broke
+    #: this could still resolve, so a replay using one passes for the wrong
+    #: reason.
+    RUN_ID = "run-1788616498-31337"
+
+    def hold_lock(self) -> None:
+        """Take the run lock, the way the controller takes it before dispatching."""
+        self.monkeypatch.setenv("APPSEC_RUN_ID", self.RUN_ID)
+        (self.tmp_path / ".appsec-lock").write_text(
+            f"{os.getpid()}\n{int(time.time())}\n{self.RUN_ID}\n", encoding="utf-8"
+        )
+
+    def release_lock(self) -> None:
+        """Release it, the way the terminator releases it before the last Stop."""
+        (self.tmp_path / ".appsec-lock").unlink(missing_ok=True)
+
     def call(self, call_id: str, agent_id: str, agent_type: str, job_id: str, **child) -> None:
         """The full happy sequence for one Agent call."""
-        self.spawn(call_id, agent_type, job_id)
+        self.dispatch(call_id, agent_id, agent_type, job_id)
         self.deliver("SubagentStart", agent_id=agent_id, agent_type=agent_type)
         self.stop(agent_id, agent_type, **child)
-        self.post(call_id, agent_type, job_id, agent_id)
+        self.settle(call_id, agent_id, agent_type, job_id)
+
+    def dispatch(self, call_id: str, agent_id: str, agent_type: str, job_id: str, background: bool = False) -> None:
+        """Start one call the way *this* host starts it.
+
+        When the Agent return is a launch acknowledgement it arrives at dispatch,
+        not on completion. Replaying the completion ordering against such a host
+        tests a sequence it never produces — and hides that nothing after the
+        acknowledgement carries an outcome.
+        """
+        self.spawn(call_id, agent_type, job_id, background=background)
+        if not self.return_carries_usage:
+            self.post(call_id, agent_type, job_id, agent_id)
+
+    def settle(self, call_id: str, agent_id: str, agent_type: str, job_id: str) -> None:
+        """Deliver the Agent return, for the hosts that send one on completion."""
+        if self.return_carries_usage:
+            self.post(call_id, agent_type, job_id, agent_id)
 
     def spawn(self, call_id: str, agent_type: str, job_id: str, background: bool = False, claimed: bool = True) -> None:
         if claimed:
@@ -205,6 +267,26 @@ class Run:
             },
         )
 
+    def parent_tool(self, call_id: str, tool_name: str = "Bash") -> None:
+        """One ordinary orchestrator tool call, the kind that follows a dispatch."""
+        self.deliver(
+            "PostToolUse",
+            tool_name=tool_name,
+            tool_use_id=call_id,
+            tool_input={"command": "echo appsec"},
+            tool_response={"stdout": "appsec", "stderr": "", "interrupted": False},
+        )
+
+    @property
+    def return_carries_usage(self) -> bool:
+        """Whether this host answers the Agent call with a completion or a launch.
+
+        The two shapes differ in what can settle a call, so a case that depends
+        on the answer says which shape it is asserting instead of pinning one
+        host's behaviour for all of them.
+        """
+        return "usage" in self.events["PostToolUse"]["tool_response"]
+
     @property
     def log(self) -> str:
         return (self.tmp_path / ".hook-events.log").read_text(encoding="utf-8")
@@ -220,7 +302,8 @@ class Run:
 @pytest.fixture
 def run(host: dict, tmp_path: Path, monkeypatch) -> Run:
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
-    return Run(host, tmp_path)
+    monkeypatch.delenv("APPSEC_RUN_ID", raising=False)
+    return Run(host, tmp_path, monkeypatch)
 
 
 def test_one_foreground_role_returns_with_child_usage(run: Run) -> None:
@@ -249,14 +332,14 @@ def test_two_sequential_roles_keep_their_usage_apart(run: Run) -> None:
 def test_a_parallel_wave_terminalizes_every_job_once(run: Run) -> None:
     jobs = [(f"toolu_{i}", f"agent_{i}", f"stride:c{i}:attempt-1") for i in range(3)]
     agent_type = "appsec-advisor:appsec-stride-analyzer-v2"
-    for call_id, _, job_id in jobs:
-        run.spawn(call_id, agent_type, job_id, background=True)
+    for call_id, agent_id, job_id in jobs:
+        run.dispatch(call_id, agent_id, agent_type, job_id, background=True)
     for _, agent_id, _ in jobs:
         run.deliver("SubagentStart", agent_id=agent_id, agent_type=agent_type)
     for _, agent_id, _ in jobs:
         run.stop(agent_id, agent_type)
     for call_id, agent_id, job_id in jobs:
-        run.post(call_id, agent_type, job_id, agent_id)
+        run.settle(call_id, agent_id, agent_type, job_id)
 
     assert len(run.calls()) == 3
     assert {call["state"] for call in run.calls()} == {"done"}
@@ -345,15 +428,59 @@ def test_a_stop_without_a_transcript_defers_the_outcome(run: Run) -> None:
     # tools must not be charged to it.
     assert run.budget_calls() == {}
 
-    # The Agent PostToolUse knows whether the tool call succeeded, and carries
-    # the per-call usage the absent transcript could not.
     run.post("toolu_a", agent_type, "phase2-recon", "agent_a")
     call = run.calls()[0]
+    # Whatever the return carries, the deferral is discharged by it. A call that
+    # is still running here is the leak this deferral caused for a whole run.
     assert call["state"] == "done"
-    assert call["usage"]["output_tokens"] == 8369
-    assert call["usage"]["cache_read_input_tokens"] == 897511
-    assert call["usage"]["tool_uses"] == 31
-    assert "AGENT_RETURN_FIELDS" not in run.log
+    assert run.budget_calls() == {}
+    if run.return_carries_usage:
+        # The Agent PostToolUse knows whether the tool call succeeded, and
+        # carries the per-call usage the absent transcript could not.
+        assert call["usage"]["output_tokens"] == 8369
+        assert call["usage"]["cache_read_input_tokens"] == 897511
+        assert call["usage"]["tool_uses"] == 31
+        assert "AGENT_RETURN_FIELDS" not in run.log
+    else:
+        # A launch acknowledgement answers neither question, and no later
+        # per-call source exists. It is still the last event this call gets, so
+        # it terminalizes here and the event says the outcome was never seen.
+        assert not call.get("usage")
+        assert f"reason={lifecycle.OUTCOME_UNOBSERVED}" in run.log
+        assert "AGENT_RETURN_FIELDS" in run.log
+
+
+def test_a_launch_acknowledgement_before_the_stop_still_terminalizes(run: Run) -> None:
+    """The ordering Claude Code 2.1.261 produces: the Agent call returns at
+    dispatch, so the return `SubagentStop` deferred to has already happened and
+    carried no outcome. Deferring to it left every dispatch of the 2026-09-05
+    insecure-python-app run `running` for the rest of the run, which reported a
+    `lifecycle_not_terminal` mismatch at every semantic boundary."""
+    agent_type = "appsec-advisor:appsec-recon-scanner"
+    run.spawn("toolu_a", agent_type, "phase2-recon")
+    run.post("toolu_a", agent_type, "phase2-recon", "agent_a")
+    run.deliver("SubagentStart", agent_id="agent_a", agent_type=agent_type)
+    run.stop_without_transcript("agent_a", agent_type)
+
+    assert run.calls()[0]["state"] == "done"
+    assert run.budget_calls() == {}
+    assert "AGENT_FAILED" not in run.log
+
+
+def test_a_stopped_child_does_not_own_the_parents_later_turns(run: Run) -> None:
+    """`SubagentStop` retires the turn counter; the parent's next tool call must
+    not re-create it. While a stopped call stayed `running`, the watchdog
+    resolved it as the session's one running call and charged the orchestrator's
+    own tools to the finished child, re-opening the entry the stop had just
+    removed — the `budget_not_retired` half of the same leak."""
+    agent_type = "appsec-advisor:appsec-recon-scanner"
+    run.spawn("toolu_a", agent_type, "phase2-recon")
+    run.deliver("SubagentStart", agent_id="agent_a", agent_type=agent_type)
+    run.stop_without_transcript("agent_a", agent_type)
+    assert run.budget_calls() == {}
+
+    run.parent_tool("toolu_parent_bash")
+    assert run.budget_calls() == {}
 
 
 def test_an_agent_return_without_usage_records_its_shape_instead(run: Run) -> None:
@@ -384,3 +511,68 @@ def test_a_call_outside_the_current_claim_gets_no_turn_budget(run: Run) -> None:
     run.stop("agent_a", "appsec-advisor:appsec-recon-scanner", tool_uses=30)
     assert "BUDGET_" not in run.log
     assert run.calls()[0]["state"] == "done"
+
+
+def test_a_whole_run_holds_its_invariants_whatever_the_events_mean(run: Run) -> None:
+    """The class guard for every event this plugin reads as an authority.
+
+    Between 05:17Z and 07:22Z on 2026-09-05 Claude Code changed what all three
+    of them mean: the Agent return became a launch acknowledgement carrying no
+    outcome, the child transcript stopped being written, and `Stop` began firing
+    once per parent turn instead of once per run — 28 across 18 dispatches. Each
+    change turned an event that had been read as an authority into one that no
+    longer observes what it was read for, and the run reported a telemetry
+    mismatch at every boundary, failed its live agents as
+    `outer_session_terminal` and printed a completion summary 1m23s into a
+    40-minute run.
+
+    A future host may change a fourth. These three invariants hold whatever any
+    single event means, so they are what a replay asserts.
+    """
+    run.hold_lock()
+    agents = [
+        ("toolu_a", "agent_a", "appsec-advisor:appsec-recon-scanner", "phase2-recon"),
+        ("toolu_b", "agent_b", "appsec-advisor:appsec-architecture-analyst", "phase3-6-architecture"),
+    ]
+    for call_id, agent_id, agent_type, job_id in agents:
+        run.dispatch(call_id, agent_id, agent_type, job_id)
+        run.deliver("SubagentStart", agent_id=agent_id, agent_type=agent_type)
+        run.parent_stop()
+        run.parent_tool(f"toolu_after_{call_id}")
+        # Headless: the host names a child transcript it never writes, so no
+        # surface reports how the child ended.
+        run.stop_without_transcript(agent_id, agent_type)
+        run.settle(call_id, agent_id, agent_type, job_id)
+        run.parent_stop()
+
+    assert [call["state"] for call in run.calls()] == ["done", "done"], "a dispatched call outlived its own return"
+    assert "outer_session_terminal" not in run.log, "a parent turn ending was read as the run ending"
+    assert "ASSESSMENT_SUMMARY" not in run.log, "the run summarised itself while it was still running"
+    assert run.budget_calls() == {}, "a stopped child still holds turn budget"
+
+
+def test_the_run_ends_only_once_its_lock_is_gone(run: Run) -> None:
+    """The other half: a `Stop` still has to end the run, exactly once.
+
+    The terminator releases the lock and the session then stops, so lock
+    ownership — not the event — is what separates a turn boundary from the end
+    of the run. Pinning both directions keeps the guard above from being
+    satisfiable by never cleaning up at all.
+    """
+    agent_type = "appsec-advisor:appsec-architecture-analyst"
+    run.hold_lock()
+    run.dispatch("toolu_a", "agent_a", agent_type, "phase3-6-architecture")
+    run.deliver("SubagentStart", agent_id="agent_a", agent_type=agent_type)
+
+    run.parent_stop()
+    assert run.calls()[0]["state"] == "running"
+    assert "outer_session_terminal" not in run.log
+
+    run.release_lock()
+    run.parent_stop()
+    # The cleanup removes the live call state with the call, so the log is what
+    # is left to read — the same shape `clear_terminal_active_tool_calls` leaves
+    # behind for an interrupted run.
+    assert "outer_session_terminal" in run.log
+    assert "AGENT_FAILED" in run.log
+    assert not lifecycle.state_path(run.tmp_path).exists()

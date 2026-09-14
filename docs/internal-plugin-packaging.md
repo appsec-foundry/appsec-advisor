@@ -34,7 +34,7 @@ presets:
   local-default:
     base_mode: standard
     outputs: { sarif: true }
-    guardrails: { max_cost_usd: 10 }
+    guardrails: { soft_budget_usd: 10 }
 YAML
 ```
 
@@ -185,7 +185,7 @@ presets:
         priority_floor: MUST
     guardrails:
       max_wall_time: 1h
-      max_cost_usd: 20
+      soft_budget_usd: 20
       fail_on: high             # headless run exits non-zero on new High+ threats
 
   release-review:
@@ -198,7 +198,7 @@ presets:
       enabled: true
     guardrails:
       max_wall_time: 3h
-      max_cost_usd: 80
+      soft_budget_usd: 80
 ```
 
 The `requirements.gate` block makes `verify-requirements` and

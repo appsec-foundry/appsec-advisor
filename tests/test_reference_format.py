@@ -159,6 +159,25 @@ def test_linter_ignores_prose_file_mentions_and_urls():
     assert linter.lint_text(prose) == []
 
 
+def test_linter_ignores_a_title_that_starts_with_a_filename():
+    # Form C is a locator that ends the reference; a title may open with a filename.
+    good = "🟡 [F-004](#f-004) — settings.json exposes the debug flag (`config/settings.json:3`)"
+    assert linter.lint_text(good) == []
+    assert linter.lint_text("🟡 [F-004](#f-004) — settings.json exposes the debug flag") == []
+
+
+def test_linter_reports_the_full_extension():
+    (message,) = linter.lint_text("[F-010](#f-010) — Exposed configuration — config/app.json:4")
+    assert "'— config/app.json:4'" in message
+    # An unlisted extension is not cut down to a listed prefix (`.jsonl` → `.js`).
+    assert linter.lint_text("[F-010](#f-010) — Log retention — logs/data.jsonl") == []
+
+
+def test_linter_flags_emdash_locator_before_trailing_punctuation():
+    for tail in ("", ".", ", [F-011](#f-011)", ")*", " → [W-001](#w-001)"):
+        assert linter.lint_text(f"[F-010](#f-010) — Hard-coded key — lib/keys.py:21{tail}"), tail
+
+
 # ---------------------------------------------------------------------------
 # _normalize_reference_locators — the global catch-all post-pass
 # ---------------------------------------------------------------------------

@@ -157,6 +157,7 @@ class Finding:
     cwe: list[str]
     recommended_mitigation_title: str
     breach_vector: str
+    evidence_tier: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1336,6 +1337,162 @@ def _title_with_location(check: Check, file: str, line: int) -> str:
     return f"{check.name} — {file}:{line}"
 
 
+_REQUEST_INPUT = re.compile(r"\b(?:req|request)\.(?:body|query|params|headers)\b")
+_RECORD_READ = re.compile(r"\b[\w.]+\.(?:findByPk|findById|findOne|findUnique)\s*\(")
+_JS_LEXEME = re.compile(r""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|/\*[\s\S]*?\*/|//[^\n]*""")
+_DYNAMIC_WHERE = re.compile(r"\.(?:find|findOne|update|updateMany|deleteMany)\s*\(\s*\{\s*\$where\s*:")
+_TEMPLATE_COMPILE = re.compile(r"\b(?:pug|jade|ejs|handlebars)\.(?:compile|render)\s*\(", re.I)
+
+
+def _without_js_comments(text: str) -> str:
+    return _JS_LEXEME.sub(lambda m: re.sub(r"[^\n]", " ", m[0]) if m[0].startswith("/") else m[0], text)
+
+
+def _numeric_expression(expr: str) -> bool:
+    """Only a whole numeric conversion closes the expression-injection path.
+
+    In particular, a safe branch of a ternary does not sanitize the other arm.
+    Truncation and HTML escaping do not constrain JavaScript expression syntax.
+    """
+    expr = expr.strip().rstrip(";").strip()
+    match = re.match(r"(?:Number|parseInt|parseFloat)\s*\(", expr)
+    if not match:
+        return bool(re.fullmatch(r"[+-]?\d+(?:\.\d+)?", expr))
+    arguments = _call_arguments(expr, match)
+    reconstructed = match[0] + ",".join(arguments) + ")"
+    # Reconstruct the entire call: no suffix, branch, or string concatenation.
+    return re.sub(r"\s+", "", expr) == re.sub(r"\s+", "", reconstructed)
+
+
+def _expression_code(expr: str) -> str:
+    # A quoted identifier is data, not a read of that variable. Template
+    # interpolation remains code; its surrounding literal words do not.
+    def code(match: re.Match) -> str:
+        token = match[0]
+        if token.startswith("`"):
+            return " ".join(re.findall(r"\$\{([^}]+)\}", token))
+        return " "
+
+    code_text = _JS_LEXEME.sub(code, expr)
+    return re.sub(
+        r"\b(?:Number|parseInt|parseFloat)\(\s*(?:req|request)\.(?:params|query|body)\.[\w]+(?:,\s*\d+)?\s*\)",
+        "0",
+        code_text,
+    )
+
+
+def _expression_input_refs(expr: str, names: set[str]) -> set[str]:
+    return _refs_in(_expression_code(expr), names)
+
+
+def _scan_expression_inputs(file_abs: Path, file_rel: str) -> list[Finding]:
+    """Bounded Node input-to-expression checks, emitted as unproven practices.
+
+    INJ-NODE-006 inspects dynamic $where predicates (CWE-943 / High / FT-002).
+    INJ-NODE-007 inspects eval/Function/vm execution (CWE-94 / High / FT-020).
+    INJ-NODE-008 inspects template source compilation (CWE-1336 / High / FT-022).
+    Evidence requires a concrete sink and a local request/record-read source.
+    Record reads alone do not prove an attacker-controlled write or deployed
+    configuration; none of these checks claims confirmed exploitation.
+    Constants, whole numeric conversions, test files, comments, and unrelated
+    variables are excluded. Propagation is limited to one handler and 120 lines.
+    """
+    if file_abs.suffix not in {".js", ".ts", ".mjs", ".cjs"} or _matches_any_glob(file_rel, _LLM_OUTPUT_EXCLUDE_GLOBS):
+        return []
+    try:
+        if file_abs.stat().st_size > _MAX_FILE_BYTES:
+            return []
+        original = file_abs.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    lines = _without_js_comments("\n".join(original)).splitlines()
+    tainted: dict[str, tuple[int, str]] = {}
+    findings = []
+    for idx, line in enumerate(lines):
+        if re.search(r"\bfunction\s+\w+\s*\(|(?:return|=)\s*(?:async\s*)?\([^)]*\)\s*=>\s*\{", line):
+            tainted.clear()
+        tainted = {name: source for name, source in tainted.items() if idx - source[0] <= 120}
+        statement = _forward_statement(lines, idx)
+        assignment = _assignment(line)
+        if assignment:
+            targets, rhs = assignment
+            refs = _expression_input_refs(rhs, set(tainted))
+            source = None
+            if _REQUEST_INPUT.search(_expression_code(rhs)):
+                source = (idx, "request input")
+            elif _RECORD_READ.search(rhs):
+                source = (idx, "persisted record")
+            elif refs:
+                source = min(tainted[name] for name in refs)
+            constrained = re.fullmatch(
+                r"[\w.]+\.replace\(\s*/\[\^(?:\\w-|A-Za-z0-9_-|a-zA-Z0-9_-)\]\+?/g\s*,\s*([\"'])\1\s*\)",
+                rhs.strip().rstrip(";"),
+            )
+            if _numeric_expression(rhs) or constrained:
+                source = None
+            for target in targets:
+                if source:
+                    tainted[target] = source
+                else:
+                    tainted.pop(target, None)
+
+        for pattern, check_id, cwe, finding_type, title in (
+            (_DYNAMIC_WHERE, "INJ-NODE-006", "CWE-943", "FT-002", "Input in executable NoSQL predicate"),
+            (_CODE_EXEC_RE, "INJ-NODE-007", "CWE-94", "FT-020", "Input passed to code execution"),
+            (_TEMPLATE_COMPILE, "INJ-NODE-008", "CWE-1336", "FT-022", "Input compiled as template source"),
+        ):
+            match = pattern.search(line)
+            if not match:
+                continue
+            if pattern is _DYNAMIC_WHERE:
+                # Parse one expression so a later callback cannot taint a constant predicate.
+                argument = _call_first_argument("(" + statement[match.end() :], re.match(r"\(", "("))
+            else:
+                argument = _call_first_argument(statement, match)
+            refs = _expression_input_refs(argument, set(tainted))
+            direct = bool(_REQUEST_INPUT.search(_expression_code(argument)))
+            if (not refs and not direct) or _numeric_expression(argument):
+                continue
+            source_idx, source_kind = (idx, "request input") if direct else min(tainted[name] for name in refs)
+            conditions = [
+                _cut_condition(raw)
+                for raw in lines[max(source_idx, idx - 24) : idx + 1]
+                if re.search(r"\bif\s*\(|\s\?\s", raw)
+            ][:3]
+            condition_text = " Observed path conditions: " + " | ".join(conditions) + "." if conditions else ""
+            findings.append(
+                Finding(
+                    local_id="",
+                    check_id=check_id,
+                    finding_type_id=finding_type,
+                    source_type=_source_type_for(file_rel),
+                    file=file_rel,
+                    line=idx + 1,
+                    evidence_snippet=_evidence_snippet(original, idx),
+                    title=f"{title} — {file_rel}:{idx + 1}",
+                    scenario=(
+                        f"{source_kind.capitalize()} read at {file_rel}:{source_idx + 1} reaches an executable "
+                        f"expression at {file_rel}:{idx + 1}.{condition_text} The unsafe path is observed; "
+                        "attacker control, access prerequisites, and active configuration require verification."
+                    ),
+                    severity="High",
+                    cwe=[cwe],
+                    recommended_mitigation_title=(
+                        "Use typed query predicates instead of $where"
+                        if pattern is _DYNAMIC_WHERE
+                        else "Keep input as data; remove dynamic code or template-source compilation"
+                    ),
+                    breach_vector="n/a",
+                    evidence_tier="insecure-practice",
+                )
+            )
+    return findings
+
+
+def _cut_condition(line: str) -> str:
+    return line.strip()[:240]
+
+
 def scan_file(
     file_abs: Path,
     file_rel: str,
@@ -1397,12 +1554,14 @@ def scan_repo(repo_root: Path, checks: list[Check]) -> list[Finding]:
             continue
         catalog_findings = scan_file(path, rel, checks)
         llm_findings = _scan_llm_output_file(path, rel)
+        expression_findings = _scan_expression_inputs(path, rel)
         # Prefer the source-aware LLM finding when a broad catalog rule matched
         # the same sink and CWE. Both rows describe one affected statement and
         # mechanism; keeping both would violate the per-instance finding model.
         specific = {(f.line, tuple(f.cwe)) for f in llm_findings}
         findings.extend(f for f in catalog_findings if (f.line, tuple(f.cwe)) not in specific)
         findings.extend(llm_findings)
+        findings.extend(f for f in expression_findings if (f.line, tuple(f.cwe)) not in specific)
     # Assign sequential local IDs (SAF-001, SAF-002, …) deterministically by
     # (file, line, check_id).
     findings.sort(key=lambda f: (f.file, f.line, f.check_id))
@@ -1426,7 +1585,7 @@ def emit_sidecar(
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "checks_run": checks_run,
         "violations": len(findings),
-        "findings": [asdict(f) for f in findings],
+        "findings": [{k: v for k, v in asdict(f).items() if k != "evidence_tier" or v is not None} for f in findings],
     }
     out_path = output_dir / ".source-auth-findings.json"
     tmp = out_path.with_suffix(".json.tmp")

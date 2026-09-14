@@ -6,7 +6,9 @@
 #
 # Check structure:
 #   id                         — IAC-NNN stable identifier
-#   name                       — short check name (will become finding title)
+#   name                       — the desired state; mitigation cards reuse it
+#   violation_title            — finding title: the defect when the check fails,
+#                                a weakness class with a title-case lead
 #   iac_type                   — file category (Dockerfile, github_workflow,
 #                                docker_compose, dependabot, npm_config,
 #                                kubernetes, terraform)
@@ -60,6 +62,7 @@ checks:
   # ============ Dockerfile ============
   - id: IAC-001
     name: "Dockerfile base image must be digest-pinned"
+    violation_title: "Unpinned Container Base Image"
     iac_type: Dockerfile
     file_pattern: "Dockerfile"
     pattern: "^FROM\\s+\\S+@sha256:"
@@ -72,6 +75,7 @@ checks:
 
   - id: IAC-002
     name: "Dockerfile USER directive (non-root)"
+    violation_title: "Container Runs as Root"
     iac_type: Dockerfile
     file_pattern: "Dockerfile"
     pattern: "^USER\\s+(?!root)(?!0\\b)"
@@ -84,6 +88,7 @@ checks:
 
   - id: IAC-003
     name: "Dockerfile HEALTHCHECK instruction"
+    violation_title: "Missing Container Healthcheck"
     iac_type: Dockerfile
     file_pattern: "Dockerfile"
     pattern: "^HEALTHCHECK"
@@ -96,6 +101,7 @@ checks:
 
   - id: IAC-004
     name: "Dockerfile no --unsafe-perm install flag"
+    violation_title: "Package Install Scripts Run as Root"
     iac_type: Dockerfile
     file_pattern: "Dockerfile"
     pattern: "--unsafe-perm"
@@ -108,6 +114,7 @@ checks:
 
   - id: IAC-005
     name: "Dockerfile npm/pnpm/yarn install without --ignore-scripts"
+    violation_title: "Dependency Install Scripts Run at Build Time"
     iac_type: Dockerfile
     file_pattern: "Dockerfile"
     # Flag the BAD pattern (a JS package install that does NOT pass
@@ -128,6 +135,7 @@ checks:
   # ============ GitHub Actions Workflows ============
   - id: IAC-010
     name: "GitHub Actions workflow-level permissions block"
+    violation_title: "Missing Workflow Permissions Block"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
     pattern: "^permissions:"
@@ -140,6 +148,7 @@ checks:
 
   - id: IAC-011
     name: "Third-party GitHub Actions pinned to commit SHA"
+    violation_title: "Unpinned Third-Party GitHub Action"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
     pattern: "uses:\\s+[^@]+@[0-9a-f]{40}"
@@ -152,6 +161,7 @@ checks:
 
   - id: IAC-012
     name: "pull_request_target must not check out head ref from fork"
+    violation_title: "Fork Checkout in pull_request_target Workflow"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
     pattern: "on:.*pull_request_target.*\\n.*actions/checkout.*ref:\\s*\\$\\{\\{\\s*github\\.event\\.pull_request\\.head"
@@ -164,6 +174,7 @@ checks:
 
   - id: IAC-013
     name: "No script injection via github.event.* expressions in run:"
+    violation_title: "Workflow Script Injection from Event Data"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
     pattern: "run:.*\\$\\{\\{\\s*github\\.event\\.(pull_request\\.title|issue\\.title|comment\\.body|head_ref|review\\.body).*\\}\\}"
@@ -176,6 +187,7 @@ checks:
 
   - id: IAC-014
     name: "No ACTIONS_STEP_DEBUG or set -x echoing secrets"
+    violation_title: "Secrets Echoed in Workflow Debug Logs"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
     pattern: "(ACTIONS_STEP_DEBUG:\\s*true|set\\s+-x|echo\\s+\\$\\{?[A-Z_]+_TOKEN|echo\\s+\\$\\{?[A-Z_]+_SECRET)"
@@ -188,6 +200,7 @@ checks:
 
   - id: IAC-015
     name: "GITHUB_TOKEN scope minimization"
+    violation_title: "Default GITHUB_TOKEN Scope Not Restricted"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
     pattern: "permissions:\\s*\\n\\s+contents:\\s+read"
@@ -201,6 +214,7 @@ checks:
   # ============ docker-compose ============
   - id: IAC-020
     name: "docker-compose no privileged mode"
+    violation_title: "Privileged Compose Service"
     iac_type: docker_compose
     file_pattern: "docker-compose*.yml"
     pattern: "privileged:\\s*true"
@@ -213,6 +227,7 @@ checks:
 
   - id: IAC-021
     name: "docker-compose no docker.sock mount"
+    violation_title: "Docker Socket Mounted into Container"
     iac_type: docker_compose
     file_pattern: "docker-compose*.yml"
     pattern: "/var/run/docker\\.sock"
@@ -225,6 +240,7 @@ checks:
 
   - id: IAC-022
     name: "docker-compose no host network mode"
+    violation_title: "Compose Service on Host Network"
     iac_type: docker_compose
     file_pattern: "docker-compose*.yml"
     pattern: "network_mode:\\s*host"
@@ -238,6 +254,7 @@ checks:
   # ============ Dependabot / Renovate ============
   - id: IAC-030
     name: "Dependabot covers npm ecosystem"
+    violation_title: "Dependabot Does Not Cover npm"
     iac_type: dependabot
     file_pattern: ".github/dependabot.yml"
     pattern: "package-ecosystem:\\s*\"npm\""
@@ -250,6 +267,7 @@ checks:
 
   - id: IAC-031
     name: "Dependabot covers github-actions ecosystem"
+    violation_title: "Dependabot Does Not Cover GitHub Actions"
     iac_type: dependabot
     file_pattern: ".github/dependabot.yml"
     pattern: "package-ecosystem:\\s*\"github-actions\""
@@ -262,6 +280,7 @@ checks:
 
   - id: IAC-032
     name: "Dependabot covers docker ecosystem"
+    violation_title: "Dependabot Does Not Cover Docker"
     iac_type: dependabot
     file_pattern: ".github/dependabot.yml"
     pattern: "package-ecosystem:\\s*\"docker\""
@@ -287,6 +306,7 @@ checks:
 
   - id: IAC-033
     name: "Renovate config present (file-mode detection)"
+    violation_title: "Renovate Configuration Missing"
     iac_type: renovate
     file_pattern: "renovate.json"
     pattern: ".*"
@@ -299,6 +319,7 @@ checks:
 
   - id: IAC-034
     name: "Renovate config alternative location (.github/renovate.json)"
+    violation_title: "Renovate GitHub Directory Configuration Missing"
     iac_type: renovate
     file_pattern: ".github/renovate.json"
     pattern: ".*"
@@ -311,6 +332,7 @@ checks:
 
   - id: IAC-035
     name: "Renovate config alternative dotfile (.renovaterc[.json])"
+    violation_title: "Renovate Dotfile Configuration Missing"
     iac_type: renovate
     file_pattern: ".renovaterc.json"
     pattern: ".*"
@@ -324,6 +346,7 @@ checks:
   # ============ SBOM & Provenance ============
   - id: IAC-040
     name: "Container image signing via cosign or attest-build-provenance"
+    violation_title: "Missing Container Image Signing"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
     pattern_any_of:
@@ -339,6 +362,7 @@ checks:
 
   - id: IAC-041
     name: "SBOM generation in build pipeline"
+    violation_title: "Missing SBOM Generation"
     iac_type: github_workflow
     file_pattern: ".github/workflows/*.yml"
     pattern_any_of:
@@ -355,6 +379,7 @@ checks:
   # ============ NPM config ============
   - id: IAC-050
     name: "package-lock.json present and committed"
+    violation_title: "Missing npm Lockfile"
     iac_type: npm_config
     file_pattern: "package-lock.json"
     pattern: ""
@@ -367,6 +392,7 @@ checks:
 
   - id: IAC-051
     name: "No postinstall scripts in package.json (or audited)"
+    violation_title: "Unaudited npm Lifecycle Script"
     iac_type: npm_config
     file_pattern: "package.json"
     pattern: "\"(postinstall|prepare)\":"
@@ -390,6 +416,7 @@ checks:
   # violation on its own.
   - id: IAC-060
     name: "Claude Code project settings must enable the command sandbox"
+    violation_title: "Claude Code Command Sandbox Not Enabled"
     iac_type: agent_config
     file_pattern: ".claude/settings*.json"
     expect: structured
@@ -402,6 +429,7 @@ checks:
 
   - id: IAC-061
     name: "Claude Code settings must not disable permission prompts"
+    violation_title: "Claude Code Permission Prompts Disabled"
     iac_type: agent_config
     file_pattern: ".claude/settings*.json"
     pattern: "\"defaultMode\"\\s*:\\s*\"bypassPermissions\""
@@ -414,6 +442,7 @@ checks:
 
   - id: IAC-062
     name: "Claude Code settings must not auto-trust repository MCP servers"
+    violation_title: "Claude Code Auto-Trusts Repository MCP Servers"
     iac_type: agent_config
     file_pattern: ".claude/settings*.json"
     pattern: "\"enableAllProjectMcpServers\"\\s*:\\s*true"
@@ -426,6 +455,7 @@ checks:
 
   - id: IAC-063
     name: "Codex project config must not disable the sandbox"
+    violation_title: "Codex Sandbox Disabled"
     iac_type: agent_config
     file_pattern: ".codex/config.toml"
     pattern: "(?m)^\\s*(?:[A-Za-z_][\\w.-]*\\.)?sandbox_mode\\s*=\\s*[\"']danger-full-access[\"']"
@@ -438,6 +468,7 @@ checks:
 
   - id: IAC-064
     name: "Codex project config must not disable approvals"
+    violation_title: "Codex Approvals Disabled"
     iac_type: agent_config
     file_pattern: ".codex/config.toml"
     pattern: "(?m)^\\s*(?:[A-Za-z_][\\w.-]*\\.)?approval_policy\\s*=\\s*[\"']never[\"']"
@@ -450,6 +481,7 @@ checks:
 
   - id: IAC-065
     name: "Codex sandbox must not be granted network access"
+    violation_title: "Codex Sandbox Network Access Enabled"
     iac_type: agent_config
     file_pattern: ".codex/config.toml"
     pattern: "(?m)^\\s*(?:[A-Za-z_][\\w.-]*\\.)?network_access\\s*=\\s*true"
@@ -462,6 +494,7 @@ checks:
 
   - id: IAC-066
     name: "VS Code workspace settings must not auto-approve every agent tool"
+    violation_title: "VS Code Agent Tools Auto-Approved"
     iac_type: agent_config
     file_pattern: ".vscode/settings.json"
     pattern: "\"chat\\.tools\\.global\\.autoApprove\"\\s*:\\s*true"
@@ -474,6 +507,7 @@ checks:
 
   - id: IAC-067
     name: "VS Code workspace settings must not turn the agent sandbox off"
+    violation_title: "VS Code Agent Sandbox Disabled"
     iac_type: agent_config
     file_pattern: ".vscode/settings.json"
     pattern: "\"chat\\.agent\\.sandbox\\.enabled\"\\s*:\\s*\"off\""
@@ -486,6 +520,7 @@ checks:
 
   - id: IAC-068
     name: "Gemini CLI project settings must enable sandboxing"
+    violation_title: "Gemini CLI Sandbox Not Enabled"
     iac_type: agent_config
     file_pattern: ".gemini/settings.json"
     expect: structured
@@ -498,6 +533,7 @@ checks:
 
   - id: IAC-069
     name: "Gemini CLI project settings must not auto-trust tools"
+    violation_title: "Gemini CLI Tools Auto-Trusted"
     iac_type: agent_config
     file_pattern: ".gemini/settings.json"
     expect: structured
@@ -510,6 +546,7 @@ checks:
 
   - id: IAC-070
     name: "Kiro workspace MCP servers must not auto-approve tools"
+    violation_title: "Kiro MCP Tools Auto-Approved"
     iac_type: agent_config
     file_pattern: ".kiro/settings/mcp.json"
     expect: structured
@@ -522,6 +559,7 @@ checks:
 
   - id: IAC-071
     name: "Automation must not run a coding agent without sandbox or approvals"
+    violation_title: "Unsandboxed Coding Agent in Automation"
     iac_type: agent_automation
     file_pattern: ".github/workflows/*.yml"
     pattern: "--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--allow-all-tools|--approval-mode[ =]yolo|--sandbox[ =]danger-full-access|--permission-mode[ =]bypassPermissions|(?<![\\w-])--yolo(?![\\w-])"
@@ -534,6 +572,7 @@ checks:
 
   - id: IAC-072
     name: "Committed agent hooks must not run remote or constructed commands"
+    violation_title: "Agent Hook Runs Remote or Constructed Commands"
     iac_type: agent_config
     file_pattern: ".claude/*.json"
     expect: structured
@@ -546,6 +585,7 @@ checks:
 
   - id: IAC-073
     name: "Committed agent hooks must not egress or delete on every trigger"
+    violation_title: "Agent Hook Egresses or Deletes on Every Trigger"
     iac_type: agent_config
     file_pattern: ".claude/*.json"
     expect: structured
@@ -558,6 +598,7 @@ checks:
 
   - id: IAC-074
     name: "Committed permission rules must not grant shell or credential access"
+    violation_title: "Agent Permission Rules Grant Shell or Credential Access"
     iac_type: agent_config
     file_pattern: ".claude/settings*.json"
     expect: structured
@@ -570,6 +611,7 @@ checks:
 
   - id: IAC-075
     name: "Committed permission rules must not grant unrestricted read or fetch"
+    violation_title: "Agent Permission Rules Grant Unrestricted Read or Fetch"
     iac_type: agent_config
     file_pattern: ".claude/settings*.json"
     expect: structured

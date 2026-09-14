@@ -301,8 +301,6 @@ jobs:
           MODE_FLAG=""
           case "${{ steps.preset.outputs.mode }}" in
             full)        MODE_FLAG="--full" ;;
-            incremental) MODE_FLAG="--incremental" ;;
-            dry-run)     MODE_FLAG="--dry-run" ;;
             *) echo "::error::unknown mode '${{ steps.preset.outputs.mode }}'"; exit 1 ;;
           esac
 

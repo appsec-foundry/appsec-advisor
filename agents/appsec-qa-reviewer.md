@@ -174,6 +174,7 @@ reached, stop expanding scope:
 1. Finish the current Edit/Write if already in progress.
 2. Write `RUN_COMPLETE` to the agent log:
    ```bash
+   OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)  [--------]  INFO   qa-reviewer  RUN_COMPLETE   reason=budget_wrap_up  repairs_applied=<N>  remaining_actions=<M>" >> "$OUTPUT_DIR/.agent-run.log" 2>/dev/null
    ```
 3. Proceed directly to writing `.qa-status.json` and exit.

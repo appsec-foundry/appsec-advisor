@@ -51,6 +51,11 @@ CONFIG = json.loads((SCRIPT.parent.parent / "config.json").read_text(encoding="u
 # The banner heads the baseline line with the configured name, so the tests read
 # it from the same place the hook does rather than pinning this build's wording.
 BASELINE_NAME = CONFIG["baseline"]["name"]
+# The id likewise, so a version the build moves to does not break tests that
+# only care which bucket a baseline lands in.
+BASELINE_ID = CONFIG["baseline"]["id"]
+OLDER_ID = f"{BASELINE_ID.rsplit('-', 1)[0]}-0.0"
+NEWER_ID = f"{BASELINE_ID.rsplit('-', 1)[0]}-99.0"
 
 
 @pytest.fixture(autouse=True)
@@ -65,11 +70,14 @@ def _tmp_path_is_a_repository(tmp_path, monkeypatch):
     ``HOME`` is redirected for the same reason: the baseline line reads
     ``~/.claude/CLAUDE.md``, so a developer who has the baseline installed on
     their own machine would otherwise get a different banner than CI.
+    ``AISCB_DISABLE`` is cleared for the same reason: it is the developer's own
+    session switch.
     """
     (tmp_path / ".git").mkdir(exist_ok=True)
     home = tmp_path / "_home"
     (home / ".claude").mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("AISCB_DISABLE", raising=False)
     return tmp_path
 
 
@@ -459,7 +467,7 @@ def test_installed_baseline_names_its_id_and_scope(tmp_path):
     write_model(tmp_path)
     install_baseline_for(tmp_path)
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == f"{BASELINE_NAME} · aisec-0.1 · this repo"
+    assert line == f"{BASELINE_NAME} · {BASELINE_ID} · this repo"
 
 
 def test_an_organizations_baseline_appears_under_its_own_name(tmp_path, monkeypatch):
@@ -483,16 +491,16 @@ def test_a_second_different_baseline_beside_the_loaded_one_is_named(tmp_path):
     install_baseline_for_user(tmp_path)
     (tmp_path / "CLAUDE.md").write_text("baseline-id: `acme-sec-1.0`\n", encoding="utf-8")
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == f"{BASELINE_NAME} · aisec-0.1 · this machine · also acme-sec-1.0 in this repo"
+    assert line == f"{BASELINE_NAME} · {BASELINE_ID} · this machine · also acme-sec-1.0 in this repo"
 
 
 def test_a_declared_derivative_beside_the_baseline_is_not_a_foreign_one(tmp_path):
     """``<id>+suffix`` is the same rules adapted, so it counts as loaded, not as drift."""
     write_model(tmp_path)
     install_baseline_for_user(tmp_path)
-    (tmp_path / "CLAUDE.md").write_text("baseline-id: `aisec-0.1+acme`\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(f"baseline-id: `{BASELINE_ID}+acme`\n", encoding="utf-8")
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == f"{BASELINE_NAME} · aisec-0.1, aisec-0.1+acme · this repo+this machine"
+    assert line == f"{BASELINE_NAME} · {BASELINE_ID}, {BASELINE_ID}+acme · this repo+this machine"
     assert "also" not in line
 
 
@@ -504,9 +512,11 @@ def test_an_outdated_baseline_points_at_update_rather_than_install(tmp_path):
     that applies.
     """
     write_model(tmp_path)
-    (tmp_path / "CLAUDE.md").write_text("baseline-id: `aisec-0.0`\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(f"baseline-id: `{OLDER_ID}`\n", encoding="utf-8")
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == (f"{BASELINE_NAME} · aisec-0.0 · this repo · behind aisec-0.1 · /appsec-advisor:update-baseline")
+    assert line == (
+        f"{BASELINE_NAME} · {OLDER_ID} · this repo · behind {BASELINE_ID} · /appsec-advisor:update-baseline"
+    )
     assert "install-baseline" not in line
 
 
@@ -554,9 +564,9 @@ def test_a_newer_baseline_is_reported_as_ahead_without_a_command(tmp_path):
     newer rules, so the line names the state and stops.
     """
     write_model(tmp_path)
-    (tmp_path / "CLAUDE.md").write_text("baseline-id: `aisec-9.9`\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(f"baseline-id: `{NEWER_ID}`\n", encoding="utf-8")
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == f"{BASELINE_NAME} · aisec-9.9 · this repo · ahead of aisec-0.1"
+    assert line == f"{BASELINE_NAME} · {NEWER_ID} · this repo · ahead of {BASELINE_ID}"
     assert "install-baseline" not in line
 
 
@@ -616,6 +626,109 @@ def test_no_baseline_configured_drops_the_line(tmp_path, monkeypatch):
     lines = session_banner.build_banner(str(repo)).splitlines()
     assert baseline_line("\n".join(lines)) is None
     assert len(lines) == 2
+
+
+def aiscb_user_data(repo: Path, text: str | None = None) -> Path:
+    """An aiscb user installation in the test HOME: its baseline and its helper."""
+    data = repo / "_home" / ".local" / "share" / "aiscb"
+    data.mkdir(parents=True, exist_ok=True)
+    (data / "secure-coding-baseline.md").write_text(text or baseline_text(), encoding="utf-8")
+    (data / "show-baseline-version.py").write_text("# helper\n", encoding="utf-8")
+    return data
+
+
+def register_session_start(repo: Path, entry: dict) -> None:
+    settings = repo / "_home" / ".claude" / "settings.json"
+    settings.write_text(json.dumps({"hooks": {"SessionStart": [entry]}}), encoding="utf-8")
+
+
+def aiscb_session_hooks(data: Path) -> dict:
+    """What a switchable aiscb install registers: part 0 carries the id and prints the status."""
+    helper = data / "show-baseline-version.py"
+    return {
+        "matcher": "startup|resume|fork|clear|compact",
+        "hooks": [{"type": "command", "command": f"python3 {helper} --session-context --part {n}"} for n in range(4)],
+    }
+
+
+def aiscb_status_hook(data: Path, matcher: str = "startup|resume|fork") -> dict:
+    """What a static aiscb install registers: it prints the status and loads nothing."""
+    helper = str(data / "show-baseline-version.py")
+    return {
+        "matcher": matcher,
+        "hooks": [{"type": "command", "command": "python3", "args": [helper, "--output", "json"]}],
+    }
+
+
+def test_a_baseline_the_aiscb_hook_reports_is_not_repeated(tmp_path):
+    """aiscb's hook already prints the status, so the reader gets one line, not two."""
+    write_model(tmp_path)
+    register_session_start(tmp_path, aiscb_session_hooks(aiscb_user_data(tmp_path)))
+    message = run_hook(str(tmp_path))
+    assert baseline_line(message) is None
+    assert tm_line(message)
+
+
+def test_a_static_install_s_status_hook_leaves_the_line_out_as_well(tmp_path):
+    write_model(tmp_path)
+    install_baseline_for(tmp_path)
+    register_session_start(tmp_path, aiscb_status_hook(aiscb_user_data(tmp_path)))
+    assert baseline_line(run_hook(str(tmp_path))) is None
+
+
+@pytest.mark.parametrize("matcher", ["resume", "clear|compact"])
+def test_the_line_stays_when_the_aiscb_hook_prints_nothing_at_startup(tmp_path, matcher):
+    """Left out only where aiscb's own line is actually shown."""
+    write_model(tmp_path)
+    install_baseline_for(tmp_path)
+    register_session_start(tmp_path, aiscb_status_hook(aiscb_user_data(tmp_path), matcher))
+    assert baseline_line(run_hook(str(tmp_path))) == f"{BASELINE_NAME} · {BASELINE_ID} · this repo"
+
+
+def test_the_line_stays_when_the_aiscb_helper_is_gone(tmp_path):
+    """A registered hook whose helper is missing prints nothing."""
+    write_model(tmp_path)
+    install_baseline_for(tmp_path)
+    data = aiscb_user_data(tmp_path)
+    register_session_start(tmp_path, aiscb_status_hook(data))
+    (data / "show-baseline-version.py").unlink()
+    assert baseline_line(run_hook(str(tmp_path))) == f"{BASELINE_NAME} · {BASELINE_ID} · this repo"
+
+
+def test_a_second_baseline_is_still_named_beside_an_aiscb_install(tmp_path):
+    """Which of two rule sets applies is a decision aiscb's line does not raise."""
+    write_model(tmp_path)
+    register_session_start(tmp_path, aiscb_session_hooks(aiscb_user_data(tmp_path)))
+    (tmp_path / "CLAUDE.md").write_text("baseline-id: `acme-sec-1.0`\n", encoding="utf-8")
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line == f"{BASELINE_NAME} · {BASELINE_ID} · this machine · also acme-sec-1.0 in this repo"
+
+
+def test_a_missing_baseline_is_still_reported_beside_an_aiscb_status_hook(tmp_path):
+    """A status hook with no import behind it: the rules are not in context."""
+    write_model(tmp_path)
+    register_session_start(tmp_path, aiscb_status_hook(aiscb_user_data(tmp_path)))
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line is not None
+    assert line.startswith(f"{BASELINE_NAME} · not installed")
+
+
+def test_a_switched_off_aiscb_install_is_left_to_its_own_line(tmp_path, monkeypatch):
+    write_model(tmp_path)
+    register_session_start(tmp_path, aiscb_session_hooks(aiscb_user_data(tmp_path)))
+    monkeypatch.setenv("AISCB_DISABLE", "1")
+    assert baseline_line(run_hook(str(tmp_path))) is None
+
+
+def test_an_outdated_aiscb_copy_names_no_command_that_would_refuse(tmp_path):
+    """update-baseline leaves an aiscb installation to that installer."""
+    write_model(tmp_path)
+    data = aiscb_user_data(tmp_path, text=f"baseline-id: `{OLDER_ID}`\n")
+    claude = tmp_path / "_home" / ".claude"
+    (claude / "secure-coding-baseline.md").symlink_to(data / "secure-coding-baseline.md")
+    (claude / "CLAUDE.md").write_text("@~/.claude/secure-coding-baseline.md\n", encoding="utf-8")
+    line = baseline_line(run_hook(str(tmp_path)))
+    assert line == f"{BASELINE_NAME} · {OLDER_ID} · this machine · behind {BASELINE_ID}"
 
 
 # ---------------------------------------------------------------------------

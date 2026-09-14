@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
@@ -94,17 +97,69 @@ def _progress_lines(pcts: list[str], start_min: int = 0) -> list[str]:
     ]
 
 
+def _heartbeat_line(minute: int, phase: str = "7") -> str:
+    return (
+        f"2026-06-06T17:{minute:02d}:00Z  [--------]  INFO   HEARTBEAT"
+        f"           pid=1  phase={phase}  step=watchdog  ts={minute}"
+    )
+
+
 def test_repeated_identical_percentage_is_not_relogged():
-    """The percentage is phase-granular and sits flat through a long phase.
-    Off-TTY, an unchanged reading must not scroll a fresh line every minute —
-    but it must not go fully silent either: the watchdog emits no HEARTBEAT of
-    its own, so this line is the only liveness signal during flat stretches.
-    Twelve minutes of flat readings → 1 permanent line + a 300s-throttled tick
-    at minutes 5 and 10, instead of 12 lines."""
+    """A reading that has not moved must not scroll a fresh line every minute.
+    Twelve minutes of flat readings → one line, not twelve."""
     out = _render(_progress_lines(["40"] * 12))
-    assert out.count("progress · ") == 3
-    assert "elapsed=5m00s" in out and "elapsed=10m00s" in out  # ticks kept
-    assert "elapsed=3m00s" not in out  # in-between repeats dropped
+    assert out.count("progress · ") == 1
+    assert "elapsed=3m00s" not in out  # repeats dropped
+
+
+def test_the_percentage_rides_the_heartbeat_line():
+    """Production shape: the watchdog emits HEARTBEAT and RUN_PROGRESS in the
+    same second of the same loop, and `.hook-events.log` is tailed first. The
+    heartbeat therefore always takes the 300s throttle slot, so a repeated
+    reading routed through that channel is never shown — measured as 2 of 20
+    and 9 of 190 readings reaching the console. The tick carries the number
+    instead."""
+    stream = ["2026-06-06T17:00:00Z  [--------]  INFO   threat-analyst    PHASE_START   [Phase 9/11] STRIDE"]
+    for i in range(1, 13):
+        stream.append(_heartbeat_line(i))
+        stream.append(_progress_lines(["40"], start_min=i)[0])
+    out = _render(stream)
+    ticks = [ln for ln in out.splitlines() if "still in Phase" in ln]
+    assert ticks, "the liveness tick must survive"
+    assert all("~40%" in ln for ln in ticks)
+    assert out.count("progress · ") == 1  # the reading itself scrolls once
+
+
+def test_phase_boundary_line_reports_duration_and_spend():
+    out = _render(
+        [
+            "2026-06-06T17:20:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=9  duration=24m10s  delta=≥$12.40  total=≥$18.06",
+        ]
+    )
+    assert "✓ Phase 9 done — 24m10s · +≥$12.40 (run ≥$18.06)" in out
+
+
+def test_phase_boundary_line_without_an_attributable_delta_shows_the_run_total():
+    out = _render(
+        [
+            "2026-06-06T17:20:00Z  [--------]  INFO   skill-watchdog      PHASE_COST"
+            "          phase=9  duration=24m10s  total=≥$18.06",
+        ]
+    )
+    assert "✓ Phase 9 done — 24m10s · run ≥$18.06" in out
+
+
+def test_phase_boundary_line_without_usage_shows_the_duration_only():
+    """The host may report no usage for the window; the boundary itself still
+    happened, and inventing a $0.00 delta for it would read as a free phase."""
+    out = _render(
+        [
+            "2026-06-06T17:20:00Z  [--------]  INFO   skill-watchdog      PHASE_COST          phase=2  duration=6m12s",
+        ]
+    )
+    assert "✓ Phase 2 done — 6m12s" in out
+    assert "$" not in out
 
 
 def test_each_changed_percentage_gets_its_own_line():
@@ -386,3 +441,356 @@ def test_session_aborted_midrun_event_renders():
     )
     assert "aborted mid-run" in out
     assert "phase=9" in out
+
+
+def test_mirrored_phase_boundary_renders_once():
+    """`log_event.py` writes PHASE_START/PHASE_END to `.agent-run.log` and
+    mirrors it to `.hook-events.log` from the same formatted line; run-headless
+    tails both, so the identical line arrives twice and must render once."""
+    line = "2026-08-31T08:55:57Z  [--------]  INFO   threat-renderer  PHASE_START  [Phase 11/11] Finalization"
+    out = _render([line, line])
+    assert out.count("▶ Phase 11/11") == 1
+
+
+def test_a_repeat_in_a_later_second_is_not_suppressed():
+    """Only the mirror is deduplicated. A genuinely repeated event — same text,
+    a later timestamp — stays visible; suppressing it would hide a stuck run."""
+    out = _render(
+        [
+            "2026-08-31T08:55:57Z  [--------]  INFO   stride-analyzer  STEP_START  Reading focus path source files",
+            "2026-08-31T08:57:57Z  [--------]  INFO   stride-analyzer  STEP_START  Reading focus path source files",
+        ]
+    )
+    assert out.count("Reading focus path source files") == 2
+
+
+def test_terminal_line_names_the_call_instead_of_echoing_the_dispatch():
+    """AGENT_DONE repeats the dispatch parameters the spawn line already showed.
+    The view keeps what identifies the finished call and drops the echo."""
+    out = _render(
+        [
+            "2026-08-31T08:17:44Z  [b0ba1e2f]  INFO   AGENT_DONE"
+            "  agent_call_id=toolu_01FgPyBi6TshkNrqEszCdxsJ"
+            "  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  background=true"
+            "  action_id=stage1c:872a05ac10a64c48  job_id=stride:auth-session:attempt-1"
+            "  component_id=auth-session  attempt=1  analysis_depth=full"
+            "  description=STRIDE (full): auth-session",
+        ]
+    )
+    assert "✓ appsec-stride-analyzer-v2 done (auth-session)" in out
+    for echoed in ("toolu_", "action_id", "background=true", "description="):
+        assert echoed not in out
+
+
+def test_terminal_line_keeps_a_reported_stop_reason():
+    out = _render(
+        [
+            "2026-08-15T04:47:36Z  [b0ba1e2f]  INFO   AGENT_DONE"
+            "  agent_call_id=toolu_01TkvNUF1iKrgk6L5basHv3Y"
+            "  agent_type=appsec-advisor:appsec-recon-scanner  stop_reason=max_turns",
+        ]
+    )
+    assert "✓ appsec-recon-scanner done (reason: max_turns)" in out
+
+
+def test_a_failure_keeps_its_whole_reason():
+    """`agent_lifecycle.event_detail` puts the failure explanation in a free-text
+    `reason=` field that runs to the next double space — a trim at the first
+    space would leave the failure line saying nothing."""
+    out = _render(
+        [
+            "2026-08-31T08:31:02Z  [b0ba1e2f]  WARN   AGENT_FAILED"
+            "  agent_call_id=toolu_015q4jYSPeJmLhF5PvCmTxYg"
+            "  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet  background=true"
+            "  component_id=web3-nft"
+            "  reason=call expired without a terminal hook event"
+            "  description=STRIDE (full): web3-nft",
+        ]
+    )
+    assert "⚠ appsec-stride-analyzer-v2 failed (web3-nft, reason: call expired without a terminal hook event)" in out
+    assert "description=" not in out
+
+
+@pytest.mark.parametrize(
+    "token, prose",
+    sorted(rp._REASON_PROSE.items()),
+)
+def test_a_contract_reason_reads_as_what_happened(token, prose):
+    """The live view is read by a person, so a state token is spelled out there.
+
+    The log keeps the token: aggregation and correlation match on it.
+    """
+    out = _render(
+        [
+            "2026-09-05T07:22:13Z  [6b851f4b]  WARN   AGENT_FAILED"
+            "  agent_call_id=toolu_0182FvwAnGo4t2iNFNhgPKBL"
+            "  agent_type=appsec-advisor:appsec-recon-scanner  model=haiku  background=true"
+            "  job_id=phase2-recon"
+            f"  reason={token}"
+            "  description=Recon scanner for insecure-python-app",
+        ]
+    )
+    assert f"⚠ appsec-recon-scanner failed (phase2-recon, reason: {prose})" in out
+    assert token not in out
+
+
+def test_an_api_error_reason_names_the_host_error_code():
+    """A child the model API refused carries the host's error code; the live view spells out the token."""
+    out = _render(
+        [
+            "2026-09-05T07:22:13Z  [6b851f4b]  WARN   AGENT_FAILED"
+            "  agent_call_id=toolu_0182FvwAnGo4t2iNFNhgPKBL"
+            "  agent_type=appsec-advisor:appsec-recon-scanner  model=haiku  background=true"
+            "  job_id=phase2-recon"
+            "  reason=subagent_api_error:max_output_tokens"
+            "  description=Recon scanner for insecure-python-app",
+        ]
+    )
+    assert "⚠ appsec-recon-scanner failed (phase2-recon, reason: the model API stopped it (max_output_tokens))" in out
+    assert "subagent_api_error" not in out
+
+
+def test_an_agent_logger_mirror_is_rendered_once():
+    """`run-headless.sh` tails both logs, so a mirrored event arrives twice.
+
+    The two copies agree only on event and detail: the `.agent-run.log` copy
+    names the writing component and blanks the session. Keying the suppression
+    on the component showed the completion summary twice per run.
+    """
+    out = _render(
+        [
+            "2026-09-05T07:22:13Z  [6b851f4b]  INFO   ASSESSMENT_SUMMARY"
+            "  mode=full  duration=1m 23s  threats=0 (Critical=0, High=0, Medium=0, Low=0)",
+            "2026-09-05T07:22:13Z  [--------]  INFO   hook-logger         ASSESSMENT_SUMMARY"
+            "  mode=full  duration=1m 23s  threats=0 (Critical=0, High=0, Medium=0, Low=0)",
+        ]
+    )
+    assert out.count("assessment complete") == 1
+
+
+def test_an_unmapped_reason_is_shown_verbatim():
+    """A reason the map does not know must still reach the reader."""
+    out = _render(
+        [
+            "2026-09-05T07:22:13Z  [6b851f4b]  WARN   AGENT_FAILED"
+            "  agent_call_id=toolu_0182FvwAnGo4t2iNFNhgPKBL"
+            "  agent_type=appsec-advisor:appsec-recon-scanner"
+            "  reason=something nobody mapped yet",
+        ]
+    )
+    assert "reason: something nobody mapped yet" in out
+
+
+def _stride_spawn(ts: str, call_id: str, component: str) -> str:
+    return (
+        f"2026-08-31T{ts}Z  [b0ba1e2f]  INFO   AGENT_SPAWN  agent_call_id={call_id}"
+        f"  agent_type=appsec-advisor:appsec-stride-analyzer-v2  model=sonnet"
+        f"  component_id={component}  analysis_depth=full  description=STRIDE (full): {component}"
+    )
+
+
+def _stride_failed(ts: str, call_id: str, component: str, reason: str) -> str:
+    return (
+        f"2026-08-31T{ts}Z  [b0ba1e2f]  WARN   AGENT_FAILED  agent_call_id={call_id}"
+        f"  agent_type=appsec-advisor:appsec-stride-analyzer-v2  component_id={component}"
+        f"  reason={reason}"
+    )
+
+
+def _stride_done(ts: str, call_id: str, component: str) -> str:
+    return (
+        f"2026-08-31T{ts}Z  [b0ba1e2f]  INFO   AGENT_DONE  agent_call_id={call_id}"
+        f"  agent_type=appsec-advisor:appsec-stride-analyzer-v2  component_id={component}"
+    )
+
+
+def test_stride_tally_counts_finished_components_against_dispatched():
+    """Phase 9 runs the analyzers in parallel and interleaves their lines; the
+    tally is the only reading of how far the phase has come."""
+    out = _render(
+        [
+            _stride_spawn("08:09:06", "toolu_a", "frontend-spa"),
+            _stride_spawn("08:09:17", "toolu_b", "backend-api"),
+            _stride_done("08:17:44", "toolu_b", "backend-api"),
+            _stride_done("08:20:26", "toolu_a", "frontend-spa"),
+        ]
+    )
+    assert "[STRIDE 1/2 components done]" in out
+    assert "[STRIDE 2/2 components done]" in out
+
+
+def test_stride_tally_rides_along_on_the_phase_9_heartbeat():
+    out = _render(
+        [
+            _stride_spawn("08:09:06", "toolu_a", "frontend-spa"),
+            _stride_spawn("08:09:17", "toolu_b", "backend-api"),
+            _stride_done("08:17:44", "toolu_b", "backend-api"),
+            "2026-08-31T08:22:44Z  [--------]  INFO   HEARTBEAT  step=watchdog",
+        ]
+    )
+    assert "still in Phase 9/11 STRIDE — 13m, STRIDE 1/2 components done" in out
+
+
+def test_a_non_stride_agent_gets_no_tally():
+    out = _render(
+        [
+            "2026-08-31T08:09:06Z  [b0ba1e2f]  INFO   AGENT_SPAWN  agent_call_id=toolu_c"
+            "  agent_type=appsec-advisor:appsec-control-analyst  model=sonnet  description=Control analyst",
+            "2026-08-31T08:12:06Z  [b0ba1e2f]  INFO   AGENT_DONE  agent_call_id=toolu_c"
+            "  agent_type=appsec-advisor:appsec-control-analyst",
+        ]
+    )
+    assert "STRIDE" not in out
+
+
+def test_step_line_drops_the_injected_correlation_ids_but_keeps_the_component():
+    """`log_event.py` prepends `component= depth= action_id= job_id= attempt=`
+    to a component-scoped event. The two ids repeat what `component=` and
+    `attempt=` already say and are dropped from the view."""
+    out = _render(
+        [
+            "2026-08-31T08:09:42Z  [--------]  INFO   stride-analyzer  STEP_START"
+            "  component=auth-session depth=full action_id=stage1c:872a05ac10a64c48"
+            " job_id=stride:auth-session:attempt-1 attempt=1  AGENT_START model=sonnet",
+        ]
+    )
+    assert "component=auth-session depth=full attempt=1  AGENT_START model=sonnet" in out
+    assert "action_id" not in out and "job_id" not in out
+
+
+def test_a_warning_keeps_its_job_id_locator():
+    """The step-line strip must not reach a warning: `job_id` is the only thing
+    that says which dispatch the mismatch belongs to."""
+    out = _render(
+        [
+            "2026-08-31T08:00:08Z  [b0ba1e2f]  WARN   hook-logger  TELEMETRY_MISMATCH"
+            "  code=lifecycle_not_terminal  job_id=phase7-boundary  agent_call_id=toolu_016f5eRBaNTT",
+        ]
+    )
+    assert "job_id=phase7-boundary" in out
+    assert "toolu_" not in out
+
+
+# ---------------------------------------------------------------------------
+# Wrapper wiring — which streams `run-headless.sh` puts on stderr per mode
+# ---------------------------------------------------------------------------
+
+_WRAPPER = Path(__file__).resolve().parents[1] / "scripts" / "run-headless.sh"
+
+
+def _verbose_branch() -> str:
+    body = _WRAPPER.read_text(encoding="utf-8")
+    start = body.index('if [ -n "$VERBOSE" ]; then')
+    return body[start : body.index('elif [ -z "$QUIET" ]; then', start)]
+
+
+def test_verbose_keeps_the_rendered_progress_view():
+    """`--verbose` adds the raw stream to the default view; it must not replace
+    it. Without the renderer the operator who asked for the most detail loses
+    the phase banners, the roadmap and the wall-clock anchors."""
+    assert "start_progress_monitor" in _verbose_branch()
+
+
+def test_verbose_does_not_print_the_hook_log_twice():
+    """`APPSEC_VERBOSE=1` already mirrors every `.hook-events.log` line to
+    stderr from agent_logger, so tailing that file as well would double it.
+    `.agent-run.log` has no mirror and stays tailed."""
+    branch = _verbose_branch()
+    assert "export APPSEC_VERBOSE=1" in branch
+    assert 'tail -f "$LOG_FILE"' not in branch
+    assert 'tail -f "$RUN_LOG_FILE"' in branch
+
+
+def test_the_stride_tally_counts_a_component_only_once_and_only_when_it_finished():
+    """A wave of four reported `4/4 components done` on the line saying one had
+    failed, then `5/5` once its retry finished — more components than the phase
+    had. The tally counted calls and read any terminal event as progress."""
+    out = _render(
+        [
+            _stride_spawn("08:09:06", "toolu_a", "fastapi-api"),
+            _stride_spawn("08:09:17", "toolu_b", "django-ui"),
+            _stride_done("08:19:44", "toolu_b", "django-ui"),
+            _stride_failed("08:25:26", "toolu_a", "fastapi-api", "join_deadline_expired"),
+            _stride_spawn("08:26:36", "toolu_a2", "fastapi-api"),
+            _stride_done("08:38:26", "toolu_a2", "fastapi-api"),
+        ]
+    )
+    tallies = re.findall(r"STRIDE (\d+)/(\d+) components done", out)
+    assert tallies == [("1", "2"), ("1", "2"), ("2", "2")]
+
+
+def _telemetry_mismatch(ts: str, code: str, job_id: str) -> str:
+    return (
+        f"2026-08-31T{ts}Z  [b0ba1e2f]  WARN   TELEMETRY_MISMATCH  code={code}"
+        f"  job_id={job_id}  agent_call_id=toolu_x  agent_type=appsec-advisor:appsec-recon-scanner"
+        f"  detail=the host returns no per-call usage for Agent calls"
+    )
+
+
+def test_a_run_level_telemetry_finding_is_shown_once_and_a_per_call_one_every_time():
+    """`usage_source_absent` describes the run, not a call, so it is equally true
+    at each of the ~20 semantic boundaries that follow. Twenty identical warnings
+    is the shape operators already learned to skip."""
+    out = _render(
+        [
+            _telemetry_mismatch("08:09:06", "usage_source_absent", "-"),
+            _telemetry_mismatch("08:19:06", "usage_source_absent", "-"),
+            _telemetry_mismatch("08:29:06", "usage_source_absent", "-"),
+            _telemetry_mismatch("08:39:06", "lifecycle_not_terminal", "phase2-recon"),
+            _telemetry_mismatch("08:49:06", "lifecycle_not_terminal", "phase7-boundary"),
+        ]
+    )
+    assert out.count("usage_source_absent") == 1
+    assert out.count("lifecycle_not_terminal") == 2
+
+
+def _agent_done(ts: str, call_id: str, job_id: str, reason: str) -> str:
+    return (
+        f"2026-09-06T{ts}Z  [b0ba1e2f]  INFO   AGENT_DONE  agent_call_id={call_id}"
+        f"  agent_type=appsec-advisor:appsec-recon-scanner  model=haiku  background=true"
+        f"  job_id={job_id}  reason={reason}  description=STRIDE (recon_scanner): {job_id}"
+    )
+
+
+def test_a_run_level_terminal_reason_is_shown_once_and_a_per_call_one_every_time():
+    """A host either reports call outcomes or it does not, so `outcome_unobserved`
+    is equally true of every call in the run. Repeated on each terminal line it
+    put a failure-shaped clause on every ✓ of a healthy run. A reason that
+    distinguishes one call from its siblings keeps appearing."""
+    out = _render(
+        [
+            _agent_done("04:22:15", "toolu_a", "phase2-recon", "outcome_unobserved"),
+            _agent_done("04:24:13", "toolu_b", "phase3-6-architecture", "outcome_unobserved"),
+            _agent_done("04:31:05", "toolu_c", "phase7-boundary", "outcome_unobserved"),
+            _agent_done("04:36:34", "toolu_d", "phase8-controls", "join_deadline_expired"),
+            _agent_done("04:41:02", "toolu_e", "phase9-merge", "join_deadline_expired"),
+        ]
+    )
+    assert out.count("this host reported no result for it") == 1
+    assert out.count("join window closed") == 2
+    # Nothing else is lost: every call still reports as done, named by its job.
+    assert out.count("✓ appsec-recon-scanner done") == 5
+    assert "done (phase3-6-architecture)" in out
+
+
+def test_budget_threshold_warnings_name_which_budget_was_crossed():
+    out = _render(
+        [
+            "2026-09-06T05:10:00Z  [--------]  WARN   skill-watchdog      RUN_BUDGET_WARN"
+            "     scope=soft  used=≥$20.10  budget=$25.00  pct=≥80%",
+            "2026-09-06T05:30:00Z  [--------]  WARN   skill-watchdog      RUN_BUDGET_WARN"
+            "     scope=hard  used=≥$32.40  budget=$40.00  pct=≥81%",
+        ]
+    )
+    assert "⚠ cost soft budget — ≥$20.10 of $25.00 (≥80%)" in out
+    assert "⚠ cost hard cut (the host stops the run there) — ≥$32.40 of $40.00 (≥81%)" in out
+
+
+def test_an_unwatchable_budget_is_said_once():
+    out = _render(
+        [
+            "2026-09-06T05:10:00Z  [--------]  WARN   skill-watchdog      RUN_BUDGET_UNWATCHED"
+            "     budget=$25.00  the host reports no per-call usage, so spend cannot be tracked against it",
+        ]
+    )
+    assert "⚠ budget not watchable — budget=$25.00" in out

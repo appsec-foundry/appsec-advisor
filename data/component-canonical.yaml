@@ -127,18 +127,26 @@ canonical_components:
       - database-layer
       - nosql-layer
       - persistence
-      - models-layer
-      - orm-layer
       - db-layer
     detection_signals:
-      - "models/"
+      - "sqlite3.Database"
+      - "new MarsDB.Collection"
+      - "new Datastore"
+    category: data-persistence
+
+  data-access:
+    display_name: "Application Data Access"
+    aliases:
+      - models-layer
+      - orm-layer
+    detection_signals:
       - "sequelize.define"
       - "mongoose.Schema"
       - "@Entity"
       - "prisma.schema"
       - "knex"
       - "TypeORM"
-    category: data-persistence
+    category: backend-api
 
   file-handling:
     display_name: "File Handling"

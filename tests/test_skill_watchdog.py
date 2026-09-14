@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -1001,6 +1002,217 @@ def test_run_progress_emitted_for_timeable_run(out_dir, silent_heartbeat):
     assert "phase=9" in log
     # ~120s elapsed, no standby tracking (run_idle_seconds=0) → net shown.
     assert "net=2m" in log
+
+
+def _dispatch_manifest(out_dir, components: int) -> None:
+    (out_dir / ".stride-dispatch-manifest.json").write_text(
+        json.dumps({"components": [{"component_id": f"c{i}"} for i in range(components)]})
+    )
+
+
+def _stride_results(out_dir, count: int) -> None:
+    for i in range(count):
+        (out_dir / f".stride-c{i}.json").write_text("{}")
+
+
+def test_phase_9_percentage_steps_per_finished_component(out_dir):
+    """Phase 9 is 55 % of a standard run and the checkpoint never reads
+    `phase=9`, so the reading used to sit at 33 % for the whole fan-out and then
+    jump to 96 %. It now steps once per completed component."""
+    sw = _load()
+    weights = sw._PROGRESS_WEIGHTS["standard"]
+    (out_dir / ".appsec-checkpoint").write_text("phase=7 status=completed\n")
+    assert sw._progress_snapshot(out_dir, weights) == (33, "7")  # no fan-out yet
+    _dispatch_manifest(out_dir, 4)
+    seen = []
+    for done in range(5):
+        _stride_results(out_dir, done)
+        pct, token = sw._progress_snapshot(out_dir, weights)
+        seen.append(pct)
+        assert token == "9"
+    assert seen == sorted(seen) and len(set(seen)) == 5
+    assert seen[0] == 40 and seen[-1] == 95
+
+
+def test_phase_9_interpolation_ignores_results_from_the_previous_run(out_dir):
+    """`--mode rebuild` keeps the previous run's `.stride-*.json`; counting them
+    would open Phase 9 at 100 %."""
+    sw = _load()
+    weights = sw._PROGRESS_WEIGHTS["standard"]
+    (out_dir / ".appsec-checkpoint").write_text("phase=7 status=completed\n")
+    _stride_results(out_dir, 4)
+    _dispatch_manifest(out_dir, 4)
+    cutoff = (out_dir / ".stride-dispatch-manifest.json").stat().st_mtime
+    for f in out_dir.glob(".stride-c*.json"):
+        os.utime(f, (cutoff - 3600, cutoff - 3600))
+    assert sw._progress_snapshot(out_dir, weights) == (40, "9")
+
+
+def test_phase_9_interpolation_stops_at_the_stage_2_checkpoint(out_dir):
+    """Past Phase 9 the checkpoint is authoritative again — the manifest and its
+    results stay on disk for the rest of the run."""
+    sw = _load()
+    weights = sw._PROGRESS_WEIGHTS["standard"]
+    _dispatch_manifest(out_dir, 4)
+    _stride_results(out_dir, 4)
+    (out_dir / ".appsec-checkpoint").write_text("phase=10b status=completed\n")
+    assert sw._progress_snapshot(out_dir, weights) == (96, "10b")
+
+
+def test_stride_fraction_ignores_the_reserved_sidecars(out_dir):
+    sw = _load()
+    _dispatch_manifest(out_dir, 4)
+    for name in (".stride-selection.json", ".stride-analyst-context.json", ".stride-repository-registry.json"):
+        (out_dir / name).write_text("{}")
+    assert sw._stride_fraction(out_dir) == (0, 4)
+    _stride_results(out_dir, 1)
+    assert sw._stride_fraction(out_dir) == (1, 4)
+
+
+def test_stride_fraction_none_without_a_usable_manifest(out_dir):
+    sw = _load()
+    assert sw._stride_fraction(out_dir) is None
+    (out_dir / ".stride-dispatch-manifest.json").write_text("{}")
+    assert sw._stride_fraction(out_dir) is None
+    (out_dir / ".stride-dispatch-manifest.json").write_text(json.dumps({"components": []}))
+    assert sw._stride_fraction(out_dir) is None
+
+
+def test_usage_fields_are_withheld_when_the_host_reports_no_usage(out_dir, monkeypatch):
+    """A run whose host stopped reporting per-call usage computes to $0.19 for a
+    run that cost tens of dollars. Show nothing rather than that."""
+    sw = _load()
+    metered = {"status": "ok", "out_tokens": 187_000, "cost_usd": 15.96, "host_cost_usd": 9.94}
+    monkeypatch.setattr(sw, "aggregate_running_total", lambda _d: dict(metered))
+    assert sw._running_usage(out_dir) == (metered, False)
+    assert sw._usage_fields(sw._running_usage(out_dir)[0]) == "  out=187k  cost≥$15.96"
+
+    # The two ways a reading goes missing are not the same: `usage_source_absent`
+    # means the host meters nothing at all, which a declared budget must hear.
+    for broken, absent in (
+        ({**metered, "usage_source_absent": True}, True),
+        ({**metered, "host_cost_usd": 0.0}, False),
+        ({**metered, "status": "error"}, False),
+    ):
+        monkeypatch.setattr(sw, "aggregate_running_total", lambda _d, b=broken: dict(b))
+        assert sw._running_usage(out_dir) == (None, absent)
+    assert sw._usage_fields(None) == ""
+
+
+def test_the_progress_line_measures_the_cost_against_the_soft_budget(out_dir):
+    sw = _load()
+    usage = {"status": "ok", "out_tokens": 187_000, "cost_usd": 15.96, "host_cost_usd": 9.94}
+    assert sw._usage_fields(usage, 25.0) == "  out=187k  cost≥$15.96/$25.00 (≥64%)"
+    assert sw._usage_fields(usage, None) == "  out=187k  cost≥$15.96"
+    (out_dir / ".skill-config.json").write_text(json.dumps({"soft_budget_usd": 25.0}))
+    assert sw._soft_budget(out_dir) == 25.0
+    (out_dir / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard"}))
+    assert sw._soft_budget(out_dir) is None
+
+
+def test_the_hard_cut_is_read_from_the_environment(monkeypatch):
+    """It is a `claude` launch flag, so it reaches no file the watchdog can read."""
+    sw = _load()
+    monkeypatch.delenv("APPSEC_HARD_BUDGET_USD", raising=False)
+    assert sw._hard_budget() is None
+    monkeypatch.setenv("APPSEC_HARD_BUDGET_USD", "40")
+    assert sw._hard_budget() == 40.0
+    monkeypatch.setenv("APPSEC_HARD_BUDGET_USD", "not-a-number")
+    assert sw._hard_budget() is None
+
+
+def test_each_budget_threshold_is_reported_once():
+    sw = _load()
+    fired: set[str] = set()
+    assert sw._budget_warnings(10.0, 25.0, 40.0, fired) == []
+    crossed = sw._budget_warnings(21.0, 25.0, 40.0, fired)
+    assert len(crossed) == 1 and "scope=soft" in crossed[0] and "pct=≥84%" in crossed[0]
+    assert sw._budget_warnings(22.0, 25.0, 40.0, fired) == []  # same threshold, silent
+    over = sw._budget_warnings(33.0, 25.0, 40.0, fired)
+    assert len(over) == 2  # soft exceeded, and 80 % of the hard cut
+    assert any("scope=hard" in w for w in over)
+    assert sw._budget_warnings(99.0, None, None, set()) == []
+
+
+def test_a_budget_nobody_can_measure_is_reported_as_unwatched(out_dir, silent_heartbeat, monkeypatch):
+    """Only the host's own cut still applies then, and it kills the session where
+    it stands — a silent budget would read as a watched one."""
+    sw = silent_heartbeat
+    monkeypatch.setattr(sw, "_running_usage", lambda _d: (None, True))
+    monkeypatch.setattr(sw, "_progress_snapshot", lambda _d, _w: (40, "8"))
+    (out_dir / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard", "soft_budget_usd": 25.0}))
+    (out_dir / ".scan-start-epoch").write_text(str(int(time.time()) - 120))
+    sw.watch(
+        output_dir=out_dir,
+        plugin_root=REPO_ROOT,
+        heartbeat_interval=0,
+        stride_stale_seconds=999,
+        stride_canary_seconds=999,
+        component_timeout_seconds=999,
+        max_iterations=3,
+        run_idle_seconds=0,
+    )
+    log = (out_dir / ".agent-run.log").read_text()
+    assert log.count("RUN_BUDGET_UNWATCHED") == 1  # once, not once per tick
+    assert "budget=$25.00" in log
+
+
+def test_phase_boundary_reports_the_phase_it_closes(out_dir, silent_heartbeat, monkeypatch):
+    """`PHASE_END` events fired 0-3 times per run in three measured runs; the
+    checkpoint token change is the boundary the watchdog can see."""
+    sw = silent_heartbeat
+    costs = iter(
+        [
+            {"status": "ok", "out_tokens": 1000, "cost_usd": 4.00, "host_cost_usd": 1.0},
+            {"status": "ok", "out_tokens": 9000, "cost_usd": 16.40, "host_cost_usd": 1.0},
+        ]
+    )
+    monkeypatch.setattr(sw, "aggregate_running_total", lambda _d: next(costs))
+    readings = iter([(40, "8"), (96, "10")])
+    monkeypatch.setattr(sw, "_progress_snapshot", lambda _d, _w: next(readings))
+    (out_dir / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard"}))
+    (out_dir / ".scan-start-epoch").write_text(str(int(time.time()) - 120))
+    sw.watch(
+        output_dir=out_dir,
+        plugin_root=REPO_ROOT,
+        heartbeat_interval=0,
+        stride_stale_seconds=999,
+        stride_canary_seconds=999,
+        component_timeout_seconds=999,
+        max_iterations=2,
+        run_idle_seconds=0,
+    )
+    log = (out_dir / ".agent-run.log").read_text()
+    assert log.count("PHASE_COST") == 1  # the first sighting only arms the tracker
+    assert "phase=8" in log and "delta=≥$12.40" in log and "total=≥$16.40" in log
+    assert "out=9k" in log  # the progress line carries the running usage
+
+
+def test_phase_boundary_omits_a_delta_it_cannot_attribute(out_dir, silent_heartbeat, monkeypatch):
+    """Nothing was metered when the phase opened, so the difference would be the
+    whole run so far charged to that one phase."""
+    sw = silent_heartbeat
+    costs = iter(
+        [(None, False), ({"status": "ok", "out_tokens": 9000, "cost_usd": 16.40, "host_cost_usd": 1.0}, False)]
+    )
+    monkeypatch.setattr(sw, "_running_usage", lambda _d: next(costs))
+    readings = iter([(40, "8"), (96, "10")])
+    monkeypatch.setattr(sw, "_progress_snapshot", lambda _d, _w: next(readings))
+    (out_dir / ".skill-config.json").write_text(json.dumps({"assessment_depth": "standard"}))
+    (out_dir / ".scan-start-epoch").write_text(str(int(time.time()) - 120))
+    sw.watch(
+        output_dir=out_dir,
+        plugin_root=REPO_ROOT,
+        heartbeat_interval=0,
+        stride_stale_seconds=999,
+        stride_canary_seconds=999,
+        component_timeout_seconds=999,
+        max_iterations=2,
+        run_idle_seconds=0,
+    )
+    log = (out_dir / ".agent-run.log").read_text()
+    assert "PHASE_COST" in log and "total=≥$16.40" in log
+    assert "delta=" not in log
 
 
 def test_run_progress_silent_without_scan_start_epoch(out_dir, silent_heartbeat):

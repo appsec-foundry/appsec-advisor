@@ -35,6 +35,7 @@ from pathlib import Path
 
 import yaml
 from _atomic_io import atomic_write_json
+from detect_open_registration import load_registration_inputs, resolve_open_registration
 from jsonschema import Draft202012Validator
 from validate_intermediate import (
     validate_actor,
@@ -421,6 +422,7 @@ def resolve(
 
     # Load signals
     signals: dict = {}
+    signal_document: dict = {}
     if signals_path and os.path.exists(signals_path):
         try:
             signal_document = _load_json(signals_path)
@@ -429,7 +431,15 @@ def resolve(
                 raise ValueError("; ".join(errors[:3]))
             signals = signal_document["signals"]
         except Exception as e:
+            signal_document = {}
             print(f"[resolve_actors] WARNING: could not load signals: {e}", file=sys.stderr)
+
+    routes, source_findings = load_registration_inputs(Path(output_dir), Path(repo_root))
+    registration = resolve_open_registration(signal_document, routes, source_findings)
+    # Missing recon retains the existing activate-with-warning behavior. The
+    # independently resolved signal is used only for reach equivalence below.
+    if signals:
+        signals = {**signals, "has_open_self_registration": registration["open"]}
 
     # Load org-profile
     org_profile: dict = {}
@@ -452,6 +462,14 @@ def resolve(
 
     # --- run-issues accumulator (used by activation + disable + fingerprint passes) ---
     run_issues: list[dict] = []
+    if registration["disputed"]:
+        run_issues.append(
+            {
+                "class": "open_registration_disputed",
+                "severity": "advisory",
+                "message": "Self-registration remains unconfirmed; ask the team whether account creation requires approval.",
+            }
+        )
 
     # --- Merge: build ID-keyed map ---
     resolved_map: dict[str, dict] = {}
@@ -584,7 +602,9 @@ def resolve(
             )
 
     # --- Reach-equivalence ---
-    resolved_map = apply_reach_equivalence(resolved_map, signals, plugin_root)
+    resolved_map = apply_reach_equivalence(
+        resolved_map, {**signals, "has_open_self_registration": registration["open"]}, plugin_root
+    )
 
     # Validate the fully merged static records before publishing any actor
     # artifact. Layer files may contain partial overrides, but their merged
@@ -728,6 +748,7 @@ def resolve(
     resolved_out = {
         "schema_version": 1,
         "quick_mode": quick_mode,
+        "open_registration_resolution": registration,
         "discovery_enabled": discovery_enabled,
         "discovery_skip_reason": discovery_skip_reason,
         "actors_inputs_fingerprint": actors_inputs_fingerprint,

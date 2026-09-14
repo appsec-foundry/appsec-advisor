@@ -1305,10 +1305,9 @@ def resolve_incremental_mode(
                 f"Error: --incremental requires a structured baseline "
                 f"(threat-model.yaml), but\n       only a legacy "
                 f"threat-model.md was found at {output_dir}.\n       This "
-                f"report was generated before incremental mode was "
-                f"supported.\n  Fix: run once without --incremental to "
-                f"bootstrap threat-model.yaml, then\n       subsequent runs "
-                f"will automatically use incremental mode."
+                f"report predates the structured baseline.\n  Fix: run with "
+                f"--full to rebuild threat-model.yaml; incremental scans are "
+                f"not supported by the compact runtime."
             )
         return {
             "mode": "incremental",
@@ -1695,7 +1694,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--tracing",
         dest="tracing",
         action="store_true",
-        default=True,
+        default=None,  # None = neither flag given: an org-profile preset may decide, else ON
         help="Record per-agent token/cost/timing to .appsec-trace.log (default: ON since M3.6).",
     )
     p.add_argument(
@@ -1954,16 +1953,21 @@ def build_parser() -> argparse.ArgumentParser:
         "Skill watchdog aborts the run when reached. "
         "Default: unbounded.",
     )
-    # M9 — cost budget hard cap (USD). Skill watchdog scans .hook-events.log
-    # for cumulative cost and aborts when reached.
+    # Soft cost budget (USD). It steers the run and never kills it: admission
+    # refuses an invocation that cannot fit, and the run finishes even when it
+    # overruns. `--max-cost` is the deprecated spelling; the name promised a
+    # maximum this value is not.
     p.add_argument(
+        "--soft-budget",
         "--max-cost",
         type=float,
         default=None,
+        dest="soft_budget",
         metavar="USD",
-        help="Hard cost cap in USD (e.g. 15.0). Skill watchdog "
-        "aborts the run when cumulative cost exceeds this. "
-        "Default: unbounded.",
+        help="Soft cost budget in USD (e.g. 30.0). A run that cannot fit it "
+        "does not start; a run that overruns it still finishes and reports "
+        "the overrun. Not a hard cap — use the wrapper's --hard-budget for "
+        "that. Default: unbounded.",
     )
     # Negative flags for tri-state semantics. When org profiles set output
     # defaults via a preset, the user needs an explicit way to opt back
@@ -2082,7 +2086,7 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
         "slug": (secrets.token_hex(2) if ns.slug == "__auto__" else ns.slug),
         "verbose": ns.verbose,
         "quiet": ns.quiet,
-        "tracing": ns.tracing,
+        "tracing": True if ns.tracing is None else ns.tracing,
         "resume": ns.resume,
         "pr_mode": ns.pr_mode,
         "base_ref": ns.base,
@@ -2196,8 +2200,8 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
 
     # M11 — wall-time deadline parsing. Accept "3600" (s), "60m", "1h".
     cfg["max_wall_time_seconds"] = _parse_duration(ns.max_wall_time) if ns.max_wall_time else None
-    # M9 — cost budget. Plain float USD.
-    cfg["max_cost_usd"] = ns.max_cost
+    # Soft cost budget. Plain float USD.
+    cfg["soft_budget_usd"] = ns.soft_budget
 
     # Plugin metadata (always present).
     cfg["plugin_root"] = str(plugin_root)
@@ -2249,7 +2253,7 @@ def resolve(argv: list[str], plugin_root: Path, *, create_output_dir: bool = Tru
     # incremental pre-check / dirty-set git diffs run. It fills the otherwise
     # silent gap between the "🔧 Building …" line and the Pre-flight summary so
     # the user knows what the wait is doing (notably "existing model found,
-    # computing incremental delta"). Deterministic content; the model only
+    # preparing a full re-assessment"). Deterministic content; the model only
     # relays it (same pattern as the LLM-typed Pre-flight summary).
     cfg["preflight_status"] = _preflight_status_line(cfg)
 
@@ -2264,8 +2268,8 @@ def _preflight_status_line(cfg: dict) -> str:
         return "🔧 Rebuilding from scratch — wiping the prior model and cache …"
     if cfg.get("rerender"):
         return "🖉 Re-rendering the report from existing analysis fragments …"
-    if cfg.get("incremental") and has_model:
-        return "📋 Existing threat model found — computing the incremental delta (changed files vs. baseline) …"
+    # An incremental classification never reaches the pre-flight: the compact
+    # runtime refuses it first, so an existing model only ever precedes a full run.
     if has_model:
         return "📋 Existing threat model found — preparing a full re-assessment …"
     return "🔍 No prior threat model — preparing a full assessment …"
@@ -2403,7 +2407,9 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
             org_block[_bkey] = defaults[_bkey]
 
     # Tracing / scan_manifest: preset wins when user did not pass the flag.
-    if not ns.tracing and isinstance(defaults.get("tracing"), bool):
+    # --tracing/--no-tracing leave None when neither is given; --scan-manifest
+    # has no negative flag, so falsy already means "not passed" there.
+    if ns.tracing is None and isinstance(defaults.get("tracing"), bool):
         org_block["tracing"] = defaults["tracing"]
     if not ns.scan_manifest and isinstance(defaults.get("scan_manifest"), bool):
         org_block["scan_manifest"] = defaults["scan_manifest"]
@@ -2414,8 +2420,13 @@ def _apply_org_profile(ns: argparse.Namespace, cfg: dict, plugin_root: Path) -> 
             org_block["max_wall_time_seconds"] = _parse_duration(defaults["max_wall_time"])
         except (TypeError, ValueError):
             pass
-    if ns.max_cost is None and isinstance(defaults.get("max_cost_usd"), (int, float)):
-        org_block["max_cost_usd"] = float(defaults["max_cost_usd"])
+    # `max_cost_usd` is the deprecated spelling of `soft_budget_usd`; the new
+    # key wins when a profile carries both.
+    if ns.soft_budget is None:
+        for _key in ("soft_budget_usd", "max_cost_usd"):
+            if isinstance(defaults.get(_key), (int, float)):
+                org_block["soft_budget_usd"] = float(defaults[_key])
+                break
 
     return org_block
 
@@ -3515,8 +3526,8 @@ def _summary_active_options(cfg: dict) -> list[tuple[str, str]]:
             deadline_parts.append(f"wall-time {h} h" + (f" {m} min" if m else ""))
         else:
             deadline_parts.append(f"wall-time {sec // 60} min")
-    if cfg.get("max_cost_usd"):
-        deadline_parts.append(f"cost ${cfg['max_cost_usd']:.2f}")
+    if cfg.get("soft_budget_usd"):
+        deadline_parts.append(f"soft budget ${cfg['soft_budget_usd']:.2f}")
     if deadline_parts:
         rows.append(("Limits", " / ".join(deadline_parts)))
 

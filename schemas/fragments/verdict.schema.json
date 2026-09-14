@@ -46,7 +46,7 @@
             "type": "string",
             "minLength": 20,
             "maxLength": 260,
-            "description": "Exactly one short sentence in PRODUCT-OWNER language: what an attacker achieves and the broad missing protection. Describe a business or operational consequence, not an exploit recipe. FORBIDDEN here (they belong in §8/§7): security acronyms and attack-class names, config keys, library names or version pins, CVE/CWE numbers, file names / paths / file:line refs, framework-internal symbols, port numbers, HTTP-header names, protocol names, code snippets, or backticks. GOOD: 'Anyone can read and change another customer's records because the app does not reliably check ownership.' BAD: 'routes/order.ts passes req.params.id to findOne() without an ownerId clause (CWE-639).'"
+            "description": "Exactly one short sentence in PRODUCT-OWNER language: the weakness class in plain words, optionally followed by its standard term in parentheses, then who can reach it and what an attacker achieves. Describe a business or operational consequence, not an exploit recipe. FORBIDDEN here (they belong in §8/§7): technology identifiers, config keys, library names or version pins, CVE/CWE numbers, file names / paths / file:line refs, framework-internal symbols, port numbers, HTTP-header names, protocol names, code snippets, or backticks. GOOD: 'Missing ownership checks (IDOR) let any signed-in customer read and change another customer's records.' BAD: 'routes/order.ts passes req.params.id to findOne() without an ownerId clause (CWE-639).'"
           },
           "refs": {
             "type": "array",

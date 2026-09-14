@@ -20,9 +20,15 @@ def test_business_context_reaches_the_default_full_runtime():
 
     assert "BUSINESS_CONTEXT_SOURCE = business_context_source" in runtime
     assert runtime.count("modes/business-context.md") == 1
-    assert "APPSEC_HEADLESS=1" in runtime
     assert "SKIP_BUSINESS_CONTEXT = skip_business_context" in runtime
-    assert "skip_business_context` is true" in runtime
+    # §2b states no condition of its own. All three reasons not to ask — a
+    # source already captured, --skip-context, and a run with no operator — are
+    # resolved by the controller and arrive as one field. The wording used to be
+    # pinned here instead, and it told the runtime to read APPSEC_HEADLESS,
+    # which it cannot see.
+    section = runtime.split("### 2b.")[1].split("## 3.")[0]
+    assert "ACTION.business_context_prompt_needed" in section
+    assert "APPSEC_HEADLESS" not in section
     assert runtime.index("modes/business-context.md") < runtime.index("## 3. Bind compact state")
     assert "load_business_context.py" in mode
     assert "business-context question" in router
@@ -32,7 +38,7 @@ def test_business_context_reaches_the_default_full_runtime():
     # depends on this instruction being followed.
     assert "Step 0" not in mode
     assert "interactive question only" in mode
-    assert "business_context_source` is\nnon-empty" in runtime
+    assert "business_context_prompt_needed" in mode
 
 
 def test_full_runtime_loads_only_controller_returned_stage_surfaces():
@@ -103,8 +109,13 @@ def test_stage4_is_one_editorial_pass_with_no_repair_loop():
     assert ".architect-status.json" in stage4
     assert "runs **once**" in stage4
     assert "Never dispatch it twice." in stage4
+    assert "at most three concurrent calls" in stage4
+    assert "Do not retry a failed packet." in stage4
     assert "secret gate" not in stage4  # the tail is spelled out as commands now
     assert "qa_checks.py" in stage4 and "unmasked_secrets" in stage4
+
+    # Between waves the console stays silent; progress notes are output too.
+    assert "printing nothing, not even wave notes" in stage4
 
     # The removed loop stays removed.
     assert "repair_required" not in stage4

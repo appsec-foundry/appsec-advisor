@@ -1260,11 +1260,14 @@ def _now_iso() -> str:
 
 
 def write_outputs(output_dir: Path, ranking: dict) -> None:
+    from enrichment_pass import EnrichmentContinuation
+
     yaml_path = output_dir / "threat-model.yaml"
     flags_path = output_dir / ".triage-flags.json"
 
     with yaml_path.open(encoding="utf-8") as fh:
         yaml_data = yaml.safe_load(fh)
+    continuation = EnrichmentContinuation(yaml_data)
     finding_updates = [update for update in ranking.get("_finding_updates", []) if isinstance(update, dict)]
     findings_by_id = {_finding_id(t): t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)}
     for update in finding_updates:
@@ -1404,6 +1407,7 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
     }
     flags["ranking"] = {key: value for key, value in ranking.items() if not key.startswith("_")}
 
+    continuation.refresh(yaml_data)
     yaml_path.write_text(
         yaml.safe_dump(yaml_data, sort_keys=False, allow_unicode=True, width=120),
         encoding="utf-8",

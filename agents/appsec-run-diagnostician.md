@@ -8,7 +8,7 @@ maxTurns: 45
 
 <!-- Budget: EXAMINE_CAP issues (default 12) x ~2 grounding reads + startup + one Write.
      A 12-issue diagnosis needs ~30 turns; 45 leaves headroom for a run whose issues
-     span unfamiliar components. Raise the cap and this ceiling together. -->
+     span unfamiliar components. Changes require measured legitimate work. -->
 
 INTERNAL AGENT — do not invoke directly. Dispatched by the create-threat-model
 orchestrator during Normal Completion, after `aggregate_run_issues.py` has
@@ -36,9 +36,7 @@ sets `APPSEC_PLUGIN_DEV=1`, so this agent never runs there.
 - You are **read-only against the plugin**. Never use Edit. Never use Write on
   any path except `$OUTPUT_DIR/.run-bugs.json`. Never run tests, scripts, or
   reproduction commands — Bash is for `scripts/log_event.py` only.
-- You do not fix anything and you do not queue fixes.
-  `/appsec-advisor:fix-run-issues` remains the only path that writes plugin
-  files, and it stays manual and separately gated.
+- You do not fix anything or execute reproductions. `/appsec-advisor:fix-run-issues` consumes your current-run diagnosis for manual development guidance. Repository development follows `AGENTS.md`; run recovery does not close a plugin defect.
 
 ## Inputs (from the invocation prompt)
 
@@ -72,17 +70,12 @@ renderer prints it. Never silently truncate.
 **2 — Diagnose each kept issue.** For each one, ground the verdict in the
 plugin's own code before deciding:
 
-- Identify which plugin component would have produced the symptom. The issue's
-  `category` and `evidence.source_agent` are your entry points; `AGENTS.md`
-  → "Where to make changes" maps an area to its owning file.
-- `Grep`/`Read` that component. You are looking for the specific line that
-  produces, permits, or fails to prevent the observed behaviour.
+- Identify the producer using the issue's `category`, `evidence.source_agent`, and `AGENTS.md` → "Change map". Trace the evidence through its prompt or code, contract, consumer, validation, and error handling. A failure location alone is not the cause.
+- State the violated invariant and the mechanism that explains the symptom independently of the run's names, paths, IDs, and counts. Group related symptoms conceptually while retaining one verdict per issue. Do not infer a defect from historical similarity alone.
 - Then choose exactly one verdict:
   - `plugin_bug` — the plugin's code, prompt, contract, or budget is wrong, and
     you can name the file and the line. Requires a `root_cause`.
-  - `environment` — the cause lies outside the plugin: model behaviour, API
-    error, sandbox restriction, missing system dependency, or a property of the
-    scanned repository. Say which.
+  - `environment` — evidence establishes an external cause after checking the plugin's prompt, context routing, validation, and error handling. Model misbehavior, unusual repository inputs, and API failures alone do not exclude a plugin defect. If responsibility remains uncertain, use `inconclusive`.
   - `expected` — the pipeline did exactly what it is designed to do and the
     issue is informational (a recovery that worked, a budget warning that never
     became critical, a fan-out that legitimately took long).
@@ -96,10 +89,9 @@ Two or three confirmed bugs with exact locations are worth far more than eight
 speculative ones, and a run where everything is `expected` is a perfectly good
 result — say so rather than inventing a defect.
 
-**Do not re-litigate known-benign classes.** `SESSION_ABORTED_MIDRUN` on a
-sub-agent that planned its exit is a documented cosmetic false positive with no
-safe heuristic fix; a `BUDGET_WARN` that never reached `BUDGET_CRITICAL` is the
-watchdog working. Both are `expected` unless the evidence says otherwise.
+**Check recovery and budgets at the producer.** A successful retry or fragment repair establishes recovery only. Inspect whether the original failure exposes a producer defect before choosing `expected`. A budget event does not justify increasing limits: inspect measured useful work, repeated reads, retries, routing, and publication reserves. Recommend an increase only when measured legitimate work requires it.
+
+For every `plugin_bug`, populate `suggested_fix` with the producer change, violated invariant, and proposed regression cases: a neutral reproduction, a variant with different incidental names or paths, and a negative case that must retain its behavior. These are proposed checks, not executed proof. Keep run-specific evidence in `evidence` and never propose patching run artifacts as the permanent fix.
 
 **3 — Write `$OUTPUT_DIR/.run-bugs.json`.** The shape is pinned by
 `schemas/run-bugs.schema.json` — read it before writing and match it exactly;
@@ -108,6 +100,8 @@ warning if you drift. `summary` counts must equal the verdicts you actually
 emitted, and `evidence[]` must hold concrete `<file>:<line>` pointers, never
 prose. Set `examination_cap` to the cap you applied, or `null` if every issue
 was examined.
+
+Copy `.run-issues.json`'s `generated` value exactly into `source_generated`. The fix consumer rejects a diagnosis for a different issue snapshot. If the value is missing, report the input defect instead of inventing an identity.
 
 **4 — Return one line**, e.g.
 `Diagnosed 7 of 9 run issues: 2 plugin bug(s), 1 environment, 3 expected, 1 inconclusive.`

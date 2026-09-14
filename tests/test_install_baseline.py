@@ -414,6 +414,55 @@ def test_a_url_blocked_by_the_guard_falls_back(config: dict, monkeypatch):
     assert "not in allowlist" in note
 
 
+# ---------- the signed release source ------------------------------------
+
+
+def from_releases(config: dict) -> dict:
+    return {**config, "url": "", "release": {"repository": "example-org/baseline", "allowed_signers": ["k"]}}
+
+
+def test_a_verified_release_ahead_of_the_configured_id_is_installed(config: dict, monkeypatch):
+    """The configured id is the floor a release is held to, not the only version it may carry."""
+    newer = BASELINE_TEXT.replace("test-1.0", "test-1.1")
+    asked: list[str] = []
+
+    def fetch_latest(release, minimum):
+        asked.append(minimum)
+        return ib.br.Release(newer, "test-1.1", "example-org/baseline release test-1.1, signature verified")
+
+    monkeypatch.setattr(ib.br, "fetch_latest", fetch_latest)
+    text, origin, note = ib.resolve_source(from_releases(config), offline=False)
+    assert text == newer
+    assert "signature verified" in origin
+    assert note == ""
+    assert asked == ["test-1.0"]
+
+
+def test_a_release_that_does_not_verify_falls_back_and_says_why(repo: Path, home: Path, config: dict, monkeypatch):
+    def fetch_latest(release, minimum):
+        raise ib.br.ReleaseError("the manifest signature is not from a trusted release key")
+
+    monkeypatch.setattr(ib.br, "fetch_latest", fetch_latest)
+    steps = ib.install("project", repo, home, from_releases(config))
+    assert (repo / config["install_filename"]).read_text(encoding="utf-8") == BASELINE_TEXT
+    assert any("example-org/baseline" in step and "trusted release key" in step for step in steps)
+
+
+def test_the_cli_counts_a_newer_release_as_installed(repo: Path, home: Path, config: dict, monkeypatch, capsys):
+    """A signed release ahead of the configured id is loaded, not missing."""
+    newer = BASELINE_TEXT.replace("test-1.0", "test-1.1")
+    monkeypatch.setattr(ib.bc, "load_config", lambda: from_releases(config))
+    monkeypatch.setattr(
+        ib.br,
+        "fetch_latest",
+        lambda release, minimum: ib.br.Release(newer, "test-1.1", "example-org/baseline release test-1.1"),
+    )
+    monkeypatch.setenv("HOME", str(home))
+
+    assert ib.main(["--scope", "project", "--repo", str(repo)]) == 0
+    assert "ahead of test-1.0" in capsys.readouterr().out
+
+
 # ---------- the git source ------------------------------------------------
 
 
@@ -469,6 +518,40 @@ def test_git_source_needs_both_url_and_path(config: dict):
     config = {**config, "url": "", "git": {"url": "https://example.invalid/x.git"}}
     _text, _origin, note = ib.resolve_source(config, offline=False)
     assert "needs both" in note
+
+
+# ---------- an aiscb installation is its installer's ---------------------
+
+LOADER_TEXT = "# AI Secure Coding Baseline session loader\n"
+
+
+def aiscb_loader(directory: Path) -> Path:
+    """An aiscb session loader beside the installer's helper, as a switchable install leaves it."""
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "show-baseline-version.py").write_text("# helper\n", encoding="utf-8")
+    loader = directory / "session-loader.md"
+    loader.write_text(LOADER_TEXT, encoding="utf-8")
+    return loader
+
+
+@pytest.mark.parametrize("scope", ["user", "project-rules"])
+def test_nothing_is_written_through_a_link_into_an_aiscb_installation(repo: Path, home: Path, config: dict, scope: str):
+    """The link Claude Code reads leads to aiscb's loader, which its hooks rely on.
+
+    Writing through it replaced the loader with the rules: they loaded twice, and
+    AISCB_DISABLE no longer switched them off.
+    """
+    loader = aiscb_loader(home / ".local" / "share" / "aiscb" if scope == "user" else repo / ".aiscb")
+    target = ib.plan(scope, repo, home, config)["target"]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(loader)
+
+    with pytest.raises(ib.InstallError, match="aiscb installation"):
+        ib.install(scope, repo, home, config, offline=True, force=True)
+
+    assert loader.read_text(encoding="utf-8") == LOADER_TEXT
+    assert target.is_symlink()
+    assert not (home / ".claude" / "CLAUDE.md").exists()
 
 
 # ---------- CLI -----------------------------------------------------------

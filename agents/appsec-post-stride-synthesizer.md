@@ -70,6 +70,7 @@ artifact that exists:
 ```bash
 set -e
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 if [ -f "$OUTPUT_DIR/.mitigation-overrides.json" ]; then
   python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" mitigation-overrides "$OUTPUT_DIR/.mitigation-overrides.json"
 fi
@@ -96,6 +97,7 @@ exact Bash calls — `AGENT_START` is an event name passed to the `info` kind, n
 a kind of its own, and `--agent` is what fills the component column:
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START "<message>" --agent post-stride-synthesizer
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent post-stride-synthesizer
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent post-stride-synthesizer

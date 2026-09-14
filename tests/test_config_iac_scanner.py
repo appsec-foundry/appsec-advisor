@@ -12,6 +12,7 @@ def _check(check_id: str, iac_type: str, file_pattern: str, expect: str, **extra
     value = {
         "id": check_id,
         "name": f"Check {check_id}",
+        "violation_title": f"Violation {check_id}",
         "iac_type": iac_type,
         "file_pattern": file_pattern,
         "pattern": extra.pop("pattern", "secure"),
@@ -60,6 +61,21 @@ def test_scan_evaluates_catalog_and_emits_canonical_findings(tmp_path):
         "package-lock.json",
     ]
     assert all(row["breach_vector"] == "Build-Time" for row in result["findings"])
+    # The title names the defect; the desired-state `name` would read as a pass.
+    assert [row["title"] for row in result["findings"]] == [check["violation_title"] for check in checks]
+    assert all(row["scenario"].startswith(f"{row['title']}: ") for row in result["findings"])
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_catalog_rejects_a_check_without_a_violation_title(tmp_path, value):
+    check = _check("IAC-001", "Dockerfile", "Dockerfile", "present")
+    if value is None:
+        del check["violation_title"]
+    else:
+        check["violation_title"] = value
+
+    with pytest.raises(scanner.ConfigScanError):
+        scanner._catalog(_catalog(tmp_path, [check]))
 
 
 def test_quick_depth_scans_first_five_files_per_category(tmp_path):

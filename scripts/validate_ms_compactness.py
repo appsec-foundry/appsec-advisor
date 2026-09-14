@@ -8,12 +8,19 @@ for no content gain.
 
 This script gives the renderer an objective pass/fail so it authors once and
 stops. It catches both runaway prose and engineering-level terminology in the
-product-owner Verdict. Technical evidence belongs in §§7–8, not in the short
-management summary.
+product-owner Verdict. A bullet body may name the weakness class (SQL injection,
+XSS); opening, titles and closing state outcomes only. Technology identifiers,
+code and locations belong in §§7–8, never in the short management summary.
+
+It also judges every Management Summary fragment the renderer authored against
+its schema, exactly as the pre-render gate will judge it
+(``validate_fragment.ms_renderer_schema_errors``). A broken length or enum limit
+is then corrected in the renderer's own turn instead of by a fragment-fixer
+dispatch and a second compose.
 
 Exit codes:
-  0 — all present fragments within budget (or fragments absent — nothing to check)
-  1 — at least one field over budget; stdout lists each offending field + count
+  0 — all present fragments within budget and schema (or absent — nothing to check)
+  1 — at least one field over budget or outside its schema; stdout lists each offending field
 
 Only the fields named in a violation should be re-authored. Do NOT rewrite a
 field the validator did not flag.
@@ -27,26 +34,38 @@ import re
 import sys
 from pathlib import Path
 
+import validate_fragment
+
 # --- Management-summary hard limits. These are intentionally tighter than the
 # --- JSON schema: the schema preserves the shape, while this gate protects the
 # --- product-owner reading level and concise worst-case scenarios.
 VERDICT_OPENING_MAX_WORDS = 52
-# 32 never bound: the worked examples in agents/shared/ms-template.md ran
-# 17-25 words and the 2026-08-21 insecure-large-spring-app run produced 17-20,
-# so every bullet passed untouched while reading as padded. Those examples now
-# run 12-15 words; 20 keeps this a runaway catcher sitting above the 16-word
-# soft target in the authoring contract rather than a second authoring rule.
-VERDICT_BULLET_BODY_MAX_WORDS = 20
+# A bullet body names the weakness class in plain words, optionally with its
+# standard term in parentheses ("database query injection (SQL injection)").
+# That costs 4-6 words over an outcome-only sentence, so the authoring contract
+# targets 20 words and 26 stays a runaway catcher above that target rather than
+# a second authoring rule. At the former 20-word cap, runs produced bodies that
+# named no weakness at all and read as vague to the engineers who act on them.
+VERDICT_BULLET_BODY_MAX_WORDS = 26
 VERDICT_CLOSING_MAX_CHARS = 220
 
-# Terms that expose an implementation, attack-class, protocol, or code-level
-# detail rather than an operational consequence. Keep this list conservative:
+# Technology and implementation identifiers: nobody in the verdict's audience
+# can act on them, so every field rejects them. Keep this list conservative:
 # common business words such as "account", "data", and "session" remain valid.
+# `xml` stays allowed only as the first word of the class "XML external entity".
 _TECHNICAL_DETAIL_RE = re.compile(
-    r"\b(?:api|csrf|csp|cve|cwe|idor|jwt|llm|oauth|oidc|rsa|sql|tls|http|https|"
-    r"xml|xxe|xss|localstorage|httponly|samesite|middleware|endpoint|"
-    r"parameteri[sz]ed|prompt[ -]injection|system prompt|directory listing|"
-    r"private key|public key|sandbox(?:ing)?|allow-?list)\b",
+    r"\b(?:api|csp|cve|cwe|jwt|llm|oauth|oidc|rsa|tls|http|https|"
+    r"xml(?!\s+external\s+entit)|localstorage|httponly|samesite|middleware|endpoint|"
+    r"parameteri[sz]ed|sandbox(?:ing)?|allow-?list)\b",
+    re.IGNORECASE,
+)
+# Weakness-class names and the plain names of what a class exposes. A bullet
+# body names the class so an engineer can map the scenario to its finding;
+# opening, titles and closing state outcomes only and keep rejecting them.
+# `llm` is a technology, not a weakness, and stays in the list above.
+_ATTACK_CLASS_RE = re.compile(
+    r"\b(?:csrf|idor|sql|xss|xxe|prompt[ -]injection|system prompt|directory listing|"
+    r"private key|public key)\b",
     re.IGNORECASE,
 )
 _CODE_OR_LOCATION_RE = re.compile(
@@ -69,9 +88,14 @@ def _sentences(text: str) -> int:
     return max(1, len(parts))
 
 
-def _check_management_language(value: str, field: str, violations: list[str]) -> None:
-    """Reject implementation detail in prose intended for non-experts."""
-    for match in (_TECHNICAL_DETAIL_RE.search(value or ""), _CODE_OR_LOCATION_RE.search(value or "")):
+def _check_management_language(value: str, field: str, violations: list[str], *, body: bool = False) -> None:
+    """Reject implementation detail in prose intended for non-experts.
+
+    A bullet body may name the weakness class; every other field states outcomes only.
+    """
+    patterns = [_TECHNICAL_DETAIL_RE, _CODE_OR_LOCATION_RE] + ([] if body else [_ATTACK_CLASS_RE])
+    for pattern in patterns:
+        match = pattern.search(value or "")
         if match:
             violations.append(f"ms-verdict.json: {field} contains technical detail {match.group(0)!r}")
             return
@@ -98,7 +122,7 @@ def _check_verdict(path: Path, violations: list[str]) -> None:
             )
         if _sentences(body) > 1:
             violations.append(f"ms-verdict.json: bullets[{i}].body has {_sentences(body)} sentences (max 1)")
-        _check_management_language(body, f"bullets[{i}].body", violations)
+        _check_management_language(body, f"bullets[{i}].body", violations, body=True)
 
 
 def main() -> int:
@@ -121,6 +145,7 @@ def main() -> int:
             # A malformed fragment is the composer's problem, not ours — do not
             # block the run on a parse error here.
             print(f"warn: could not read {path.name}: {e}", file=sys.stderr)
+    violations.extend(validate_fragment.ms_renderer_schema_errors(Path(args.output_dir)))
 
     if violations:
         print("MS compactness: FAIL — re-author ONLY these fields:")

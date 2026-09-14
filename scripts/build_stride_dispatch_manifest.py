@@ -917,6 +917,8 @@ def _grep_paths(repo_root: Path, rel: str, needle: str, *, limit: int = 400) -> 
             return []
         for p in cands:
             try:
+                if not p.resolve().is_relative_to(repo_root.resolve()) or p.stat().st_size > 512_000:
+                    continue
                 if needle in p.read_text(encoding="utf-8", errors="ignore"):
                     out.append(p.relative_to(repo_root).as_posix())
             except OSError:
@@ -935,10 +937,15 @@ def _detect_auth(repo_root: Path) -> dict | None:
         try:
             for p in base.rglob("*"):
                 if p.is_file() and p.suffix.lower() in _SRC_SUFFIXES and _AUTH_FILE_RE.search(p.stem):
-                    cands.add(p.relative_to(repo_root).as_posix())
+                    rel = p.relative_to(repo_root).as_posix()
+                    if not p.resolve().is_relative_to(repo_root.resolve()) or re.search(
+                        r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", rel
+                    ):
+                        continue
+                    cands.add(rel)
         except OSError:
             continue
-    paths = sorted(cands)[:25]
+    paths = sorted(cands, key=lambda path: (not bool(re.search(r"login|session|jwt|token", path, re.I)), path))[:25]
     if not paths:
         return None
     sample = ", ".join(paths[:4]) + (", …" if len(paths) > 4 else "")
@@ -1107,6 +1114,111 @@ def _merge_same_id_components(components: list) -> list:
     return out
 
 
+def _detect_embedded_stores(repo_root: Path) -> list[dict]:
+    """Require a runtime dependency, source import, and engine constructor.
+
+    An installed SDK, comment, test, or model declaration is insufficient.
+    Keep each engine distinct; an existing SQL store does not cover a document store.
+    """
+    deps = _package_deps(repo_root)
+    stores = []
+    for engine, constructor in (
+        ("marsdb", "Collection"),
+        ("nedb", ""),
+        ("@seald-io/nedb", ""),
+        ("lokijs", ""),
+        ("pouchdb", ""),
+    ):
+        if engine not in deps:
+            continue
+        paths = []
+        for directory in ("data", "src", "lib", "server", "app"):
+            for rel in _grep_paths(repo_root, directory, engine):
+                path = repo_root / rel
+                if not path.resolve().is_relative_to(repo_root.resolve()) or re.search(
+                    r"(?:^|/)(?:tests?|__tests__|node_modules)/|\.(?:test|spec)\.", rel
+                ):
+                    continue
+                try:
+                    if path.stat().st_size > 512_000:
+                        continue
+                    source = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                source = re.sub(r"/\*[\s\S]*?\*/|^[ \t]*//[^\n]*", "", source, flags=re.M)
+                imported = re.search(
+                    r"(?:import\s+(?:\*\s+as\s+)?|(?:const|let|var)\s+)([A-Za-z_$][\w$]*)\s*(?:from\s*|=\s*require\(\s*)['\"]"
+                    + re.escape(engine)
+                    + r"['\"]",
+                    source,
+                )
+                if imported and re.search(
+                    r"\bnew\s+" + re.escape(imported[1]) + (r"\." + constructor if constructor else "") + r"\s*\(",
+                    source,
+                ):
+                    paths.append(rel)
+        if paths:
+            stores.append(
+                {
+                    "id": re.sub(r"[^a-z0-9]+", "-", engine).strip("-") + "-store",
+                    "name": f"{engine} Embedded Store",
+                    "description": f"Embedded {engine} persistence instantiated in application code.",
+                    "paths": sorted(set(paths)),
+                    "tier": "data",
+                    "framework": engine,
+                    "complexity": "simple",
+                    "deployment_zones": [],
+                    "handles_sensitive_data": False,
+                    "origin": "reconciliation",
+                }
+            )
+    return stores
+
+
+def _reconcile_orm_ownership(components: list, repo_root: Path) -> list[dict]:
+    """Give executable ORM source an application owner without turning it into a database engine."""
+    from reclassify_components import _glob_to_regex, orm_source_files
+
+    source_files = orm_source_files(components, repo_root)
+    owners = [_glob_to_regex(p) for c in components if c.get("tier") == "application" for p in c.get("paths") or []]
+    missing = {path: framework for path, framework in source_files.items() if not any(p.search(path) for p in owners)}
+    added = []
+    for framework in sorted(set(missing.values())):
+        paths = sorted(path for path, value in missing.items() if value == framework)
+        cid = f"{framework}-data-access"
+        existing = next((c for c in components if c.get("id") == cid), None)
+        if existing:
+            if existing.get("tier") == "application":
+                existing["paths"] = sorted(set(existing.get("paths") or []) | set(paths))
+            continue
+        component = {
+            "id": cid,
+            "name": f"{framework.title()} application data access",
+            "description": "Executable ORM model definitions, setters, and query construction in the application process.",
+            "paths": paths,
+            "tier": "application",
+            "framework": framework,
+            "complexity": "simple",
+            "deployment_zones": [],
+            "handles_sensitive_data": False,
+            "origin": "reconciliation",
+        }
+        components.append(component)
+        added.append(component)
+    if source_files:
+        for component in components:
+            if component.get("tier") == "data":
+                if str(component.get("framework") or "").lower() in {"sequelize", "typeorm", "mongoose"}:
+                    component["framework"] = None
+                component["name"] = re.sub(
+                    r"\s+(?:via|with)\s+(?:Sequelize|TypeORM|Mongoose)\s*$",
+                    "",
+                    component.get("name") or component["id"],
+                    flags=re.I,
+                )
+    return added
+
+
 def reconcile_inventory(components: list, repo_root: Path) -> tuple:
     """Inject security-relevant deployable units that hard repo evidence shows
     exist but Phase-3 did not enumerate as their own role-bearing component.
@@ -1120,12 +1232,25 @@ def reconcile_inventory(components: list, repo_root: Path) -> tuple:
     augmented = list(existing)
     injected: list[dict] = []
     for role_pred, detect in _RECONCILE_DETECTORS:
-        if any(role_pred(c) for c in augmented):
-            continue  # role already covered — do not duplicate
+        covered = [c for c in augmented if role_pred(c)]
+        if covered:
+            if detect is _detect_auth:
+                candidate = detect(repo_root)
+                if candidate:
+                    owner = covered[0]
+                    owner["paths"] = list(dict.fromkeys([*(owner.get("paths") or []), *candidate["paths"]]))
+            continue  # role already covered; authentication handlers still need ownership
         cand = detect(repo_root)
         if cand and not any(c.get("id") == cand.get("id") for c in augmented):
             augmented.append(cand)
             injected.append(cand)
+    for candidate in _detect_embedded_stores(repo_root):
+        engine = candidate["framework"]
+        if not any(c.get("tier") == "data" and (c.get("framework") or "").lower() == engine for c in augmented):
+            if not any(c.get("id") == candidate["id"] for c in augmented):
+                augmented.append(candidate)
+                injected.append(candidate)
+    injected.extend(_reconcile_orm_ownership(augmented, repo_root))
     return augmented, injected
 
 

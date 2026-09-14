@@ -28,6 +28,8 @@ import re
 import sys
 from pathlib import Path
 
+from enrichment_pass import valid_receipt
+
 try:
     import yaml
 except ImportError:
@@ -147,7 +149,12 @@ def chk_render_findings_register_substance(y: dict, md: str) -> tuple[bool, str]
     return (has_row, "§8 present but contains no F-NNN finding row (boilerplate only)")
 
 
+def chk_render_enrichment_current(y: dict, md: str) -> tuple[bool, str]:
+    return valid_receipt(y), "missing, malformed, or stale meta.enrichment_pass for the final YAML"
+
+
 _CHECKS = {
+    "render_enrichment_current": chk_render_enrichment_current,
     "every_threat_has_id": chk_every_threat_has_id,
     "mitigations_nonempty_when_remediations": chk_mitigations_nonempty_when_remediations,
     "mitigation_links_resolve": chk_mitigation_links_resolve,

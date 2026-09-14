@@ -1772,3 +1772,27 @@ class TestRequirementsExportConsistency:
         self._resolution(tmp_path, 0)
         (tmp_path / "threat-model.yaml").write_text("threats: []\n", encoding="utf-8")
         assert agg._extract_requirements_export_consistency(tmp_path) == []
+
+
+def test_editorial_failure_survives_status_cleanup():
+    log = [
+        (
+            8,
+            _line(
+                "2026-09-11T14:59:19Z", "EDITORIAL_PASS", "offered=232 proposed=0 applied=0 apply_report_missing=true"
+            ),
+        )
+    ]
+    issues = agg._extract_editorial_outcome(log)
+    assert issues[0]["category"] == "editorial_pass_incomplete"
+    assert issues[0]["evidence"]["log_line"] == 8
+
+
+def test_latest_editorial_receipt_controls_the_outcome():
+    log = [
+        (1, _line("2026-09-11T14:59:19Z", "EDITORIAL_PASS", "outcome=incomplete")),
+        (2, _line("2026-09-11T15:01:00Z", "EDITORIAL_PASS", "outcome=applied")),
+    ]
+    assert agg._extract_editorial_outcome(log) == []
+    log.append((3, _line("2026-09-11T15:02:00Z", "EDITORIAL_PASS", "outcome=partial")))
+    assert agg._extract_editorial_outcome(log)[0]["evidence"]["outcome"] == "partial"

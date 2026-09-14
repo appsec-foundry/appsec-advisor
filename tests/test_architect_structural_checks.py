@@ -27,6 +27,9 @@ import architect_structural_checks as asc  # noqa: E402
 PLUGIN_ROOT = Path(__file__).parent.parent
 SCRIPT = PLUGIN_ROOT / "scripts" / "architect_structural_checks.py"
 
+# A CVSS-eligible CWE with a concrete line: FE-1 lets such a finding carry a vector.
+_CVSS_ELIGIBLE = {"cwe": "CWE-89", "evidence": {"file": "src/db/query.py", "line": 12}}
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -492,11 +495,31 @@ class TestCvssRisk:
 
     def test_critical_without_cvss_flagged(self, out_dir):
         _write_json(
-            out_dir / ".threats-merged.json", {"threats": [{"t_id": "T-003", "risk": "Critical", "source": "stride"}]}
+            out_dir / ".threats-merged.json",
+            {"threats": [{"t_id": "T-003", "risk": "Critical", "source": "stride", **_CVSS_ELIGIBLE}]},
         )
         r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
         kinds = [f["kind"] for f in r["findings"]]
         assert "critical_without_cvss" in kinds
+
+    @pytest.mark.parametrize(
+        "threat,flagged",
+        [
+            # A CWE outside data/cvss-eligible-cwes.yaml carries no CVSS (FE-1).
+            ({"risk": "Critical", "cwe": "CWE-311", "evidence": {"file": "src/models/card.py", "line": 8}}, False),
+            # FE-1 withholds the vector from a finding without an evidence line.
+            ({"risk": "Critical", "cwe": "CWE-89", "evidence": {"file": "src/db/query.py"}}, False),
+            # The effective severity decides, not the pre-triage risk.
+            ({"risk": "High", "effective_severity": "Critical", **_CVSS_ELIGIBLE}, True),
+            ({"risk": "Critical", "effective_severity": "High", **_CVSS_ELIGIBLE}, False),
+        ],
+    )
+    def test_critical_without_cvss_follows_cvss_eligibility(self, out_dir, threat, flagged):
+        """Only a finding that could carry a CVSS vector is missing one."""
+        _write_json(out_dir / ".threats-merged.json", {"threats": [{"t_id": "T-010", "source": "stride", **threat}]})
+        r = asc.check_cvss_risk(out_dir / ".threats-merged.json")
+        kinds = [f["kind"] for f in r["findings"]]
+        assert ("critical_without_cvss" in kinds) is flagged
 
     def test_architectural_critical_without_cvss_accepted(self, out_dir):
         """Architectural violations can carry Critical risk without a CVSS."""
@@ -609,7 +632,8 @@ class TestRunAll:
         """,
         )
         _write_json(
-            out_dir / ".threats-merged.json", {"threats": [{"t_id": "T-001", "risk": "Critical", "source": "stride"}]}
+            out_dir / ".threats-merged.json",
+            {"threats": [{"t_id": "T-001", "risk": "Critical", "source": "stride", **_CVSS_ELIGIBLE}]},
         )
         r = asc.run_all(out_dir)
         assert r["findings_total"] >= 2  # verdict_understates + critical_without_cvss

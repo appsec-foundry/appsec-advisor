@@ -62,6 +62,10 @@ KEY_SECONDS = "last_run_seconds"
 KEY_MODE = "last_run_mode"
 KEY_DEPTH = "last_run_depth"
 KEY_ISO = "last_run_iso"
+# Read by `project_run_cost.last_run_cost` so the next run projects against a
+# measurement of this repository instead of the parametric floor. Absent when
+# the run's telemetry could not be totalled; the projection then falls back.
+KEY_COST = "last_run_cost_usd"
 
 _ASSESSMENT_START_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s.*ASSESSMENT_START\b")
 
@@ -122,6 +126,92 @@ def _net_wall_seconds(output_dir: Path, plugin_root: Path | None) -> int | None:
     return int(raw) if raw.isdigit() and int(raw) > 0 else None
 
 
+def _run_cost_usd(output_dir: Path) -> float | None:
+    """This run's total from its own telemetry, or None when it cannot be read.
+
+    A total that is only a lower bound (an agent reported no usage) is not
+    written: the next run would then project against a figure it cannot tell
+    apart from a complete one.
+    """
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import cost_running_total  # type: ignore
+
+        result = cost_running_total.aggregate_running_total(Path(output_dir))
+    except Exception:  # noqa: BLE001 — best-effort by contract, like the timing write
+        return None
+    if result.get("status") != "ok" or result.get("cost_is_floor"):
+        return None
+    cost = result.get("cost_usd")
+    return round(float(cost), 4) if isinstance(cost, (int, float)) and cost > 0 else None
+
+
+def persist_cost_from_result(output_dir: Path, result_path: Path) -> float | None:
+    """Write ``last_run_cost_usd`` from the headless result object.
+
+    The in-run telemetry can only ever be a floor when the host reports no
+    per-call token classes, and ``_run_cost_usd`` refuses a floor on purpose —
+    so on such a host the baseline never gains a cost and every later run
+    projects parametrically. The result object of ``claude -p --output-format
+    json`` is the exact figure: the host's own ``total_cost_usd``, sub-agents
+    included, priced by the models actually billed.
+
+    It exists only once the session has exited, which is after the skill's own
+    finalization, so this runs from the wrapper rather than from ``persist``.
+    Only the cost field is touched; the timing fields keep the values the
+    in-run write measured. Returns the cost written, or None.
+    """
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    try:
+        import headless_usage  # type: ignore
+
+        result = headless_usage.load_result(Path(result_path))
+    except Exception:  # noqa: BLE001 — best-effort by contract, like the timing write
+        return None
+    if not isinstance(result, dict):
+        return None
+    usage = headless_usage.extract_usage(result)
+    cost = usage.get("total_cost_usd")
+    if not isinstance(cost, (int, float)) or cost <= 0:
+        return None
+    # An errored run's cost describes a run that did not deliver a report; the
+    # next projection must not learn from it.
+    if usage.get("is_error"):
+        return None
+    written = round(float(cost), 4)
+    _write_fields(output_dir, {KEY_COST: written})
+    return written
+
+
+def _write_fields(output_dir: Path, fields: dict) -> None:
+    """Merge ``fields`` into `.appsec-cache/baseline.json`, atomically.
+
+    Every writer goes through here so a partial write cannot drop the fields
+    another writer owns; a corrupt cache is replaced rather than blocking.
+    """
+    cache_dir = output_dir / ".appsec-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / "baseline.json"
+
+    data: dict = {}
+    if cache_file.is_file():
+        try:
+            loaded = json.loads(cache_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            data = {}  # a corrupt cache must not block the write
+    data.update(fields)
+
+    tmp = cache_file.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, cache_file)
+
+
 def persist(
     output_dir: Path,
     mode: str,
@@ -152,24 +242,11 @@ def persist(
 
     iso = datetime.datetime.fromtimestamp(end_epoch, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     fields = {KEY_SECONDS: seconds, KEY_MODE: mode, KEY_DEPTH: depth, KEY_ISO: iso}
+    cost = _run_cost_usd(output_dir)
+    if cost is not None:
+        fields[KEY_COST] = cost
 
-    cache_dir = output_dir / ".appsec-cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_file = cache_dir / "baseline.json"
-
-    data: dict = {}
-    if cache_file.is_file():
-        try:
-            loaded = json.loads(cache_file.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                data = loaded
-        except (OSError, json.JSONDecodeError):
-            data = {}  # a corrupt cache must not block the write
-    data.update(fields)
-
-    tmp = cache_file.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, cache_file)
+    _write_fields(output_dir, fields)
 
     fields["_start_source"] = source
     return fields
@@ -178,12 +255,35 @@ def persist(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Persist run-end timing into .appsec-cache/baseline.json")
     ap.add_argument("--output-dir", required=True, type=Path)
-    ap.add_argument("--mode", required=True)
+    ap.add_argument("--mode", required=False, default="")
     ap.add_argument("--depth", default="standard")
+    ap.add_argument(
+        "--cost-from-result",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="Update only last_run_cost_usd from a headless result object; the timing fields are untouched",
+    )
     ap.add_argument("--fallback-epoch", type=int, default=0, help="ASSESSMENT_START_EPOCH, if the caller still has it")
     ap.add_argument("--plugin-root", type=Path, default=None)
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
+
+    if args.cost_from_result is not None:
+        cost = persist_cost_from_result(args.output_dir, args.cost_from_result)
+        if cost is None:
+            # Best-effort like the timing write: the next run projects
+            # parametrically rather than against a figure nobody can trust.
+            sys.stderr.write(
+                "persist_run_baseline: no usable total_cost_usd in the result object — cost baseline not written\n"
+            )
+            return 0
+        if not args.quiet:
+            print(f"run-baseline: ${cost:.2f} from the headless result object")
+        return 0
+
+    if not args.mode:
+        ap.error("--mode is required unless --cost-from-result is given")
 
     written = persist(
         args.output_dir,

@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -166,3 +168,53 @@ def test_main_repairs_non_dict_meta(tmp_path: Path):
 
     data = yaml.safe_load((out / "threat-model.yaml").read_text(encoding="utf-8"))
     assert data["meta"]["public_source_repo"] is True
+
+
+@pytest.mark.parametrize("host,project", [("github.com", "catalog"), ("gitlab.com", "ledger")])
+@pytest.mark.parametrize("public", [True, False])
+def test_rebuilt_public_source_grouping_survives_enrichment(tmp_path, host, project, public):
+    from enrichment_pass import valid_receipt
+    from figure1_dfd import scenarios_from_attack_paths
+
+    repo = _repo(
+        tmp_path, license_text=_MIT if public else None, pkg={"repository": f"https://{host}/example/{project}"}
+    )
+    out = tmp_path / "assessment"
+    out.mkdir()
+    model = {"meta": {}, "components": [], "threats": [], "security_controls": [], "assets": [], "mitigations": []}
+    paths = {
+        "attack_paths": [
+            {"class": "source-read", "actor": actor, "findings": []}
+            for actor in ("internet-anon", "repo-read", "build-time", "internet-priv-user")
+        ]
+    }
+    for _rebuild in range(2):
+        # A rebuild deliberately discards prior meta; the real pass must restore it.
+        (out / "threat-model.yaml").write_text(yaml.safe_dump(model))
+        completed = subprocess.run(
+            ["bash", str(ROOT / "scripts/auto_emitter_pass.sh"), str(out), str(repo), str(ROOT), "false"],
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 0, completed.stderr
+        current = yaml.safe_load((out / "threat-model.yaml").read_text())
+        assert (current["meta"].get("public_source_repo") is True) is public
+        assert valid_receipt(current)
+        _, actors = scenarios_from_attack_paths(current, paths, {})
+        slugs = [actor["slug"] for actor in actors]
+        assert ("repo-read" not in slugs) is public
+        assert slugs.count("internet-anon") == 1
+        assert "build-time" in slugs and "internet-priv-user" in slugs
+
+
+def test_self_hosted_source_visibility_remains_unknown(tmp_path):
+    repo = _repo(tmp_path, license_text=_MIT, pkg={"repository": "https://git.example.org/team/service"})
+    assert dpr.detect(repo)[0] is None
+
+
+def test_host_and_license_cannot_distinguish_repository_visibility(tmp_path, monkeypatch):
+    repo = _repo(tmp_path, license_text=_MIT, pkg={"repository": "https://github.com/example/service"})
+    monkeypatch.setattr(dpr, "_git_remote_public", lambda _repo: False)
+    # Identical metadata can belong to a private repository; no remote visibility
+    # API is consulted. This pins the known display-only heuristic limitation.
+    assert dpr.detect(repo)[0] is True

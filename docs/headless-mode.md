@@ -15,7 +15,7 @@ The headless wrapper uses the compact controller runtime only.
 | Rerender | `--rerender` | Rebuilds the report from validated Stage-1 artifacts without analyzing source again. |
 
 Incremental, resume, assessment dry-run, PR mode, baseline restore,
-`--max-wall-time`, `--max-cost`, and `APPSEC_LIVE_PHASE=1` are unsupported.
+`--max-wall-time`, and `APPSEC_LIVE_PHASE=1` are unsupported.
 They fail before output creation, run-state mutation, or model dispatch. Use
 `--full` after source changes, `--rebuild` for a clean restart, and `--rerender`
 only when the existing Stage-1 artifacts remain authoritative.
@@ -114,13 +114,12 @@ Headless limits are enforced outside the model runtime:
   --repo /repos/team-api \
   --full \
   --max-duration 3600 \
-  --max-budget 10
+  --soft-budget 30
 ```
 
-`--max-duration` uses the host `timeout` command. `--max-budget` applies to API
-billing. An interrupted or capped assessment is not resumable; start a new
-`--full` or `--rebuild` run. Completed component artifacts may remain for
-diagnosis, but they are never silently admitted as a legacy continuation.
+`--max-duration` uses the host `timeout` command.
+
+The two cost flags do different jobs. `--soft-budget` steers the run: an invocation that cannot fit is refused before it spends anything, and a run that overruns still finishes and reports the overrun. `--hard-budget` is the host's cut, applies to API billing, and kills the session wherever it is. Giving only `--soft-budget` derives the hard cut at 1.25 times its value, above the band the soft budget is allowed to use, so it fires only when the soft mechanism was wrong. Pass `--hard-budget` to set it yourself. An interrupted or capped assessment is not resumable mid-analysis. One boundary is recoverable: a run that stopped after Stage 1 but before the report leaves validated Stage-1 artifacts, and `--rerender` turns them into a report without analyzing the source again. The run prints the command that applies to what it left behind. `--full` and `--rebuild` refuse to discard those artifacts until you repeat the invocation with `--force`. Anything earlier than that boundary starts again with `--full` or `--rebuild`; partial component artifacts may remain for diagnosis, but they are never silently admitted as a legacy continuation.
 
 ## Scheduled CI example
 
@@ -168,6 +167,14 @@ modes:
 ./scripts/run-headless.sh --audit-requirements --repo /repos/team-api
 ```
 
+## While the run is going
+
+Unless you pass `--quiet`, the run prints a progress line: the phase it is in, roughly how far along it is, how long it has taken, and what it has spent so far. The spend is a lower bound, marked `≥`, because sub-agents only report when they finish. With `--soft-budget` it is shown against that budget, and passing 80 % or 100 % of it prints a warning once. A warning never stops the run; only `--hard-budget` does that.
+
+Where the host reports no usage, the run says so once and shows no spend at all rather than a figure that is far too low. Nothing is then tracking the soft budget, and only `--hard-budget` still applies.
+
+At the end you get the exact cost per model for the whole run, sub-agents included, and under it a table of what each phase took. A role that carries no model pin of its own runs on the session model, so a run can bill as few as two models and that is still the complete figure, not a truncated one. The `Models` line the run prints at the start names what each model drives; a model listed there and absent from the cost table means missing spend.
+
 ## Output
 
 A successful threat-model run writes `threat-model.md` and, unless disabled,
@@ -194,12 +201,14 @@ cleanup, and fail-closed report gate in every supported assessment mode.
 | `--requirements [source]` | Include the requirements catalog. |
 | `--context <source>` | Supply business context as untrusted data for this run. |
 | `--max-duration <seconds>` | Stop the wrapper after the host deadline. |
-| `--max-budget <usd>` | Stop when the API billing budget is reached. |
+| `--soft-budget <usd>` | Steer the run to this cost. A run that cannot fit does not start; a run that overruns still finishes. |
+| `--hard-budget <usd>` | Kill the session at this cost, losing the report (API billing). Defaults to 1.25 × the soft budget. |
 | `--trust-mode trusted\|untrusted` | Select repository trust preflight; default is untrusted. |
 | `--clean-cache` | Delete transient cache state and exit. |
 | `--clean-all` | Delete the selected output directory contents after confirmation and exit. |
 | `--dry-run` with cleanup | Preview deterministic cleanup without writing. |
-| `--verbose` | Stream detailed runtime events. |
+| `--force` | Skip the `--clean-all` confirmation; with `--full` or `--rebuild`, discard a completed Stage 1 instead of rendering it. |
+| `--verbose` | Add the raw event stream to the live phase progress. |
 | `--quiet` | Suppress live progress. |
 
 `APPSEC_CLAUDE_EXECUTABLE` selects one Claude-compatible executable for the
@@ -211,10 +220,7 @@ old producer or orchestration path.
 
 ## Exit behavior and diagnosis
 
-An exit code of `0` means the requested supported operation completed and the
-required report artifact exists. Invalid configuration, unsupported modes,
-missing rerender inputs, trust-preflight findings, validation failures, secret
-gate failures, and incomplete reports exit non-zero.
+An exit code of `0` means the requested supported operation completed and the required report artifact exists. Invalid configuration, unsupported modes, missing rerender inputs, a run that declined to discard a completed Stage 1, trust-preflight findings, validation failures, secret gate failures, and incomplete reports exit non-zero. A declined run analyzes nothing, so it never reports success even when an earlier report is still on disk.
 
 Use these deterministic status tools against the selected output directory:
 
@@ -225,6 +231,4 @@ python3 scripts/render_completion_summary.py \
   --issues-only --output-dir /path/to/output --repo-root /path/to/repository
 ```
 
-After an interrupted run, inspect the reported issue and start a new `--full`
-or `--rebuild` assessment. Do not copy checkpoint files into a new run or set a
-compatibility environment variable; neither is an admitted runtime path.
+After an interrupted run, inspect the reported issue, then use the recovery command the run printed: `--rerender` when Stage 1 had finished, otherwise a new `--full` or `--rebuild` assessment. Do not copy checkpoint files into a new run or set a compatibility environment variable; neither is an admitted runtime path.

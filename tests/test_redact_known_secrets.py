@@ -211,3 +211,18 @@ def test_no_source_secrets_is_noop(tmp_path: Path) -> None:
     assert rc == 0
     report = json.loads((out / ".secret-redaction.json").read_text(encoding="utf-8"))
     assert report["total_redactions"] == 0
+
+
+def test_credential_context_does_not_reach_across_a_line_break() -> None:
+    """The word-shaped path replaces a value only where an assignment stands
+    immediately before it. An assignment does not span a line break, so a
+    keyword ending one line must not claim the next line's first token — the
+    same rule the scanner's twin pattern follows."""
+    text = "- entry_point: GET /api/x?token=\n  local-insecure-password: HTTP\n"
+    out, count = R._replace_in_credential_context(text, "local-insecure-password", "MASK")
+    assert count == 0, "matched across a line break"
+    assert out == text
+
+    same_line = "token=local-insecure-password"
+    out, count = R._replace_in_credential_context(same_line, "local-insecure-password", "MASK")
+    assert count == 1, "a real single-line assignment must still be redacted"

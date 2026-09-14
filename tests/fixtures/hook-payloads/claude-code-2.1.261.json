@@ -1,0 +1,89 @@
+{
+  "host": {
+    "product": "Claude Code",
+    "version": "2.1.261",
+    "captured_at": "2026-09-05",
+    "note": "Sanitized payloads for one Agent call. Identifiers, paths, prompt text and counters are anonymized. This host differs from 2.1.233 in the one place the lifecycle depends on: the Agent `tool_response` is a launch acknowledgement, not a completion. Its key set is the live `AGENT_RETURN_FIELDS` capture (agentId, canReadOutputFile, description, isAsync, outputFile, prompt, resolvedModel, status) — no `content`, no `usage`, no `totalToolUseCount` — and it arrives at dispatch, before `SubagentStop`. Together with the headless `agent_transcript_path` that names a file the host never writes, no surface reports the outcome, which is why the two events hand it over to each other explicitly."
+  },
+  "base_keys": {
+    "required": [
+      "session_id",
+      "transcript_path",
+      "cwd",
+      "hook_event_name"
+    ],
+    "optional": [
+      "prompt_id",
+      "permission_mode",
+      "agent_id",
+      "agent_type",
+      "effort"
+    ]
+  },
+  "events": {
+    "PreToolUse": {
+      "session_id": "3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33",
+      "transcript_path": "/home/example/.claude/projects/-workspace-target/3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33.jsonl",
+      "cwd": "/workspace/target",
+      "permission_mode": "acceptEdits",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "Agent",
+      "tool_use_id": "toolu_01ExampleReconCallIdentity",
+      "tool_input": {
+        "subagent_type": "appsec-advisor:appsec-recon-scanner",
+        "description": "Reconnaissance",
+        "model": "haiku",
+        "run_in_background": false,
+        "prompt": "REPO_ROOT=/workspace/target\nOUTPUT_DIR=/workspace/target/docs/security\nCLAUDE_PLUGIN_ROOT=/opt/appsec-advisor\nMODEL_ID=haiku\nACTION_ID=stage1c:b078fb4269a6b5c5\nJOB_ID=phase2-recon\nMAX_TURNS=36\n"
+      }
+    },
+    "SubagentStart": {
+      "session_id": "3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33",
+      "transcript_path": "/home/example/.claude/projects/-workspace-target/3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33.jsonl",
+      "cwd": "/workspace/target",
+      "permission_mode": "acceptEdits",
+      "hook_event_name": "SubagentStart",
+      "agent_id": "a84d84ba10db3ec71",
+      "agent_type": "appsec-advisor:appsec-recon-scanner"
+    },
+    "SubagentStop": {
+      "session_id": "3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33",
+      "transcript_path": "/home/example/.claude/projects/-workspace-target/3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33.jsonl",
+      "cwd": "/workspace/target",
+      "permission_mode": "acceptEdits",
+      "hook_event_name": "SubagentStop",
+      "stop_hook_active": false,
+      "agent_id": "a84d84ba10db3ec71",
+      "agent_type": "appsec-advisor:appsec-recon-scanner",
+      "agent_transcript_path": "/home/example/.claude/projects/-workspace-target/3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33/subagents/agent-a84d84ba10db3ec71.jsonl",
+      "last_assistant_message": "Reconnaissance complete."
+    },
+    "PostToolUse": {
+      "session_id": "3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33",
+      "transcript_path": "/home/example/.claude/projects/-workspace-target/3f9c1d7e-0a42-4b6d-9c81-7e2a5f0b4c33.jsonl",
+      "cwd": "/workspace/target",
+      "permission_mode": "acceptEdits",
+      "hook_event_name": "PostToolUse",
+      "tool_name": "Agent",
+      "tool_use_id": "toolu_01ExampleReconCallIdentity",
+      "duration_ms": 412,
+      "tool_input": {
+        "subagent_type": "appsec-advisor:appsec-recon-scanner",
+        "description": "Reconnaissance",
+        "model": "haiku",
+        "run_in_background": false,
+        "prompt": "REPO_ROOT=/workspace/target\nOUTPUT_DIR=/workspace/target/docs/security\nCLAUDE_PLUGIN_ROOT=/opt/appsec-advisor\nMODEL_ID=haiku\nACTION_ID=stage1c:b078fb4269a6b5c5\nJOB_ID=phase2-recon\nMAX_TURNS=36\n"
+      },
+      "tool_response": {
+        "agentId": "a84d84ba10db3ec71",
+        "canReadOutputFile": true,
+        "description": "Reconnaissance",
+        "isAsync": true,
+        "outputFile": "/workspace/target/docs/security/.agent-output-a84d84ba10db3ec71.md",
+        "prompt": "REPO_ROOT=/workspace/target\n",
+        "resolvedModel": "claude-haiku-4-5",
+        "status": "pending"
+      }
+    }
+  }
+}

@@ -39,11 +39,7 @@ depends on emits `HOOK_PAYLOAD_UNEXPECTED` instead of degrading silently.
 
 SubagentStop takes stop reason and usage from the host's child-specific
 `agent_transcript_path`; the common `transcript_path` names the parent session.
-A headless session persists no transcript, so neither answers there: an
-undeterminable stop reason emits `AGENT_OUTCOME_DEFERRED` and leaves the
-outcome to the Agent `PostToolUse` rather than recording a failure, and per-call
-usage comes from that return's `usage` block and `totalToolUseCount`. The turn
-budget retires either way — the child has stopped.
+A headless session persists no transcript, so neither answers there. `SubagentStop` and the Agent `PostToolUse` then hand the outcome over once, in whichever order they arrive: the first to find the question unanswerable emits `AGENT_OUTCOME_DEFERRED` rather than recording a failure, and the second terminalizes as `AGENT_DONE` with `reason=outcome_unobserved`. A host whose Agent return is a launch acknowledgement sends it at dispatch, so `SubagentStop` is the second event and closes the call there; a host that answers on completion carries per-call usage in that return's `usage` block and `totalToolUseCount`. No call may end a run in `running`. The turn budget retires at the stop either way, and a stopped call owns no further turns even before its outcome is settled.
 | Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
 
 `AGENT_DONE` and `AGENT_FAILED` are the only terminal outcome of a call. A
@@ -55,11 +51,17 @@ is set.
 
 ## Budget wrap-up signal (read at every phase boundary)
 
-Every agent that runs more than a handful of phases must run
-`python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical
---output-dir "$OUTPUT_DIR"` at each phase boundary. A zero exit means the
-marker identity still matches a running call and its authoritative controller
-claim. Bare file existence is never a control signal; legacy or malformed
+Every agent that runs more than a handful of phases must run this at each
+phase boundary:
+
+```bash
+OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
+CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"
+```
+
+A zero exit means the marker identity still matches a running call and its
+authoritative controller claim. Bare file existence is never a control signal; legacy or malformed
 entries are inert.
 
 When the command exits zero:
@@ -94,7 +96,7 @@ will do and which artifact it produces.
 | `threat-merger` | deduplicates candidate threats via CWE + component + title fingerprint → merge decisions feed `.threats-merged.json` |
 | `triage-validator` | infers breach distance, detects compound attack chains, computes effective severity, re-ranks top threats → `.triage-flags.json` |
 | `qa-reviewer` | verifies rendered `threat-model.md` against `data/sections-contract.yaml` (11 deterministic checks: links, xrefs, anchors, invariants, MS structure, …); emits `.qa-repair-plan.json` on drift |
-| `architect-reviewer` | Stage-4 editorial pass: rewrites prose from the bounded projection and emits `.dispatch-context/editorial/plan.json`; it writes no report bytes itself |
+| `architect-reviewer` | edits one bounded prose packet → `.dispatch-context/editorial/plan-<batch>.json` |
 | `config-scanner` | scans Dockerfile, GitHub Actions, docker-compose, Dependabot/Renovate against `data/config-iac-checks.yaml` → `.config-scan-findings.json` (Phase 2.5, M3.5) |
 
 **Dispatch echo template:**
@@ -113,8 +115,11 @@ Pair every `⟶ Dispatching …` print with its `AGENT_INVOKE` log line (same Ba
 
 Execute this IMMEDIATELY before any file reads, globs, or greps.
 
-**Assign `OUTPUT_DIR` inside the same Bash command that uses it**, substituting
-the literal path from your dispatch prompt. Combine the startup log with
+**Assign `OUTPUT_DIR`, `CLAUDE_PLUGIN_ROOT` and `REPO_ROOT` inside the same Bash
+command that uses them**, substituting the literal paths from your dispatch
+prompt — as a statement on its own line, never as a `VAR=x cmd "$VAR"` prefix,
+which expands `$VAR` before it is set; `export` it when a called script reads it
+from the environment (`agent_progress.sh` does). Combine the startup log with
 `date +%s` to capture `START_EPOCH`:
 
 ```bash
@@ -155,6 +160,7 @@ Emit at the **start** and **end** of each step or check (see event catalog above
 ```bash
 # STEP_START / STEP_END pairs (stride-analyzer, context-resolver, triage-validator, orchestrator):
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
+CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-start "<message>" --agent <AGENT>
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" step-end   "<message>" --agent <AGENT>
 
@@ -189,6 +195,7 @@ Use a `python3` call to compute the elapsed duration and write the final log ent
 
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
+CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_agent_end.py" \
   "$OUTPUT_DIR" "<AGENT>" "<MODEL>" "$START_EPOCH"
 ```

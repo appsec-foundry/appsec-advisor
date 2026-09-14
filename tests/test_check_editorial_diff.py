@@ -275,3 +275,24 @@ def test_only_existing_guarded_files_are_snapshotted(output_dir: Path) -> None:
     snapshot = _snapshot(output_dir)
 
     assert sorted(snapshot["files"]) == [".fragments/security-architecture.md", "threat-model.yaml"]
+
+
+def test_uncertainty_removal_and_negation_changes_are_rejected():
+    import check_editorial_diff as guard
+
+    assert guard.prose_violations(
+        "The endpoint may allow unauthorized access.", "The endpoint prevents unauthorized access."
+    )
+    assert guard.prose_violations(
+        "The endpoint does not authenticate requests.", "The endpoint authenticates requests."
+    )
+    assert guard.prose_violations("**Assessment:** The handler accepts input.", "The handler accepts input.")
+
+
+def test_lexical_guard_does_not_claim_general_semantic_equivalence():
+    import check_editorial_diff as guard
+
+    # Document the boundary: preserving tokens alone cannot prove meaning.
+    assert not guard.prose_violations(
+        "The endpoint accepts unauthorized requests.", "The endpoint rejects unauthorized requests."
+    )

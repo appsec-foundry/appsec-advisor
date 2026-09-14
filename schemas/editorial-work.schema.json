@@ -1,0 +1,160 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Editorial work",
+  "description": "A run-bound projection and disjoint assignments. Packet files use the same shape with one batch. The consumer additionally validates the UTF-8 byte budget and exact block partition.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated",
+    "run_id",
+    "selection",
+    "blocks",
+    "batches"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "generated": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32}$"
+    },
+    "selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity_floor",
+        "max_findings",
+        "blocks_total",
+        "chars_total",
+        "blocks_skipped"
+      ],
+      "properties": {
+        "severity_floor": {
+          "type": "string"
+        },
+        "max_findings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocks_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "chars_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocks_skipped": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "blocks": {
+      "type": "array",
+      "maxItems": 2560,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "file",
+          "path",
+          "label",
+          "text"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^b[0-9]{3,6}$"
+          },
+          "file": {
+            "type": "string",
+            "enum": [
+              "threat-model.yaml",
+              ".fragments/security-architecture.md",
+              ".fragments/ms-verdict.json",
+              ".fragments/ms-anti-patterns.json"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "file": {
+                  "const": ".fragments/security-architecture.md"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "path": {
+                  "type": "null"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\[[0-9]+\\]|\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "batches": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "block_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$"
+          },
+          "block_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^b[0-9]{3,6}$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

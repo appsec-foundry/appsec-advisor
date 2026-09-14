@@ -45,6 +45,54 @@ properties:
       mode:
         type: string
         enum: [full, incremental]
+      open_user_registration:
+        type: boolean
+      open_registration_resolution:
+        type: object
+        additionalProperties: false
+        required: [open, disputed, reason, evidence]
+        properties:
+          open: {type: boolean}
+          disputed: {type: boolean}
+          reason:
+            type: string
+            enum: [recon-supporting, explicit-registration-post, authz-008-route, unresolved-candidate, not-established]
+          evidence:
+            type: array
+            maxItems: 8
+            uniqueItems: true
+            items:
+              type: object
+              additionalProperties: false
+              required: [file, line]
+              properties:
+                file: {type: string, minLength: 1}
+                line: {type: integer, minimum: 1}
+        allOf:
+          - if:
+              properties: {open: {const: true}}
+            then:
+              properties:
+                disputed: {const: false}
+                reason: {enum: [recon-supporting, explicit-registration-post, authz-008-route]}
+                evidence: {minItems: 1}
+          - if:
+              properties: {disputed: {const: true}}
+            then:
+              properties:
+                open: {const: false}
+                reason: {const: unresolved-candidate}
+                evidence: {minItems: 1}
+      enrichment_pass:
+        type: object
+        additionalProperties: false
+        required: [completed_at, yaml_sha256]
+        properties:
+          completed_at: {type: string, format: date-time}
+          yaml_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+      open_registration_source:
+        type: string
+        enum: [actor-resolution]
       analyst:
         type: string
       model:
@@ -287,12 +335,125 @@ properties:
         paths:
           type: array
           items: { type: string }
+        sensitive_data:
+          type: array
+          maxItems: 12
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - category
+            - basis
+            - handling
+            - evidence
+            allOf:
+              - if: {properties: {category: {const: business-data}}}
+                then: {properties: {basis: {const: declared}}}
+            properties:
+              category:
+                type: string
+                enum:
+                - credentials
+                - personal-data
+                - payment-data
+                - secrets
+                - business-data
+              basis:
+                type: string
+                enum:
+                - observed
+                - declared
+              handling:
+                type: string
+                enum:
+                - stores
+                - processes
+                - transmits
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 8
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - file
+                  - line
+                  properties:
+                    file:
+                      type: string
+                      minLength: 1
+                      maxLength: 512
+                      not:
+                        pattern: ^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\.\.(?:/|$)|\\
+                    line:
+                      type: integer
+                      minimum: 1
         complexity:
           type: string
           enum: [simple, moderate, complex]
         tier:
           type: string
           enum: [client, application, data]
+
+  external_entities:
+    type: array
+    maxItems: 64
+    items:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      - kind
+      - description
+      - evidence
+      dependentSchemas:
+        access:
+          properties:
+            kind: {const: legitimate-role}
+      properties:
+        id:
+          type: string
+          pattern: ^ext-[a-z0-9]+(?:-[a-z0-9]+)*$
+          maxLength: 100
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        kind:
+          type: string
+          enum:
+          - legitimate-role
+          - identity-provider
+          - external-service
+        access:
+          type: string
+          enum: [internet-anon, internet-user, internet-priv-user]
+        description:
+          type: string
+          minLength: 1
+          maxLength: 240
+        evidence:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - file
+            - line
+            properties:
+              file:
+                type: string
+                minLength: 1
+                maxLength: 512
+                not:
+                  pattern: ^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\.\.(?:/|$)|\\
+              line:
+                type: integer
+                minimum: 1
 
   data_flows:
     type: array
@@ -304,7 +465,21 @@ properties:
         id: {type: string, pattern: "^df-[0-9]{3,}$"}
         from: {type: string, pattern: "^(?:external|[a-z][a-z0-9-]+)$"}
         to: {type: string, pattern: "^(?:external|[a-z][a-z0-9-]+)$"}
+        from_entity:
+          type: string
+          pattern: ^ext-[a-z0-9]+(?:-[a-z0-9]+)*$
+          maxLength: 100
+        to_entity:
+          type: string
+          pattern: ^ext-[a-z0-9]+(?:-[a-z0-9]+)*$
+          maxLength: 100
         label: {type: string, minLength: 1}
+        diagram_label:
+          type: string
+          minLength: 1
+          maxLength: 48
+          pattern: '^[^\r\n\t]+$'
+          description: Short flow purpose for Figure 1; the complete label and individual flow identity remain authoritative.
         protocol: {type: string, minLength: 1}
         data_classification: {type: string, minLength: 1}
         direction:
@@ -466,7 +641,7 @@ properties:
                 properties:
                   step: {type: integer, minimum: 1}
                   outcome: {type: string, maxLength: 1000}
-                  verdict: {type: string, enum: [confirmed, blocked, inconclusive]}
+                  verdict: {type: string, enum: [confirmed, blocked, refuted, inconclusive]}
                   finding_id:
                     type: [string, "null"]
                     pattern: "^F-[0-9]{3,}$"
@@ -527,6 +702,47 @@ properties:
       required: [name, classification]
       properties:
         name:           { type: string, minLength: 1 }
+        component_refs:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - component_id
+            - relation
+            - evidence
+            properties:
+              component_id:
+                type: string
+                minLength: 1
+                maxLength: 128
+              relation:
+                type: string
+                enum:
+                - stored
+                - processed
+                - transmitted
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 8
+                items:
+                  type: object
+                  additionalProperties: false
+                  required:
+                  - file
+                  - line
+                  properties:
+                    file:
+                      type: string
+                      minLength: 1
+                      maxLength: 512
+                      not:
+                        pattern: ^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\.\.(?:/|$)|\\
+                    line:
+                      type: integer
+                      minimum: 1
         classification:
           type: string
           enum: [Public, Internal, Confidential, Restricted]

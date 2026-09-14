@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import functools
 import html
 import importlib.util
@@ -70,6 +71,7 @@ import apply_prose_fixes as _prose_formatter
 import inline_code_formatter as _inline_code_formatter
 import jinja2
 import requirements_trace
+import team_questions as _team_questions
 import yaml
 from _atomic_io import atomic_write_text
 from _boundary_criticality import exposure_of, rating_of, tier_of
@@ -102,6 +104,7 @@ from _manifest_readers import (
 # `_MULTI_MATCH_WARNED` is re-exported so existing call sites/tests keep
 # mutating the shared warned-CWE set.
 from build_posture_verdict import build_posture_verdict as _build_posture_verdict  # P4: systemic verdict
+from detect_open_registration import overview_actor_notes, overview_actor_slug
 from pregenerate_fragments import _TIER_HINTS as _pregen_tier_hints
 from pregenerate_fragments import _classify_tier as _pregen_classify_tier
 from pregenerate_fragments import gen_architecture_diagrams
@@ -3305,6 +3308,11 @@ def _reconcile_attack_path_membership(data: dict, taxonomy: dict, threats: list[
         cur_set = set(cur)
         missing = [f for f in sorted(set(fids)) if f not in cur_set]
         if missing:
+            # A title authored for a narrower finding set may misdescribe the expanded path.
+            # Namespace aliases alone do not change the title's evidence scope.
+            authored_refs = {_normalize_tid_to_fid(f) for f in cur_set}
+            if any(_normalize_tid_to_fid(f) not in authored_refs for f in missing):
+                ap.pop("scenario_title", None)
             ap["findings"] = sorted(cur_set | set(missing))
             merged_any = True
             gap_log.append(
@@ -5425,17 +5433,8 @@ def _tier_header_summary(display_name: str, comp_ids: list[str], n_findings: int
 
 
 def _collapse_open_registration_actors(attack_paths_data: dict) -> None:
-    """Fold internet-user and internet-priv-user into internet-anon when
-    the app exposes open self-registration. Mutates the dict in place.
-
-    Reason: with `POST /register`-style routes available to anyone, the
-    three-tier attacker spectrum (anon / authenticated / privileged) on
-    the heatmap implies a reachability ladder that doesn't exist —
-    every "authenticated" attack is one HTTP POST away from anonymous.
-    The §8 Vektor column keeps its granularity; only the heatmap card
-    column and the attack-arrow origins collapse.
-    """
-    collapse_from = {"internet-user", "internet-priv-user"}
+    """Fold regular self-registered users in the overview, preserving privileged access and finding prerequisites."""
+    collapse_from = {"internet-user"}
 
     # 1. Rewrite the top-level `actors` array.
     actors = attack_paths_data.get("actors") or []
@@ -5563,12 +5562,14 @@ def _build_actor_cards(
             # Make the collapse explicit so the reader doesn't wonder
             # why there's no "Authenticated User" card despite many
             # findings on auth-required routes.
-            subtitle = "any internet user — public registration is one POST away"
+            subtitle = "can self-register a regular account"
         cards.append(
             {
                 "id": node_id,
                 "slug": slug,
-                "label": meta.get("label") or slug,
+                "label": "Internet Attacker"
+                if slug == "internet-anon" and open_user_registration
+                else meta.get("label") or slug,
                 "subtitle": subtitle,
                 "severity_class": meta.get("severity_class") or "actorAnon",
                 "role": meta.get("role") or "attacker",
@@ -5889,55 +5890,84 @@ def _figure_basename_for_md(md_name: str) -> str:
 
 
 def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
-    """Build Figure 1 as a deterministic hand-built SVG (the PRIMARY renderer),
-    write it next to threat-model.md, and return the image-reference markdown.
+    """Build Figure 1 as a deterministic hand-built SVG, write it next to
+    threat-model.md, and return the image-reference markdown.
 
-    Why SVG instead of the Mermaid builder below: Mermaid/ELK lays each tier out
-    as one horizontal row and scatters disconnected nodes, so the figure could
-    not wrap a busy tier into a grid and grew unboundedly wide. The SVG generator
-    computes the layout itself (top-N grid that grows in height, multi-actor band,
-    per-component internet-exposed markers, a straight direct-attack arrow). It
-    emits plain primitives (rect/line/circle/text) which GitHub, VS Code and
-    WeasyPrint all render natively — so the PDF export needs no Chrome for it.
+    PRIMARY: ``figure1_dfd`` draws a data-flow diagram (trust zones, data flows,
+    boundary crossings with their assumption verdict, STRIDE per element, attack
+    scenarios). FALLBACK: the ``figure1_svg`` tier stack. Both compute their own
+    layout and emit plain primitives (rect/path/text) which GitHub, VS Code and
+    WeasyPrint render natively — so the PDF export needs no Chrome for it. The
+    Mermaid builder below is the last resort: Mermaid/ELK lays each tier out as
+    one horizontal row and grew unboundedly wide on busy models.
 
-    ``attack_paths_data`` is already actor-collapsed by the caller (public-repo /
-    open-registration), so the SVG attribution matches Figure 2. Returns "" when
+    Each SVG builder projects the original actors for display and explains the
+    grouping, so its attribution matches Figure 2. Returns "" when
     there is nothing to draw or the generator is unavailable — the caller then
     falls back to the Mermaid builder and finally the LLM fragment.
     """
     components = ctx.yaml_data.get("components") or []
     if not components or not (attack_paths_data.get("attack_paths") or []):
         return ""
-    try:
-        from figure1_svg import build_figure1_svg
-    except Exception:  # noqa: BLE001 — missing module must never break the section
-        return ""
     actor_labels = (_load_posture_actor_labels() or {}).get("actors") or {}
-    svg = build_figure1_svg(
-        ctx.yaml_data,
-        attack_paths_data,
-        attack_taxonomy,
-        meta=ctx.yaml_data.get("meta") or {},
-        actor_labels=actor_labels,
-    )
+    kwargs = {"meta": ctx.yaml_data.get("meta") or {}, "actor_labels": actor_labels}
+    # PRIMARY: the data-flow diagram (zones, flows, boundary crossings, STRIDE
+    # per element). FALLBACK: the tier-stack generator, kept for models the DFD
+    # builder cannot draw. The DFD builder verifies its own output (no edge
+    # through a foreign node, no label overlap, every arrow matches its YAML
+    # flow); a diagram that fails that check is wrong, not merely ugly, so it
+    # falls back like a crash does — and both paths leave a RENDER_WARN, so a
+    # silent downgrade cannot hide behind a report that still has a Figure 1.
+    svg, intro = "", ""
+    role_notes = []
+    try:
+        from figure1_dfd import check_diagram, legitimate_role_notes
+
+        svg, problems = check_diagram(ctx.yaml_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels)
+        if problems:
+            ctx.warnings.append(
+                f"figure1: data-flow diagram failed its self-check ({len(problems)} problem(s): "
+                f"{'; '.join(problems[:3])}) — rendered the tier-stack fallback"
+            )
+            svg = ""
+        else:
+            role_notes = legitimate_role_notes(ctx.yaml_data)
+            intro = (
+                "Data-flow diagram: external entities, processes and data stores in their trust zones "
+                "(Internet → Application → Data), the data flows between them, and the attack scenarios "
+                "numbered as in the table below. Each crossing of a dashed trust-boundary line carries the "
+                "`tb-N` id catalogued in [§1 Trust Boundaries](#trust-boundaries) with the verdict on its "
+                "enforcement assumption. The legend below the diagram explains the notation."
+            )
+    except Exception as exc:  # noqa: BLE001 — the DFD builder must never break the section
+        ctx.warnings.append(
+            f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc}) — rendered the tier-stack fallback"
+        )
+        svg = ""
     if not (svg or "").strip():
-        return ""
+        try:
+            from figure1_svg import build_figure1_svg
+        except Exception:  # noqa: BLE001 — missing module must never break the section
+            return ""
+        svg = build_figure1_svg(ctx.yaml_data, attack_paths_data, attack_taxonomy, **kwargs)
+        if not (svg or "").strip():
+            return ""
+        intro = (
+            "Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the "
+            "top threats per component. The in-figure legend on the right explains the attack scenarios, "
+            "severity dots and symbols."
+        )
+        # Name the boundary dividers only when the builder actually drew them —
+        # `figure1_svg.diag_rows` gates its own legend row on `drawn_dividers`, and a
+        # caption that promises an element the figure omits is the same defect as the
+        # §2 `==>` legend bullet.
+        if "trust boundary" in (svg or ""):
+            intro += (
+                " Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids "
+                "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
+            )
     # Always write the file (referenced by the published md / consumed by export).
     (ctx.output_dir / ctx.figure_basename).write_text(svg, encoding="utf-8")
-    intro = (
-        "Architecture tiers top-to-bottom (External Actors → Client → Application → Data) with the "
-        "top threats per component. The in-figure legend on the right explains the attack scenarios, "
-        "severity dots and symbols."
-    )
-    # Name the boundary dividers only when the builder actually drew them —
-    # `figure1_svg.diag_rows` gates its own legend row on `drawn_dividers`, and a
-    # caption that promises an element the figure omits is the same defect as the
-    # §2 `==>` legend bullet.
-    if "trust boundary" in (svg or ""):
-        intro += (
-            " Dashed slate lines mark trust-boundary crossings, labelled with the `tb-N` ids "
-            "catalogued in [§1 Trust Boundaries](#trust-boundaries)."
-        )
     # Embed inline when the CLI flag is set OR the skill persisted the choice in
     # .skill-config.json — the latter lets `/create-threat-model --embed-figures`
     # work through the renderer/recompose paths without threading a flag to each.
@@ -5955,7 +5985,8 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         src = f"data:image/svg+xml;base64,{b64}"
     else:
         src = ctx.figure_basename
-    return f"{intro}\n\n![Figure 1 - Architecture & Top Threats]({src})"
+    caption = "\n\n" + " ".join(role_notes) if role_notes else ""
+    return f"{intro}\n\n![Figure 1 - Architecture & Top Threats]({src}){caption}"
 
 
 def _figure2_basename(ctx: RenderContext) -> str:
@@ -6078,12 +6109,12 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
 
     # Actor collapse: when self-registration is open, an "authenticated" internet
     # attacker is one trivial POST away from an account, so it is not meaningfully
-    # distinct from the anonymous attacker. Fold internet-user / internet-priv-user
+    # distinct from the anonymous attacker. Fold internet-user
     # into internet-anon and annotate the merged node. Driven by
     # meta.open_user_registration (set by detect_open_registration.py). Same
     # principle the Figure-2 heatmap uses, applied here so both figures agree.
     collapse_authed = bool((ctx.yaml_data.get("meta") or {}).get("open_user_registration"))
-    _COLLAPSIBLE_AUTHED = {"internet-user", "internet-priv-user"}
+    _COLLAPSIBLE_AUTHED = {"internet-user"}
 
     def _collapse_slug(slug: str) -> str:
         if collapse_authed and (slug or "").strip() in _COLLAPSIBLE_AUTHED:
@@ -6764,7 +6795,9 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     return body
 
 
-def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonomy: dict) -> str:
+def _build_security_posture_actor_legend(
+    attack_paths_data: dict, attack_taxonomy: dict, model_meta: dict | None = None
+) -> str:
     """Build the ``**Threat actors.**`` legend rendered below the two figures.
 
     Lists every actor present in ``attack_paths`` (attackers AND the
@@ -6814,6 +6847,9 @@ def _build_security_posture_actor_legend(attack_paths_data: dict, attack_taxonom
         meta = actor_meta.get(a) or {}
         name = _FIG1_ACTOR_LABEL.get(a) or meta.get("label") or a
         sub = meta.get("default_subtitle") or ""
+        if a == "internet-anon" and (model_meta or {}).get("open_user_registration") is True:
+            name = "Internet Attacker"
+            sub = "can self-register a regular account"
         is_victim = meta.get("role") == "victim" or a == "victim-required"
         verb = "target of" if is_victim else "drives"
         paths = ", ".join(drives[a])
@@ -6999,27 +7035,15 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     impact_taxonomy = _load_business_impact_taxonomy()
     actor_labels = _load_posture_actor_labels()
     attack_paths_data = _load_attack_paths_fragment(ctx, attack_taxonomy, threats)
+    figure1_paths = copy.deepcopy(attack_paths_data)
+    actor_notes = overview_actor_notes(ctx.yaml_data, figure1_paths, attack_taxonomy)
 
-    # When the app exposes open user self-registration, the heatmap actor
-    # spectrum `internet-anon → internet-user → internet-priv-user` is
-    # misleading — reaching the "authenticated" position is a single POST,
-    # so distinct attacker cards for each tier paint a false picture of
-    # reachability gates. Collapse the three slugs to `internet-anon` for
-    # both the actor-card column and the attack-arrow origins. The §8
-    # Vektor column (and the YAML field) keep their granularity — only
-    # the at-a-glance heatmap collapses.
+    # Reach-equivalent regular accounts share an overview origin; findings
+    # retain their actual authentication prerequisites and privileged roles.
     open_user_registration = bool((ctx.yaml_data.get("meta") or {}).get("open_user_registration"))
-    # 2026-05-31 actor-model decision: do NOT collapse the authenticated
-    # internet tiers (`internet-user` / `internet-priv-user`) into `internet-anon`
-    # on open registration. Registering is trivial, but an authenticated request
-    # is still a distinct attack position (a post-login state-changing endpoint
-    # is a different surface than an anonymous one), and collapsing it hid the
-    # "Authenticated Internet Attacker" entirely. The `internet-anon` card is
-    # still relabelled below (open_user_registration=True) to note registration
-    # is one POST away, so the trivial-escalation insight is preserved without
-    # erasing the authenticated tier. The legacy collapse helper
-    # (_collapse_open_registration_actors) is retained but no longer called.
-    #
+    if open_user_registration:
+        _collapse_open_registration_actors(attack_paths_data)
+
     # A committed secret in a PUBLIC repo is readable by any anonymous attacker,
     # so the repo-reader vektor collapses into internet-anon (drops the
     # "Internal Developer" actor — anyone can clone public source). Gated on
@@ -7111,13 +7135,6 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "Client → Application → Data) → **impact** (right). "
         f"Numbered red arrows {glyph_range} are the threats enumerated in the Top Threats table below."
     )
-    if open_user_registration:
-        intro_paragraph += (
-            " Self-registration is open, so the **Authenticated Internet Attacker** "
-            "tier is one POST away from anonymous — it is shown distinctly because a "
-            "post-login endpoint is still a different attack surface."
-        )
-
     diagram_data = {
         "intro_paragraph": intro_paragraph,
         "subgraph_actors": {
@@ -7299,10 +7316,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # Attacker" read identically to "Anonymous Internet Attacker".
     _actor_prose: dict[str, str] = {
         "internet-anon": (
-            "no account, no foothold; reaches every unauthenticated route, "
-            "registers a throw-away account in seconds when needed, and can "
-            "clone the public repository to obtain any committed secret offline. "
-            "Initiates the outgoing attack arrows."
+            "no account, no foothold; reaches unauthenticated routes. Initiates the outgoing attack arrows."
         ),
         "internet-user": (
             "owns a valid registered account and an active session; can reach "
@@ -7387,21 +7401,19 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
 
     # Figure 1 is built DETERMINISTICALLY from yaml + the SAME reconciled
     # attack_paths order that drives Figure 2's glyphs, so ①–⑦ agree across
-    # both figures and the Top Threats table. The deterministic builder is the
-    # AUTHORITATIVE source: it guarantees the agreed format every run — actor
-    # band on top, Client→Application→Data tier stack, per-component finding
-    # badges (🔴/🟠), red attackers / green users, no actor→data edges, and
-    # in-range linkStyle indices. An LLM/operator-authored
-    # `.fragments/top-threats-architecture.md` is consulted ONLY as a fallback
-    # when the builder yields nothing (e.g. no attack_paths). This precedence
-    # is intentional: when the LLM fragment was preferred it produced free-form
+    # both figures and the Top Threats table. Precedence, see
+    # `_render_figure1_svg`: the self-checked data-flow diagram, then the
+    # tier-stack SVG, then the Mermaid builder below, and an LLM/operator-
+    # authored `.fragments/top-threats-architecture.md` ONLY when every
+    # deterministic builder yields nothing (e.g. no attack_paths). The fragment
+    # comes last on purpose: when it was preferred it produced free-form
     # diagrams that ignored the prescribed structure and emitted out-of-range
     # `linkStyle` indices that crash Mermaid (2026-05-30 regression). Best-effort:
     # a builder failure must never break the section (Figure 2 + table still render).
     # PRIMARY: deterministic hand-built SVG (written next to threat-model.md).
     figure1_md = ""
     try:
-        figure1_md = _render_figure1_svg(ctx, attack_paths_data, attack_taxonomy).strip()
+        figure1_md = _render_figure1_svg(ctx, figure1_paths, attack_taxonomy).strip()
     except Exception:  # noqa: BLE001 — Figure 1 is non-essential
         figure1_md = ""
     # FALLBACK 1: the legacy deterministic Mermaid builder (kept for robustness
@@ -7425,13 +7437,15 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     parts: list[str] = ["### Security Posture & Top Threats", ""]
     if figure1_md:
         parts += ["**Figure 1 — Architecture & Top Threats**", "", figure1_md, ""]
+    if actor_notes:
+        parts += ["**Actor grouping.** " + " ".join(actor_notes), ""]
     parts += [
         "**Figure 2 — Risk Flow: Actor → Tier → Impact**",
         "",
         figure2_block.rstrip(),
         "",
     ]
-    legend_md = _build_security_posture_actor_legend(attack_paths_data, attack_taxonomy)
+    legend_md = _build_security_posture_actor_legend(attack_paths_data, attack_taxonomy, ctx.yaml_data.get("meta"))
     if legend_md:
         parts += [legend_md.rstrip(), ""]
     parts += [table_md]
@@ -9812,6 +9826,36 @@ def _render_ms_top_weaknesses(ctx: RenderContext) -> str:
     return "\n".join(out)
 
 
+def _render_ms_open_questions(ctx: RenderContext) -> str:
+    """Render the shared team-question selection inside the Management Summary."""
+    selection = _team_questions.select_open_questions(
+        ctx.yaml_data,
+        _team_questions.model_anchor_ids(ctx.yaml_data),
+    )
+    if not selection["questions"] and not selection["unverified"]:
+        return ""
+
+    def link(item_id: str, *, unproven: bool = False) -> str:
+        rendered = f"[{item_id}](#{item_id.lower()})"
+        return rendered + (" (unproven)" if unproven else "")
+
+    out = [_team_questions.REPORT_HEADING, "", _team_questions.REPORT_INTRO, ""]
+    for topic in selection["questions"]:
+        refs = ", ".join(link(item["id"], unproven=item["unproven"]) for item in topic["refs"])
+        if topic["hidden"] > 0:
+            refs += f" (+{topic['hidden']} more)"
+        if topic["weakness_id"]:
+            refs = f"{link(topic['weakness_id'])}: {refs}"
+        out.append(f"- {refs + ' — ' if refs else ''}{topic['question']}")
+    if selection["unverified"]:
+        refs = ", ".join(link(item["id"]) for item in selection["unverified"][:5])
+        if len(selection["unverified"]) > 5:
+            refs += f" (+{len(selection['unverified']) - 5} more)"
+        out.append(f"- {refs} — {_team_questions.UNVERIFIED_QUESTION}")
+    out.append("")
+    return "\n".join(out)
+
+
 def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
     # Explicit composition ensures the canonical subsection order is enforced.
     # `security_posture_at_a_glance` is rendered between `verdict` and
@@ -9842,6 +9886,10 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
         # the reader sees "what is systemically wrong" before the per-finding view.
         # Computed from weaknesses[]; renders nothing when the register is empty.
         "top_weaknesses",
+        # The same deterministic selection used by the completion summary.
+        # This slot follows Top Weaknesses when present and still surfaces
+        # unresolved attack-chain or deployment questions without a register.
+        "open_questions_for_team",
         # security_posture_at_a_glance renders "### Security Posture & Top Threats"
         # (Figure 1 + Figure 2 heatmap + the Top Threats table).
         "security_posture_at_a_glance",
@@ -9879,6 +9927,11 @@ def _render_management_summary(ctx: RenderContext, env: jinja2.Environment, sect
             tw_ms = _render_ms_top_weaknesses(ctx)
             if tw_ms.strip():
                 parts.append(tw_ms.rstrip())
+            continue
+        if sid == "open_questions_for_team":
+            questions_ms = _render_ms_open_questions(ctx)
+            if questions_ms.strip():
+                parts.append(questions_ms.rstrip())
             continue
         sec = sections.get(sid)
         if sec is None:
@@ -12867,9 +12920,11 @@ def _is_bare_finding_ref_line(line: str) -> bool:
     this module, plus ``linkify_anchors`` / ``_annotate_id_refs`` in qa_checks)
     skip these lines so their `[F-NNN](#f-nnn)` links stay compact.
 
-    Three contexts (user 2026-07-15, 2026-07-31):
+    Four contexts (user 2026-07-15, 2026-07-31, 2026-09-13):
       • MS "Top Weaknesses" proof run — the single weakness dot owns the bullet's
         severity signal (`… _Proven by [F-NNN], …._`).
+      • MS "Open Questions for the Team" bullets — the linked W/F ids are the
+        same compact evidence references the console prints.
       • Critical Attack Tree findings pointer — the tree leaves above already
         carry each finding's id + title, so the pointer is a bare jump-index.
       • §1 Trust Boundaries catalogue row (carries its `<a id="tb-N">` declaration
@@ -12878,6 +12933,8 @@ def _is_bare_finding_ref_line(line: str) -> bool:
         stacked characters. The renderer emits the severity dot itself.
     """
     if "_Proven by " in line and "](#w-" in line:
+        return True
+    if line.startswith("- [") and " — " in line and (line.rstrip().endswith("?") or " — Unverified evidence: " in line):
         return True
     if "full detail in" in line and "#8-findings-register" in line:
         return True
@@ -15388,7 +15445,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
     Renders nothing when no finding carries a vektor (legacy runs).
     """
     threats = ctx.yaml_data.get("threats") or []
-    public_repo = bool((ctx.yaml_data.get("meta") or {}).get("public_source_repo"))
+    meta = ctx.yaml_data.get("meta") or {}
 
     counts: dict[str, int] = {}
     components: dict[str, set[str]] = {}
@@ -15398,11 +15455,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         vek = (t.get("vektor") or "").strip()
         if not vek:
             continue
-        # A committed secret in a PUBLIC repo is readable by any anonymous
-        # attacker, so the repo-reader folds into internet-anon — the same
-        # collapse the MS figures apply (_collapse_public_repo_actors).
-        if public_repo and vek == "repo-read":
-            vek = "internet-anon"
+        vek = overview_actor_slug(vek, meta)
         counts[vek] = counts.get(vek, 0) + 1
         comp = (t.get("component") or "").strip()
         if comp:
@@ -15424,6 +15477,9 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         "client-side attacks, not an attacker."
     )
     lines.append("")
+    actor_notes = overview_actor_notes(ctx.yaml_data)
+    if actor_notes:
+        lines.extend(["**Actor grouping.** " + " ".join(actor_notes), ""])
     lines.append("| Actor | Role | Reach | Findings | Components |")
     lines.append("|---|---|---|---|---|")
     for a in present:
@@ -15431,6 +15487,9 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
         name = m.get("label") or _FIG1_ACTOR_LABEL.get(a) or a
         role = "victim" if (m.get("role") == "victim" or a == "victim-required") else "attacker"
         reach = m.get("default_subtitle") or "—"
+        if a == "internet-anon" and meta.get("open_user_registration") is True:
+            name = "Internet Attacker"
+            reach = "can self-register a regular account"
         comps = ", ".join(sorted(components.get(a, set()))) or "—"
         lines.append(f"| {name} | {role} | {reach} | {counts.get(a, 0)} | {comps} |")
     lines.append("")
@@ -18195,6 +18254,10 @@ def render(
         ((yaml_data.get("meta") or {}).get("assessment_depth") or "").strip().lower() == "quick"
     )
     _has_authored_walkthroughs = (not _skip_attack_walkthroughs) and severity_counts["critical"] >= 1
+    _open_questions = _team_questions.select_open_questions(
+        yaml_data,
+        _team_questions.model_anchor_ids(yaml_data),
+    )
 
     ctx = RenderContext(
         output_dir=output_dir,
@@ -18235,6 +18298,7 @@ def render(
             # the hoisted P4 verdict table so pre-register runs / clean repos with
             # no register render nothing (goldens unchanged).
             "has_weakness_register": bool(yaml_data.get("weaknesses")),
+            "has_open_questions": bool(_open_questions["questions"] or _open_questions["unverified"]),
             # Optional MS "Architectural Anti-Patterns" callout — true when the
             # threat-renderer authored ms-anti-patterns.json (gated on presence;
             # the renderer also self-gates defensively).

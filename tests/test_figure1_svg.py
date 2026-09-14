@@ -309,6 +309,27 @@ def test_actor_description_hidden_for_many_actors():
     assert "sub-a1" not in svg  # >2 attackers → descriptions dropped (compact)
 
 
+def test_actor_grouping_remains_visible_when_card_subtitles_are_hidden():
+    model, paths, taxonomy = _model(
+        attackers=("internet-user", "repo-read", "internet-priv-user", "build-time"),
+        meta={"open_user_registration": True, "public_source_repo": True},
+    )
+    svg = F.build_figure1_svg(model, paths, taxonomy)
+    text = " ".join(" ".join(ET.fromstring(svg).itertext()).split())
+    assert "can self-register a regular account" not in text  # three attackers after grouping
+    assert "Actor grouping" in text
+    assert "because registration is open" in text
+    assert "because the source repository is public" in text
+    assert "Each finding retains its login and privilege requirements." in text
+    assert len(_actor_card_rects(svg)) == 4  # three attackers plus the legitimate user
+
+
+def test_no_grouping_note_for_closed_registration_and_private_source():
+    svg = _build(attackers=("internet-user", "repo-read"))
+    assert "Actor grouping" not in svg
+    assert len(_actor_card_rects(svg)) == 3
+
+
 # ---- adaptive band title ----------------------------------------------------
 def test_title_internet_only():
     # the band title is word-wrapped into the gutter, so assert a single-line

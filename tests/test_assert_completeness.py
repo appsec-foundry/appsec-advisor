@@ -48,6 +48,12 @@ def test_missing_contract_blocks(tmp_path: Path) -> None:
     assert completeness.run(tmp_path, tmp_path / "missing-plugin", "build") == 2
 
 
+def test_render_rejects_model_without_enrichment_receipt(tmp_path, plugin_root):
+    _write_yaml(tmp_path, "meta: {}\nthreats: []\nmitigations: []\n")
+    _write_minimal_report(tmp_path)
+    assert completeness.run(tmp_path, plugin_root, "render") == 2
+
+
 def test_missing_yaml_blocks(tmp_path: Path, plugin_root: Path) -> None:
     assert completeness.run(tmp_path, plugin_root, "build") == 2
 
@@ -74,6 +80,7 @@ def test_render_phase_accepts_required_substantive_sections(
     plugin_root: Path,
 ) -> None:
     _write_yaml(tmp_path, "threats: []\nmitigations: []\n")
+    _stamp_yaml(tmp_path)
     _write_minimal_report(tmp_path)
 
     assert completeness.run(tmp_path, plugin_root, "render") == 0
@@ -97,6 +104,7 @@ mitigations: []
 """,
     )
     _write_minimal_report(tmp_path, "\nF-001 concrete finding.\n")
+    _stamp_yaml(tmp_path)
 
     # Fragment completeness belongs to final rendering, not the YAML build gate.
     assert completeness.run(tmp_path, plugin_root, "build") == 0
@@ -118,3 +126,13 @@ mitigations: []
         encoding="utf-8",
     )
     assert completeness.run(tmp_path, plugin_root, "render") == 0
+
+
+def _stamp_yaml(output_dir):
+    import yaml
+    from enrichment_pass import stamp
+
+    path = output_dir / "threat-model.yaml"
+    data = yaml.safe_load(path.read_text())
+    stamp(data)
+    path.write_text(yaml.safe_dump(data))

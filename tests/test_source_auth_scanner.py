@@ -95,6 +95,72 @@ def _ids(findings) -> set[str]:
     return {f.check_id for f in findings}
 
 
+@pytest.mark.parametrize(
+    "conversion",
+    ["req.params.key", "String(req.params.key)", "enabled ? Number(req.params.key) : truncate(req.params.key, 40)"],
+)
+def test_executable_nosql_predicate_tracks_request_input(tmp_path, conversion):
+    (tmp_path / "lookup.ts").write_text(
+        "export function lookup(req, res) {\n"
+        f"  const key = {conversion};\n"
+        "  return records.find({ $where: `this.key === '${key}'` });\n}\n"
+    )
+    findings = [f for f in _scan(tmp_path) if f.check_id == "INJ-NODE-006"]
+    assert len(findings) == 1
+    assert findings[0].cwe == ["CWE-943"]
+    assert findings[0].evidence_tier == "insecure-practice"
+    assert "lookup.ts:2" in findings[0].scenario
+
+
+@pytest.mark.parametrize(
+    "source,sink",
+    [
+        ("Number(req.params.key)", "records.find({ $where: 'this.key == ' + key })"),
+        ("parseInt(req.params.key)", "eval(key)"),
+        ("req.params.key", "records.find({ key })"),
+        ("req.params.key", "eval('key')"),
+        ("'constant'", "eval(key)"),
+        ("req.params.key", "records.find({ $where: 'this.key == 1' })"),
+    ],
+)
+def test_expression_scanner_excludes_data_constants_and_numeric_inputs(tmp_path, source, sink):
+    (tmp_path / "lookup.ts").write_text(f"function lookup(req) {{\n const key = {source};\n {sink};\n}}\n")
+    assert not {f.check_id for f in _scan(tmp_path)} & {"INJ-NODE-006", "INJ-NODE-007", "INJ-NODE-008"}
+
+
+def test_persisted_expression_requires_verification_and_keeps_condition(tmp_path):
+    (tmp_path / "profile.ts").write_text(
+        "export function profile(req) {\n"
+        " const record = await Profile.findByPk(req.user.id);\n"
+        " let caption = record.caption;\n"
+        " if (config.allowExpressions) {\n"
+        "   const expression = caption.substring(2, caption.length - 1);\n"
+        "   caption = eval(expression);\n"
+        " }\n"
+        " template = template.replace('_caption_', caption);\n"
+        " return pug.compile(template);\n}\n"
+    )
+    findings = [f for f in _scan(tmp_path) if f.check_id.startswith("INJ-NODE-")]
+    assert [(f.check_id, f.line) for f in findings] == [("INJ-NODE-007", 6), ("INJ-NODE-008", 9)]
+    assert all(f.evidence_tier == "insecure-practice" for f in findings)
+    assert all("config.allowExpressions" in f.scenario for f in findings)
+    from dataclasses import asdict
+
+    import merge_threats
+
+    assert merge_threats._source_auth_finding_to_threat(asdict(findings[0]))["evidence_tier"] == "insecure-practice"
+
+
+def test_expression_scanner_does_not_reuse_another_handler_or_comment(tmp_path):
+    (tmp_path / "handlers.ts").write_text(
+        "function first(req) {\n const value = req.body.value;\n}\n"
+        "function second() {\n const value = '1 + 1';\n eval(value);\n}\n"
+        "// eval(req.body.value);\n/* eval(req.query.value); */\n"
+    )
+    (tmp_path / "handler.spec.ts").write_text("eval(req.body.value)")
+    assert "INJ-NODE-007" not in _ids(_scan(tmp_path))
+
+
 # ---------------------------------------------------------------------------
 # Functional detection
 # ---------------------------------------------------------------------------
@@ -1296,3 +1362,38 @@ def test_java_signed_jws_not_flagged(tmp_path: Path) -> None:
 def test_python_test_files_excluded(tmp_path: Path) -> None:
     (tmp_path / "test_views.py").write_text("def test_x(request):\n    User.objects.create(**request.data)\n")
     assert _scan(tmp_path) == []
+
+
+def test_expression_checks_exclude_quoted_request_names_and_numeric_input(tmp_path):
+    from source_auth_scanner import _scan_expression_inputs
+
+    path = tmp_path / "handler.ts"
+    path.write_text("eval('req.body.expression')\nstore.find({ $where: 'this.id === ' + Number(req.params.id) })\n")
+    assert _scan_expression_inputs(path, "src/handler.ts") == []
+
+
+def test_executable_predicate_excludes_whole_numeric_or_constrained_values(tmp_path):
+    from source_auth_scanner import _scan_expression_inputs
+
+    path = tmp_path / "handler.ts"
+    for conversion in ["parseInt(raw, 10)", "raw.replace(/[^\\w-]+/g, '')"]:
+        path.write_text(
+            "const raw = req.params.id\nconst id = " + conversion + "\nstore.find({ $where: 'this.id === ' + id })\n"
+        )
+        assert _scan_expression_inputs(path, "src/handler.ts") == []
+
+
+def test_template_source_practice_reaches_the_injection_overview(tmp_path):
+    from dataclasses import asdict
+
+    from merge_threats import _source_auth_finding_to_threat
+    from source_auth_scanner import _scan_expression_inputs
+    from weakness_classifier import classify_threat, load_weakness_classes
+
+    path = tmp_path / "profile.ts"
+    path.write_text("const record = await Account.findByPk(id)\npug.compile(record.template)\n")
+    findings = _scan_expression_inputs(path, "src/profile.ts")
+    assert len(findings) == 1
+    threat = _source_auth_finding_to_threat(asdict(findings[0]))
+    assert threat["evidence_tier"] == "insecure-practice"
+    assert classify_threat(threat, load_weakness_classes(), warn=False) == "injection"

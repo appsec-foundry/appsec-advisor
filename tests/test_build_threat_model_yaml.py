@@ -1077,6 +1077,26 @@ def test_changelog_full_delta_resolves_by_fingerprint(tmp_path):
     assert "+1/-1 vs prior" in e["note"]
 
 
+def test_changelog_shallower_full_rescan_claims_no_fix(tmp_path):
+    """A --full rescan at a shallower depth did not examine everything the deeper
+    prior did, so a prior finding it did not reach is not resolved (IN-2)."""
+    b = _load()
+    t1 = [
+        {"id": "T-001", "component": "comp-a", "cwe": "CWE-89", "title": "SQLi"},
+        {"id": "T-002", "component": "comp-b", "cwe": "CWE-639", "title": "IDOR"},
+    ]
+    run1 = b.build_changelog(_CL_CFG, t1, _CL_COMPS, [], None, tmp_path, current_sha="sha-1")
+    cfg2 = {"mode": "full", "assessment_depth": "quick", "reasoning_model": "sonnet-economy"}
+    t2 = [{"id": "T-001", "component": "comp-a", "cwe": "CWE-89", "title": "SQLi"}]
+    run2 = b.build_changelog(cfg2, t2, _CL_COMPS, [], run1, tmp_path, current_sha="sha-2")
+    e = run2[0]
+    assert e["delta_basis"] == "shallower-scan"
+    assert not e["resolved"]["threats"]
+    assert not e["resolved"].get("fingerprints")
+    assert e["added"]["threats"] == ["T-001"]
+    assert "shallower" in e["note"]
+
+
 def test_changelog_rescan_same_commit_suppresses_noise_delta(tmp_path):
     """Regression (2026-06-27 juice-shop): five quick --full re-runs of the SAME
     commit, repo untouched, each reported ~16 added / ~37 resolved — pure LLM
@@ -3328,3 +3348,96 @@ def test_an_id_outside_the_catalog_is_not_exported(tmp_path):
     out = b.build_requirements_compliance(_requirements_run(tmp_path, fragment=fragment))
     assert "ZZZ-999" not in {r["id"] for r in out["requirements"]}
     assert out["total"] == 5
+
+
+@pytest.mark.parametrize("owner", [None, True, False])
+@pytest.mark.parametrize("access", [None, "internet-anon", "internet-user", "internet-priv-user"])
+def test_builder_preserves_named_entities_and_resolved_registration_equivalence(tmp_path, owner, access):
+    import yaml
+
+    from tests.test_validate_intermediate import _valid_resolved_actors
+
+    _write_min_intermediates(tmp_path)
+    (tmp_path / "roles.ts").write_text('export const roles = ["customer", "operator"]\n')
+    actors = _valid_resolved_actors()
+    actor = actors["resolved_actors"][0]
+    actor["heatmap_slug"] = "internet-anon"
+    actors["resolved_actors"].append(
+        dict(
+            actor,
+            id="ACT-D-2",
+            heatmap_slug="internet-user",
+            collapse_primary=actor["id"],
+            collapse_reason="open-self-registration",
+        )
+    )
+    if owner is not None:
+        actors["open_registration_resolution"] = {
+            "open": owner,
+            "disputed": not owner,
+            "reason": "authz-008-route" if owner else "unresolved-candidate",
+            "evidence": [{"file": "roles.ts", "line": 1}],
+        }
+    _write_json(tmp_path / ".actors-resolved.json", actors)
+    _write_json(
+        tmp_path / ".components.json",
+        {
+            "schema_version": 1,
+            "components": [
+                {
+                    "id": "api",
+                    "name": "API",
+                    "tier": "application",
+                    "description": "HTTP service",
+                    "paths": ["roles.ts"],
+                }
+            ],
+        },
+    )
+    entity = {
+        "id": "ext-operator",
+        "name": "Operator",
+        "kind": "legitimate-role",
+        "description": "Maintains settings",
+        **({"access": access} if access is not None else {}),
+        "evidence": [{"file": "roles.ts", "line": 1}],
+    }
+    _write_json(
+        tmp_path / ".data-flows.json",
+        {
+            "schema_version": 1,
+            "component_inventory_fingerprint": "sha256:" + "0" * 64,
+            "external_entities": [entity],
+            "data_flows": [
+                {
+                    "id": "df-001",
+                    "from": "external",
+                    "from_entity": "ext-operator",
+                    "to": "api",
+                    "protocol": "HTTPS",
+                    "direction": "request-response",
+                    "data_classification": "Public",
+                    "label": "Settings request",
+                    "diagram_label": "Settings updates",
+                    "provenance": "architecture",
+                    "evidence": [{"file": "roles.ts", "line": 1}],
+                }
+            ],
+        },
+    )
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), str(tmp_path), "--repo-root", str(tmp_path)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    model = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+    assert model["external_entities"] == [entity]
+    assert model["data_flows"][0]["from_entity"] == "ext-operator"
+    assert model["data_flows"][0]["diagram_label"] == "Settings updates"
+    assert model["meta"]["open_user_registration"] is (True if owner is None else owner)
+    assert model["meta"]["open_registration_source"] == "actor-resolution"
+    if owner is not None:
+        assert model["meta"]["open_registration_resolution"] == actors["open_registration_resolution"]
+        import match_abuse_cases
+
+        signals = match_abuse_cases._effective_registration_signal({"has_auth_surface"}, tmp_path)
+        assert ("has_open_self_registration" in signals) is owner

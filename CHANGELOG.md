@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+## 0.6.0-beta.3 (2026-09-14)
+
+### Added
+
+- The Management Summary and completion summary give developers concrete starting points for manual threat modeling through up to three open questions about deployment assumptions, business decisions, or unresolved attack chains, with references to findings.
+- Cost budgets via `--soft-budget` or organization profiles, with spending warnings and per-phase cost totals in headless runs.
+- `/appsec-advisor:repo-profile` shows repository size, languages, and build manifests before a scan, without model calls or network access.
+
+### Changed
+
+- Figure 1 has been completely redesigned to show attack scenarios, grouped data flows, actors, and Critical/High weaknesses in a clearer architecture overview.
+- Scenario summaries show attack-path verification status in a compact table.
+- Actor grouping accounts for self-registration and public access while preserving login and privilege requirements.
+- `fix-run-issues` requires a diagnosis from the affected run and provides manual remediation guidance.
+- Threat model examples moved to the companion `appsec-advisor-examples` repository.
+- Baseline installation and updates use signed releases with signature and checksum verification.
+
+### Fixed
+
+- Headless runs handle asynchronous agents, interruptions, and lock conflicts without premature completion or interference with other runs.
+- Progress displays track completed STRIDE components accurately and avoid repeated status messages.
+- Cost reports use the actual model's rates, retain usage from stopped agents, and flag missing measurements.
+- `--verbose` and tracing settings apply correctly to each run.
+- Unattended runs no longer prompt for business context, and discarding completed analysis with `--full` or `--rebuild` requires confirmation or `--force`.
+- Deeper scans reuse reconnaissance for unchanged repositories, and rebuilds preserve derived model details.
+- Injection analysis covers more NoSQL, code, and template sinks and distinguishes stored, reflected, and DOM-based XSS.
+- Reports retain applicable security controls, merge duplicate findings, and exclude refuted attack chains from open questions.
+- Report generation preserves valid editorial work and avoids false QA failures, broken code formatting, and secret masking that corrupts report content.
+- Completion summaries list all requested exports and the editorial outcome.
+
 ## 0.6.0-beta.2 (2026-09-04)
 
 ### Added

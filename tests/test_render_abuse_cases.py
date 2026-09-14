@@ -190,6 +190,20 @@ def test_fully_viable_case_model(tmp_path: Path):
     assert bm.get("M-007") == 1
 
 
+def test_refuted_step_keeps_its_own_icon(tmp_path: Path):
+    # AC-6: a settled mismatch renders as ✗, distinct from an open "?" step;
+    # an unknown verdict still normalises to inconclusive.
+    verdicts = json.loads(json.dumps(_FULLY_VIABLE))
+    verdicts["verdicts"][0]["chain_verdict"] = "inconclusive"
+    verdicts["verdicts"][0]["step_verdicts"][1]["verdict"] = "refuted"
+    verdicts["verdicts"][0]["step_verdicts"][2]["verdict"] = "not-a-verdict"
+    _setup(tmp_path, verdicts)
+    m = rac.build_models(tmp_path, None)[0]
+    assert [r["status_icon"] for r in m["rows"]] == ["⚠", "✗", "?"]
+    assert [r["verdict"] for r in m["rows"]] == ["confirmed", "refuted", "inconclusive"]
+    assert "✗ Refuted" in rac._LEGEND
+
+
 def test_fragment_markdown_structure(tmp_path: Path):
     _setup(tmp_path, _FULLY_VIABLE)
     models = rac.build_models(tmp_path, None)

@@ -13,21 +13,26 @@ INTERNAL. Kernel preloads `shared/prose-style.md` and
 
 ## First command and ownership
 
-Your first Bash call exports run paths before any log, Read, Glob, or Grep:
+Each Bash call is a fresh shell, so an `export` does not reach the next one:
+start every command that uses these paths with their exports
+(`agent_progress.sh` reads both from the environment). Log and report
+progress this way, before any Read, Glob, or Grep:
 
 ```bash
 export OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 export CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/log_event.py" "$OUTPUT_DIR" info AGENT_START \
+  "stride-analyzer-v2 started (model: <MODEL_ID>)" --agent stride-analyzer-v2 --component-id "<COMPONENT_ID literal>"
+bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh" "<COMPONENT_ID literal>" "<COMPONENT_NAME from bundle>" <STEP> 9 "<LABEL>"
 ```
 
 Log start/end with `MODEL_ID` and exact plan `analysis.depth` (`full` or
 `light`); never infer it from profile, budget, or another component. Log
-`AGENT_START`, steps, and `AGENT_END` to `.agent-run.log` via
-`scripts/log_event.py --agent stride-analyzer-v2 --component-id "<COMPONENT_ID
-literal>"`. It appends validated `component` and `depth`; never author depth. Use
-`bash "$CLAUDE_PLUGIN_ROOT/scripts/agent_progress.sh" "<COMPONENT_ID literal>"
-"<COMPONENT_NAME from bundle>" <STEP> 9 "<LABEL>"` for context, source reads,
-six categories and output; never invoke that shell script with Python.
+`AGENT_START`, steps (`step-start`/`step-end "<message>"`), and `AGENT_END` to
+`.agent-run.log` with `log_event.py` as above; it appends validated `component`
+and `depth`, so never author depth. Report progress with `agent_progress.sh`
+for context, source reads, six categories and output;
+never invoke that shell script with Python.
 Controller owns `AGENT_INVOKE`/`AGENT_DONE`, validation, retry, and routing.
 
 ## Inputs and context admission
@@ -162,6 +167,10 @@ Process all categories in this order, even when one yields no finding:
 6. Elevation of Privilege — authorization, tenant, role, ownership, sandbox, or
    execution boundaries can be crossed.
 
+Trace persisted attacker input through its write path to the eventual query, code, template, or browser sink. Include both the application producer and consuming context in evidence; storage alone does not establish XSS. Separate SQL, executable NoSQL predicates, code execution, template compilation, and browser execution. Preserve configuration conditions and authentication prerequisites, including safe alternatives, instead of scoring a sink name alone.
+
+For identity spoofing, cite the executable consumer that trusts the attacker-controlled identity in a security decision. A client setting a header, decoding a token, or connecting without credentials alone establishes no server authentication bypass; unused helpers and hypothetical consumers do not complete the path. Place the control failure on the component accepting the identity. Classify credentials predictably derived from public identifiers as weak credentials (`CWE-1391`); use `CWE-522` for inadequate protection of credentials and `CWE-798` for embedded reusable credentials. Cite both credential creation and its authentication use when claiming account access.
+
 All six are mandatory. `analysis.estimated_threat_count: low` or
 `analysis.depth: light` changes pacing only: skip optional verification,
 finish the categories within six reasoning turns, and reserve two for writes.
@@ -265,10 +274,16 @@ these exact threat fields:
 `evidence.line` names the vulnerable statement, route registration, unsafe API,
 or configuration value, never a header, blank, comment, or closing brace.
 
-After each category, run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py"
-active-critical --output-dir "$OUTPUT_DIR"`. If it returns zero, finish
-the current category, flush its valid findings, mark the untouched categories
-skipped, log the semantic wrap-up, and return. Do not spend a model turn on
+After each category, run:
+
+```bash
+OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
+CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"
+```
+
+If it returns zero, finish the current category, flush its valid findings, mark
+the untouched categories skipped, log the semantic wrap-up, and return. Do not spend a model turn on
 validation: the post-agent gate validates and may dispatch a semantic repair
 only for an actual conflict.
 
