@@ -13,62 +13,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- The Management Summary and the completion summary show the same selection of up to three open threat-modeling questions for the team about deployment assumptions, business decisions, or unresolved attack chains, with weakness and finding references and any evidence still awaiting verification.
-- A headless run shows what it has spent so far, measured against `--soft-budget`, warns once at 80 % and at 100 % of it, and ends with a table of what each phase cost. Where the spend cannot be measured the run says so instead of showing a figure, and no warning stops a run. The end-of-run cost table states that it covers the whole run including sub-agents, and the `Models` line says that the roles behind each model are sub-agent dispatches billed in that table.
-- A run can declare a cost budget with `--soft-budget <usd>`, or `guardrails.soft_budget_usd` in an organization profile. It steers rather than caps: an invocation whose projected cost cannot fit is refused before it spends anything, and a run that overruns still finishes. Headless runs derive the hard `--hard-budget` cut at 1.25 times that value unless it is given. `--max-cost`, `max_cost_usd`, and `--max-budget` remain as deprecated spellings.
-- `/appsec-advisor:repo-profile` reports a repository's size, language split, build manifests and tracked-versus-untracked content before a scan is started — deterministic, no model, no network.
+- Report and completion summaries highlight up to three open questions about deployment, business decisions, or unresolved attack chains.
+- Cost budgets via `--soft-budget` or organization profiles, with spending warnings and per-phase cost totals in headless runs.
+- `/appsec-advisor:repo-profile` shows repository size, languages, and build manifests before a scan, without model calls or network access.
 
 ### Changed
 
-- Figure 1 shows clearer scenario titles, compact grouped data flows, smoother arrows, actor-grouping notes inside actor cards, and all Critical weakness categories with High categories filling up to five annotations per component.
-- Actor consolidation groups self-registered users and public-source readers with anonymous internet attackers when access evidence supports it, while preserving each finding's login and privilege requirements.
-- Disproved abuse-case steps are marked `✗ Refuted` in §9, excluding those steps and their chains from open questions.
-- Worst-case scenarios name their weakness class, such as SQL injection or cross-site scripting, and claim no worst-first order; the completion summary and `show-threat-model` list them in a compact table with attack-path verification status.
-- `fix-run-issues` now requires a diagnosis from the same run and provides manual remediation guidance instead of automatic plugin edits.
-- Threat model examples now live in the companion `appsec-advisor-examples` repository instead of the plugin release.
-- `install-baseline` and `update-baseline` now install the latest signed release of the AI Secure Coding Baseline, only after its signature and checksum verify, instead of unverified text from its main branch or the outdated bundled `aisec-0.1`.
+- Architecture diagrams use clearer labels and grouped data flows, while scenario summaries show attack-path verification status.
+- Actor grouping accounts for self-registration and public access while preserving login and privilege requirements.
+- `fix-run-issues` requires a diagnosis from the affected run and provides manual remediation guidance.
+- Threat model examples moved to the companion `appsec-advisor-examples` repository.
+- Baseline installation and updates use signed releases with signature and checksum verification.
 
 ### Fixed
 
-- Threat-model rebuilds preserve automatically derived model details, including actor grouping for public source access.
-- Actor grouping, abuse-case matching, and authentication coverage use evidenced self-registration, with unclear registration routes surfaced as team questions.
-- Early STRIDE completion checks no longer start duplicate component analyses.
-- Completed scans no longer leave deterministically completed Stage 1 tasks open in Claude Code.
-- Abuse case AC-T-001 no longer claims a stored XSS when the matched finding is reflected or DOM-based.
-- `--no-tracing` and an organization profile's `guardrails.tracing: false` now reliably turn tracing off, and a run's tracing and verbose modes end with the run instead of carrying over into later sessions.
-- A run no longer fills the console with repeated status lines while its report renderers, QA reviewer, fragment fixer or editorial agents run.
-- Source analysis detects executable NoSQL predicates and input-driven code or template compilation, preserves distinct injection sinks, and rejects XSS attribution to a database.
-- The editorial pass processes bounded packets concurrently, retains valid partial results, reports incomplete work, and preserves previously accepted QA observations.
-- A depth increase over an unchanged repository reuses the previous run's reconnaissance again: the run end records the recon fingerprint, and the controller reads the eligibility flag under the name the resolver writes.
-- Starting a run over an existing threat model without a mode flag now says that the existing model selected an unsupported incremental rescan and that `--full` reassesses it.
-- The report no longer sets ordinary words and punctuation such as `to` or `/` in code format throughout the document because one finding used them as code.
-- §6.12 no longer claims "Not applicable" when the model contains a real-time, LLM, GraphQL or gRPC component, and no longer drops an LLM control catalogued there.
-- The completion summary no longer counts a deterministic QA step as an agent, so a run with unrecorded agents reports its compute as partial.
-- STRIDE analyzers' closing progress and log lines are no longer rejected, because a wave is joined only after its analyzers stop.
-- Agents no longer run their documented commands with an empty output directory or plugin path, and the runtimes name the exact heartbeat and lock-release commands.
-- Config and IaC findings are titled with the defect they report, such as "Missing npm Lockfile", instead of the desired state.
-- Two components that report the same finding under the same title at the same code line now produce one finding that keeps both threat categories.
-- The completion summary lists every deliverable the run requested, including PDF and HTML, and states the outcome of the editorial pass instead of "pass".
-- A finding or mitigation title that starts with a file name no longer fails the reference-format QA check, and the QA receipt says the report was re-composed only when a repair re-composed it.
-- Stage 4 no longer warns about a Critical finding without a CVSS vector when its weakness is not CVSS-eligible, and the AI/LLM exposure diagnostic no longer counts findings that merely mention a prompt.
-- Cost reports price each sub-agent at the rates of the model release that actually ran it, instead of assuming an older release for an alias such as `opus`.
-- Agents started after a run finished no longer appear in that run's logs, and an agent the API stopped keeps its token spend and the reason it stopped.
-- The session banner and the baseline commands recognize a baseline that the AI Secure Coding Baseline installer loads through its session hooks instead of reporting it as not installed, leave that installer's files to it, and the banner no longer repeats the baseline status that installer's startup hook already prints.
-- The progress percentage moves during the STRIDE phase instead of standing still for up to half the run and then jumping, and it now appears on every progress line rather than two or three times per run.
-- A run reports its token spend on hosts that return no per-call usage, where every figure previously read zero, and says that the cost cannot be priced rather than showing `$0.00`. A completed headless run records its exact cost so the next run projects a budget against a measurement instead of the parametric floor.
-- The live view states a host's missing call outcome once instead of appending it to every finished agent.
-- An unattended run no longer stops to ask whether to add business context.
-- A run that ends early no longer reports a previous run's failure as its own.
-- The secret masker no longer rewrites the line following a credential keyword that ends a line, so an entry point such as `GET /api/audit?token=` no longer corrupts the threat model into a document the run then aborts on.
-- A headless run blocked by another run's lock now stops with its exit code instead of printing an interactive menu into the log, no longer composes or reports on the artifacts of the assessment holding the lock, and no longer aborts it.
-- Interrupting an unattended headless run now actually stops it: the signal reaches Claude without a terminal, the run releases its own lock instead of blocking the next attempt for five minutes, and the printed recovery command offers `--rerender` when Stage 1 had already finished.
-- `--full` and `--rebuild` no longer discard a completed Stage 1 without asking, and the `--force` needed to discard it on purpose now reaches the skill.
-- The headless progress view no longer prints phase banners twice, shows how many STRIDE components have finished during the long parallel phase, and drops the internal call ids that pushed the readable part of each line off the screen; `--verbose` now adds the raw event stream to that view instead of replacing it, and no longer prints each hook event twice.
-- `--verbose` now reaches the skill in a headless run, so the completion summary shows the per-stage timings, the agent roster and the token/cost detail instead of the timing headline alone.
-- A headless run no longer reports its working agents as failed, finishes the assessment minutes after it started, or prints the completion summary twice; budget warnings raised by the run are no longer dropped, and an agent that does fail says what happened instead of naming an internal state.
-- On hosts that answer an Agent call with a launch acknowledgement, a finished agent is now recorded as finished: the run no longer reports a telemetry mismatch at every dispatch, and turn-budget warnings keep working for the rest of the run instead of stopping after the first agent.
-- The STRIDE progress count now counts components rather than dispatches, and only once one finishes, so a wave no longer reports every component done on the line saying one failed, nor more components done than the phase has.
-- A run whose host returns no per-call usage now says so once, instead of silently reporting no token or cost figures for any agent; a telemetry finding about the run is no longer repeated at every stage boundary.
+- Headless runs handle asynchronous agents, interruptions, and lock conflicts without premature completion or interference with other runs.
+- Progress displays track completed STRIDE components accurately and avoid repeated status messages.
+- Cost reports use the actual model's rates, retain usage from stopped agents, and flag missing measurements.
+- `--verbose` and tracing settings apply correctly to each run.
+- Unattended runs no longer prompt for business context, and discarding completed analysis with `--full` or `--rebuild` requires confirmation or `--force`.
+- Deeper scans reuse reconnaissance for unchanged repositories, and rebuilds preserve derived model details.
+- Injection analysis covers more NoSQL, code, and template sinks and distinguishes stored, reflected, and DOM-based XSS.
+- Reports retain applicable security controls, merge duplicate findings, and exclude refuted attack chains from open questions.
+- Report generation preserves valid editorial work and avoids false QA failures, broken code formatting, and secret masking that corrupts report content.
+- Completion summaries list all requested exports and the editorial outcome.
 
 ## 0.6.0-beta.2 (2026-09-04)
 
