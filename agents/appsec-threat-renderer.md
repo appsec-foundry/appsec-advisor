@@ -158,8 +158,8 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_ms_compactness.py" "$OUTPUT_DIR"
   else, then re-run the gate once to confirm. Never rewrite a field the gate did
   not flag.
 
-The gate catches only runaway prose (budgets sit above the soft targets), so a
-disciplined first write passes immediately — that is the expected path.
+The gate catches runaway prose (budgets sit above the soft targets) and broken MS
+fragment schema limits, so a disciplined first write passes immediately.
 
 ### `ms-verdict.json` authoring contract
 

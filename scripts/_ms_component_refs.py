@@ -76,6 +76,26 @@ def normalize_refs(refs: Any, cmap: dict[str, str]) -> tuple[Any, bool]:
     return new_refs, changed
 
 
+def normalize_fragment_data(data: Any, list_key: str, cmap: dict[str, str]) -> bool:
+    """Normalise one parsed MS fragment's component refs in memory; True when any changed.
+
+    The renderer's own gate judges a fragment through this without rewriting it,
+    so it sees exactly what the pre-render gate and compose will see.
+    """
+    items = data.get(list_key) if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return False
+    changed = False
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        new_refs, item_changed = normalize_refs(item.get("affected_components"), cmap)
+        if item_changed:
+            item["affected_components"] = new_refs
+            changed = True
+    return changed
+
+
 def normalize_fragment_file(path: Path, list_key: str, cmap: dict[str, str]) -> bool:
     """Rewrite one MS fragment's component refs in place. Idempotent.
 
@@ -88,17 +108,7 @@ def normalize_fragment_file(path: Path, list_key: str, cmap: dict[str, str]) -> 
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    items = data.get(list_key)
-    if not isinstance(items, list):
-        return False
-    changed = False
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        new_refs, item_changed = normalize_refs(item.get("affected_components"), cmap)
-        if item_changed:
-            item["affected_components"] = new_refs
-            changed = True
+    changed = normalize_fragment_data(data, list_key, cmap)
     if changed:
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return changed

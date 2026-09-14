@@ -12,9 +12,15 @@ product-owner Verdict. A bullet body may name the weakness class (SQL injection,
 XSS); opening, titles and closing state outcomes only. Technology identifiers,
 code and locations belong in §§7–8, never in the short management summary.
 
+It also judges every Management Summary fragment the renderer authored against
+its schema, exactly as the pre-render gate will judge it
+(``validate_fragment.ms_renderer_schema_errors``). A broken length or enum limit
+is then corrected in the renderer's own turn instead of by a fragment-fixer
+dispatch and a second compose.
+
 Exit codes:
-  0 — all present fragments within budget (or fragments absent — nothing to check)
-  1 — at least one field over budget; stdout lists each offending field + count
+  0 — all present fragments within budget and schema (or absent — nothing to check)
+  1 — at least one field over budget or outside its schema; stdout lists each offending field
 
 Only the fields named in a violation should be re-authored. Do NOT rewrite a
 field the validator did not flag.
@@ -27,6 +33,8 @@ import json
 import re
 import sys
 from pathlib import Path
+
+import validate_fragment
 
 # --- Management-summary hard limits. These are intentionally tighter than the
 # --- JSON schema: the schema preserves the shape, while this gate protects the
@@ -137,6 +145,7 @@ def main() -> int:
             # A malformed fragment is the composer's problem, not ours — do not
             # block the run on a parse error here.
             print(f"warn: could not read {path.name}: {e}", file=sys.stderr)
+    violations.extend(validate_fragment.ms_renderer_schema_errors(Path(args.output_dir)))
 
     if violations:
         print("MS compactness: FAIL — re-author ONLY these fields:")

@@ -39,20 +39,25 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_DIR = PLUGIN_ROOT / "schemas" / "fragments"
 
 
+def _model_components(output_dir: Path) -> Any:
+    """The ``components`` of ``threat-model.yaml``; ``None`` when it cannot be read."""
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    return data.get("components") if isinstance(data, dict) else None
+
+
 def _normalize_ms_component_refs(output_dir: Path, fragments_dir: Path) -> None:
     """Repair slug component ids in MS fragments exactly as compose does.
 
     Best-effort: without a readable threat-model.yaml there is no slug -> C-NN
     mapping to apply, and the fragments are validated as they stand.
     """
-    yaml_path = output_dir / "threat-model.yaml"
-    if not yaml_path.is_file():
-        return
-    try:
-        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return
-    _ms_component_refs.normalize_ms_fragments(fragments_dir, data.get("components"))
+    _ms_component_refs.normalize_ms_fragments(fragments_dir, _model_components(output_dir))
 
 
 # Map fragment type → schema file. This is the single source of truth for
@@ -598,6 +603,57 @@ def _fragment_type_for_file(path: Path) -> str | None:
     # Fallback: strip ".json" and check if the stem matches a schema name.
     stem = name.removesuffix(".json")
     return _STEM_TO_TYPE.get(stem)
+
+
+#: Fragment types the Management Summary renderer authors
+#: (`agents/appsec-ms-renderer.md`). Its gate judges only these, because the
+#: renderer can re-author nothing else; every other fragment stays a finding of
+#: the pre-render gate below.
+MS_RENDERER_FRAGMENT_TYPES = (
+    "verdict",
+    "critical-attack-tree",
+    "security-posture-attack-paths",
+    "anti-patterns",
+    "ai-exposure",
+)
+
+
+def _describe_schema_error(error: jsonschema.ValidationError) -> str:
+    """The field path and its violation; a length violation states both sizes."""
+    where = "/".join(str(part) for part in error.absolute_path) or "<root>"
+    if error.validator in {"maxLength", "minLength"} and isinstance(error.instance, str):
+        bound = "max" if error.validator == "maxLength" else "min"
+        return f"{where} is {len(error.instance)} chars ({bound} {error.validator_value})"
+    message = error.message if len(error.message) <= 200 else error.message[:199] + "…"
+    return f"{where}: {message}"
+
+
+def ms_renderer_schema_errors(output_dir: Path) -> list[str]:
+    """Schema violations in the MS renderer's fragments, judged as the pre-render gate judges them.
+
+    The renderer reaches this through ``validate_ms_compactness.py``, so a broken
+    schema limit is corrected in its own turn instead of by a fragment-fixer
+    dispatch and a second compose. It applies the gate's slug -> C-NN repair in
+    memory and the gate's schema check, nothing stricter, and rewrites no file.
+    Unreadable JSON stays the pre-render gate's finding.
+    """
+    fragments_dir = output_dir / ".fragments"
+    cmap = _ms_component_refs.slug_to_cnn_map(_model_components(output_dir))
+    errors: list[str] = []
+    for fragment_type in MS_RENDERER_FRAGMENT_TYPES:
+        name = _FRAGMENT_FILENAMES[fragment_type]
+        try:
+            data = json.loads((fragments_dir / name).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        list_key = _ms_component_refs.MS_FRAGMENT_LIST_KEYS.get(name)
+        if list_key:
+            _ms_component_refs.normalize_fragment_data(data, list_key, cmap)
+        schema = _load_schema(fragment_type)
+        validator = jsonschema.validators.validator_for(schema)(schema)
+        for error in sorted(validator.iter_errors(data), key=lambda e: [str(part) for part in e.absolute_path]):
+            errors.append(f"{name}: {_describe_schema_error(error)}")
+    return errors
 
 
 def run_pre_render_gate(

@@ -6,6 +6,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+import validate_fragment
 import validate_ms_compactness as mod
 
 # --- helpers ---------------------------------------------------------------
@@ -166,6 +168,26 @@ def test_renderer_contract_states_the_gate_word_cap():
 
 # --- main ------------------------------------------------------------------
 
+# Clean for this gate's prose rules and valid against the verdict schema, which
+# the gate also enforces.
+_CLEAN_VERDICT = {
+    "severity": "red",
+    "opening": "Not ready for production. Anyone on the internet can read every customer record today.",
+    "bullets": [
+        {
+            "title": "Customer records exposed",
+            "body": "Anyone can read every stored customer record without signing in.",
+            "refs": ["T-001"],
+        },
+        {
+            "title": "Orders changed by strangers",
+            "body": "Any signed-in customer can change another customer's orders.",
+            "refs": ["T-002"],
+        },
+    ],
+    "closing": "Close the open record access before the next release to customers.",
+}
+
 
 def test_main_fragment_absent_passes(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
@@ -175,7 +197,7 @@ def test_main_fragment_absent_passes(tmp_path, capsys, monkeypatch):
 
 
 def test_main_clean_passes(tmp_path, capsys, monkeypatch):
-    _write_verdict(tmp_path, {"opening": "fine", "closing": "ok", "bullets": []})
+    _write_verdict(tmp_path, _CLEAN_VERDICT)
     monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
     rc = mod.main()
     assert rc == 0
@@ -202,3 +224,136 @@ def test_main_malformed_fragment_does_not_block(tmp_path, capsys, monkeypatch):
     err = capsys.readouterr()
     assert "warn: could not read" in err.err
     assert "PASS" in err.out
+
+
+# --- schema limits of the renderer's fragments ------------------------------
+
+SCHEMAS = Path(__file__).resolve().parent.parent / "schemas" / "fragments"
+
+
+def _max_length(schema_type: str, list_key: str, field: str) -> int:
+    schema = json.loads((SCHEMAS / f"{schema_type}.schema.json").read_text(encoding="utf-8"))
+    return schema["properties"][list_key]["items"]["properties"][field]["maxLength"]
+
+
+def _write(p: Path, name: str, obj) -> Path:
+    (p / ".fragments").mkdir(exist_ok=True)
+    path = p / ".fragments" / name
+    path.write_text(json.dumps(obj, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _prose(n: int) -> str:
+    return ("A request reaches the data store without a server-side check. " * 20)[:n]
+
+
+def _anti_patterns(description: str, components: list | None = None) -> dict:
+    item = {
+        "name": "Client-held session credential",
+        "description": description,
+        "findings": [{"ref": "T-001", "label": "Token readable by scripts"}],
+    }
+    if components is not None:
+        item["affected_components"] = components
+    return {"anti_patterns": [item]}
+
+
+def _posture(description: str) -> dict:
+    return {
+        "schema_version": 1,
+        "actors": ["internet-anon"],
+        "attack_paths": [
+            {
+                "class": "injection",
+                "actor": "internet-anon",
+                "target": "data",
+                "description": description,
+                "impact": ["customer-data-exfiltration"],
+                "findings": ["T-001"],
+            }
+        ],
+    }
+
+
+def _ai_exposure(components: list) -> dict:
+    return {
+        "ai_risks": [
+            {
+                "name": "Prompt reaches a tool call",
+                "description": _prose(60),
+                "findings": [{"ref": "T-002", "label": "Unfiltered prompt"}],
+                "affected_components": components,
+            }
+        ]
+    }
+
+
+def _run(tmp_path: Path, monkeypatch) -> int:
+    monkeypatch.setattr("sys.argv", ["validate_ms_compactness.py", str(tmp_path)])
+    return mod.main()
+
+
+@pytest.mark.parametrize(
+    ("name", "schema_type", "list_key", "build"),
+    [
+        ("ms-anti-patterns.json", "anti-patterns", "anti_patterns", _anti_patterns),
+        ("security-posture-attack-paths.json", "security-posture-attack-paths", "attack_paths", _posture),
+    ],
+)
+def test_main_names_a_schema_limit_the_renderer_broke(
+    tmp_path, capsys, monkeypatch, name, schema_type, list_key, build
+):
+    """The renderer passed this gate with an over-long description; the pre-render
+    gate then needed a fragment-fixer dispatch and a second compose to repair it."""
+    cap = _max_length(schema_type, list_key, "description")
+    _write(tmp_path, name, build(_prose(cap + 1)))
+    assert _run(tmp_path, monkeypatch) == 1
+    assert f"{name}: {list_key}/0/description is {cap + 1} chars (max {cap})" in capsys.readouterr().out
+
+    _write(tmp_path, name, build(_prose(cap)))
+    assert _run(tmp_path, monkeypatch) == 0
+
+
+def test_a_component_slug_compose_repairs_is_not_a_violation(tmp_path, capsys, monkeypatch):
+    """Refs are judged as compose will see them, so the gate is never stricter than compose."""
+    (tmp_path / "threat-model.yaml").write_text(
+        "components:\n  - id: billing-api\n  - id: web-client\n", encoding="utf-8"
+    )
+    path = _write(tmp_path, "ms-ai-exposure.json", _ai_exposure(["web-client"]))
+    before = path.read_bytes()
+    assert _run(tmp_path, monkeypatch) == 0
+    assert path.read_bytes() == before, "the renderer's gate must not rewrite its fragments"
+
+    _write(tmp_path, "ms-ai-exposure.json", _ai_exposure(["no-such-component"]))
+    assert _run(tmp_path, monkeypatch) == 1
+    assert "ms-ai-exposure.json: ai_risks/0/affected_components/0" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [("compound-chains.json", '{"unexpected": true}'), ("ms-anti-patterns.json", "{ broken")],
+)
+def test_what_the_renderer_cannot_repair_stays_with_the_pre_render_gate(tmp_path, monkeypatch, name, content):
+    """Another producer's fragment and unreadable JSON are the pre-render gate's findings."""
+    (tmp_path / ".fragments").mkdir()
+    (tmp_path / ".fragments" / name).write_text(content, encoding="utf-8")
+    assert _run(tmp_path, monkeypatch) == 0
+
+
+@pytest.mark.parametrize("shape", ["over_cap", "at_cap", "repairable_slug", "unknown_slug"])
+def test_the_gate_fails_exactly_the_fragments_the_pre_render_gate_fails(tmp_path, capsys, shape):
+    """Both judge the same bytes; the renderer's gate only runs first."""
+    cap = _max_length("anti-patterns", "anti_patterns", "description")
+    (tmp_path / "threat-model.yaml").write_text("components:\n  - id: billing-api\n", encoding="utf-8")
+    fragment = {
+        "over_cap": _anti_patterns(_prose(cap + 1)),
+        "at_cap": _anti_patterns(_prose(cap)),
+        "repairable_slug": _anti_patterns(_prose(80), ["billing-api"]),
+        "unknown_slug": _anti_patterns(_prose(80), ["no-such-component"]),
+    }[shape]
+    _write(tmp_path, "ms-anti-patterns.json", fragment)
+
+    own = {error.split(":", 1)[0] for error in validate_fragment.ms_renderer_schema_errors(tmp_path)}
+    validate_fragment.run_pre_render_gate(tmp_path, emit_json=True)
+    gate = {entry["file"] for entry in json.loads(capsys.readouterr().out)["failed"]}
+    assert own == gate
