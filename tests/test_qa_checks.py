@@ -2061,6 +2061,47 @@ class TestSecurityPostureStructureRegexes:
         report = qa.check_security_posture_structure(md)
         assert any(i.startswith("D-SVG:") for i in report.issues), report.issues
 
+    @pytest.mark.parametrize("embedded", [False, True])
+    @pytest.mark.parametrize("tamper", [False, True])
+    def test_svg_route_references_are_checked_for_files_and_embedded_images(self, tmp_path, embedded, tamper):
+        import base64
+
+        from figure2_svg import build_figure2_data, build_figure2_svg
+
+        threats = [{"id": f"T-{n:03d}", "title": "Untrusted input", "risk": "High"} for n in range(1, 4)]
+        paths = {
+            "attack_paths": [
+                {
+                    "class": "input",
+                    "actor": "internet-anon",
+                    "target": "application",
+                    "findings": [t["id"].replace("T-", "F-")],
+                    "impact": [],
+                }
+                for t in threats
+            ]
+        }
+        svg = build_figure2_svg(
+            build_figure2_data(
+                {"threats": threats},
+                paths,
+                {"classes": [{"id": "input", "label": "Input processing"}]},
+                {"impacts": []},
+            )
+        )
+        if tamper:
+            svg = svg.replace('data-finding-id="F-001"', 'data-finding-id="F-999"')
+        src = "threat-model.figure2.svg"
+        if embedded:
+            src = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+        else:
+            (tmp_path / src).write_text(svg)
+        md = _write_minimal_model(tmp_path, self._svg_posture_section(src))
+        report = qa.check_security_posture_structure(md)
+        assert bool(report.issues) is tamper, report.issues
+        if tamper:
+            assert any(i.startswith("D-SVG:") for i in report.issues)
+
     def test_figure1_data_bottom_stack_passes(self, tmp_path):
         """Figure 1 may precede the Figure 2 heatmap. Its architecture stack
         passes when DATA is the last tier, solid attacks target app/client

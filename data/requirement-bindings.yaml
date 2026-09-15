@@ -149,6 +149,7 @@ requirements:
 
   REQ-MOD-009:
     applies_to:
+      - scripts/figure2_svg.py
       - scripts/merge_threats.py
       - scripts/_severity_rollup.py
       - scripts/build_posture_verdict.py
@@ -162,6 +163,7 @@ requirements:
     documents: []
     coverage: partial
     guards:
+      - tests/test_figure2_svg.py::test_unproven_status_and_risk_do_not_come_from_impact_defaults
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_unproven_evidence_keeps_its_status
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_practice_evidence_does_not_become_confirmed_exploitation
 
@@ -201,6 +203,7 @@ requirements:
 
   REQ-FLW-003:
     applies_to:
+      - scripts/figure2_svg.py
       - scripts/enrichment_pass.py
       - scripts/auto_emitter_pass.sh
       - scripts/assert_completeness.py
@@ -230,6 +233,7 @@ requirements:
       - docs/internal/contracts/schema-invariants.md
     coverage: partial
     guards:
+      - tests/test_compose_threat_model.py::TestSecurityPostureV2::test_v2_invalid_figure_data_stops_publication
       - tests/test_enrichment_pass.py::test_continuation_never_heals_an_unverified_receipt
       - tests/test_enrichment_pass.py::test_receipt_detects_changed_or_rebuilt_model
       - tests/test_orchestration_controller.py::test_abuse_rebuild_reapplies_enrichment_and_quality_gates
@@ -384,6 +388,9 @@ requirements:
 
   REQ-RPT-003:
     applies_to:
+      - scripts/figure2_svg.py
+      - schemas/figure2-diagram.schema.json
+      - data/business-impact-taxonomy.yaml
       - agents/appsec-architecture-analyst.md
       - agents/appsec-threat-renderer.md
       - data/attack-class-taxonomy.yaml
@@ -423,6 +430,9 @@ requirements:
       - agents/shared/prose-style.md
     coverage: partial
     guards:
+      - tests/test_figure2_svg.py::test_routes_keep_findings_weakness_and_impact_connected
+      - tests/test_figure2_svg.py::test_unrelated_or_design_only_weakness_does_not_gain_a_reference
+      - tests/test_figure2_svg.py::test_svg_checker_detects_a_missing_route_and_changed_badge
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_no_generic_questions_for_empty_or_unmatched_models
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses
       - tests/test_team_questions.py::test_selector_caps_questions_but_keeps_unverified_evidence_line

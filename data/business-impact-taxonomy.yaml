@@ -23,6 +23,8 @@
 #                       critical|high|medium|low.
 #   short_description — one-sentence rationale; surfaced in tooltips and
 #                       triggers for QA repair plans.
+#   business_harm     — qualitative potential harm displayed for an explicitly
+#                       assigned scenario impact; not a new risk assessment.
 #   triggered_by      — list of *attack-class ids* (see attack-class-
 #                       taxonomy.yaml) that, when present in the threat
 #                       register, can plausibly land in this impact. The
@@ -38,6 +40,7 @@ schema_version: 1
 impacts:
   - id: customer-session-hijack
     label: "Customer Session Hijack"
+    business_harm: "Customer account misuse and disclosure of private account data"
     severity_default: high
     short_description: >-
       Attacker reads or replays a legitimate user's session credentials
@@ -49,6 +52,7 @@ impacts:
 
   - id: full-admin-takeover
     label: "Full Admin Takeover"
+    business_harm: "Unauthorized administration and changes to protected business data"
     severity_default: critical
     short_description: >-
       Attacker obtains a privileged (admin / root / service-owner)
@@ -61,6 +65,7 @@ impacts:
 
   - id: full-server-compromise
     label: "Full Server Compromise"
+    business_harm: "Service disruption or compromise of application data"
     severity_default: critical
     short_description: >-
       Attacker executes arbitrary code on the server / container / OS
@@ -71,6 +76,7 @@ impacts:
 
   - id: customer-data-exfiltration
     label: "Customer Data Exfiltration"
+    business_harm: "Disclosure of customer information"
     severity_default: critical
     short_description: >-
       Attacker reads customer PII, credentials, payment data, or other

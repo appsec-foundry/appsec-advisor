@@ -99,11 +99,11 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 ### Security Posture & Top Threats
 
-**Figure 2 - Risk Flow: Actor → Tier → Impact**
+**Figure 2 - Attack Routes and Impact**
 
-Heatmap: **actors** (left) → **architecture tiers** (middle, Client → Application → Data) → **impact** (right). Numbered red arrows ① are the threats enumerated in the Top Threats table below.
+Each numbered route shows one example finding from the corresponding Top Threats group, its underlying weakness and its reported consequence. Potential business harm follows the group's reported impact categories and depends on deployment and affected assets. W-IDs in parentheses link the example to an existing weakness. Ellipses mark excerpts; full details remain in findings and SVG tooltips. Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to possible consequences.
 
-![Figure 2 - Risk Flow: Actor to Tier to Impact](figure2.svg)
+![Figure 2 - Actors, attack routes, weaknesses and impact](figure2.svg)
 
 **0 structural threats**, grouped by weakness class - each row is one threat, not one finding. *Threat Description* states the general architectural weakness (STRIDE in brackets); *Findings* lists the concrete instances, each linked to [§8 Findings Register](#8-findings-register) with its component; *Risk & Impact* combines severity with business consequence.
 

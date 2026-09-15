@@ -509,7 +509,7 @@ sections:
   # Critical/High findings (a green-status threat model does not need a
   # hero diagram).
   security_posture_at_a_glance:
-    # 2026-05 — merged section. Renders: the risk-flow heatmap (Figure 2,
+    # 2026-05 — merged section. Renders: the attack-route overview (Figure 2,
     # forward-only) + an optional architecture diagram (Figure 1, from
     # `.fragments/top-threats-architecture.md`) + the **Top Threats** table
     # (one threat-grouped row per attack class, replacing the former
@@ -544,7 +544,8 @@ sections:
     # `qa_checks.py check_security_posture_structure`):
     #   A     = Figure 1 architecture stack (Data bottom / sink-band rules)
     #   D-SVG = Figure 2 PRIMARY form: a portable hand-built SVG image
-    #           (`figure2_svg.py`) — file exists + glyph parity via `data-glyphs`
+    #           (`figure2_svg.py`) — file exists + glyph parity via `data-glyphs`;
+    #           version 2 also validates scenario data, visible references and geometry
     #   T     = Top Threats table below Figure 2 (glyph parity, links)
     #   D/E/C/F/G = Figure 2 FALLBACK form only (inline ELK Mermaid heatmap,
     #           used when the SVG builder yields nothing). 2026-07: Figure 2
@@ -568,7 +569,7 @@ sections:
       # D-SVG — Figure 2 PRIMARY form (portable SVG image). When the section
       # references `![Figure 2 …](<stem>.figure2.svg)`, only D-SVG + T apply;
       # the Mermaid D/E/C/F/G rules below guard the fallback path only.
-      - { id: D-SVG, rule: "when Figure 2 is an SVG image, the referenced `<stem>.figure2.svg` file exists next to the md, and its `data-glyphs` attribute matches the Top Threats table row glyphs (emitted as `T2/G3`)" }
+      - { id: D-SVG, rule: "when Figure 2 is an SVG image, the referenced `<stem>.figure2.svg` file exists next to the md, and its `data-glyphs` attribute matches the Top Threats table row glyphs (emitted as `T2/G3`); version 2 also satisfies `schemas/figure2-diagram.schema.json` and retains visible route numbers, finding and weakness references, and text inside its cards" }
       # D/E/C/F/G/T — Figure 2 FALLBACK heatmap (inline ELK Mermaid) + table.
       - { id: D1, rule: "mermaid block declares ELK renderer via `%%{init: {\"flowchart\": {\"defaultRenderer\": \"elk\"}} }%%` directive" }
       - { id: D2, rule: "mermaid block opens with `flowchart LR`" }
@@ -602,7 +603,7 @@ sections:
 
   # Top Threats — the merged threat-grouped table (replaced Top Findings +
   # Architecture Assessment). 2026-05: FOLDED into `security_posture_at_a_glance`
-  # so the heatmap (Figure 2) and the table render under one
+  # so the attack-route overview (Figure 2) and the table render under one
   # "### Security Posture & Top Threats" heading. The renderer
   # (`_compute_top_threats_rows` + `templates/fragments/top-threats.md.j2`,
   # invoked from `_render_security_posture_at_a_glance`) joins the attack-paths

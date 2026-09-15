@@ -10322,6 +10322,10 @@ def _check_posture_structure_svg(report: Report, section: str, md_path: Path, im
 
     mg = re.search(r'data-glyphs="([0-9 ]*)"', svg_text)
     svg_nums = {int(n) for n in (mg.group(1).split() if mg else [])}
+    if 'data-figure2-version="2"' in svg_text:
+        from figure2_svg import check_figure2_svg
+
+        report.issues.extend(f"D-SVG: {problem}" for problem in check_figure2_svg(svg_text))
 
     # T1: table header present.
     if "| # | Threat Description | Findings (→ Component) | Risk & Impact | Fix |" not in section:
@@ -10334,7 +10338,7 @@ def _check_posture_structure_svg(report: Report, section: str, md_path: Path, im
         re.MULTILINE,
     )
     table_nums = {ord(g) - 0x2460 + 1 for g in table_glyphs}
-    if svg_nums and svg_nums != table_nums:
+    if (svg_nums or 'data-figure2-version="2"' in svg_text) and svg_nums != table_nums:
         report.issues.append(
             f"T2/G3: Figure 2 arrow glyphs {sorted(svg_nums)} ≠ Top Threats row glyphs {sorted(table_nums)}"
         )

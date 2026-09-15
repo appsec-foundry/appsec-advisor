@@ -102,6 +102,8 @@ Decisions are stored separately from the generated model and survive reassessmen
 
 Figure 1 presents the Architecture and Threat Overview with attack paths and hexagonal authentication markers at component accesses. Equal methods share a number; `0` marks evidenced absence of separate authentication and `?` marks uncertainty. Marker colours describe method properties, not a security verdict. Matching E-labelled rows inside components name the peer and direction of connections whose lines are omitted. A linked detail view retains the data-flow and boundary catalogues. Existing models without authentication evidence need a new analysis to populate these markers; exporting does not infer missing controls.
 
+Figure 2 connects actors, attack routes, underlying weaknesses and impact using the same numbers as Figure 1 and the Top Threats table. Each route shows one example finding. Existing weakness links appear as W-IDs in parentheses; an absent W-ID means no explicit register link exists for that example. Potential business harm is labelled at group level. Full details remain in the linked findings and SVG tooltips.
+
 ## Example report: OWASP Juice Shop
 
 The [OWASP Juice Shop example](https://github.com/appsec-foundry/appsec-advisor-examples/blob/main/threat-modeler/threat-model-juice-shop-thorough-v0.6.0b3.md) shows a thorough assessment with evidence links, abuse cases, and attack paths.

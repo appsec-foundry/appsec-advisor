@@ -72,6 +72,15 @@ def test_overview_and_detail_use_existing_output_directory_permission():
     assert not any("figure1-detail" in e["entry"] for e in entries)
 
 
+def test_figure2_uses_existing_plugin_read_and_output_write_permissions():
+    entries = cp.load_required(cp.DATA_FILE)
+    read = next(e for e in entries if e["entry"] == "Read(${PLUGIN_ROOT}/**)")
+    write = next(e for e in entries if e["entry"] == "Write(${OUTPUT_DIR}/**)")
+    assert "Figure 2 presentation schema" in read["reason"]
+    assert "figure2 SVG" in write["reason"]
+    assert not any("figure2" in e["entry"] for e in entries)
+
+
 def test_yaml_entries_use_known_tools():
     entries = cp.load_required(cp.DATA_FILE)
     allowed_tools = {"Bash", "Write", "Edit", "Read"}

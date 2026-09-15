@@ -3780,15 +3780,16 @@ class TestSecurityPostureV2:
         compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         svg = (ctx.output_dir / "figure2.svg").read_text(encoding="utf-8")
         assert "Threat Actors" in svg
-        assert "Architecture Tiers" in svg
-        assert "Business Impact" in svg
+        assert "Attack Route" in svg
+        assert "Underlying Weakness" in svg
+        assert "Impact" in svg
 
-    def test_v2_svg_has_tier_and_impact_content(self, tmp_path):
+    def test_v2_svg_has_route_and_impact_content(self, tmp_path):
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
         compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
         svg = (ctx.output_dir / "figure2.svg").read_text(encoding="utf-8")
-        assert "Application Tier" in svg
-        assert "Customer Data Exfiltration" in svg
+        assert "data-route-number" in svg
+        assert "Disclosure of customer information" in svg
 
     def test_v2_svg_glyph_parity_with_table(self, tmp_path):
         # The figure's attack-arrow glyphs are recorded on the SVG root as a
@@ -3800,6 +3801,34 @@ class TestSecurityPostureV2:
         m = re.search(r'data-glyphs="([0-9 ]+)"', svg)
         assert m
         assert set(m.group(1).split()) == {"1", "2", "3", "4", "5", "6", "7"}
+
+    def test_v2_figure2_preserves_explicit_weakness_links(self, tmp_path):
+        import xml.etree.ElementTree as ET
+
+        yaml_data = self._yaml_seven_classes()
+        yaml_data["weaknesses"] = [
+            {"id": "W-031", "title": "Untrusted input reaches a query", "instances": [{"id": "T-001"}]}
+        ]
+        ctx, env = self._build_ctx(tmp_path, yaml_data, self._fragment_seven_classes())
+        out = compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
+        svg = (ctx.output_dir / "figure2.svg").read_text()
+        root = ET.fromstring(svg)
+        data = json.loads(root.find("{*}metadata").text)
+        assert data["routes"][0]["finding_id"] == "F-001"
+        assert data["routes"][0]["weakness_ids"] == ["W-031"]
+        assert all(not r["weakness_ids"] for r in data["routes"][1:])
+        assert "(W-031)" in " ".join(t.text or "" for t in root.findall(".//{*}text"))
+        assert "Each numbered route shows one example finding" in out
+
+    def test_v2_invalid_figure_data_stops_publication(self, tmp_path):
+        ctx, _ = self._build_ctx(tmp_path, self._yaml_seven_classes())
+        paths = self._fragment_seven_classes()
+        paths["attack_paths"][0]["findings"] = ["F-999"]
+        with pytest.raises(compose.ContractError, match="Figure 2 validation failed"):
+            compose._render_figure2_svg(
+                ctx, paths, compose._load_attack_class_taxonomy(), compose._load_business_impact_taxonomy()
+            )
+        assert not (ctx.output_dir / "figure2.svg").exists()
 
     def test_v2_seven_attack_arrows_with_glyphs(self, tmp_path):
         ctx, env = self._build_ctx(tmp_path, self._yaml_seven_classes(), self._fragment_seven_classes())
@@ -3841,8 +3870,8 @@ class TestSecurityPostureV2:
         assert "Full Admin Takeover" in out
         assert "Customer Session Hijack" in out
 
-    def test_v2_no_low_findings_in_tier_counts(self, tmp_path):
-        # Add a Low-severity finding; verify it is NOT shown in tier counts.
+    def test_v2_no_unselected_low_findings_in_routes(self, tmp_path):
+        # Findings outside the reconciled scenario membership stay out of Figure 2.
         yaml_data = self._yaml_seven_classes()
         yaml_data["threats"].append(
             {
@@ -3855,11 +3884,10 @@ class TestSecurityPostureV2:
         )
         ctx, env = self._build_ctx(tmp_path, yaml_data, self._fragment_seven_classes())
         compose._render_security_posture_at_a_glance(ctx, env, self._section_cfg())
-        # Figure 2 shows tier name + components only — Low-severity findings must
-        # never surface in it (no 🟢 / "Low" markers leak into the SVG).
+        # The unrelated Low finding must not leak into the selected routes.
         svg = (ctx.output_dir / "figure2.svg").read_text(encoding="utf-8")
-        assert "Application Tier" in svg
-        assert "🟢" not in svg
+        assert "data-route-number" in svg
+        assert 'data-finding-id="F-099"' not in svg
         assert "Low" not in svg
 
     def test_v2_fallback_when_fragment_missing(self, tmp_path):

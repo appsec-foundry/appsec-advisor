@@ -6049,29 +6049,25 @@ def _figure2_basename(ctx: RenderContext) -> str:
     return "figure2.svg"
 
 
-def _render_figure2_svg(ctx: RenderContext, diagram_data: dict) -> str:
-    """Build Figure 2 (the risk-flow heatmap) as a deterministic hand-built SVG,
-    write it next to threat-model.md, and return the image-reference markdown.
+def _render_figure2_svg(ctx: RenderContext, attack_paths: dict, attack_taxonomy: dict, impact_taxonomy: dict) -> str:
+    """Publish the validated route/weakness/impact figure beside the report.
 
-    Why SVG instead of the inline Mermaid heatmap: the Mermaid block declares the
-    ELK renderer (nested `direction TB` inside three invisible subgraph columns).
-    The plugin's PDF pipeline bundles ELK, but common Markdown viewers (GitHub,
-    VS Code preview, Obsidian) do NOT — they silently fall back to dagre, which
-    cannot honour the nested directions, so the 3-column layout collapses onto one
-    flat row with floating arrows. The SVG generator computes the layout itself and
-    emits plain primitives that render natively everywhere (mirrors Figure 1).
-
-    Returns "" when the builder yields nothing (missing module, no actor/tier
-    cards) — the caller then falls back to the inline Mermaid block.
+    Figure 1, Figure 2 and the table consume the same reconciled scenario order.
+    Invalid references or presentation data fail before the SVG is written.
     """
+    from figure2_svg import build_figure2_data, build_figure2_svg
+
     try:
-        from figure2_svg import build_figure2_svg
-    except Exception:  # noqa: BLE001 — missing module must never break the section
-        return ""
-    try:
-        svg = build_figure2_svg(diagram_data)
-    except Exception:  # noqa: BLE001 — a builder failure falls back to Mermaid
-        return ""
+        data = build_figure2_data(
+            ctx.yaml_data,
+            attack_paths,
+            attack_taxonomy,
+            impact_taxonomy,
+            (_load_posture_actor_labels() or {}).get("actors") or {},
+        )
+        svg = build_figure2_svg(data)
+    except (ValueError, jsonschema.ValidationError) as exc:
+        raise ContractError(f"Figure 2 validation failed: {exc}") from exc
     if not (svg or "").strip():
         return ""
     basename = _figure2_basename(ctx)
@@ -6090,7 +6086,7 @@ def _render_figure2_svg(ctx: RenderContext, diagram_data: dict) -> str:
         src = f"data:image/svg+xml;base64,{b64}"
     else:
         src = basename
-    return f"![Figure 2 - Risk Flow: Actor to Tier to Impact]({src})"
+    return f"![Figure 2 - Actors, attack routes, weaknesses and impact]({src})"
 
 
 def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
@@ -6890,8 +6886,7 @@ def _build_security_posture_actor_legend(
     if has_victim:
         intro += (
             " The **Shop User** is the *victim* of client-side attacks (XSS / CSRF), "
-            "not an attacker — in Figure 2 the compromise surfaces as the resulting "
-            "business-impact node rather than as a separate actor box."
+            "not an attacker. Figure 2 marks victim interaction on the applicable attack routes."
         )
     out = [intro, ""]
     for a in present:
@@ -7217,8 +7212,15 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # (`diagram_md`) when the SVG builder yields nothing. When the SVG is used,
     # the intro paragraph (emitted inside `diagram_md` by the template) is
     # re-prepended so the caption text is preserved.
-    figure2_svg_md = _render_figure2_svg(ctx, diagram_data)
-    figure2_block = f"{intro_paragraph}\n\n{figure2_svg_md}" if figure2_svg_md else diagram_md
+    figure2_svg_md = _render_figure2_svg(ctx, figure1_paths, attack_taxonomy, impact_taxonomy)
+    figure2_intro = (
+        "Each numbered route shows one example finding from the corresponding Top Threats group, "
+        "its underlying weakness and its reported consequence. Potential business harm follows the group's "
+        "reported impact categories and depends on deployment and affected assets. "
+        "W-IDs in parentheses link the example to an existing weakness. Ellipses mark excerpts; full details remain in findings and SVG tooltips. "
+        "Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to possible consequences."
+    )
+    figure2_block = f"{figure2_intro}\n\n{figure2_svg_md}" if figure2_svg_md else diagram_md
 
     # ---- Attack-paths bullet list -------------------------------------------
     # Prefix-tolerant lookup: the schema mandates F-NNN ids in the LLM-authored
@@ -7491,7 +7493,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     if actor_notes:
         parts += ["**Actor grouping.** " + " ".join(actor_notes), ""]
     parts += [
-        "**Figure 2 — Risk Flow: Actor → Tier → Impact**",
+        "**Figure 2 — Attack Routes and Impact**",
         "",
         figure2_block.rstrip(),
         "",

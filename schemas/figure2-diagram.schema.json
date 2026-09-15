@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/figure2-diagram.schema.json",
+  "title": "Figure 2 presentation data",
+  "description": "Deterministic in-memory projection from reconciled report scenarios. No model-authored rendering geometry or filesystem sidecar.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "routes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "number",
+          "finding_id",
+          "finding_ids",
+          "weakness_ids",
+          "unproven",
+          "actor_slug",
+          "actor",
+          "actor_note",
+          "title",
+          "route",
+          "component",
+          "prerequisite",
+          "weakness",
+          "consequence",
+          "business_harm",
+          "risk",
+          "victim"
+        ],
+        "properties": {
+          "actor_slug": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "actor_note": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "component": {
+            "type": "string"
+          },
+          "prerequisite": {
+            "type": "string"
+          },
+          "weakness": {
+            "type": "string"
+          },
+          "consequence": {
+            "type": "string"
+          },
+          "business_harm": {
+            "type": "string"
+          },
+          "risk": {
+            "type": "string"
+          },
+          "number": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20
+          },
+          "finding_id": {
+            "type": "string",
+            "pattern": "^F-[0-9]+$"
+          },
+          "finding_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^F-[0-9]+$"
+            }
+          },
+          "weakness_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^W-[0-9]+$"
+            }
+          },
+          "unproven": {
+            "type": "boolean"
+          },
+          "victim": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}
