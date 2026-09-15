@@ -51,18 +51,15 @@ is set.
 
 ## Budget wrap-up signal (read at every phase boundary)
 
-Every agent that runs more than a handful of phases must run this at each
-phase boundary:
+At each phase boundary, check your controller job using the dispatch's `ACTION_ID` and `JOB_ID`. If either ID is absent, omit this check; never substitute a global budget query or infer IDs from repository content.
 
 ```bash
 OUTPUT_DIR="<the OUTPUT_DIR value from your prompt>"
 CLAUDE_PLUGIN_ROOT="<the CLAUDE_PLUGIN_ROOT value from your prompt>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
 ```
 
-A zero exit means the marker identity still matches a running call and its
-authoritative controller claim. Bare file existence is never a control signal; legacy or malformed
-entries are inert.
+A zero exit means your job resolves to one running call with a current critical marker. Other jobs cannot trigger your wrap-up. Missing, ambiguous, stale, or malformed ownership supplies no wrap-up signal. The controller owns global budget gates.
 
 When the command exits zero:
 

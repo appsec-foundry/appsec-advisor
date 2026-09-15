@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agents no longer cut analysis short because another agent reaches its turn budget.
 - Weakness derivation covers verified attribute binding, code evaluation, browser credentials, and CSRF, preserves source evidence, and avoids unrelated grouping and safe-code false positives.
 
 ## 0.6.0-beta.3 (2026-09-14)

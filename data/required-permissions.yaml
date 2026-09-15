@@ -133,6 +133,7 @@ required:
 
   # --- Shell — one entry covers all commands without per-command maintenance ---
   # enrichment_pass.py uses this shell rule and the existing OUTPUT_DIR YAML write rule.
+  # budget_watchdog.py active-job-critical reads existing lifecycle and marker files through this rule.
   #
   # Why Bash(*) instead of per-command entries:
   #   Claude Code's Bash allow-list matches only the FIRST TOKEN of a simple command.

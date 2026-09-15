@@ -81,6 +81,14 @@ def test_figure2_uses_existing_plugin_read_and_output_write_permissions():
     assert not any("figure2" in e["entry"] for e in entries)
 
 
+def test_job_budget_query_uses_existing_shell_permission():
+    rules = [entry["entry"] for entry in cp.load_required(cp.DATA_FILE)]
+    command = "Bash(python3 budget_watchdog.py active-job-critical --output-dir out --action-id wave-a --job-id job-a)"
+    assert any(cp._rule_covers(rule, command) for rule in rules)
+    assert not any("budget_watchdog" in rule for rule in rules)
+    assert "budget_watchdog.py active-job-critical" in cp.DATA_FILE.read_text(encoding="utf-8")
+
+
 def test_yaml_entries_use_known_tools():
     entries = cp.load_required(cp.DATA_FILE)
     allowed_tools = {"Bash", "Write", "Edit", "Read"}

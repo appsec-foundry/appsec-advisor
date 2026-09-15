@@ -45,8 +45,11 @@ retires it with the terminal call. Budget markers retain the compatible JSON
 list envelope but each new entry must validate against
 `schemas/agent-call-budget-marker.schema.json`. Entries without a current
 `agent_call_id + action_id + job_id + component_id + attempt` identity are
-inert. Consumers use `budget_watchdog.py active-critical`; they never branch on
-marker-file existence. Terminal cleanup first emits `AGENT_FAILED` for any
+inert.
+
+Agents use `budget_watchdog.py active-job-critical --action-id <ACTION_ID> --job-id <JOB_ID>` with their controller dispatch identity. Only a critical marker belonging to that job's unique current call authorizes its wrap-up. Missing or ambiguous identity supplies no wrap-up signal and never falls back to another job. Controller gates retain the global `active-critical` query. Neither consumer branches on marker-file existence.
+
+Terminal cleanup first emits `AGENT_FAILED` for any
 remaining calls, retires their counters and markers, then removes
 `.active-tool-calls/`.
 

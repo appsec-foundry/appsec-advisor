@@ -673,3 +673,183 @@ def test_a_leaked_call_cannot_hold_a_budget_claim_forever(tmp_path: Path):
 
     _age(bw.LEAKED_CALL_SECONDS + 60)
     assert bw.has_active_critical_claim(tmp_path) is False, "a leaked call must not hold the claim"
+
+
+def _job_call(output_dir, component, *, action="wave-a", attempt=1, call_id=None):
+    import agent_lifecycle
+
+    job = f"stride:{component}:attempt-{attempt}"
+    plan_path = output_dir / ".context-routing-plan.json"
+    plan = json.loads(plan_path.read_text()) if plan_path.exists() else {"actions": []}
+    plan["actions"].append({"action_id": action, "job_ids": [job]})
+    plan_path.write_text(json.dumps(plan))
+    waves_path = output_dir / ".dispatch-waves.json"
+    waves = (
+        json.loads(waves_path.read_text())
+        if waves_path.exists()
+        else {"active_claim": {"component_ids": [], "attempts": {}}}
+    )
+    waves["active_claim"]["component_ids"].append(component)
+    waves["active_claim"]["attempts"][component] = attempt
+    waves_path.write_text(json.dumps(waves))
+    identity = {
+        "agent_call_id": call_id or f"call-{action}-{component}-{attempt}",
+        "session_id": "shared01",
+        "agent": "stride-analyzer-v2",
+        "agent_type": "appsec-advisor:appsec-stride-analyzer-v2",
+        "model": "sonnet",
+        "description": "Neutral component analysis",
+        "background": True,
+        "max_turns": 10,
+        "action_id": action,
+        "job_id": job,
+        "component_id": component,
+        "attempt": attempt,
+    }
+    agent_lifecycle.register_call(output_dir, identity)
+    call = next(
+        row for row in agent_lifecycle.running_calls(output_dir) if row["agent_call_id"] == identity["agent_call_id"]
+    )
+    bw.open_call(call, output_dir)
+    return call
+
+
+def _job_check(output_dir, call):
+    return bw.main(
+        [
+            "active-job-critical",
+            "--output-dir",
+            str(output_dir),
+            "--action-id",
+            call["action_id"],
+            "--job-id",
+            call["job_id"],
+        ]
+    )
+
+
+@pytest.mark.parametrize("components", [("api", "worker"), ("gateway", "store")])
+def test_job_budget_does_not_wrap_up_another_parallel_component(tmp_path, components):
+    from jsonschema import Draft202012Validator
+
+    critical = _job_call(tmp_path, components[0])
+    other = _job_call(tmp_path, components[1])
+    assert bw.observe_tool_uses(critical, 9, tmp_path)["event"] == "BUDGET_CRITICAL"
+    before = {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+    assert _job_check(tmp_path, other) == 1
+    assert _job_check(tmp_path, critical) == 0
+    assert bw.main(["active-critical", "--output-dir", str(tmp_path)]) == 0
+    assert bw.has_active_critical_claim(tmp_path)
+    assert {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()} == before
+    for filename, schema_name in (
+        (bw.STATE_FILENAME, "agent-call-budget-state.schema.json"),
+        (bw.CRITICAL_FLAG_FILENAME, "agent-call-budget-marker.schema.json"),
+    ):
+        schema = json.loads((PLUGIN_ROOT / "schemas" / schema_name).read_text())
+        Draft202012Validator(schema).validate(json.loads((tmp_path / filename).read_text()))
+
+
+def test_job_budget_requires_both_action_and_job_to_match(tmp_path):
+    critical = _job_call(tmp_path, "api")
+    bw.observe_tool_uses(critical, 9, tmp_path)
+    same_job_elsewhere = _job_call(tmp_path, "api", action="wave-b")
+    assert _job_check(tmp_path, same_job_elsewhere) == 1
+    assert _job_check(tmp_path, {**critical, "job_id": "stride:worker:attempt-1"}) == 1
+
+
+def test_job_budget_without_lifecycle_does_not_recreate_cleaned_state(tmp_path):
+    output = tmp_path / "missing-output"
+    call = {"action_id": "wave-a", "job_id": "stride:api:attempt-1"}
+    assert _job_check(output, call) == 1
+    assert not output.exists()
+    (tmp_path / bw.CRITICAL_FLAG_FILENAME).write_text(json.dumps([_marker_payload()]))
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    assert _job_check(tmp_path, call) == 1
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
+
+
+@pytest.mark.parametrize("retirement", ["terminal", "stopped", "attempt", "action", "expired", "malformed"])
+def test_job_budget_keeps_existing_marker_retirement_rules(tmp_path, retirement):
+    import time
+
+    import agent_lifecycle
+
+    call = _job_call(tmp_path, "api")
+    bw.observe_tool_uses(call, 9, tmp_path)
+    assert _job_check(tmp_path, call) == 0
+    if retirement == "terminal":
+        agent_lifecycle.finish_call(tmp_path, call["agent_call_id"])
+    elif retirement in {"stopped", "expired"}:
+        path = agent_lifecycle.state_path(tmp_path)
+        state = json.loads(path.read_text())
+        if retirement == "stopped":
+            state["calls"][0]["stopped_at"] = int(time.time())
+        else:
+            state["calls"][0]["running_at"] = int(time.time()) - bw.LEAKED_CALL_SECONDS - 1
+        path.write_text(json.dumps(state))
+    elif retirement == "attempt":
+        _job_call(tmp_path, "api", attempt=2)
+    elif retirement == "action":
+        (tmp_path / ".context-routing-plan.json").write_text(json.dumps({"actions": []}))
+    else:
+        (tmp_path / bw.CRITICAL_FLAG_FILENAME).write_text("not JSON")
+    assert _job_check(tmp_path, call) == 1
+    assert not bw.has_active_critical_claim(tmp_path)
+
+
+def test_job_budget_does_not_choose_between_duplicate_running_calls(tmp_path):
+    call = _job_call(tmp_path, "api")
+    bw.observe_tool_uses(call, 9, tmp_path)
+    _job_call(tmp_path, "api", call_id="duplicate-call")
+    assert _job_check(tmp_path, call) == 1
+    assert bw.has_active_critical_claim(tmp_path)
+
+
+@pytest.mark.parametrize("ids", [[], ["--action-id", "wave-a"], ["--job-id", "job-a"]])
+def test_job_budget_missing_identity_never_falls_back_to_global(tmp_path, ids):
+    call = _job_call(tmp_path, "api")
+    bw.observe_tool_uses(call, 9, tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        bw.main(["active-job-critical", "--output-dir", str(tmp_path), *ids])
+    assert exc.value.code == 2
+    assert bw.has_active_critical_claim(tmp_path)
+
+
+@pytest.mark.parametrize("invalid", ["", "../wave-a", "wave a", "x" * 257])
+def test_job_budget_invalid_identity_never_falls_back_to_global(tmp_path, invalid):
+    call = _job_call(tmp_path, "api")
+    bw.observe_tool_uses(call, 9, tmp_path)
+    assert _job_check(tmp_path, {**call, "action_id": invalid}) == 1
+    assert _job_check(tmp_path, {**call, "job_id": invalid}) == 1
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "agents/appsec-stride-analyzer-v2.md",
+        "agents/appsec-abuse-case-verifier.md",
+        "agents/shared/logging-standard.md",
+    ],
+)
+def test_shipped_agent_budget_command_uses_only_its_dispatch_job(tmp_path, relative):
+    import re
+    import subprocess
+
+    critical = _job_call(tmp_path, "api")
+    other = _job_call(tmp_path, "worker")
+    bw.observe_tool_uses(critical, 9, tmp_path)
+    text = (PLUGIN_ROOT / relative).read_text()
+    blocks = [block for block in re.findall(r"```bash\n(.*?)```", text, re.DOTALL) if "budget_watchdog.py" in block]
+    assert len(blocks) == 1
+    for call, expected in ((other, 1), (critical, 0)):
+        values = {
+            "OUTPUT_DIR": str(tmp_path),
+            "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT),
+            "ACTION_ID": call["action_id"],
+            "JOB_ID": call["job_id"],
+        }
+        command = re.sub(r"<([^>]+)>", lambda m: next(v for k, v in values.items() if k in m[1]), blocks[0])
+        result = subprocess.run(["bash", "-c", command], capture_output=True, text=True)
+        assert result.returncode == expected, result.stderr
+        assert not result.stdout

@@ -532,6 +532,35 @@ def has_active_critical_claim(output_dir: str | Path) -> bool:
     return bool(active_marker_entries(output_dir, CRITICAL_FLAG_FILENAME))
 
 
+def has_active_critical_job_claim(output_dir: str | Path, *, action_id: str, job_id: str) -> bool:
+    """Check one controller job without borrowing another call's budget.
+
+    Dispatches already carry action/job IDs; the lifecycle resolves them to
+    the immutable tool-use ID. Ambiguous or unavailable ownership supplies no
+    wrap-up signal, just as ambiguous hook attribution supplies no turn count.
+    Global controller gates continue to use ``has_active_critical_claim``.
+    """
+    if not _ID_RE.fullmatch(action_id) or not _ID_RE.fullmatch(job_id):
+        return False
+    # running_calls takes a filesystem lock; do not recreate its directory
+    # when cleanup already removed the lifecycle or the run never started.
+    if not agent_lifecycle.state_path(output_dir).is_file():
+        return False
+    calls = [
+        call
+        for call in agent_lifecycle.running_calls(output_dir)
+        if call.get("action_id") == action_id
+        and call.get("job_id") == job_id
+        and agent_lifecycle.is_current_claim(output_dir, call)
+    ]
+    if len(calls) != 1:
+        return False
+    return any(
+        entry["agent_call_id"] == calls[0]["agent_call_id"]
+        for entry in active_marker_entries(output_dir, CRITICAL_FLAG_FILENAME)
+    )
+
+
 def format_detail(payload: dict) -> str:
     return (
         f"agent={payload.get('agent', '?')}  "
@@ -546,9 +575,15 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     active = sub.add_parser("active-critical")
     active.add_argument("--output-dir", required=True, type=Path)
+    job = sub.add_parser("active-job-critical")
+    job.add_argument("--output-dir", required=True, type=Path)
+    job.add_argument("--action-id", required=True)
+    job.add_argument("--job-id", required=True)
     args = parser.parse_args(argv)
     if args.command == "active-critical":
         return 0 if has_active_critical_claim(args.output_dir) else 1
+    if args.command == "active-job-critical":
+        return 0 if has_active_critical_job_claim(args.output_dir, action_id=args.action_id, job_id=args.job_id) else 1
     return 2
 
 

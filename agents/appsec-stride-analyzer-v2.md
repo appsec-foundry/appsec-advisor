@@ -274,12 +274,12 @@ these exact threat fields:
 `evidence.line` names the vulnerable statement, route registration, unsafe API,
 or configuration value, never a header, blank, comment, or closing brace.
 
-After each category, run:
+After each category, check your dispatch IDs:
 
 ```bash
 OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-critical --output-dir "$OUTPUT_DIR"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-job-critical --output-dir "$OUTPUT_DIR" --action-id "<ACTION_ID>" --job-id "<JOB_ID>"
 ```
 
 If it returns zero, finish the current category, flush its valid findings, mark

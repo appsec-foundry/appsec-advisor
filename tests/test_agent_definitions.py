@@ -1241,3 +1241,22 @@ def test_recon_signal_prompt_states_the_coupling_the_validator_enforces():
         "the prompt must name the compliant way out when no location was observed"
     )
     assert "never invent a location" in rules, "the way out must not be fabricated evidence"
+
+
+def test_agent_budget_queries_require_their_controller_job_identity():
+    queries = []
+    for path in AGENTS_DIR.rglob("*.md"):
+        for block in _BASH_BLOCKS.findall(path.read_text(encoding="utf-8")):
+            if "budget_watchdog.py" not in block:
+                continue
+            queries.append(path)
+            assert "active-job-critical" in block, path
+            assert '--action-id "<ACTION_ID>"' in block, path
+            assert '--job-id "<JOB_ID>"' in block, path
+            assert not re.search(r"\bactive-critical\b", block), path
+    assert queries, "expected live agent budget queries"
+    root = AGENTS_DIR.parent / "skills" / "create-threat-model"
+    for filename in ("SKILL-thin-stage1-v2.md", "SKILL-thin-stage1d.md"):
+        text = (root / filename).read_text(encoding="utf-8")
+        assert "ACTION_ID=<context_plan.action_id>" in text
+        assert "JOB_ID=<dispatch_jobs[].job_id>" in text
