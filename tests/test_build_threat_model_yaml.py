@@ -3419,6 +3419,12 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
                     "data_classification": "Public",
                     "label": "Settings request",
                     "diagram_label": "Settings updates",
+                    "authentication": {
+                        "scheme": "basic",
+                        "scope": "Settings access",
+                        "transport": "protected",
+                        "evidence": [{"file": "roles.ts", "line": 1}],
+                    },
                     "provenance": "architecture",
                     "evidence": [{"file": "roles.ts", "line": 1}],
                 }
@@ -3433,6 +3439,34 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
     assert model["external_entities"] == [entity]
     assert model["data_flows"][0]["from_entity"] == "ext-operator"
     assert model["data_flows"][0]["diagram_label"] == "Settings updates"
+    assert model["data_flows"][0]["authentication"]["scheme"] == "basic"
+    assert model["data_flows"][0]["authentication"]["evidence"] == [{"file": "roles.ts", "line": 1}]
+    # The same canonical producer must preserve explicit alternatives and steps,
+    # rather than leaving them usable only by a standalone preview renderer.
+    flow_path = tmp_path / ".data-flows.json"
+    data = json.loads(flow_path.read_text())
+    first = data["data_flows"][0]
+    for mode in ("alternatives", "sequence"):
+        data["data_flows"] = [
+            {
+                **first,
+                "id": f"df-{i:03d}",
+                "access_group": {
+                    "id": "access",
+                    "mode": mode,
+                    "label": "Settings access",
+                    **({"step": i} if mode == "sequence" else {}),
+                },
+            }
+            for i in (1, 2)
+        ]
+        flow_path.write_text(json.dumps(data))
+        replay = subprocess.run(
+            [sys.executable, str(SCRIPT), str(tmp_path), "--repo-root", str(tmp_path)], capture_output=True, text=True
+        )
+        assert replay.returncode == 0, replay.stderr
+        rebuilt = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())
+        assert rebuilt["data_flows"] == data["data_flows"]
     assert model["meta"]["open_user_registration"] is (True if owner is None else owner)
     assert model["meta"]["open_registration_source"] == "actor-resolution"
     if owner is not None:

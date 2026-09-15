@@ -275,6 +275,11 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
             flow_id = str(flow.get("id") or "<unknown>")
             evidence = flow.get("evidence", [])
             errors.extend(repository_evidence_errors(evidence, root, label=f"data flow {flow_id} evidence"))
+            auth = flow.get("authentication")
+            if isinstance(auth, dict):
+                errors.extend(
+                    repository_evidence_errors(auth.get("evidence"), root, label=f"data flow {flow_id} authentication")
+                )
         for entity in data.get("external_entities") or []:
             errors.extend(
                 repository_evidence_errors(entity.get("evidence"), root, label=f"entity {entity.get('id')} evidence")
@@ -292,16 +297,27 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
 
 def architecture_reference_errors(data: dict) -> list[str]:
     """Validate optional identities; schema-invalid shapes remain validation errors."""
+    from figure1_security import access_groups
 
     def rows(value):
         return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
-    errors = []
+    _groups, errors = access_groups(rows(data.get("data_flows")))
     entities = rows(data.get("external_entities"))
     entity_ids = [e["id"] for e in entities if isinstance(e.get("id"), str)]
+    entity_kinds = {e["id"]: e.get("kind") for e in entities if isinstance(e.get("id"), str)}
     if len(entity_ids) != len(set(entity_ids)):
         errors.append("external_entities contains duplicate IDs")
     for flow in rows(data.get("data_flows")):
+        if flow.get("interaction") and (
+            flow.get("from") != "external"
+            or entity_kinds.get(flow.get("from_entity")) != "legitimate-role"
+            or flow.get("to") == "external"
+            or flow.get("authentication")
+        ):
+            errors.append(
+                f"{flow.get('id')}: interaction must be a human-to-client access without a server authentication claim"
+            )
         for side in ("from", "to"):
             ref = flow.get(f"{side}_entity")
             if ref is not None and (ref not in entity_ids or flow.get(side) != "external"):
@@ -312,6 +328,9 @@ def architecture_reference_errors(data: dict) -> list[str]:
         if component_ids.intersection(entity_ids):
             errors.append("external entity IDs must not collide with component IDs")
         tiers = {c["id"]: c.get("tier") for c in components}
+        for flow in rows(data.get("data_flows")):
+            if flow.get("interaction") and tiers.get(flow.get("to")) != "client":
+                errors.append(f"{flow.get('id')}: human interaction must target a client component")
         for threat in rows(data.get("threats")):
             if (
                 str(threat.get("cwe") or "").upper() in {"CWE-79", "CWE-80"}

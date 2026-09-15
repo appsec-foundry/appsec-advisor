@@ -5919,11 +5919,15 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     # falls back like a crash does — and both paths leave a RENDER_WARN, so a
     # silent downgrade cannot hide behind a report that still has a Figure 1.
     svg, intro = "", ""
+    detail_svg = ""
+    detail_basename = f"{Path(ctx.figure_basename).stem}-detail.svg"
     role_notes = []
     try:
         from figure1_dfd import check_diagram, legitimate_role_notes
 
-        svg, problems = check_diagram(ctx.yaml_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels)
+        svg, problems = check_diagram(
+            ctx.yaml_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=False
+        )
         if problems:
             ctx.warnings.append(
                 f"figure1: data-flow diagram failed its self-check ({len(problems)} problem(s): "
@@ -5933,12 +5937,26 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         else:
             role_notes = legitimate_role_notes(ctx.yaml_data)
             intro = (
-                "Data-flow diagram: external entities, processes and data stores in their trust zones "
-                "(Internet → Application → Data), the data flows between them, and the attack scenarios "
-                "numbered as in the table below. Each crossing of a dashed trust-boundary line carries the "
-                "`tb-N` id catalogued in [§1 Trust Boundaries](#trust-boundaries) with the verdict on its "
-                "enforcement assumption. The legend below the diagram explains the notation."
+                (
+                    "Numbered hexagons identify authentication at each access; `0` means no separate login and `?` means "
+                    "not established. Colours describe method properties, not implementation assurance. "
+                    if "data-authentication=" in svg
+                    else ""
+                )
+                + "Attack numbers match the scenarios below. The complete boundary catalogue remains in "
+                "[§1 Trust Boundaries](#trust-boundaries)."
             )
+            try:
+                detail_svg, detail_problems = check_diagram(
+                    ctx.yaml_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=True
+                )
+            except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
+                detail_svg, detail_problems = "", [str(exc)]
+            if detail_problems:
+                ctx.warnings.append(
+                    f"figure1: detailed diagram failed its self-check: {'; '.join(detail_problems[:3])}"
+                )
+                detail_svg = ""
     except Exception as exc:  # noqa: BLE001 — the DFD builder must never break the section
         ctx.warnings.append(
             f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc}) — rendered the tier-stack fallback"
@@ -5968,6 +5986,11 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             )
     # Always write the file (referenced by the published md / consumed by export).
     (ctx.output_dir / ctx.figure_basename).write_text(svg, encoding="utf-8")
+    detail_path = ctx.output_dir / detail_basename
+    if detail_svg:
+        detail_path.write_text(detail_svg, encoding="utf-8")
+    elif detail_path.exists():
+        detail_path.unlink()  # Never leave a prior run's detail next to the current overview.
     # Embed inline when the CLI flag is set OR the skill persisted the choice in
     # .skill-config.json — the latter lets `/create-threat-model --embed-figures`
     # work through the renderer/recompose paths without threading a flag to each.
@@ -5986,7 +6009,14 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     else:
         src = ctx.figure_basename
     caption = "\n\n" + " ".join(role_notes) if role_notes else ""
-    return f"{intro}\n\n![Figure 1 - Architecture & Top Threats]({src}){caption}"
+    if detail_svg:
+        detail_src = (
+            "data:image/svg+xml;base64," + base64.b64encode(detail_svg.encode("utf-8")).decode("ascii")
+            if embed
+            else detail_basename
+        )
+        caption += f"\n\n[Detailed architecture diagram]({detail_src})"
+    return f"{intro}\n\n![Figure 1 - Architecture and Threat Overview]({src}){caption}"
 
 
 def _figure2_basename(ctx: RenderContext) -> str:
@@ -7436,7 +7466,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
 
     parts: list[str] = ["### Security Posture & Top Threats", ""]
     if figure1_md:
-        parts += ["**Figure 1 — Architecture & Top Threats**", "", figure1_md, ""]
+        parts += ["**Figure 1 — Architecture and Threat Overview**", "", figure1_md, ""]
     if actor_notes:
         parts += ["**Actor grouping.** " + " ".join(actor_notes), ""]
     parts += [

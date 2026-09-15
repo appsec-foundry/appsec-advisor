@@ -5,14 +5,58 @@ require-mermaid render-ok/render-bad/skip), export_html (with and without
 mermaid), and main() dispatch (check-only, missing input, missing css,
 conversion error, success, abort).
 
-The heavy external tools (pandoc, mmdc) are never actually invoked: the
-export_pdf helpers (check_tool, probe_runs, probe_mmdc, render_mermaid_blocks,
-md_to_html) are monkeypatched on the export_html module namespace.
+Most tests replace the external tools. One optional pandoc smoke test verifies
+that the detail diagram is embedded in the standalone HTML.
 """
 
 from __future__ import annotations
 
+import shutil
+
 import export_html
+import pytest
+
+
+@pytest.mark.parametrize("stem", ["figure1", "service-review.figure1"])
+def test_architecture_detail_is_an_embeddable_collapsed_image(stem):
+    ref = f"{stem}-detail.svg"
+    result = export_html._expand_architecture_detail(f"[Detailed architecture diagram]({ref})")
+    assert "<details>" in result
+    assert f"![Detailed architecture diagram]({ref})" in result
+
+
+@pytest.mark.parametrize("ref", ["../figure1-detail.svg", "https://example.test/figure1-detail.svg", "notes.svg"])
+def test_architecture_detail_does_not_expand_other_links(ref):
+    text = f"[Detailed architecture diagram]({ref})"
+    assert export_html._expand_architecture_detail(text) == text
+
+
+def test_architecture_detail_embedded_form_stays_self_contained():
+    ref = "data:image/svg+xml;base64,PHN2Zy8+"
+    result = export_html._expand_architecture_detail(f"[Detailed architecture diagram]({ref})")
+    assert f"![Detailed architecture diagram]({ref})" in result
+
+
+@pytest.mark.skipif(not shutil.which("pandoc"), reason="pandoc is not installed")
+def test_architecture_detail_standalone_html_smoke(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    detail = "neutral-review.figure1-detail.svg"
+    (source / detail).write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><text y="20">Detail</text></svg>'
+    )
+    report = source / "report.md"
+    report.write_text(f"# Review\n\n[Detailed architecture diagram]({detail})\n")
+    css = tmp_path / "print.css"
+    css.write_text("body { color: black; }")
+    output = tmp_path / "standalone.html"
+    assert export_html.export_html(report, output, use_mermaid=False, css_path=css) == 0
+    html = output.read_text()
+    assert "<details>" in html
+    assert '<img src="data:image/svg+xml;base64,' in html or "<svg" in html
+    assert f'href="{detail}"' not in html
+    assert f'src="{detail}"' not in html
+
 
 # --------------------------------------------------------------------------
 # preflight()

@@ -30,6 +30,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -70,6 +71,23 @@ except ImportError:
 
 
 DEFAULT_INPUT_REL = "docs/security/threat-model.md"
+
+
+def _expand_architecture_detail(md_text: str) -> str:
+    """Keep the generated detail accessible inside the standalone HTML export.
+
+    A normal hyperlink is not embedded by pandoc. Convert only the generated
+    sibling asset (or its embedded form) into a collapsed image section; the
+    existing image staging path then includes it without introducing new I/O.
+    """
+    return re.sub(
+        r"^\[Detailed architecture diagram\]\("
+        r"((?:[\w.-]+\.)?figure1-detail\.svg|data:image/svg\+xml;base64,[A-Za-z0-9+/=]+)\)$",
+        lambda match: "<details>\n<summary>Detailed architecture diagram</summary>\n\n"
+        f"![Detailed architecture diagram]({match[1]})\n\n</details>",
+        md_text,
+        flags=re.MULTILINE,
+    )
 
 
 def preflight(require_mermaid: bool) -> tuple[bool, list[str]]:
@@ -133,6 +151,7 @@ def export_html(
 ) -> int:
     md_text = input_md.read_text(encoding="utf-8")
     md_text = rewrite_vscode_links(md_text)
+    md_text = _expand_architecture_detail(md_text)
 
     with tempfile.TemporaryDirectory(prefix="export-html-") as tmp:
         work = Path(tmp)

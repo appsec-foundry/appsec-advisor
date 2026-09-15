@@ -5732,6 +5732,27 @@ def test_render_figure1_svg_writes_file_and_image_ref(tmp_path: Path) -> None:
     assert svg.is_file() and svg.read_text(encoding="utf-8").startswith("<svg")
 
 
+def test_detail_failure_keeps_overview_and_removes_stale_detail(tmp_path, monkeypatch):
+    import figure1_dfd
+
+    render = figure1_dfd.check_diagram
+
+    def fail_detail(*args, **kwargs):
+        if kwargs.get("detail"):
+            raise ValueError("invalid detail geometry")
+        return render(*args, **kwargs)
+
+    monkeypatch.setattr(figure1_dfd, "check_diagram", fail_detail)
+    stale = tmp_path / "figure1-detail.svg"
+    stale.write_text("prior run")
+    ctx = _fig1_ctx(tmp_path)
+    markdown = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert "data-legend-section" in (tmp_path / "figure1.svg").read_text()
+    assert "Detailed architecture diagram" not in markdown
+    assert not stale.exists()
+    assert any("detailed diagram failed" in warning for warning in ctx.warnings)
+
+
 def test_render_figure1_svg_empty_without_attack_paths(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
@@ -5813,7 +5834,10 @@ def test_render_figure1_svg_prefers_the_data_flow_diagram(tmp_path: Path) -> Non
     out.mkdir()
     ctx = _fig1_ctx(out)
     md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
-    assert md.startswith("Data-flow diagram:")
+    assert md.startswith("Attack numbers match the scenarios below.")
+    assert "Numbered hexagons" not in md  # This legacy fixture has no data-flow authentication ports.
+    assert "Architecture and Threat Overview" in md
+    assert (out / "figure1-detail.svg").is_file()
     assert "Architecture tiers top-to-bottom" not in md
     assert not [w for w in ctx.warnings if w.startswith("figure1:")]
     assert 'data-legend-section="notation"' in (out / "figure1.svg").read_text(encoding="utf-8")

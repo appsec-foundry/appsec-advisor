@@ -522,6 +522,7 @@ class TestPreflightScansEveryPublishableFile:
             ("threat-model.yaml", 'evidence:\n  snippet: "password: Pr0dP4ss!2024xyz"\n'),
             ("threat-model.sarif.json", '{"text":"DB_PASSWORD=Pr0dP4ss!2024xyz"}'),
             (".architect-review.md", "Observed `api_key: AKIAIOSFODNN7EXAMPLE`\n"),
+            ("threat-model.figure1-detail.svg", "<svg><text>DB_PASSWORD=Pr0dP4ss!2024xyz</text></svg>"),
         ],
     )
     def test_a_secret_in_any_published_file_is_found(self, tmp_path, name, content):

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Changed
+
+- Figure 1 shows evidenced authentication at component accesses in a compact architecture and threat overview, with a separate detailed diagram.
+
 ## 0.6.0-beta.3 (2026-09-14)
 
 ### Added

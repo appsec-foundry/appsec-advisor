@@ -77,7 +77,7 @@ required:
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"
-    reason: "deterministic preparers, context projectors, build_stride_evidence_bundles.py, compose_threat_model.py, fragment writers, and annotators write under OUTPUT_DIR, including run-bound .dispatch-context/editorial/plan-<batch>.json packets and gate comparison receipts, bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
+    reason: "deterministic preparers, context projectors, build_stride_evidence_bundles.py, compose_threat_model.py (including paired figure1 and figure1-detail SVGs), fragment writers, and annotators write under OUTPUT_DIR, including run-bound .dispatch-context/editorial/plan-<batch>.json packets and gate comparison receipts, bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"

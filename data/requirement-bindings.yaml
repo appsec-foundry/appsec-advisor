@@ -401,6 +401,7 @@ requirements:
       - scripts/emit_auth_coverage.py
       - scripts/match_abuse_cases.py
       - scripts/figure1_dfd.py
+      - scripts/figure1_security.py
       - scripts/figure1_svg.py
       - data/posture-actor-labels.yaml
       - scripts/walkthrough_renderer.py
@@ -461,6 +462,14 @@ requirements:
       - tests/test_figure1_dfd.py::test_intra_column_arrow_tips_have_a_straight_approach
       - tests/test_figure1_dfd.py::test_flow_legend_groups_drawn_edges_and_keeps_all_flow_meanings
       - tests/test_figure1_dfd.py::test_flow_legends_accept_arbitrary_protocols_without_catalogs
+      - tests/test_figure1_dfd.py::test_overview_authentication_ports_are_evidenced_and_geometry_checked
+      - tests/test_figure1_dfd.py::test_overview_reference_rows_name_peers_and_keep_authentication_at_receiver
+      - tests/test_figure1_dfd.py::test_reference_footers_wrap_long_names_and_multiple_receiving_methods
+      - tests/test_figure1_dfd.py::test_authentication_markers_use_the_same_hexagon_at_accesses_and_in_legend
+      - tests/test_figure1_dfd.py::test_explicit_access_groups_preserve_methods_and_individual_detail
+      - tests/test_figure1_security.py::test_access_groups_reject_ambiguous_or_unevidenced_relationships
+      - tests/test_figure1_security.py::test_missing_authentication_never_becomes_none
+      - tests/test_figure1_security.py::test_catalog_reuses_method_not_component_name_or_evidence
       - tests/test_figure1_dfd.py::test_scenario_title_is_preserved_without_inventing_mechanisms
       - tests/test_figure1_dfd.py::test_actor_grouping_is_explained_inside_its_node
       - tests/test_compose_threat_model.py::test_figure1_authored_title_survives_loading_unless_membership_expands

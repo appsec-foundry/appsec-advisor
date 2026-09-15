@@ -34,6 +34,9 @@ TIER2 = [
     "threat-model.threatdragon.json",
     "threat-model.pdf",
     "figure1.svg",
+    "figure1-detail.svg",
+    "threat-model.figure1.svg",
+    "threat-model.figure1-detail.svg",
     ".architect-review.md",
 ]
 

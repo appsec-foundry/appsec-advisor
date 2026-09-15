@@ -61,6 +61,17 @@ def test_default_slug_is_random_hex(tmp_path):
     assert slug, stamped[0].name
 
 
+def test_detail_diagram_travels_with_stamped_report(tmp_path):
+    _seed_model(tmp_path)
+    model = tmp_path / "threat-model.md"
+    model.write_text(model.read_text() + "\n[Details](threat-model.figure1-detail.svg)\n")
+    (tmp_path / "threat-model.figure1-detail.svg").write_text("<svg/>\n")
+    result = _run("--output-dir", str(tmp_path), "--slug", "detail")
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "threat-model-detail.figure1-detail.svg").is_file()
+    assert "(threat-model-detail.figure1-detail.svg)" in (tmp_path / "threat-model-detail.md").read_text()
+
+
 def test_missing_model_errors(tmp_path):
     r = _run("--output-dir", str(tmp_path), "--slug", "x")
     assert r.returncode == 2

@@ -65,6 +65,13 @@ def test_yaml_entries_are_unique():
     assert len(raw_entries) == len(set(raw_entries)), "duplicate entries in required-permissions.yaml"
 
 
+def test_overview_and_detail_use_existing_output_directory_permission():
+    entries = cp.load_required(cp.DATA_FILE)
+    write = next(e for e in entries if e["entry"] == "Write(${OUTPUT_DIR}/**)")
+    assert "figure1-detail" in write["reason"]
+    assert not any("figure1-detail" in e["entry"] for e in entries)
+
+
 def test_yaml_entries_use_known_tools():
     entries = cp.load_required(cp.DATA_FILE)
     allowed_tools = {"Bash", "Write", "Edit", "Read"}

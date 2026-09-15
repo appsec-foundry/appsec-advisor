@@ -20,6 +20,335 @@ import pytest
 _GLYPHS = ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
 
 
+@pytest.mark.parametrize("name", ["Account access", "Telemetry access"])
+@pytest.mark.parametrize("mode", ["alternatives", "sequence"])
+def test_explicit_access_groups_preserve_methods_and_individual_detail(name, mode):
+    from tests.test_figure1_security import auth
+
+    model, paths, taxonomy = _model()
+    model["data_flows"] = [
+        {
+            "id": f"df-{i:03d}",
+            "from": "spa",
+            "to": "app0",
+            "protocol": "HTTPS",
+            "label": f"Operation {i}",
+            "diagram_label": name,
+            "interface_refs": [f"operation-{i}"],
+            "authentication": auth(scheme),
+            "access_group": {
+                "id": "access",
+                "mode": mode,
+                "label": name,
+                **({"step": i} if mode == "sequence" else {}),
+            },
+        }
+        for i, scheme in enumerate(("password", "bearer"), 1)
+    ]
+    original = copy.deepcopy(model)
+    svg, errors = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert not errors
+    root = ET.fromstring(svg)
+    edge = root.find("{*}g[@data-flow-ids='df-001 df-002']")
+    assert edge is not None and edge.get("data-access-mode") == mode
+    ports = root.findall("{*}g[@data-auth-flows='df-001 df-002']/{*}g[@data-authentication]")
+    assert len(ports) == 2
+    assert [p.get("data-authentication") for p in ports] == (["2", "1"] if mode == "sequence" else ["1", "2"])
+    assert name in svg
+    assert "Clients" in svg
+    detail, errors = F.check_diagram(model, paths, taxonomy, detail=True)
+    assert not errors
+    detail_root = ET.fromstring(detail)
+    assert detail_root.find("{*}g[@data-flow-ids='df-001']") is not None
+    assert detail_root.find("{*}g[@data-flow-ids='df-002']") is not None
+    assert model == original
+    for flow in model["data_flows"]:
+        flow.pop("access_group")
+    separate, errors = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert not errors
+    assert ET.fromstring(separate).find("{*}g[@data-flow-ids='df-001 df-002']") is None
+
+
+@pytest.mark.parametrize("provider", ["Federation Gateway", "Independent Authentication Authority With A Longer Name"])
+def test_overview_reference_rows_name_peers_and_keep_authentication_at_receiver(provider):
+    model, paths, taxonomy = _model()
+    model["external_entities"] = [
+        {"id": "ext-identity", "name": provider, "kind": "identity-provider", "description": "Identity exchange"},
+        {"id": "ext-profile", "name": "Profile directory", "kind": "external-service", "description": "Profile lookup"},
+    ]
+    for index, source, target, entity, scheme in [
+        (90, "spa", "external", "ext-identity", "none"),
+        (91, "external", "spa", "ext-identity", "none"),
+        (92, "spa", "external", "ext-profile", "bearer"),
+    ]:
+        model["data_flows"].append(
+            {
+                "id": f"df-{index:03d}",
+                "from": source,
+                "to": target,
+                "to_entity" if target == "external" else "from_entity": entity,
+                "label": "Identity exchange",
+                "protocol": "HTTPS",
+                "data_classification": "Confidential",
+                "protocol_group": "Federation",
+                "authentication": {
+                    "scheme": scheme,
+                    "scope": "This operation only",
+                    "evidence": [{"file": "src/access.cfg", "line": 1}],
+                },
+            }
+        )
+    before = copy.deepcopy(model)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    root = ET.fromstring(svg)
+    rows = root.findall("{*}g[@data-integration-reference]")
+    assert len(rows) == 4
+    client_rows = [r for r in rows if r.get("data-reference-owner") == "spa"]
+    assert len(client_rows) == 2
+    identity = next(r for r in rows if r.get("data-reference-owner") == "ext-identity")
+    profile = next(r for r in rows if r.get("data-reference-owner") == "ext-profile")
+    assert identity.get("data-reference-direction") == "↔"
+    assert profile.get("data-reference-direction") == "←"
+    assert "C-01" in "".join(identity.itertext())
+    assert provider in " ".join(" ".join(r.itertext()) for r in client_rows)
+    assert profile.find("{*}g[@data-authentication='1']") is not None
+    assert all(r.find("{*}g[@data-authentication='1']") is None for r in client_rows)
+    assert "Matching E-labels indicate a connection" in svg
+    assert root.find("{*}g[@data-legend-section='integrations']") is None
+    assert model == before
+    assert F.check_diagram(model, paths, taxonomy, detail=False)[0] == svg
+    detail, detail_problems = F.check_diagram(model, paths, taxonomy, detail=True)
+    assert detail_problems == []
+    assert "data-integration-reference=" not in detail
+    assert "df-090" in detail and "df-092" in detail
+
+
+def test_authentication_markers_use_the_same_hexagon_at_accesses_and_in_legend():
+    model, paths, taxonomy = _model()
+    root = ET.fromstring(F.check_diagram(model, paths, taxonomy, detail=False)[0])
+    markers = root.findall(".//{*}g[@data-authentication]")
+    assert markers
+    for marker in markers:
+        assert marker.get("data-authentication-shape") == "hexagon"
+        assert marker.find("{*}polygon") is not None
+        assert marker.find("{*}rect") is None
+
+
+@pytest.mark.parametrize("prefix", ["Portal", "Field console"])
+def test_overview_keeps_inventory_and_routes_humans_into_the_client(prefix):
+    from tests.test_figure1_security import auth
+
+    model, paths, taxonomy = _model(app=4, stores=2, flows=False, xss=True)
+    for comp in model["components"]:
+        comp["name"] = f"{prefix} {comp['id']}"
+    model["external_entities"] = [
+        {
+            "id": f"ext-person-{i}",
+            "kind": "legitimate-role",
+            "name": f"{prefix} role {i}",
+            "access": "internet-user" if i == 1 else "internet-priv-user",
+            "description": "Uses the application",
+        }
+        for i in (1, 2)
+    ]
+    model["data_flows"] = [
+        {
+            "id": f"df-{i:03d}",
+            "from": "external",
+            "from_entity": f"ext-person-{i}",
+            "to": "spa",
+            "interaction": True,
+            "label": "Uses UI",
+            "protocol": "UI",
+        }
+        for i in (1, 2)
+    ]
+    for i in range(4):
+        model["data_flows"].append(
+            {
+                "id": f"df-{i + 3:03d}",
+                "from": "spa",
+                "to": f"app{i}",
+                "label": "Application requests",
+                "protocol": "HTTPS",
+                "authentication": auth("bearer"),
+            }
+        )
+    for i in range(2):
+        model["data_flows"].append(
+            {
+                "id": f"df-{i + 7:03d}",
+                "from": "app0",
+                "to": f"db{i}",
+                "label": "Stored records",
+                "protocol": "Local call",
+                **({"authentication": auth("none")} if i == 0 else {}),
+            }
+        )
+    model["assets"] = [
+        {
+            "id": f"A-{i + 1:03d}",
+            "name": f"Record collection {i + 1}",
+            "classification": "Confidential",
+            "component_refs": [
+                {"component_id": f"db{i % 2}", "relation": "stored", "evidence": [{"file": "src/store.cfg", "line": 1}]}
+            ],
+        }
+        for i in range(8)
+    ]
+    original = copy.deepcopy(model)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert not problems
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _, state = F._build(model, scenarios, actors, detail=False)
+    assert {c["id"] for c in model["components"]} <= state["nodes"].keys()
+    assert {a["id"] for n in state["nodes"].values() for a in n.get("assets", [])} == {a["id"] for a in model["assets"]}
+    assert {fid for e in state["edges"] for fid in e["ids"]} == {f["id"] for f in model["data_flows"]}
+    for edge in state["edges"]:
+        if not edge.get("interaction"):
+            continue
+        target = state["nodes"]["spa"]
+        a, b = edge["draw_pts"][-2:]
+        assert edge["ui_top_entry"] and a[0] == b[0] and b[1] > a[1] + 12
+        assert b[1] < target["y"] and target["x"] < b[0] < target["x"] + target["w"]
+    root = ET.fromstring(svg)
+    assert root.find("{*}g[@data-auth-flows='df-007'][@data-authentication='0']") is not None
+    assert root.find("{*}g[@data-auth-flows='df-008'][@data-authentication='?']") is not None
+    assert model == original
+
+
+def test_large_access_groups_keep_every_operation_instead_of_partial_sequences():
+    from tests.test_figure1_security import auth
+
+    model, paths, taxonomy = _model()
+    model["data_flows"] = [
+        {
+            "id": f"df-{i:03d}",
+            "from": "spa",
+            "to": "app0",
+            "protocol": "HTTPS",
+            "label": "Verification",
+            "authentication": auth(scheme),
+            "interface_refs": [f"check-{i}"],
+            "access_group": {"id": "checks", "mode": "sequence", "label": "Three checks", "step": i},
+        }
+        for i, scheme in enumerate(("password", "private-key", "bearer"), 1)
+    ]
+    svg, errors = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert not errors
+    root = ET.fromstring(svg)
+    for i in (1, 2, 3):
+        assert root.find(f"{{*}}g[@data-flow-ids='df-{i:03d}']") is not None
+    # Even an equal method on the same interface cannot erase distinct steps.
+    for flow in model["data_flows"]:
+        flow["authentication"] = auth("password")
+        flow["interface_refs"] = ["shared-interface"]
+    for detail in (False, True):
+        svg, errors = F.check_diagram(model, paths, taxonomy, detail=detail)
+        assert not errors
+        root = ET.fromstring(svg)
+        for i in (1, 2, 3):
+            assert root.find(f"{{*}}g[@data-flow-ids='df-{i:03d}']") is not None
+
+
+def test_reference_footers_wrap_long_names_and_multiple_receiving_methods():
+    model, paths, taxonomy = _model()
+    model["external_entities"] = [
+        {
+            "id": "ext-directory",
+            "kind": "external-service",
+            "name": "Partner <Directory> & Federation Service",
+            "description": "A distinct subtitle above the reference footer",
+        }
+    ]
+    schemes = ["none", "bearer", "basic", "password", "mtls", "private-key", "cookie"]
+    for index, scheme in enumerate(schemes, 90):
+        model["data_flows"].append(
+            {
+                "id": f"df-{index:03d}",
+                "from": "spa",
+                "to": "external",
+                "to_entity": "ext-directory",
+                "label": "Directory request",
+                "protocol": "HTTPS",
+                "data_classification": "Confidential",
+                "protocol_group": "Federated directory",
+                "authentication": {
+                    "scheme": scheme,
+                    "scope": f"Operation {index}",
+                    "evidence": [{"file": "src/access.cfg", "line": 1}],
+                },
+            }
+        )
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    root = ET.fromstring(svg)
+    rows = root.findall("{*}g[@data-reference-owner='ext-directory']")
+    assert len(rows) == 4
+    assert sum(len(r.findall("{*}g[@data-authentication]")) for r in rows) == len(schemes)
+    subtitle = next(t for t in root.findall("{*}text") if "distinct subtitle" in (t.text or ""))
+    assert float(subtitle.get("y")) < min(float(r.find("{*}rect").get("y")) for r in rows) - 4
+    assert "&lt;Directory&gt; &amp;" in svg
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_hexagon_ports_leave_a_four_unit_arrow_gap(side):
+    edge = {"pts": [(0 if side == "left" else 200, 50), (100, 50)]}
+    pts = F._authentication_endpoint(edge, {"_auth_catalog": {"present": True}})
+    assert abs(pts[-1][0] - edge["auth_port"][0]) == 20 + 4
+    assert edge["pts"][-1] == (100, 50)
+
+
+@pytest.mark.parametrize("rename", [False, True])
+def test_overview_authentication_ports_are_evidenced_and_geometry_checked(rename):
+    model, paths, taxonomy = _model()
+    for i, flow in enumerate(model["data_flows"]):
+        flow["label"] = "Telemetry" if rename else "Records"
+        flow["authentication"] = {
+            "scheme": "bearer" if i % 2 else "none",
+            "scope": "This access",
+            "evidence": [{"file": "src/guard.cfg", "line": 3}],
+        }
+    if rename:
+        for comp in model["components"]:
+            comp["name"] = "Renamed " + comp["id"]
+    before = copy.deepcopy(model)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    root = ET.fromstring(svg)
+    assert "Figure 1 — Architecture and Threat Overview" in svg
+    assert root.find("{*}g[@data-legend-section='flows']") is None
+    assert root.find("{*}g[@data-legend-section='boundaries']") is None
+    assert root.find("{*}g[@data-legend-section='authentication']") is not None
+    assert len(root.findall("{*}g[@data-authentication='0']")) >= 1
+    assert model == before
+
+
+@pytest.mark.parametrize("app", [1, 3, 9])
+@pytest.mark.parametrize("stores", [0, 2])
+@pytest.mark.parametrize("xss", [False, True])
+@pytest.mark.parametrize("intra", [False, True])
+def test_overview_layout_is_generic_across_topologies(app, stores, xss, intra):
+    model, paths, taxonomy = _model(app=app, stores=stores, xss=xss, intra=intra)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    assert "Architecture and Threat Overview" in svg
+
+
+def test_geometry_rejects_longitudinal_boundary_overlap_and_label_crossings():
+    canvas = F._Canvas()
+    edge = {"src": "client", "dst": "api", "ids": ["df-001"], "pts": [(20, 20), (60, 20), (60, 90), (100, 90)]}
+    nodes = {
+        "client": {"id": "client", "x": 0, "y": 0, "w": 20, "h": 40},
+        "api": {"id": "api", "x": 100, "y": 80, "w": 20, "h": 40},
+    }
+    assert F._check_geometry(nodes, [edge], canvas, [], boundaries=[80]) == []
+    assert any("runs along" in p for p in F._check_geometry(nodes, [edge], canvas, [], boundaries=[62]))
+    canvas.labels.append((55, 40, 65, 50, "payload test"))
+    assert any("payload label crosses" in p for p in F._check_geometry(nodes, [edge], canvas, []))
+
+
 @pytest.mark.parametrize("title", ["Template Injection Reads Private Records", "Forged Tokens Impersonate Other Users"])
 def test_scenario_title_is_preserved_without_inventing_mechanisms(title):
     model, paths, taxonomy = _model()
@@ -1367,12 +1696,14 @@ def test_report_composer_publishes_compact_annotations_without_fallback(tmp_path
     svg = (tmp_path / "report.figure1.svg").read_text()
     assert context.warnings == []
     assert "(report.figure1.svg)" in markdown
-    assert "The legend below the diagram" in markdown
+    assert "Numbered hexagons identify authentication" in markdown
+    assert "Detailed architecture diagram" in markdown
     assert "All Critical · High fills to 5 · +N = omitted High categories" in svg
     assert "Unsafe Query Construction (SQLi)" in svg
     assert "Insufficient Resource Limits" not in svg
     assert not re.search(r"[WT]-\d{3}", svg)
-    assert ">Data flows<" in svg
+    assert ">Data flows<" not in svg
+    assert ">Data flows<" in (tmp_path / "report.figure1-detail.svg").read_text()
     assert "sensitive data handling" not in svg
 
 

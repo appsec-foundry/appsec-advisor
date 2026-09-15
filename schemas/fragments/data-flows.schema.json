@@ -135,6 +135,32 @@
           "description": "Short plain-text purpose or payload for Figure 1, preserving authentication or direction distinctions. Omit repeated endpoint names and protocol. The full label remains authoritative; optional for older inventories."
         },
         "protocol": {"type": "string", "minLength": 1, "maxLength": 80},
+        "authentication": {
+          "type": "object", "additionalProperties": false,
+          "required": ["scheme","scope","evidence"],
+          "properties": {
+            "scheme": {"type":"string","enum":["unknown","none","password","basic","bearer","cookie","api-key","oauth2","oidc","saml","mtls","private-key","mfa","other"]},
+            "scope": {"type":"string","minLength":1,"maxLength":240,"pattern":"^[^\\r\\n\\t]+$"},
+            "transport": {"type":"string","enum":["protected","cleartext","unknown"]},
+            "flow": {"type":"string","enum":["implicit","authorization-code","authorization-code-pkce","client-credentials","device-code"]},
+            "factors": {"type":"array","minItems":2,"maxItems":4,"uniqueItems":true,"items":{"type":"string","enum":["password","totp","webauthn","hardware-key","push","sms","email","biometric"]}},
+            "evidence": {"type":"array","minItems":1,"maxItems":8,"items":{"type":"object","additionalProperties":false,"required":["file","line"],"properties":{"file":{"type":"string","minLength":1,"maxLength":512,"not":{"pattern":"^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"}},"line":{"type":"integer","minimum":1}}}}
+          },
+          "allOf": [{"if":{"properties":{"scheme":{"const":"mfa"}}},"then":{"required":["factors"],"properties":{"factors":{"contains":{"enum":["password","biometric"]}}}},"else":{"not":{"required":["factors"]}}},{"if":{"required":["flow"]},"then":{"properties":{"scheme":{"enum":["oauth2","oidc"]}}}}]
+        },
+        "access_group": {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "mode", "label"],
+          "properties": {
+            "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 80},
+            "mode": {"type": "string", "enum": ["alternatives", "sequence"]},
+            "label": {"type": "string", "minLength": 1, "maxLength": 48, "pattern": "^[^\\r\\n\\t]+$"},
+            "step": {"type": "integer", "minimum": 1, "maximum": 500}
+          },
+          "allOf": [{"if": {"properties": {"mode": {"const": "sequence"}}}, "then": {"required": ["step"]}, "else": {"not": {"required": ["step"]}}}]
+        },
+        "interaction": {"type": "boolean", "description": "Human interaction with a client, not a technical API request."},
+        "protocol_group": {"type": "string", "minLength": 1, "maxLength": 80, "description": "Evidenced multi-step integration; may use endpoint references in the overview."},
         "data_classification": {"type": "string", "minLength": 1, "maxLength": 80},
         "direction": {
           "type": "string",

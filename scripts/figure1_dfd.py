@@ -2,10 +2,10 @@
 """Deterministic Figure 1 renderer: a threat-model data-flow diagram.
 
 Draws external entities, processes, data stores, labelled data flows, trust
-boundaries as zones with crossing chips that carry the assumption verdict, a
+zones and evidenced authentication tabs, a
 STRIDE-per-element strip, severity counts and evidenced weaknesses or causes on
 every node, and the numbered attack scenarios of the Security Posture section as
-badges on the components they touch. Each attacker enters over a labelled, coloured bus that
+badges on the components they touch. Each attacker enters over a labelled bus that
 fans out into every exposed process its scenarios reach; a victim scenario adds
 a dashed edge back to the user.
 
@@ -16,8 +16,10 @@ node sides. Measured legend blocks fill up to three columns below the diagram.
 The same input yields byte-identical SVG.
 
 Public entry point: ``build_figure1_dfd_svg(yaml_data, attack_paths_data,
-attack_taxonomy, meta=None, actor_labels=None) -> str``. Returns "" when there
-is nothing to draw.
+attack_taxonomy, meta=None, actor_labels=None, detail=True) -> str``. The report
+requests the compact overview with ``detail=False``; the compatibility API
+default retains boundary verdicts and the complete flow legend. Returns ""
+when there is nothing to draw.
 
 ``check_diagram`` (used by the tests and the ``--check`` CLI flag) verifies the
 result geometrically and semantically: no edge crosses a foreign node, no label
@@ -25,7 +27,7 @@ overlaps another, every arrow starts on its source and ends on its target with
 the head pointing inward, every chip sits on the crossing of its own flow, and
 every flow and boundary is either drawn or explained in the legend.
 
-Dev CLI: ``figure1_dfd.py <threat-model.yaml> [<threat-model.md>] <out.svg> [--check]``
+Dev CLI: ``figure1_dfd.py <threat-model.yaml> [<threat-model.md>] <out.svg> [--check] [--detail]``
 — the markdown is only a stand-in for ``attack_paths_data`` when replaying a
 published example.
 """
@@ -43,6 +45,13 @@ from pathlib import Path
 
 import yaml
 from detect_open_registration import overview_actor_groups, overview_actor_slug
+from figure1_security import (
+    authentication_profile,
+    bundle_access_groups,
+    flow_bundle_key,
+    profile_catalog,
+    select_references,
+)
 from prepare_trust_boundary_context import boundary_endpoints_valid
 from weakness_classifier import load_weakness_classes
 
@@ -60,6 +69,8 @@ ZONE_STYLE = {  # zone key -> (title, stroke, fill)
     "build": ("Build pipeline", "#4b7a94", "#f3f8fa"),
     "data": ("Data", "#7b62a6", "#f7f5fa"),
     "third-party": ("Third-party", "#3f857c", "#f3f9f8"),
+    "attackers": ("Attackers", "#a04d4a", "#fbf6f6"),
+    "users": ("Users", "#6d927c", "#f5f8f6"),
 }
 SEV_COL = {"Critical": RED, "High": ORANGE, "Medium": YELLOW}
 SEV_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -93,7 +104,7 @@ LEGEND_GAP = 20
 FS = 8.5  # small label font
 ZONE_CAP = 8  # drawn nodes per zone; the rest collapse into one bar
 PORT_STEP = 22  # minimum spacing between ports on one node side
-INTRA_STUB, INTRA_STEP = 28, 14  # space for an arrowhead plus a rounded corner; parallel lane spacing
+INTRA_STUB, INTRA_STEP = 48, 14  # reserve authentication tabs and a straight arrow approach
 BAR_H = 24
 COLUMN = {"client": 0, "application": 1, "build": 1, "data": 2, "third-party": 0}
 ZONE_ORDER = {"client": 0, "application": 0, "build": 1, "data": 0, "third-party": 1}
@@ -796,8 +807,19 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         if src not in nodes or dst not in nodes:
             undrawn.append((fid, f"unknown component {src if src not in nodes else dst}"))
             continue
+        key = flow_bundle_key(f) if d.get("_overview") or f.get("authentication") else (src, dst)
         b = bundles.setdefault(
-            (src, dst), {"src": src, "dst": dst, "ids": [], "cls": "Public", "tb": [], "bidi": False}
+            key,
+            {
+                "src": src,
+                "dst": dst,
+                "ids": [],
+                "cls": "Public",
+                "tb": [],
+                "bidi": False,
+                "authentication": authentication_profile(f),
+                "interaction": bool(f.get("interaction")),
+            },
         )
         b["ids"].append(fid)
         cls = str(f.get("data_classification") or "Public").title()
@@ -968,7 +990,10 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
         e["kind"] = "intra" if dc == 0 else ("forward" if dc > 0 else "backward")
         e["skip"] = abs(dc) > 1
     sides = collections.defaultdict(lambda: {"L": [], "R": []})
+    ui_entries = collections.defaultdict(list)
     for e in edges:
+        if e.get("interaction") and e["kind"] == "intra" and nodes[e["dst"]]["zone"] == "client":
+            ui_entries[e["dst"]].append(e)
         if e["kind"] == "forward":
             sides[e["src"]]["R"].append(("out", e))
             sides[e["dst"]]["L"].append(("in", e))
@@ -992,7 +1017,8 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
         n["h"] = max(n["h"], n["tagspace"] + PORT_STEP * (k + 1))
     # 3. column widths (right-side channel for intra edges), gap widths (one lane per edge)
     intra_per_col = collections.Counter(nodes[e["src"]]["col"] for e in edges if e["kind"] == "intra")
-    col_w = [COL_W + _intra_channel(intra_per_col[c]) for c in range(ncols)]
+    port_extra = 32 if any(len(e.get("auth_keys", [])) > 1 for e in edges) else 0
+    col_w = [COL_W + _intra_channel(intra_per_col[c]) + (port_extra if intra_per_col[c] else 0) for c in range(ncols)]
     n_lanes = collections.Counter()
     for e in edges:
         if e["kind"] == "intra":
@@ -1000,7 +1026,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
         g1, g2 = sorted((nodes[e["src"]]["col"], nodes[e["dst"]]["col"]))
         for g in range(g1, g2):
             n_lanes[g] += 1
-    gap_w = [max(GAP, B_OFF + LANE0 + n_lanes[g] * LANE_STEP + 24) for g in range(ncols - 1)]
+    gap_w = [max(GAP, B_OFF + LANE0 + n_lanes[g] * LANE_STEP + 52 + port_extra) for g in range(ncols - 1)]
     col_x = [MARGIN]
     for c in range(1, ncols):
         col_x.append(col_x[-1] + col_w[c - 1] + gap_w[c - 1])
@@ -1016,6 +1042,8 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
         def key(n):
             srcs = [nodes[s]["cy"] for s in incoming[n["id"]] if "cy" in nodes[s]]
             bary = sum(srcs) / len(srcs) if srcs else 1e9
+            if n.get("stable_order"):
+                bary = n["order"]
             return (n.get("col_rank", 1), ZONE_ORDER.get(n["zone"], 9), bary, n["order"])
 
         members.sort(key=key)
@@ -1043,6 +1071,10 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
                 if cur != "internet":
                     zy = y
                     y += ZONE_HEAD
+                    if cur == "client":
+                        y += max(
+                            (12 * len(ui_entries[m["id"]]) + 16 for m in members if ui_entries[m["id"]]), default=0
+                        )
             n["x"], n["y"] = x + ZONE_PAD + (NODE_W - n["w"]) / 2, y
             n["cy"] = y + n["h"] / 2
             y += n["h"] + NODE_GAP
@@ -1053,9 +1085,9 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
                 0,
                 {
                     "zone": "internet",
-                    "x": x - 6,
+                    "x": x - 10,
                     "y": outer_top,
-                    "w": col_w[0] + 12,
+                    "w": col_w[0] + 20,
                     "h": y - ZONE_GAP + ZONE_PAD - outer_top,
                     "outer": True,
                 },
@@ -1116,8 +1148,15 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
         if e["kind"] == "intra":
             j = chan_used[s["col"]]
             chan_used[s["col"]] += 1
-            cx = col_x[s["col"]] + ZONE_PAD + NODE_W + INTRA_STUB + j * INTRA_STEP
+            cx = col_x[s["col"]] + ZONE_PAD + NODE_W + INTRA_STUB + port_extra + j * INTRA_STEP
             e["pts"] = [(s["x"] + s["w"], e["ys"]), (cx, e["ys"]), (cx, e["yd"]), (t["x"] + t["w"], e["yd"])]
+            if e in ui_entries[e["dst"]]:
+                entries = ui_entries[e["dst"]]
+                slot = entries.index(e)
+                px = t["x"] + t["w"] * (slot + 1) / (len(entries) + 1)
+                py = t["y"] - 16 - 12 * (len(entries) - slot - 1)
+                e["pts"] = [(s["x"] + s["w"], e["ys"]), (cx, e["ys"]), (cx, py), (px, py), (px, t["y"])]
+                e["ui_top_entry"] = True
             e["bx"] = None
         elif e["kind"] == "forward" and not e["skip"]:
             lane = lanes[id(e)]
@@ -1201,6 +1240,202 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
 
 
 # ---- rendering ----------------------------------------------------------------------------------
+def _overview_groups(nodes, edges):
+    """Keep semantic sidebar groups contiguous; backend-only egress sits by data."""
+    for node in nodes.values():
+        node["stable_order"] = True
+        if node.get("attacker"):
+            node.update(zone="attackers", col_rank=0, color=RED)
+        elif node["zone"] == "internet":
+            node.update(zone="users", col_rank=1)
+        elif node["zone"] == "client":
+            node["col_rank"] = 2
+        elif node["zone"] == "third-party":
+            node["col_rank"] = 3
+            peers = [
+                nodes[e["src"] if e["dst"] == node["id"] else e["dst"]]
+                for e in edges
+                if node["id"] in (e["src"], e["dst"])
+            ]
+            if peers and all(p["col"] in {1, 2} for p in peers):
+                node.update(col=2, col_rank=2)
+
+
+def _authentication_endpoint(edge, model):
+    """Shorten only the displayed receiving end; retain semantic node endpoints."""
+    pts = _trim(edge["pts"])
+    if not model.get("_auth_catalog") or edge.get("interaction"):
+        return pts
+    x, y = edge["pts"][-1]
+    side = "left" if x > edge["pts"][-2][0] else "right"
+    edge["auth_port"] = (x, y, side)
+    clearance = 24 + 32 * (max(1, len(edge.get("auth_keys", []))) - 1)
+    pts[-1] = (x - clearance if side == "left" else x + clearance, y)
+    return pts
+
+
+def _auth_tab(canvas, x, y, side, profile, flow_ids=""):
+    """A numbered 20-unit hexagonal access port, distinct from attack circles."""
+    palette = {
+        "red": (RED, "#fff0ee"),
+        "yellow": ("#926200", "#fff5d6"),
+        "green": ("#28704b", "#e4f3e9"),
+        "grey": ("#64748b", "#edf2f7"),
+    }
+    color, fill = palette[profile["color"]]
+    dx = -1 if side == "left" else 1
+    number = profile["number"]
+    canvas.add(
+        f'<g data-authentication="{_esc(number)}" data-authentication-shape="hexagon" data-auth-flows="{_esc(flow_ids)}" transform="translate({x:.1f} {y:.1f}) scale({dx} 1)">'
+    )
+    canvas.add(f"<title>{_esc(profile['title'])}</title>")
+    canvas.add(
+        f'<polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="{fill}" stroke="{color}" stroke-width="1.2" stroke-linejoin="round"/>'
+    )
+    size = min(10, 12 / max(1, len(str(number)) * 0.56))
+    canvas.add(
+        f'<text x="{10 * dx}" y="3.5" transform="scale({dx} 1)" text-anchor="middle" font-size="{size:g}" font-weight="bold" fill="{color}">{_esc(number)}</text></g>'
+    )
+    if flow_ids:
+        canvas.badges.append((min(x, x + dx * 20), y - 9, max(x, x + dx * 20), y + 9, f"auth {flow_ids}"))
+
+
+def _prepare_reference_rows(nodes):
+    """Reserve measured footers before layout; names never select connectivity."""
+    for node in nodes.values():
+        rows = []
+        for ref in node.get("references", []):
+            profiles = ref["profiles"]
+            for offset in range(0, max(1, len(profiles)), 2):
+                chunk = profiles[offset : offset + 2]
+                label = f"{ref['direction']} {ref['id']} · {nodes[ref['peer']]['name']}"
+                lines = _legend_wrap(label, node["w"] - 36 - 26 * len(chunk), 9)
+                rows.append({**ref, "profiles": chunk, "lines": lines, "height": max(24, len(lines) * 12 + 8)})
+        if rows:
+            node["reference_rows"] = rows
+            node["reference_height"] = sum(r["height"] + 4 for r in rows) + 16
+            node["h"] += node["reference_height"]
+
+
+def _segment_hits_rect(a, b, rect):
+    x0, y0, x1, y1 = rect[:4]
+    if a[1] == b[1]:
+        return y0 < a[1] < y1 and min(a[0], b[0]) < x1 and max(a[0], b[0]) > x0
+    return x0 < a[0] < x1 and min(a[1], b[1]) < y1 and max(a[1], b[1]) > y0
+
+
+def _rect_overlap(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _flow_label_candidates(entries, interaction):
+    """Prefer authored payloads; shorten legacy prose without inventing a summary."""
+    labels = list(dict.fromkeys(f.get("diagram_label") or f.get("label") or f["id"] for f in entries))
+    protocol = entries[0].get("protocol") or ""
+    full = " / ".join(labels) + (f" ({protocol})" if protocol and not interaction else "")
+    choices = [full]
+    for width in (48, 30, 18):
+        label = labels[0]
+        if len(label) > width:
+            label = label[:width].rsplit(" ", 1)[0] + "…"
+        if len(labels) > 1:
+            label += f" +{len(labels) - 1}"
+        if protocol and not interaction and len(protocol) <= 18 and width == 48:
+            label += f" ({protocol})"
+        choices.append(label)
+    return list(dict.fromkeys(choices))
+
+
+def _overview_flow_labels(canvas, model, nodes, edges, boundaries, zones):
+    """Place actual payload labels on clear runs; retain overflow in compact notes."""
+    segments = [(a, b, e) for e in edges for a, b in zip(e.get("draw_pts", e["pts"]), e.get("draw_pts", e["pts"])[1:])]
+    walls = [((bx, TOP), (bx, max(n["y"] + n["h"] for n in nodes.values()))) for bx in boundaries]
+    for z in zones:
+        x, y, w, h = z["x"], z["y"], z["w"], z["h"]
+        walls.extend(
+            [((x, y), (x + w, y)), ((x, y + h), (x + w, y + h)), ((x, y), (x, y + h)), ((x + w, y), (x + w, y + h))]
+        )
+    occupied = [(n["x"] - 3, n["y"] - 3, n["x"] + n["w"] + 3, n["y"] + n["h"] + 3) for n in nodes.values()]
+    occupied += [(z["x"], z["y"], z["x"] + z["w"], z["y"] + ZONE_HEAD) for z in zones]
+    occupied += canvas.labels + canvas.badges
+    # A small white break at proper crossings prevents false junction readings.
+    seen = set()
+    for i, (a, b, edge) in enumerate(segments):
+        for p, q, other in segments[i + 1 :]:
+            if edge is other or edge.get("attack") and other.get("attack"):
+                continue
+            h, v = ((a, b, edge), (p, q, other)) if a[1] == b[1] else ((p, q, other), (a, b, edge))
+            if h[0][1] != h[1][1] or v[0][0] != v[1][0]:
+                continue
+            x, y = v[0][0], h[0][1]
+            if not (
+                min(h[0][0], h[1][0]) + 7 < x < max(h[0][0], h[1][0]) - 7
+                and min(v[0][1], v[1][1]) + 7 < y < max(v[0][1], v[1][1]) - 7
+            ):
+                continue
+            if (x, y) in seen:
+                continue
+            seen.add((x, y))
+            over = v if v[2].get("attack") else h
+            path = f"M {x} {y - 3} V {y + 3}" if over is v else f"M {x - 3} {y} H {x + 3}"
+            canvas.path(path, "#ffffff", sw=4)
+            canvas.path(
+                path,
+                RED if over[2].get("attack") else CLS_COL.get(over[2]["cls"], LINE),
+                sw=1.6 if over[2].get("attack") else 1.1,
+            )
+    flows = {f["id"]: f for f in model.get("data_flows") or []}
+    for edge in edges:
+        if edge.get("attack"):
+            continue
+        entries = [flows[fid] for fid in edge["ids"]]
+        points = edge.get("draw_pts", edge["pts"])
+        candidates = []
+        texts = _flow_label_candidates(entries, edge.get("interaction"))
+        if edge.get("access_group"):
+            texts = [edge["access_group"]["label"]]
+        texts.append(edge["ids"][0])
+        for index, text in enumerate(texts):
+            for a, b in zip(points, points[1:]):
+                length = abs(a[0] - b[0]) + abs(a[1] - b[1])
+                tw = _tw(text, FS)
+                if length < tw + 20:
+                    continue
+                horizontal = a[1] == b[1]
+                for fraction in (0.5, 0.25, 0.75):
+                    cx, cy = a[0] + (b[0] - a[0]) * fraction, a[1] + (b[1] - a[1]) * fraction
+                    for offset in (-6, 14, -18, 26):
+                        x, y = (cx, cy + offset) if horizontal else (cx + offset, cy)
+                        rect = (
+                            (x - tw / 2, y - FS, x + tw / 2, y + 2)
+                            if horizontal
+                            else (x - FS, y - tw / 2, x + 2, y + tw / 2)
+                        )
+                        if any(_rect_overlap(rect, r) for r in occupied):
+                            continue
+                        if any(_segment_hits_rect(p, q, rect) for p, q, _ in segments) or any(
+                            _segment_hits_rect(p, q, rect) for p, q in walls
+                        ):
+                            continue
+                        candidates.append((index, not horizontal, abs(offset), abs(fraction - 0.5), x, y, rect))
+            if candidates:
+                break
+        if not candidates:
+            model.setdefault("_label_notes", []).append((edge["ids"], texts[0]))
+            continue
+        index, rotated, _, _, x, y, rect = min(candidates)
+        text = texts[index]
+        if index == len(texts) - 1:
+            model.setdefault("_label_notes", []).append((edge["ids"], texts[0]))
+        if rotated:
+            canvas.add(f'<g transform="rotate(-90 {x:.1f} {y:.1f})">')
+        canvas.text(x, y, text, size=FS, fill=MUTED)
+        if rotated:
+            canvas.add("</g>")
+        canvas.labels.append((*rect, "payload " + "/".join(edge["ids"])))
+        occupied.append(rect)
+
+
 def _trim(pts, a=1.2, b=1.8):
     """Drawn copy of a polyline: starts just outside the source border, ends where the arrowhead touches the target."""
 
@@ -1309,7 +1544,7 @@ def _render(
     for key, col in list(CLS_COL.items()) + [("red", RED), ("grey", LINE)] + markers:
         defs += (
             f'<marker id="arw-{key}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" '
-            f'markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="{col}"/></marker>'
+            f'markerUnits="userSpaceOnUse" orient="auto-start-reverse" overflow="visible"><path d="M0 0 L10 5 L0 10 z" fill="{col}"/></marker>'
         )
     c.add(defs + "</defs>")
     meta = d.get("meta") or {}
@@ -1323,7 +1558,7 @@ def _render(
     c.text(
         MARGIN,
         26,
-        "Figure 1 — Data-flow diagram: trust boundaries, STRIDE-per-element, top attack paths",
+        "Figure 1 — Architecture and Threat Overview",
         size=14,
         anchor="start",
         weight="bold",
@@ -1350,7 +1585,19 @@ def _render(
             zone_fw[_zone_key(comp)].add(str(comp["framework"]))
     for zb in [z for z in zone_boxes if not z.get("bar")]:
         title, stroke, fill = ZONE_STYLE[zb["zone"]]
-        c.rect(zb["x"], zb["y"], zb["w"], zb["h"], fill=fill, stroke=stroke, sw=1.6, rx=10, dash="7 4")
+        if d.get("_overview") and zb["zone"] == "client":
+            title = "Clients"
+        c.rect(
+            zb["x"],
+            zb["y"],
+            zb["w"],
+            zb["h"],
+            fill=fill,
+            stroke=stroke,
+            sw=1.2,
+            rx=7,
+            dash=None if zb["zone"] in {"attackers", "users"} else "7 4",
+        )
         c.text(zb["x"] + 10, zb["y"] + 16, title, size=10.5, anchor="start", weight="bold", fill=stroke)
         zk = zb["zone"]
         sub = {"internet": "actors and their browsers", "third-party": "external integrations"}.get(zk) or (
@@ -1358,6 +1605,12 @@ def _render(
             if zone_sub[zk]
             else ""
         )
+        if d.get("_overview"):
+            sub = {
+                "attackers": "Untrusted threat actors",
+                "users": "Application users and administrators",
+                "client": "User-facing applications",
+            }.get(zk, sub)
         if sub:
             c.text(zb["x"] + 10, zb["y"] + 29, _cut(sub, 38), size=8.5, anchor="start", fill=MUTED, italic=True)
     for zb in [z for z in zone_boxes if z.get("bar")]:
@@ -1411,9 +1664,9 @@ def _render(
     for e in edges:
         if e.get("attack"):
             c.path(
-                _orth(_trim(e["pts"])),
+                _orth(_trim(e["pts"]), r=0 if d.get("_overview") else 8),
                 nodes[e["src"]]["color"],
-                sw=(1.6 if e.get("victim") else 2.2),
+                sw=1.6,
                 marker=f"arw-{nodes[e['src']]['marker']}",
                 dash=("5 4" if e.get("victim") else None),
             )
@@ -1434,13 +1687,33 @@ def _render(
             continue
         col = CLS_COL.get(e["cls"], LINE)
         mk = f"arw-{e['cls'] if e['cls'] in CLS_COL else 'grey'}"
+        draw_pts = _authentication_endpoint(e, d)
+        e["draw_pts"] = draw_pts
+        mode = e.get("access_group", {}).get("mode", "")
+        c.add(f'<g data-flow-ids="{_esc(" ".join(e["ids"]))}" data-access-mode="{_esc(mode)}">')
+        inventory = [f for f in d.get("data_flows", []) if f.get("id") in e["ids"]]
+        full_labels = [f"{f['id']}: {f.get('label', '')} ({f.get('protocol', '')})" for f in inventory]
+        for flow in inventory:
+            auth = flow.get("authentication") or {}
+            if auth:
+                sources = ", ".join(f"{ev.get('file')}:{ev.get('line')}" for ev in auth.get("evidence") or [])
+                full_labels.append(f"{flow['id']} authentication: {auth.get('scope', '')}; evidence: {sources}")
+            group = flow.get("access_group")
+            if group:
+                full_labels.append(
+                    f"{flow['id']} access group: {group['label']}; {group['mode']}; step {group.get('step', 'n/a')}"
+                )
+        c.add(f"<title>{_esc(chr(10).join(full_labels))}</title>")
         c.path(
-            _orth(_trim(e["pts"])),
+            _orth(draw_pts, r=0 if d.get("_overview") else 8),
             col,
-            sw=(2.2 if e["cls"] == "Restricted" else 1.6),
+            sw=1.1,
             marker=mk,
             marker_start=(mk if e.get("bidi") else None),
         )
+        c.add("</g>")
+        if d.get("_overview"):
+            continue
         ids = "/".join(i.replace("df-", "") for i in e["ids"])
         lbl = "df-" + ids if len(e["ids"]) <= 3 else f"df-{e['ids'][0][3:]} +{len(e['ids']) - 1}"
         x0, y0 = e["pts"][0]
@@ -1487,7 +1760,7 @@ def _render(
                 c.label_owners[f"actor grouping {n['actor_code']}"] = n["id"]
                 c.add(f'<g data-actor-grouping="{n["actor_code"]}">')
             c.rect(x, y, w, h, fill="#ffffff", stroke=col, sw=1.8)
-            if n["zone"] == "internet":
+            if n["zone"] in {"internet", "users", "attackers"}:
                 _person(c, x + 16, y + 20, col)
                 tx = x + 32
             else:
@@ -1495,7 +1768,7 @@ def _render(
             label = (n["actor_code"] + " · " if n.get("actor_code") else "") + n["name"]
             for i, line in enumerate(_wrap(label, w - (tx - x) - 8, 10)[:2]):
                 c.text(tx, y + 19 + i * 12, line, size=10, anchor="start", weight="bold", fill=col)
-            sub_y = y + h - (20 if n.get("victim_label") else 8)
+            sub_y = y + h - n.get("reference_height", 0) - (20 if n.get("victim_label") else 8)
             if n.get("group_lines"):
                 for i, line in enumerate(n["group_lines"]):
                     c.text(
@@ -1578,6 +1851,51 @@ def _render(
             chip(cx, cy, tbid, track=False)
             c.badges.append((cx - w / 2, cy - 8, cx + w / 2, cy + 8, f"tag {tbid} on {n['id']}"))
 
+    flow_inventory = {f["id"]: f for f in d.get("data_flows", [])}
+    for node in nodes.values():
+        x, y = node["x"] + 8, node["y"] + node["h"] - node.get("reference_height", 0)
+        for i, ref in enumerate(node.get("reference_rows", [])):
+            w, h = node["w"] - 16, ref["height"]
+            track = f"reference {node['id']} {i}"
+            c.label_owners[track] = node["id"]
+            c.add(
+                f'<g data-integration-reference="{_esc(ref["id"])}" data-reference-owner="{_esc(node["id"])}" data-reference-peer="{_esc(ref["peer"])}" data-reference-direction="{ref["direction"]}">'
+            )
+            operations = [nodes[ref["peer"]]["name"]]
+            for fid in ref["ids"]:
+                flow = flow_inventory[fid]
+                auth = flow.get("authentication") or {}
+                operations.append(
+                    f"{fid}: {flow.get('label', '')} ({flow.get('protocol', '')}); {auth.get('scope', 'authentication not established')}"
+                )
+            c.add(f"<title>{_esc(chr(10).join(operations))}</title>")
+            c.rect(x, y, w, h, fill="#edf3f9", stroke="#b6c6d8", sw=0.7, rx=3)
+            for j, line in enumerate(ref["lines"]):
+                c.text(x + 6, y + 14 + j * 12, line, size=9, fill=NAVY, anchor="start", weight="bold", track=track)
+            for j, key in enumerate(ref["profiles"]):
+                _auth_tab(c, x + w - 4 - j * 26, y + h / 2, "left", d["_auth_catalog"][key])
+            c.badges.append((x, y, x + w, y + h, track))
+            c.add("</g>")
+            y += h + 4
+    for e in edges:
+        if e.get("auth_port"):
+            x, y, side = e["auth_port"]
+            keys = e.get("auth_keys", [e["authentication"]["key"]])
+            flow_ids = " ".join(e["ids"])
+            if e.get("access_group"):
+                c.add(f'<g data-auth-flows="{_esc(flow_ids)}" data-access-mode="{e["access_group"]["mode"]}">')
+            dx = -1 if side == "left" else 1
+            for i, key in enumerate(keys):
+                px = x + dx * 32 * (len(keys) - i - 1)
+                _auth_tab(c, px, y, side, d["_auth_catalog"][key], flow_ids)
+                if i:
+                    separator = "/" if e["access_group"]["mode"] == "alternatives" else ("→" if side == "left" else "←")
+                    c.text(px + dx * 26, y + 3, separator, size=9, fill=MUTED)
+            if e.get("access_group"):
+                c.add("</g>")
+    if d.get("_overview"):
+        _overview_flow_labels(c, d, nodes, edges, boundaries, zone_boxes)
+
     blocks = _legend_blocks(
         d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups
     )
@@ -1630,23 +1948,26 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     y += 18
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=2, dash="6 4")
     c.text(lx + 40, y + 3, "trust boundary (dashed) = zone edge", size=9, anchor="start")
+    if not d.get("_overview"):
+        y += 20
+        c.rect(lx + 8, y - 9, 44, 16, fill="#ffffff", stroke=RED, sw=1.4, rx=8)
+        c.text(lx + 14, y + 3, "tb ✕", size=8, anchor="start", fill=RED, weight="bold")
+        c.rect(lx + 38, y - 7, 11, 12, fill=RED, rx=6)
+        c.text(lx + 43.5, y + 3, "9", size=8, fill="#ffffff", weight="bold")
+        c.text(
+            lx + 60, y + 3, "boundary crossing: ✕ assumption refuted · ✓ held · ? unverified", size=8.5, anchor="start"
+        )
+        y += 13
+        c.text(
+            lx + 60,
+            y + 3,
+            "count = threats crossing it · on a node corner = guards that entry",
+            size=8.5,
+            anchor="start",
+            fill=MUTED,
+        )
     y += 20
-    c.rect(lx + 8, y - 9, 44, 16, fill="#ffffff", stroke=RED, sw=1.4, rx=8)
-    c.text(lx + 14, y + 3, "tb ✕", size=8, anchor="start", fill=RED, weight="bold")
-    c.rect(lx + 38, y - 7, 11, 12, fill=RED, rx=6)
-    c.text(lx + 43.5, y + 3, "9", size=8, fill="#ffffff", weight="bold")
-    c.text(lx + 60, y + 3, "boundary crossing: ✕ assumption refuted · ✓ held · ? unverified", size=8.5, anchor="start")
-    y += 13
-    c.text(
-        lx + 60,
-        y + 3,
-        "count = threats crossing it · on a node corner = guards that entry",
-        size=8.5,
-        anchor="start",
-        fill=MUTED,
-    )
-    y += 20
-    c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=2.4, marker="arw-red")
+    c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=1.6, marker="arw-red")
     c.text(
         lx + 40,
         y + 3,
@@ -1695,6 +2016,11 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     )
     y += 32
 
+    if d.get("_references"):
+        c.text(lx + 10, y + 3, "↔ E1", size=9, fill=NAVY, weight="bold", anchor="start")
+        for i, line in enumerate(_legend_wrap("Matching E-labels indicate a connection; lines omitted.", lw - 58, 9)):
+            c.text(lx + 48, y + 3 + 12 * i, line, size=9, anchor="start")
+
     if scenarios:
         y = head("scenarios", "Attack scenarios — by actor")
         cur = None
@@ -1730,7 +2056,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             y += max(17, 12 * len(title_lines) + 5)
         y += 8
 
-    if tbs:
+    if tbs and not d.get("_overview"):
         y = head("boundaries", "Trust boundaries — assumption verdicts")
         for t in sorted(tbs, key=lambda t: _tb_num(t["id"])):
             g, col = VERDICT.get(t.get("assumption_verdict"), VERDICT["unconfirmed"])
@@ -1744,7 +2070,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             y += 15
         y += 12
     flows = {f.get("id"): f for f in d.get("data_flows") or [] if isinstance(f, dict)}
-    if any(e["ids"] for e in edges):
+    if any(e["ids"] for e in edges) and not d.get("_overview"):
         y = head("flows", "Data flows")
         for e in edges:
             if not e["ids"]:
@@ -1781,6 +2107,38 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
                 c.text(lx + 82, y + 3 + i * 11, line, size=8, anchor="start", track=f"flow detail {fid_label}")
             y += max(14, 11 * max(len(lines), len(id_lines)) + 5)
             c.add("</g>")
+    if d.get("_auth_catalog"):
+        y = head("authentication", "Authentication")
+        for profile in sorted(
+            d["_auth_catalog"].values(),
+            key=lambda p: (p["number"] == "?", int(p["number"]) if p["number"].isdigit() else 999),
+        ):
+            _auth_tab(c, 28, y, "left", profile)
+            for line in _legend_wrap(profile["title"], lw - 50, 9):
+                c.text(40, y + 2, line, size=9, anchor="start", weight="bold")
+                y += 12
+            for line in _legend_wrap(profile["description"], lw - 50, 8):
+                c.text(40, y, line, size=8, anchor="start", fill=MUTED)
+                y += 11
+            y += 8
+        for line in [
+            "Numbered hexagon: authentication · circle: attack scenario",
+            "0: no separate login · ?: not established",
+            "Red: absent / unsafe · yellow: standard / limited · green: stronger",
+            "Method properties, not proof of a secure implementation.",
+        ]:
+            c.text(10, y + 3, line, size=8, anchor="start", fill=MUTED)
+            y += 12
+        if any(e.get("access_group") for e in edges):
+            c.text(
+                10,
+                y + 3,
+                "/: alternatives · →: successive checks (see access label)",
+                size=8,
+                anchor="start",
+                fill=MUTED,
+            )
+            y += 12
     if unattached_assets:
         y += 12
         y = head("assets", "Assets — location and handling")
@@ -1804,6 +2162,8 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
                 c.text(lx + 22, y + 1, detail, size=8, anchor="start", fill=MUTED)
             y += 18
     notes = []
+    for ids, label in d.get("_label_notes", []):
+        notes.append(f"{'/'.join(ids)}: {label}")
     if dropped:
         n = sum(len(v) for v in dropped.values())
         notes.append(f"{n} lower-priority component(s) collapsed into '+N more' bars; their flows are not drawn.")
@@ -1814,19 +2174,27 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     if notes:
         y = head("notes", "Diagram notes")
         for s in notes:
-            c.text(lx + 10, y + 3, _cut(s, 70), size=8, anchor="start", fill=MUTED, italic=True)
-            y += 12
+            for line in _legend_wrap(s, lw - 20, 8):
+                c.text(lx + 10, y + 3, line, size=8, anchor="start", fill=MUTED)
+                y += 12
     return blocks
 
 
 # ---- verification -------------------------------------------------------------------------------
-def _check_geometry(nodes, edges, canvas, chips):
+def _check_geometry(nodes, edges, canvas, chips, *, boundaries=()):
     problems = []
     rects = {n["id"]: (n["x"] + 1, n["y"] + 1, n["x"] + n["w"] - 1, n["y"] + n["h"] - 1) for n in nodes.values()}
     segs = []
     for e in edges:
-        for p, q in zip(e["pts"], e["pts"][1:]):
+        points = e.get("draw_pts", e["pts"])
+        for p, q in zip(points, points[1:]):
             segs.append((p, q, (e.get("ids") or ["attack"]) + list(e.get("tb") or [])))
+            if p[0] == q[0] and p != q and any(abs(p[0] - bx) < 14 for bx in boundaries):
+                problems.append(f"edge {e.get('ids') or 'attack'} runs along a trust boundary")
+        if e.get("auth_port"):
+            p, q = points[-2:]
+            if p[1] != q[1] or abs(q[0] - p[0]) < 12:
+                problems.append(f"edge {e['ids']}: authentication arrow approach is too short")
 
     def hits(p, q, r):
         x0, y0, x1, y1 = r
@@ -1868,6 +2236,8 @@ def _check_geometry(nodes, edges, canvas, chips):
                 problems.append(f"segment {ename} touches {name}")
     labs = canvas.labels
     for i in range(len(labs)):
+        if labs[i][4].startswith("payload ") and any(hits(p, q, labs[i][:4]) for p, q, _ in segs):
+            problems.append(f"payload label crosses a connection: {labs[i][4]}")
         for j in range(i + 1, len(labs)):
             a, b = labs[i], labs[j]
             if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
@@ -1916,10 +2286,15 @@ def _audit(d, nodes, edges, chips, boundaries):
                 problems.append(f"{name}: stub does not start on its attacker's bus")
         elif not on_edge(e["pts"][0], s):
             problems.append(f"{name}: does not start on its source {s['id']}")
-        if not on_edge(p1, t):
+        top_entry = e.get("ui_top_entry") and e.get("interaction") and t["zone"] == "client"
+        on_top = t["x"] < p1[0] < t["x"] + t["w"] and abs(p1[1] - t["y"]) < 0.6
+        if not on_edge(p1, t) and not (top_entry and on_top):
             problems.append(f"{name}: does not end on its target {t['id']}")
         (qx, qy), (px, py) = e["pts"][-2], p1
-        if qy != py:
+        if top_entry:
+            if qx != px or not on_top or py - qy < 12:
+                problems.append(f"{name}: human interaction needs a straight approach into the client top")
+        elif qy != py:
             problems.append(f"{name}: last segment is not horizontal")
         elif (abs(p1[0] - t["x"]) < 0.6) != (px > qx):
             problems.append(f"{name}: arrowhead points away from {t['id']}")
@@ -1953,12 +2328,15 @@ def _audit(d, nodes, edges, chips, boundaries):
             if tb and n["id"] not in (tb.get("from"), tb.get("to")):
                 problems.append(f"{tid}: tag on {n['id']} but boundary is {tb.get('from')}→{tb.get('to')}")
     drawn = {fid for e in edges for fid in e["ids"]}
-    explained = {u[0] for u in d.get("_undrawn_flows", [])}
+    explained = {u[0] for u in d.get("_undrawn_flows", [])} | {
+        fid for ref in d.get("_references", []) for fid in ref["ids"]
+    }
     for fid in flows:
         if fid not in drawn and fid not in explained:
             problems.append(f"{fid}: neither drawn nor explained")
     placed = (
         {c["tb"] for c in chips}
+        | set(d.get("_overview_tbs", []))
         | {t for n in nodes.values() for t in n.get("tags", [])}
         | {u[0] for u in d.get("_unplaced_tbs", [])}
     )
@@ -1969,9 +2347,18 @@ def _audit(d, nodes, edges, chips, boundaries):
 
 
 # ---- entry points ---------------------------------------------------------------------------------
-def _build(yaml_data, scenarios, actors, actor_groups=()):
+def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True):
     d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
+    d["_overview"] = not detail
+    d["_auth_catalog"] = (
+        profile_catalog(d.get("data_flows") or [])
+        if not detail or any(f.get("authentication") for f in d.get("data_flows") or [])
+        else {}
+    )
     nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors, victim_target)
+    if not detail:
+        _overview_groups(nodes, edges)
+        d["_overview_tbs"] = [t["id"] for t in tbs]
     group_labels = {"internet-user": "Self-registered users", "repo-read": "Public-source readers"}
     for node in nodes.values():
         if not node.get("attacker"):
@@ -1985,6 +2372,14 @@ def _build(yaml_data, scenarios, actors, actor_groups=()):
             title_height = 12 * min(2, len(_wrap(title, node["w"] - 40, 10)))
             node["h"] = max(node["h"], 24 + title_height + 10 * len(node["group_lines"]))
     nodes, edges, dropped = _select_drawn(nodes, edges, d)
+    if not detail:
+        edges, d["_references"] = select_references(d, nodes, edges, tb_threats)
+        edges = bundle_access_groups(d, edges)
+        _prepare_reference_rows(nodes)
+        for node in nodes.values():
+            node.pop("tags", None)
+        for edge in edges:
+            edge["tb"] = []
     col_x, col_w, zone_boxes, boundaries, chips, height = _layout(nodes, edges, dropped, tb_threats)
     attached = {a.get("id") for n in nodes.values() for a in n.get("assets", [])}
     unattached = sorted(
@@ -2011,7 +2406,7 @@ def _build(yaml_data, scenarios, actors, actor_groups=()):
     return svg, {"d": d, "nodes": nodes, "edges": edges, "chips": chips, "boundaries": boundaries, "canvas": canvas}
 
 
-def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=None, actor_labels=None):
+def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=None, actor_labels=None, *, detail=True):
     """Figure 1 for a threat model. Returns "" when there is nothing to draw."""
     if not (yaml_data.get("components") or []):
         return ""
@@ -2019,23 +2414,33 @@ def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=No
         yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
     )
     svg, _state = _build(
-        yaml_data, scenarios, actors, overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy)
+        yaml_data,
+        scenarios,
+        actors,
+        overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy),
+        detail=detail,
     )
     return svg
 
 
-def check_diagram(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None, scenarios=None, actors=None):
+def check_diagram(
+    yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None, scenarios=None, actors=None, *, detail=True
+):
     """Render and verify; returns (svg, problems). Used by the tests and the CLI."""
     if scenarios is None:
         scenarios, actors = scenarios_from_attack_paths(
             yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
         )
     svg, st = _build(
-        yaml_data, scenarios, actors or [], overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy)
+        yaml_data,
+        scenarios,
+        actors or [],
+        overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy),
+        detail=detail,
     )
-    problems = _check_geometry(st["nodes"], st["edges"], st["canvas"], st["chips"]) + _audit(
-        st["d"], st["nodes"], st["edges"], st["chips"], st["boundaries"]
-    )
+    problems = _check_geometry(
+        st["nodes"], st["edges"], st["canvas"], st["chips"], boundaries=st["boundaries"]
+    ) + _audit(st["d"], st["nodes"], st["edges"], st["chips"], st["boundaries"])
     return svg, problems
 
 
@@ -2043,7 +2448,8 @@ def main(argv):
     import yaml
 
     do_check = "--check" in argv
-    args = [a for a in argv if a != "--check"]
+    detail = "--detail" in argv
+    args = [a for a in argv if a not in {"--check", "--detail"}]
     if len(args) < 2:
         print(__doc__)
         return 2
@@ -2054,7 +2460,7 @@ def main(argv):
     if len(args) == 3:
         with open(args[1], encoding="utf-8") as fh:
             scenarios, actors = _parse_markdown(fh.read())
-    svg, problems = check_diagram(d, {}, {}, scenarios=scenarios, actors=actors)
+    svg, problems = check_diagram(d, {}, {}, scenarios=scenarios, actors=actors, detail=detail)
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(svg)
     print(f"wrote {out}")

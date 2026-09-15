@@ -27,6 +27,17 @@ import pytest
 import runtime_cleanup as rc
 
 PLUGIN_ROOT = Path(__file__).parent.parent
+
+
+def test_completed_cleanup_preserves_both_architecture_diagrams(tmp_path):
+    for name in ["threat-model.md", "threat-model.figure1.svg", "threat-model.figure1-detail.svg"]:
+        (tmp_path / name).write_text("generated report artifact")
+    result = rc.run_cleanup(tmp_path, "post-qa", False, True)
+    assert not result["skipped"]
+    assert (tmp_path / "threat-model.figure1.svg").is_file()
+    assert (tmp_path / "threat-model.figure1-detail.svg").is_file()
+
+
 CLEANUP_WHITELIST_MD = PLUGIN_ROOT / "docs" / "internal" / "contracts" / "cleanup-whitelist.md"
 SKILL_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL.md"
 FULL_RUNTIME_MD = PLUGIN_ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md"
