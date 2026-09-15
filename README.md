@@ -117,26 +117,25 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
-### Security Score script
+### Security score script
 
-`scripts/security_score.py` gives a limited 0–100 indication from deterministic checks without running a threat model. It reports `undetermined` when too few checks apply. Pass a local directory or an HTTPS GitHub/GitLab Git URL to `--repo`; remote checkouts are temporary. The default output is text; `--json` or `--yaml` emits the same structured result in the selected format. The output flags are mutually exclusive. The script needs Python 3.10+, PyYAML, and git.
+Get a quick 0–100 score from automated checks without running a threat model. The score is limited to these checks and shows `undetermined` when too few apply. Requires Python 3.10+, PyYAML, and git.
 
 ```bash
-python3 /path/to/appsec-advisor/scripts/security_score.py --repo https://gitlab.com/group/project.git
-python3 /path/to/appsec-advisor/scripts/security_score.py --repo /path/to/project --yaml
+python3 /path/to/appsec-advisor/scripts/security_score.py --repo /path/to/project
 ```
+
+Replace the paths with your plugin and project directories, or use an HTTPS GitHub/GitLab Git URL for `--repo`. Add `--json` or `--yaml` for structured output; use `--help` for all options.
 
 ### Deterministic scan script
 
-`scripts/repo_scan.py` runs the repository-only deterministic scans and prints findings, endpoints, and the detected stack without a threat model. Pass a local directory or an HTTPS GitHub/GitLab Git URL to `--repo`. Without a severity filter, the default runs all scans. With `--medium`, `--high`, or `--critical`, the default runs only finding scans, so route and stack details do not fill a severity-filtered report. Repeat `--scan` to select `config`, `authz`, `source`, `mass-assignment`, `architecture`, `endpoints`, or `stack` explicitly. `authz` runs only authorization catalog checks. Recognized route registrations appear under `endpoints`; unsupported route files are counted.
-
-In default text mode, progress goes to stderr and stdout ends with a parseable `SUMMARY key=value` line. `--medium`, `--high`, and `--critical` filter findings at or above the chosen severity. `--yaml` and `--json` emit the same schema-validated report on stdout in the selected format; `--yaml PATH` and `--json PATH` write a file. JSON mode suppresses progress and file-write messages, so stdout contains only JSON when no path is given and stays empty when writing a file. The output flags are mutually exclusive. Both scripts show usage with `--help` and reject unknown arguments before scanning. The script needs Python 3.10+, PyYAML, jsonschema, and git; scanner sidecars and remote checkouts remain temporary.
+Scan a repository for security findings, endpoints, and its technology stack without running a threat model. Requires Python 3.10+, PyYAML, jsonschema, and git.
 
 ```bash
-python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project --scan authz --high
-python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo https://github.com/group/project.git --scan endpoints --scan stack --yaml scan.yaml
-python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project --scan endpoints --json scan.json
+python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project
 ```
+
+Use the same path or URL format as above. Add `--high` to show only High and Critical findings, or `--json scan.json` to save the report. Use `--help` for scan selection and other options.
 
 ## What's new in 0.6.0-beta.3
 
