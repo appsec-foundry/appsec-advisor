@@ -55,7 +55,7 @@ def test_explicit_access_groups_preserve_methods_and_individual_detail(name, mod
     assert len(ports) == 2
     assert [p.get("data-authentication") for p in ports] == (["2", "1"] if mode == "sequence" else ["1", "2"])
     assert name in svg
-    assert "Clients" in svg
+    assert "Client Layer" in svg
     detail, errors = F.check_diagram(model, paths, taxonomy, detail=True)
     assert not errors
     detail_root = ET.fromstring(detail)
@@ -287,7 +287,7 @@ def test_reference_footers_wrap_long_names_and_multiple_receiving_methods():
     rows = root.findall("{*}g[@data-reference-owner='ext-directory']")
     assert len(rows) == 4
     assert sum(len(r.findall("{*}g[@data-authentication]")) for r in rows) == len(schemes)
-    subtitle = next(t for t in root.findall("{*}text") if "distinct subtitle" in (t.text or ""))
+    subtitle = next(t for t in root.findall(".//{*}text") if "distinct subtitle" in (t.text or ""))
     assert float(subtitle.get("y")) < min(float(r.find("{*}rect").get("y")) for r in rows) - 4
     assert "&lt;Directory&gt; &amp;" in svg
 
@@ -365,6 +365,7 @@ def test_flow_legend_groups_drawn_edges_and_keeps_all_flow_meanings(endpoint, la
     model, paths, taxonomy = _model()
     for flow in model["data_flows"][1:3]:
         flow["to"] = endpoint
+        flow["direction"] = "bidirectional"
         flow["label"] = "A complete description retained in the canonical model"
     model["data_flows"][1]["diagram_label"] = label
     model["data_flows"][2]["diagram_label"] = "Live notifications"
@@ -618,12 +619,13 @@ def test_geometry_and_semantics_are_clean():
     svg = _checked()
     for token in (
         "C-01 · Web SPA",
-        "df-002/003",
+        "df-002",
+        "df-003",
         "df-005",
         "tb-1",
         "tb-8",
         "TRUST BOUNDARY",
-        "Assets — location and handling",
+        "no displayed component mapping",
     ):
         assert token in svg, token
 
@@ -667,7 +669,7 @@ def test_legend_balances_heights_and_keeps_small_assets_with_boundaries():
 
 
 @pytest.mark.parametrize("asset_count,flow_repetitions", [(2, 1), (18, 1), (2, 12)])
-def test_legend_keeps_complete_flows_assets_and_translated_labels(asset_count, flow_repetitions):
+def test_legend_keeps_complete_flows_and_explains_unmapped_assets(asset_count, flow_repetitions):
     model, paths, taxonomy = _model()
     model["assets"] = [
         {"id": f"A-{index:03d}", "name": f"Record collection {index}", "classification": "Internal"}
@@ -685,8 +687,9 @@ def test_legend_keeps_complete_flows_assets_and_translated_labels(asset_count, f
     for flow in model["data_flows"]:
         assert grouped_ids.split().count(flow["id"]) == 1
         assert flow["id"] in " ".join(panels["flows"].itertext())
-    for asset in model["assets"]:
-        assert f"{asset['id']} {asset['name']}" in text(panels["assets"])
+    assert "assets" not in panels
+    assert f"{asset_count} assets have no displayed component mapping" in text(panels["notes"])
+    assert state["d"]["assets"] == model["assets"]
     assert "actors" not in panels
     assert "Self-registered users" in text(root.find("{*}g[@data-actor-grouping]"))
     assert all(y1 <= float(root.get("height")) - F.MARGIN for _, _, _, y1, _ in state["canvas"].legend_boxes)
@@ -752,7 +755,11 @@ def test_scenario_badges_only_on_processes_and_linked_assets():
 
 def test_bidirectional_flow_gets_two_heads():
     svg = _checked()
-    assert 'marker-start="url(#arw-Confidential)"' in svg  # the df-002/003 bundle carries the WebSocket direction
+    root = ET.fromstring(svg)
+    websocket = root.find("{*}g[@data-flow-ids='df-003']/{*}path")
+    http = root.find("{*}g[@data-flow-ids='df-002']/{*}path")
+    assert websocket.get("marker-start") == "url(#arw-Internal)"
+    assert http.get("marker-start") is None
 
 
 def test_boundary_on_a_flow_is_a_chip_and_without_a_flow_a_tag():
@@ -783,7 +790,7 @@ def test_nearly_aligned_flow_ports_avoid_micro_jogs(offset, names):
     edge = dict(src=names[0], dst=names[1], ids=["df-081"], tb=[])
     F._layout(nodes, [edge], {}, {}, ncols=2)
     delta = edge["yd"] - edge["ys"]
-    assert delta == (offset if abs(offset) > 8 else 0)
+    assert delta == 0  # Larger offsets can align too when both ports have room.
 
 
 @pytest.mark.parametrize("occupied,attack,skip", [(True, False, False), (False, True, False), (False, False, True)])
@@ -927,9 +934,12 @@ def test_unknown_flow_endpoints_and_self_loops_are_explained():
     assert "df-091 not drawn: self-loop" in svg
 
 
-def test_multiple_stores_list_assets_in_the_legend():
+def test_multiple_stores_do_not_invent_asset_locations():
     svg = _checked(stores=2)
-    assert "Assets — location and handling" in svg and "Stored assets" not in svg
+    root = ET.fromstring(svg)
+    assert root.find("{*}g[@data-legend-section='assets']") is None
+    assert root.find("{*}g[@data-asset-id]") is None
+    assert "no displayed component mapping" in svg
 
 
 def test_audit_catches_a_misrouted_edge():
@@ -1736,8 +1746,10 @@ def test_evidenced_application_asset_is_not_reported_as_an_unknown_location():
     ]
     svg, problems = F.check_diagram(model, paths, taxonomy)
     assert problems == []
-    assert "processed by C-02" in svg
-    assert "location not established" not in svg
+    asset = ET.fromstring(svg).find("{*}g[@data-asset-id='A-001']")
+    assert asset.get("data-asset-component") == "app0"
+    assert asset.get("data-asset-relation") == "processed"
+    assert "no displayed component mapping" not in svg
 
 
 def test_ambiguous_outbound_boundary_tags_the_application_not_an_external_alias():
@@ -1753,3 +1765,554 @@ def test_ambiguous_outbound_boundary_tags_the_application_not_an_external_alias(
     assert "tb-99" in state["nodes"]["app0"]["tags"]
     assert "tb-99" not in state["nodes"]["ext:app0"].get("tags", [])
     assert F.check_diagram(model, paths, taxonomy)[1] == []
+
+
+def _routing_model(tiers, pairs, prefix):
+    ids = [f"{prefix}-{i}" for i in range(len(tiers))]
+    return {
+        "components": [{"id": cid, "name": cid.title(), "tier": tier} for cid, tier in zip(ids, tiers)],
+        "data_flows": [
+            {
+                "id": f"df-{i:03d}",
+                "from": ids[a] if isinstance(a, int) else a,
+                "to": ids[b],
+                "protocol": "HTTPS",
+                "label": "Record exchange",
+                "direction": "unidirectional",
+                "data_classification": "Internal",
+            }
+            for i, (a, b) in enumerate(pairs, 1)
+        ],
+    }
+
+
+def _proper_crossings(edges):
+    """Measure the actual paths independently of the renderer's quality score."""
+    segments = [(i, a, b) for i, edge in enumerate(edges) for a, b in zip(edge["pts"], edge["pts"][1:]) if a != b]
+    total = 0
+    for i, a, b in segments:
+        if a[1] != b[1]:
+            continue
+        for j, c, d in segments:
+            if i != j and c[0] == d[0]:
+                total += min(a[0], b[0]) < c[0] < max(a[0], b[0]) and min(c[1], d[1]) < a[1] < max(c[1], d[1])
+    return total
+
+
+@pytest.mark.parametrize("prefix", ["dispatch", "telemetry"])
+@pytest.mark.parametrize("detail", [False, True])
+def test_reciprocal_services_have_separate_uncrossed_routes(prefix, detail):
+    model = _routing_model(["application", "application"], [(0, 1), (1, 0)], prefix)
+    before = copy.deepcopy(model)
+    svg, state = F._build(model, [], [], detail=detail)
+    assert _proper_crossings(state["edges"]) == 0
+    assert len(state["edges"]) == 2
+    assert F.USER_ID not in state["nodes"]
+    assert F.check_diagram(model, {}, {}, detail=detail)[1] == []
+    assert F._build(model, [], [], detail=detail)[0] == svg
+    assert model == before
+
+
+@pytest.mark.parametrize("prefix", ["desktop", "instrument"])
+@pytest.mark.parametrize("detail", [False, True])
+def test_direct_store_access_uses_free_corridor(prefix, detail):
+    model = _routing_model(["client", "data"], [(0, 1)], prefix)
+    _, state = F._build(model, [], [], detail=detail)
+    points = state["edges"][0]["pts"]
+    assert len(points) <= 4
+    assert max(p[1] for p in points) <= max(points[0][1], points[-1][1])
+    assert F.check_diagram(model, {}, {}, detail=detail)[1] == []
+
+
+@pytest.mark.parametrize("prefix", ["dispatch", "telemetry"])
+@pytest.mark.parametrize("detail", [False, True])
+def test_opposing_routes_reallocate_ports_before_fallback(prefix, detail):
+    model = _routing_model(
+        ["client", "application", "application", "application", "data", "data"],
+        [(0, 5), (4, 2), (1, 5), (2, 3)],
+        prefix,
+    )
+    _, problems = F.check_diagram(model, {}, {}, detail=detail)
+    assert problems == []
+
+
+@pytest.mark.parametrize("incoming,victim", [(False, False), (True, False), (False, True)])
+def test_generic_user_requires_an_external_flow_or_victim(incoming, victim):
+    model = _routing_model(["application"], [("external", 0)] if incoming else [], "worker")
+    scenarios = [{"n": "1", "victim": True, "cids": [], "title": "Victim action"}] if victim else []
+    _, state = F._build(model, scenarios, [])
+    assert (F.USER_ID in state["nodes"]) == (incoming or victim)
+
+
+@pytest.mark.parametrize("prefix", ["gateway", "relay"])
+@pytest.mark.parametrize("detail", [False, True])
+def test_flow_bundles_preserve_individual_direction(prefix, detail):
+    model = _routing_model(["application", "data"], [(0, 1), (0, 1)], prefix)
+    model["data_flows"][1].update(direction="bidirectional", label="Status exchange")
+    _, state = F._build(model, [], [], detail=detail)
+    assert [(e["ids"], e["bidi"]) for e in state["edges"]] == [(["df-001"], False), (["df-002"], True)]
+    assert F.check_diagram(model, {}, {}, detail=detail)[1] == []
+    model["data_flows"][0]["direction"] = "bidirectional"
+    _, state = F._build(model, [], [], detail=detail)
+    assert [(e["ids"], e["bidi"]) for e in state["edges"]] == [(["df-001", "df-002"], True)]
+
+
+def test_legend_content_has_clearance_below_header():
+    model = _routing_model(["application", "data"], [(0, 1)], "archive")
+    svg, _ = F._build(model, [], [], detail=False)
+    root = ET.fromstring(svg)
+    notation = root.find("{*}g[@data-legend-section='notation']")
+    header, first_icon = notation.findall("{*}rect")[:2]
+    assert float(first_icon.get("y")) - float(header.get("height")) >= 8
+    authentication = root.find("{*}g[@data-legend-section='authentication']")
+    header = authentication.find("{*}rect")
+    icon = authentication.find("{*}g[@data-authentication]")
+    center_y = float(re.search(r"translate\([^ ]+ ([^)]+)", icon.get("transform"))[1])
+    assert center_y - 9 - float(header.get("height")) >= 8
+    title, description = authentication.findall("{*}text")[1:3]
+    assert float(description.get("y")) - float(description.get("font-size")) - float(title.get("y")) >= 4
+
+
+@pytest.mark.parametrize("prefix", ["shipment", "measurement"])
+def test_composer_keeps_dfd_for_opposing_routes(tmp_path, prefix):
+    from types import SimpleNamespace
+
+    import compose_threat_model as composer
+
+    model = _routing_model(
+        ["client", "application", "application", "application", "data", "data"],
+        [(0, 5), (4, 2), (1, 5), (2, 3)],
+        prefix,
+    )
+    model["threats"] = [{"id": "F-001", "component": f"{prefix}-2", "risk": "High", "stride": "Tampering"}]
+    paths = {"attack_paths": [{"class": "tampering", "actor": "internet-anon", "findings": ["F-001"]}]}
+    context = SimpleNamespace(yaml_data=model, output_dir=tmp_path, figure_basename="review.figure1.svg", warnings=[])
+    markdown = composer._render_figure1_svg(context, paths, {})
+    assert context.warnings == []
+    assert "review.figure1-detail.svg" in markdown
+    assert 'data-flow-ids="df-002"' in (tmp_path / "review.figure1.svg").read_text()
+
+
+@pytest.mark.parametrize("seed", [36, 74, 82, 135])
+@pytest.mark.parametrize("detail", [False, True])
+def test_mixed_service_topologies_retain_clean_geometry(seed, detail):
+    import itertools
+    import random
+
+    rng = random.Random(seed)
+    tiers = ["client", *["application"] * 4, "data", "data"]
+    pairs = rng.sample(list(itertools.permutations(range(len(tiers)), 2)), rng.randrange(3, 13))
+    model = _routing_model(tiers, pairs, "node")
+    before = copy.deepcopy(model)
+    svg, errors = F.check_diagram(model, {}, {}, detail=detail)
+    assert errors == []
+    assert svg == F.check_diagram(model, {}, {}, detail=detail)[0]
+    assert model == before
+
+
+def test_shortcut_does_not_cross_an_intervening_component():
+    model = _routing_model(["client", "application", "data"], [(0, 2)], "node")
+    _, state = F._build(model, [], [], detail=False)
+    node = state["nodes"]["node-1"]
+    rect = (node["x"], node["y"], node["x"] + node["w"], node["y"] + node["h"])
+    points = state["edges"][0]["pts"]
+    for a, b in zip(points, points[1:]):
+        if a[1] == b[1]:
+            assert not (rect[1] < a[1] < rect[3] and min(a[0], b[0]) < rect[2] and max(a[0], b[0]) > rect[0])
+        else:
+            assert not (rect[0] < a[0] < rect[2] and min(a[1], b[1]) < rect[3] and max(a[1], b[1]) > rect[1])
+    assert F.check_diagram(model, {}, {}, detail=False)[1] == []
+
+
+def test_audit_rejects_an_extra_reverse_direction():
+    model = _routing_model(["application", "data"], [(0, 1)], "node")
+    _, state = F._build(model, [], [])
+    state["edges"][0]["bidi"] = True
+    assert any(
+        "one-way flow drawn with two heads" in p
+        for p in F._audit(state["d"], state["nodes"], state["edges"], state["chips"], state["boundaries"])
+    )
+
+
+@pytest.mark.parametrize("side", ["top", "side", "bottom"])
+def test_geometry_gate_rejects_compressed_legend_content(side):
+    block = F._Canvas()
+    block.rect(0, 0, F.LEGEND_W, F.LEGEND_HEAD)
+    block.legend_content = []
+    block.rect(4 if side == "side" else 14, F.LEGEND_HEAD + (1 if side == "top" else 10), 20, 18)
+    block.maxy += 1 if side == "bottom" else 10
+    canvas = F._Canvas()
+    F._place_legend(canvas, [("test", block)], F.LEGEND_W, 0)
+    assert any("legend padding" in p for p in F._check_geometry({}, [], canvas, []))
+
+
+@pytest.mark.parametrize("name", ["ProcessingGateway" * 12, "TelemetryPipeline" * 10])
+def test_asset_annotations_retain_long_owner_identifiers(name):
+    model = _routing_model(["application"], [], "processor")
+    model["components"][0]["name"] = name
+    model["assets"] = [
+        {
+            "id": "A-001",
+            "name": "Events",
+            "classification": "Internal",
+            "component_refs": [
+                {
+                    "component_id": "processor-0",
+                    "relation": "processed",
+                    "evidence": [{"file": "src/worker.py", "line": 1}],
+                }
+            ],
+        }
+    ]
+    svg, errors = F.check_diagram(model, {}, {}, detail=False)
+    assert errors == []
+    asset = ET.fromstring(svg).find("{*}g[@data-asset-id='A-001']")
+    assert asset.get("data-asset-component") == "processor-0"
+    assert name in asset.find("{*}title").text
+
+
+@pytest.mark.parametrize("prefix", ["dispatch", "telemetry"])
+def test_route_simplification_keeps_payload_labels_visible(prefix):
+    model = _routing_model(["client", "application", "application", "data"], [(0, 2), (3, 2), (1, 3)], prefix)
+    labels = ["Credentials", "Account authentication", "Record synchronization"]
+    for flow, label in zip(model["data_flows"], labels):
+        flow["label"] = label
+    svg, state = F._build(model, [], [], detail=False)
+    assert not state["d"].get("_label_notes")
+    assert all(label in svg for label in labels)
+    assert F.check_diagram(model, {}, {}, detail=False)[1] == []
+
+
+@pytest.mark.parametrize("detail", [False, True])
+def test_flow_lines_use_payload_names_instead_of_identifiers(detail):
+    model = _routing_model(["application", "data"], [(0, 1)], "shipping")
+    model["data_flows"][0]["label"] = "Orders"
+    svg, _ = F._build(model, [], [], detail=detail)
+    root = ET.fromstring(svg)
+    # Legend IDs and hover metadata retain traceability; visible diagram labels convey the payload.
+    for legend in root.findall("{*}g[@data-legend-section]"):
+        root.remove(legend)
+    text = " ".join(node.text or "" for node in root.iter("{http://www.w3.org/2000/svg}text"))
+    assert "Orders" in text
+    assert "df-001" not in text
+
+
+@pytest.mark.parametrize("prefix", ["archive", "ledger"])
+def test_assets_appear_at_evidenced_components_without_a_remainder_legend(prefix):
+    model = _routing_model(["application", "data", "data"], [(0, 1), (0, 2)], prefix)
+    model["assets"] = [
+        {
+            "id": f"A-{i:03d}",
+            "name": name,
+            "classification": "Confidential",
+            "component_refs": [
+                {
+                    "component_id": f"{prefix}-{owner}",
+                    "relation": relation,
+                    "evidence": [{"file": f"src/{prefix}.py", "line": i}],
+                }
+            ],
+        }
+        for i, name, owner, relation in [(1, "Orders", 1, "stored"), (2, "Session tokens", 0, "processed")]
+    ]
+    original = copy.deepcopy(model)
+    svg, state = F._build(model, [], [], detail=False)
+    root = ET.fromstring(svg)
+    assert root.find("{*}g[@data-legend-section='assets']") is None
+    for aid, owner, relation in [("A-001", 1, "stored"), ("A-002", 0, "processed")]:
+        asset = root.find(f"{{*}}g[@data-asset-id='{aid}']")
+        assert asset.get("data-asset-component") == f"{prefix}-{owner}"
+        assert asset.get("data-asset-relation") == relation
+        assert relation.title() + ":" in " ".join(asset.itertext())
+    assert [a["id"] for a in state["nodes"][f"{prefix}-1"]["assets"]] == ["A-001"]
+    assert state["nodes"][f"{prefix}-2"]["assets"] == []
+    assert "Asset mapping not established" in " ".join(root.itertext())
+    assert model == original
+    assert F.check_diagram(model, {}, {}, detail=False)[1] == []
+
+
+def test_payload_layout_selection_respects_geometry_rejection(monkeypatch):
+    model = _routing_model(
+        ["client", "application", "application", "data"],
+        [(1, 2), (1, 3), (2, 3), (0, 1), (2, 1), (2, 0), (0, 2)],
+        "dispatch",
+    )
+    for i, flow in enumerate(model["data_flows"]):
+        flow["label"] = ["Credential lookup", "Account authentication", "Record synchronization"][i % 3]
+    monkeypatch.setattr(F, "_check_geometry", lambda *args, **kwargs: ["blocked alternative"])
+    svg, state = F._build(model, [], [], detail=False)
+    assert state["d"].get("_label_notes")
+    note = ET.fromstring(svg).find("{*}g[@data-legend-section='flow-notes']")
+    text = " ".join(note.itertext())
+    assert any("df-007" in ids for ids, _ in state["d"]["_label_notes"])
+    assert "Credential lookup" in text
+    assert "df-007" not in text
+    assert F.check_diagram(model, {}, {}, detail=False)[1] == ["blocked alternative"]
+
+
+@pytest.mark.parametrize("relation", ["stored", "processed", "transmitted"])
+def test_asset_annotations_require_evidence_and_keep_handling_explicit(relation):
+    model = _routing_model(["application", "data"], [(0, 1)], "records")
+    ref = {"component_id": "records-0", "relation": relation}
+    model["assets"] = [{"id": "A-001", "name": "Records", "classification": "Internal", "component_refs": [ref]}]
+    _, state = F._build(model, [], [], detail=False)
+    assert not any(n["assets"] for n in state["nodes"].values())
+    ref["evidence"] = [{"file": "src/records.py", "line": 1}]
+    _, state = F._build(model, [], [], detail=False)
+    assert state["nodes"]["records-0"]["assets"][0]["_relation"] == relation
+    assert state["nodes"]["records-1"]["assets"] == []
+    model["assets"][0]["component_refs"].append(
+        {"component_id": "records-1", "relation": "stored", "evidence": [{"file": "schema.sql", "line": 1}]}
+    )
+    _, state = F._build(model, [], [], detail=False)
+    assert [a["id"] for a in state["nodes"]["records-1"]["assets"]] == ["A-001"]
+    assert bool(state["nodes"]["records-0"]["assets"]) == (relation == "stored")
+
+
+def test_asset_scenario_badges_have_space_below_classification():
+    model = _routing_model(["data"], [], "archive")
+    model["assets"] = [
+        {
+            "id": "A-001",
+            "name": "Records",
+            "classification": "Confidential",
+            "linked_threats": ["T-001"],
+            "component_refs": [
+                {"component_id": "archive-0", "relation": "stored", "evidence": [{"file": "schema.sql", "line": 1}]}
+            ],
+        }
+    ]
+    scenarios = [{"n": str(n), "fids": [1], "cids": [], "title": "Read records"} for n in range(1, 8)]
+    svg, _ = F._build(model, scenarios, [], detail=False)
+    asset = ET.fromstring(svg).find("{*}g[@data-asset-id='A-001']")
+    classification = next(t for t in asset.findall("{*}text") if t.text == "Confidential")
+    badges = asset.findall("{*}circle")
+    assert len(badges) == 7
+    assert min(float(b.get("cy")) - float(b.get("r")) for b in badges) >= float(classification.get("y")) + 7
+    assert F.check_diagram(model, {}, {}, scenarios=scenarios, actors=[], detail=False)[1] == []
+
+
+@pytest.mark.parametrize("prefix", ["archive", "ledger"])
+@pytest.mark.parametrize("detail", [False, True])
+def test_dense_asset_symbols_have_an_exact_legend_and_preserve_small_stores(prefix, detail):
+    model = _routing_model(["application", "data", "data"], [(0, 1), (0, 2)], prefix)
+    model["assets"] = [
+        {
+            "id": f"A-{i:03d}",
+            "name": f"Record collection {i}",
+            "classification": "Confidential",
+            "linked_threats": ["T-001"],
+            "component_refs": [
+                {
+                    "component_id": f"{prefix}-{1 if i <= 20 else 2}",
+                    "relation": "stored",
+                    "evidence": [{"file": f"schema/{prefix}.sql", "line": i}],
+                }
+            ],
+        }
+        for i in range(1, 23)
+    ]
+    # A shared storage location must not create duplicate legend entries.
+    model["assets"][0]["component_refs"].append(
+        {"component_id": f"{prefix}-2", "relation": "stored", "evidence": [{"file": "schema/replica.sql", "line": 1}]}
+    )
+    original = copy.deepcopy(model)
+    scenarios = [{"n": "1", "fids": [1], "cids": [], "title": "Read records"}]
+    svg, state = F._build(model, scenarios, [], detail=detail)
+    root = ET.fromstring(svg)
+    dense, small = (state["nodes"][f"{prefix}-{i}"] for i in (1, 2))
+    assert dense["compact_assets"] and not small["compact_assets"]
+    assert dense["h"] < F._asset_inline_height(dense["assets"])
+    assert dense["inline_asset_ids"] == ["A-001", "A-002"]
+    symbols = root.findall(f"{{*}}g[@data-asset-component='{prefix}-1'][@data-asset-display='symbol']")
+    assert len(symbols) == 18
+    for symbol in symbols:
+        visible = " ".join(t.text or "" for t in symbol.findall("{*}text"))
+        assert visible == symbol.get("data-asset-id")
+    legend = root.find("{*}g[@data-legend-section='assets']")
+    entries = legend.findall("{*}g[@data-asset-legend-id]")
+    assert [e.get("data-asset-legend-id") for e in entries] == [f"A-{i:03d}" for i in range(3, 21)]
+    for i, entry in enumerate(entries, 3):
+        text = " ".join(entry.itertext())
+        assert f"A-{i:03d} Record collection {i}" in text
+        assert "Confidential · stored in C-02" in text
+        assert "Attack scenarios: 1" in text
+    assert "Record collection 21" in " ".join(root.find("{*}g[@data-asset-id='A-021']").itertext())
+    assert model == original
+    assert F.check_diagram(model, {}, {}, scenarios=scenarios, actors=[], detail=detail)[1] == []
+    assert F._build(model, scenarios, [], detail=detail)[0] == svg
+
+
+@pytest.mark.parametrize("detail", [False, True])
+def test_layer_titles_omit_internal_framework_and_deployment_notes(detail):
+    model = _routing_model(["client", "application", "data"], [(0, 1), (1, 2)], "dispatch")
+    model["components"][1].update(framework="opaque-framework-label", deployment_zones=["internal-segment-code"])
+    svg, errors = F.check_diagram(model, {}, {}, detail=detail)
+    assert not errors
+    for title in ("Client Layer", "Application Layer", "Data Layer"):
+        assert f">{title}<" in svg
+    assert "opaque-framework-label" not in svg
+    assert "internal-segment-code" not in svg
+
+
+@pytest.mark.parametrize("tier,relation", [("application", "processed"), ("data", "stored")])
+def test_dense_asset_preview_prioritizes_linked_risk_then_classification(tier, relation):
+    model = _routing_model([tier], [], "records")
+    model["assets"] = [
+        {
+            "id": f"A-{i:03d}",
+            "name": "Critical sounding name" if i == 1 else f"Record collection {i}",
+            "classification": "Internal",
+            "component_refs": [
+                {"component_id": "records-0", "relation": relation, "evidence": [{"file": "src/records.py", "line": i}]}
+            ],
+        }
+        for i in range(1, 13)
+    ]
+    model["assets"][9]["classification"] = "Restricted"
+    model["assets"][10]["linked_threats"] = ["T-001"]
+    model["threats"] = [{"id": "T-001", "component": "records-0", "risk": "High", "stride": "Information Disclosure"}]
+    svg, state = F._build(model, [], [], detail=False)
+    assert state["nodes"]["records-0"]["inline_asset_ids"] == ["A-011", "A-010"]
+    root = ET.fromstring(svg)
+    assert len(root.findall("{*}g[@data-asset-display='inline']")) == 2
+    assert len(root.findall("{*}g[@data-asset-display='symbol']")) == 10
+    assert F.check_diagram(model, {}, {}, detail=False)[1] == []
+
+
+@pytest.mark.parametrize("version", [None, "3.2.1"])
+def test_project_identity_prefers_recorded_name_and_never_uses_plugin_version(version):
+    model = _routing_model(["application"], [], "checkout")
+    model["meta"] = {"project": "working-copy-2", "plugin_version": "9.9.9"}
+    model["project"] = {"name": "Order Gateway", "version": version}
+    svg, _ = F._build(model, [], [], detail=False)
+    assert "Order Gateway" in svg
+    assert "working-copy-2" not in svg and "9.9.9" not in svg
+    assert ("3.2.1" in svg) == bool(version)
+
+
+@pytest.mark.parametrize("prefix", ["gateway", "relay"])
+@pytest.mark.parametrize("blocked", [False, True])
+def test_straight_routes_move_both_ports_only_through_a_free_corridor(prefix, blocked):
+    nodes = {
+        prefix: {"id": prefix, "x": 0, "y": 220, "w": 100, "h": 120, "tagspace": 0},
+        "records": {"id": "records", "x": 300, "y": 20, "w": 100, "h": 280, "tagspace": 0},
+    }
+    if blocked:
+        nodes["obstacle"] = {"id": "obstacle", "x": 150, "y": 210, "w": 100, "h": 100, "tagspace": 0}
+    edge = {
+        "src": prefix,
+        "dst": "records",
+        "ids": ["df-001"],
+        "kind": "forward",
+        "skip": False,
+        "tb": [],
+        "pts": [(100, 320), (260, 320), (260, 150), (300, 150)],
+    }
+    original = copy.deepcopy(edge["pts"])
+    F._improve_routes(nodes, [edge], [], [], straight_only=True)
+    if blocked:
+        assert edge["pts"] == original
+    else:
+        assert len({p[1] for p in edge["pts"]}) == 1
+        assert 231 <= edge["pts"][0][1] <= 289
+        assert len(F._authentication_endpoint(edge, {})) == 2
+    assert F._check_geometry(nodes, [edge], F._Canvas(), []) == []
+
+
+def test_payload_placement_uses_free_intervals_between_obstacles():
+    occupied = [(0, 0, 154, 110), (256, 0, 300, 110)]
+    candidates = list(F._label_gaps((0, 100), (300, 100), 80, -6, occupied, []))
+    assert candidates
+    for _, _, rect, _ in candidates:
+        assert 154 < rect[0] < rect[2] < 256
+
+
+@pytest.mark.parametrize("protocol", ["SQLite in-process", "Custom Repository Protocol"])
+def test_short_payload_candidates_never_drop_the_protocol(protocol):
+    choices = F._flow_label_candidates(
+        [{"id": "df-001", "label": "User and product record lookups", "protocol": protocol}], False
+    )
+    assert choices and all(protocol in choice for choice in choices)
+    assert all("df-001" not in choice for choice in choices)
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Local inference service for prompts and responses",
+        "Blockchain gateway for event subscriptions and transactions",
+    ],
+)
+def test_external_descriptions_wrap_without_cutting_short_sentences(description):
+    model = _routing_model(["application"], [], "gateway")
+    model["external_entities"] = [
+        {
+            "id": "ext-service",
+            "name": "External processing service",
+            "kind": "external-service",
+            "description": description,
+        }
+    ]
+    model["data_flows"] = [
+        {
+            "id": "df-001",
+            "from": "gateway-0",
+            "to": "external",
+            "to_entity": "ext-service",
+            "label": "Records",
+            "protocol": "HTTPS",
+        }
+    ]
+    original = copy.deepcopy(model)
+    svg, state = F._build(model, [], [], detail=False)
+    node = ET.fromstring(svg).find("{*}g[@data-external-id='ext-service']")
+    lines = [t for t in node.findall("{*}text") if t.get("font-size") == "7.5"]
+    assert len(lines) == 2
+    assert " ".join(t.text for t in lines) == description
+    assert node.find("{*}title").text == description
+    assert state["nodes"]["ext-service"]["h"] > F.EXT_H
+    assert model == original
+    assert F.check_diagram(model, {}, {}, detail=False)[1] == []
+
+
+def test_attack_paths_use_slightly_heavier_lines_and_descriptive_labels():
+    model, paths, taxonomy = _model(xss=True)
+    svg, errors = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert not errors
+    root = ET.fromstring(svg)
+    attacks = [p for p in root.iter("{http://www.w3.org/2000/svg}path") if "attacker-" in p.get("marker-end", "")]
+    assert attacks and all(float(p.get("stroke-width")) == 1.8 for p in attacks)
+    text = [t.text for t in root.iter("{http://www.w3.org/2000/svg}text")]
+    assert "Direct attack" in text and "Via user" in text
+    assert "A1" not in text
+
+
+@pytest.mark.parametrize("port", [12345, 7443])
+def test_external_subtitles_keep_the_value_after_a_port_label(port):
+    nodes = {
+        "external": {
+            "kind": "ext",
+            "zone": "third-party",
+            "name": "Inference endpoint",
+            "w": F.EXT_W,
+            "h": F.EXT_H,
+            "sub": f"Local or remote inference service providing responses on port {port} through a compatible API.",
+        }
+    }
+    F._prepare_external_text(nodes)
+    lines = nodes["external"]["sub_lines"]
+    assert len(lines) == 3
+    assert " ".join(lines) == nodes["external"]["sub"]
+
+
+def test_multiline_payload_labels_keep_content_and_protocol_outside_notes():
+    model = _routing_model(["application", "data"], [(0, 1)], "gateway")
+    model["data_flows"][0].update(label="Product queries", protocol="SQLite in-process")
+    svg, state = F._build(model, [], [], detail=False)
+    assert not state["d"].get("_label_notes")
+    root = ET.fromstring(svg)
+    for legend in root.findall("{*}g[@data-legend-section]"):
+        root.remove(legend)
+    text = " ".join(t.text or "" for t in root.iter("{http://www.w3.org/2000/svg}text"))
+    assert "Product queries" in text and "SQLite in-process" in text

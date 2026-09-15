@@ -6777,3 +6777,39 @@ def test_run_statistics_omit_the_row_without_declared_context(tmp_path):
     out = compose._render_appendix_run_statistics(_run_stats_ctx(tmp_path, {"meta": {}, "threats": []}), None, {})
 
     assert "Business context" not in out
+
+
+@pytest.mark.parametrize(
+    "manifest,content,name,version",
+    [
+        ("package.json", '{"name":"order-gateway","version":"3.2.1"}', "Order Gateway", "3.2.1"),
+        ("pyproject.toml", '[project]\nname="sensor-relay"\nversion="4.5.0"\n', "Sensor Relay", "4.5.0"),
+        ("Cargo.toml", '[package]\nname="archive-worker"\nversion="0.8.2"\n', "Archive Worker", "0.8.2"),
+    ],
+)
+def test_figure1_uses_project_manifest_identity_in_both_images(tmp_path, manifest, content, name, version):
+    import copy
+
+    (tmp_path / manifest).write_text(content)
+    out = tmp_path / "docs" / "security"
+    out.mkdir(parents=True)
+    ctx = _fig1_ctx(out)
+    ctx.yaml_data["meta"] = {"project": "working-copy-2", "plugin_version": "9.9.9"}
+    original = copy.deepcopy(ctx.yaml_data)
+    compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert ctx.warnings == []
+    for filename in ("figure1.svg", "figure1-detail.svg"):
+        svg = (out / filename).read_text()
+        assert f"{name} · {version}" in svg
+        assert "working-copy-2" not in svg and "9.9.9" not in svg
+    assert ctx.yaml_data == original
+
+
+def test_figure1_retains_known_identity_without_local_manifest(tmp_path):
+    ctx = _fig1_ctx(tmp_path / "docs" / "security")
+    ctx.yaml_data["meta"] = {"project": "checkout-dir", "plugin_version": "9.9.9"}
+    assert compose._figure1_display_data(ctx)["project"] == {}
+    ctx.yaml_data["project"] = {"name": "Recorded System", "version": "1.2"}
+    assert compose._figure1_display_data(ctx)["project"] == ctx.yaml_data["project"]
+    (tmp_path / "package.json").write_text('{"name":"different-checkout","version":"5.6"}')
+    assert compose._figure1_display_data(ctx)["project"] == ctx.yaml_data["project"]

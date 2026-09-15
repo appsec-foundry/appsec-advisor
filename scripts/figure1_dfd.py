@@ -64,10 +64,10 @@ CLS_RANK = {"Restricted": 0, "Confidential": 1, "Internal": 2, "Public": 3}
 VERDICT = {"refuted": ("✕", RED), "clean": ("✓", GREEN), "held": ("✓", GREEN), "unconfirmed": ("?", AMBER)}
 ZONE_STYLE = {  # zone key -> (title, stroke, fill)
     "internet": ("INTERNET — untrusted", "#a04d4a", "#fbf6f6"),
-    "client": ("Client device", "#a0673f", "#fcf8f3"),
-    "application": ("Application", "#4f6d9c", "#f3f6fa"),
+    "client": ("Client Layer", "#a0673f", "#fcf8f3"),
+    "application": ("Application Layer", "#4f6d9c", "#f3f6fa"),
     "build": ("Build pipeline", "#4b7a94", "#f3f8fa"),
-    "data": ("Data", "#7b62a6", "#f7f5fa"),
+    "data": ("Data Layer", "#7b62a6", "#f7f5fa"),
     "third-party": ("Third-party", "#3f857c", "#f3f9f8"),
     "attackers": ("Attackers", "#a04d4a", "#fbf6f6"),
     "users": ("Users", "#6d927c", "#f5f8f6"),
@@ -101,6 +101,12 @@ B_OFF = 100  # boundary line offset inside a gap (from gap left)
 LANE0, LANE_STEP = 40, 10  # first lane offset right of the boundary (clear of the chips)
 LEGEND_W = 350
 LEGEND_GAP = 20
+LEGEND_HEAD = 26
+LEGEND_INSET = 14
+LEGEND_CONTENT_GAP = 10
+ASSET_INLINE_HEIGHT = 300
+ASSET_SYMBOL_ROW = 22
+ATTACK_WIDTH = 1.8
 FS = 8.5  # small label font
 ZONE_CAP = 8  # drawn nodes per zone; the rest collapse into one bar
 PORT_STEP = 22  # minimum spacing between ports on one node side
@@ -187,6 +193,8 @@ class _Canvas:
         self.labels = []  # bboxes for the overlap check: (x0, y0, x1, y1, name)
         self.badges = []
         self.legend_boxes = []
+        self.legend_content = None
+        self.legend_clearances = []
         self.label_owners = {}  # Tracked in-node labels must remain inside their owner.
         self.maxy = 0
 
@@ -200,6 +208,8 @@ class _Canvas:
             f'stroke="{stroke}" stroke-width="{sw}"{d}/>'
         )
         self.maxy = max(self.maxy, y + h)
+        if self.legend_content is not None:
+            self.legend_content.append((x, y, x + w, y + h))
 
     def text(self, x, y, s, size=11, fill=INK, anchor="middle", weight="normal", italic=False, track=None, halo=False):
         st = ' font-style="italic"' if italic else ""
@@ -209,10 +219,14 @@ class _Canvas:
             f'text-anchor="{anchor}" font-weight="{weight}"{st}{hl}>{_esc(s)}</text>'
         )
         self.maxy = max(self.maxy, y + 3)
-        if track:
+        if track or self.legend_content is not None:
             w = _tw(s, size)
             x0 = {"start": x, "middle": x - w / 2, "end": x - w}[anchor]
-            self.labels.append((x0, y - size, x0 + w, y + 2, track))
+            bounds = (x0, y - size, x0 + w, y + 2)
+            if self.legend_content is not None:
+                self.legend_content.append(bounds)
+            if track:
+                self.labels.append((*bounds, track))
 
     def path(self, d, stroke, sw=1.5, dash=None, marker=None, marker_start=None):
         ds = f' stroke-dasharray="{dash}"' if dash else ""
@@ -222,6 +236,9 @@ class _Canvas:
 
     def circle(self, cx, cy, r, fill="none", stroke="none", sw=1):
         self.add(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r}" fill="{fill}" stroke="{stroke}" stroke-width="{sw}"/>')
+        if self.legend_content is not None:
+            self.legend_content.append((cx - r, cy - r, cx + r, cy + r))
+            self.maxy = max(self.maxy, cy + r)
 
 
 # ---- glyphs -----------------------------------------------------------------------
@@ -393,7 +410,12 @@ def _weak_lines(items, maxw):
 
 
 def _asset_lines(asset):
-    return _wrap(f"{asset.get('id')} {asset.get('name')}", NODE_W - 46, 8.5)
+    relation = asset.get("_relation", "stored").title()
+    return _legend_wrap(f"{relation}: {asset.get('id')} {asset.get('name')}", NODE_W - 46, 8.5)
+
+
+def _asset_inline_height(assets):
+    return sum(11 * len(_asset_lines(a)) + 17 + (18 if a.get("_hits") else 0) for a in assets)
 
 
 def _weak_line(c, x, y, items, maxw):
@@ -685,24 +707,63 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         for cid in cids:
             if cid in nodes:
                 nodes[cid]["badges"].append(s["n"])
-    # Storage claims require an explicit, evidenced relation; classification alone is insufficient.
+    # Prefer evidenced storage locations. Without storage evidence, show known
+    # processing or transmission instead, labelled as such rather than as storage.
+    asset_risk = {
+        t.get("id"): SEV_RANK.get(t.get("effective_severity") or t.get("risk") or t.get("severity"), 3)
+        for t in d.get("threats") or []
+    }
     for asset in d.get("assets") or []:
         if not isinstance(asset, dict):
             continue
         linked = {int(m) for t in asset.get("linked_threats") or [] for m in re.findall(r"(\d+)$", str(t))}
-        for ref in asset.get("component_refs") or []:
-            node = nodes.get(ref.get("component_id"))
-            if node and node["kind"] == "store" and ref.get("relation") == "stored" and ref.get("evidence"):
-                node["assets"].append(
-                    dict(asset, _hits=[s["n"] for s in scenarios if linked & set(s.get("fids") or [])])
+        refs = [
+            ref for ref in asset.get("component_refs") or [] if ref.get("component_id") in nodes and ref.get("evidence")
+        ]
+        for relation in ("stored", "processed", "transmitted"):
+            owners = dict.fromkeys(ref["component_id"] for ref in refs if ref.get("relation") == relation)
+            if not owners:
+                continue
+            for owner in owners:
+                nodes[owner]["assets"].append(
+                    dict(
+                        asset,
+                        _relation=relation,
+                        _priority=(
+                            min((asset_risk.get(tid, 3) for tid in asset.get("linked_threats") or []), default=3),
+                            CLS_RANK.get(str(asset.get("classification")).title(), 9),
+                            asset["id"],
+                        ),
+                        _hits=[s["n"] for s in scenarios if linked & set(s.get("fids") or [])]
+                        if relation == "stored"
+                        else [],
+                    )
                 )
+            break
     for node in nodes.values():
+        asset_height = _asset_inline_height(node["assets"])
+        node["compact_assets"] = asset_height > ASSET_INLINE_HEIGHT
+        if node["compact_assets"]:
+            inline = []
+            inline_height = 0
+            for asset in sorted(node["assets"], key=lambda a: a["_priority"])[:2]:
+                row_height = _asset_inline_height([asset])
+                if inline_height + row_height <= ASSET_INLINE_HEIGHT / 2:
+                    inline.append(asset["id"])
+                    inline_height += row_height
+            node["inline_asset_ids"] = inline
+            cell_width = max(_tw(a["id"], 8.5) + 20 for a in node["assets"])
+            columns = max(1, min(3, int((NODE_W - 46) / cell_width)))
+            node["asset_columns"] = columns
+            symbol_count = len(node["assets"]) - len(inline)
+            asset_height = inline_height + (16 if inline else 0)
+            asset_height += ((symbol_count + columns - 1) // columns) * ASSET_SYMBOL_ROW
         node["h"] = max(
             PROC_H,
             108
             + 12 * len(_weak_lines(node["weak"], NODE_W - 32))
             + (12 if node["weak_more_high"] else 0)
-            + (24 + sum(11 * len(_asset_lines(a)) + 17 for a in node["assets"]) if node["assets"] else 0),
+            + (24 + asset_height if node["assets"] else 24 if node["kind"] == "store" else 0),
         )
     # actors: one legitimate user, then the attackers
     victim_of = [s["n"] for s in scenarios if s.get("victim")]
@@ -730,7 +791,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "id": f"actor:a{i}",
             "kind": "ext",
             "name": a["name"],
-            "sub": _cut(a.get("sub") or "", 34),
+            "sub": a.get("sub") or "",
             "zone": "internet",
             "col": 0,
             "w": EXT_W,
@@ -752,7 +813,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "id": key,
             "kind": "ext",
             "name": entity["name"],
-            "sub": _cut(entity.get("description") or "", 34),
+            "sub": entity.get("description") or "",
             "zone": "internet" if role else "third-party",
             "col": 0,
             "w": EXT_W,
@@ -768,7 +829,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     needs_generic_user = (victim_of and victim_target == USER_ID) or any(
         f.get("from") == "external" and not f.get("from_entity") for f in d.get("data_flows") or []
     )
-    if not needs_generic_user and any(e.get("kind") == "legitimate-role" for e in d.get("external_entities") or []):
+    if not needs_generic_user:
         nodes.pop(USER_ID)
 
     # edges from data flows; `external` is the user's client on the way in, a third-party entity on the way out
@@ -794,7 +855,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
                     "id": key,
                     "kind": "ext",
                     "name": "External service",
-                    "sub": _cut(f.get("label") or "", 36),
+                    "sub": f.get("label") or "",
                     "zone": "third-party",
                     "col": 0,
                     "w": EXT_W,
@@ -807,7 +868,11 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         if src not in nodes or dst not in nodes:
             undrawn.append((fid, f"unknown component {src if src not in nodes else dst}"))
             continue
-        key = flow_bundle_key(f) if d.get("_overview") or f.get("authentication") else (src, dst)
+        key = (
+            flow_bundle_key(f)
+            if d.get("_overview") or f.get("authentication")
+            else (src, dst, str(f.get("direction") or "").lower())
+        )
         b = bundles.setdefault(
             key,
             {
@@ -982,7 +1047,203 @@ def _align_flow_ports(nodes, edges, sides):
         edge["yd"] = height
 
 
-def _layout(nodes, edges, dropped, tb_threats, ncols=3):
+def _route_intersections(first, second):
+    """Count shared line intervals and proper crossings, excluding endpoint touches."""
+    overlaps = crossings = 0
+    for a, b in zip(first, first[1:]):
+        if a == b:
+            continue
+        for c, d in zip(second, second[1:]):
+            if c == d:
+                continue
+            horizontal = a[1] == b[1]
+            other_horizontal = c[1] == d[1]
+            if horizontal == other_horizontal:
+                axis, fixed = (0, 1) if horizontal else (1, 0)
+                overlaps += (
+                    abs(a[fixed] - c[fixed]) < 0.01
+                    and min(max(a[axis], b[axis]), max(c[axis], d[axis]))
+                    - max(min(a[axis], b[axis]), min(c[axis], d[axis]))
+                    > 1
+                )
+            else:
+                h1, h2, v1, v2 = (a, b, c, d) if horizontal else (c, d, a, b)
+                crossings += min(h1[0], h2[0]) < v1[0] < max(h1[0], h2[0]) and min(v1[1], v2[1]) < h1[1] < max(
+                    v1[1], v2[1]
+                )
+    return overlaps, crossings
+
+
+def _improve_routes(nodes, edges, boundaries, zones, *, straight_only=False):
+    """Improve data routes without moving nodes, changing topology or splitting buses.
+
+    Compare only affected paths, with invalid geometry taking precedence over
+    overlaps, crossings, short jogs, bends and length. One deterministic sweep
+    exchanges existing ports, uses free port positions, then exchanges lanes;
+    a final sweep tries free corridors for routes that skip a column. Ports
+    retain their minimum clearance. Layout failures still reach the independent
+    geometry and semantic gates.
+    """
+    movable = [i for i, e in enumerate(edges) if not e.get("attack") and not e.get("ui_top_entry")]
+    regular = [] if straight_only else movable
+    headings = [(z["x"], z["y"], z["x"] + z["w"], z["y"] + ZONE_HEAD - 3) for z in zones if not z.get("bar")]
+    badges = [
+        (n["x"] + n["w"] - 26 - i * 19, n["y"] + n["h"] - 9, n["x"] + n["w"] - 10 - i * 19, n["y"] + n["h"] + 7)
+        for n in nodes.values()
+        for i, _ in enumerate(n.get("badges", []))
+    ]
+
+    def shape_cost(index, points):
+        edge = edges[index]
+        segments = [(a, b) for a, b in zip(points, points[1:]) if a != b]
+        invalid = 0
+        for a, b in segments:
+            invalid += a[0] != b[0] and a[1] != b[1]
+            invalid += a[0] == b[0] and any(abs(a[0] - bx) < 14 for bx in boundaries)
+            for node in nodes.values():
+                rect = (node["x"] + 1, node["y"] + 1, node["x"] + node["w"] - 1, node["y"] + node["h"] - 1)
+                invalid += _segment_hits_rect(a, b, rect)
+            invalid += sum(_segment_hits_rect(a, b, rect) for rect in headings)
+            invalid += sum(_segment_hits_rect(a, b, rect) for rect in badges)
+        # Keep the existing source/receiver side and room for the authentication tab.
+        for nid, end, approach in ((edge["src"], points[0], points[1]), (edge["dst"], points[-1], points[-2])):
+            node = nodes[nid]
+            invalid += end[1] != approach[1] or (
+                approach[0] >= end[0] if end[0] == node["x"] else approach[0] <= end[0]
+            )
+        invalid += abs(points[-1][0] - points[-2][0]) < 38 + 32 * (max(1, len(edge.get("auth_keys", []))) - 1)
+        if edge.get("tb") and edge.get("bx") is not None:
+            a, b = points[:2] if edge["kind"] == "forward" else points[-2:]
+            invalid += not min(a[0], b[0]) <= edge["bx"] <= max(a[0], b[0])
+        lengths = [abs(a[0] - b[0]) + abs(a[1] - b[1]) for a, b in segments]
+        bends = sum((a[0] == b[0]) != (c[0] == d[0]) for (a, b), (c, d) in zip(segments, segments[1:]))
+        return invalid, sum(length < 8 for length in lengths), bends, sum(lengths)
+
+    def cost(changes):
+        invalid = overlaps = crossings = jogs = bends = 0
+        length = 0
+        for i, points in changes.items():
+            bad, short, turns, distance = shape_cost(i, points)
+            invalid += bad
+            jogs += short
+            bends += turns
+            length += distance
+            for j, edge in enumerate(edges):
+                if j == i or j in changes and j < i:
+                    continue
+                shared, crossed = _route_intersections(points, changes.get(j, edge["pts"]))
+                overlaps += shared
+                crossings += crossed
+        return invalid, overlaps, crossings, jogs, bends, round(length, 6)
+
+    def consider(changes, *, straight=False):
+        before = {i: edges[i]["pts"] for i in changes}
+        candidate = cost(changes)
+        previous = cost(before)
+        if straight:
+            # A valid straight connection takes precedence over avoiding a proper
+            # crossing. Shared line intervals still reject ambiguous junctions.
+            order = lambda c: (c[0], c[1], c[3], c[4], c[2], c[5])
+            candidate, previous = order(candidate), order(previous)
+        if candidate[0] or candidate >= previous:
+            return
+        for i, points in changes.items():
+            edges[i]["pts"] = points
+            edges[i]["ys"], edges[i]["yd"] = points[0][1], points[-1][1]
+
+    ports = collections.defaultdict(list)
+    for i in regular:
+        for role, position in (("src", 0), ("dst", -1)):
+            ports[(edges[i][role], edges[i]["pts"][position][0])].append((i, position))
+    for entries in ports.values():
+        for offset, (i, end) in enumerate(entries):
+            for j, other_end in entries[offset + 1 :]:
+                if i == j:
+                    continue
+                first, second = list(edges[i]["pts"]), list(edges[j]["pts"])
+                y1, y2 = first[end][1], second[other_end][1]
+                for points, pos, y in ((first, end, y2), (second, other_end, y1)):
+                    for p in (0, 1) if pos == 0 else (-2, -1):
+                        points[p] = (points[p][0], y)
+                consider({i: first, j: second})
+    # Break cyclic lane constraints using free space on the existing node side.
+    # Also align ports when a straight connection fits without crowding a peer.
+    for i in regular:
+        edge = edges[i]
+        for role, end, opposite in (("src", 0, -1), ("dst", -1, 0)):
+            node = nodes[edge[role]]
+            x, y = edge["pts"][end]
+            candidates = (edge["pts"][opposite][1], y - PORT_STEP / 2, y + PORT_STEP / 2)
+            for height in candidates:
+                if not node["y"] + node["tagspace"] + PORT_STEP / 2 <= height <= node["y"] + node["h"] - PORT_STEP / 2:
+                    continue
+                if any(
+                    j != i
+                    and other[r] == edge[role]
+                    and other["pts"][p][0] == x
+                    and abs(other["pts"][p][1] - height) < PORT_STEP
+                    for j, other in enumerate(edges)
+                    for r, p in (("src", 0), ("dst", -1))
+                ):
+                    continue
+                points = list(edge["pts"])
+                for p in (0, 1) if end == 0 else (-2, -1):
+                    points[p] = (points[p][0], height)
+                consider({i: points})
+    for offset, i in enumerate(regular):
+        edge = edges[i]
+        if len(edge["pts"]) != 4 or edge["skip"]:
+            continue
+        for j in regular[offset + 1 :]:
+            other = edges[j]
+            if len(other["pts"]) != 4 or other["skip"]:
+                continue
+            corridor = lambda e: (e["kind"] == "intra", min(nodes[e["src"]]["col"], nodes[e["dst"]]["col"]))
+            if corridor(edge) != corridor(other):
+                continue
+            first, second = list(edge["pts"]), list(other["pts"])
+            x1, x2 = first[1][0], second[1][0]
+            for points, x in ((first, x2), (second, x1)):
+                points[1:3] = [(x, points[1][1]), (x, points[2][1])]
+            consider({i: first, j: second})
+    for i in regular:
+        edge = edges[i]
+        if not edge["skip"]:
+            continue
+        points = edge["pts"]
+        for x in dict.fromkeys((points[1][0], points[-2][0])):
+            consider({i: [points[0], (x, points[0][1]), (x, points[-1][1]), points[-1]]})
+    for i in movable:
+        edge = edges[i]
+        if edge["kind"] == "intra":
+            continue
+        source, target = nodes[edge["src"]], nodes[edge["dst"]]
+        lower = max(n["y"] + n["tagspace"] + PORT_STEP / 2 for n in (source, target))
+        upper = min(n["y"] + n["h"] - PORT_STEP / 2 for n in (source, target))
+        if lower > upper:
+            continue
+        peers = []
+        for role, end in (("src", 0), ("dst", -1)):
+            peers.extend(
+                other["pts"][p][1]
+                for j, other in enumerate(edges)
+                if j != i
+                for r, p in (("src", 0), ("dst", -1))
+                if other[r] == edge[role] and other["pts"][p][0] == edge["pts"][end][0]
+            )
+        candidates = [edge["pts"][0][1], edge["pts"][-1][1], (lower + upper) / 2, lower, upper]
+        candidates.extend(y + delta for y in peers for delta in (-PORT_STEP, PORT_STEP))
+        for height in dict.fromkeys(max(lower, min(upper, y)) for y in candidates):
+            if any(abs(height - y) < PORT_STEP for y in peers):
+                continue
+            points = edge["pts"]
+            lane = points[1][0]
+            consider(
+                {i: [(points[0][0], height), (lane, height), (lane, height), (points[-1][0], height)]}, straight=True
+            )
+
+
+def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
     # 1. sides: L = entering from the left, R = leaving right / intra-column channel
     for e in edges:
         s, t = nodes[e["src"]], nodes[e["dst"]]
@@ -1080,7 +1341,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
             y += n["h"] + NODE_GAP
         if cur is not None:
             close(cur)
-        if col == 0:
+        if col == 0 and members:
             boxes.insert(
                 0,
                 {
@@ -1214,6 +1475,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
             head = [(s["x"] + s["w"], ys)] if not down else []
             e["pts"] = head + [(bus, ys), (bus, e["yd"]), (nodes[e["dst"]]["x"], e["yd"])]
     # 7. chips: on the crossing of their own flow; same-flow chips stack, others slide along their line
+    _improve_routes(nodes, edges, boundaries, zone_boxes, straight_only=not optimize)
     chips = []
     for e in edges:
         if e.get("bx") is not None:
@@ -1235,7 +1497,8 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3):
             ):
                 ch["x"] -= 2
             placed.append(ch)
-    height = max(bottom, detour_y) + MARGIN
+    route_bottom = max((p[1] for e in edges for p in e["pts"]), default=bottom)
+    height = max(bottom + 16, route_bottom + LANE_STEP) + MARGIN
     return col_x, col_w, zone_boxes, boundaries, chips, height
 
 
@@ -1298,6 +1561,8 @@ def _auth_tab(canvas, x, y, side, profile, flow_ids=""):
     )
     if flow_ids:
         canvas.badges.append((min(x, x + dx * 20), y - 9, max(x, x + dx * 20), y + 9, f"auth {flow_ids}"))
+    if canvas.legend_content is not None:
+        canvas.legend_content.append((min(x, x + dx * 20), y - 9, max(x, x + dx * 20), y + 9))
 
 
 def _prepare_reference_rows(nodes):
@@ -1317,6 +1582,32 @@ def _prepare_reference_rows(nodes):
             node["h"] += node["reference_height"]
 
 
+def _prepare_external_text(nodes):
+    for node in nodes.values():
+        if node["kind"] != "ext" or node.get("group_lines"):
+            continue
+        inset = 32 if node["zone"] in {"internet", "users", "attackers"} else 12
+        width = node["w"] - inset - 8
+        text = str(node.get("sub") or "").strip()
+        lines = _legend_wrap(text, width, 7.5) if text else []
+        if len(lines) > 3:
+            text = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
+            lines = _legend_wrap(text, width, 7.5)
+        if len(lines) > 3:
+            words = []
+            for word in text.split():
+                candidate = _legend_wrap(" ".join([*words, word]) + "…", width, 7.5)
+                if len(candidate) > 3:
+                    break
+                words.append(word)
+            lines = _legend_wrap(" ".join(words) + "…", width, 7.5) if words else ["See full description on hover"]
+        node["sub_lines"] = lines
+        title_lines = min(2, len(_wrap(node["name"], width, 10)))
+        node["h"] = max(
+            node["h"], 20 + title_lines * 12 + 8 + len(lines) * 10 + (12 if node.get("victim_label") else 0)
+        )
+
+
 def _segment_hits_rect(a, b, rect):
     x0, y0, x1, y1 = rect[:4]
     if a[1] == b[1]:
@@ -1324,29 +1615,64 @@ def _segment_hits_rect(a, b, rect):
     return x0 < a[0] < x1 and min(a[1], b[1]) < y1 and max(a[1], b[1]) > y0
 
 
-def _rect_overlap(a, b):
-    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
-
-
 def _flow_label_candidates(entries, interaction):
     """Prefer authored payloads; shorten legacy prose without inventing a summary."""
-    labels = list(dict.fromkeys(f.get("diagram_label") or f.get("label") or f["id"] for f in entries))
-    protocol = entries[0].get("protocol") or ""
+    labels = list(dict.fromkeys(f.get("diagram_label") or f.get("label") or "Data exchange" for f in entries))
+    protocol = " / ".join(dict.fromkeys(f["protocol"] for f in entries if f.get("protocol")))
     full = " / ".join(labels) + (f" ({protocol})" if protocol and not interaction else "")
     choices = [full]
+    if protocol and not interaction:
+        choices.append(" / ".join(labels) + f"\n({protocol})")
     for width in (48, 30, 18):
         label = labels[0]
         if len(label) > width:
             label = label[:width].rsplit(" ", 1)[0] + "…"
         if len(labels) > 1:
             label += f" +{len(labels) - 1}"
-        if protocol and not interaction and len(protocol) <= 18 and width == 48:
-            label += f" ({protocol})"
-        choices.append(label)
+        if protocol and not interaction:
+            choices.extend([label + f" ({protocol})", label + f"\n({protocol})"])
+        else:
+            choices.append(label)
     return list(dict.fromkeys(choices))
 
 
-def _overview_flow_labels(canvas, model, nodes, edges, boundaries, zones):
+def _label_gaps(a, b, width, offset, occupied, segments, *, lines=1):
+    """Find actual free label intervals instead of sampling a few fractions."""
+    horizontal = a[1] == b[1]
+    along, cross = (0, 1) if horizontal else (1, 0)
+    fixed = a[cross] + offset
+    extra = (lines - 1) * 12
+    low, high = fixed - FS, fixed + 2 + extra
+    intervals = [(min(a[along], b[along]) + width / 2 + 10, max(a[along], b[along]) - width / 2 - 10)]
+    blocked = [(r[along], r[along + 2]) for r in occupied if r[cross] < high and r[cross + 2] > low]
+    blocked += [
+        (min(p[along], q[along]), max(p[along], q[along]))
+        for p, q in segments
+        if min(p[cross], q[cross]) < high and max(p[cross], q[cross]) > low
+    ]
+    for left, right in blocked:
+        left, right = left - width / 2 - 0.5, right + width / 2 + 0.5
+        intervals = [
+            part
+            for start, end in intervals
+            for part in ((start, min(end, left)), (max(start, right), end))
+            if part[0] <= part[1]
+        ]
+        if not intervals:
+            break
+    middle = (a[along] + b[along]) / 2
+    for start, end in intervals:
+        center = min(end, max(start, middle))
+        x, y = (center, fixed) if horizontal else (fixed, center)
+        rect = (
+            (x - width / 2, y - FS, x + width / 2, y + 2 + extra)
+            if horizontal
+            else (x - FS, y - width / 2, x + 2 + extra, y + width / 2)
+        )
+        yield x, y, rect, abs(center - middle)
+
+
+def _flow_labels(canvas, model, nodes, edges, boundaries, zones):
     """Place actual payload labels on clear runs; retain overflow in compact notes."""
     segments = [(a, b, e) for e in edges for a, b in zip(e.get("draw_pts", e["pts"]), e.get("draw_pts", e["pts"])[1:])]
     walls = [((bx, TOP), (bx, max(n["y"] + n["h"] for n in nodes.values()))) for bx in boundaries]
@@ -1382,7 +1708,7 @@ def _overview_flow_labels(canvas, model, nodes, edges, boundaries, zones):
             canvas.path(
                 path,
                 RED if over[2].get("attack") else CLS_COL.get(over[2]["cls"], LINE),
-                sw=1.6 if over[2].get("attack") else 1.1,
+                sw=ATTACK_WIDTH if over[2].get("attack") else 1.1,
             )
     flows = {f["id"]: f for f in model.get("data_flows") or []}
     for edge in edges:
@@ -1393,31 +1719,29 @@ def _overview_flow_labels(canvas, model, nodes, edges, boundaries, zones):
         candidates = []
         texts = _flow_label_candidates(entries, edge.get("interaction"))
         if edge.get("access_group"):
-            texts = [edge["access_group"]["label"]]
-        texts.append(edge["ids"][0])
+            # Access labels can express conditions or a sequence. Keep those
+            # words intact rather than abbreviating away an optional step.
+            label = edge["access_group"]["label"]
+            protocol = " / ".join(dict.fromkeys(f["protocol"] for f in entries if f.get("protocol")))
+            texts = [label + (f" ({protocol})" if protocol else "")]
+            if protocol:
+                texts.append(label + f"\n({protocol})")
+            wrapped = _legend_wrap(label, 110, FS)
+            if len(wrapped) <= 3:
+                texts.append("\n".join([*wrapped, *([f"({protocol})"] if protocol else [])]))
         for index, text in enumerate(texts):
             for a, b in zip(points, points[1:]):
                 length = abs(a[0] - b[0]) + abs(a[1] - b[1])
-                tw = _tw(text, FS)
+                lines = text.split("\n")
+                tw = max(_tw(line, FS) for line in lines)
                 if length < tw + 20:
                     continue
                 horizontal = a[1] == b[1]
-                for fraction in (0.5, 0.25, 0.75):
-                    cx, cy = a[0] + (b[0] - a[0]) * fraction, a[1] + (b[1] - a[1]) * fraction
-                    for offset in (-6, 14, -18, 26):
-                        x, y = (cx, cy + offset) if horizontal else (cx + offset, cy)
-                        rect = (
-                            (x - tw / 2, y - FS, x + tw / 2, y + 2)
-                            if horizontal
-                            else (x - FS, y - tw / 2, x + 2, y + tw / 2)
-                        )
-                        if any(_rect_overlap(rect, r) for r in occupied):
-                            continue
-                        if any(_segment_hits_rect(p, q, rect) for p, q, _ in segments) or any(
-                            _segment_hits_rect(p, q, rect) for p, q in walls
-                        ):
-                            continue
-                        candidates.append((index, not horizontal, abs(offset), abs(fraction - 0.5), x, y, rect))
+                for offset in (-6, 14, -18, 26):
+                    for x, y, rect, distance in _label_gaps(
+                        a, b, tw, offset, occupied, [(p, q) for p, q, _ in segments] + walls, lines=len(lines)
+                    ):
+                        candidates.append((index, not horizontal, abs(offset), distance, x, y, rect))
             if candidates:
                 break
         if not candidates:
@@ -1425,11 +1749,10 @@ def _overview_flow_labels(canvas, model, nodes, edges, boundaries, zones):
             continue
         index, rotated, _, _, x, y, rect = min(candidates)
         text = texts[index]
-        if index == len(texts) - 1:
-            model.setdefault("_label_notes", []).append((edge["ids"], texts[0]))
         if rotated:
             canvas.add(f'<g transform="rotate(-90 {x:.1f} {y:.1f})">')
-        canvas.text(x, y, text, size=FS, fill=MUTED)
+        for line_index, line in enumerate(text.split("\n")):
+            canvas.text(x, y + line_index * 12, line, size=FS, fill=MUTED)
         if rotated:
             canvas.add("</g>")
         canvas.labels.append((*rect, "payload " + "/".join(edge["ids"])))
@@ -1442,7 +1765,18 @@ def _trim(pts, a=1.2, b=1.8):
     def sg(v):
         return (v > 0) - (v < 0)
 
-    p = [tuple(q) for q in pts]
+    p = []
+    for point in map(tuple, pts):
+        if p and p[-1] == point:
+            continue
+        while len(p) >= 2 and (
+            p[-2][0] == p[-1][0] == point[0]
+            and min(p[-2][1], point[1]) <= p[-1][1] <= max(p[-2][1], point[1])
+            or p[-2][1] == p[-1][1] == point[1]
+            and min(p[-2][0], point[0]) <= p[-1][0] <= max(p[-2][0], point[0])
+        ):
+            p.pop()
+        p.append(point)
     (x0, y0), (x1, y1) = p[0], p[1]
     p[0] = (x0 + sg(x1 - x0) * a, y0 + sg(y1 - y0) * a)
     (xa, ya), (xb, yb) = p[-2], p[-1]
@@ -1510,6 +1844,15 @@ def _place_legend(canvas, blocks, width, top):
         canvas.o.extend(block.o)
         canvas.add("</g>")
         canvas.legend_boxes.append((x, y, x + LEGEND_W, y + block.maxy, key))
+        if block.legend_content:
+            canvas.legend_clearances.append(
+                (
+                    key,
+                    min(b[1] for b in block.legend_content) - LEGEND_HEAD,
+                    min(min(b[0], LEGEND_W - b[2]) for b in block.legend_content),
+                    block.maxy - max(b[3] for b in block.legend_content),
+                )
+            )
         for source, dest in ((block.labels, canvas.labels), (block.badges, canvas.badges)):
             dest.extend((x0 + x, y0 + y, x1 + x, y1 + y, name) for x0, y0, x1, y1, name in source)
         bottoms[col] = y + block.maxy + LEGEND_GAP
@@ -1548,13 +1891,19 @@ def _render(
         )
     c.add(defs + "</defs>")
     meta = d.get("meta") or {}
-    project = (
+    project_data = d.get("project") if isinstance(d.get("project"), dict) else {}
+    legacy_project = (
         meta.get("project")
         if isinstance(meta.get("project"), str)
         else (meta.get("project") or {}).get("name")
         if isinstance(meta.get("project"), dict)
         else None
     )
+    project = project_data.get("name") or d.get("project_name") or meta.get("project_name") or legacy_project
+    version = project_data.get("version") or meta.get("project_version")
+    identity = str(project or "Project")
+    if isinstance(version, (str, int, float)) and not isinstance(version, bool) and str(version).strip():
+        identity += " · " + str(version).strip()
     c.text(
         MARGIN,
         26,
@@ -1568,7 +1917,7 @@ def _render(
     c.text(
         MARGIN,
         42,
-        f"{project or 'Project'} · {n_comp} components · {len(d.get('data_flows') or [])} data flows · {len(tbs)} trust boundaries · {len(d.get('threats') or [])} threats",
+        f"{identity} · {n_comp} components · {len(d.get('data_flows') or [])} data flows · {len(tbs)} trust boundaries · {len(d.get('threats') or [])} threats",
         size=10,
         anchor="start",
         fill=MUTED,
@@ -1585,8 +1934,6 @@ def _render(
             zone_fw[_zone_key(comp)].add(str(comp["framework"]))
     for zb in [z for z in zone_boxes if not z.get("bar")]:
         title, stroke, fill = ZONE_STYLE[zb["zone"]]
-        if d.get("_overview") and zb["zone"] == "client":
-            title = "Clients"
         c.rect(
             zb["x"],
             zb["y"],
@@ -1611,6 +1958,8 @@ def _render(
                 "users": "Application users and administrators",
                 "client": "User-facing applications",
             }.get(zk, sub)
+        if zk in {"client", "application", "data"}:
+            sub = ""
         if sub:
             c.text(zb["x"] + 10, zb["y"] + 29, _cut(sub, 38), size=8.5, anchor="start", fill=MUTED, italic=True)
     for zb in [z for z in zone_boxes if z.get("bar")]:
@@ -1656,33 +2005,28 @@ def _render(
             c.labels.append((x0, y - 8, x0 + w, y + 8, f"chip {tbid}"))
         return w
 
-    intra_n = collections.Counter(nodes[e["src"]]["col"] for e in edges if e["kind"] == "intra")
-
-    def _chan(col):  # width of the intra-column channel that sits right of the nodes in `col`
-        return _intra_channel(intra_n[col])
-
     for e in edges:
         if e.get("attack"):
             c.path(
                 _orth(_trim(e["pts"]), r=0 if d.get("_overview") else 8),
                 nodes[e["src"]]["color"],
-                sw=1.6,
+                sw=ATTACK_WIDTH,
                 marker=f"arw-{nodes[e['src']]['marker']}",
                 dash=("5 4" if e.get("victim") else None),
             )
             source = nodes[e["src"]]
-            if not e.get("victim") and abs(e["pts"][0][0] - source["x"] - source["w"]) < 0.6:
+            if abs(e["pts"][0][0] - source["x"] - source["w"]) < 0.6:
                 x0, y0 = e["pts"][0]
                 c.text(
                     x0 + 6,
                     y0 - 4,
-                    source["actor_code"],
+                    "Via user" if e.get("victim") else "Direct attack",
                     size=FS,
                     fill=source["color"],
                     anchor="start",
                     weight="bold",
                     halo=True,
-                    track=f"actor {source['actor_code']}",
+                    track=f"attack label {source['actor_code']} {bool(e.get('victim'))}",
                 )
             continue
         col = CLS_COL.get(e["cls"], LINE)
@@ -1712,49 +2056,12 @@ def _render(
             marker_start=(mk if e.get("bidi") else None),
         )
         c.add("</g>")
-        if d.get("_overview"):
-            continue
-        ids = "/".join(i.replace("df-", "") for i in e["ids"])
-        lbl = "df-" + ids if len(e["ids"]) <= 3 else f"df-{e['ids'][0][3:]} +{len(e['ids']) - 1}"
-        x0, y0 = e["pts"][0]
-        if e["kind"] == "forward":  # past the intra channel of its column; the halo keeps it legible on the border
-            c.text(
-                x0 + 6 + _chan(nodes[e["src"]]["col"]),
-                y0 - 4,
-                lbl,
-                size=FS,
-                fill=col,
-                anchor="start",
-                weight="bold",
-                track=f"label {lbl}",
-                halo=True,
-            )
-        elif e["kind"] == "backward":
-            xe, ye = e["pts"][-1]
-            c.text(
-                xe + 6 + _chan(nodes[e["dst"]]["col"]),
-                ye - 4,
-                lbl,
-                size=FS,
-                fill=col,
-                anchor="start",
-                weight="bold",
-                track=f"label {lbl}",
-                halo=True,
-            )
-        else:  # intra: rotated along the channel segment
-            (cx, ya), (_, yb) = e["pts"][1], e["pts"][2]
-            ym = (ya + yb) / 2
-            c.add(
-                f'<text x="{cx + 9:.1f}" y="{ym:.1f}" font-family="{FONT}" font-size="{FS}" fill="{col}" text-anchor="middle" '
-                f'font-weight="bold" transform="rotate(-90 {cx + 9:.1f} {ym:.1f})">{_esc(lbl)}</text>'
-            )
-            w = _tw(lbl, FS)
-            c.labels.append((cx + 3, ym - w / 2, cx + 13, ym + w / 2, f"label {lbl}"))
     # nodes
     for n in sorted(nodes.values(), key=lambda n: n["order"]):
         x, y, w, h = n["x"], n["y"], n["w"], n["h"]
         if n["kind"] == "ext":
+            if not n.get("attacker"):
+                c.add(f'<g data-external-id="{_esc(n["id"])}"><title>{_esc(n.get("sub", ""))}</title>')
             col = n["color"]
             if n.get("group_lines"):
                 c.label_owners[f"actor grouping {n['actor_code']}"] = n["id"]
@@ -1782,9 +2089,15 @@ def _render(
                     )
                 c.add("</g>")
             else:
-                c.text(tx, sub_y, _cut(n["sub"], 36), size=7.5, anchor="start", fill=MUTED, italic=True)
+                lines = n.get("sub_lines") or []
+                for i, line in enumerate(lines):
+                    c.text(
+                        tx, sub_y - 10 * (len(lines) - 1 - i), line, size=7.5, anchor="start", fill=MUTED, italic=True
+                    )
             if n.get("victim_label"):
                 c.text(tx, y + h - 8, n["victim_label"], size=7.5, anchor="start", fill=MUTED, italic=True)
+            if not n.get("attacker"):
+                c.add("</g>")
             continue
         crit = n["sev"].get("Critical", 0)
         border = RED if crit else (ORANGE if n["sev"].get("High") else LINE)
@@ -1823,10 +2136,45 @@ def _render(
             _globe(c, x + w - 16, y + 15)
         if n["assets"]:
             ay = ty + 50 + 12 * max(0, weak_lines - 1)
-            c.text(x + ox, ay, "Stored assets", size=8.5, anchor="start", fill=MUTED, italic=True)
+            compact = n.get("compact_assets")
+            c.text(
+                x + ox,
+                ay,
+                "Assets — see legend" if compact and not n.get("inline_asset_ids") else "Assets",
+                size=8.5,
+                anchor="start",
+                fill=MUTED,
+                italic=True,
+            )
             yy = ay + 10
-            for a in n["assets"]:
+            inline_ids = n.get("inline_asset_ids", [a["id"] for a in n["assets"]])
+            assets = (
+                sorted(n["assets"], key=lambda a: (a["id"] not in inline_ids, a["_priority"]))
+                if compact
+                else n["assets"]
+            )
+            symbol_index = 0
+            for a in assets:
+                symbol = compact and a["id"] not in inline_ids
+                if symbol and symbol_index == 0 and inline_ids:
+                    c.text(x + ox, yy + 5, "More assets — see legend", size=8, anchor="start", fill=MUTED)
+                    yy += 16
+                c.add(
+                    f'<g data-asset-id="{_esc(a["id"])}" data-asset-component="{_esc(n["id"])}" '
+                    f'data-asset-relation="{a["_relation"]}" '
+                    f'data-asset-display="{"symbol" if symbol else "inline"}">'
+                )
+                c.add(f"<title>{_esc(n['name'] + ': ' + str(a.get('name')))}</title>")
                 col = CLS_COL.get(str(a.get("classification")).title(), MUTED)
+                if symbol:
+                    columns = n["asset_columns"]
+                    ax = x + ox + (symbol_index % columns) * (NODE_W - 46) / columns
+                    sy = yy + (symbol_index // columns) * ASSET_SYMBOL_ROW
+                    c.rect(ax, sy, 6, 6, fill=col)
+                    c.text(ax + 10, sy + 6, a["id"], size=8.5, anchor="start", fill=col)
+                    symbol_index += 1
+                    c.add("</g>")
+                    continue
                 c.rect(x + ox, yy, 6, 6, fill=col)
                 lines = _asset_lines(a)
                 for index, line in enumerate(lines):
@@ -1835,9 +2183,21 @@ def _render(
                 hits = a.get("_hits", [])
                 badge_x0 = x + w - 30 - (len(hits) - 1) * 15 if hits else x + w - 26
                 for j, s in enumerate(hits):
-                    _badge(c, badge_x0 + j * 15, yy + 3, s, col=scenario_colors.get(s, RED), r=6.5)
+                    _badge(c, badge_x0 + j * 15, yy + 20, s, col=scenario_colors.get(s, RED), r=6.5)
                 c.text(x + ox + 10, yy + 6, str(a.get("classification")), size=7.5, anchor="start", fill=col)
-                yy += 17
+                yy += 17 + (18 if hits else 0)
+                c.add("</g>")
+        elif n["kind"] == "store":
+            for i, line in enumerate(_wrap("Asset mapping not established", w - ox - 12, 8.5)):
+                c.text(
+                    x + ox,
+                    ty + 50 + 12 * max(0, weak_lines - 1) + i * 11,
+                    line,
+                    size=8.5,
+                    anchor="start",
+                    fill=MUTED,
+                    italic=True,
+                )
         for i, b in enumerate(n["badges"]):
             _badge(c, x + w - 18 - i * 19, y + h - 1, b, col=scenario_colors.get(b, RED))
             c.badges.append((x + w - 26 - i * 19, y + h - 9, x + w - 10 - i * 19, y + h + 7, f"badge {b} on {n['id']}"))
@@ -1893,8 +2253,7 @@ def _render(
                     c.text(px + dx * 26, y + 3, separator, size=9, fill=MUTED)
             if e.get("access_group"):
                 c.add("</g>")
-    if d.get("_overview"):
-        _overview_flow_labels(c, d, nodes, edges, boundaries, zone_boxes)
+    _flow_labels(c, d, nodes, edges, boundaries, zone_boxes)
 
     blocks = _legend_blocks(
         d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups
@@ -1912,16 +2271,18 @@ def _render(
 def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dropped, unattached_assets, actor_groups):
     """Render independent sections at the origin before measuring their heights."""
     blocks = []
-    lx, lw = 0, LEGEND_W
+    lx = LEGEND_INSET - 10
+    lw = LEGEND_W - 2 * lx
     c = None
 
     def head(key, title):
         nonlocal c
         c = _Canvas()
         blocks.append((key, c))
-        c.rect(lx, 0, lw, 20, fill=NAVY, rx=4)
-        c.text(lx + lw / 2, 14, title, size=10.5, fill="#ffffff", weight="bold")
-        return 30
+        c.rect(0, 0, LEGEND_W, LEGEND_HEAD, fill=NAVY, rx=4)
+        c.text(lx + lw / 2, 17, title, size=10.5, fill="#ffffff", weight="bold")
+        c.legend_content = []
+        return LEGEND_HEAD + LEGEND_CONTENT_GAP + 9
 
     y = head("notation", "Notation")
     c.rect(lx + 10, y - 8, 22, 14, fill="#ffffff", stroke=INK, sw=1.4)
@@ -1938,7 +2299,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     c.text(lx + 40, y + 3, "data store (evidenced asset locations)", size=9, anchor="start")
     y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", CLS_COL["Confidential"], sw=1.6, marker="arw-Confidential")
-    c.text(lx + 40, y + 3, "data flow · colour = classification · two heads = bidirectional", size=9, anchor="start")
+    c.text(lx + 40, y + 3, "data flow · classification colour · two heads = bidirectional", size=9, anchor="start")
     y += 16
     xx = lx + 40
     for k, col in CLS_COL.items():
@@ -1954,24 +2315,22 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         c.text(lx + 14, y + 3, "tb ✕", size=8, anchor="start", fill=RED, weight="bold")
         c.rect(lx + 38, y - 7, 11, 12, fill=RED, rx=6)
         c.text(lx + 43.5, y + 3, "9", size=8, fill="#ffffff", weight="bold")
-        c.text(
-            lx + 60, y + 3, "boundary crossing: ✕ assumption refuted · ✓ held · ? unverified", size=8.5, anchor="start"
-        )
+        c.text(lx + 60, y + 3, "boundary: ✕ refuted · ✓ held · ? unverified", size=8.5, anchor="start")
         y += 13
         c.text(
             lx + 60,
             y + 3,
-            "count = threats crossing it · on a node corner = guards that entry",
+            "count = crossing threats · corner tag = guarded entry",
             size=8.5,
             anchor="start",
             fill=MUTED,
         )
     y += 20
-    c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=1.6, marker="arw-red")
+    c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=ATTACK_WIDTH, marker="arw-red")
     c.text(
         lx + 40,
         y + 3,
-        "A1… = attacker; colour follows actor · dashed = victim",
+        "solid = direct attack · dashed = via user",
         size=9,
         anchor="start",
     )
@@ -2044,7 +2403,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
                 c.text(lx + 34, y + 2 + i * 12, line, size=9, anchor="start", track=f"scenario {s['n']}")
             if s.get("risk"):
                 c.text(
-                    lx + lw - 6,
+                    lx + lw - 10,
                     y + 2,
                     s["risk"],
                     size=8,
@@ -2065,7 +2424,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             c.text(lx + 52, y + 3, _cut(f"{t.get('from')} → {t.get('to')} · {ep}", 44), size=8.5, anchor="start")
             if tb_threats.get(t["id"]):
                 c.text(
-                    lx + lw - 6, y + 3, f"{tb_threats[t['id']]} threats", size=8, anchor="end", fill=col, weight="bold"
+                    lx + lw - 10, y + 3, f"{tb_threats[t['id']]} threats", size=8, anchor="end", fill=col, weight="bold"
                 )
             y += 15
         y += 12
@@ -2113,21 +2472,22 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             d["_auth_catalog"].values(),
             key=lambda p: (p["number"] == "?", int(p["number"]) if p["number"].isdigit() else 999),
         ):
-            _auth_tab(c, 28, y, "left", profile)
+            _auth_tab(c, lx + 30, y, "left", profile)
             for line in _legend_wrap(profile["title"], lw - 50, 9):
-                c.text(40, y + 2, line, size=9, anchor="start", weight="bold")
+                c.text(lx + 40, y + 2, line, size=9, anchor="start", weight="bold")
                 y += 12
+            y += 4
             for line in _legend_wrap(profile["description"], lw - 50, 8):
-                c.text(40, y, line, size=8, anchor="start", fill=MUTED)
+                c.text(lx + 40, y, line, size=8, anchor="start", fill=MUTED)
                 y += 11
             y += 8
         for line in [
             "Numbered hexagon: authentication · circle: attack scenario",
-            "0: no separate login · ?: not established",
+            "0: no authentication · ?: not established",
             "Red: absent / unsafe · yellow: standard / limited · green: stronger",
             "Method properties, not proof of a secure implementation.",
         ]:
-            c.text(10, y + 3, line, size=8, anchor="start", fill=MUTED)
+            c.text(lx + 10, y + 3, line, size=8, anchor="start", fill=MUTED)
             y += 12
         if any(e.get("access_group") for e in edges):
             c.text(
@@ -2139,31 +2499,56 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
                 fill=MUTED,
             )
             y += 12
-    if unattached_assets:
-        y += 12
-        y = head("assets", "Assets — location and handling")
-        for a in unattached_assets:
-            col = CLS_COL.get(str(a.get("classification")).title(), MUTED)
+    symbol_assets = collections.defaultdict(list)
+    for node in nodes.values():
+        if node.get("compact_assets"):
+            for asset in node["assets"]:
+                if asset["id"] not in node["inline_asset_ids"]:
+                    symbol_assets[asset["id"]].append((node, asset))
+    if symbol_assets:
+        y = head("assets", "Asset symbols")
+        for aid, occurrences in sorted(symbol_assets.items()):
+            asset = occurrences[0][1]
+            col = CLS_COL.get(str(asset.get("classification")).title(), MUTED)
+            c.add(f'<g data-asset-legend-id="{_esc(aid)}">')
             c.rect(lx + 10, y - 6, 6, 6, fill=col)
-            c.text(lx + 22, y + 1, _cut(f"{a.get('id')} {a.get('name')}", 44), size=8.5, anchor="start")
-            c.text(lx + lw - 6, y + 1, str(a.get("classification")), size=7.5, anchor="end", fill=col, weight="bold")
-            relations = []
-            for ref in a.get("component_refs") or []:
-                if not ref.get("evidence"):
-                    continue
-                owner = nodes.get(ref.get("component_id"), {}).get("name") or ref.get("component_id")
-                verb = {"stored": "stored in", "processed": "processed by", "transmitted": "transmitted by"}.get(
-                    ref.get("relation")
-                )
-                if owner and verb:
-                    relations.append(f"{verb} {owner}")
-            for detail in _wrap("; ".join(relations) or "location not established", lw - 32, 8):
+            for line in _legend_wrap(f"{aid} {asset.get('name')}", lw - 32, 8.5):
+                c.text(lx + 22, y + 1, line, size=8.5, anchor="start")
                 y += 11
-                c.text(lx + 22, y + 1, detail, size=8, anchor="start", fill=MUTED)
-            y += 18
+            relations = []
+            for node, placed_asset in occurrences:
+                verb = {"stored": "stored in", "processed": "processed by", "transmitted": "transmitted by"}[
+                    placed_asset["_relation"]
+                ]
+                relations.append(f"{verb} {node['name'].split(' · ')[0]}")
+            info = f"{asset.get('classification')} · " + "; ".join(relations)
+            for line in _legend_wrap(info, lw - 32, 8):
+                c.text(lx + 22, y + 1, line, size=8, anchor="start", fill=MUTED)
+                y += 11
+            hits = list(dict.fromkeys(hit for _, placed_asset in occurrences for hit in placed_asset.get("_hits", [])))
+            if hits:
+                for line in _legend_wrap("Attack scenarios: " + ", ".join(hits), lw - 32, 8):
+                    c.text(lx + 22, y + 1, line, size=8, anchor="start", fill=RED)
+                    y += 11
+            y += 12
+            c.add("</g>")
+    if d.get("_label_notes"):
+        y = head("flow-notes", "Additional flow labels")
+        c.text(lx + 10, y + 3, "Labels without room on their connection:", size=8, anchor="start", fill=MUTED)
+        y += 18
+        edge_by_ids = {tuple(edge["ids"]): edge for edge in edges if not edge.get("attack")}
+        for ids, label in d["_label_notes"]:
+            edge = edge_by_ids[tuple(ids)]
+            source, target = (nodes[edge[key]]["name"].split(" · ")[0] for key in ("src", "dst"))
+            for line in _legend_wrap(f"{source} → {target}: {label}", lw - 20, 8):
+                c.text(lx + 10, y + 3, line, size=8, anchor="start", fill=MUTED)
+                y += 12
+            y += 6
     notes = []
-    for ids, label in d.get("_label_notes", []):
-        notes.append(f"{'/'.join(ids)}: {label}")
+    if unattached_assets:
+        count = len(unattached_assets)
+        subject = "1 asset has" if count == 1 else f"{count} assets have"
+        notes.append(f"{subject} no displayed component mapping; see the report asset register.")
     if dropped:
         n = sum(len(v) for v in dropped.values())
         notes.append(f"{n} lower-priority component(s) collapsed into '+N more' bars; their flows are not drawn.")
@@ -2177,12 +2562,17 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             for line in _legend_wrap(s, lw - 20, 8):
                 c.text(lx + 10, y + 3, line, size=8, anchor="start", fill=MUTED)
                 y += 12
+    for _, block in blocks:
+        block.maxy += LEGEND_CONTENT_GAP
     return blocks
 
 
 # ---- verification -------------------------------------------------------------------------------
 def _check_geometry(nodes, edges, canvas, chips, *, boundaries=()):
     problems = []
+    for name, top, side, bottom in canvas.legend_clearances:
+        if top < LEGEND_CONTENT_GAP or side < 8 or bottom < LEGEND_CONTENT_GAP:
+            problems.append(f"legend padding: {name} (top={top:g}, side={side:g}, bottom={bottom:g})")
     rects = {n["id"]: (n["x"] + 1, n["y"] + 1, n["x"] + n["w"] - 1, n["y"] + n["h"] - 1) for n in nodes.values()}
     segs = []
     for e in edges:
@@ -2310,6 +2700,8 @@ def _audit(d, nodes, edges, chips, boundaries):
                 problems.append(f"{fid}: bundle colour {e['cls']} weaker than flow classification {cls}")
             if str(f.get("direction") or "").lower() == "bidirectional" and not e.get("bidi"):
                 problems.append(f"{fid}: bidirectional flow drawn with one head")
+            elif str(f.get("direction") or "").lower() != "bidirectional" and e.get("bidi"):
+                problems.append(f"{fid}: one-way flow drawn with two heads")
         for ch in [c for c in chips if c.get("group") == id(e)]:
             seg = (e["pts"][0], e["pts"][1]) if e["kind"] == "forward" else (e["pts"][-2], e["pts"][-1])
             xs = sorted((seg[0][0], seg[1][0]))
@@ -2347,7 +2739,7 @@ def _audit(d, nodes, edges, chips, boundaries):
 
 
 # ---- entry points ---------------------------------------------------------------------------------
-def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True):
+def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True, _optimize=True):
     d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
     d["_overview"] = not detail
     d["_auth_catalog"] = (
@@ -2372,6 +2764,7 @@ def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True):
             title_height = 12 * min(2, len(_wrap(title, node["w"] - 40, 10)))
             node["h"] = max(node["h"], 24 + title_height + 10 * len(node["group_lines"]))
     nodes, edges, dropped = _select_drawn(nodes, edges, d)
+    _prepare_external_text(nodes)
     if not detail:
         edges, d["_references"] = select_references(d, nodes, edges, tb_threats)
         edges = bundle_access_groups(d, edges)
@@ -2380,7 +2773,7 @@ def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True):
             node.pop("tags", None)
         for edge in edges:
             edge["tb"] = []
-    col_x, col_w, zone_boxes, boundaries, chips, height = _layout(nodes, edges, dropped, tb_threats)
+    col_x, col_w, zone_boxes, boundaries, chips, height = _layout(nodes, edges, dropped, tb_threats, optimize=_optimize)
     attached = {a.get("id") for n in nodes.values() for a in n.get("assets", [])}
     unattached = sorted(
         [a for a in d.get("assets") or [] if isinstance(a, dict) and a.get("id") not in attached],
@@ -2403,7 +2796,33 @@ def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True):
         unattached,
         actor_groups,
     )
-    return svg, {"d": d, "nodes": nodes, "edges": edges, "chips": chips, "boundaries": boundaries, "canvas": canvas}
+    state = {"d": d, "nodes": nodes, "edges": edges, "chips": chips, "boundaries": boundaries, "canvas": canvas}
+    if _optimize and d.get("_label_notes"):
+        # Fewer bends must not displace readable payloads. Compare complete layouts
+        # once, since endpoint markers and earlier labels also consume label space.
+        alternative_svg, alternative = _build(
+            yaml_data, scenarios, actors, actor_groups, detail=detail, _optimize=False
+        )
+        missing = {fid for ids, _ in d["_label_notes"] for fid in ids}
+        alternative_missing = {fid for ids, _ in alternative["d"].get("_label_notes", []) for fid in ids}
+        if alternative_missing < missing and not (
+            _check_geometry(
+                alternative["nodes"],
+                alternative["edges"],
+                alternative["canvas"],
+                alternative["chips"],
+                boundaries=alternative["boundaries"],
+            )
+            + _audit(
+                alternative["d"],
+                alternative["nodes"],
+                alternative["edges"],
+                alternative["chips"],
+                alternative["boundaries"],
+            )
+        ):
+            return alternative_svg, alternative
+    return svg, state
 
 
 def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=None, actor_labels=None, *, detail=True):

@@ -58,7 +58,12 @@ def test_strength_is_qualified_not_inferred_from_oauth_or_key_name(scheme, extra
 def test_distinct_protocols_authentication_and_interfaces_are_not_bundled():
     flow = {"from": "device", "to": "gateway", "protocol": "CustomWire-v42", "authentication": auth("bearer")}
     key = flow_bundle_key(flow)
-    for change in [{"protocol": "gRPC"}, {"authentication": auth("none")}, {"interface_refs": ["management"]}]:
+    for change in [
+        {"protocol": "gRPC"},
+        {"authentication": auth("none")},
+        {"interface_refs": ["management"]},
+        {"direction": "bidirectional"},
+    ]:
         assert flow_bundle_key({**flow, **change}) != key
     assert flow_bundle_key({**flow, "id": "df-999", "label": "Other payload"}) == key
 

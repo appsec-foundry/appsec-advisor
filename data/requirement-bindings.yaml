@@ -458,6 +458,30 @@ requirements:
       - tests/test_figure1_dfd.py::test_equal_regular_access_can_fold_without_open_registration
       - tests/test_figure1_dfd.py::test_unnamed_flows_are_not_assigned_to_the_merged_victim_role
       - tests/test_figure1_dfd.py::test_flow_lanes_separate_opposing_stubs_at_equal_port_heights
+      - tests/test_figure1_dfd.py::test_reciprocal_services_have_separate_uncrossed_routes
+      - tests/test_figure1_dfd.py::test_direct_store_access_uses_free_corridor
+      - tests/test_figure1_dfd.py::test_opposing_routes_reallocate_ports_before_fallback
+      - tests/test_figure1_dfd.py::test_generic_user_requires_an_external_flow_or_victim
+      - tests/test_figure1_dfd.py::test_flow_bundles_preserve_individual_direction
+      - tests/test_figure1_dfd.py::test_legend_content_has_clearance_below_header
+      - tests/test_figure1_dfd.py::test_route_simplification_keeps_payload_labels_visible
+      - tests/test_figure1_dfd.py::test_flow_lines_use_payload_names_instead_of_identifiers
+      - tests/test_figure1_dfd.py::test_payload_layout_selection_respects_geometry_rejection
+      - tests/test_figure1_dfd.py::test_assets_appear_at_evidenced_components_without_a_remainder_legend
+      - tests/test_figure1_dfd.py::test_asset_annotations_require_evidence_and_keep_handling_explicit
+      - tests/test_figure1_dfd.py::test_asset_scenario_badges_have_space_below_classification
+      - tests/test_figure1_dfd.py::test_dense_asset_symbols_have_an_exact_legend_and_preserve_small_stores
+      - tests/test_figure1_dfd.py::test_layer_titles_omit_internal_framework_and_deployment_notes
+      - tests/test_figure1_dfd.py::test_straight_routes_move_both_ports_only_through_a_free_corridor
+      - tests/test_figure1_dfd.py::test_payload_placement_uses_free_intervals_between_obstacles
+      - tests/test_figure1_dfd.py::test_short_payload_candidates_never_drop_the_protocol
+      - tests/test_figure1_dfd.py::test_external_descriptions_wrap_without_cutting_short_sentences
+      - tests/test_figure1_dfd.py::test_attack_paths_use_slightly_heavier_lines_and_descriptive_labels
+      - tests/test_figure1_dfd.py::test_multiline_payload_labels_keep_content_and_protocol_outside_notes
+      - tests/test_figure1_dfd.py::test_dense_asset_preview_prioritizes_linked_risk_then_classification
+      - tests/test_figure1_dfd.py::test_project_identity_prefers_recorded_name_and_never_uses_plugin_version
+      - tests/test_compose_threat_model.py::test_figure1_uses_project_manifest_identity_in_both_images
+      - tests/test_compose_threat_model.py::test_figure1_retains_known_identity_without_local_manifest
       - tests/test_figure1_dfd.py::test_nearly_aligned_flow_ports_avoid_micro_jogs
       - tests/test_figure1_dfd.py::test_intra_column_arrow_tips_have_a_straight_approach
       - tests/test_figure1_dfd.py::test_flow_legend_groups_drawn_edges_and_keeps_all_flow_meanings

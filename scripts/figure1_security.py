@@ -7,7 +7,7 @@ Colours describe method properties, not the effectiveness of an implementation.
 
 SCHEMES = {
     "unknown": ("Not established", "The inspected evidence does not establish authentication."),
-    "none": ("No separate authentication", "No login at this access; this may be an embedded local call."),
+    "none": ("No Authentication", "The recipient performs no authentication check on this connection."),
     "password": ("Password login", "The recipient checks the supplied password."),
     "basic": ("HTTP Basic", "Username and password accompany the request."),
     "bearer": ("Bearer token", "The recipient checks the token supplied with the request."),
@@ -84,6 +84,7 @@ def flow_bundle_key(flow):
         flow.get("to"),
         flow.get("to_entity"),
         flow.get("protocol"),
+        str(flow.get("direction") or "").lower(),
         tuple(sorted(flow.get("interface_refs") or [])),
         authentication_profile(flow)["key"],
         bool(flow.get("interaction")),

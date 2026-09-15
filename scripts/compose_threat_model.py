@@ -5889,6 +5889,26 @@ def _figure_basename_for_md(md_name: str) -> str:
     return f"{Path(md_name).stem}.figure1.svg"
 
 
+def _figure1_display_data(ctx: RenderContext) -> dict:
+    """Use recorded identity or the infobox's manifest sources without changing the model."""
+    data = ctx.yaml_data
+    meta = data.get("meta") or {}
+    project = dict(data["project"]) if isinstance(data.get("project"), dict) else {}
+    manifest = _read_project_manifest(ctx)
+    manifest = manifest if isinstance(manifest, dict) else {}
+    name = project.get("name") or data.get("project_name") or meta.get("project_name")
+    if not name and isinstance(manifest.get("name"), str):
+        name = manifest["name"]
+        if "/" not in name:
+            name = name.replace("-", " ").replace("_", " ").title()
+    if name:
+        project["name"] = name
+    version = project.get("version") or meta.get("project_version") or manifest.get("version")
+    if isinstance(version, (str, int, float)) and not isinstance(version, bool):
+        project["version"] = str(version)
+    return {**data, "project": project}
+
+
 def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxonomy: dict) -> str:
     """Build Figure 1 as a deterministic hand-built SVG, write it next to
     threat-model.md, and return the image-reference markdown.
@@ -5925,8 +5945,9 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     try:
         from figure1_dfd import check_diagram, legitimate_role_notes
 
+        figure_data = _figure1_display_data(ctx)
         svg, problems = check_diagram(
-            ctx.yaml_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=False
+            figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=False
         )
         if problems:
             ctx.warnings.append(
@@ -5938,7 +5959,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             role_notes = legitimate_role_notes(ctx.yaml_data)
             intro = (
                 (
-                    "Numbered hexagons identify authentication at each access; `0` means no separate login and `?` means "
+                    "Numbered hexagons identify authentication at each access; `0` means no authentication and `?` means "
                     "not established. Colours describe method properties, not implementation assurance. "
                     if "data-authentication=" in svg
                     else ""
@@ -5948,7 +5969,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             )
             try:
                 detail_svg, detail_problems = check_diagram(
-                    ctx.yaml_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=True
+                    figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=True
                 )
             except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
                 detail_svg, detail_problems = "", [str(exc)]

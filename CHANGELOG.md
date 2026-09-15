@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Figure 1 shows evidenced authentication at component accesses in a compact architecture and threat overview, with a separate detailed diagram.
+- Figure 1 shows evidenced authentication in an architecture overview with readable payload labels, faithful flow directions, adaptive asset labels, project identity, roomier legends, and a separate detailed diagram.
 
 ## 0.6.0-beta.3 (2026-09-14)
 
