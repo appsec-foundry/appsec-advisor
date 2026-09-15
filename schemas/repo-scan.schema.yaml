@@ -1,7 +1,7 @@
 $schema: https://json-schema.org/draft/2020-12/schema
 $id: https://appsec-advisor/schemas/repo-scan.schema.yaml
 title: Standalone deterministic repository scan
-description: Output from scripts/repo_scan.py when --yaml is selected.
+description: Structured output from scripts/repo_scan.py when --yaml or --json is selected.
 type: object
 required: [version, repo, scans, summary]
 additionalProperties: false

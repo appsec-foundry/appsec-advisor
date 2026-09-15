@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -48,6 +49,25 @@ def test_endpoints_and_stack_can_be_selected_independently(tmp_path: Path, sourc
     assert "SUMMARY scans=1 findings=0" in stack.stdout
 
 
+@pytest.mark.parametrize("source_dir,route_name", [("src", "items"), ("service/api", "records")])
+def test_json_stdout_matches_yaml_for_selected_scan(tmp_path: Path, source_dir: str, route_name: str) -> None:
+    folder = tmp_path / source_dir
+    folder.mkdir(parents=True)
+    (folder / "app.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n"
+        f"@router.get('/{route_name}')\ndef list_rows(): return []\n",
+        encoding="utf-8",
+    )
+
+    yaml_result = run("--repo", str(tmp_path), "--scan", "endpoints", "--yaml")
+    json_result = run("--repo", str(tmp_path), "--scan", "endpoints", "--json")
+
+    assert yaml_result.returncode == json_result.returncode == 0, json_result.stderr
+    assert json.loads(json_result.stdout) == yaml.safe_load(yaml_result.stdout)
+    assert json_result.stderr == ""
+    assert "PROGRESS" not in json_result.stdout
+
+
 def test_authz_only_runs_matching_checks_and_preserves_negative_case(tmp_path: Path) -> None:
     (tmp_path / "unsafe.ts").write_text(
         "export function read(req) {\n  return Orders.findAll({ where: { ownerId: req.body.ownerId } });\n}\n",
@@ -88,6 +108,43 @@ def test_all_scans_and_yaml_file_leave_no_sidecars_in_target(tmp_path: Path) -> 
     }
     assert not list(repo.glob(".*findings.json"))
     assert not (repo / ".config-scan.json").exists()
+
+
+def test_json_file_contains_validated_report_and_leaves_no_sidecars(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("from flask import Flask\napp = Flask(__name__)\n", encoding="utf-8")
+    output = tmp_path / "scan.json"
+
+    result = run("--repo", str(repo), "--scan", "endpoints", "--json", str(output))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert result.stderr == ""
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["repo"] == str(repo)
+    assert payload["scans"][0]["name"] == "endpoints"
+    assert not list(repo.glob(".*findings.json"))
+
+
+def test_json_and_yaml_are_mutually_exclusive_before_scanning(tmp_path: Path) -> None:
+    result = run("--repo", str(tmp_path), "--json", "--yaml")
+
+    assert result.returncode == 2
+    assert "not allowed with argument" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("argument,exit_code", [("--help", 0), ("--unknown-option", 2)])
+def test_help_and_unknown_options_exit_before_scanning(monkeypatch, capsys, argument: str, exit_code: int) -> None:
+    monkeypatch.setattr(scan, "collect", lambda *args, **kwargs: pytest.fail("argument validation triggered a scan"))
+
+    with pytest.raises(SystemExit) as exc:
+        scan.main([argument])
+
+    output = capsys.readouterr()
+    assert exc.value.code == exit_code
+    assert "usage:" in (output.out if exit_code == 0 else output.err)
 
 
 def test_invalid_remote_url_fails_before_clone(tmp_path: Path) -> None:
@@ -188,6 +245,60 @@ def test_cli_thresholds_are_exclusive_and_yaml_summary_matches_visible_findings(
     assert all(row["severity"].lower() == "critical" for row in payload["scans"][0]["findings"])
     assert "PROGRESS authz: scanning" in result.stderr
     assert run("--medium", "--high").returncode == 2
+
+
+@pytest.mark.parametrize(
+    ("source_dir", "route_name"),
+    [("src", "items"), ("service/api", "records")],
+)
+def test_default_severity_filter_runs_finding_scans_without_routes(
+    tmp_path: Path, source_dir: str, route_name: str
+) -> None:
+    folder = tmp_path / source_dir
+    folder.mkdir(parents=True)
+    (folder / "app.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n"
+        f"@router.get('/{route_name}')\ndef list_rows(): return []\n",
+        encoding="utf-8",
+    )
+
+    result = run("--repo", str(tmp_path), "--critical", "--json")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert [entry["name"] for entry in payload["scans"]] == ["config", "source", "mass-assignment"]
+    assert payload["summary"]["minimum_severity"] == "critical"
+    assert payload["summary"]["endpoints_total"] is None
+    assert result.stderr == ""
+
+
+def test_explicit_endpoint_scan_still_runs_with_severity_filter(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n@router.get('/items')\ndef list_rows(): return []\n",
+        encoding="utf-8",
+    )
+
+    result = run("--repo", str(tmp_path), "--scan", "endpoints", "--critical", "--json")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert [entry["name"] for entry in payload["scans"]] == ["endpoints"]
+    assert payload["summary"]["endpoints_total"] == 1
+
+
+def test_critical_text_report_omits_unselected_routes(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text(
+        "from fastapi import APIRouter\nrouter = APIRouter()\n@router.get('/items')\ndef list_rows(): return []\n",
+        encoding="utf-8",
+    )
+
+    result = run("--repo", str(tmp_path), "--critical")
+
+    assert result.returncode == 0, result.stderr
+    assert "minimum_severity=critical" in result.stdout
+    assert "  endpoints:" not in result.stdout
+    assert "  stack:" not in result.stdout
+    assert "PROGRESS endpoints:" not in result.stderr
 
 
 def test_summary_does_not_double_count_source_and_authz_overlap() -> None:

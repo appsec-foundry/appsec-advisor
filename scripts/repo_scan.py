@@ -2,8 +2,9 @@
 """Run repository-only deterministic scanners without a threat-model run.
 
 The default output includes console details and a parseable summary. ``--yaml``
-emits the selected results to stdout; ``--yaml PATH`` writes them to PATH. Scanner
-sidecars and remote checkouts remain in temporary directories.
+and ``--json`` emit the selected results to stdout; a PATH argument writes the
+selected format to that path. Scanner sidecars and remote checkouts remain in
+temporary directories.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from scan_excludes import is_assessment_artifact  # noqa: E402
 from security_score import _clone, _remote_url  # noqa: E402
 
 SCANS = ("config", "source", "authz", "mass-assignment", "architecture", "endpoints", "stack")
+FINDING_SCANS = ("config", "source", "mass-assignment")
 TIMEOUT_S = 600
 SCHEMA = HERE.parent / "schemas" / "repo-scan.schema.yaml"
 SEVERITY_LEVEL = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -349,14 +351,22 @@ def main(argv: list[str] | None = None) -> int:
         "--scan",
         action="append",
         choices=(*SCANS, "all"),
-        help="Select a scan (repeatable; default: all). authz filters the source catalog.",
+        help="Select a scan (repeatable; default: all, or finding scans with a severity filter).",
     )
-    parser.add_argument(
+    formats = parser.add_mutually_exclusive_group()
+    formats.add_argument(
         "--yaml",
         nargs="?",
         const="-",
         metavar="PATH",
         help="Emit selected results as YAML to stdout, or write them to PATH",
+    )
+    formats.add_argument(
+        "--json",
+        nargs="?",
+        const="-",
+        metavar="PATH",
+        help="Emit selected results as JSON to stdout, or write them to PATH",
     )
     thresholds = parser.add_mutually_exclusive_group()
     thresholds.add_argument("--medium", action="store_true", help="Show Medium, High, and Critical findings")
@@ -364,14 +374,16 @@ def main(argv: list[str] | None = None) -> int:
     thresholds.add_argument("--critical", action="store_true", help="Show Critical findings only")
     args = parser.parse_args(argv)
     minimum_severity = next((key for key in ("medium", "high", "critical") if getattr(args, key)), "all")
-    selected = (
-        [name for name in SCANS if name != "authz"]
-        if not args.scan or "all" in args.scan
-        else list(dict.fromkeys(args.scan))
-    )
+    if not args.scan:
+        selected = list(FINDING_SCANS) if minimum_severity != "all" else [name for name in SCANS if name != "authz"]
+    elif "all" in args.scan:
+        selected = [name for name in SCANS if name != "authz"]
+    else:
+        selected = list(dict.fromkeys(args.scan))
 
     def progress(message: str) -> None:
-        print(f"PROGRESS {message}", file=sys.stderr, flush=True)
+        if args.json is None:
+            print(f"PROGRESS {message}", file=sys.stderr, flush=True)
 
     started = time.monotonic()
     try:
@@ -399,16 +411,22 @@ def main(argv: list[str] | None = None) -> int:
             validate(report, yaml.safe_load(SCHEMA.read_text(encoding="utf-8")))
             progress(f"completed {len(report['scans'])} scans in {time.monotonic() - started:.1f}s")
 
-            if args.yaml is None:
+            if args.yaml is None and args.json is None:
                 print(render_text(report))
             else:
-                payload = yaml.safe_dump(report, sort_keys=False, allow_unicode=True)
-                if args.yaml == "-":
+                format_name = "YAML" if args.yaml is not None else "JSON"
+                destination = args.yaml if args.yaml is not None else args.json
+                payload = (
+                    yaml.safe_dump(report, sort_keys=False, allow_unicode=True)
+                    if format_name == "YAML"
+                    else json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+                )
+                if destination == "-":
                     print(payload, end="")
                 else:
-                    target = Path(args.yaml).expanduser().resolve()
+                    target = Path(destination).expanduser().resolve()
                     if not target.parent.is_dir():
-                        raise ValueError(f"YAML output directory does not exist: {target.parent}")
+                        raise ValueError(f"{format_name} output directory does not exist: {target.parent}")
                     with tempfile.NamedTemporaryFile(
                         mode="w",
                         encoding="utf-8",
@@ -423,7 +441,8 @@ def main(argv: list[str] | None = None) -> int:
                         os.replace(staged, target)
                     finally:
                         staged.unlink(missing_ok=True)
-                    print(f"Wrote {target}")
+                    if args.json is None:
+                        print(f"Wrote {target}")
     except (ValueError, RuntimeError, OSError, ValidationError, yaml.YAMLError) as exc:
         print(f"repo_scan: {exc}", file=sys.stderr)
         return 1

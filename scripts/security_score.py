@@ -61,6 +61,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+import yaml
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
@@ -674,7 +676,9 @@ def render_text(result: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Deterministic quick Security Score (0-100) for a repository.")
     parser.add_argument("--repo", default=".", help="Local directory or HTTPS Git URL (default: current working dir)")
-    parser.add_argument("--json", action="store_true", help="Emit the result as machine-readable JSON")
+    formats = parser.add_mutually_exclusive_group()
+    formats.add_argument("--json", action="store_true", help="Emit the result as machine-readable JSON")
+    formats.add_argument("--yaml", action="store_true", help="Emit the result as machine-readable YAML")
     args = parser.parse_args(argv)
 
     with contextlib.ExitStack() as cleanup:
@@ -721,6 +725,8 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.json:
             print(json.dumps(result, indent=2, sort_keys=True))
+        elif args.yaml:
+            print(yaml.safe_dump(result, sort_keys=False, allow_unicode=True), end="")
         else:
             print(render_text(result))
 

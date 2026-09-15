@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -564,6 +565,45 @@ def test_local_repository_does_not_clone(monkeypatch, capsys, tmp_path):
 
     assert ss.main(["--repo", str(tmp_path), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["repo"] == str(tmp_path)
+
+
+@pytest.mark.parametrize("statuses", [["present"] * 5, ["present"] * 2])
+def test_yaml_contains_the_same_result_as_json(monkeypatch, capsys, tmp_path, statuses):
+    findings = [_hit("High", "CHECK-1", "Unsafe rendering", "src/über.ts")]
+    monkeypatch.setattr(ss, "collect", lambda repo, work: (_rules(*statuses), findings, ["scanner: partial result"]))
+
+    json_exit = ss.main(["--repo", str(tmp_path), "--json"])
+    json_output = capsys.readouterr()
+    json_result = json.loads(json_output.out)
+    yaml_exit = ss.main(["--repo", str(tmp_path), "--yaml"])
+    yaml_output = capsys.readouterr().out
+
+    assert yaml_exit == json_exit
+    assert json_output.err == ""
+    assert yaml.safe_load(yaml_output) == json_result
+    assert "über.ts" in yaml_output
+
+
+def test_json_and_yaml_cannot_be_requested_together(monkeypatch, capsys):
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("conflicting formats triggered a scan"))
+
+    with pytest.raises(SystemExit) as exc:
+        ss.main(["--json", "--yaml"])
+
+    assert exc.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argument,exit_code", [("--help", 0), ("--unknown-option", 2)])
+def test_help_and_unknown_options_exit_before_scanning(monkeypatch, capsys, argument, exit_code):
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("argument validation triggered a scan"))
+
+    with pytest.raises(SystemExit) as exc:
+        ss.main([argument])
+
+    output = capsys.readouterr()
+    assert exc.value.code == exit_code
+    assert "usage:" in (output.out if exit_code == 0 else output.err)
 
 
 @pytest.mark.parametrize(
