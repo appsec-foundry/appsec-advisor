@@ -70,18 +70,34 @@ requirements:
 
   REQ-MOD-002:
     applies_to:
+      - scripts/arch_coverage_to_threats.py
       - scripts/detect_impl_strategy.py
+      - scripts/weakness_signals.py
+      - scripts/merge_threats.py
+      - data/security-libraries.yaml
+      - schemas/weakness-signals.schema.json
+      - schemas/impl-strategy.schema.json
       - data/weakness-classes.yaml
     decisions:
       - WK-1
       - WK-2
+      - WK-3
       - WK-4
-    documents: []
+    documents:
+      - docs/internal/contracts/weakness-derivation.md
     coverage: partial
     guards:
+      - tests/test_weakness_signals.py::test_verified_mechanism_reaches_register
+      - tests/test_weakness_signals.py::test_same_cwe_elsewhere_does_not_join_observed_mechanism
+      - tests/test_weakness_signals.py::test_refresh_rebuilds_and_drops_refuted_backing
+      - tests/test_weakness_signals.py::test_unknown_cwe_practices_keep_separate_causes
+      - tests/test_detect_impl_strategy.py::test_safe_local_controls_do_not_emit_weaknesses
+      - tests/test_orchestration_controller.py::test_post_triage_refreshes_weaknesses_before_synthesis
       - tests/test_weakness_class_config_consistency.py::test_schema_enums_match_cluster_ids
       - tests/test_detect_impl_strategy.py::test_vetted_lib_no_bespoke_is_standard_vetted
       - tests/test_detect_impl_strategy.py::test_bespoke_no_lib_is_home_grown
+      - tests/test_arch_coverage_bridge.py::test_specific_cwe_preserves_mechanism_instances
+      - tests/test_arch_coverage_bridge.py::test_build_design_signals_recognizes_weak_or_missing_controls
 
   REQ-MOD-003:
     applies_to:

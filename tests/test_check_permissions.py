@@ -385,3 +385,15 @@ def test_architecture_evidence_uses_existing_repository_read_and_validator_permi
     assert any(cp._rule_covers(rule, "Read(${REPO_ROOT}/src/roles.ts)") for rule in rules)
     assert any(cp._rule_covers(rule, "Bash(python3 validate_fragment.py assets)") for rule in rules)
     assert "asset locations" in " ".join(entry["reason"] for entry in entries)
+
+
+def test_weakness_refresh_and_observations_use_existing_permissions():
+    entries = cp.load_required(cp.DATA_FILE)
+    rules = [entry["entry"] for entry in entries]
+    assert any(
+        cp._rule_covers(rule, "Bash(python3 merge_threats.py refresh-weaknesses --output-dir output)") for rule in rules
+    )
+    reasons = " ".join(entry["reason"] for entry in entries)
+    for name in (".impl-strategy.json", ".impl-design-signals.json", ".finding-design-signals.json"):
+        assert name in reasons
+        assert any(cp._rule_covers(rule, "Write(${OUTPUT_DIR}/" + name + ")") for rule in rules)

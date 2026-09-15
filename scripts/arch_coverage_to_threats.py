@@ -57,10 +57,9 @@ _HERE = Path(__file__).resolve().parent
 def _theme_to_primary_cluster() -> dict:
     """Invert posture-rubric ``theme_by_weakness_class`` → {theme: primary
     cluster}. Multiple clusters share a theme (InputValidation ← injection AND
-    output_xss_csp); the FIRST listed is the primary manifestation, so an
-    architectural theme maps to the cluster its concrete instances most likely
-    live in (InputValidation → injection, Authorization → missing_authz,
-    Authentication → broken_auth, DataProtection → weak_crypto). Missing/
+    output_xss_csp); the FIRST listed is the fallback for an unmapped CWE.
+    A recognized CWE keeps its specific cluster so broad themes cannot reroute
+    XSS into injection or insecure storage into cryptography. Missing/
     unreadable rubric → {} (caller falls back to CWE classification)."""
     if yaml is None:
         return {}
@@ -349,12 +348,11 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
         # `controls_absent_evidence` / `positive_signals`. Any of them is
         # observable backing — without this, every control-derived design gap was
         # silently dropped and never reached the weakness register.
-        backing = (
-            hyp.get("controls_absent_evidence")
-            or hyp.get("weak_or_missing_controls")
-            or hyp.get("positive_signals")
-            or []
-        )
+        backing = []
+        for field in ("controls_absent_evidence", "weak_or_missing_controls", "positive_signals"):
+            for item in hyp.get(field) or []:
+                if item not in backing:
+                    backing.append(item)
         if not backing:
             dropped.append(
                 {
@@ -365,15 +363,12 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
             )
             continue
         cwe = (hyp.get("cwe") or "").strip()
-        # A control-derived hypothesis's CWE is often the generic parent (e.g.
-        # CWE-20 → _unmapped), which would strand the signal in a bucket with no
-        # confirmed instances. Prefer the architectural theme mapped to its
-        # primary cluster so the design gap folds onto the SAME class as the
-        # concrete findings (an InputValidation gap folds onto the injection
-        # instances); fall back to CWE classification.
-        wclass = _cluster_for_theme(hyp.get("architectural_theme"))
-        if not wclass:
-            wclass = classify_cwe(cwe, warn=False) if cwe else "_unmapped"
+        # Match the concrete findings' canonical classifier first. A theme can
+        # span several classes, so using it first strands otherwise matching
+        # instances. Retain the theme fallback for generic CWEs such as CWE-20.
+        wclass = classify_cwe(cwe, warn=False)
+        if wclass == "_unmapped":
+            wclass = _cluster_for_theme(hyp.get("architectural_theme")) or "_unmapped"
         control = control_by_rule.get(str(hyp.get("rule_id") or ""))
         statement = (
             f"{control} is not consistently enforced."
@@ -384,7 +379,7 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
             "rule_id": hyp.get("rule_id"),
             "hypothesis_id": hid,
             "weakness_class": wclass,
-            "mechanism_id": mechanism_by_rule.get(str(hyp.get("rule_id") or "")),
+            "mechanism_id": hyp.get("weakness_mechanism") or mechanism_by_rule.get(str(hyp.get("rule_id") or "")),
             "cwe": cwe or None,
             "component": hyp.get("component_id"),
             "title": control or (hyp.get("title") or "Security control weakness"),
@@ -395,6 +390,9 @@ def build_design_signals(coverage: dict) -> tuple[list[dict], list[dict]]:
             "severity": hyp.get("severity") or "Medium",
         }
         signals.append(signal)
+    from weakness_signals import validate_document
+
+    validate_document({"version": 1, "design_signals": signals})
     return signals, dropped
 
 

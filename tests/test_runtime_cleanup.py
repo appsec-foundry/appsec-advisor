@@ -777,3 +777,17 @@ def test_always_wave_is_not_scheduled_twice_at_stage_all(tmp_path):
     report = rc.run_cleanup(out, stage="all", keep_runtime_files=False, force=False)
 
     assert len(report["removed"]) == len(set(report["removed"]))
+
+
+def test_cleanup_preserves_weakness_observation_audit(tmp_path):
+    (tmp_path / "threat-model.md").write_text("Report")
+    names = [
+        ".impl-strategy.json",
+        ".impl-design-signals.json",
+        ".finding-design-signals.json",
+        ".arch-design-signals.json",
+    ]
+    for name in names:
+        (tmp_path / name).write_text('{"version": 1}')
+    rc.run_cleanup(tmp_path, "post-qa", False, True)
+    assert all((tmp_path / name).read_text() == '{"version": 1}' for name in names)

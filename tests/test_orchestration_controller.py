@@ -7119,3 +7119,20 @@ def test_the_runtime_no_longer_writes_the_run_start_marker():
     move the run boundary after the prepasses already read the earlier one."""
     runtime = (ROOT / "skills" / "create-threat-model" / "SKILL-full-runtime.md").read_text(encoding="utf-8")
     assert ".scan-start-epoch" not in runtime
+
+
+def test_post_triage_refreshes_weaknesses_before_synthesis(tmp_path, monkeypatch):
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": []}))
+    (tmp_path / ".triage-flags.json").write_text(json.dumps({"version": 2, "flags": []}))
+    calls = []
+    monkeypatch.setattr(controller, "_run_script", lambda script, args: calls.append((script, args)))
+    monkeypatch.setattr(controller, "_context_v2_finalize", lambda *args: {"action": "done"})
+    assert controller._context_v2_after_triage(tmp_path, {}) == {"action": "done"}
+    assert [name for name, _ in calls] == [
+        "validate_intermediate.py",
+        "merge_threats.py",
+        "validate_intermediate.py",
+        "validate_intermediate.py",
+    ]
+    assert calls[1][1] == ["refresh-weaknesses", "--output-dir", str(tmp_path)]
+    assert calls[0][1][0] == calls[2][1][0] == "threats_merged"

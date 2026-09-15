@@ -76,10 +76,12 @@ diagram_annotations:
     Insecure Code Evaluation:
       tie_break_order: 30
       cwes: [CWE-94, CWE-95, CWE-917]
+      mechanisms: [application-data-as-code]
       priority_group: interpreter
     Insecure Template Handling:
       tie_break_order: 240
       cwes: [CWE-1336]
+      mechanisms: [application-data-as-template]
       priority_group: interpreter
     Insecure XML Processing:
       tie_break_order: 260
@@ -102,6 +104,7 @@ diagram_annotations:
     Improper Attribute Modification:
       tie_break_order: 320
       cwes: [CWE-915, CWE-1321]
+      mechanisms: [unrestricted-attribute-binding]
     Improper Input Validation:
       tie_break_order: 330
       cwes: [CWE-20, CWE-158, CWE-1284, CWE-1287]
@@ -158,7 +161,7 @@ diagram_annotations:
     Insecure Session Management:
       tie_break_order: 230
       cwes: [CWE-384, CWE-613, CWE-614, CWE-1004]
-      mechanisms: [browser-clients-without-bff]
+      mechanisms: [browser-clients-without-bff, script-readable-sensitive-cookies]
     Insecure Secret Management:
       tie_break_order: 220
       cwes: [CWE-259, CWE-260, CWE-321, CWE-522, CWE-547, CWE-798]
@@ -170,9 +173,11 @@ diagram_annotations:
     Improper Authenticity Checks:
       tie_break_order: 340
       cwes: [CWE-345, CWE-347]
+      mechanisms: [unsigned-token-acceptance]
     Improper Origin Validation:
       tie_break_order: 360
       cwes: [CWE-346, CWE-352, CWE-942]
+      mechanisms: [unprotected-cookie-mutations]
       cwe_qualifiers:
         CWE-352: CSRF
     Insecure Framing Policy:
@@ -205,6 +210,7 @@ diagram_annotations:
       cwes: [CWE-311]
     Insecure Data Storage:
       tie_break_order: 80
+      mechanisms: [browser-readable-session-credentials]
       cwes: [CWE-312, CWE-922]
     Improper File Exposure:
       tie_break_order: 310
@@ -528,6 +534,82 @@ class_guidance:
 # the query, encode the output, pick a KDF) carries no question: there is
 # nothing for the team to decide, only work to schedule.
 mechanism_guidance:
+  unrestricted-attribute-binding:
+    weakness_name: "Privileged attributes lack an enforced write allowlist"
+    cwes: [CWE-915]
+    description: >-
+      Model binding accepts caller-selected attributes across a privileged write
+      boundary. The affected binding path does not separate fields callers may
+      change from fields reserved for server-side policy.
+    structural_fix: >-
+      define operation-specific write schemas and assign privileged attributes
+      exclusively through server-side policy
+    finding_signal:
+      # An admitted CWE-915 finding proves the sensitive-field violation;
+      # the cited source must additionally expose a binding or model operation.
+      any_pattern:
+        - '(?i)\b(create|update|assign|bind|permit|model|attributes|exclude|request|params)\b'
+  application-data-as-code:
+    weakness_name: "Application data crosses into executable code"
+    cwes: [CWE-94, CWE-95]
+    description: >-
+      An interpreter evaluates application values as code. The affected path
+      mixes data processing with executable program construction instead of
+      constraining callers to predefined operations.
+    structural_fix: >-
+      replace evaluation of application values with a data parser or a fixed
+      set of operations whose arguments remain data
+    finding_signal:
+      any_pattern:
+        - '\b(eval|exec|Function|evaluate)\s*\(\s*[A-Za-z_$][\w.$\[\]]*'
+  browser-readable-session-credentials:
+    weakness_name: "Browser scripts retain reusable session credentials"
+    cwes: [CWE-922]
+    description: >-
+      Browser code retains reusable authentication credentials in script-readable
+      storage. Script execution in the same origin can obtain the credentials
+      and reuse the authenticated session.
+    structural_fix: >-
+      move reusable credentials behind a server-managed session boundary and
+      keep browser-visible state free of reusable authentication secrets
+    finding_signal:
+      any_pattern:
+        - '(?is)\b(?:localStorage|sessionStorage)\s*\.\s*(?:getItem|setItem)\s*\([^\n]*(?:token|session|credential|jwt|auth)'
+        - '(?is)\bAuthorization\b.{0,160}\b(?:localStorage|sessionStorage)\b'
+  unprotected-cookie-mutations:
+    weakness_name: "Cookie-authenticated changes lack request authenticity checks"
+    cwes: [CWE-352]
+    description: >-
+      A state-changing operation accepts ambient browser credentials without an
+      enforced check that the authenticated user initiated the request. The
+      affected mutation path lacks a request-authenticity boundary.
+    structural_fix: >-
+      enforce framework CSRF protection or validated origin and anti-CSRF tokens
+      on every mutation that accepts ambient browser credentials
+    finding_signal:
+      # CWE-352 comes from the inspected authentication/mutation/control path;
+      # merely seeing a cookie API without that finding never emits a signal.
+      any_pattern:
+        - '(?i)\b(?:cookies?|session|csrf|request|req)\b'
+  script-readable-sensitive-cookies:
+    weakness_name: "Sensitive cookies remain accessible to browser scripts"
+    cwes: [CWE-1004]
+    description: >-
+      Sensitive cookies are issued without HttpOnly protection. Browser scripts
+      in the same origin can read values that should remain confined to the
+      browser's HTTP cookie handling.
+    structural_fix: >-
+      issue sensitive cookies server-side with HttpOnly protection and keep
+      script-readable application preferences separate from session credentials
+  application-data-as-template:
+    weakness_name: "Application data crosses into template source"
+    cwes: [CWE-1336]
+    description: >-
+      Template construction treats application values as template source.
+      Rendering can therefore interpret data as template instructions.
+    structural_fix: >-
+      compile fixed templates and pass application values only through their
+      data-binding interface
   database-query-concatenation:
     weakness_name: "Database access relies on concatenated queries"
     cwes: [CWE-89]

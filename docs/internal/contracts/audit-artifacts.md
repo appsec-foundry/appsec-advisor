@@ -12,6 +12,8 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.dep-scan.json` | Dependency scan findings |
 | `.stride-<component-id>.json`, `.stride-dispatch-manifest.json`, `.stride-selection.json`, `.stride-analyst-context.json` | Per-component STRIDE fragments and the three durable pre-fan-out sidecars below; the analyst context contains bounded component business and architecture projections |
 | `.threats-merged.json` | Canonical merged threat set |
+| `.arch-design-signals.json`, `.impl-design-signals.json`, `.finding-design-signals.json` | Validated mechanism observations and source provenance under `schemas/weakness-signals.schema.json`; see [weakness derivation](weakness-derivation.md) |
+| `.impl-strategy.json` | Dependency inventory and bounded source observations under `schemas/impl-strategy.schema.json` |
 | `.triage-flags.json` | Triage-validator verdicts |
 | `.trust-boundary-diagnostics.json` | Canonical endpoint-resolution failures and ambiguity audit |
 | `.trust-boundary-renumber.json` | `{counter id: delivered id}` map from the contiguous `tb-1 … tb-N` delivery renumbering — lets post-build emitters translate the ids `.triage-flags.json` recorded |

@@ -6841,3 +6841,31 @@ def test_figure1_retains_known_identity_without_local_manifest(tmp_path):
     assert compose._figure1_display_data(ctx)["project"] == ctx.yaml_data["project"]
     (tmp_path / "package.json").write_text('{"name":"different-checkout","version":"5.6"}')
     assert compose._figure1_display_data(ctx)["project"] == ctx.yaml_data["project"]
+
+
+def test_weakness_card_preserves_source_backing_without_duplicate_finding(tmp_path):
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        triage={},
+        fragments_dir=tmp_path,
+        yaml_data={
+            "weaknesses": [
+                {
+                    "id": "W-001",
+                    "title": "Observed rendering weakness",
+                    "severity": "High",
+                    "severity_basis": "confirmed",
+                    "instances": [{"id": "T-001"}],
+                    "observable_backing": {
+                        "practice_evidence": [{"id": "T-001", "file": "view.ts", "line": 3}],
+                        "absent_control_signal": ["Output encoding", {"file": "view.ts", "line": 3}],
+                    },
+                }
+            ]
+        },
+    )
+    result = compose._render_systemic_weaknesses(ctx)
+    assert result.count("[F-001](#f-001)") == 1
+    assert "Practice sites:" not in result
+    assert "Source evidence (`view.ts:3`)" in result

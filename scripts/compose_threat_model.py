@@ -16653,7 +16653,11 @@ def _render_systemic_weaknesses(ctx: RenderContext) -> str:
                     out.append(f"- {link}")
             out.append("")
         # Practice sites — bullet list.
-        practice = (w.get("observable_backing") or {}).get("practice_evidence") or []
+        practice = [
+            p
+            for p in ((w.get("observable_backing") or {}).get("practice_evidence") or [])
+            if not isinstance(p, dict) or str(p.get("id") or "").upper() not in inst_ids
+        ]
         if practice:
             out.append("**Practice sites:**")
             out.append("")
@@ -16675,7 +16679,12 @@ def _render_systemic_weaknesses(ctx: RenderContext) -> str:
                 if isinstance(item, str):
                     labels.append(item)
                 elif isinstance(item, dict):
-                    labels.append(str(item.get("control") or item.get("pattern") or "control signal"))
+                    label = str(item.get("control") or item.get("pattern") or "Source evidence")
+                    if item.get("file"):
+                        path = str(item["file"]).replace("`", "&#96;")
+                        locator = f"{path}:{item['line']}" if item.get("line") else path
+                        label += f" (`{locator}`)"
+                    labels.append(label)
             shown = ", ".join(labels)
             if len(absent) > 6:
                 shown += f" (+{len(absent) - 6} more)"

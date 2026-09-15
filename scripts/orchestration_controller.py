@@ -5528,6 +5528,11 @@ def _context_v2_after_triage(output_dir: Path, cfg: dict[str, Any]) -> dict[str,
         "validate_intermediate.py",
         ["threats_merged", str(output_dir / ".threats-merged.json")],
     )
+    _run_script("merge_threats.py", ["refresh-weaknesses", "--output-dir", str(output_dir)])
+    _run_script(
+        "validate_intermediate.py",
+        ["threats_merged", str(output_dir / ".threats-merged.json")],
+    )
     repaired = _canonicalize_triage_flag_types(output_dir)
     if repaired:
         _append_event(

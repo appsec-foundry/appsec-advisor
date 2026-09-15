@@ -324,6 +324,7 @@ GROUPS = {
         triage_compute_ranking
         triage_validate_ratings
         weakness_class_config_consistency
+        weakness_signals
     """),
     "config": _tests("""
         detect_public_repo

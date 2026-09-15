@@ -2660,6 +2660,8 @@ def build_weakness_register(
                 "components": [],
                 "strategies": [],
                 "design_severities": [],
+                "instance_ids": None,
+                "architecture_scope": False,
             },
         )
 
@@ -2687,8 +2689,8 @@ def build_weakness_register(
         ids are snake_case and must not reach the id unnormalised.
         """
         key = _normalise_mechanism_key(mechanism_id) if mechanism_id else ""
-        if key and isinstance(mechanism_guidance.get(key), dict):
-            return key, mechanism_guidance[key]
+        if key:
+            return key, mechanism_guidance.get(key) or {}
         cwe_norm = (cwe or "").upper()
         for candidate, candidate_guidance in mechanism_guidance.items():
             if cwe_norm and cwe_norm in {str(v).upper() for v in (candidate_guidance.get("cwes") or [])}:
@@ -2741,6 +2743,8 @@ def build_weakness_register(
 
     confirmed: list[dict] = []
     for t in threats:
+        if t.get("evidence_check") == "refuted":
+            continue
         src = (t.get("source") or "").strip()
         wcid = classify_threat(t, vocab, warn=False)
         cwe = (t.get("cwe") or "").strip().upper()
@@ -2795,11 +2799,15 @@ def build_weakness_register(
                 t.get("mechanism_id"),
                 wcid=wcid,
                 cwe=cwe,
-                fallback_title=f"{_wname(wcid)} is implemented inconsistently",
+                fallback_title=str(t.get("title") or f"Observed {cwe or wcid} practice"),
                 fallback_statement=(t.get("title") or "Observed insecure security-control practice.").strip(),
             )
+            # A CWE with no curated mechanism cannot join unrelated practices.
+            # Keep its own source scope and narrative instead of borrowing the
+            # class-wide remediation (e.g. CI fan-out is not API rate limiting).
+            scope = "" if guidance else ":" + str(t.get("t_id") or t.get("id") or _first_evidence(t))
             b = _bucket(
-                f"mechanism:{mechanism}",
+                f"mechanism:{mechanism}{scope}",
                 wcid=wcid,
                 kind="implementation",
                 title=title,
@@ -2816,6 +2824,8 @@ def build_weakness_register(
                 pe["id"] = tid
             if pe["file"]:
                 b["practice"].append(pe)
+            if not guidance:
+                b["instance_ids"] = set()
 
     # Fold externally-supplied design signals (P1.3 bridge output).
     for ds in design_signals or []:
@@ -2829,6 +2839,13 @@ def build_weakness_register(
         wcid = _raw_wc if _raw_wc in _valid_wc else classify_cwe(ds.get("cwe") or "", vocab, warn=False)
         cwe = (ds.get("cwe") or "").strip().upper()
         b = _design_bucket(ds, wcid=wcid, cwe=cwe)
+        if "instance_ids" not in ds and ds.get("absent_control_signal"):
+            b["architecture_scope"] = True
+        b["practice"].extend(ds.get("practice_evidence") or [])
+        if "instance_ids" in ds:
+            if b["instance_ids"] is None:
+                b["instance_ids"] = set()
+            b["instance_ids"].update(ds["instance_ids"])
         for a in ds.get("absent_control_signal") or ds.get("controls_absent_evidence") or []:
             b["absent"].append(a)
         strat = (ds.get("implementation_strategy") or "").strip()
@@ -2845,6 +2862,7 @@ def build_weakness_register(
     seq = 0
     for key in sorted(agg):
         b = agg[key]
+        b["practice"] = list({json.dumps(site, sort_keys=True): site for site in b["practice"]}.values())
         wcid = b["weakness_class"]
         # `_unmapped` is the CWE catch-all; it is not a coherent weakness class,
         # so it never becomes a weakness (its findings stay as plain §8 findings).
@@ -2873,6 +2891,12 @@ def build_weakness_register(
         # database-query weakness. Known-vuln mechanisms match their source,
         # because their implementation CWE is not their management root cause.
         for t in confirmed:
+            if (
+                not b["architecture_scope"]
+                and b["instance_ids"] is not None
+                and (t.get("t_id") or t.get("id")) not in b["instance_ids"]
+            ):
+                continue
             if b.get("instance_source"):
                 if (t.get("source") or "").strip() != b["instance_source"]:
                     continue
@@ -2912,12 +2936,6 @@ def build_weakness_register(
             _add_component(b, component)
 
         confirmed_basis = bool(b["instances"])
-        # Fall B (§4b "control present"): a standard-vetted control IS the
-        # central control, so a PURE design gap (no confirmed instance, no
-        # bad-practice site) is exculpated — suppressed, not shown.
-        if resolved_strategy == "standard-vetted" and kind == "design" and not confirmed_basis and not has_practice:
-            continue
-
         if confirmed_basis:
             # Driven by a proven exploit: keep the real instance severity band.
             severity_basis = "confirmed"
@@ -2942,7 +2960,7 @@ def build_weakness_register(
         # NEVER for a `confirmed` weakness — a proven exploit must not be
         # de-ranked below its own instance severity (risk-register R1); the
         # softening applies to design-risk gaps only.
-        if resolved_strategy == "standard-vetted" and severity_basis != "confirmed":
+        if b["strategies"] == ["standard-vetted"] and severity_basis != "confirmed":
             severity = _lower_severity(severity)
 
         statement = b["statement"]
@@ -2977,7 +2995,7 @@ def build_weakness_register(
         # root-cause fix the Hybrid mitigation model surfaces alongside the
         # tactical per-finding M-NNN roll-up. Sourced from weakness-classes.yaml
         # `class_guidance`; absent for _unmapped / unlisted classes.
-        guidance = b.get("guidance") or ((class_guidance.get(wcid) or {}) if isinstance(class_guidance, dict) else {})
+        guidance = b.get("guidance") or {}
         _desc = " ".join((guidance.get("description") or "").split()).strip()
         _struct = " ".join((guidance.get("structural_fix") or "").split()).strip()
         if _desc:
@@ -3004,56 +3022,64 @@ def build_weakness_register(
 
 
 def _load_design_signals(out_dir: Path) -> list[dict]:
-    """Arch-coverage design-signal records (P1.3 bridge output), consumed by the
-    weakness reconciler so architectural design gaps fold into the weakness
-    register with their instances.
+    """Load validated observations, preferring current architecture coverage."""
+    from weakness_signals import validate_document
 
-    Two independent streams are merged (both fold into the same weakness buckets
-    by class):
-
-    1. **Arch-coverage** — prefer the emitted ``.arch-design-signals.json``; if
-       absent, generate deterministically from ``.architecture-coverage.json``
-       (the Phase-9 agent is *instructed* to run ``arch_coverage_to_threats.py
-       emit-design-signals``, but that soft step is sometimes skipped under
-       turn-budget pressure — which silently dropped EVERY architectural design
-       weakness; the fallback makes the fold happen regardless).
-    2. **Impl-strategy (Gap-A)** — ``.impl-design-signals.json`` from
-       detect_impl_strategy: a home-grown / misused *central control* (unsafe SQL
-       handling, direct DOM sinks, ad-hoc authz) surfaced as a design-risk
-       weakness even when no concrete instance was confirmed."""
     signals: list[dict] = []
-    path = out_dir / ".arch-design-signals.json"
-    if path.exists():
-        try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            doc = None
-        if isinstance(doc, dict):
-            signals.extend(doc.get("design_signals") or [])
-        elif isinstance(doc, list):
-            signals.extend(doc)
-    else:
-        cov_path = out_dir / ".architecture-coverage.json"
-        if cov_path.exists():
-            try:
-                cov = json.loads(cov_path.read_text(encoding="utf-8"))
-                from arch_coverage_to_threats import build_design_signals
+    coverage = out_dir / ".architecture-coverage.json"
+    if coverage.exists():
+        from arch_coverage_to_threats import build_design_signals
 
-                arch_signals, _ = build_design_signals(cov)
-                signals.extend(arch_signals)
-            except Exception:  # noqa: BLE001 — a fallback must never break finalize
-                pass
-    impl_path = out_dir / ".impl-design-signals.json"
-    if impl_path.exists():
-        try:
-            idoc = json.loads(impl_path.read_text(encoding="utf-8"))
-            if isinstance(idoc, dict):
-                signals.extend(idoc.get("design_signals") or [])
-            elif isinstance(idoc, list):
-                signals.extend(idoc)
-        except (OSError, json.JSONDecodeError):
-            pass
+        arch_signals, _ = build_design_signals(json.loads(coverage.read_text(encoding="utf-8")))
+        signals.extend(arch_signals)
+    paths = [out_dir / ".impl-design-signals.json"]
+    if not coverage.exists():
+        paths.insert(0, out_dir / ".arch-design-signals.json")
+    for path in paths:
+        if not path.exists():
+            continue
+        document = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(document, list):
+            document = {"version": 1, "design_signals": document}
+        validate_document(document)
+        signals.extend(document["design_signals"])
     return signals
+
+
+def refresh_weaknesses(out_dir: Path, threats: list[dict]) -> list[dict]:
+    """Rebuild observations from current verified evidence and current source."""
+    from detect_impl_strategy import emit_artifacts
+    from weakness_signals import finding_signals, validate_document
+
+    config_path = out_dir / ".skill-config.json"
+    config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    root = config.get("repo_root")
+    observed = []
+    if root:
+        repo_root = Path(root).resolve()
+        if not repo_root.is_dir():
+            raise ValueError("Weakness derivation: configured repository is unavailable")
+        emit_artifacts(repo_root, out_dir, threats)
+        observed = finding_signals(threats, repo_root)
+    else:
+        atomic_write_json(out_dir / ".impl-strategy.json", {"version": 1, "strategies": {}})
+        atomic_write_json(out_dir / ".impl-design-signals.json", {"version": 1, "design_signals": []})
+    document = {"version": 1, "design_signals": observed}
+    validate_document(document)
+    atomic_write_json(out_dir / ".finding-design-signals.json", document, indent=2)
+    signals = _load_design_signals(out_dir) + observed
+    # Strategy belongs to the observed mechanism. A SQL concatenation elsewhere
+    # does not establish home-grown validation for every injection-class gap.
+    return build_weakness_register(threats, signals)
+
+
+def cmd_refresh_weaknesses(args: argparse.Namespace) -> int:
+    out_dir = Path(args.output_dir).resolve()
+    path = out_dir / ".threats-merged.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["weaknesses"] = refresh_weaknesses(out_dir, payload["threats"])
+    atomic_write_json(path, payload, indent=2, sort_keys=False)
+    return 0
 
 
 def _load_impl_strategy(out_dir: Path) -> dict[str, str]:
@@ -3101,12 +3127,10 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     # to the global T-ids just assigned — must run AFTER _assign_t_ids.
     threats = _remap_scenario_local_refs(threats)
 
-    # Weakness-class register (P1) — folds confirmed findings + non-exploitable
-    # practice sites + arch-coverage design signals into one weakness heading
-    # per class. Runs AFTER _assign_t_ids so instances[] reference real T-ids.
+    # Reconcile mechanism observations after assigning their stable finding IDs.
     # Additive: `threats[]` is untouched. `weaknesses` omitted when empty so
     # legacy consumers and golden diffs are unaffected until a signal exists.
-    weaknesses = build_weakness_register(threats, _load_design_signals(out_dir), _load_impl_strategy(out_dir))
+    weaknesses = refresh_weaknesses(out_dir, threats)
 
     payload = {
         "version": 1,
@@ -3208,6 +3232,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Directory containing .merge-candidates.json (and optionally .merge-decisions.json).",
     )
     f.set_defaults(func=cmd_finalize)
+
+    w = sub.add_parser("refresh-weaknesses", help="Rebuild weaknesses after evidence verification and triage.")
+    w.add_argument("--output-dir", required=True)
+    w.set_defaults(func=cmd_refresh_weaknesses)
 
     v = sub.add_parser(
         "validate-decisions",

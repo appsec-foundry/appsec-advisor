@@ -82,7 +82,7 @@ required:
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"
-    reason: "agents and deterministic preparers, including config_iac_scanner.py, write direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents and deterministic preparers, including config_iac_scanner.py and merge_threats.py refresh-weaknesses (.impl-strategy.json, .impl-design-signals.json, .finding-design-signals.json), write direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/**)"

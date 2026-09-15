@@ -7,6 +7,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import detect_impl_strategy as dis  # noqa: E402
@@ -40,7 +42,7 @@ def test_bespoke_no_lib_is_home_grown(tmp_path: Path) -> None:
 
 
 def test_lib_plus_bespoke_is_standard_misused(tmp_path: Path) -> None:
-    repo = _repo(tmp_path, {"bcrypt": "^5"}, {"x.js": "crypto.createHash('md5')\n"})
+    repo = _repo(tmp_path, {"bcrypt": "^5"}, {"x.js": "crypto.createHash('md5').update(password)\n"})
     m = dis.build_strategy_map(repo)
     assert m["weak_crypto"]["strategy"] == "standard-misused"
 
@@ -70,10 +72,11 @@ def _design_signal(wclass="injection", component=None):
     return ds
 
 
-def test_standard_vetted_suppresses_pure_design_gap() -> None:
-    # Fall B — a vetted central control means the design gap is not real.
+def test_library_inventory_does_not_suppress_observed_design_gap() -> None:
+    # A dependency inventory does not establish enforcement at the affected path.
     w = mt.build_weakness_register([], [_design_signal()], {"injection": "standard-vetted"})
-    assert w == []
+    assert len(w) == 1
+    assert w[0]["severity"] == "Medium"
 
 
 def test_standard_vetted_does_not_lower_confirmed_severity() -> None:
@@ -132,8 +135,8 @@ def test_impl_design_signal_emitted_for_home_grown_central_control(tmp_path: Pat
     assert s["implementation_strategy"] == "home-grown"
     assert s["mechanism_id"] == "frontend-output-encoding"
     assert s["title"] == "Frontend rendering lacks enforced output encoding"
-    ac = s["absent_control_signal"][0]
-    assert ac["hit_count"] >= 1 and ac["example"].endswith(":1")
+    assert s["practice_evidence"] == [{"file": "src/view.js", "line": 1}]
+    assert "absent_control_signal" not in s
 
 
 def test_impl_design_signal_not_emitted_for_vetted() -> None:
@@ -149,22 +152,21 @@ def test_impl_design_signal_skips_domain_without_central_control() -> None:
     assert dis.build_impl_design_signals(strat) == []
 
 
-def test_home_grown_central_control_surfaces_design_weakness_without_instances() -> None:
-    # The Gap-A payoff: a hand-rolled sink with NO confirmed instance still
-    # becomes a design-risk weakness (kind: design, no CVSS).
+def test_observed_sink_surfaces_implementation_weakness_without_instances() -> None:
+    # A sink proves the observed practice, not absence of an application-wide control.
     strat = {"injection": {"strategy": "home-grown", "bespoke_evidence": [{"file": "routes/a.ts", "line": 3}]}}
     signals = dis.build_impl_design_signals(strat)
     assert len(signals) == 1
     w = mt.build_weakness_register([], signals, {"injection": "home-grown"})
     assert len(w) == 1
     assert w[0]["weakness_class"] == "injection"
-    assert w[0]["kind"] == "design"
-    assert w[0]["severity_basis"] == "design-risk"
+    assert w[0]["kind"] == "implementation"
+    assert w[0]["severity_basis"] == "observed-practice"
     assert w[0].get("instances") in (None, [])
 
 
-def test_home_grown_central_control_pervasive_is_systemic() -> None:
-    # Sinks across ≥2 directories → systemic → Critical (spread × home-grown).
+def test_directories_do_not_invent_components_or_critical_design_risk() -> None:
+    # Directory names are not component identities or proof of systemic absence.
     strat = {
         "injection": {
             "strategy": "home-grown",
@@ -172,9 +174,67 @@ def test_home_grown_central_control_pervasive_is_systemic() -> None:
         }
     }
     signals = dis.build_impl_design_signals(strat)
-    assert sorted(signals[0]["affected_components"]) == ["lib", "routes"]
+    assert signals[0]["affected_components"] == []
     w = mt.build_weakness_register([], signals, {"injection": "home-grown"})
-    assert w[0]["severity"] == "Critical"
+    assert w[0]["severity"] == "Medium"
+    assert w[0]["kind"] == "implementation"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "sequelize.query('SELECT * FROM entries WHERE id = :id', { replacements: { id: request.query.id } })",
+        "sequelize.query('SELECT * FROM reports WHERE owner = $owner', { bind: { owner: principalId } })",
+        "element.innerHTML = DOMPurify.sanitize(value)",
+        "element.innerHTML = '<p>Fixed</p>'",
+        "// element.innerHTML = request.body.text",
+        "const explanation = 'element.innerHTML = userInput'",
+        "const header = jwt.decode(token)",
+        "const requestId = Math.random()",
+        "crypto.createHash('md5').update(assetBytes)",
+        "database.query(`SELECT ${1 + 2}`)",
+        "graph.query(`query ${operation}`)",
+        "client.query('filter=' + expression)",
+    ],
+)
+def test_safe_operations_do_not_emit_weaknesses(tmp_path, body):
+    repo = _repo(tmp_path, {"sequelize": "1", "dompurify": "1"}, {"handler.ts": body + "\n"})
+    assert dis.build_impl_design_signals(dis.build_strategy_map(repo)) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "db.query(`SELECT * FROM entries WHERE id = ${request.query.id}`)",
+        """pool.query("SELECT * FROM records WHERE owner = '" + accountName)""",
+        "database.query(\n  `SELECT * FROM reports WHERE id = ${value}`\n)",
+    ],
+)
+def test_query_interpolation_retains_concrete_evidence(tmp_path, body):
+    repo = _repo(tmp_path, {}, {"lookup.ts": body + "\n"})
+    signals = dis.build_impl_design_signals(dis.build_strategy_map(repo))
+    assert [s["mechanism_id"] for s in signals] == ["database-query-concatenation"]
+    assert signals[0]["practice_evidence"] == [{"file": "src/lookup.ts", "line": 1}]
+
+
+@pytest.mark.parametrize("location", ["tests/view.ts", "src/view.spec.ts", "examples/ui.js"])
+def test_nonproduction_code_does_not_supply_strategy_evidence(tmp_path, location):
+    path = tmp_path / location
+    path.parent.mkdir(parents=True)
+    path.write_text("element.innerHTML = userInput\n")
+    assert dis.build_strategy_map(tmp_path) == {}
+
+
+def test_authentication_library_does_not_establish_authorization(tmp_path):
+    repo = _repo(
+        tmp_path,
+        {"express-jwt": "1", "@nestjs/passport": "1", "helmet": "1"},
+        {"edit.ts": "record.update(request.body)\n"},
+    )
+    strategies = dis.build_strategy_map(repo)
+    assert "missing_authz" not in strategies
+    assert "output_xss_csp" not in strategies
+    assert "server_side_exposure" not in strategies
 
 
 def test_cli_writes_impl_design_signals_sidecar(tmp_path: Path) -> None:
@@ -185,3 +245,67 @@ def test_cli_writes_impl_design_signals_sidecar(tmp_path: Path) -> None:
     doc = json.loads((out / ".impl-design-signals.json").read_text())
     classes = {s["weakness_class"] for s in doc["design_signals"]}
     assert "output_xss_csp" in classes
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "const clean = DOMPurify.sanitize(input); element.innerHTML = clean;",
+        "const rendered = sanitizeHtml(raw);\nnode.innerHTML = rendered;",
+        "if (req.user.role === 'admin') { next(); }",
+    ],
+)
+def test_safe_local_controls_do_not_emit_weaknesses(tmp_path, body):
+    repo = _repo(tmp_path, {}, {"view.ts": body})
+    assert dis.build_impl_design_signals(dis.build_strategy_map(repo)) == []
+
+
+def test_reassigned_sanitizer_result_is_not_exculpatory(tmp_path):
+    repo = _repo(
+        tmp_path, {}, {"view.ts": "let clean = DOMPurify.sanitize(input); clean = raw; element.innerHTML = clean;"}
+    )
+    assert dis.build_impl_design_signals(dis.build_strategy_map(repo))
+
+
+def test_refuted_source_site_does_not_resurface_as_practice(tmp_path):
+    repo = _repo(tmp_path, {}, {"query.ts": "db.query(`select * from entries where id=${value}`)"})
+    out = tmp_path / "run"
+    out.mkdir()
+    threat = {
+        "t_id": "T-001",
+        "cwe": "CWE-89",
+        "evidence_check": "refuted",
+        "evidence": {"file": "src/query.ts", "line": 1},
+    }
+    _, signals = dis.emit_artifacts(repo, out, [threat])
+    assert signals == []
+
+
+def test_components_and_instances_require_the_observed_location(tmp_path):
+    repo = _repo(tmp_path, {}, {"query.ts": "db.query(`select * from entries where id=${value}`)\notherOperation()"})
+    out = tmp_path / "run"
+    out.mkdir()
+    threat = {
+        "t_id": "T-001",
+        "cwe": "CWE-89",
+        "component_id": "unrelated",
+        "evidence": {"file": "src/query.ts", "line": 2},
+    }
+    _, signals = dis.emit_artifacts(repo, out, [threat])
+    assert signals[0]["affected_components"] == []
+    assert signals[0]["instance_ids"] == []
+
+
+def test_refuted_other_cwe_at_same_site_does_not_hide_source_observation(tmp_path):
+    repo = _repo(tmp_path, {}, {"query.ts": "db.query(`select * from entries where id=${value}`)"})
+    out = tmp_path / "run"
+    out.mkdir()
+    threat = {
+        "t_id": "T-001",
+        "cwe": "CWE-94",
+        "evidence_check": "refuted",
+        "evidence": {"file": "src/query.ts", "line": 1},
+    }
+    _, signals = dis.emit_artifacts(repo, out, [threat])
+    assert len(signals) == 1
+    assert signals[0]["cwe"] == "CWE-89"
