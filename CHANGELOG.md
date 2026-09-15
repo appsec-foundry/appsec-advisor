@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- Add entries here as work lands on dev; promote them into a dated heading at release. -->
 
+### Added
+
+- Security Score accepts HTTPS GitHub and GitLab repository URLs and scans a temporary clone.
+
 ### Changed
 
 - Figure 1 shows evidenced authentication at component accesses in a compact architecture and threat overview, with a separate detailed diagram.

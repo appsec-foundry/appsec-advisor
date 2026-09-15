@@ -13,10 +13,10 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim and 
 /appsec-advisor:security-score — Deterministic quick score, no LLM involved.
 
 USAGE
-  /appsec-advisor:security-score [--repo <path>] [--json]
+  /appsec-advisor:security-score [--repo <path|https-git-url>] [--json]
 
 FLAGS
-  --repo <path>   Repository to score (default: current working dir)
+  --repo <path|https-git-url>  Local directory or HTTPS GitHub/GitLab repository (default: current working dir)
   --json          Emit the result as machine-readable JSON
 
 WHAT THE NUMBER IS
@@ -43,15 +43,15 @@ WHAT IT IS NOT
 EXIT CODES
   0  score computed
   2  undetermined — too few checks applied to this repository
-  1  error
+  1  error, including an invalid URL or failed clone
 ```
 
 ## Run
 
-Run the script from the plugin root, passing the user's `--repo` and `--json` through unchanged:
+Run the script from the plugin root, passing the user's `--repo` and `--json` through unchanged. An HTTPS Git URL explicitly requests a shallow network clone; the script scans the temporary checkout and removes it afterwards. Local paths cause no clone:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_score.py" [--repo <path>] [--json]
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_score.py" [--repo <path|https-git-url>] [--json]
 ```
 
 Use exactly `Calculating the repository's security score` as the tool call's description. It is the only thing the user sees for the 15 to 30 seconds the scan takes, so it names the work, not the mechanism: not "Running the security score script", not "Executing security_score.py".

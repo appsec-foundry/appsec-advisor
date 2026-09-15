@@ -49,19 +49,23 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import functools
 import json
 import math
-import shutil
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from _path_guard import iter_escaping_symlinks  # noqa: E402
+from _url_guard import validate_target_url  # noqa: E402
 from scan_excludes import is_assessment_artifact  # noqa: E402
 from weakness_classifier import classify_cwe  # noqa: E402
 
@@ -121,6 +125,75 @@ _RULES_YAML = HERE.parent / "data" / "architecture-coverage-rules.yaml"
 # Per-scanner wall-clock ceiling. A pathological repository must not hang the
 # probe; a scanner that times out degrades the score to a warning, not a crash.
 SCANNER_TIMEOUT_S = 600
+CLONE_TIMEOUT_S = 60
+
+
+def _remote_url(value: str) -> str:
+    """Validate and canonicalize an explicitly supplied HTTPS Git URL."""
+    if any(char.isspace() or ord(char) == 127 for char in value) or "\\" in value:
+        raise ValueError("repository URL contains whitespace, control characters, or backslashes")
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"invalid repository URL: {exc}") from exc
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise ValueError("repository URL must use HTTPS and include a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("repository URL must not contain credentials")
+    if "?" in value or "#" in value:
+        raise ValueError("repository URL must not contain a query or fragment")
+    path = parsed.path.rstrip("/")
+    if not path or path == "/":
+        raise ValueError("repository URL must include a project path")
+    if any(not part or unquote(part) in {".", ".."} for part in path.split("/")[1:]):
+        raise ValueError("repository URL contains an ambiguous project path")
+    host = parsed.hostname.lower()
+    authority = f"[{host}]" if ":" in host else host
+    if port is not None:
+        authority += f":{port}"
+    url = urlunsplit(("https", authority, path, "", ""))
+    verdict = validate_target_url(url, check_ip_safety=False)
+    if not verdict.ok:
+        raise ValueError(f"repository URL blocked: {verdict.reason}")
+    return url
+
+
+def _clone(url: str, checkout: Path) -> None:
+    """Create a temporary working tree without shell evaluation or redirects."""
+    command = [
+        "git",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "http.followRedirects=false",
+        "clone",
+        "--depth",
+        "1",
+        "--single-branch",
+        "--quiet",
+        "--",
+        url,
+        str(checkout),
+    ]
+    try:
+        done = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=CLONE_TIMEOUT_S,
+            check=False,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_LFS_SKIP_SMUDGE": "1"},
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("git clone timed out") from exc
+    except OSError as exc:
+        raise RuntimeError(f"git clone could not start: {exc}") from exc
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout or "").strip().splitlines()
+        raise RuntimeError(f"git clone failed: {detail[-1] if detail else f'exit {done.returncode}'}")
+    if not checkout.is_dir():
+        raise RuntimeError("git clone succeeded without a working tree")
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -600,39 +673,58 @@ def render_text(result: dict[str, Any]) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Deterministic quick Security Score (0-100) for a repository.")
-    parser.add_argument("--repo", default=".", help="Repository to score (default: current working dir)")
+    parser.add_argument("--repo", default=".", help="Local directory or HTTPS Git URL (default: current working dir)")
     parser.add_argument("--json", action="store_true", help="Emit the result as machine-readable JSON")
     args = parser.parse_args(argv)
 
-    repo_root = Path(args.repo).expanduser().resolve()
-    if not repo_root.is_dir():
-        print(f"error: not a directory: {repo_root}", file=sys.stderr)
-        return 1
+    with contextlib.ExitStack() as cleanup:
+        if "://" in args.repo:
+            try:
+                remote = _remote_url(args.repo)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            clone_parent = Path(cleanup.enter_context(tempfile.TemporaryDirectory(prefix="appsec-score-repo-")))
+            repo_root = clone_parent / "checkout"
+            try:
+                _clone(remote, repo_root)
+            except RuntimeError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
+            escaping = next(iter_escaping_symlinks(repo_root), None)
+            if escaping is not None:
+                rel = escaping.path.relative_to(repo_root)
+                print(f"error: checkout contains a symlink outside the repository: {str(rel)!r}", file=sys.stderr)
+                return 1
+            display_repo = remote
+        else:
+            repo_root = Path(args.repo).expanduser().resolve()
+            if not repo_root.is_dir():
+                print(f"error: not a directory: {repo_root}", file=sys.stderr)
+                return 1
+            display_repo = str(repo_root)
 
-    work_dir = Path(tempfile.mkdtemp(prefix="appsec-score-"))
-    try:
+        work_dir = Path(cleanup.enter_context(tempfile.TemporaryDirectory(prefix="appsec-score-")))
         rules, findings, warnings = collect(repo_root, work_dir)
-    finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
 
-    findings, dropped = _drop_assessment_artifacts(findings, repo_root)
-    if dropped:
-        warnings.append(f"ignored {dropped} findings quoting a previous assessment in the repo")
-    contaminated = _contaminated_rules(rules, repo_root)
-    if contaminated:
-        warnings.append("judged on a previous assessment's evidence: " + ", ".join(contaminated))
+        findings, dropped = _drop_assessment_artifacts(findings, repo_root)
+        if dropped:
+            warnings.append(f"ignored {dropped} findings quoting a previous assessment in the repo")
+        contaminated = _contaminated_rules(rules, repo_root)
+        if contaminated:
+            warnings.append("judged on a previous assessment's evidence: " + ", ".join(contaminated))
 
-    result = compute(rules, findings)
-    result["top_findings"] = top_findings(findings)
-    result["repo"] = str(repo_root)
-    result["warnings"] = warnings
+        result = compute(rules, findings)
+        result["top_findings"] = top_findings(findings)
+        result["repo"] = display_repo
+        result["warnings"] = warnings
 
-    if args.json:
-        print(json.dumps(result, indent=2, sort_keys=True))
-    else:
-        print(render_text(result))
+        if args.json:
+            print(json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(render_text(result))
 
-    return 2 if result["verdict"] == "undetermined" else 0
+        return 2 if result["verdict"] == "undetermined" else 0
 
 
 if __name__ == "__main__":

@@ -18,6 +18,8 @@ Covers:
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -520,3 +522,153 @@ def test_exit_code_signals_undetermined(monkeypatch, capsys, tmp_path, statuses,
 def test_missing_repository_is_an_error(capsys, tmp_path):
     assert ss.main(["--repo", str(tmp_path / "nope")]) == 1
     assert "not a directory" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gitlab.com/example-team/service-a.git",
+        "https://github.com/another-org/worker-b.git",
+    ],
+)
+def test_https_repository_is_cloned_scanned_and_removed(monkeypatch, capsys, url):
+    checkouts = []
+
+    def fake_clone(argv, **kwargs):
+        checkout = Path(argv[-1])
+        checkout.mkdir()
+        (checkout / "source.txt").write_text("scan me", encoding="utf-8")
+        checkouts.append(checkout)
+        assert argv[-2] == url
+        assert argv[-3] == "--"
+        assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    def fake_collect(repo, work):
+        assert repo == checkouts[-1]
+        assert (repo / "source.txt").read_text(encoding="utf-8") == "scan me"
+        return _rules(*(["present"] * 5)), [], []
+
+    monkeypatch.setattr(ss.subprocess, "run", fake_clone)
+    monkeypatch.setattr(ss, "collect", fake_collect)
+
+    assert ss.main(["--repo", url, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["repo"] == url
+    assert len(checkouts) == 1
+    assert not checkouts[0].exists()
+
+
+def test_local_repository_does_not_clone(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(ss.subprocess, "run", lambda *a, **kw: pytest.fail("local path triggered a clone"))
+    monkeypatch.setattr(ss, "collect", lambda repo, work: (_rules(*(["present"] * 5)), [], []))
+
+    assert ss.main(["--repo", str(tmp_path), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["repo"] == str(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://gitlab.com/team/repo.git",
+        "file:///tmp/repo.git",
+        "https://user:token@gitlab.com/team/repo.git",
+        "https://github.com/team/repo.git?ref=main",
+        "https://gitlab.com/team/repo.git#",
+        "https://gitlab.com/team/other repo.git",
+        "https://[broken/team/repo.git",
+        "https://gitlab.com/team/../repo.git",
+        "https://github.com/team/%2e%2e/repo.git",
+        "https://gitlab.com//team/repo.git",
+        "https://gitlab.com\\@github.com/team/repo.git",
+    ],
+)
+def test_unsafe_remote_url_is_rejected_before_clone(monkeypatch, capsys, url):
+    monkeypatch.setattr(ss.subprocess, "run", lambda *a, **kw: pytest.fail("invalid URL triggered a clone"))
+
+    assert ss.main(["--repo", url]) == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_clone_failure_stops_without_scanning(monkeypatch, capsys):
+    url = "https://gitlab.com/neutral/project.git"
+    checkouts = []
+
+    def fake_clone(argv, **kw):
+        checkout = Path(argv[-1])
+        checkout.mkdir()
+        checkouts.append(checkout)
+        return subprocess.CompletedProcess(argv, 128, "", "fatal: repository not found")
+
+    monkeypatch.setattr(
+        ss.subprocess,
+        "run",
+        fake_clone,
+    )
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("failed clone was scanned"))
+
+    assert ss.main(["--repo", url]) == 1
+    assert "repository not found" in capsys.readouterr().err
+    assert len(checkouts) == 1
+    assert not checkouts[0].exists()
+
+
+def test_clone_timeout_is_an_error(monkeypatch, capsys):
+    url = "https://github.com/neutral/project.git"
+
+    def fake_timeout(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, ss.CLONE_TIMEOUT_S)
+
+    monkeypatch.setattr(ss.subprocess, "run", fake_timeout)
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("timed-out clone was scanned"))
+
+    assert ss.main(["--repo", url]) == 1
+    assert "timed out" in capsys.readouterr().err
+
+
+def test_remote_checkout_with_escaping_symlink_is_not_scanned(monkeypatch, capsys, tmp_path):
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private data", encoding="utf-8")
+    checkouts = []
+
+    def fake_clone(argv, **kw):
+        checkout = Path(argv[-1])
+        checkout.mkdir()
+        (checkout / "source.txt").symlink_to(outside)
+        checkouts.append(checkout)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(ss.subprocess, "run", fake_clone)
+    monkeypatch.setattr(ss, "collect", lambda repo, work: pytest.fail("escaping symlink was scanned"))
+
+    assert ss.main(["--repo", "https://github.com/neutral/project.git"]) == 1
+    assert "symlink outside the repository" in capsys.readouterr().err
+    assert not checkouts[0].exists()
+
+
+def test_clone_command_creates_a_working_tree(tmp_path):
+    source = tmp_path / "neutral-source"
+    source.mkdir()
+    subprocess.run(["git", "init", str(source)], check=True, capture_output=True)
+    (source / "source.txt").write_text("scan me", encoding="utf-8")
+    subprocess.run(["git", "-C", str(source), "add", "source.txt"], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.test",
+            "commit",
+            "-m",
+            "add neutral source",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    checkout = tmp_path / "checkout"
+    ss._clone(str(source), checkout)
+
+    assert (checkout / "source.txt").read_text(encoding="utf-8") == "scan me"

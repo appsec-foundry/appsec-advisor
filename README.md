@@ -117,6 +117,14 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
+### Security Score without Claude Code
+
+Run the score directly from an appsec-advisor checkout with Python 3.10+, PyYAML, and git. Pass a local directory or an HTTPS GitHub/GitLab repository URL to `--repo`; a URL makes a shallow temporary clone that is removed after the scan. Use `--json` for machine-readable output and `--help` for CLI options. Replace `/path/to/appsec-advisor` and the example URL with your checkout and target repository.
+
+```bash
+python3 /path/to/appsec-advisor/scripts/security_score.py --repo https://gitlab.com/group/project.git
+```
+
 ## What's new in 0.6.0-beta.3
 
 - Figure 1 has been redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths. Actors with equivalent access are grouped while each finding keeps its login and privilege requirements.
