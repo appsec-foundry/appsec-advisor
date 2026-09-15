@@ -57,6 +57,7 @@ GROUPS = {
         figure1_layout_harness
         figure1_security
         figure1_svg
+        figure2_svg
         final_render_guards
         fragment_authoring_fidelity
         fragment_invariant_parity

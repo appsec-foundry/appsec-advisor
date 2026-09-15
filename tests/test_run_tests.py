@@ -186,6 +186,7 @@ def test_report_group_includes_qa_and_diagram_consumers():
     assert {
         "tests/test_qa_checks.py",
         "tests/test_figure1_svg.py",
+        "tests/test_figure2_svg.py",
         "tests/test_walkthrough_renderer.py",
     } <= set(runner.select_tests("report"))
 
@@ -492,7 +493,7 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
         ),
         (
             "scripts/figure2_svg.py",
-            {"tests/test_compose_threat_model.py", "tests/test_qa_checks.py"},
+            {"tests/test_figure2_svg.py", "tests/test_compose_threat_model.py", "tests/test_qa_checks.py"},
         ),
         (
             "scripts/repo_scan.py",
