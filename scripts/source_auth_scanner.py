@@ -1543,7 +1543,7 @@ def scan_file(
     return findings
 
 
-def scan_repo(repo_root: Path, checks: list[Check]) -> list[Finding]:
+def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = False) -> list[Finding]:
     findings: list[Finding] = []
     for path in _walk_repo(repo_root):
         try:
@@ -1553,8 +1553,8 @@ def scan_repo(repo_root: Path, checks: list[Check]) -> list[Finding]:
         if _is_universally_excluded(rel):
             continue
         catalog_findings = scan_file(path, rel, checks)
-        llm_findings = _scan_llm_output_file(path, rel)
-        expression_findings = _scan_expression_inputs(path, rel)
+        llm_findings = [] if catalog_only else _scan_llm_output_file(path, rel)
+        expression_findings = [] if catalog_only else _scan_expression_inputs(path, rel)
         # Prefer the source-aware LLM finding when a broad catalog rule matched
         # the same sink and CWE. Both rows describe one affected statement and
         # mechanism; keeping both would violate the per-instance finding model.
@@ -1622,6 +1622,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Output directory for .source-auth-findings.json (omit with --dry-run)",
     )
     ap.add_argument("--checks", type=Path, help="Override checks YAML path")
+    ap.add_argument("--check-prefix", help="Run only catalog checks whose IDs start with this prefix")
     ap.add_argument("--dry-run", action="store_true", help="Print findings to stdout, do NOT write sidecar")
     ap.add_argument("--quiet", action="store_true", help="Suppress summary line")
     args = ap.parse_args(argv)
@@ -1666,7 +1667,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"source_auth_scanner: failed to load checks: {e}", file=sys.stderr)
         return 2
 
-    findings = scan_repo(repo_root, checks)
+    if args.check_prefix:
+        checks = [check for check in checks if check.id.startswith(args.check_prefix)]
+        if not checks:
+            print(f"source_auth_scanner: no checks match prefix {args.check_prefix!r}", file=sys.stderr)
+            return 2
+
+    findings = scan_repo(repo_root, checks, catalog_only=bool(args.check_prefix))
 
     if args.dry_run:
         print(json.dumps([asdict(f) for f in findings], indent=2))

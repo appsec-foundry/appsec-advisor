@@ -1107,6 +1107,50 @@ def test_main_dry_run_prints_findings_and_summary(tmp_path: Path, capsys) -> Non
     assert "1 finding(s) across 1 check(s)" in captured.err
 
 
+def test_main_check_prefix_runs_only_selected_catalog_checks(tmp_path: Path, capsys) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.js").write_text("BAD\n", encoding="utf-8")
+    checks = tmp_path / "checks.yaml"
+    checks.write_text(
+        _checks_yaml(id="AUTHZ-TEST", pattern="BAD")
+        + _checks_yaml(id="INJ-TEST", pattern="BAD").removeprefix("checks:\n"),
+        encoding="utf-8",
+    )
+
+    assert (
+        S.main(
+            [
+                "--repo-root",
+                str(repo),
+                "--checks",
+                str(checks),
+                "--check-prefix",
+                "AUTHZ-",
+                "--dry-run",
+            ]
+        )
+        == 0
+    )
+    rows = json.loads(capsys.readouterr().out)
+    assert [row["check_id"] for row in rows] == ["AUTHZ-TEST"]
+    assert (
+        S.main(
+            [
+                "--repo-root",
+                str(repo),
+                "--checks",
+                str(checks),
+                "--check-prefix",
+                "CRYPTO-",
+                "--dry-run",
+            ]
+        )
+        == 2
+    )
+    assert "no checks match prefix" in capsys.readouterr().err
+
+
 def test_main_writes_sidecar_and_non_quiet_tally(tmp_path: Path, capsys) -> None:
     repo = tmp_path / "repo"
     out = tmp_path / "out"

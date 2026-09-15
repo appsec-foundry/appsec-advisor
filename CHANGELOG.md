@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Security Score accepts HTTPS GitHub and GitLab repository URLs and scans a temporary clone.
+- Standalone repository scans now select deterministic checks, enumerate endpoints and technology, and export YAML.
 
 ### Changed
 

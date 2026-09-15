@@ -1,0 +1,131 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://appsec-advisor/schemas/repo-scan.schema.yaml
+title: Standalone deterministic repository scan
+description: Output from scripts/repo_scan.py when --yaml is selected.
+type: object
+required: [version, repo, scans, summary]
+additionalProperties: false
+properties:
+  version:
+    const: 1
+  repo:
+    type: string
+    minLength: 1
+  scans:
+    type: array
+    minItems: 1
+    items:
+      oneOf:
+        - $ref: '#/$defs/findingsScan'
+        - $ref: '#/$defs/architectureScan'
+        - $ref: '#/$defs/endpointsScan'
+        - $ref: '#/$defs/stackScan'
+  summary:
+    $ref: '#/$defs/summary'
+$defs:
+  summary:
+    type: object
+    required: [scans_run, minimum_severity, findings_total, severity_counts, endpoints_total, architecture_applicable, frameworks, languages]
+    additionalProperties: false
+    properties:
+      scans_run: {type: integer, minimum: 1}
+      minimum_severity: {enum: [all, medium, high, critical]}
+      findings_total: {type: integer, minimum: 0}
+      severity_counts:
+        type: object
+        required: [critical, high, medium, low, other]
+        additionalProperties: false
+        properties:
+          critical: {type: integer, minimum: 0}
+          high: {type: integer, minimum: 0}
+          medium: {type: integer, minimum: 0}
+          low: {type: integer, minimum: 0}
+          other: {type: integer, minimum: 0}
+      endpoints_total:
+        type: [integer, 'null']
+        minimum: 0
+      architecture_applicable:
+        type: [integer, 'null']
+        minimum: 0
+      frameworks:
+        type: array
+        items: {type: string}
+      languages:
+        type: array
+        items: {type: string}
+  findingsScan:
+    type: object
+    required: [name, checks_run, findings, findings_total, ignored_assessment_findings]
+    additionalProperties: false
+    properties:
+      name:
+        enum: [config, source, authz, mass-assignment]
+      checks_run:
+        type: integer
+        minimum: 0
+      findings_total:
+        type: integer
+        minimum: 0
+      ignored_assessment_findings:
+        type: integer
+        minimum: 0
+      findings:
+        type: array
+        items:
+          type: object
+          required: [file, line, check_id, severity]
+          properties:
+            file: {type: string}
+            line: {type: integer, minimum: 0}
+            check_id: {type: string, minLength: 1}
+            severity: {type: string, minLength: 1}
+          additionalProperties: true
+  architectureScan:
+    type: object
+    required: [name, checks_run, rules, rules_applicable]
+    additionalProperties: false
+    properties:
+      name: {const: architecture}
+      checks_run: {type: integer, minimum: 0}
+      rules_applicable: {type: integer, minimum: 0}
+      rules:
+        type: array
+        items:
+          type: object
+          required: [rule_id, status]
+          additionalProperties: true
+  endpointsScan:
+    type: object
+    required: [name, route_count, routes, coverage]
+    additionalProperties: false
+    properties:
+      name: {const: endpoints}
+      route_count: {type: integer, minimum: 0}
+      routes:
+        type: array
+        items:
+          type: object
+          required: [route_id, method, path, framework, handler_file, handler_line]
+          additionalProperties: true
+      coverage: {type: object}
+  stackScan:
+    type: object
+    required: [name, languages, manifests, frameworks]
+    additionalProperties: false
+    properties:
+      name: {const: stack}
+      languages:
+        type: array
+        items:
+          type: object
+          required: [language, category, files, bytes, share]
+          additionalProperties: true
+      manifests:
+        type: array
+        items:
+          type: object
+          required: [ecosystem, directories]
+          additionalProperties: true
+      frameworks:
+        type: array
+        items: {type: string}

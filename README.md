@@ -125,6 +125,16 @@ Run the score directly from an appsec-advisor checkout with Python 3.10+, PyYAML
 python3 /path/to/appsec-advisor/scripts/security_score.py --repo https://gitlab.com/group/project.git
 ```
 
+### Deterministic repository scans without Claude Code
+
+Run `repo_scan.py` from a checkout with Python 3.10+, PyYAML, jsonschema, and git. Pass a local directory or an HTTPS GitHub/GitLab Git URL. It prints progress on stderr and findings, route locations, and a stable `SUMMARY key=value` line on stdout. Use `--scan` repeatedly to select `config`, `authz`, `source`, `mass-assignment`, `architecture`, `endpoints`, or `stack`; omitting it runs all available repository scans. `authz` runs only authorization catalog checks, while `source` runs the complete source scanner. `endpoints` enumerates recognized route registrations, and `stack` reports source languages, build ecosystems, and recognized route frameworks. Unsupported route files are counted, so an empty endpoint list does not prove that the repository has no endpoints. Use `--medium`, `--high`, or `--critical` to show findings at or above that severity; these flags do not filter routes, stack details, or architecture rules. Pass `--yaml` for structured YAML containing the selected results and a `summary` on stdout or `--yaml PATH` to save it. Scanner sidecars and remote checkouts stay in temporary directories. Replace the example paths and URL with your target.
+
+```bash
+python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project --scan authz
+python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo https://github.com/group/project.git --scan config --high --yaml scan.yaml
+python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project --scan endpoints --scan stack
+```
+
 ## What's new in 0.6.0-beta.3
 
 - Figure 1 has been redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths. Actors with equivalent access are grouped while each finding keeps its login and privilege requirements.
