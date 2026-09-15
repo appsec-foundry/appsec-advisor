@@ -117,26 +117,6 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
-### Security score script
-
-Get a quick 0–100 score from automated checks without running a threat model. The score is limited to these checks and shows `undetermined` when too few apply. Requires Python 3.10+, PyYAML, and git.
-
-```bash
-python3 /path/to/appsec-advisor/scripts/security_score.py --repo /path/to/project
-```
-
-Replace the paths with your plugin and project directories, or use an HTTPS GitHub/GitLab Git URL for `--repo`. Add `--json` or `--yaml` for structured output; use `--help` for all options.
-
-### Deterministic scan script
-
-Scan a repository for security findings, endpoints, and its technology stack without running a threat model. Requires Python 3.10+, PyYAML, jsonschema, and git.
-
-```bash
-python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project
-```
-
-Use the same path or URL format as above. Add `--high` to show only High and Critical findings, or `--json scan.json` to save the report. Use `--help` for scan selection and other options.
-
 ## What's new in 0.6.0-beta.3
 
 - Figure 1 has been redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths. Actors with equivalent access are grouped while each finding keeps its login and privilege requirements.
@@ -212,6 +192,26 @@ If you do not have a catalog, adapt `data/appsec-requirements-fallback.yaml` or 
 | [appsec-reviewer-cli](docs/dev-security-helper-usage.md#appsec-reviewer-cli) (*experimental*) | Run the same change review in CI or other automation. |
 
 See the [developer tools guide](docs/dev-security-helper-usage.md) for commands and configuration.
+
+### Security score script
+
+The score script checks a repository without building a threat model. It returns a score from 0 to 100, or `undetermined` if too few checks apply. You need Python 3.10+, PyYAML, and git.
+
+```bash
+python3 /path/to/appsec-advisor/scripts/security_score.py --repo /path/to/project
+```
+
+Replace the example paths with your plugin checkout and project directory. `--repo` also accepts an HTTPS GitHub or GitLab Git URL. Use `--json` or `--yaml` for structured output.
+
+### Deterministic scan script
+
+Run the scanner for findings, endpoints, and detected technologies without building a threat model. You need Python 3.10+, PyYAML, jsonschema, and git.
+
+```bash
+python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project
+```
+
+`--repo` accepts a local directory or an HTTPS GitHub or GitLab Git URL. Use `--high` to show only High and Critical findings, or `--json scan.json` to save a JSON report. See `--help` for scan selection.
 
 ## Report a failed run
 
