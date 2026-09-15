@@ -35,8 +35,9 @@
 # compound commands / pipelines / VAR=$(...) chains still prompt. A single
 # Bash(*) is the only way to keep an interactive run prompt-free. It is wide
 # open by design; the guards above are what bound the blast radius.
-# Maintainer commands such as scripts/run_tests.py and make test-group use
-# the existing Bash(*) rule; test selection adds no permission entries.
+# Maintainer commands such as scripts/run_tests.py --changed-against,
+# make test-plan, make test-changed, and make test-group use the existing
+# Bash(*) rule; local Git diffs and test selection add no permission entries.
 #
 # Placeholders expanded at check-time:
 #   ${OUTPUT_DIR}   — from --output-dir / $OUTPUT_DIR / <repo>/docs/security

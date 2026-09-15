@@ -104,6 +104,11 @@ def test_maintainer_test_groups_use_existing_shell_permission():
     for command in (
         "python3 scripts/run_tests.py quick",
         "make test-group GROUP=report",
+        "python3 scripts/run_tests.py --changed-against origin/dev",
+        "python3 scripts/run_tests.py --check-groups",
+        "make test-plan BASE=origin/dev",
+        "make test-changed BASE=origin/dev",
+        "git diff --name-only --no-renames -z HEAD --",
         "make test-full",
         "make validate",
     ):

@@ -101,9 +101,17 @@ test-quick:  ## Run shared base drift guards without coverage
 	@$(PYTHON) scripts/run_tests.py quick -q
 
 .PHONY: test-group
-test-group:  ## Run a focused group: make test-group GROUP=report|scanner|prompts|runtime|incremental|e2e
+test-group:  ## Run a focused group: make test-group GROUP=<name> (see scripts/run_tests.py --help)
 	@test -n "$(GROUP)" || { echo "ERROR: set GROUP=<test group>; see scripts/run_tests.py --help"; exit 2; }
 	@$(PYTHON) scripts/run_tests.py "$(GROUP)" -q
+
+.PHONY: test-changed
+test-changed:  ## Run reviewed tests for branch and local changes: make test-changed BASE=origin/dev
+	@$(PYTHON) scripts/run_tests.py --changed-against "$(or $(BASE),origin/dev)" all -q
+
+.PHONY: test-plan
+test-plan:  ## Explain changed-file selection without running pytest: make test-plan BASE=origin/dev
+	@$(PYTHON) scripts/run_tests.py --list --changed-against "$(or $(BASE),origin/dev)"
 
 .PHONY: lint
 lint:  ## Ruff check + format check
@@ -161,6 +169,7 @@ validate:  ## Validate config, registry, target neutrality, and requirement bind
 	@$(PYTHON) scripts/check_fragment_registry.py
 	@$(PYTHON) scripts/check_target_specificity.py
 	@$(PYTHON) scripts/check_specs.py
+	@$(PYTHON) scripts/run_tests.py --check-groups
 
 .PHONY: release-check
 release-check:  ## Release-boundary gate: `check` + version/tag/changelog consistency

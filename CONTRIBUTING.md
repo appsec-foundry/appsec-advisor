@@ -47,6 +47,8 @@ PDF export (mermaid drives a headless Chrome over a local socket) and any write 
 ```bash
 make test-quick                    # shared base drift guards
 make test-group GROUP=report        # focused report and export tests
+make test-plan BASE=origin/dev      # explain the selection without running tests
+make test-changed BASE=origin/dev   # branch and local changes, with base guards
 make test-full                     # complete suite without coverage
 make check                         # lint, validators, and complete suite
 make test                          # complete suite with coverage
@@ -107,24 +109,33 @@ Select tests by the affected behavior. Include the changed producer, its consume
 | Shared runtime behavior or uncertain impact | `make check`. The `runtime` group supports iteration but does not replace this gate. |
 | Release | `make release-check` and the prescribed live E2E checks. |
 
-Base checks for non-trivial implementation changes:
+Inspect the automatic selection before using it for a bounded implementation change:
 
 ```bash
-make validate test-quick
+make test-plan BASE=origin/dev
+make validate test-changed BASE=origin/dev
 ```
 
-Run `make lint` whenever Python changes in `scripts/`, `tests/`, or `hooks/`. Use `make check` for changes spanning multiple runtime modules or contracts, or when targeted coverage cannot be bounded confidently. Its full suite includes the base tests, so do not rerun them separately after that gate passes.
+The selection includes commits since the merge base with `BASE`, staged changes, unstaged changes, and untracked files. `BASE` defaults to the local `origin/dev` reference; the runner does not fetch it. An invalid reference fails before pytest starts. Each routed path prints the groups it requires. The selected tests include the `quick` group and applicable requirement guard modules.
 
-The shared groups are `quick`, `report`, `scanner`, `prompts`, `runtime`, `incremental`, and `e2e`. Their file selections live in [`scripts/run_tests.py`](scripts/run_tests.py). They are starting sets; add tests for affected behavior outside the group. The `e2e` group replays a frozen run without model calls.
+Source routes currently cover selected report/export helpers and scanner entry points. Unknown paths, shared inputs such as schemas or templates, deleted files, and changes to multiple source modules fall back to the full suite. A clean comparison runs the base group. Review the plan against the behavior changed; an existing route does not prove that a new dependency is covered. Full compatibility and coverage runs remain in CI while the local selection is evaluated.
+
+Run `make lint` whenever Python changes in `scripts/`, `tests/`, or `hooks/`. Use `make check` for shared runtime changes, changes spanning multiple runtime modules or contracts, or uncertain impact. For iteration or separately bounded work in a mixed working tree, use `make validate test-quick` and the affected groups plus any additional consumer tests. Reuse successful checks until relevant source, contracts, dependencies, or the test environment changes. The full gate already includes the base checks.
+
+Group membership and source routes live in [`scripts/run_tests.py`](scripts/run_tests.py). The groups are `quick`, `report`, `scanner`, `prompts`, `runtime`, `incremental`, `e2e`, `qa-repair`, `findings`, `config`, `requirements`, `baseline`, `packaging`, `context`, `trust`, `shared`, `tooling`, and `integration`. The `e2e` group retains the frozen-run replay without model calls; `integration` covers other deterministic integration tests and drivers. Manual live-run assertions have a separate role and are not added to focused groups.
+
+When adding or renaming a test, update its exact membership or its justified manual role. When changing a producer or consumer, review the source routes and the tests at that boundary. `make validate` checks the inventory and rejects unassigned tests, stale paths, and invalid routes. File assignment prevents omission but does not prove semantic coverage. Do not infer sufficient coverage from filenames or Python imports alone; tests also invoke subprocesses and read schemas, templates, and prompts.
 
 ```bash
 make test-group GROUP=scanner
 python3 scripts/run_tests.py --list report  # inspect the selected files
 python3 scripts/run_tests.py report -x -q   # forward pytest options
 scripts/run-tests.sh group report          # same selection with dependency setup
+scripts/run-tests.sh changed origin/dev -q # changed-file selection
+scripts/run-tests.sh pattern 'golden' -q    # explicit pytest name filter
 ```
 
-`scripts/run-tests.sh quick` and `make test-quick` use the same selection. The wrapper prefers `.venv`, then an installed system interpreter, then `.venv-tests`; it installs test dependencies into `.venv-tests` if needed. Unknown names passed through `group` fail. The legacy `scripts/run-tests.sh <pattern>` form still forwards the pattern to pytest's `-k` option.
+`scripts/run-tests.sh quick` and `make test-quick` use the same selection. The wrapper prefers `.venv`, then an installed system interpreter, then `.venv-tests`; it installs test dependencies into `.venv-tests` if needed. A missing group name fails before dependency setup. Unknown names passed through `group` fail. The legacy `scripts/run-tests.sh <pattern>` form retains pytest's `-k` filtering: `scripts/run-tests.sh scanner` is a name filter, while `scripts/run-tests.sh group scanner` selects the reviewed group.
 
 #### Deterministic end-to-end (no LLM)
 
