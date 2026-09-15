@@ -117,22 +117,23 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
-### Security Score without Claude Code
+### Security Score script
 
-Run the score directly from an appsec-advisor checkout with Python 3.10+, PyYAML, and git. Pass a local directory or an HTTPS GitHub/GitLab repository URL to `--repo`; a URL makes a shallow temporary clone that is removed after the scan. Use `--json` for machine-readable output and `--help` for CLI options. Replace `/path/to/appsec-advisor` and the example URL with your checkout and target repository.
+`scripts/security_score.py` gives a limited 0–100 indication from deterministic checks without running a threat model. It reports `undetermined` when too few checks apply. Pass a local directory or an HTTPS GitHub/GitLab Git URL to `--repo`; remote checkouts are temporary. The default output is text; `--json` emits structured results. The script needs Python 3.10+, PyYAML, and git.
 
 ```bash
 python3 /path/to/appsec-advisor/scripts/security_score.py --repo https://gitlab.com/group/project.git
 ```
 
-### Deterministic repository scans without Claude Code
+### Deterministic scan script
 
-Run `repo_scan.py` from a checkout with Python 3.10+, PyYAML, jsonschema, and git. Pass a local directory or an HTTPS GitHub/GitLab Git URL. It prints progress on stderr and findings, route locations, and a stable `SUMMARY key=value` line on stdout. Use `--scan` repeatedly to select `config`, `authz`, `source`, `mass-assignment`, `architecture`, `endpoints`, or `stack`; omitting it runs all available repository scans. `authz` runs only authorization catalog checks, while `source` runs the complete source scanner. `endpoints` enumerates recognized route registrations, and `stack` reports source languages, build ecosystems, and recognized route frameworks. Unsupported route files are counted, so an empty endpoint list does not prove that the repository has no endpoints. Use `--medium`, `--high`, or `--critical` to show findings at or above that severity; these flags do not filter routes, stack details, or architecture rules. Pass `--yaml` for structured YAML containing the selected results and a `summary` on stdout or `--yaml PATH` to save it. Scanner sidecars and remote checkouts stay in temporary directories. Replace the example paths and URL with your target.
+`scripts/repo_scan.py` runs the repository-only deterministic scans and prints findings, endpoints, and the detected stack without a threat model. Pass a local directory or an HTTPS GitHub/GitLab Git URL to `--repo`. The default runs all scans; repeat `--scan` to select `config`, `authz`, `source`, `mass-assignment`, `architecture`, `endpoints`, or `stack`. `authz` runs only authorization catalog checks. Recognized route registrations appear under `endpoints`; unsupported route files are counted.
+
+In default text mode, progress goes to stderr and stdout ends with a parseable `SUMMARY key=value` line. `--medium`, `--high`, and `--critical` filter findings at or above the chosen severity. `--yaml` emits structured YAML on stdout, and `--yaml PATH` writes a file. The script needs Python 3.10+, PyYAML, jsonschema, and git; scanner sidecars and remote checkouts remain temporary.
 
 ```bash
-python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project --scan authz
-python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo https://github.com/group/project.git --scan config --high --yaml scan.yaml
-python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project --scan endpoints --scan stack
+python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project --scan authz --high
+python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo https://github.com/group/project.git --scan endpoints --scan stack --yaml scan.yaml
 ```
 
 ## What's new in 0.6.0-beta.3
