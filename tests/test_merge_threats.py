@@ -638,6 +638,73 @@ class TestScenarioRefRemap:
         assert out[0]["scenario"] == "Plain prose, no refs."
 
 
+class TestMergerReviewRegressions:
+    @pytest.mark.parametrize("path", ["src/handler.py", "lib/query.rb"])
+    @pytest.mark.parametrize("risks", [("Low", "High"), ("High", "Low"), ("High", "High")])
+    def test_exact_duplicate_retains_high_risk_through_yaml(self, mt, tmp_path, path, risks):
+        from build_threat_model_yaml import build_threats
+
+        records = [
+            _threat(
+                local_id=f"F-{index:03d}",
+                risk=risk,
+                likelihood=risk,
+                impact=risk,
+                scenario="User input reaches SQL query construction.",
+                evidence={"file": path, "line": 42},
+            )
+            for index, risk in enumerate(risks, 1)
+        ]
+        _write_stride(tmp_path, "service", records)
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        survivor = merged["threats"][0]
+        assert len(merged["threats"]) == 1
+        assert (survivor["risk"], survivor["likelihood"], survivor["impact"]) == ("High", "High", "High")
+        assert survivor["local_id"] == records[risks.index("High")]["local_id"]
+        assert [row["severity"] for row in survivor["instances"]] == list(risks)
+        delivered, _ = build_threats(merged)
+        assert len(delivered) == 1
+        assert delivered[0]["risk"] == "High"
+
+    @pytest.mark.parametrize("paths", [("src/Handler.py", "src/handler.py"), ("lib/Query.rb", "lib/query.rb")])
+    @pytest.mark.parametrize("dedupe", ["_dedupe_evidence", "_dedupe_title_locator"])
+    def test_case_distinct_paths_are_not_identity(self, mt, paths, dedupe):
+        records = [_threat(evidence={"file": path, "line": 42}) for path in paths]
+        assert len(getattr(mt, dedupe)(records)) == 2
+
+    @pytest.mark.parametrize("path", ["src/Handler.py", "lib/Query.rb"])
+    @pytest.mark.parametrize("dedupe", ["_dedupe_evidence", "_dedupe_title_locator"])
+    def test_identical_case_paths_still_deduplicate(self, mt, path, dedupe):
+        records = [_threat(evidence={"file": path, "line": 42}) for _ in range(2)]
+        assert len(getattr(mt, dedupe)(records)) == 1
+
+    @pytest.mark.parametrize("local_ids", [("F-009", "F-017", "F-025"), ("F-027", "F-035", "F-043")])
+    @pytest.mark.parametrize("prefix", ["F", "T"])
+    def test_local_references_follow_folded_findings_and_instances(self, mt, tmp_path, local_ids, prefix):
+        refs = [prefix + local_id[1:] for local_id in local_ids]
+        scenario = f"Combined with {', '.join(refs)}, this enables data access."
+        records = [
+            _threat(local_id=local_id, scenario=scenario, risk=risk)
+            for local_id, risk in zip(local_ids, ["Low", "High", "Medium"])
+        ]
+        _write_stride(tmp_path, "service", records)
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        first = json.loads((tmp_path / ".threats-merged.json").read_text())
+        survivor = first["threats"][0]
+        expected = "Combined with T-001, T-001, T-001, this enables data access."
+        assert survivor["scenario"] == expected
+        assert all(instance["scenario"] == expected for instance in survivor["instances"])
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+        assert json.loads((tmp_path / ".threats-merged.json").read_text()) == first
+
+    def test_canonical_local_id_takes_precedence_over_legacy_id(self, mt):
+        records = [{"local_id": "F-009", "id": "F-088", "t_id": "T-001", "scenario": "See F-009 and F-088."}]
+        assert mt._remap_scenario_local_refs(records)[0]["scenario"] == "See T-001 and F-088."
+
+
 # ---------------------------------------------------------------------------
 # Candidate grouping
 # ---------------------------------------------------------------------------

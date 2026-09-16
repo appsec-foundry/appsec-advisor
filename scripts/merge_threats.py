@@ -1133,7 +1133,11 @@ def _dedupe_exact(threats: list[dict]) -> list[dict]:
             if not _same_primary_threat_category([primary, t]):
                 out.append(t)
                 continue
-            _merge_member_metadata(primary, [primary, t], systemic=False)
+            survivor = min([primary, t], key=lambda member: _risk_rank(member.get("risk")))
+            if survivor is not primary:
+                by_key[k] = survivor
+                out[out.index(primary)] = survivor
+            _merge_member_metadata(survivor, [primary, t], systemic=False)
             continue
         by_key[k] = t
         out.append(t)
@@ -1176,7 +1180,7 @@ def _evidence_identity_key(t: dict) -> tuple | None:
     ev = t.get("evidence") or {}
     if not isinstance(ev, dict):
         ev = {}
-    f = (ev.get("file") or "").strip().lower()
+    f = (ev.get("file") or "").strip()
     ln = ev.get("line")
     cwe = (t.get("cwe") or "").strip()
     if not f or not cwe or not isinstance(ln, int) or isinstance(ln, bool) or ln <= 0:
@@ -1607,7 +1611,7 @@ def _title_locator_key(t: dict) -> tuple | None:
     ev = t.get("evidence") or {}
     if not isinstance(ev, dict):
         return None
-    file_path = (ev.get("file") or "").strip().lower()
+    file_path = (ev.get("file") or "").strip()
     line = ev.get("line")
     if not file_path or not isinstance(line, int) or isinstance(line, bool) or line <= 0:
         return None
@@ -1879,27 +1883,25 @@ _SCENARIO_REF_RE = re.compile(r"\b[FT]-(\d{2,3})\b")
 
 
 def _remap_scenario_local_refs(threats: list[dict]) -> list[dict]:
-    """Rewrite analyzer-local cross-references in ``scenario`` prose to the
-    assigned GLOBAL T-ids.
+    """Resolve analyzer-local F/T references in finding and instance scenarios.
 
-    STRIDE analyzers reference their own findings by component-LOCAL F-id (with
-    a stray ``T-`` prefix) when writing scenarios — e.g. the rate-limit
-    finding's scenario reads "Combined with MD5 password hashing (T-009)" where
-    ``T-009`` is the analyzer's local ``F-009`` (MD5). ``_assign_t_ids`` then
-    assigns a global T-id by sorting across ALL components + config-scan, with
-    no relation to the local number, and never rewrites the prose — so the ref
-    silently points at an unrelated global threat (2026-06 juice-shop: T-024
-    "wildcard CORS (T-019)" where T-019 was zip-slip; the local F-019 was CORS).
-
-    Local ids are globally unique by construction (the orchestrator hands each
-    analyzer a non-overlapping F-range), so a single ``local-id → t_id`` table
-    suffices. Each ``[TF]-NNN`` scenario token is interpreted as local
-    ``F-NNN`` and replaced with the resolved global T-id. Tokens that don't
-    resolve to a known local id (a deduped finding, a config-scan ``CFG-``
-    finding, or a hallucinated number) are left untouched — the pass never
-    emits a ref it cannot justify. Idempotent w.r.t. re-running finalize, which
-    always starts from the local-ref scenarios in ``.merge-candidates.json``."""
-    loc2tid = {t["id"]: t["t_id"] for t in threats if isinstance(t.get("id"), str) and isinstance(t.get("t_id"), str)}
+    STRIDE owns ``local_id``; historical artifacts may use ``id``. Folded
+    findings resolve through their retained instance provenance and consolidated
+    references. Unknown references remain untouched. Finalize always starts
+    from candidate scenarios, so repeating finalize does not remap global IDs.
+    """
+    loc2tid: dict[str, str] = {}
+    for threat in threats:
+        tid = threat.get("t_id")
+        if not isinstance(tid, str):
+            continue
+        refs = [threat.get("local_id") or threat.get("id"), *(threat.get("consolidated_refs") or [])]
+        for instance in threat.get("instances") or []:
+            if isinstance(instance, dict):
+                refs.extend([instance.get("local_id"), instance.get("source_ref")])
+        for ref in refs:
+            if isinstance(ref, str) and re.fullmatch(r"F-\d{2,3}", ref):
+                loc2tid[f"F-{int(ref[2:]):03d}"] = tid
     n_fixed = 0
 
     def _sub(m: re.Match[str]) -> str:
@@ -1910,10 +1912,13 @@ def _remap_scenario_local_refs(threats: list[dict]) -> list[dict]:
             return tid
         return m.group(0)
 
-    for t in threats:
-        sc = t.get("scenario")
-        if isinstance(sc, str) and ("T-" in sc or "F-" in sc):
-            t["scenario"] = _SCENARIO_REF_RE.sub(_sub, sc)
+    for threat in threats:
+        for record in [threat, *(threat.get("instances") or [])]:
+            if not isinstance(record, dict):
+                continue
+            sc = record.get("scenario")
+            if isinstance(sc, str) and ("T-" in sc or "F-" in sc):
+                record["scenario"] = _SCENARIO_REF_RE.sub(_sub, sc)
     if n_fixed:
         print(
             f"merge_threats: remapped {n_fixed} scenario cross-reference(s) from analyzer-local F-ids to global T-ids",
