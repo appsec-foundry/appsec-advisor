@@ -20,6 +20,128 @@ import pytest
 _GLYPHS = ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
 
 
+@pytest.mark.parametrize("names", [("app0", "db0"), ("processor", "archive")])
+@pytest.mark.parametrize("detail", [False, True])
+def test_boundary_inventory_distinguishes_interfaces_and_uncertainty(names, detail):
+    model, paths, taxonomy = _model(exposed=("app0", "app1"))
+    renames = dict(zip(("app0", "db0"), names))
+    for comp in model["components"]:
+        comp["id"] = renames.get(comp["id"], comp["id"])
+    for threat in model["threats"]:
+        threat["component"] = renames.get(threat["component"], threat["component"])
+    for row in model["data_flows"] + model["trust_boundaries"]:
+        for key in ("from", "to"):
+            row[key] = renames.get(row[key], row[key])
+    model["trust_boundaries"][2].update(surface="in-process", transition=[], kind="process")
+    model["trust_boundaries"][1].update(surface="network", transition=["identity"], kind="identity")
+    before = copy.deepcopy(model)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=detail)
+    assert problems == []
+    assert "TRUST BOUNDARY" not in svg
+    assert "3 trust boundaries (1 inferred) · 1 internal interface" in svg
+    root = ET.fromstring(svg)
+    panel = root.find("{*}g[@data-legend-section='boundaries']")
+    entries = {entry.get("data-boundary-id"): " ".join(entry.itertext()) for entry in panel.findall("{*}g")}
+    assert set(entries) == {"tb-1", "tb-2", "tb-8", "tb-9"}
+    assert "identity" in entries["tb-2"]
+    assert "no trust transition" in entries["tb-8"]
+    assert "inferred" in entries["tb-9"]
+    assert "no unique drawn flow" in entries["tb-1"]
+    assert root.find(".//{*}g[@data-boundary-marker='tb-2']") is not None
+    assert root.find(".//{*}g[@data-boundary-marker='tb-8']") is None
+    assert model == before
+
+
+@pytest.mark.parametrize("status", ["unresolved", "conflicted", "invalid-endpoint"])
+def test_invalid_boundaries_cannot_create_counts_markers_or_exposure(status):
+    model, paths, taxonomy = _model(exposed=("app1",))
+    model["trust_boundaries"] = model["trust_boundaries"][:1]
+    row = model["trust_boundaries"][0]
+    if status == "invalid-endpoint":
+        row["from"] = "not-a-component"
+    else:
+        row["resolution_status"] = status
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    assert "0 trust boundaries" in svg
+    assert "data-boundary-marker=" not in svg
+    assert "data-boundary-id=" not in svg
+
+
+def test_boundary_audit_requires_visible_legend_entries(monkeypatch):
+    original = F._legend_blocks
+
+    def without_boundaries(*args, **kwargs):
+        return [(key, block) for key, block in original(*args, **kwargs) if key != "boundaries"]
+
+    monkeypatch.setattr(F, "_legend_blocks", without_boundaries)
+    model, paths, taxonomy = _model()
+    _, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert any("boundary legend missing" in problem for problem in problems)
+
+
+@pytest.mark.parametrize("transition", [["identity"], ["privilege"], ["tenant"], ["operator"]])
+def test_in_process_trust_changes_remain_boundaries(transition):
+    model, paths, taxonomy = _model()
+    row = next(t for t in model["trust_boundaries"] if t["id"] == "tb-8")
+    row.update(surface="in-process", transition=transition, kind="process")
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    assert "internal interface</text>" not in svg
+    assert ET.fromstring(svg).find(".//{*}g[@data-boundary-marker='tb-8']") is not None
+    assert transition[0] in svg
+
+
+@pytest.mark.parametrize("endpoints", [("external", "app1", "df-004"), ("app0", "db0", "df-005")])
+@pytest.mark.parametrize("count", [1, 2, 5])
+@pytest.mark.parametrize("detail", [False, True])
+def test_shared_crossing_keeps_all_boundaries_without_off_flow_marker_stacks(endpoints, count, detail):
+    model, paths, taxonomy = _model(exposed=("app1",))
+    source, target, fid = endpoints
+    template = model["trust_boundaries"][0]
+    model["trust_boundaries"] = [
+        dict(template, id=f"tb-{i}", **{"from": source, "to": target}, kind="identity", enforcement_point=f"guard-{i}")
+        for i in range(1, count + 1)
+    ]
+    before = copy.deepcopy(model)
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=detail)
+    assert problems == []
+    root = ET.fromstring(svg)
+    markers = root.findall(".//{*}g[@data-boundary-marker]")
+    assert len(markers) == (1 if count == 1 else 0)
+    entries = root.findall("{*}g[@data-legend-section='boundaries']/{*}g[@data-boundary-id]")
+    assert {e.get("data-boundary-id") for e in entries} == {t["id"] for t in model["trust_boundaries"]}
+    assert all(f"flow {fid}" in " ".join(entry.itertext()) for entry in entries)
+    assert model == before
+
+
+def test_same_column_boundary_resolves_flow_without_inventing_a_column_crossing():
+    model, paths, taxonomy = _model(intra=True)
+    model["trust_boundaries"] = [
+        dict(
+            id="tb-1",
+            **{"from": "app0", "to": "app2"},
+            confidence="confirmed",
+            resolution_status="resolved",
+            kind="identity",
+        )
+    ]
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    entry = ET.fromstring(svg).find("{*}g[@data-legend-section='boundaries']/{*}g[@data-boundary-id='tb-1']")
+    assert "flow df-007" in " ".join(entry.itertext())
+
+
+@pytest.mark.parametrize("axes", [{"kind": "process"}, {"kind": "network", "surface": "in-process", "transition": []}])
+def test_internal_interface_does_not_imply_internet_exposure(axes):
+    model, paths, taxonomy = _model(exposed=("app1",))
+    model["trust_boundaries"] = model["trust_boundaries"][:1]
+    model["trust_boundaries"][0].update(axes)
+    svg, state = F._build(model, *F.scenarios_from_attack_paths(model, paths, taxonomy), detail=False)
+    assert not state["nodes"]["app1"]["exposed"]
+    assert "0 trust boundaries · 1 internal interface" in svg
+
+
 @pytest.mark.parametrize("name", ["Account access", "Telemetry access"])
 @pytest.mark.parametrize("mode", ["alternatives", "sequence"])
 def test_explicit_access_groups_preserve_methods_and_individual_detail(name, mode):
@@ -319,7 +441,7 @@ def test_overview_authentication_ports_are_evidenced_and_geometry_checked(rename
     root = ET.fromstring(svg)
     assert "Figure 1 — Architecture and Threat Overview" in svg
     assert root.find("{*}g[@data-legend-section='flows']") is None
-    assert root.find("{*}g[@data-legend-section='boundaries']") is None
+    assert root.find("{*}g[@data-legend-section='boundaries']") is not None
     assert root.find("{*}g[@data-legend-section='authentication']") is not None
     assert len(root.findall("{*}g[@data-authentication='0']")) >= 1
     assert model == before
@@ -624,7 +746,7 @@ def test_geometry_and_semantics_are_clean():
         "df-005",
         "tb-1",
         "tb-8",
-        "TRUST BOUNDARY",
+        "Trust boundaries and internal interfaces",
         "no displayed component mapping",
     ):
         assert token in svg, token

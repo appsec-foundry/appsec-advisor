@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Figure 2 connects numbered attack routes to example findings, explicit weakness references, and impact in a compact overview matching Figure 1.
 
-- Figure 1 shows evidenced authentication in an architecture overview with readable payload labels, faithful flow directions, adaptive asset labels, project identity, roomier legends, and a separate detailed diagram.
+- Figure 1 shows evidenced authentication, readable flows and assets, and a boundary legend with consistent counts that distinguishes trust boundaries from internal interfaces, with a separate detailed diagram.
 
 ### Fixed
 

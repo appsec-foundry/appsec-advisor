@@ -39,6 +39,7 @@ import copy
 import html
 import re
 import sys
+import xml.etree.ElementTree as ET
 from functools import cache
 from itertools import product
 from pathlib import Path
@@ -142,6 +143,39 @@ def _wrap(s, maxw, size):
 def _cut(s, n):
     s = str(s)
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _figure_boundaries(d):
+    """Only resolved catalogue rows with canonical endpoints may affect the figure."""
+    component_ids = {c["id"] for c in d.get("components") or [] if isinstance(c, dict) and c.get("id")}
+    return [
+        row
+        for row in d.get("trust_boundaries") or []
+        if isinstance(row, dict) and row.get("id") and boundary_endpoints_valid(row, component_ids)
+    ]
+
+
+def _internal_interface(row):
+    """An in-process call without a trust change is not a trust boundary.
+
+    Legacy rows may carry only kind; explicit surface/transition axes take
+    precedence, as in the report's boundary catalogue.
+    """
+    if row.get("surface") in {"network", "in-process", "build-pipeline"} and isinstance(row.get("transition"), list):
+        return row["surface"] == "in-process" and not row["transition"]
+    return row.get("kind") == "process"
+
+
+def _boundary_count_label(tbs):
+    boundaries = [t for t in tbs if not _internal_interface(t)]
+    inferred = sum(t.get("confidence") != "confirmed" for t in boundaries)
+    label = f"{len(boundaries)} trust {'boundary' if len(boundaries) == 1 else 'boundaries'}"
+    if inferred:
+        label += f" ({inferred} inferred)"
+    interfaces = len(tbs) - len(boundaries)
+    if interfaces:
+        label += f" · {interfaces} internal {'interface' if interfaces == 1 else 'interfaces'}"
+    return label
 
 
 def _legend_wrap(text, width, size):
@@ -670,13 +704,14 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         for b in t.get("boundary_refs") or []:
             if isinstance(b, dict):
                 tb_threats[b.get("boundary_id")] += 1
-    tbs = [t for t in (d.get("trust_boundaries") or []) if isinstance(t, dict) and t.get("id")]
+    tbs = _figure_boundaries(d)
     component_ids = {c["id"] for c in comps}
     exposed = {
         t["to"]
         for t in tbs
         if t.get("from") == "external"
         and t.get("confidence") == "confirmed"
+        and not _internal_interface(t)
         and boundary_endpoints_valid(t, component_ids)
     }
 
@@ -927,6 +962,8 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     # trust boundaries: chip on the flow that crosses them, else a tag on the guarded node
     unplaced = []
     for t in tbs:
+        if _internal_interface(t):
+            continue
         src = USER_ID if t.get("from") == "external" else t.get("from")
         dst = t.get("to")
         if dst == "external":
@@ -1474,14 +1511,14 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
             e = up[0]
             head = [(s["x"] + s["w"], ys)] if not down else []
             e["pts"] = head + [(bus, ys), (bus, e["yd"]), (nodes[e["dst"]]["x"], e["yd"])]
-    # 7. chips: on the crossing of their own flow; same-flow chips stack, others slide along their line
+    # 7. Single-boundary chips stay on their flow. Shared crossings retain all
+    # boundary IDs in the legend; vertical stacks would leave the actual flow.
     _improve_routes(nodes, edges, boundaries, zone_boxes, straight_only=not optimize)
     chips = []
     for e in edges:
-        if e.get("bx") is not None:
+        if e.get("bx") is not None and len(e["tb"]) == 1:
             y0 = e["pts"][0][1] if e["kind"] == "forward" else e["pts"][-1][1]
-            for j, tbid in enumerate(sorted(e["tb"], key=_tb_num)):
-                chips.append({"bx": e["bx"], "y": y0 + j * 17, "tb": tbid, "group": id(e)})
+            chips.append({"bx": e["bx"], "y": y0, "tb": e["tb"][0], "group": id(e)})
     for ch in chips:
         ch["w"] = _chip_width(ch["tb"], tb_threats.get(ch["tb"], 0))
         ch["x"] = ch["bx"]
@@ -1917,7 +1954,7 @@ def _render(
     c.text(
         MARGIN,
         42,
-        f"{identity} · {n_comp} components · {len(d.get('data_flows') or [])} data flows · {len(tbs)} trust boundaries · {len(d.get('threats') or [])} threats",
+        f"{identity} · {n_comp} components · {len(d.get('data_flows') or [])} data flows · {_boundary_count_label(tbs)} · {len(d.get('threats') or [])} threats",
         size=10,
         anchor="start",
         fill=MUTED,
@@ -1974,18 +2011,7 @@ def _render(
             fill=MUTED,
         )
 
-    # boundary lines
-    for i, bx in enumerate(boundaries):
-        c.path(f"M {bx} {TOP - 4} V {height - MARGIN}", RED, sw=2.4, dash="6 5")
-        c.text(
-            bx,
-            TOP - 9,
-            "TRUST BOUNDARY",
-            size=8,
-            fill=RED,
-            weight="bold",
-            track="bline",
-        )
+    # Column gaps are routing coordinates, not evidence of a trust transition.
 
     # edges
     def chip(x, y, tbid, track=True):
@@ -1994,6 +2020,14 @@ def _render(
         n = tb_threats.get(tbid, 0)
         w = _chip_width(tbid, n)
         x0 = x - w / 2
+        c.add(f'<g data-boundary-marker="{_esc(tbid)}">')
+        if d.get("_overview"):
+            c.rect(x0, y - 8, w, 16, fill="#ffffff", stroke=NAVY, sw=1.2, rx=8)
+            c.text(x, y + 3.5, tbid, size=8.5, weight="bold", fill=NAVY)
+            c.add("</g>")
+            if track:
+                c.labels.append((x0, y - 8, x0 + w, y + 8, f"chip {tbid}"))
+            return w
         c.rect(x0, y - 8, w, 16, fill="#ffffff", stroke=col, sw=1.5, rx=8)
         c.text(x0 + 8, y + 3.5, tbid, size=8.5, anchor="start", weight="bold", fill=col)
         gx = x0 + 8 + _tw(tbid, 8.5) + 4
@@ -2001,6 +2035,7 @@ def _render(
         if n:
             c.rect(gx + 14, y - 6, 6 + _tw(str(n), 8), 12, fill=col, rx=6)
             c.text(gx + 17 + _tw(str(n), 8) / 2, y + 3, str(n), size=8, fill="#ffffff", weight="bold")
+        c.add("</g>")
         if track:
             c.labels.append((x0, y - 8, x0 + w, y + 8, f"chip {tbid}"))
         return w
@@ -2307,8 +2342,12 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         c.text(xx + 11, y + 1, k, size=8, anchor="start", fill=col)
         xx += _tw(k, 8) + 22
     y += 18
-    c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=2, dash="6 4")
-    c.text(lx + 40, y + 3, "trust boundary (dashed) = zone edge", size=9, anchor="start")
+    c.path(f"M {lx + 10} {y - 1} H {lx + 32}", LINE, sw=1.2, dash="6 4")
+    c.text(lx + 40, y + 3, "dashed outline = zone, not a counted trust boundary", size=9, anchor="start")
+    if d.get("_overview"):
+        y += 20
+        c.text(lx + 10, y + 3, "tb-N", size=8.5, anchor="start", weight="bold", fill=NAVY)
+        c.text(lx + 40, y + 3, "boundary on a mapped flow; all entries in the legend", size=9, anchor="start")
     if not d.get("_overview"):
         y += 20
         c.rect(lx + 8, y - 9, 44, 16, fill="#ffffff", stroke=RED, sw=1.4, rx=8)
@@ -2415,19 +2454,55 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             y += max(17, 12 * len(title_lines) + 5)
         y += 8
 
-    if tbs and not d.get("_overview"):
-        y = head("boundaries", "Trust boundaries — assumption verdicts")
+    if tbs:
+        y = head("boundaries", "Trust boundaries and internal interfaces")
+        cnums = {row["id"]: f"C-{i:02d}" for i, row in enumerate(d.get("components") or [], 1)}
+        flows = {f.get("id"): f for f in d.get("data_flows") or [] if isinstance(f, dict)}
         for t in sorted(tbs, key=lambda t: _tb_num(t["id"])):
-            g, col = VERDICT.get(t.get("assumption_verdict"), VERDICT["unconfirmed"])
-            c.text(lx + 10, y + 3, f"{t['id']} {g}", size=9, anchor="start", weight="bold", fill=col)
-            ep = t.get("enforcement_point") or "no enforcement point"
-            c.text(lx + 52, y + 3, _cut(f"{t.get('from')} → {t.get('to')} · {ep}", 44), size=8.5, anchor="start")
-            if tb_threats.get(t["id"]):
-                c.text(
-                    lx + lw - 10, y + 3, f"{tb_threats[t['id']]} threats", size=8, anchor="end", fill=col, weight="bold"
-                )
-            y += 15
-        y += 12
+            c.add(f'<g data-boundary-id="{_esc(t["id"])}">')
+            endpoints = " → ".join(cnums.get(t.get(key), "External") for key in ("from", "to"))
+            c.text(lx + 10, y + 3, f"{t['id']} · {endpoints}", size=9, anchor="start", weight="bold", fill=NAVY)
+            y += 14
+            if _internal_interface(t):
+                description = "internal interface · no trust transition"
+            else:
+                description = str(t.get("surface") or t.get("kind") or "type not recorded")
+                if t.get("transition"):
+                    description += " · " + " + ".join(t["transition"])
+            description += " · " + ("confirmed" if t.get("confidence") == "confirmed" else "inferred")
+            for line in _legend_wrap(description, lw - 20, 8.5):
+                c.text(lx + 10, y + 3, line, size=8.5, anchor="start", fill=MUTED)
+                y += 12
+            if not _internal_interface(t):
+                matched = [
+                    e
+                    for e in edges
+                    if any(
+                        (flows[fid].get("from"), flows[fid].get("to")) == (t.get("from"), t.get("to"))
+                        for fid in e["ids"]
+                    )
+                ]
+                location = "flow " + _flow_ids_label(matched[0]["ids"]) if len(matched) == 1 else "no unique drawn flow"
+                if len(matched) == 1 and len(matched[0]["tb"]) > 1:
+                    location += " · shared crossing"
+                for line in _legend_wrap(location, lw - 20, 8):
+                    c.text(lx + 10, y + 3, line, size=8, anchor="start", fill=MUTED)
+                    y += 12
+            if not d.get("_overview"):
+                g, col = VERDICT.get(t.get("assumption_verdict"), VERDICT["unconfirmed"])
+                verdict = f"{g} {t.get('assumption_verdict') or 'unconfirmed'} · {t.get('enforcement_point') or 'no enforcement point'}"
+                if tb_threats.get(t["id"]):
+                    verdict += f" · {tb_threats[t['id']]} threats"
+                for line in _legend_wrap(verdict, lw - 20, 8):
+                    c.text(lx + 10, y + 3, line, size=8, anchor="start", fill=col)
+                    y += 12
+            c.add("</g>")
+            y += 8
+        for line in _legend_wrap(
+            "External means outside modelled components, not necessarily the Internet.", lw - 20, 8
+        ):
+            c.text(lx + 10, y + 3, line, size=8, anchor="start", fill=MUTED)
+            y += 12
     flows = {f.get("id"): f for f in d.get("data_flows") or [] if isinstance(f, dict)}
     if any(e["ids"] for e in edges) and not d.get("_overview"):
         y = head("flows", "Data flows")
@@ -2580,7 +2655,7 @@ def _check_geometry(nodes, edges, canvas, chips, *, boundaries=()):
         for p, q in zip(points, points[1:]):
             segs.append((p, q, (e.get("ids") or ["attack"]) + list(e.get("tb") or [])))
             if p[0] == q[0] and p != q and any(abs(p[0] - bx) < 14 for bx in boundaries):
-                problems.append(f"edge {e.get('ids') or 'attack'} runs along a trust boundary")
+                problems.append(f"edge {e.get('ids') or 'attack'} runs along a reserved crossing lane")
         if e.get("auth_port"):
             p, q = points[-2:]
             if p[1] != q[1] or abs(q[0] - p[0]) < 12:
@@ -2650,11 +2725,11 @@ def _check_geometry(nodes, edges, canvas, chips, *, boundaries=()):
     return problems
 
 
-def _audit(d, nodes, edges, chips, boundaries):
+def _audit(d, nodes, edges, chips, boundaries, canvas=None):
     """Every drawn arrow matches its YAML flow; every flow and boundary is drawn or explained."""
     problems = []
     flows = {f.get("id"): f for f in d.get("data_flows") or [] if isinstance(f, dict)}
-    tbs = {t["id"]: t for t in d.get("trust_boundaries") or [] if isinstance(t, dict) and t.get("id")}
+    tbs = {t["id"]: t for t in _figure_boundaries(d)}
 
     def on_edge(pt, n):
         x, y = pt
@@ -2705,7 +2780,7 @@ def _audit(d, nodes, edges, chips, boundaries):
         for ch in [c for c in chips if c.get("group") == id(e)]:
             seg = (e["pts"][0], e["pts"][1]) if e["kind"] == "forward" else (e["pts"][-2], e["pts"][-1])
             xs = sorted((seg[0][0], seg[1][0]))
-            if not (xs[0] <= ch["x"] <= xs[1]) or not (0 <= ch["y"] - seg[0][1] <= 17 * 3):
+            if not (xs[0] <= ch["x"] <= xs[1]) or abs(ch["y"] - seg[0][1]) > 0.6:
                 problems.append(f"{ch['tb']}: chip not on the crossing segment of {name}")
             if e["bx"] not in boundaries or not (xs[0] <= e["bx"] <= xs[1]):
                 problems.append(f"{ch['tb']}: {name} does not cross boundary at x={e['bx']}")
@@ -2726,9 +2801,18 @@ def _audit(d, nodes, edges, chips, boundaries):
     for fid in flows:
         if fid not in drawn and fid not in explained:
             problems.append(f"{fid}: neither drawn nor explained")
+    explained_boundaries = set()
+    if canvas is not None:
+        root = ET.fromstring("\n".join(canvas.o))
+        for entry in root.findall("{*}g[@data-legend-section='boundaries']/{*}g[@data-boundary-id]"):
+            tid = entry.get("data-boundary-id")
+            if any(text.text and text.text.startswith(tid + " · ") for text in entry.findall("{*}text")):
+                explained_boundaries.add(tid)
+        for tid in sorted(tbs.keys() - explained_boundaries, key=_tb_num):
+            problems.append(f"{tid}: boundary legend missing")
     placed = (
         {c["tb"] for c in chips}
-        | set(d.get("_overview_tbs", []))
+        | explained_boundaries
         | {t for n in nodes.values() for t in n.get("tags", [])}
         | {u[0] for u in d.get("_unplaced_tbs", [])}
     )
@@ -2750,7 +2834,6 @@ def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True, _optim
     nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors, victim_target)
     if not detail:
         _overview_groups(nodes, edges)
-        d["_overview_tbs"] = [t["id"] for t in tbs]
     group_labels = {"internet-user": "Self-registered users", "repo-read": "Public-source readers"}
     for node in nodes.values():
         if not node.get("attacker"):
@@ -2771,8 +2854,6 @@ def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True, _optim
         _prepare_reference_rows(nodes)
         for node in nodes.values():
             node.pop("tags", None)
-        for edge in edges:
-            edge["tb"] = []
     col_x, col_w, zone_boxes, boundaries, chips, height = _layout(nodes, edges, dropped, tb_threats, optimize=_optimize)
     attached = {a.get("id") for n in nodes.values() for a in n.get("assets", [])}
     unattached = sorted(
@@ -2819,6 +2900,7 @@ def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True, _optim
                 alternative["edges"],
                 alternative["chips"],
                 alternative["boundaries"],
+                alternative["canvas"],
             )
         ):
             return alternative_svg, alternative
@@ -2859,7 +2941,7 @@ def check_diagram(
     )
     problems = _check_geometry(
         st["nodes"], st["edges"], st["canvas"], st["chips"], boundaries=st["boundaries"]
-    ) + _audit(st["d"], st["nodes"], st["edges"], st["chips"], st["boundaries"])
+    ) + _audit(st["d"], st["nodes"], st["edges"], st["chips"], st["boundaries"], st["canvas"])
     return svg, problems
 
 
