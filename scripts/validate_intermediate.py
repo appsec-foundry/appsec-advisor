@@ -255,7 +255,8 @@ def _check_cvss_eligibility(data: dict, skip_cvss_required: bool = False) -> lis
 
         if has_cvss:
             sev = cvss.get("severity")
-            risk = t.get("risk")
+            # CVSS describes the assessed weakness; policy caps only its risk.
+            risk = t.get("risk_before_policy") or t.get("risk")
             if sev in _CVSS_BAND and risk in _RISK_BAND:
                 # Map CVSS "None" to risk band 1 (Low) for the gap check —
                 # None severity on a real threat row is itself suspicious
@@ -941,6 +942,12 @@ def validate_threats_merged(data: Any, output_dir: Path | None = None) -> tuple[
     errors.extend(_check_title_not_blank(data))
     errors.extend(_check_t_id_sequence(data))
     errors.extend(_check_cvss_eligibility(data, skip_cvss_required=skip_cvss_required))
+    from _severity_policy import policy_errors
+
+    # Historical merged artifacts predate policy normalization. They remain
+    # readable; the YAML producer normalizes them before the final strict gate.
+    if data.get("severity_policy_version") == 1:
+        errors.extend(policy_errors(data.get("threats") or []))
     errors.extend(_check_architecture_coverage_invariants(data))
     # RC.G.1 / RC.I — TH gate on merged output.
     errors.extend(_check_threat_category_id_set(data))
@@ -1230,6 +1237,9 @@ def validate_threat_model_output(data: Any) -> tuple[bool, list[str]]:
     if not isinstance(data, dict):
         return False, ["root must be a mapping"]
     errors = _schema_errors("threat_model_output", data)
+    from _severity_policy import policy_errors
+
+    errors.extend(policy_errors(data.get("threats") or []))
     errors.extend(_check_security_controls_shape(data))
     errors.extend(_check_attack_surface_shape(data))
     errors.extend(_check_mitigations_nonempty(data))

@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Finding ratings enforce policy ceilings across reports and exports, require verified attack chains for elevation, and prioritize likelihood and CVSS consistently.
+
 - Deterministic scanners retain live source coverage, reject external symlinks, and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading nearby signals.
 
 - Finding deduplication preserves the highest risk, distinguishes case-sensitive source paths, and keeps scenario references aligned with merged findings.

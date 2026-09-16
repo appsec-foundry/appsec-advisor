@@ -46,6 +46,7 @@ from typing import Any
 import yaml
 from _artifact_stamp import carry_generated_at
 from _atomic_io import atomic_write_json, atomic_write_text
+from _severity_policy import normalize_risks
 from _shared_sources import CODE_LEVEL_SOURCES, CONFIG_DEFECT_SOURCES, DESIGN_LEVEL_SOURCES
 from jsonschema import Draft202012Validator
 from stride_outputs import component_id as _stride_component_id
@@ -2416,6 +2417,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
     # `.dep-scan.json` ingestion was removed 2026-05 — supply-chain
     # posture now arrives as §7.11 control rows + meta_findings[] sidecars,
     # not as CVE-shaped threats in this merged set.
+    # Normalize before consolidation captures per-instance severity and picks
+    # a survivor; an over-cap analyst rating cannot win either decision.
+    normalize_risks(flat)
     deduped = _dedupe_exact(flat)
     # Evidence-identity dedup (2026-06): collapse the cross-STRIDE /
     # cross-component duplicate (same file:line + CWE) that _exact_key and the
@@ -3082,6 +3086,8 @@ def cmd_refresh_weaknesses(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
     path = out_dir / ".threats-merged.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
+    normalize_risks(payload["threats"])
+    payload["severity_policy_version"] = 1
     payload["weaknesses"] = refresh_weaknesses(out_dir, payload["threats"])
     atomic_write_json(path, payload, indent=2, sort_keys=False)
     return 0
@@ -3126,7 +3132,9 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     if dec_path.exists():
         decisions.extend(_read_agent_decisions(dec_path))
 
+    normalize_risks(threats)
     threats = _apply_decisions(threats, decisions)
+    normalize_risks(threats)
     threats = _assign_t_ids(threats)
     # Rewrite analyzer-local scenario cross-refs (F-NNN with a stray T- prefix)
     # to the global T-ids just assigned — must run AFTER _assign_t_ids.
@@ -3141,6 +3149,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
         "version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "threats": threats,
+        "severity_policy_version": 1,
         "resolved_prior_findings": cand.get("resolved_prior_findings") or [],
     }
     if weaknesses:

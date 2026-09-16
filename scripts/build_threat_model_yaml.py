@@ -68,6 +68,7 @@ import triage_compute_ranking  # noqa: E402
 from _atomic_io import atomic_write_text  # noqa: E402
 from _boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from _boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
+from _severity_policy import normalize_risks  # noqa: E402
 from merge_threats import normalize_cvss_v4 as _normalize_cvss_v4  # noqa: E402
 from stride_outputs import is_stride_output  # noqa: E402
 
@@ -1514,14 +1515,6 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
         if (threat.get("evidence_check") or "").strip().lower() == "refuted":
             skipped_refuted += 1
             continue
-        # Severity-floor filter. Mirror the composer's effective_severity →
-        # risk → severity precedence so the dropped set matches the rendered
-        # tally. Anything below the floor (default: Low/Informational) is
-        # excluded from the canonical threats[] entirely.
-        sev = threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "medium"
-        if _SEVERITY_FLOOR_RANK.get(str(sev).strip().lower(), 2) < floor_rank:
-            skipped_below_floor += 1
-            continue
         threat["component"] = threat.pop("component_id", threat.get("component", ""))
         lossy_titles += _conform_title(threat)
         # Same reason as the title (2026-08-21): these are enum- and
@@ -1563,6 +1556,22 @@ def build_threats(merged: dict, register_floor: str = "medium") -> tuple[list[di
         elif ev is None:
             threat["evidence"] = []
         out.append(threat)
+    # Lexical repairs precede policy, and policy precedes the register floor.
+    # Keep all normalized peers available when evaluating cap exceptions.
+    normalize_risks(out)
+    retained = [
+        threat
+        for threat in out
+        if _SEVERITY_FLOOR_RANK.get(
+            str(threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "medium")
+            .strip()
+            .lower(),
+            2,
+        )
+        >= floor_rank
+    ]
+    skipped_below_floor = len(out) - len(retained)
+    out = retained
     if skipped_stubs:
         warnings.append(
             f"threats: {skipped_stubs} observation-stub entries skipped (id=None — Phase 10b notes mis-parked in threats[])"

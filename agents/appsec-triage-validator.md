@@ -41,7 +41,7 @@ Every print statement uses the prefix `[triage]`. Print each line immediately be
 
 ## Preservation constraint — CRITICAL
 
-This agent is a **validator + reconciliation owner.** The raw severity fields remain the auditor's authority; the triage agent has **explicit authority over derived severities** (`effective_severity` on findings and `max_effective_severity` on categories) because those fields fold in compound-chain context, severity caps, and keystone/contributor roles that the STRIDE analyzer cannot see.
+This agent reviews rating consistency. Deterministic producers enforce individual-risk ceilings through `scripts/_severity_policy.py` and retain a corrected analyst rating in `risk_before_policy`. Only the deterministic ranking owner derives `effective_severity` from verified chains, exposure and policy caps. The agent must not bypass those ceilings or restore a pre-policy rating.
 
 **MUST NOT:**
 
@@ -110,7 +110,7 @@ Without the flag set, run the LLM-driven Step 6 below as documented (legacy / de
 
 This step runs **only** when `threat-model.yaml` (or the equivalent upstream data) carries `analysis_version >= 2` — i.e. Phase-3 two-level structure with `threat_categories[]` + `findings[]` is in scope. For legacy v1 baselines, skip with `[triage]   ↳ Step 6 skipped (legacy v1 schema — no ranking emitted)`.
 
-The step is **additive-only** — it does NOT mutate raw `risk`, `likelihood`, `impact`, or any authoritative severity field on findings. It emits a parallel ranking stream in `.triage-flags.json → ranking` that the orchestrator's Phase 11 reads for rendering.
+Ranking uses the policy-constrained individual `risk`. The deterministic owner preserves `likelihood`, `impact` and finding identity. It emits the ranking in `.triage-flags.json → ranking`. Register and export consumers continue to use individual risk, not chain elevation.
 
 #### 6a — Per-finding breach-distance inference
 
@@ -122,70 +122,19 @@ Read `$CLAUDE_PLUGIN_ROOT/data/breach-distance-patterns.yaml` once. For each fin
 4. Apply `amplifiers[]` (distance increases) and `deamplifiers[]` (distance decreases). Clamp to `[1, 3]`.
 5. Write `breach_distance` + `breach_distance_reason` on the finding (additive — never overwrite if already set by an upstream agent).
 
-#### 6b — Compound-chain detection with keystone/contributor roles
+#### 6b — Verified chain membership
 
-Read `$CLAUDE_PLUGIN_ROOT/data/compound-chain-patterns.yaml` (schema ≥ 2). For each chain:
+CWE and title matches in `data/compound-chain-patterns.yaml` identify candidates only. They never establish an active chain or justify elevation. Only `fully_viable` verdicts from `.abuse-case-verdicts.json`, joined to `.abuse-case-matches.json`, may affect effective severity. The deterministic owner resolves finding identities and assigns required steps as keystones and optional steps as contributors. Missing or contradicted required findings invalidate the chain for ranking. Keep verified abuse-case IDs in `verified_chain_ids`; do not invent CC IDs or a chain narrative from co-occurrence.
 
-1. Evaluate `match.all_of` conditions: every group must have at least one finding matching. Collect all findings that match as members.
-2. If ≥ 2 findings join and (`roles.keystone` set has ≥ 1 match **OR** chain has no keystone section), the chain is **ACTIVE**.
-3. **Role assignment.** For every member, classify based on `chain.roles`:
-   - **keystone** — finding's CWE is in `roles.keystone.cwe_any` OR title matches `roles.keystone.title_any`. These findings rise to `chain.severity`.
-   - **contributor** — finding's CWE is in `roles.contributor.cwe_any` OR title matches `roles.contributor.title_any`. These are capped at `severity-caps.yaml → contributor_cap.default` (default `High`).
-   - When `roles.keystone` is empty, treat every member as contributor (the chain itself is not Critical — see CC-05).
-4. Write the chain detection entry with role annotations per member:
-   ```json
-   {
-     "id": "CC-01",
-     "name": "Stored XSS → Session Theft",
-     "severity": "Critical",
-     "severity_justification": "<text from chain.severity_justification>",
-     "breach_distance": 2,
-     "keystones": ["F-024", "F-025"],
-     "contributors": ["F-008", "F-039", "F-040"],
-     "narrative": "<rendered from narrative_template>"
-   }
-   ```
-5. **Narrative rendering — placeholder substitution.** When rendering `narrative_template` into the `narrative` field, replace every `{{NAME}}` placeholder. Never emit an unsubstituted `{{…}}` — the QA gate `check_placeholders` will flag it as a defect.
-   - `{{*_MEMBERS}}` placeholders (e.g. `{{KEY_MEMBERS}}`, `{{VERIFY_MEMBERS}}`, `{{STORAGE_MEMBERS}}`, `{{CSP_MEMBERS}}`) → comma-separated list of `F-NNN` IDs whose CWE/title matches the placeholder's role. E.g. `{{KEY_MEMBERS}}` lists keystones with CWE-321/CWE-798 (hardcoded crypto-key findings); `{{VERIFY_MEMBERS}}` lists keystones with CWE-347/CWE-290 (signature-bypass findings).
-   - `{{KEY_FILE}}` and similar `{{*_FILE}}` placeholders → relative file path from `evidence.file` of the *first* matching keystone in the corresponding `*_MEMBERS` list (e.g. `lib/insecurity.ts`, `app/auth/jwt.py`, `internal/auth/sign.go`). When no evidence path is available, render a plain noun phrase such as `the signing-key source` (no backticks).
-6. Never activate a chain with < 2 members. Log inactive chains at INFO for transparency.
+#### 6c — Policy-constrained severity
 
-#### 6c — Effective severity per finding (with caps, role-scoped elevation, and critical-criteria gate)
+`scripts/_severity_policy.py` owns individual-risk ceilings from `data/severity-caps.yaml` and the per-entry `max_severity_individual` in `data/critical-criteria.yaml`. Merge and YAML construction apply those ceilings before downstream registers and exports. `risk_before_policy` retains the original analyst rating only when corrected; it is never a ranking input. Artifact validation rejects an over-cap risk rather than repairing it.
 
-Compute `effective_severity` in this ordered pipeline:
+`scripts/triage_compute_ranking.py` owns effective severity. It applies verified chain roles, evidence-backed external ingress, Critical criteria, and the final CWE ceiling. A Critical exception requires a keystone in a verified Critical chain, not merely a keystone role in another chain. `refuted` and `ambiguous` evidence never earns chain elevation. Policy ceilings take precedence over the input rating. `conditional_critical` remains advisory until its context predicates have deterministic evidence contracts.
 
-1. **Start with raw `risk`.**
-2. **Apply chain elevation scoped by role.** For every active chain this finding belongs to:
-   - If **keystone** in this chain: `effective = max(effective, chain.severity)` — but see step 2b.
-   - If **contributor** in this chain: `effective = max(effective, contributor_cap)` where contributor_cap = value from `severity-caps.yaml → contributor_cap.default` (default `High`). Do NOT elevate contributor to `chain.severity`.
-   - **Evidence-refutation guard (M2).** When the finding carries `evidence_check` of `refuted` or `ambiguous` (set by Phase 10a evidence-verifier), **skip elevation entirely** for both keystone and contributor roles. The raw `risk` is preserved unchanged (we never downgrade the auditor's rating), but an unverified finding cannot pull the chain's severity up. Record `suppressed:evidence_<state>(<role>)` in the reconciliation reasons. This guard is the entire point of running Phase 10a — without it, an unverified finding still inflates the chain it sits on.
-2b. **Chain severity realization check (R5 rule).** Read `compound-chain-patterns.yaml → chain.severity_realization` if present. If the chain's `requires_all` preconditions are not all satisfied by the current findings set, **downgrade** the chain's effective severity for this finding to `severity_realization.fallback_severity`. Example: CC-01 Stored XSS → Session Theft only realises Critical when at least one XSS keystone has `likelihood: High` AND `breach_distance ≤ 2`; otherwise the chain stays active but caps at `High`.
-3. **Apply evidence-backed external-ingress elevation.** Consider only `boundary_refs[]` entries that pass the shared deterministic validator: the boundary exists, has canonical endpoints, is `resolved` and `confirmed`, is oriented `external → origin_component_id`, matches the finding's component, and cites evidence locations owned by that finding. If at least one eligible reference remains and the evidence state is neither `refuted` nor `ambiguous`, raise the current effective severity by exactly one band, capped at `High`. Multiple eligible boundaries still cause only one step. Component adjacency without such a reference, as well as internal, outbound, inferred, unresolved, conflicted, wrong-origin, dangling, or evidence-free references, never changes severity.
-4. **Apply per-CWE severity cap.** Read `severity-caps.yaml → severity_caps`. For the finding's primary CWE, if a cap entry exists, **clamp** `effective_severity` to at most `cap.max`. Cap exceptions: if `cap_exceptions[cwe]` lists a `requires_compound_with` CWE set that is fully satisfied by OTHER findings in the same category, use `elevated_cap` instead.
-5. **Apply critical-criteria gate (V2 rule, last).** Read `$CLAUDE_PLUGIN_ROOT/data/critical-criteria.yaml`. This is the **final gatekeeper** before the finding is allowed to hold `effective_severity: Critical`:
-    - If `effective_severity == Critical` AND the finding's primary CWE is in `never_individual_critical` list AND the finding is NOT a keystone in any active chain with severity=Critical → **downgrade** to `max_severity_individual` (usually High). Emit flag `severity_over_inflation`.
-    - If `effective_severity == Critical` AND primary CWE is in `always_critical_cwes` → check `required.breach_distance_max` and `required.impact_min`. If violated, downgrade to High.
-    - If `effective_severity == Critical` AND primary CWE is in `conditional_critical` → check `condition` (specific context hints in scenario text). If the condition is not present, drop to `fallback_severity`.
-    - If `effective_severity < Critical` AND primary CWE is in `always_critical_cwes` AND context conditions hold → **escalate** to Critical. Emit flag `severity_under_rated`.
-6. **Record a reconciliation flag** when the effective differs from raw. For an external-ingress elevation, include the eligible `tb-N` IDs in deterministic numeric order in the flag source:
-   ```json
-   {
-     "flag_id": "TF-NNN",
-     "type": "severity_reconciliation",
-     "severity": "info",
-     "threat_ids": ["T-039"],
-     "message": "Raw risk High; capped via CWE-693 severity_cap at High despite CC-01 chain severity Critical (contributor role)",
-     "suggested_action": "Confirm the defense-in-depth framing is appropriate — see severity-caps.yaml rationale."
-   }
-   ```
+Only validated `boundary_refs[]` to resolved, confirmed `external → origin_component_id` crossings can raise effective severity by one band, capped at High. Component adjacency, inferred or outbound crossings, and refuted or ambiguous finding evidence grant no elevation. Multiple valid crossings still cause one step.
 
-Write `effective_severity`, breach distance and its reason, `compound_chain_ids`, `verified_chain_ids`, and `chain_role` on every finding, including findings outside the top-50 display view. Recompute these fields and reconciliation flags on every run so removed evidence, chains, or boundaries clear stale elevation state. Raw `risk` is preserved unchanged.
-
-**Invariants (QA-enforced by Check 3j and Check 7d):**
-- `effective_severity` ≥ `risk` (never downgrades the auditor's rating)
-- `effective_severity` ≤ `severity_caps[primary_cwe].max` (hard cap)
-- A contributor finding never carries `effective_severity == Critical` purely via chain membership
-- Every elevation has a matching `triage_flags` entry on the finding with `type: severity_reconciliation`
+Every policy correction or difference between individual and effective risk has a `severity_reconciliation` flag. External-ingress flags carry the eligible `tb-N` IDs. Recompute derived finding fields and flags on every run, including findings outside the display limit, so removed evidence or chains cannot retain an elevation. Persist `effective_severity`, `breach_distance`, `breach_distance_reason`, `chain_role`, `compound_chain_ids` and `verified_chain_ids` on findings.
 
 #### 6d — Category aggregates
 
@@ -232,9 +181,9 @@ score = (
     150 * severity_rank(effective_severity)
   +  40 * impact_rank(impact)                    # direct impact weight
   +  15 * (4 - breach_distance)                  # reduced from 20
-  +   3 * likelihood_rank_inverse(likelihood)    # High=0, Med=1, Low=2 (low-likelihood finding deprioritized)
+  -   3 * likelihood_rank_inverse(likelihood)    # High=0, Med=1, Low=2 (low-likelihood finding deprioritized)
   +   5 * (cwe_top25_rank ? (26 - cwe_top25_rank) : 0)
-  +   1 * (cvss_v3_1.score or 0)
+  +   1 * cvss_score
 )
 
 # Apply chain-role penalty: contributors get deprioritized to keep keystones on top
@@ -352,15 +301,15 @@ Append a `ranking` block to `.triage-flags.json` (Phase-4 schema v2). The block 
 - `top_threats.categories_ranked[*].id` is a subset of active categories with `effective_severity ≥ High`
 - `top_findings.findings_ranked` is sorted descending by `finding_score`, truncated at `max_rows` (default 5)
 - `prioritized_mitigations.mitigations_ranked` covers every Critical-effective finding at least once
-- `chains.chains_ranked` contains every ACTIVE chain from compound-chain-patterns detection
+- `chains.chains_ranked` never contains unverified pattern candidates; verified abuse-case membership is recorded in `verified_chain_ids`
 
 The orchestrator (Phase 11) MUST read from the view that matches the section being rendered — never re-compute a ranking locally.
 
 #### 6h — Write-protocol constraints
 
 - **Use a single `python3 -c` Bash call** that loads `threat-model.yaml`, the two data files, applies 6a–6f, and writes both the updated yaml (with additive fields on findings and categories) AND the `.triage-flags.json` with the new `ranking` block. Do not hand-write this — the logic is deterministic and must be reproducible across re-runs.
-- The ranking is **advisory**: Phase 11 reads it to drive rendering (Top Threats table, Section 8.A sort, Prioritized Mitigations order), but individual severity fields on findings remain the auditor's raw `risk` rating.
-- Score weights are defined in this document (not in a config file) so that ranking semantics are versioned under `analysis_version`. When weights change materially, bump `analysis_version`.
+- The ranking is **advisory**: Phase 11 reads it to drive rendering (Top Threats table, Section 8.A sort, Prioritized Mitigations order), but individual severity fields on findings remain the policy-constrained `risk` rating.
+- The scoring implementation in `scripts/triage_compute_ranking.py` owns weights and tie-breaking. The formulas here describe its terms; corrections to their implementation must retain regression evidence.
 
 **Print when done:** `[triage]   ↳ Ranking: <n> categories ranked, <n> findings ranked, <n> compound chains detected (<n> members elevated to effective Critical)`
 

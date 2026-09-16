@@ -364,6 +364,11 @@ requirements:
 
   REQ-RPT-001:
     applies_to:
+      - scripts/_severity_policy.py
+      - scripts/triage_compute_ranking.py
+      - scripts/triage_validate_ratings.py
+      - scripts/merge_threats.py
+      - scripts/build_threat_model_yaml.py
       - data/severity-caps.yaml
       - data/critical-criteria.yaml
       - scripts/validate_intermediate.py
@@ -374,6 +379,9 @@ requirements:
     documents: []
     coverage: direct
     guards:
+      - tests/test_severity_policy.py::test_policy_risk_reaches_register_summary_and_sarif
+      - tests/test_triage_compute_ranking.py::test_policy_cap_wins_over_critical_input
+      - tests/test_triage_compute_ranking.py::test_unrelated_pattern_matches_do_not_elevate
       - tests/test_cvss_eligibility.py::TestForbiddenSources::test_cvss_forbidden
       - tests/test_cvss_eligibility.py::TestRequiredSources::test_missing_cvss_for_required_source
       - tests/test_cvss_eligibility.py::TestStrideSource::test_stride_eligible_cwe_with_line_passes

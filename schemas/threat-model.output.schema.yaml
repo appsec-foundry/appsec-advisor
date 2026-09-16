@@ -1177,6 +1177,10 @@ properties:
         risk:
           type: string
           enum: [Critical, High, Medium, Low, Informational]
+        risk_before_policy:
+          description: Original analyst risk retained when a deterministic policy ceiling lowers individual risk; never a ranking input.
+          type: string
+          enum: [Critical, High, Medium, Low]
         owasp_llm_ids:
           description: Evidence-backed OWASP LLM Top-10 (2025) classifications, preserved from the STRIDE finding.
           type: array

@@ -281,3 +281,11 @@ The exported status vocabulary is `PASS`, `FAIL`, `PARTIAL`, `UNVERIFIABLE`, and
 Every finding, mitigation, requirement, and abuse-case reference inside those blocks must resolve against the same YAML document. `validate_intermediate.py` owns this reconciliation, and a producer that adds or changes canonical trace data validates the updated document before replacing the last valid model.
 
 Threat Dragon has no native structures for these dimensions. Its exporter attaches applicable trace to the existing finding and mitigation text fields and reports counted omissions; it never creates a second threat merely to represent an abuse chain or requirement.
+
+## Finding severity policy
+
+Individual `risk` is constrained by the applicable CWE ceiling before merge finalization and canonical YAML construction. When a policy corrects the analyst rating, `risk_before_policy` preserves that rating for audit. It never contributes to ranking, counts or exported severity. CVSS and matrix consistency compare the original assessment when a policy correction exists; a policy ceiling does not rewrite the CVSS score.
+
+New merged artifacts carry `severity_policy_version: 1` and their validation enforces these ceilings. Historical merged artifacts without the marker remain readable; YAML construction applies the policy before any derived register or export. Final YAML validation enforces the ceilings regardless of input age.
+
+`effective_severity` describes contextual prioritization and remains subject to the CWE ceiling. A pattern match alone never establishes a viable attack chain. Only fully viable verified abuse cases may supply chain elevation, and a Critical exception requires a Critical keystone relationship. Missing or refuted required members cannot justify another member's elevation. Register, summary and exports continue to use the corrected individual risk. Artifact gates reject remaining policy violations without mutating their input.

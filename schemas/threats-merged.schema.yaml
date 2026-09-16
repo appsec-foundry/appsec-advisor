@@ -10,6 +10,10 @@ description: |
 type: object
 required: [version, generated_at, threats]
 properties:
+  severity_policy_version:
+    description: Present on policy-normalized merged output; legacy input is normalized by the YAML producer before publication.
+    type: integer
+    const: 1
 
   version:
     const: 1
@@ -67,6 +71,10 @@ properties:
             - Denial of Service
             - Elevation of Privilege
         risk:
+          type: string
+          enum: [Critical, High, Medium, Low]
+        risk_before_policy:
+          description: Original analyst risk retained when a deterministic policy ceiling lowers individual risk; never a ranking input.
           type: string
           enum: [Critical, High, Medium, Low]
         owasp_llm_ids:

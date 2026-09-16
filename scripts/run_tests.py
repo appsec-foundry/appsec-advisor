@@ -322,6 +322,7 @@ GROUPS = {
         security_relevance_filter
         security_score
         severity_rollup
+        severity_policy
         team_questions
         threat_model_fields
         threat_model_health

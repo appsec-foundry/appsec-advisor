@@ -11,7 +11,61 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
+
+
+@pytest.mark.parametrize("cwe", ["CWE-778", "CWE-548"])
+def test_policy_cap_wins_over_critical_input(cwe):
+    tcr = _tcr()
+    caps = yaml.safe_load((PLUGIN_ROOT / "data/severity-caps.yaml").read_text())
+    criteria = yaml.safe_load((PLUGIN_ROOT / "data/critical-criteria.yaml").read_text())
+    finding = {"cwe": cwe, "risk": "Critical", "impact": "High"}
+    assert tcr._compute_effective(finding, None, 0, caps, criteria, 2)[0] == "High"
+
+
+@pytest.mark.parametrize("cwe, expected", [("CWE-321", "High"), ("CWE-601", "Medium")])
+def test_individual_critical_rules_use_real_data(cwe, expected):
+    tcr = _tcr()
+    criteria = yaml.safe_load((PLUGIN_ROOT / "data/critical-criteria.yaml").read_text())
+    rank, _ = tcr._apply_critical_criteria({"cwe": cwe}, 3, "", criteria, 2)
+    assert tcr._sev_label(rank) == expected
+
+
+@pytest.mark.parametrize("cwe", ["CWE-79", "CWE-22"])
+def test_more_likely_findings_rank_first(cwe):
+    tcr = _tcr()
+    scores = [
+        tcr._finding_score({"cwe": cwe, "impact": "High", "likelihood": likelihood}, "High", 2, None, {}, {})
+        for likelihood in ("High", "Medium", "Low")
+    ]
+    assert scores[0] > scores[1] > scores[2]
+
+
+@pytest.mark.parametrize("score", [9.8, 7.5])
+def test_ranking_reads_canonical_cvss_v4(score):
+    assert _tcr()._finding_cvss({"cvss_v4": {"base_score": score}}) == score
+
+
+@pytest.mark.parametrize("names", [("portal", "billing"), ("console", "catalog")])
+def test_unrelated_pattern_matches_do_not_elevate(tmp_path, names):
+    tcr = _tcr()
+    findings = [
+        {
+            "t_id": f"T-{index:03d}",
+            "component_id": name,
+            "cwe": "CWE-79",
+            "title": "Unsafe page output",
+            "risk": "High",
+            "impact": "High",
+            "likelihood": "Medium",
+        }
+        for index, name in enumerate(names, 1)
+    ]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(findings))
+    ranking = tcr.compute_ranking(tmp_path)
+    assert all(f["effective_severity"] == "High" for f in ranking["views"]["top_findings"]["findings_ranked"])
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = PLUGIN_ROOT / "scripts" / "triage_compute_ranking.py"

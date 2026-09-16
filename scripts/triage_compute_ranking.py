@@ -4,7 +4,7 @@
 Replaces the LLM-driven Step 6 of ``appsec-triage-validator`` with a Python
 script. The agent's spec for Step 6 (sub-steps 6a–6g) is deterministic rule
 application against YAML configs (breach-distance-patterns,
-compound-chain-patterns, severity-caps, critical-criteria, cwe-taxonomy). The
+severity-caps, critical-criteria, cwe-taxonomy). The
 deterministic owner also uses validated component business overlays only as a
 final tie-break between otherwise equal scores. LLM reasoning is not required,
 and the LLM consistently mis-emits the ranking schema (the 2026-04-26
@@ -20,7 +20,6 @@ Inputs (in $OUTPUT_DIR unless absolute):
 
 Plugin data files ($CLAUDE_PLUGIN_ROOT/data/):
     breach-distance-patterns.yaml
-    compound-chain-patterns.yaml
     severity-caps.yaml
     critical-criteria.yaml
     cwe-taxonomy.yaml
@@ -51,6 +50,7 @@ from typing import Any
 import _yaml_io
 import plugin_meta
 import yaml  # noqa: F401  (kept for downstream callers writing yaml)
+from _severity_policy import companion_cwes, cwe_ceiling, individual_critical_ceiling, normalize_risks
 from prepare_trust_boundary_context import (
     boundary_assumption_state,
     boundary_endpoints_valid,
@@ -220,10 +220,15 @@ def _finding_evidence_path(t: dict) -> str:
 
 
 def _finding_cvss(t: dict) -> float:
-    cvss = t.get("cvss_v3_1") or t.get("cvss")
+    cvss = t.get("cvss_v4")
+    key = "base_score"
+    if not isinstance(cvss, dict):
+        cvss = t.get("cvss_v3_1") or t.get("cvss")
+        key = "score"
     if isinstance(cvss, dict):
         try:
-            return float(cvss.get("score") or 0)
+            score = float(cvss.get(key) or 0)
+            return score if 0 <= score <= 10 else 0.0
         except (TypeError, ValueError):
             return 0.0
     return 0.0
@@ -417,61 +422,10 @@ def _compute_breach_distance(t: dict, patterns: dict) -> tuple[int, str]:
 # ---------------------------------------------------------------------------
 
 
-def _match_chain_role(t: dict, role_spec: dict) -> bool:
-    if not isinstance(role_spec, dict):
-        return False
-    cwe_any = role_spec.get("cwe_any") or []
-    if cwe_any and _finding_cwe(t) in {c.strip().upper() for c in cwe_any if isinstance(c, str)}:
-        return True
-    title_any = role_spec.get("title_any") or []
-    title = _finding_title(t).lower()
-    if title_any and any(p.lower() in title for p in title_any if isinstance(p, str)):
-        return True
-    return False
-
-
-def _detect_chains(findings: list[dict], chain_specs: list[dict]) -> list[dict]:
-    """For each chain spec, identify members + roles. Return list of active chains."""
-    active = []
-    for chain in chain_specs:
-        keystones, contributors, members = [], [], []
-        for t in findings:
-            tid = _finding_id(t)
-            if not tid:
-                continue
-            roles = chain.get("roles") or {}
-            is_keystone = _match_chain_role(t, roles.get("keystone") or {})
-            is_contributor = _match_chain_role(t, roles.get("contributor") or {})
-            if is_keystone:
-                keystones.append(tid)
-                members.append(tid)
-            elif is_contributor:
-                contributors.append(tid)
-                members.append(tid)
-
-        # Active when ≥ 2 members AND (at least one keystone OR no keystone section)
-        keystone_required = bool((chain.get("roles") or {}).get("keystone"))
-        if len(members) >= 2 and (keystones or not keystone_required):
-            active.append(
-                {
-                    "id": chain.get("id"),
-                    "name": chain.get("name"),
-                    "severity": chain.get("severity", "High"),
-                    "severity_justification": (chain.get("severity_justification") or "").strip(),
-                    "breach_distance": int(chain.get("breach_distance", 2)),
-                    "keystones": keystones,
-                    "contributors": contributors,
-                    "members": members,
-                    "narrative": (chain.get("narrative_template") or "").strip(),
-                }
-            )
-    return active
-
-
 def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, matches_doc: Any) -> list[dict]:
-    """Build chain entries (same shape as ``_detect_chains``) from CODE-VERIFIED
-    abuse-case verdicts, so the existing effective-severity elevation
-    (keystone/contributor + caps + no-downgrade) drives the finding ratings.
+    """Build severity-bearing chains only from code-verified abuse verdicts.
+
+    Keystone/contributor roles and policy ceilings govern contextual elevation.
 
     Only ``fully_viable`` chains elevate — ``partially_blocked`` /
     ``inconclusive`` do not (guardrail against inflation). A finding bound to a
@@ -505,10 +459,12 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
             continue
 
         keystones, contributors, members, member_sevs = [], [], [], []
+        missing_required = False
         for sm in m.get("step_matches") or []:
             raw = (sm.get("matched_finding_id") or "").strip()
             finding = finding_by_any_id.get(raw)
-            if not finding:
+            if not finding or finding.get("evidence_check") in ("refuted", "ambiguous"):
+                missing_required |= bool(sm.get("required", True))
                 continue
             tid = _finding_id(finding)
             if not tid:
@@ -519,7 +475,7 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
                 keystones.append(tid)
             else:
                 contributors.append(tid)
-        if not members:
+        if not members or missing_required:
             continue
 
         base = max((_sev_rank(s) for s in member_sevs), default=_sev_rank("High"))
@@ -545,13 +501,11 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
 # ---------------------------------------------------------------------------
 
 
-def _apply_severity_caps(eff_rank: int, cwe: str, caps: dict) -> tuple[int, str]:
-    cap = (caps.get("severity_caps") or {}).get(cwe)
-    if not cap:
-        return eff_rank, ""
-    cap_rank = _sev_rank(cap.get("max", "Critical"))
+def _apply_severity_caps(eff_rank: int, cwe: str, caps: dict, companions: set[str] | None = None) -> tuple[int, str]:
+    ceiling = cwe_ceiling(cwe, caps, companions)
+    cap_rank = _sev_rank(ceiling)
     if eff_rank > cap_rank:
-        return cap_rank, f"capped:{cwe}<={cap.get('max')}"
+        return cap_rank, f"capped:{cwe}<={ceiling}"
     return eff_rank, ""
 
 
@@ -595,14 +549,11 @@ def _apply_critical_criteria(
                 return _sev_rank("Critical"), f"always_crit_promoted:{cwe}"
             return eff_rank, ""
 
-    # Don't elevate by default — only de-escalate Critical (non-always CWEs).
-    if eff_rank < _sev_rank("Critical"):
-        return eff_rank, ""
-
-    # never_individual_critical CWEs drop unless they're a keystone in a Critical chain
-    never_ind = criteria.get("never_individual_critical") or []
-    if cwe in {c.strip().upper() for c in never_ind if isinstance(c, str)} and role != "keystone":
-        return _sev_rank(criteria.get("max_severity_individual", "High")), f"never_individual:{cwe}"
+    # Each entry's ceiling also binds High inputs when the configured maximum
+    # is Medium; otherwise raising the input rating could LOWER its output.
+    ceiling = individual_critical_ceiling(cwe, criteria)
+    if eff_rank > _sev_rank(ceiling) and role != "keystone":
+        return _sev_rank(ceiling), f"never_individual:{cwe}"
 
     return eff_rank, ""
 
@@ -615,24 +566,18 @@ def _compute_effective(
     criteria: dict,
     breach_distance: int,
     external_boundary_ids: tuple[str, ...] = (),
+    companions: set[str] | None = None,
 ) -> tuple[str, list[str]]:
     """Returns (effective_severity_label, reasons[])."""
     raw_rank = _sev_rank(_finding_severity(t))
     eff = raw_rank
     reasons: list[str] = []
+    if t.get("risk_before_policy") and t["risk_before_policy"] != _finding_severity(t):
+        reasons.append(f"capped:individual:{_finding_cwe(t)}<={_finding_severity(t)}")
 
-    # M2: refuted findings are not chain-elevated. The auditor's raw risk
-    # is preserved (we never downgrade), but the chain cannot pull this
-    # finding's effective severity above raw. Suppression is opt-in via
-    # the evidence-verifier's verdict; absent/unchecked findings behave
-    # identically to pre-M2.
-    # RC.P2a (2026-07): an *ambiguous* verdict — the evidence pointer could not
-    # be confirmed against real code (e.g. it lands on a package/import line, is
-    # out of range, or is an unverified inferred anchor) — is treated like
-    # refuted for chain elevation: an unverifiable finding must not be pulled up
-    # to Critical/High by a chain it only nominally belongs to. Consistent with
-    # the "never downgrade raw auditor risk" policy above — raw severity is still
-    # preserved; only the chain-elevation is suppressed.
+    # Evidence refutation suppresses contextual elevation, not policy caps.
+    # Individual risk is already normalized by the producer; direct callers
+    # still receive the final ceiling even for an over-rated input.
     evidence_state = t.get("evidence_check")
     evidence_unverified = evidence_state in ("refuted", "ambiguous")
 
@@ -664,19 +609,20 @@ def _compute_effective(
 
     # Per-CWE cap
     cwe = _finding_cwe(t)
-    eff, cap_reason = _apply_severity_caps(eff, cwe, caps)
+    eff, cap_reason = _apply_severity_caps(eff, cwe, caps, companions)
     if cap_reason:
         reasons.append(cap_reason)
 
     # Critical criteria
-    eff, crit_reason = _apply_critical_criteria(t, eff, chain_role or "", criteria, breach_distance)
+    critical_role = chain_role if chain_severity >= _sev_rank("Critical") and not evidence_unverified else ""
+    eff, crit_reason = _apply_critical_criteria(t, eff, critical_role or "", criteria, breach_distance)
     if crit_reason:
         reasons.append(crit_reason)
 
-    # Invariant: effective never below raw
-    if eff < raw_rank:
-        eff = raw_rank
-        reasons.append("invariant:no_downgrade_below_raw")
+    # Contextual promotion cannot override a hard class ceiling.
+    eff, final_cap = _apply_severity_caps(eff, cwe, caps, companions)
+    if final_cap and final_cap not in reasons:
+        reasons.append(final_cap)
 
     return _sev_label(eff), reasons
 
@@ -709,7 +655,7 @@ def _finding_score(t: dict, eff: str, breach_distance: int, chain_role: str | No
         150 * _sev_rank(eff)
         + 40 * _impact_rank(_finding_impact(t))
         + 15 * (4 - breach_distance)
-        + 3 * _likelihood_rank_inverse(_finding_likelihood(t))
+        - 3 * _likelihood_rank_inverse(_finding_likelihood(t))
     )
     rank = _cwe_top25_rank(cwe, taxonomy)
     if rank:
@@ -832,10 +778,10 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
 
     # Load reference data
     bd_patterns = _load_yaml(DATA_DIR / "breach-distance-patterns.yaml", {})
-    chains_yaml = _load_yaml(DATA_DIR / "compound-chain-patterns.yaml", {})
     caps = _load_yaml(DATA_DIR / "severity-caps.yaml", {})
     criteria = _load_yaml(DATA_DIR / "critical-criteria.yaml", {})
     taxonomy = _load_yaml(DATA_DIR / "cwe-taxonomy.yaml", {})
+    normalize_risks(findings)
     boundaries = [row for row in (yaml_data.get("trust_boundaries") or []) if isinstance(row, dict)]
     component_ids = {
         row["id"]
@@ -866,27 +812,20 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             t["breach_distance"] = d
             t["breach_distance_reason"] = r
 
-    # 6b — chains (keyword compound-chains + code-verified abuse-case chains)
-    active_chains = _detect_chains(findings, chains_yaml.get("chains") or [])
+    # 6b — code-verified abuse-case chains
+    # CWE/title co-occurrence finds candidates, not a viable attack path.
+    # Only verifier-backed chains may influence ranking or be presented as active.
     verified_chains = _detect_verified_abuse_chains(
         findings,
         _load_json(output_dir / ".abuse-case-verdicts.json"),
         _load_json(output_dir / ".abuse-case-matches.json"),
     )
-    all_chains = active_chains + verified_chains
     role_by_id: dict[str, str] = {}
     chain_membership: dict[str, list[str]] = {}  # compound-chain ids (CC-*)
     verified_membership: dict[str, list[str]] = {}  # verified abuse-case ids (AC-*)
-    for ch in active_chains:
-        for k in ch.get("keystones") or []:
-            role_by_id[k] = "keystone"
-            chain_membership.setdefault(k, []).append(ch["id"])
-        for c in ch.get("contributors") or []:
-            role_by_id.setdefault(c, "contributor")
-            chain_membership.setdefault(c, []).append(ch["id"])
     for ch in verified_chains:
         for k in ch.get("keystones") or []:
-            role_by_id[k] = "keystone"  # a code-verified chain is ≥ a keyword one
+            role_by_id[k] = "keystone"
             verified_membership.setdefault(k, []).append(ch["id"])
         for c in ch.get("contributors") or []:
             role_by_id.setdefault(c, "contributor")
@@ -902,10 +841,18 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
         if not tid:
             continue
         role = role_by_id.get(tid)
-        chain_sev_rank = 0
-        for ch in all_chains:
-            if tid in (ch["keystones"] + ch["contributors"]):
-                chain_sev_rank = max(chain_sev_rank, _sev_rank(ch["severity"]))
+        keystone_severity = 0
+        contributor_severity = 0
+        for ch in verified_chains:
+            if tid in ch["keystones"]:
+                keystone_severity = max(keystone_severity, _sev_rank(ch["severity"]))
+            elif tid in ch["contributors"]:
+                contributor_severity = max(contributor_severity, _sev_rank(ch["severity"]))
+        chain_sev_rank = (
+            max(keystone_severity, min(contributor_severity, _sev_rank("High")))
+            if role == "keystone"
+            else contributor_severity
+        )
         external_ids, boundary_diagnostics = _external_boundary_ids_for_finding(
             t,
             boundaries=boundaries,
@@ -921,6 +868,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             criteria,
             bd_by_id.get(tid, 2),
             external_ids,
+            companion_cwes(t, findings),
         )
         eff_by_id[tid] = eff
         eff_reasons_by_id[tid] = reasons
@@ -944,17 +892,19 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
                 "min_breach_distance": min_bd,
                 "finding_count": len(members),
                 "top_finding_id": (
-                    max(
-                        members,
-                        key=lambda m: _finding_score(
-                            m,
-                            eff_by_id.get(_finding_id(m), _finding_severity(m)),
-                            bd_by_id.get(_finding_id(m), 2),
-                            role_by_id.get(_finding_id(m)),
-                            caps,
-                            taxonomy,
-                        ),
-                    )[_threat_id_key(members[0])]
+                    _finding_id(
+                        max(
+                            members,
+                            key=lambda m: _finding_score(
+                                m,
+                                eff_by_id.get(_finding_id(m), _finding_severity(m)),
+                                bd_by_id.get(_finding_id(m), 2),
+                                role_by_id.get(_finding_id(m)),
+                                caps,
+                                taxonomy,
+                            ),
+                        )
+                    )
                     if members
                     else None
                 ),
@@ -1040,6 +990,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             {
                 "id": tid,
                 "raw_severity": _finding_severity(finding),
+                "risk_before_policy": finding.get("risk_before_policy"),
                 "effective_severity": eff_by_id.get(tid, _finding_severity(finding)),
                 "breach_distance": bd_by_id.get(tid, 2),
                 "breach_distance_reason": bd_reason.get(tid, ""),
@@ -1054,11 +1005,6 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
 
     # 6g — mitigations ranked by addressed severity
     mits_ranked = _rank_mitigations(yaml_data.get("mitigations") or [], eff_by_id, business_basis_by_id)
-
-    chains_ranked = sorted(
-        active_chains,
-        key=lambda c: (-_sev_rank(c.get("severity", "Low")), -len(c.get("members") or []), c.get("id") or ""),
-    )
 
     # Reconciliation summary
     elevated_via_chain = sum(
@@ -1129,7 +1075,7 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             },
             "chains": {
                 "sort_key": "severity_desc_then_member_count_desc",
-                "chains_ranked": chains_ranked,
+                "chains_ranked": [],  # Legacy CC view; AC memberships stay in verified_chain_ids.
             },
         },
         "reconciliation_summary": {
@@ -1142,7 +1088,8 @@ def compute_ranking(output_dir: Path, repo_root: Path | None = None) -> dict:
             "boundary_refs_rejected_before_ranking": sum(
                 len(items) for items in boundary_ref_diagnostics_by_id.values()
             ),
-            "chains_active": len(active_chains),
+            "chains_active": 0,
+            "verified_chains_active": len(verified_chains),
         },
     }
 
@@ -1273,6 +1220,9 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
     for update in finding_updates:
         t = findings_by_id.get(update.get("id"))
         if t is not None:
+            t["risk"] = update["raw_severity"]
+            if update.get("risk_before_policy"):
+                t["risk_before_policy"] = update["risk_before_policy"]
             t["effective_severity"] = update["effective_severity"]
             t["breach_distance"] = update["breach_distance"]
             t["breach_distance_reason"] = update.get("breach_distance_reason", "")
@@ -1332,8 +1282,8 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
     next_flag_number = max_flag_number + 1
     for update in sorted(finding_updates, key=lambda item: str(item.get("id") or "")):
         threat_id = str(update.get("id") or "")
-        if _sev_rank(update.get("effective_severity", "")) <= _sev_rank(
-            update.get("raw_severity", "")
+        if (
+            update.get("effective_severity") == update.get("raw_severity") and not update.get("risk_before_policy")
         ) or not re.fullmatch(r"T-\d{3,}", threat_id):
             continue
         flag_id = f"TF-{next_flag_number:03d}"
@@ -1352,7 +1302,8 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
                 "severity": "info",
                 "threat_ids": [threat_id],
                 "message": (
-                    f"Raw risk {update['raw_severity']}; effective severity "
+                    f"Assessed risk {update.get('risk_before_policy') or update['raw_severity']}; "
+                    f"policy risk {update['raw_severity']}; effective severity "
                     f"{update['effective_severity']} ({'; '.join(reasons) or 'deterministic context adjustment'})."
                 ),
                 "suggested_action": None,
@@ -1446,6 +1397,7 @@ def _bootstrap_yaml_from_merged(output_dir: Path) -> bool:
     for t in threats_raw:
         threats_stub.append(
             {
+                **t,
                 "t_id": t.get("t_id") or t.get("id") or "",
                 "title": t.get("title") or "",
                 "risk": t.get("risk") or t.get("severity") or "Medium",

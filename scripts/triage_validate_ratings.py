@@ -431,7 +431,8 @@ def _step4_rating_completeness(threats: list[dict]) -> list[dict]:
         lh_for_matrix = likelihood_val if likelihood_val in ("High", "Medium", "Low") else None
         if lh_for_matrix:
             expected_risk = _RISK_MATRIX.get((lh_for_matrix, impact_val))
-            if expected_risk and risk_val != expected_risk and not t.get("architectural_violation"):
+            assessed_risk = t.get("risk_before_policy") or risk_val
+            if expected_risk and assessed_risk != expected_risk and not t.get("architectural_violation"):
                 flags.append(
                     {
                         "type": "completeness",
@@ -588,6 +589,7 @@ def _step5_cvss_scope(threats: list[dict], eligible_cwes: frozenset[str], depth:
 
         # Band mismatch (standard/thorough)
         if has_cvss and depth in ("standard", "thorough"):
+            risk = t.get("risk_before_policy") or risk
             sev = (cvss or {}).get("severity", "")
             if sev in _CVSS_BAND and risk in _RISK_BAND:
                 cvss_band = max(_CVSS_BAND[sev], 1)
