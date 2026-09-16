@@ -195,13 +195,13 @@ See the [developer tools guide](docs/dev-security-helper-usage.md) for commands 
 
 ### Security score script
 
-The score script checks a repository without building a threat model. It returns a score from 0 to 100, or `undetermined` if too few checks apply. You need Python 3.10+, PyYAML, and git.
+The score script checks a repository without building a threat model. It returns a score from 0 to 100, `undetermined` if too few checks apply, or `incomplete` without a score if a required scanner fails or emits invalid output. Findings and diagnostics remain visible in every verdict. You need Python 3.10+, PyYAML, jsonschema, and git.
 
 ```bash
 python3 /path/to/appsec-advisor/scripts/security_score.py --repo /path/to/project
 ```
 
-Replace the example paths with your plugin checkout and project directory. `--repo` also accepts an HTTPS GitHub or GitLab Git URL. Use `--json` or `--yaml` for structured output.
+Replace the example paths with your plugin checkout and project directory. `--repo` also accepts an HTTPS GitHub or GitLab Git URL. Use `--json` or `--yaml` for structured output validated against `schemas/security-score.schema.yaml`. Exit codes are 0 for a score, 2 for insufficient coverage, and 1 for incomplete execution or an error. Compare commits only with matching scoring versions, catalog fingerprints, and applicable coverage in `comparability`. Findings without a scored baseline and findings excluded by severity policy are disclosed separately.
 
 ### Deterministic scan script
 

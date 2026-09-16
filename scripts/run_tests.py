@@ -128,6 +128,9 @@ GROUPS = {
         scan_excludes
         secret_scan
         source_auth_scanner
+        source_lex
+        supply_chain_config
+        scanner_review_regressions
     """),
     "prompts": _tests("""
         agent_config_checks

@@ -40,6 +40,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
+from _path_guard import is_safe_to_read
+from _source_lex import without_comments
+
 try:
     import yaml  # type: ignore[import-untyped]
 except ImportError:
@@ -109,6 +112,7 @@ class Entity:
     file: str
     fields: list[str]
     has_vertical: bool  # >=1 vertical privilege field (role/admin/…) vs ownership-only
+    qualified_name: str = ""
 
 
 # Severity bands, low → high. An admin guard steps a finding down one band.
@@ -203,14 +207,19 @@ _FIELD_RE = re.compile(
 )
 
 
+def _qualified_name(text: str, name: str) -> str:
+    package = re.search(r"\bpackage\s+([\w.]+)\s*;", without_comments(text))
+    return f"{package.group(1)}.{name}" if package else name
+
+
 def discover_entities(file_rel: str, text: str, cat: Catalog) -> list[Entity]:
     """Return the privileged entities declared in this file. Only files carrying
     an entity signal are considered; per-file single primary entity is assumed
     (the common case — one @Entity class per .java file)."""
+    text = without_comments(text)
     if not any(sig in text for sig in cat.entity_signals):
         return []
 
-    lines = text.splitlines()
     m = _CLASS_RE.search(text)
     if not m:
         return []
@@ -225,9 +234,10 @@ def discover_entities(file_rel: str, text: str, cat: Catalog) -> list[Entity]:
         is_ownership = norm in cat.ownership_fields
         if not (is_vertical or is_ownership):
             continue
-        # Suppressor check: any field-suppressor annotation in the 3 lines above.
-        line_idx = text.count("\n", 0, fm.start())
-        window = "\n".join(lines[max(0, line_idx - 3) : line_idx + 1])
+        # An annotation belongs only to the declaration since the previous
+        # field terminator or class boundary, never to a neighboring field.
+        start = max(text.rfind(token, 0, fm.start()) for token in (";", "{", "}")) + 1
+        window = text[start : fm.start()]
         if any(sup.search(window) for sup in cat.field_suppressors):
             continue
         priv_fields.append(field_name)
@@ -235,7 +245,15 @@ def discover_entities(file_rel: str, text: str, cat: Catalog) -> list[Entity]:
 
     if not priv_fields:
         return []
-    return [Entity(name=entity_name, file=file_rel, fields=priv_fields, has_vertical=has_vertical)]
+    return [
+        Entity(
+            name=entity_name,
+            file=file_rel,
+            fields=priv_fields,
+            has_vertical=has_vertical,
+            qualified_name=_qualified_name(text, entity_name),
+        )
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +284,9 @@ def find_sinks(
     text: str,
     cat: Catalog,
     entities: dict[str, Entity],
+    known_types: set[str] | None = None,
 ) -> list[Finding]:
+    text = without_comments(text)
     lines = text.splitlines()
     # Class-declaration annotation block (5 lines above the class decl) — a
     # controller-wide @PreAuthorize("hasRole('ADMIN')") guards every handler.
@@ -279,7 +299,14 @@ def find_sinks(
     findings: list[Finding] = []
     for m in cat.bind.finditer(text):
         bound_type = m.group(1)
-        entity = entities.get(bound_type)
+        imported = re.search(rf"\bimport\s+([\w.]+\.{re.escape(bound_type)})\s*;", text)
+        local_type = _qualified_name(text, bound_type)
+        if imported:
+            entity = entities.get(imported.group(1))
+        elif known_types and local_type in known_types:
+            entity = entities.get(local_type)
+        else:
+            entity = entities.get(bound_type)
         if entity is None:
             continue  # binding a non-entity DTO is the safe pattern — skip
         line_idx = text.count("\n", 0, m.start())
@@ -352,7 +379,7 @@ def scan_repo(repo_root: Path, cat: Catalog) -> list[Finding]:
     files: list[tuple[str, str]] = []
     for path in _walk_java(repo_root):
         rel = _rel(path, repo_root)
-        if rel is None:
+        if rel is None or not is_safe_to_read(path, repo_root):
             continue
         text = _read(path)
         if text:
@@ -360,15 +387,21 @@ def scan_repo(repo_root: Path, cat: Catalog) -> list[Finding]:
 
     # Pass 1
     entities: dict[str, Entity] = {}
-    for rel, text in files:
+    known_types: set[str] = set()
+    for _, text in files:
+        for match in _CLASS_RE.finditer(without_comments(text)):
+            known_types.add(_qualified_name(text, match.group(1)))
+    for rel, text in sorted(files):
         for ent in discover_entities(rel, text, cat):
-            entities.setdefault(ent.name, ent)
+            entities[ent.qualified_name] = ent
+            if sum(name.rsplit(".", 1)[-1] == ent.name for name in known_types) == 1:
+                entities[ent.name] = ent
 
     # Pass 2
     findings: list[Finding] = []
     if entities:
         for rel, text in files:
-            findings.extend(find_sinks(rel, text, cat, entities))
+            findings.extend(find_sinks(rel, text, cat, entities, known_types))
 
     findings.sort(key=lambda f: (f.file, f.line))
     for i, f in enumerate(findings, start=1):

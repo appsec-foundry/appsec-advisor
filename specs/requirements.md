@@ -141,6 +141,12 @@ and a way to verify the result without inventing source examples.
 
 The canonical YAML records abuse-case outcomes, the use and provenance of business context without copying its prose, and the complete configured requirements assessment. Narrower exports retain applicable requirement, abuse-case, and business-context traces as native fields or bounded text and identify semantics they cannot represent.
 
+## Quick security score
+
+### REQ-SCO-001 — A comparable score requires complete scanner evidence
+
+The deterministic repository score validates every required scanner artifact and withholds the aggregate when execution or validation is incomplete. Both incomplete and insufficient-coverage results retain available findings and diagnostics. Structured output identifies producer completion, scoring and catalog versions, and applicable coverage for commit comparisons. Findings excluded from scoring remain visible with their severity.
+
 ## After the run
 
 ### REQ-USE-001 — Findings remain usable after publication

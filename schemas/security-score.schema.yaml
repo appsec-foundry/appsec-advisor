@@ -1,0 +1,78 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: Deterministic repository security score
+type: object
+required: [verdict, score, repo, checks_total, checks_applicable, findings, findings_total, categories, top_findings, warnings, scanner_status, comparability, excluded_findings, unscored_findings]
+additionalProperties: false
+properties:
+  verdict:
+    enum: [scored, undetermined, incomplete]
+  score:
+    type: [integer, 'null']
+    minimum: 0
+    maximum: 100
+  reason:
+    type: string
+  repo:
+    type: string
+  checks_total: {$ref: '#/$defs/count'}
+  checks_applicable: {$ref: '#/$defs/count'}
+  findings: {$ref: '#/$defs/tally'}
+  findings_total: {$ref: '#/$defs/count'}
+  excluded_findings: {$ref: '#/$defs/tally'}
+  unscored_findings: {$ref: '#/$defs/tally'}
+  warnings:
+    type: array
+    items: {type: string}
+  scanner_status:
+    type: object
+    required: [route-inventory, architecture-coverage, config-iac, source-auth]
+    additionalProperties: {enum: [complete, failed, missing, invalid]}
+  comparability:
+    type: object
+    required: [scoring_version, catalog_fingerprint, coverage_fingerprint, applicable_rules]
+    additionalProperties: false
+    properties:
+      scoring_version: {const: 2}
+      catalog_fingerprint: {$ref: '#/$defs/hash'}
+      coverage_fingerprint: {$ref: '#/$defs/hash'}
+      applicable_rules:
+        type: array
+        items: {type: string}
+  categories:
+    type: array
+    items:
+      type: object
+      required: [indicator, label, score, checks, signals, findings, severities]
+      additionalProperties: false
+      properties:
+        indicator: {type: string}
+        label: {type: string}
+        score: {type: [integer, 'null'], minimum: 0, maximum: 100}
+        checks: {$ref: '#/$defs/count'}
+        signals: {$ref: '#/$defs/tally'}
+        findings: {$ref: '#/$defs/count'}
+        severities: {$ref: '#/$defs/tally'}
+  top_findings:
+    type: array
+    items:
+      type: object
+      required: [title, severity, count, location]
+      properties:
+        title: {type: string}
+        severity: {type: string}
+        count: {$ref: '#/$defs/count'}
+        location: {type: string}
+allOf:
+  - if:
+      properties: {verdict: {const: scored}}
+    then:
+      properties: {score: {type: integer}}
+    else:
+      required: [reason]
+      properties: {score: {type: 'null'}}
+$defs:
+  count: {type: integer, minimum: 0}
+  tally:
+    type: object
+    additionalProperties: {$ref: '#/$defs/count'}
+  hash: {type: string, pattern: '^[a-f0-9]{64}$'}

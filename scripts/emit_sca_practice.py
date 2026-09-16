@@ -55,6 +55,7 @@ import sys
 from pathlib import Path
 
 import yaml
+from _supply_chain_config import renovate_configs
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -327,12 +328,10 @@ def classify_auto_updates(repo_root: Path, output_dir: Path) -> tuple[str, list[
     has_dependabot = (repo_root / _DEPENDABOT_PATH).is_file()
     if has_dependabot:
         evidence.append(_DEPENDABOT_PATH + ":1")
-    has_renovate = any((repo_root / p).is_file() for p in _RENOVATE_PATHS)
+    active_renovate = [(rel, cfg) for rel, cfg in renovate_configs(repo_root) if cfg.get("enabled") is not False]
+    has_renovate = bool(active_renovate)
     if has_renovate:
-        for p in _RENOVATE_PATHS:
-            if (repo_root / p).is_file():
-                evidence.append(p + ":1")
-                break
+        evidence.append(active_renovate[0][0] + ":1")
 
     # Activity sidecar — when emit_dep_update_activity.py ran first, lift
     # the rating out of Missing for repos that patch on a regular cadence

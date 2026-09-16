@@ -695,3 +695,18 @@ requirements:
       - tests/test_prepare_trust_boundary_context.py::test_normalize_migrates_legacy_without_promoting_absence
       - tests/test_analysis_version_upgrade.py::test_analysis_v5_declares_prior_read_compatibility
       - tests/test_check_release_meta.py::test_main_invalid_analysis_compatibility_fails
+
+  REQ-SCO-001:
+    applies_to:
+      - scripts/security_score.py
+      - schemas/security-score.schema.yaml
+      - skills/security-score/SKILL.md
+    decisions: []
+    documents:
+      - README.md
+    coverage: direct
+    guards:
+      - tests/test_security_score.py::test_invalid_or_failed_producer_withholds_headline
+      - tests/test_security_score.py::test_real_empty_scan_is_complete
+      - tests/test_security_score.py::test_sparse_coverage_keeps_findings_and_warnings_visible
+      - tests/test_security_score.py::test_comparability_tracks_coverage_not_control_status

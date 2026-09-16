@@ -404,6 +404,9 @@ def main(argv: list[str] | None = None) -> int:
                 if not root.is_dir():
                     raise ValueError(f"not a directory: {root}")
                 display = str(root)
+            escaping = next(iter_escaping_symlinks(root), None)
+            if escaping is not None:
+                raise ValueError(f"repository contains an escaping symlink: {escaping.path.relative_to(root)}")
             progress(f"running {len(selected)} selected scans (minimum severity: {minimum_severity})")
             work_dir = Path(cleanup.enter_context(tempfile.TemporaryDirectory(prefix="appsec-scan-")))
             report = collect(root, work_dir, selected, progress=progress, minimum_severity=minimum_severity)

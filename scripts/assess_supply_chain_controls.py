@@ -35,12 +35,15 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _path_guard import run_path_arg  # noqa: E402
+from _path_guard import is_safe_to_read, run_path_arg
+from _supply_chain_config import ci_steps, renovate_configs  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Effectiveness enum
@@ -106,9 +109,9 @@ def _iter_files(repo_root: str | None, name_match) -> list[Path]:
             continue
         for entry in entries:
             if entry.is_dir():
-                if entry.name not in _SKIP_DIRS:
+                if entry.name not in _SKIP_DIRS and not entry.is_symlink():
                     stack.append(entry)
-            elif name_match(entry.name):
+            elif name_match(entry.name) and is_safe_to_read(entry, root):
                 hits.append(entry)
     return hits
 
@@ -120,26 +123,22 @@ def _read(path: Path) -> str:
         return ""
 
 
-def _ci_text(recon: str, repo_root: str | None) -> str:
-    """Return recon text plus the raw text of every CI definition in the repo.
-
-    Several sub-controls used to grade on ``recon`` alone, so a terse or absent
-    ``.recon-summary.md`` made them report Missing on a repo whose workflows
-    plainly ran ``npm ci`` or ``pip-audit``. Reading the CI files directly makes
-    those rows agree with the ones that already consult ``repo_root``.
-    """
-    parts = [recon]
+def _ci_steps(recon: str, repo_root: str | None) -> list[tuple[str, bool]]:
+    steps = ci_steps(recon)
     if repo_root:
-        wf_dir = Path(repo_root) / ".github" / "workflows"
-        if wf_dir.is_dir():
-            for pattern in ("*.yml", "*.yaml"):
-                for wf in sorted(wf_dir.glob(pattern)):
-                    parts.append(_read(wf))
-        for name in (".gitlab-ci.yml", ".gitlab-ci.yaml", "Jenkinsfile", "azure-pipelines.yml"):
-            p = Path(repo_root) / name
-            if p.is_file():
-                parts.append(_read(p))
-    return "\n".join(p for p in parts if p)
+        root = Path(repo_root)
+        candidates = list((root / ".github/workflows").glob("*.y*ml"))
+        candidates += [
+            root / name for name in (".gitlab-ci.yml", ".gitlab-ci.yaml", "Jenkinsfile", "azure-pipelines.yml")
+        ]
+        for path in sorted(candidates):
+            if is_safe_to_read(path, root):
+                steps.extend(ci_steps(_read(path)))
+    return steps
+
+
+def _ci_text(recon: str, repo_root: str | None) -> str:
+    return "\n".join(command for command, _ in _ci_steps(recon, repo_root))
 
 
 # ---------------------------------------------------------------------------
@@ -147,72 +146,74 @@ def _ci_text(recon: str, repo_root: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 
+_LOCKFILES = {
+    "npm": ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json"),
+    "pip": ("Pipfile.lock", "poetry.lock", "uv.lock", "requirements.lock"),
+    "bundler": ("Gemfile.lock",),
+    "cargo": ("Cargo.lock",),
+    "gomod": ("go.sum",),
+    "composer": ("composer.lock",),
+    "gradle": ("gradle.lockfile", "verification-metadata.xml"),
+}
+
+
+def _hashed_requirements(path: Path, root: Path, seen: set[Path] | None = None) -> bool:
+    seen = set() if seen is None else seen
+    canonical = path.resolve()
+    if canonical in seen or not is_safe_to_read(path, root):
+        return False
+    seen.add(canonical)
+    rows = _read(path).replace("\\\n", " ").splitlines()
+    found = False
+    for row in rows:
+        row = row.split(" #", 1)[0].strip()
+        if not row or row.startswith("#"):
+            continue
+        include = re.match(r"(?:-r\s*|--requirement[= ]+)(\S+)", row)
+        if include:
+            if not _hashed_requirements(path.parent / include.group(1), root, seen):
+                return False
+            found = True
+        elif row.startswith(("--index-url", "--extra-index-url", "--trusted-host", "--require-hashes")):
+            continue
+        elif "==" not in row or not re.search(r"--hash=sha256:[0-9a-fA-F]{64}\b", row) or "*" in row:
+            return False
+        else:
+            found = True
+    seen.remove(canonical)
+    return found
+
+
 def _eval_lockfile(recon: str, repo_root: str | None) -> dict[str, str]:
-    """Lockfile pinning: is a lockfile present and committed?
-
-    Ecosystem-parametric: covers npm/yarn/pnpm, Python (pip/pipenv/poetry/uv),
-    Ruby, Rust, Go, PHP, and Java (Gradle ``gradle.lockfile`` /
-    ``gradle/verification-metadata.xml``). Maven has no native lockfile, so a
-    Maven-only repo cannot satisfy this row via a lockfile (its integrity story
-    is graded under CI install integrity / Enforcer instead).
-    """
-    present = _has(
-        recon,
-        r"package-lock\.json",
-        r"yarn\.lock",
-        r"pnpm-lock\.yaml",
-        r"Pipfile\.lock",
-        r"poetry\.lock",
-        r"uv\.lock",
-        r"requirements\.lock",
-        r"Gemfile\.lock",
-        r"Cargo\.lock",
-        r"go\.sum",
-        r"composer\.lock",
-        r"gradle\.lockfile",
-        r"verification-metadata\.xml",
-    )
-    # Check repo root directly when available
-    if not present and repo_root:
-        lockfiles = [
-            "package-lock.json",
-            "yarn.lock",
-            "pnpm-lock.yaml",
-            "Pipfile.lock",
-            "poetry.lock",
-            "uv.lock",
-            "requirements.lock",
-            "Gemfile.lock",
-            "Cargo.lock",
-            "go.sum",
-            "composer.lock",
-            "gradle.lockfile",
-            "gradle/verification-metadata.xml",
-        ]
-        present = any(Path(repo_root, lf).exists() for lf in lockfiles)
-
-    if present:
-        return {"effectiveness": ADEQUATE, "reason": "Lockfile present and committed for detected ecosystem(s)."}
-
-    # pip's native integrity story is `pip-compile --generate-hashes`, which
-    # produces a fully hashed requirements.txt and no file named *.lock. Without
-    # this branch such a repo scored Missing and capped the whole domain at Weak.
-    hashed = [
-        p
-        for p in _iter_files(repo_root, lambda n: n.startswith("requirements") and n.endswith(".txt"))
-        if "--hash=sha256:" in _read(p)
-    ]
-    if hashed:
+    """Grade ecosystem lockfile presence, without claiming git or resolved integrity."""
+    covered: set[str] = set()
+    for ecosystem, names in _LOCKFILES.items():
+        if _iter_files(repo_root, lambda n: n in names) or (not repo_root and any(name in recon for name in names)):
+            covered.add(ecosystem)
+    if repo_root:
+        requirements = _iter_files(repo_root, lambda n: n.startswith("requirements") and n.endswith(".txt"))
+        if requirements and all(_hashed_requirements(p, Path(repo_root)) for p in requirements):
+            covered.add("pip")
+        detected = _detected_ecosystems(repo_root)
+    else:
+        detected = set()
+        if "--hash=sha256:" in recon:
+            return {
+                "effectiveness": PARTIAL,
+                "reason": "Hash pinning referenced; complete requirements coverage is unverified.",
+            }
+    missing = detected - covered
+    if covered and not missing:
         return {
             "effectiveness": ADEQUATE,
-            "reason": f"Hash-pinned requirements file ({hashed[0].name}) provides lockfile-equivalent integrity.",
+            "reason": "Lockfiles or fully hash-pinned requirements present for detected ecosystems.",
         }
-    if _has(recon, r"--hash=sha256:"):
+    if covered:
         return {
-            "effectiveness": ADEQUATE,
-            "reason": "Hash-pinned requirements detected — lockfile-equivalent integrity.",
+            "effectiveness": PARTIAL,
+            "reason": "Lockfile coverage missing for: " + ", ".join(sorted(missing)) + ".",
         }
-    return {"effectiveness": MISSING, "reason": "No lockfile found for any detected package ecosystem."}
+    return {"effectiveness": MISSING, "reason": "No lockfile or fully hash-pinned requirements found."}
 
 
 # Commands that install strictly from a lockfile / hash set.
@@ -250,8 +251,7 @@ _MUTABLE_INSTALL = (
     r"pnpm\s+add\b",
     # `pip install` is mutable unless the same command carries --require-hashes.
     # Checked per-line so a later flag on the same line still counts.
-    r"pip\d?\s+install\b(?![^\n]*--require-hashes)",
-    r"pip\d?\s+install\b(?![^\n]*-r\s+\S+\.lock)",
+    r"pip\d?\s+install\b(?![^\n]*--require-hashes)(?![^\n]*-r\s+\S+\.lock)",
 )
 
 # Installing a CLI tool globally is not part of the product's dependency graph.
@@ -313,6 +313,8 @@ def _eval_action_pinning(recon: str, repo_root: str | None) -> dict[str, str]:
             parts = []
             for pattern in ("*.yml", "*.yaml"):
                 for wf in wf_dir.glob(pattern):
+                    if not is_safe_to_read(wf, Path(repo_root)):
+                        continue
                     try:
                         parts.append(wf.read_text(encoding="utf-8", errors="replace"))
                     except OSError:
@@ -321,7 +323,7 @@ def _eval_action_pinning(recon: str, repo_root: str | None) -> dict[str, str]:
                 workflow_text = "\n".join(parts)
         for name in (".gitlab-ci.yml", ".gitlab-ci.yaml"):
             p = Path(repo_root) / name
-            if p.is_file():
+            if is_safe_to_read(p, Path(repo_root)):
                 try:
                     gitlab_text += "\n" + p.read_text(encoding="utf-8", errors="replace")
                 except OSError:
@@ -330,11 +332,17 @@ def _eval_action_pinning(recon: str, repo_root: str | None) -> dict[str, str]:
         gitlab_text = recon
 
     # --- GitHub Actions ---
-    gh_sha = bool(
-        re.search(r"uses:\s*\S+@[0-9a-f]{40}", workflow_text) or re.search(r"uses:\s*\S+@sha256:", workflow_text)
-    )
-    gh_mutable = bool(re.search(r"uses:\s*\S+@v\d", workflow_text) or re.search(r"uses:\s*\S+@latest", workflow_text))
-    has_gh = bool(re.search(r"uses:\s*\S+@", workflow_text))
+    references = [m.group(1).strip("\"'") for m in re.finditer(r"(?m)^\s*(?:-\s*)?uses:\s*([^\s#]+)", workflow_text)]
+    references = [ref for ref in references if not ref.startswith("./")]
+    pinned_refs = [
+        ref
+        for ref in references
+        if re.fullmatch(r"[0-9a-fA-F]{40}", ref.rpartition("@")[2])
+        or re.fullmatch(r"sha256:[0-9a-fA-F]{64}", ref.rpartition("@")[2])
+    ]
+    gh_sha = bool(pinned_refs)
+    gh_mutable = len(pinned_refs) < len(references)
+    has_gh = bool(references)
 
     # --- GitLab CI images ---
     gl_pinned = gl_mutable = False
@@ -376,28 +384,30 @@ def _eval_container_hygiene(recon: str, repo_root: str | None) -> dict[str, str]
     )
     texts = [_read(p) for p in dockerfiles] or [recon]
 
-    stages: list[str] = []
-    for text in texts:
-        for m in re.finditer(r"(?im)^\s*FROM\s+(?P<image>[^\s#]+)", text):
-            stages.append(m.group("image").strip().strip("\"'"))
-
-    if not stages:
-        return {"effectiveness": MISSING, "reason": "No Dockerfile detected."}
-
-    # A stage may reference an earlier stage by alias (FROM build AS runtime);
-    # those carry no registry provenance and are not graded.
-    aliases = {m.group(1).lower() for text in texts for m in re.finditer(r"(?im)\bAS\s+([A-Za-z0-9_.-]+)", text)}
-
     pinned = tagged = mutable = 0
-    for image in stages:
-        if image.lower() in aliases or image.lower() == "scratch":
-            continue
-        if re.search(r"@sha256:[0-9a-f]{64}", image):
-            pinned += 1
-        elif re.search(r":[0-9]", image.rsplit("/", 1)[-1]):
-            tagged += 1
-        else:  # :latest, or no tag at all
-            mutable += 1
+    for text in texts:
+        aliases: set[str] = set()
+        for match in re.finditer(r"(?im)^\s*FROM\s+([^\n]+)", text):
+            try:
+                tokens = shlex.split(match.group(1), comments=True)
+            except ValueError:
+                continue
+            while tokens and tokens[0].startswith("--"):
+                option = tokens.pop(0)
+                if "=" not in option and tokens:
+                    tokens.pop(0)
+            if not tokens:
+                continue
+            image = tokens[0]
+            if image.lower() not in aliases and image.lower() != "scratch":
+                if re.fullmatch(r"[^\s]+@sha256:[0-9a-fA-F]{64}", image):
+                    pinned += 1
+                elif re.search(r":[0-9]", image.rsplit("/", 1)[-1]):
+                    tagged += 1
+                else:
+                    mutable += 1
+            if len(tokens) >= 3 and tokens[1].lower() == "as":
+                aliases.add(tokens[2].lower())
 
     if not (pinned or tagged or mutable):
         return {"effectiveness": MISSING, "reason": "No Dockerfile detected."}
@@ -434,7 +444,12 @@ _PUBLIC_EXTRA_INDEXES = (
 def _is_internal_index(url: str) -> bool:
     """True when a package index URL looks internal rather than public."""
     url = url.strip("\"'")
-    if any(host in url for host in _PUBLIC_EXTRA_INDEXES):
+    try:
+        hostname = (urlsplit(url).hostname or "").lower()
+    except ValueError:
+        # A malformed URL does not establish a usable internal index.
+        return False
+    if any(hostname == host.split("/", 1)[0] for host in _PUBLIC_EXTRA_INDEXES):
         return False
     # Credentials in the URL, an RFC1918/localhost host, or a bare hostname with
     # no public TLD all indicate an internal index.
@@ -473,6 +488,27 @@ def _consumes_internal_packages(recon: str, repo_root: str | None) -> bool:
     )
 
 
+def _requirements_options(repo_root: str | None) -> str:
+    if not repo_root:
+        return ""
+    root = Path(repo_root)
+    pending = _iter_files(repo_root, lambda n: n.startswith("requirements") and n.endswith((".txt", ".in", ".lock")))
+    seen: set[Path] = set()
+    texts = []
+    while pending:
+        path = pending.pop()
+        if path.resolve() in seen or not is_safe_to_read(path, root):
+            continue
+        seen.add(path.resolve())
+        text = _read(path)
+        texts.append(text)
+        for line in text.splitlines():
+            include = re.match(r"\s*(?:-[rc]\s*|--(?:requirement|constraint)[= ]+)(\S+)", line)
+            if include:
+                pending.append(path.parent / include.group(1))
+    return "\n".join(texts)
+
+
 def _eval_dependency_confusion(recon: str, repo_root: str | None) -> dict[str, str]:
     """Dependency confusion: is internal-package resolution pinned to one source?
 
@@ -492,7 +528,11 @@ def _eval_dependency_confusion(recon: str, repo_root: str | None) -> dict[str, s
 
     # --- npm: .npmrc / .yarnrc.yml ---
     for name in (".npmrc", ".yarnrc.yml"):
-        text = _read(Path(repo_root) / name) if repo_root else ""
+        text = (
+            _read(Path(repo_root) / name)
+            if repo_root and is_safe_to_read(Path(repo_root) / name, Path(repo_root))
+            else ""
+        )
         if not text and repo_root:
             continue
         if not text:
@@ -513,8 +553,10 @@ def _eval_dependency_confusion(recon: str, repo_root: str | None) -> dict[str, s
     py_conf = "\n".join(
         _read(p) for p in _iter_files(repo_root, lambda n: n in {"pip.conf", "pip.ini", ".pypirc", "pyproject.toml"})
     )
-    haystack = _ci_text(recon, repo_root) + "\n" + py_conf
-    for m in re.finditer(r"(?:--extra-index-url|PIP_EXTRA_INDEX_URL\s*[=:]|extra-index-url\s*=)\s*(\S+)", haystack):
+    haystack = _ci_text(recon, repo_root) + "\n" + py_conf + "\n" + _requirements_options(repo_root)
+    for m in re.finditer(
+        r"(?:--extra-index-url[= ]*|PIP_EXTRA_INDEX_URL\s*[=:]|extra-index-url\s*=)\s*(\S+)", haystack
+    ):
         if _is_internal_index(m.group(1)):
             risk.append(
                 "a supplemental internal pip index is configured alongside PyPI, so an internal "
@@ -618,10 +660,12 @@ def _eval_fetch_and_execute(recon: str, repo_root: str | None) -> list[tuple[str
         if wf_dir.is_dir():
             for pattern in ("*.yml", "*.yaml"):
                 for wf in sorted(wf_dir.glob(pattern)):
+                    if not is_safe_to_read(wf, Path(repo_root)):
+                        continue
                     _scan(f".github/workflows/{wf.name}", _read(wf))
         for name in (".gitlab-ci.yml", ".gitlab-ci.yaml", "Jenkinsfile", "azure-pipelines.yml"):
             p = Path(repo_root) / name
-            if p.is_file():
+            if is_safe_to_read(p, Path(repo_root)):
                 _scan(name, _read(p))
         for df in _iter_files(repo_root, lambda n: n == "Dockerfile" or n.startswith("Dockerfile.")):
             rel = str(df.relative_to(Path(repo_root))).replace("\\", "/")
@@ -667,8 +711,8 @@ def _eval_postinstall(recon: str, repo_root: str | None) -> dict[str, str]:
                 # Record the matched line itself, so the content classifier below
                 # can tell a benign `cmdclass=BuildExt` from a shell-out that
                 # fetches over the network at install time.
-                hooks.append((rel, "setup.py", line.strip()))
-                break
+                if not line.lstrip().startswith("#"):
+                    hooks.append((rel, "setup.py", line.strip()))
 
     # --ignore-scripts, read from the repo rather than trusted to recon prose.
     npmrc = _read(Path(repo_root) / ".npmrc") if repo_root else ""
@@ -763,17 +807,20 @@ def _eval_dep_management(recon: str, repo_root: str | None) -> dict[str, str]:
     renovate_text = ""
     dependabot_text = ""
     if repo_root:
-        for rel in ("renovate.json", "renovate.json5", ".renovaterc", ".renovaterc.json", ".github/renovate.json"):
-            renovate_text += _read(Path(repo_root) / rel)
         for rel in (".github/dependabot.yml", ".github/dependabot.yaml"):
-            dependabot_text += _read(Path(repo_root) / rel)
+            path = Path(repo_root) / rel
+            if is_safe_to_read(path, Path(repo_root)):
+                dependabot_text += _read(path)
 
-    renovate = bool(renovate_text.strip())
+    configs = renovate_configs(Path(repo_root)) if repo_root else []
+    active_configs = [cfg for _, cfg in configs if cfg.get("enabled") is not False]
+    renovate_text = json.dumps(active_configs)
+    renovate = bool(active_configs)
     dependabot = bool(dependabot_text.strip())
     if not renovate and not dependabot:
         # Fall back to recon prose only when the repo itself is unavailable.
-        renovate = _has(recon, r"renovate", r"renovatebot")
-        dependabot = _has(recon, r"dependabot")
+        renovate = not repo_root and _has(recon, r"renovate", r"renovatebot")
+        dependabot = not repo_root and _has(recon, r"dependabot")
         if renovate or dependabot:
             tool = "Renovate" if renovate else "Dependabot"
             return {
@@ -789,7 +836,29 @@ def _eval_dep_management(recon: str, repo_root: str | None) -> dict[str, str]:
         configured = {m.group(1) for m in re.finditer(r"package-ecosystem\s*:\s*[\"']?([\w-]+)", dependabot_text)}
     else:
         # Renovate auto-detects every ecosystem unless explicitly restricted.
-        configured = set() if re.search(r"\"enabledManagers\"", renovate_text) else detected
+        manager_ecosystems = {
+            "npm": "npm",
+            "pip_requirements": "pip",
+            "pip_setup": "pip",
+            "pep621": "pip",
+            "poetry": "pip",
+            "pipenv": "pip",
+            "gomod": "gomod",
+            "bundler": "bundler",
+            "cargo": "cargo",
+            "composer": "composer",
+            "maven": "maven",
+            "gradle": "gradle",
+        }
+        configured: set[str] = set()
+        for cfg in active_configs:
+            managers = cfg.get("enabledManagers")
+            if managers is None or managers == []:
+                configured.update(detected)
+            elif isinstance(managers, list):
+                configured.update(
+                    manager_ecosystems[m] for m in managers if isinstance(m, str) and m in manager_ecosystems
+                )
 
     uncovered = detected - configured
     # Install cooldown (minimumReleaseAge / minimumReleaseAgeGate) is the control
@@ -852,14 +921,22 @@ def _eval_cve_scanning(recon: str, repo_root: str | None = None) -> dict[str, st
       Adequate. This is the direction that produces a falsely reassuring report,
       so a detected suppressor downgrades regardless of the flags present.
     """
-    text = _ci_text(recon, repo_root)
+    steps = _ci_steps(recon, repo_root)
+    text = "\n".join(command for command, _ in steps)
 
     advisory = _has(text, *_SCANNER_ANY)
     if not advisory:
         return {"effectiveness": MISSING, "reason": "No SCA/CVE scanning tool detected in CI or manifests."}
 
     # Suppressors, checked on the scanner's own line (or the step around it).
-    suppressed = None
+    suppressed = next(
+        (
+            "the scanning job or step permits failure"
+            for command, advisory in steps
+            if advisory and _has(command, *_SCANNER_ANY)
+        ),
+        None,
+    )
     for line in text.splitlines():
         if _has(line, *_SCANNER_ANY) and _has(
             line, r"\|\|\s*true", r"\|\|\s*:", r"--exit-code[= ]0", r"\|\|\s*exit\s+0"

@@ -42,6 +42,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from _path_guard import is_safe_to_read
+
 try:
     import yaml  # noqa: F401  (kept for parity with sibling scripts; not used here yet)
 except ImportError:  # pragma: no cover
@@ -121,7 +123,8 @@ def _walk_sources(repo_root: Path) -> Iterable[Path]:
             # Central per-file byte cap: skip oversize blobs (not real source).
             if _scan_is_oversize is not None and _scan_is_oversize(p):
                 continue
-            yield p
+            if is_safe_to_read(p, repo_root):
+                yield p
 
 
 def _read_lines(path: Path) -> list[str]:

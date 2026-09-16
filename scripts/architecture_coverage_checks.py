@@ -41,6 +41,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from _path_guard import is_safe_to_read
+
 try:
     import yaml
 except ImportError:  # pragma: no cover
@@ -175,7 +177,8 @@ def _walk_sources(repo_root: Path) -> Iterable[Path]:
             p = Path(dirpath) / name
             if p.suffix.lower() not in _SOURCE_EXTS:
                 continue
-            yield p
+            if is_safe_to_read(p, repo_root):
+                yield p
 
 
 def _read_lines(path: Path) -> list[str]:

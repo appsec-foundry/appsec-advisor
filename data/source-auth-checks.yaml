@@ -420,7 +420,7 @@ checks:
     counter_scope: line
     counter_window: 0
     counter_patterns:
-      - 'isAuthorized|isAuthenticated|requireAuth|denyAll|requireRole|ensureAdmin|authMiddleware|passport\.authenticate|verifyToken|jwtAuth|verifyJWT|csrf|protect\s*\(|requireUser'
+      - 'isAuthorized|isAuthenticated|requireAuth|denyAll|requireRole|ensureAdmin|authMiddleware|passport\.authenticate|verifyToken|jwtAuth|verifyJWT|protect\s*\(|requireUser'
     severity_if_violated: High
     cwe: CWE-862
     finding_type: FT-042

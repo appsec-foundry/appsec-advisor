@@ -39,12 +39,15 @@ WHAT THE NUMBER IS
 WHAT IT IS NOT
   No asset tier, no exposure, no abuse chain. Severities are catalog
   defaults without the caps and elevations the report applies. Comparable
-  across commits of one repository, not between repositories.
+  across commits of one repository only with matching scoring versions,
+  catalog fingerprints and applicable coverage; not between repositories.
+  Structured output includes these in comparability and reports each
+  required scanner in scanner_status. Unscored findings remain visible.
 
 EXIT CODES
   0  score computed
   2  undetermined — too few checks applied to this repository
-  1  error, including an invalid URL or failed clone
+  1  incomplete scan (no headline score), invalid URL, or other error
 ```
 
 ## Run
@@ -58,6 +61,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/security_score.py" [--repo <path|https-gi
 Use exactly `Calculating the repository's security score` as the tool call's description. It is the only thing the user sees for the 15 to 30 seconds the scan takes, so it names the work, not the mechanism: not "Running the security score script", not "Executing security_score.py".
 
 Do not announce the run in prose beside it. "Running the security score script now", "Let me calculate the score" and their kin are forbidden even though they are true — the description line already says it. Just run it.
+
+A failed, missing or invalid required scanner result produces `incomplete` with a null score. Findings and warnings remain visible for both `incomplete` and `undetermined`. JSON and YAML conform to `schemas/security-score.schema.yaml`.
 
 The script writes its scanner sidecars to a temporary directory and removes them, so the target repository is untouched.
 

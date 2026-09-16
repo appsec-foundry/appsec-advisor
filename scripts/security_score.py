@@ -32,7 +32,7 @@ What it deliberately does NOT do
 There is no asset tier, no exposure, and no abuse chain here, so the severities
 are catalog defaults and carry none of the caps and elevations the report
 applies. Two repositories are therefore not comparable through this number; the
-same repository across commits is.
+same repository across commits requires matching scoring, catalog and coverage fingerprints.
 
 Below ``MIN_APPLICABLE_RULES`` applicable rules the verdict is ``undetermined``
 instead of a value. The rule catalog is language-bound (JS/TS, Python,
@@ -42,7 +42,7 @@ score high purely for the absence of evidence.
 Exit codes:
   0  score computed
   2  undetermined (too few applicable rules)
-  1  error
+  1  error or incomplete execution
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ import argparse
 import collections
 import contextlib
 import functools
+import hashlib
 import json
 import math
 import os
@@ -61,6 +62,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit, urlunsplit
 
+import jsonschema
 import yaml
 
 HERE = Path(__file__).resolve().parent
@@ -125,7 +127,7 @@ _INDICATORS_YAML = HERE.parent / "data" / "security-score-indicators.yaml"
 _RULES_YAML = HERE.parent / "data" / "architecture-coverage-rules.yaml"
 
 # Per-scanner wall-clock ceiling. A pathological repository must not hang the
-# probe; a scanner that times out degrades the score to a warning, not a crash.
+# probe; a scanner that times out withholds the headline score.
 SCANNER_TIMEOUT_S = 600
 CLONE_TIMEOUT_S = 60
 
@@ -296,48 +298,55 @@ def _run(argv: list[str], warnings: list[str], label: str) -> bool:
     return True
 
 
-def _load(path: Path, warnings: list[str], label: str) -> dict[str, Any]:
+SCANNER_SCHEMAS = {
+    "route-inventory": "route-inventory.schema.json",
+    "architecture-coverage": "architecture-coverage.schema.json",
+    "config-iac": "config-scan-findings.schema.yaml",
+    "source-auth": "source-auth-findings.schema.yaml",
+}
+
+
+def _load(path: Path, warnings: list[str], label: str) -> tuple[dict[str, Any], str]:
+    """Validate successful producer output; error stubs are never clean scans."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        warnings.append(f"{label}: missing output")
+        return {}, "missing"
     except (OSError, ValueError) as exc:
-        warnings.append(f"{label}: unreadable output, excluded ({exc})")
-        return {}
-    return data if isinstance(data, dict) else {}
+        warnings.append(f"{label}: unreadable output ({exc})")
+        return {}, "invalid"
+    try:
+        schema = yaml.safe_load((HERE.parent / "schemas" / SCANNER_SCHEMAS[label]).read_text(encoding="utf-8"))
+        jsonschema.Draft202012Validator(schema).validate(data)
+        if "parse_error" in data:
+            warnings.append(f"{label}: producer reported an error")
+            return {}, "failed"
+    except jsonschema.ValidationError as exc:
+        warnings.append(f"{label}: invalid output at {list(exc.absolute_path)}")
+        return {}, "invalid"
+    return data, "complete"
 
 
-def collect(repo_root: Path, work_dir: Path) -> tuple[list[dict], list[dict], list[str]]:
-    """Run the deterministic scanners and return (rules, findings, warnings).
-
-    Sidecars are written to ``work_dir`` — outside the target repository, so a
-    probe leaves no artifact behind that a later run would have to exclude.
-    """
+def collect(repo_root: Path, work_dir: Path) -> tuple[list[dict], list[dict], list[str], dict[str, str]]:
+    """Run and validate every required producer outside the target repository."""
     warnings: list[str] = []
-    repo = str(repo_root)
-    out = str(work_dir)
-
-    # Route inventory first: three ARCH rules stay not_applicable without it.
-    _run([str(HERE / "route_inventory.py"), "--repo-root", repo, "--output-dir", out], warnings, "route-inventory")
-
-    rules: list[dict] = []
-    if _run(
-        [str(HERE / "architecture_coverage_checks.py"), "--repo-root", repo, "--output-dir", out],
-        warnings,
-        "architecture-coverage",
-    ):
-        data = _load(work_dir / ".architecture-coverage.json", warnings, "architecture-coverage")
-        rules = [r for r in data.get("rules_evaluated") or [] if isinstance(r, dict)]
-
-    findings: list[dict] = []
+    statuses: dict[str, str] = {}
+    repo, out = str(repo_root), str(work_dir)
     scanners = (
         (
+            "route-inventory",
+            [str(HERE / "route_inventory.py"), "--repo-root", repo, "--output-dir", out],
+            ".route-inventory.json",
+        ),
+        (
+            "architecture-coverage",
+            [str(HERE / "architecture_coverage_checks.py"), "--repo-root", repo, "--output-dir", out],
+            ".architecture-coverage.json",
+        ),
+        (
             "config-iac",
-            [
-                str(HERE / "config_iac_scanner.py"),
-                "--repo-root",
-                repo,
-                "--output",
-                str(work_dir / ".config-scan.json"),
-            ],
+            [str(HERE / "config_iac_scanner.py"), "--repo-root", repo, "--output", str(work_dir / ".config-scan.json")],
             ".config-scan.json",
         ),
         (
@@ -346,15 +355,20 @@ def collect(repo_root: Path, work_dir: Path) -> tuple[list[dict], list[dict], li
             ".source-auth-findings.json",
         ),
     )
+    rules: list[dict] = []
+    findings: list[dict] = []
     for label, argv, sidecar in scanners:
         if not _run(argv, warnings, label):
+            statuses[label] = "failed"
             continue
-        data = _load(work_dir / sidecar, warnings, label)
-        for finding in data.get("findings") or []:
-            if isinstance(finding, dict):
-                findings.append({**finding, "_scanner": label})
-
-    return rules, findings, warnings
+        data, statuses[label] = _load(work_dir / sidecar, warnings, label)
+        if statuses[label] != "complete":
+            continue
+        if label == "architecture-coverage":
+            rules = data["rules_evaluated"]
+        elif label in {"config-iac", "source-auth"}:
+            findings.extend({**finding, "_scanner": label} for finding in data["findings"])
+    return rules, findings, warnings, statuses
 
 
 def _drop_assessment_artifacts(findings: list[dict], repo_root: Path) -> tuple[list[dict], int]:
@@ -382,17 +396,10 @@ def _contaminated_rules(rules: list[dict], repo_root: Path) -> list[str]:
 
 
 def finding_title(finding: dict) -> str:
-    """The shortest phrasing of a finding that still reads correctly.
-
-    A config/IaC finding carries the check *name*, which states the desired
-    state ("package-lock.json present and committed") and would read as a pass.
-    Its recommended mitigation is the authored phrasing that reads as an open
-    item. A source finding states the weakness class before its first dash.
-    """
-    if finding.get("_scanner") == "config-iac":
-        title = str(finding.get("recommended_mitigation_title") or finding.get("title") or "")
-    else:
-        title = str(finding.get("title") or "").split(" — ")[0]
+    """Prefer the producer's violation title; retain a legacy mitigation fallback."""
+    title = str(finding.get("title") or finding.get("recommended_mitigation_title") or "")
+    if finding.get("_scanner") != "config-iac":
+        title = title.split(" — ")[0]
     return title[:49] + "…" if len(title) > 50 else title
 
 
@@ -526,6 +533,27 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
         "categories": [],
     }
 
+    catalogs = sorted((HERE.parent / "data").glob("*-checks.yaml"))
+    catalogs += [_INDICATORS_YAML, _RULES_YAML, HERE.parent / "data" / "weakness-classes.yaml"]
+    digest = hashlib.sha256()
+    for path in catalogs:
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
+    applicable_ids = sorted(str(rule.get("rule_id", "")) for rule in applicable)
+    result["comparability"] = {
+        "scoring_version": 2,
+        "catalog_fingerprint": digest.hexdigest(),
+        "applicable_rules": applicable_ids,
+        "coverage_fingerprint": hashlib.sha256(json.dumps(applicable_ids).encode()).hexdigest(),
+    }
+    result["excluded_findings"] = dict(
+        collections.Counter(
+            str(f.get("severity", "unknown")).lower()
+            for f in findings
+            if str(f.get("severity", "")).lower() not in SEVERITY_WEIGHT
+        )
+    )
+    result["unscored_findings"] = {}
     if len(applicable) < MIN_APPLICABLE_RULES:
         result["verdict"] = "undetermined"
         result["score"] = None
@@ -533,7 +561,8 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
             f"only {len(applicable)} of {len(rules)} checks applied to this repository "
             f"({MIN_APPLICABLE_RULES} required) — the rule catalog does not cover it"
         )
-        return result
+    else:
+        result["verdict"] = "scored"
 
     order, _, _ = indicators()
     cwe_by_rule = rule_cwes()
@@ -576,8 +605,14 @@ def compute(rules: list[dict], findings: list[dict]) -> dict[str, Any]:
         )
 
     categories.sort(key=lambda row: (row["score"] is None, row["score"], row["label"]))
-    result["verdict"] = "scored"
     result["categories"] = categories
+    unscored = collections.Counter()
+    for row in categories:
+        if row["score"] is None:
+            unscored.update(row["severities"])
+    result["unscored_findings"] = dict(unscored)
+    if result["verdict"] == "undetermined":
+        return result
 
     # The weaker half decides. Averaging every category lets a well-covered area
     # pay for a broken one, which is not how a repository is attacked.
@@ -643,15 +678,29 @@ def render_text(result: dict[str, Any]) -> str:
     counts = result["findings"]
     scan = f"{result['checks_applicable']} of {result['checks_total']} checks applied · no exposure context"
 
-    if result["verdict"] == "undetermined":
-        return f"{_UNSCORED_DOT} Security Score  undetermined — {CAVEAT}\n{result['reason']}"
-
-    lines = [f"{_dot(result['score'])} Security Score  {result['score']} / 100 — {CAVEAT}", scan, ""]
+    headline = f"{result['score']} / 100" if result["verdict"] == "scored" else result["verdict"]
+    lines = [f"{_dot(result['score'])} Security Score  {headline} — {CAVEAT}", scan]
+    if result.get("reason"):
+        lines.append(result["reason"])
+    for key, label in (
+        ("unscored_findings", "Findings without a scored baseline"),
+        ("excluded_findings", "Findings excluded by severity policy"),
+    ):
+        if result.get(key):
+            detail = ", ".join(f"{count} {severity}" for severity, count in sorted(result[key].items()))
+            lines.append(f"{label}: {detail}")
+    lines.append("")
 
     width = max((len(row["label"]) for row in result["categories"]), default=0)
     found_width = max((len(_found(row)) for row in result["categories"]), default=0)
     for row in result["categories"]:
-        score = "no check" if row["score"] is None else f"{row['score']:>3}/100"
+        score = (
+            "unscored"
+            if result["verdict"] != "scored"
+            else "no check"
+            if row["score"] is None
+            else f"{row['score']:>3}/100"
+        )
         lines.append(f"  {score:>8}  {row['label']:<{width}}  {_found(row):>{found_width}} · {_signals(row)}")
 
     lines += [
@@ -708,8 +757,16 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             display_repo = str(repo_root)
 
+        escaping = next(iter_escaping_symlinks(repo_root), None)
+        if escaping is not None:
+            print(
+                f"error: repository contains a symlink outside the repository: {str(escaping.path.relative_to(repo_root))!r}",
+                file=sys.stderr,
+            )
+            return 1
+
         work_dir = Path(cleanup.enter_context(tempfile.TemporaryDirectory(prefix="appsec-score-")))
-        rules, findings, warnings = collect(repo_root, work_dir)
+        rules, findings, warnings, statuses = collect(repo_root, work_dir)
 
         findings, dropped = _drop_assessment_artifacts(findings, repo_root)
         if dropped:
@@ -719,6 +776,11 @@ def main(argv: list[str] | None = None) -> int:
             warnings.append("judged on a previous assessment's evidence: " + ", ".join(contaminated))
 
         result = compute(rules, findings)
+        result["scanner_status"] = statuses
+        if any(statuses.get(label) != "complete" for label in SCANNER_SCHEMAS):
+            result.update(
+                verdict="incomplete", score=None, reason="required scanner execution or output validation is incomplete"
+            )
         result["top_findings"] = top_findings(findings)
         result["repo"] = display_repo
         result["warnings"] = warnings
@@ -730,7 +792,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(render_text(result))
 
-        return 2 if result["verdict"] == "undetermined" else 0
+        return {"scored": 0, "undetermined": 2, "incomplete": 1}[result["verdict"]]
 
 
 if __name__ == "__main__":

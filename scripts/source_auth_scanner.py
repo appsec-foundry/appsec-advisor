@@ -54,6 +54,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
+from _path_guard import is_safe_to_read
+from _source_lex import call_end, code_only, rejecting_check, without_comments
+
 try:
     import yaml  # type: ignore[import-untyped]
 except ImportError:
@@ -195,7 +198,7 @@ def load_checks(checks_path: Path) -> list[Check]:
                     exclude_file_patterns=list(entry.get("exclude_file_patterns") or []),
                     pattern=_compile_pattern(entry["pattern"], name="pattern", check_id=cid),
                     counter_scope=scope,
-                    counter_window=int(entry.get("counter_window") or 5),
+                    counter_window=int(entry.get("counter_window", 5)),
                     counter_patterns=[
                         _compile_pattern(p, name="counter_patterns", check_id=cid)
                         for p in (entry.get("counter_patterns") or [])
@@ -224,7 +227,7 @@ def load_checks(checks_path: Path) -> list[Check]:
 
 def _is_universally_excluded(rel_path: str) -> bool:
     for excl in _UNIVERSAL_EXCLUDES:
-        if excl in rel_path or rel_path.startswith(excl.rstrip("/")):
+        if excl.rstrip("/") in rel_path.replace("\\", "/").split("/"):
             return True
     return False
 
@@ -411,6 +414,11 @@ def _counter_match(
         scope_lines = lines[match_line_idx:end]
 
     blob = "\n".join(scope_lines)
+    if check.id == "AUTHZ-103" and re.search(r"['\"]verify_signature['\"]\s*:\s*False\b", blob):
+        return False
+    if check.id == "AUTHN-001":
+        # A factor name in a log/string is not a verification operation.
+        blob = code_only(blob)
     for cp in check.counter_patterns:
         if cp.search(blob):
             return True
@@ -655,10 +663,16 @@ def _loop_target(line: str) -> tuple[str, str] | None:
 
 
 def _refs_in(text: str, refs: set[str]) -> set[str]:
+    return {ref for ref in refs if re.search(rf"(?<![A-Za-z0-9_$]){re.escape(ref)}(?![A-Za-z0-9_$])", text)}
+
+
+def _value_refs(text: str, refs: set[str]) -> set[str]:
     hits: set[str] = set()
     for ref in refs:
-        if re.search(rf"(?<![A-Za-z0-9_$]){re.escape(ref)}(?![A-Za-z0-9_$])", text):
-            hits.add(ref)
+        for match in re.finditer(
+            rf"(?<![A-Za-z0-9_$]){re.escape(ref)}(?![A-Za-z0-9_$])(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*", text
+        ):
+            hits.add(match.group(0))
     return hits
 
 
@@ -793,7 +807,9 @@ def _call_match_consumes_direct_output(statement: str, call_match: re.Match[str]
 
 
 def _guard_wraps_direct_output(scope: str, guard_re: re.Pattern[str]) -> bool:
-    return any(_call_match_consumes_direct_output(scope, match) for match in guard_re.finditer(scope))
+    return any(
+        _call_match_consumes_direct_output(scope, match) for match in guard_re.finditer(scope)
+    ) and not _direct_llm_call(_without_guarded_calls(scope, guard_re), has_surface=True)
 
 
 def _forward_statement(lines: list[str], idx: int, limit: int = 6) -> str:
@@ -831,11 +847,22 @@ def _direct_llm_call(text: str, has_surface: bool) -> bool:
     return bool(_STRONG_LLM_CALL_RE.search(text) or (has_surface and _GENERIC_LLM_CALL_RE.search(text)))
 
 
+def _without_guarded_calls(text: str, guard_re: re.Pattern[str]) -> str:
+    protected = list(text)
+    for match in guard_re.finditer(text):
+        opening = text.find("(", match.start())
+        if opening < 0:
+            continue
+        for offset in range(match.start(), call_end(text, opening)):
+            if protected[offset] != "\n":
+                protected[offset] = " "
+    return "".join(protected)
+
+
 def _html_sanitizes_refs(text: str, refs: set[str]) -> bool:
-    for sanitizer in _HTML_SANITIZER_RE.finditer(text):
-        if _refs_in(_call_first_argument(text, sanitizer), refs):
-            return True
-    return False
+    return bool(_HTML_SANITIZER_RE.search(text)) and not _refs_in(
+        _without_guarded_calls(text, _HTML_SANITIZER_RE), refs
+    )
 
 
 def _definition_scope(lines: list[str], start: int, limit: int = 24) -> str:
@@ -935,6 +962,8 @@ def _structured_validation_present(lines: list[str], idx: int, refs: set[str], p
         range_hit = bool(_MANUAL_RANGE_RE.search(line))
         allowlist_hit = bool(_MANUAL_ALLOWLIST_RE.search(line))
         if type_hit or range_hit or allowlist_hit:
+            if not rejecting_check(_forward_statement(lines, pos)):
+                return False
             manual_type = manual_type or type_hit
             manual_range = manual_range or range_hit
             manual_allowlist = manual_allowlist or allowlist_hit
@@ -947,7 +976,30 @@ def _structured_validation_present(lines: list[str], idx: int, refs: set[str], p
 
 
 def _guard_consumes_refs(scope: str, guard_re: re.Pattern[str], refs: set[str]) -> bool:
-    return any(guard_re.search(line) and _refs_in(line, refs) for line in scope.splitlines())
+    protected: set[str] = set()
+    for line in scope.splitlines():
+        if re.search(r"\b(?:if|unless)\b", line) and not rejecting_check(line):
+            continue
+        for match in guard_re.finditer(line):
+            # A string naming a guard is not an invocation.
+            if not code_only(line)[match.start() : match.start() + 1].strip():
+                continue
+            opening = line.find("(", match.start())
+            if opening < 0:
+                continue
+            if re.search(r"includes|\.has|startsWith|commonpath", match.group(0)) and not rejecting_check(line):
+                continue
+            arguments = line[opening + 1 : call_end(line, opening) - 1]
+            protected.update(_refs_in(arguments, refs))
+            assignment = _assignment(line)
+            if assignment:
+                targets, rhs = assignment
+                guard = guard_re.match(rhs.strip())
+                if guard:
+                    call_open = rhs.find("(")
+                    if call_open >= 0 and not rhs[call_end(rhs, call_open) :].strip(" ;"):
+                        protected.update(set(targets) & refs)
+    return bool(refs) and refs.issubset(protected)
 
 
 def _authz_guard_present(scope: str, selected_argument: str, refs: set[str], direct_output: bool) -> bool:
@@ -973,7 +1025,7 @@ def _selected_sink_refs(statement: str, sink_match: re.Match[str], refs: set[str
         selector = matched.split("[", 1)[1].rsplit("]", 1)[0]
     else:
         selector = _call_first_argument(statement, sink_match)
-    return _refs_in(selector, refs)
+    return _value_refs(selector, refs)
 
 
 def _python_fixed_argv(statement: str, process_match: re.Match[str], first_arg: str) -> bool:
@@ -1012,8 +1064,17 @@ def _resource_sink_argument(statement: str, sink_match: re.Match[str]) -> str:
 
 
 def _guard_scope_before(lines: list[str], idx: int, column: int, before: int = 14) -> str:
-    prior = lines[max(0, idx - before) : idx]
-    return "\n".join([*prior, lines[idx][:column]])
+    prior: list[str] = []
+    depth = 0
+    indent = len(lines[idx]) - len(lines[idx].lstrip())
+    for line in reversed(lines[max(0, idx - before) : idx]):
+        if re.search(r"\b(?:function|def|class)\b|=>\s*{", line):
+            break
+        braces = code_only(line)
+        depth += braces.count("}") - braces.count("{")
+        if depth <= 0 and len(line) - len(line.lstrip()) <= indent:
+            prior.append(line)
+    return "\n".join([*reversed(prior), lines[idx][:column]])
 
 
 def _structured_output_consumed(lines: list[str], idx: int, targets: list[str]) -> bool:
@@ -1068,7 +1129,7 @@ def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
     if not text or not _LLM_SURFACE_RE.search(text):
         return []
 
-    lines = text.splitlines()
+    lines = without_comments(text, python=file_abs.suffix == ".py").splitlines()
     tainted: set[str] = set()
     html_sanitized: set[str] = set()
     findings: list[Finding] = []
@@ -1080,7 +1141,31 @@ def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
             emitted.add(key)
             findings.append(finding)
 
+    function_frames: list[tuple[int, int, set[str], set[str]]] = []
+    brace_depth = 0
     for idx, line in enumerate(lines):
+        indent = len(line) - len(line.lstrip())
+        while function_frames and (
+            (file_abs.suffix == ".py" and line.strip() and indent <= function_frames[-1][1])
+            or (file_abs.suffix != ".py" and brace_depth <= function_frames[-1][0])
+        ):
+            _, _, tainted, html_sanitized = function_frames.pop()
+        definition = re.search(
+            r"(?:\bfunction\s*\w*|\bdef\s+\w+)\s*\(([^)]*)\)|(?:\([^)]*\)|[A-Za-z_$]\w*)\s*=>\s*{", line
+        )
+        if definition:
+            function_frames.append((brace_depth, indent, set(tainted), set(html_sanitized)))
+            params = (
+                definition.group(1)
+                if definition.group(1) is not None
+                else definition.group(0).split("=>")[0].strip("() ")
+            )
+            for param in (params or "").split(","):
+                name = param.strip().split(":")[0].split("=")[0].strip()
+                tainted = {ref for ref in tainted if ref != name and not ref.startswith(name + ".")}
+                html_sanitized.discard(name)
+        braces = code_only(line)
+        brace_depth += braces.count("{") - braces.count("}")
         statement = _forward_statement(lines, idx)
         assignment = _assignment(line)
         if assignment:
@@ -1241,7 +1326,7 @@ def _scan_llm_output_file(file_abs: Path, file_rel: str) -> list[Finding]:
             if not sink_match:
                 continue
             resource_argument = _resource_sink_argument(statement, sink_match)
-            resource_refs = _refs_in(resource_argument, tainted)
+            resource_refs = _value_refs(resource_argument, tainted)
             direct_resource = _direct_llm_call(resource_argument, has_surface=True)
             if not resource_refs and not direct_resource:
                 continue
@@ -1493,6 +1578,41 @@ def _cut_condition(line: str) -> str:
     return line.strip()[:240]
 
 
+def _strong_password_rejection(lines: list[str], idx: int, matched: str) -> bool:
+    identifier = re.search(r"(?:len\(\s*)?([A-Za-z_]\w*)", matched)
+    if not identifier:
+        return False
+    name = re.escape(identifier.group(1))
+    pattern = re.compile(rf"(?:\b{name}\.length(?:\(\))?|len\(\s*{name}\s*\))\s*(<|<=)\s*(\d+)\b")
+    depth = 0
+    base_indent = len(lines[idx]) - len(lines[idx].lstrip())
+    for pos in range(idx, min(len(lines), idx + 12)):
+        line = lines[pos]
+        indent = len(line) - len(line.lstrip())
+        if pos > idx and (re.search(r"\b(?:function|def|class)\b", line) or (line.strip() and indent < base_indent)):
+            break
+        syntax = code_only(line)
+        if pos > idx and depth == 0 and syntax.lstrip().startswith("}"):
+            break
+        comparison = pattern.search(line)
+        statement = _forward_statement(lines, pos)
+        if line.rstrip().endswith(":"):
+            block = []
+            for following in lines[pos + 1 : pos + 5]:
+                if following.strip() and len(following) - len(following.lstrip()) <= indent:
+                    break
+                block.append(following)
+            statement += "\n" + "\n".join(block)
+        if comparison and depth == 0 and rejecting_check(statement):
+            minimum = int(comparison.group(2)) + (comparison.group(1) == "<=")
+            if minimum >= 8:
+                return True
+        elif pos > idx and (re.search(rf"\b{name}\b", line) or re.search(r"\b(?:if|else)\b", syntax)):
+            break
+        depth += syntax.count("{") - syntax.count("}")
+    return False
+
+
 def scan_file(
     file_abs: Path,
     file_rel: str,
@@ -1507,6 +1627,8 @@ def scan_file(
 
     if not text:
         return []
+    evidence_lines = text.splitlines()
+    text = without_comments(text, python=file_abs.suffix == ".py")
     lines = text.splitlines()
 
     findings: list[Finding] = []
@@ -1519,7 +1641,27 @@ def scan_file(
         for m in check.pattern.finditer(text):
             # Resolve line number: count newlines before the match start.
             line_idx = text.count("\n", 0, m.start())
-            if _counter_match(lines, line_idx, check):
+            counter_lines = lines
+            counter_idx = line_idx
+            if check.id in {"AUTHZ-001", "AUTHZ-002"}:
+                # Owner/session text must belong to the affected query or to
+                # a rejecting ownership guard before the result is returned.
+                statement = _forward_statement(lines, line_idx)
+                opening = statement.find("(")
+                query = statement[: call_end(statement, opening)] if opening >= 0 else statement
+                tail = []
+                for following in lines[line_idx + len(query.splitlines()) : line_idx + check.counter_window + 1]:
+                    if re.search(r"\b(?:function|def|class)\b|^\s*}", following):
+                        break
+                    if re.search(r"\b(?:requireOwnership|ensureOwner|assertOwnership|verifyOwner)\s*\(", following):
+                        tail.append(following)
+                    elif following.strip():
+                        break
+                counter_lines = (query + "\n" + "\n".join(tail)).splitlines()
+                counter_idx = 0
+            if _counter_match(counter_lines, counter_idx, check):
+                continue
+            if check.id == "AUTHN-002" and _strong_password_rejection(lines, line_idx, m.group(0)):
                 continue
             if not _required_context_matches(lines, line_idx, check):
                 continue
@@ -1531,7 +1673,7 @@ def scan_file(
                     source_type=_source_type_for(file_rel),
                     file=file_rel,
                     line=line_idx + 1,
-                    evidence_snippet=_evidence_snippet(lines, line_idx),
+                    evidence_snippet=_evidence_snippet(evidence_lines, line_idx),
                     title=_title_with_location(check, file_rel, line_idx + 1),
                     scenario=check.rationale,
                     severity=check.severity_if_violated,
@@ -1550,7 +1692,7 @@ def scan_repo(repo_root: Path, checks: list[Check], *, catalog_only: bool = Fals
             rel = str(path.relative_to(repo_root))
         except ValueError:
             continue
-        if _is_universally_excluded(rel):
+        if _is_universally_excluded(rel) or not is_safe_to_read(path, repo_root):
             continue
         catalog_findings = scan_file(path, rel, checks)
         llm_findings = [] if catalog_only else _scan_llm_output_file(path, rel)
