@@ -30,6 +30,8 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import base64
+import html
 import re
 import sys
 import tempfile
@@ -73,18 +75,48 @@ except ImportError:
 DEFAULT_INPUT_REL = "docs/security/threat-model.md"
 
 
-def _expand_architecture_detail(md_text: str) -> str:
+def _expand_architecture_detail(md_text: str, base_dir: Path | None = None) -> str:
     """Keep the generated detail accessible inside the standalone HTML export.
 
     A normal hyperlink is not embedded by pandoc. Convert only the generated
-    sibling asset (or its embedded form) into a collapsed image section; the
-    existing image staging path then includes it without introducing new I/O.
+    sibling asset (or its embedded form) into collapsed image sections. Paged
+    SVGs are read only from contained siblings and retain inert image semantics.
     """
+
+    def expand(match):
+        ref = match[1]
+        svg = ""
+        try:
+            if ref.startswith("data:"):
+                svg = base64.b64decode(ref.split(",", 1)[1], validate=True).decode("utf-8")
+            elif base_dir is not None:
+                source = (base_dir / ref).resolve()
+                if source.parent == base_dir.resolve():
+                    svg = source.read_text(encoding="utf-8")
+            if 'data-paged-detail="true"' in svg:
+                from figure1_detail import image_views
+
+                pages = image_views(svg)
+                if pages:
+                    parts = ["<details>\n<summary>Detailed architecture diagram</summary>\n"]
+                    for title, page in pages:
+                        encoded = base64.b64encode(page.encode()).decode("ascii")
+                        parts.append(
+                            f"<details>\n<summary>{html.escape(title)}</summary>\n\n"
+                            f"![Architecture detail](data:image/svg+xml;base64,{encoded})\n\n</details>"
+                        )
+                    return "\n\n".join(parts) + "\n\n</details>"
+        except (OSError, ValueError):
+            pass  # Preserve the existing image path; its staging reports missing assets.
+        return (
+            "<details>\n<summary>Detailed architecture diagram</summary>\n\n"
+            f"![Detailed architecture diagram]({ref})\n\n</details>"
+        )
+
     return re.sub(
         r"^\[Detailed architecture diagram\]\("
         r"((?:[\w.-]+\.)?figure1-detail\.svg|data:image/svg\+xml;base64,[A-Za-z0-9+/=]+)\)$",
-        lambda match: "<details>\n<summary>Detailed architecture diagram</summary>\n\n"
-        f"![Detailed architecture diagram]({match[1]})\n\n</details>",
+        expand,
         md_text,
         flags=re.MULTILINE,
     )
@@ -151,7 +183,7 @@ def export_html(
 ) -> int:
     md_text = input_md.read_text(encoding="utf-8")
     md_text = rewrite_vscode_links(md_text)
-    md_text = _expand_architecture_detail(md_text)
+    md_text = _expand_architecture_detail(md_text, input_md.parent)
 
     with tempfile.TemporaryDirectory(prefix="export-html-") as tmp:
         work = Path(tmp)

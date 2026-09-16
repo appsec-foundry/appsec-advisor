@@ -11,10 +11,47 @@ that the detail diagram is embedded in the standalone HTML.
 
 from __future__ import annotations
 
+import base64
 import shutil
+import xml.etree.ElementTree as ET
 
 import export_html
 import pytest
+
+
+@pytest.mark.parametrize("embedded", [True, False])
+def test_paged_architecture_expands_into_inert_self_contained_views(tmp_path, embedded):
+    import figure1_dfd
+
+    from tests.test_figure1_detail import model
+
+    svg, errors = figure1_dfd.check_diagram(model(9), {}, {})
+    assert errors == []
+    ref = "custom.figure1-detail.svg"
+    (tmp_path / ref).write_text(svg)
+    if embedded:
+        ref = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+    markdown = export_html._expand_architecture_detail(f"[Detailed architecture diagram]({ref})", tmp_path)
+    assert "<object" not in markdown and "<iframe" not in markdown and "<script" not in markdown
+    assert markdown.count("<details>") > 2
+    import re
+
+    seen = set()
+    for encoded in re.findall(r"data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)", markdown):
+        page = ET.fromstring(base64.b64decode(encoded))
+        seen.update(g.get("data-component-id") for g in page.iter() if g.get("data-component-id"))
+        assert page.findall(".//{*}a[@data-detail-nav]") == []
+    assert seen == {f"dispatch-{i}" for i in range(9)}
+
+
+def test_detail_expansion_does_not_read_a_sibling_symlink_escape(tmp_path):
+    outside = tmp_path / "outside.svg"
+    outside.write_text('data-paged-detail="true"')
+    inside = tmp_path / "report"
+    inside.mkdir()
+    (inside / "figure1-detail.svg").symlink_to(outside)
+    md = export_html._expand_architecture_detail("[Detailed architecture diagram](figure1-detail.svg)", inside)
+    assert "![Detailed architecture diagram](figure1-detail.svg)" in md
 
 
 @pytest.mark.parametrize("stem", ["figure1", "service-review.figure1"])

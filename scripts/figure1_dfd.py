@@ -110,6 +110,7 @@ ASSET_SYMBOL_ROW = 22
 ATTACK_WIDTH = 1.8
 FS = 8.5  # small label font
 ZONE_CAP = 8  # drawn nodes per zone; the rest collapse into one bar
+OVERVIEW_FLOW_CAP = 24  # Keep dense graphs navigable through the linked detail views.
 PORT_STEP = 22  # minimum spacing between ports on one node side
 INTRA_STUB, INTRA_STEP = 48, 14  # reserve authentication tabs and a straight arrow approach
 BAR_H = 24
@@ -691,7 +692,7 @@ def legitimate_role_notes(yaml_data):
 
 def _build_model(d, scenarios, actors, victim_target=USER_ID):
     comps = [c for c in (d.get("components") or []) if isinstance(c, dict) and c.get("id")]
-    cnum = {c["id"]: f"C-{i:02d}" for i, c in enumerate(comps, 1)}
+    cnum = d.get("_component_numbers") or {c["id"]: f"C-{i:02d}" for i, c in enumerate(comps, 1)}
     by_cnum = {v: k for k, v in cnum.items()}
     sev = collections.defaultdict(collections.Counter)
     stride = collections.defaultdict(collections.Counter)
@@ -1002,7 +1003,7 @@ def _select_drawn(nodes, edges, d):
     for n in nodes.values():
         by_zone[(n["col"], n["zone"])].append(n)
     for (col, zk), members in by_zone.items():
-        cap = len(members) if zk in {"internet", "third-party"} else ZONE_CAP
+        cap = len(members) if zk == "internet" or (zk == "third-party" and not d.get("_overview")) else ZONE_CAP
         members.sort(
             key=lambda n: (
                 -linked[n["id"]],
@@ -1028,6 +1029,14 @@ def _select_drawn(nodes, edges, d):
             for tid in n.get("tags", []):
                 d["_unplaced_tbs"].append((tid, f"{n['name'].split(' · ')[0]} collapsed"))
     edges = [e for e in edges if e["src"] in drawn and e["dst"] in drawn]
+    if d.get("_overview"):
+        flows = sorted((e for e in edges if not e.get("attack")), key=lambda e: not bool(e["tb"]))
+        hidden = {id(e) for e in flows[OVERVIEW_FLOW_CAP:]}
+        for edge in edges:
+            if id(edge) in hidden:
+                d["_undrawn_flows"].extend((fid, "connection in detail views") for fid in edge["ids"])
+                d["_unplaced_tbs"].extend((tid, "connection in detail views") for tid in edge["tb"])
+        edges = [e for e in edges if id(e) not in hidden]
     return drawn, edges, dropped
 
 
@@ -1312,7 +1321,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
     for n in nodes.values():
         k = max(_nports(sides[n["id"]]["L"]), _nports(sides[n["id"]]["R"]))
         n["tagspace"] = 20 * len(n.get("tags", []))
-        n["h"] = max(n["h"], n["tagspace"] + PORT_STEP * (k + 1))
+        n["h"] = n["tagspace"] + max(n["h"], PORT_STEP * (k + 1))
     # 3. column widths (right-side channel for intra edges), gap widths (one lane per edge)
     intra_per_col = collections.Counter(nodes[e["src"]]["col"] for e in edges if e["kind"] == "intra")
     port_extra = 32 if any(len(e.get("auth_keys", [])) > 1 for e in edges) else 0
@@ -1950,7 +1959,9 @@ def _render(
         weight="bold",
         fill=NAVY,
     )
-    n_comp = sum(1 for n in nodes.values() if n["kind"] != "ext") + sum(len(v) for v in dropped.values())
+    n_comp = sum(n["kind"] != "ext" for n in nodes.values()) + sum(
+        n["kind"] != "ext" for group in dropped.values() for n in group
+    )
     c.text(
         MARGIN,
         42,
@@ -2001,7 +2012,7 @@ def _render(
             c.text(zb["x"] + 10, zb["y"] + 29, _cut(sub, 38), size=8.5, anchor="start", fill=MUTED, italic=True)
     for zb in [z for z in zone_boxes if z.get("bar")]:
         ids = ", ".join(n["name"].split(" · ")[0] for n in zb["nodes"])
-        nthr = sum(sum(n["sev"].values()) for n in zb["nodes"])
+        nthr = sum(sum(n.get("sev", {}).values()) for n in zb["nodes"])
         c.rect(zb["x"], zb["y"], zb["w"], zb["h"], fill="#ffffff", stroke=LINE, sw=1, rx=6, dash="3 3")
         c.text(
             zb["x"] + zb["w"] / 2,
@@ -2149,10 +2160,18 @@ def _render(
                 sw=1.8,
             )
             ox = 24
-        lines = _wrap(n["name"], w - 52, 11)[:2]
+        title_lines = _legend_wrap(n["name"], w - 52, 11)
+        lines = title_lines[:2]
+        if len(title_lines) > 2:
+            lines[-1] = lines[-1][:-1] + "…"
+        c.add(f'<g data-component-id="{_esc(n["id"])}"><title>{_esc(n["name"])}</title>')
+        title_key = f"node title {n['id']}"
+        c.label_owners[title_key] = n["id"]
+        title_y = y + n["tagspace"] + 22
         for i, line in enumerate(lines):
-            c.text(x + w / 2 - 6, y + 22 + i * 13, line, size=11, weight="bold")
-        ty = y + 22 + len(lines) * 13 + 2
+            c.text(x + w / 2 - 6, title_y + i * 13, line, size=11, weight="bold", track=title_key)
+        c.add("</g>")
+        ty = title_y + len(lines) * 13 + 2
         _sev_chips(c, x + ox + 2, ty, n["sev"])
         _stride_strip(c, x + ox, ty + 10, n["stride"])
         _weak_line(c, x + ox, ty + 36, n.get("weak") or [], w - ox - 8)
@@ -2456,7 +2475,9 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
 
     if tbs:
         y = head("boundaries", "Trust boundaries and internal interfaces")
-        cnums = {row["id"]: f"C-{i:02d}" for i, row in enumerate(d.get("components") or [], 1)}
+        cnums = d.get("_component_numbers") or {
+            row["id"]: f"C-{i:02d}" for i, row in enumerate(d.get("components") or [], 1)
+        }
         flows = {f.get("id"): f for f in d.get("data_flows") or [] if isinstance(f, dict)}
         for t in sorted(tbs, key=lambda t: _tb_num(t["id"])):
             c.add(f'<g data-boundary-id="{_esc(t["id"])}">')
@@ -2626,9 +2647,30 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         notes.append(f"{subject} no displayed component mapping; see the report asset register.")
     if dropped:
         n = sum(len(v) for v in dropped.values())
-        notes.append(f"{n} lower-priority component(s) collapsed into '+N more' bars; their flows are not drawn.")
-    for fid, why in d.get("_undrawn_flows", []):
-        notes.append(f"{fid} not drawn: {why}")
+        notes.append(f"{n} participants collapsed into '+N more' bars; open the detail views for their connections.")
+    if d.get("_overview"):
+        omitted = {fid for fid, _ in d.get("_undrawn_flows", [])}
+        groups = collections.defaultdict(collections.Counter)
+        component_zones = {row["id"]: _zone_key(row) for row in d.get("components", [])}
+
+        def endpoint(key):
+            if key in nodes:
+                return nodes[key]["name"].split(" · ")[0]
+            zone = component_zones.get(key, "third-party")
+            return f"Grouped {ZONE_STYLE[zone][0]} participants"
+
+        for flow in d.get("data_flows", []):
+            if flow.get("id") in omitted:
+                source, target = _flow_endpoints(flow)
+                direction = "↔" if flow.get("direction") == "bidirectional" else "→"
+                groups[(endpoint(source), direction)][endpoint(target)] += 1
+        for (source, direction), targets in groups.items():
+            count = sum(targets.values())
+            target = ", ".join(targets)
+            notes.append(f"{source} {direction} {target}: {count} {'flow' if count == 1 else 'flows'} in detail views.")
+    else:
+        for fid, why in d.get("_undrawn_flows", []):
+            notes.append(f"{fid} not drawn: {why}")
     for tid, why in d.get("_unplaced_tbs", []):
         notes.append(f"{tid} not placed: {why}")
     if notes:
@@ -2701,6 +2743,11 @@ def _check_geometry(nodes, edges, canvas, chips, *, boundaries=()):
                 problems.append(f"segment {ename} touches {name}")
     labs = canvas.labels
     for i in range(len(labs)):
+        if labs[i][4].startswith("node title "):
+            a = labs[i]
+            for b in canvas.badges:
+                if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]:
+                    problems.append(f"title overlaps badge: {a[4]} × {b[4]}")
         if labs[i][4].startswith("payload ") and any(hits(p, q, labs[i][:4]) for p, q, _ in segs):
             problems.append(f"payload label crosses a connection: {labs[i][4]}")
         for j in range(i + 1, len(labs)):
@@ -2823,13 +2870,34 @@ def _audit(d, nodes, edges, chips, boundaries, canvas=None):
 
 
 # ---- entry points ---------------------------------------------------------------------------------
-def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True, _optimize=True):
-    d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
+def _build(
+    yaml_data,
+    scenarios,
+    actors,
+    actor_groups=(),
+    *,
+    detail=True,
+    _optimize=True,
+    component_numbers=None,
+    authentication_catalog=None,
+    projected_victim=None,
+):
+    if projected_victim is None:
+        d, victim_target, _role_notes = _project_legitimate_roles(yaml_data)
+    else:
+        d, victim_target = copy.deepcopy(yaml_data), projected_victim
+    d["_component_numbers"] = component_numbers or {
+        row["id"]: f"C-{i:02d}" for i, row in enumerate(d.get("components") or [], 1)
+    }
     d["_overview"] = not detail
     d["_auth_catalog"] = (
-        profile_catalog(d.get("data_flows") or [])
-        if not detail or any(f.get("authentication") for f in d.get("data_flows") or [])
-        else {}
+        authentication_catalog
+        if authentication_catalog is not None
+        else (
+            profile_catalog(d.get("data_flows") or [])
+            if not detail or any(f.get("authentication") for f in d.get("data_flows") or [])
+            else {}
+        )
     )
     nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors, victim_target)
     if not detail:
@@ -2882,7 +2950,15 @@ def _build(yaml_data, scenarios, actors, actor_groups=(), *, detail=True, _optim
         # Fewer bends must not displace readable payloads. Compare complete layouts
         # once, since endpoint markers and earlier labels also consume label space.
         alternative_svg, alternative = _build(
-            yaml_data, scenarios, actors, actor_groups, detail=detail, _optimize=False
+            yaml_data,
+            scenarios,
+            actors,
+            actor_groups,
+            detail=detail,
+            _optimize=False,
+            component_numbers=component_numbers,
+            authentication_catalog=authentication_catalog,
+            projected_victim=projected_victim,
         )
         missing = {fid for ids, _ in d["_label_notes"] for fid in ids}
         alternative_missing = {fid for ids, _ in alternative["d"].get("_label_notes", []) for fid in ids}
@@ -2911,6 +2987,11 @@ def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=No
     """Figure 1 for a threat model. Returns "" when there is nothing to draw."""
     if not (yaml_data.get("components") or []):
         return ""
+    if detail:
+        from figure1_detail import needs_views
+
+        if needs_views(yaml_data):
+            return check_diagram(yaml_data, attack_paths_data, attack_taxonomy, actor_labels, detail=True)[0]
     scenarios, actors = scenarios_from_attack_paths(
         yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
     )
@@ -2932,6 +3013,13 @@ def check_diagram(
         scenarios, actors = scenarios_from_attack_paths(
             yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
         )
+    if detail:
+        from figure1_detail import build_views, needs_views
+
+        if needs_views(yaml_data):
+            return build_views(
+                yaml_data, scenarios, actors or [], overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy)
+            )
     svg, st = _build(
         yaml_data,
         scenarios,

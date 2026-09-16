@@ -1038,7 +1038,7 @@ def test_arrowheads_are_fixed_size_and_stop_at_the_border():
 
 def test_large_models_collapse_and_explain():
     y, apd, tax = _model(big=9)
-    svg, problems = F.check_diagram(y, apd, tax)
+    svg, problems = F.check_diagram(y, apd, tax, detail=False)
     assert problems == []
     assert "+4 more:" in svg
     assert "collapsed" in svg  # the legend explains the flows that are not drawn

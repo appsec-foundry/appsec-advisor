@@ -424,6 +424,7 @@ requirements:
       - scripts/emit_auth_coverage.py
       - scripts/match_abuse_cases.py
       - scripts/figure1_dfd.py
+      - scripts/figure1_detail.py
       - scripts/figure1_security.py
       - scripts/figure1_svg.py
       - data/posture-actor-labels.yaml
@@ -484,6 +485,10 @@ requirements:
       - tests/test_figure1_dfd.py::test_equal_regular_access_can_fold_without_open_registration
       - tests/test_figure1_dfd.py::test_unnamed_flows_are_not_assigned_to_the_merged_victim_role
       - tests/test_figure1_dfd.py::test_flow_lanes_separate_opposing_stubs_at_equal_port_heights
+      - tests/test_figure1_detail.py::test_corner_boundary_tags_reserve_title_space
+      - tests/test_figure1_detail.py::test_sizes_preserve_every_component_and_flow_in_bounded_views
+      - tests/test_figure1_detail.py::test_missing_coverage_or_navigation_blocks_detail_publication
+      - tests/test_export_html.py::test_paged_architecture_expands_into_inert_self_contained_views
       - tests/test_figure1_dfd.py::test_reciprocal_services_have_separate_uncrossed_routes
       - tests/test_figure1_dfd.py::test_direct_store_access_uses_free_corridor
       - tests/test_figure1_dfd.py::test_opposing_routes_reallocate_ports_before_fallback

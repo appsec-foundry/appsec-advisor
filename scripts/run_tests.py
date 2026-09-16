@@ -54,6 +54,7 @@ GROUPS = {
         export_threat_model_skill
         extract_report_section
         figure1_dfd
+        figure1_detail
         figure1_layout_harness
         figure1_security
         figure1_svg

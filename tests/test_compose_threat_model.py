@@ -5781,6 +5781,29 @@ def test_detail_failure_keeps_overview_and_removes_stale_detail(tmp_path, monkey
     assert any("detailed diagram failed" in warning for warning in ctx.warnings)
 
 
+def test_large_detail_uses_existing_sibling_and_removes_it_on_view_failure(tmp_path, monkeypatch):
+    import figure1_detail
+
+    from tests.test_figure1_detail import model
+
+    ctx = _fig1_ctx(tmp_path)
+    ctx.yaml_data = model(20, "star", "gateway")
+    ctx.yaml_data["threats"] = [{"id": "F-001", "component": "gateway-0", "risk": "High"}]
+    ctx.figure_basename = "custom.figure1.svg"
+    paths = {"attack_paths": [{"class": "tampering", "actor": "internet-anon", "findings": ["F-001"]}]}
+    markdown = compose._render_figure1_svg(ctx, paths, {})
+    detail = tmp_path / "custom.figure1-detail.svg"
+    assert 'data-paged-detail="true"' in detail.read_text()
+    assert "[Detailed architecture diagram](custom.figure1-detail.svg)" in markdown
+    assert ctx.warnings == []
+    monkeypatch.setattr(figure1_detail, "check_views", lambda *args: ["missing component view"])
+    markdown = compose._render_figure1_svg(ctx, paths, {})
+    assert "Detailed architecture diagram" not in markdown
+    assert not detail.exists()
+    assert (tmp_path / ctx.figure_basename).exists()
+    assert any("missing component view" in warning for warning in ctx.warnings)
+
+
 def test_render_figure1_svg_empty_without_attack_paths(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
