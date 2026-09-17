@@ -3194,6 +3194,10 @@ def main() -> int:
         "mitigations": mitigations,
         "critical_findings": critical,
     }
+    if actor_resolution is not None:
+        from actor_presentation import export_actors, inventory_actors
+
+        doc["actors"] = inventory_actors({"actors": export_actors(actor_resolution), "threats": threats})
     if tier_rcs:
         doc["tier_root_causes"] = tier_rcs
     requirements_compliance = build_requirements_compliance(od)

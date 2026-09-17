@@ -220,6 +220,19 @@ def overview_actor_groups(
             if str(t.get("id") or t.get("t_id") or "").upper().removeprefix("F-").removeprefix("T-") in refs
         ]
     sources.update(t.get("vektor") for t in threats)
+    if yaml_data.get("actors"):
+        from actor_presentation import projected_paths
+
+        paths = attack_paths_data
+        if paths is None:
+            paths = {
+                "attack_paths": [
+                    {"actor": t.get("vektor") or "internet-anon", "findings": [t.get("id") or t.get("t_id")]}
+                    for t in threats
+                ]
+            }
+        sources = {p["actor"] for _, p in projected_paths(yaml_data, paths, attack_taxonomy or {})}
+
     return [
         (source, overview_actor_slug(source, meta))
         for source in ("internet-user", "repo-read")

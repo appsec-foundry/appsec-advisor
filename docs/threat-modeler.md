@@ -334,6 +334,8 @@ inherit_org: true
 
 Actor choices made in conversation apply only to that run. Commit `.appsec/actors.yaml` when a choice must persist.
 
+Figures group actors linked to displayed findings by access category. Adding twenty roles does not create twenty diagram nodes. Identified Actors lists configured roles with their access, authority, finding links, and scenario group. A configured role without a linked scenario is listed without a diagram assignment. Default and automatically discovered roles appear only when assigned to a finding. Grouping does not imply that the roles share every permission.
+
 ### Known threats — `docs/known-threats.yaml`
 
 Use this file for prior pentest findings, accepted risks, or issues that each assessment should revisit. Schema validation runs before analysis, and an invalid entry stops the assessment.

@@ -40,6 +40,12 @@ Generic-route corroboration is limited to the Node/Express JavaScript and TypeSc
 
 `meta.public_source_repo` affects overview actor grouping, not finding evidence or severity. Repository-read access folds into anonymous internet access when the flag is true; build-time and privileged access do not. Detection uses local license and source-host metadata without network calls, so a self-hosted public repository may remain unknown and a private repository on a known host may appear public. YAML-only pins remain transient across rebuilds; this verification adds no configuration or organization-profile override source.
 
+## Finding actor attribution in overview diagrams
+
+Canonical `actors[]` retains configured roles and active automatic roles linked to findings after runtime cleanup. Unused default and discovery roles remain analysis input and do not enter this report inventory. Its optional presence preserves compatibility with earlier models. A role contributes to an overview group only through an explicit finding assignment and a declared display category. Disabled configured roles and configured roles without a mapping do not establish a diagram assignment. Their status and individual access positions remain visible in Identified Actors.
+
+Figure 1 groups roles into the fixed access categories without equating their permissions. Each group's attack edges retain only its attributed findings and components. Multiple groups may share one scenario number. Figure 2 selects an actor group applicable to its example finding. The numbered table and actor legend use the same assignments. Canonical finding prerequisites and severity remain unchanged. Unattributed findings retain the legacy scenario category.
+
 ## Legitimate-role access in Figure 1
 
 An external entity may carry `access` only with `kind: legitimate-role`, using `internet-anon`, `internet-user`, or `internet-priv-user` when cited code establishes that access. Boundary assessment and canonical YAML preserve this optional field and the original entity and flow identities. Older entities without access remain valid and distinct.

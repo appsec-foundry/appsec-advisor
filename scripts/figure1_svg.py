@@ -827,7 +827,10 @@ def build_figure1_svg(
         yaml_data, {cid: row.get("tier") for cid, row in comp.items()}
     )
     tb_meta = _boundary_meta(yaml_data)
-    for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
+    from actor_presentation import projected_paths
+
+    for number, ap in projected_paths(yaml_data, attack_paths_data, attack_taxonomy):
+        idx = number - 1
         digit = idx + 1
         slug = (ap.get("class") or "").strip()
         cl = cls_by_id.get(slug) or {}
@@ -855,7 +858,7 @@ def build_figure1_svg(
         # direct APPLICATION attack — never a direct arrow on the data layer
         # (which has no network listener). A data component that is itself
         # internet-exposed keeps its own direct arrow.
-        if raw_actor == "victim-required" or tgt == "victim":
+        if ap.get("_victim_required") or raw_actor == "victim-required" or tgt == "victim":
             tier_attacks["client"]["indirect"] = True
         else:
             atier = {"client": "client", "data": "data"}.get(tgt, "application")

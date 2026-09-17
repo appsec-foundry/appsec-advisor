@@ -99,6 +99,7 @@ from _manifest_readers import (
 from _manifest_readers import (
     read_readme_tags as _read_readme_tags,
 )
+from actor_presentation import inventory_actors
 
 # P1: single-source weakness-class map, shared with merge_threats.py.
 # `_MULTI_MATCH_WARNED` is re-exported so existing call sites/tests keep
@@ -6383,7 +6384,10 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             if glyph not in lst:
                 lst.append(glyph)
 
-    for idx, ap in enumerate(attack_paths):
+    from actor_presentation import projected_paths
+
+    for number, ap in projected_paths(ctx.yaml_data, {"attack_paths": attack_paths}, attack_taxonomy):
+        idx = number - 1
         if idx >= len(glyph_seq):
             break
         glyph = glyph_seq[idx]
@@ -6843,7 +6847,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
 
 
 def _build_security_posture_actor_legend(
-    attack_paths_data: dict, attack_taxonomy: dict, model_meta: dict | None = None
+    attack_paths_data: dict, attack_taxonomy: dict, model_meta: dict | None = None, model: dict | None = None
 ) -> str:
     """Build the ``**Threat actors.**`` legend rendered below the two figures.
 
@@ -6862,14 +6866,19 @@ def _build_security_posture_actor_legend(
     order = labels.get("order") or []
 
     drives: dict[str, list[str]] = {}
-    for idx, ap in enumerate(aps):
+    from actor_presentation import projected_paths
+
+    for number, ap in projected_paths(model or {}, attack_paths_data, attack_taxonomy):
+        idx = number - 1
         if idx >= len(glyph_seq):
             break
         g = glyph_seq[idx]
         cls = cls_by_id.get((ap.get("class") or "").strip()) or {}
         title = cls.get("threat_label") or cls.get("label") or (ap.get("class") or "").strip()
-        actor = (ap.get("actor") or "internet-anon").strip()
-        drives.setdefault(actor, []).append(f"{g} {title}")
+        actor = overview_actor_slug((ap.get("actor") or "internet-anon").strip(), model_meta or {})
+        entry = f"{g} {title}"
+        if entry not in drives.setdefault(actor, []):
+            drives[actor].append(entry)
     if not drives:
         return ""
 
@@ -7279,6 +7288,14 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
             meta = actors_dict.get(actor_slug) or {}
             actor_for_bullet = actor_card_by_slug.get(actor_slug, {}).get("label") or meta.get("label") or actor_slug
             target_for_bullet = target_label_map.get(target, target)
+            if ctx.yaml_data.get("actors"):
+                from actor_presentation import path_groups
+
+                slugs = dict.fromkeys(
+                    overview_actor_slug(g["actor"], ctx.yaml_data.get("meta") or {})
+                    for g in path_groups(ctx.yaml_data, ap)
+                )
+                actor_for_bullet = " / ".join((actors_dict.get(g) or {}).get("label") or g for g in slugs)
 
         # Findings sub-list: { id, title }.
         # Post-2026-05-05: when the LLM-authored fragment omits per-path
@@ -7490,6 +7507,8 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     parts: list[str] = ["### Security Posture & Top Threats", ""]
     if figure1_md:
         parts += ["**Figure 1 — Architecture and Threat Overview**", "", figure1_md, ""]
+    if inventory_actors(ctx.yaml_data):
+        parts += ["Role access and finding assignments are listed in [Identified Actors](#identified-actors).", ""]
     if actor_notes:
         parts += ["**Actor grouping.** " + " ".join(actor_notes), ""]
     parts += [
@@ -7498,7 +7517,9 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         figure2_block.rstrip(),
         "",
     ]
-    legend_md = _build_security_posture_actor_legend(attack_paths_data, attack_taxonomy, ctx.yaml_data.get("meta"))
+    legend_md = _build_security_posture_actor_legend(
+        attack_paths_data, attack_taxonomy, ctx.yaml_data.get("meta"), ctx.yaml_data
+    )
     if legend_md:
         parts += [legend_md.rstrip(), ""]
     parts += [table_md]
@@ -15479,24 +15500,65 @@ def _actor_fold_map(active_ids: set[str], meta: dict) -> tuple[dict[str, str], d
     return folded, reason
 
 
+def _render_actor_inventory(ctx: RenderContext) -> str:
+    """Keep individual access positions outside the bounded overview diagrams."""
+    from actor_presentation import actor_group, finding_id, path_groups
+
+    taxonomy = _load_attack_class_taxonomy()
+    paths = _load_attack_paths_fragment(ctx, taxonomy, ctx.yaml_data.get("threats") or [])
+    represented = {}
+    for number, path in enumerate(paths.get("attack_paths", []), 1):
+        for group in path_groups(ctx.yaml_data, path):
+            for aid in group["actor_ids"]:
+                represented.setdefault(aid, set()).add(str(number))
+    labels = (_load_posture_actor_labels() or {}).get("actors") or {}
+    lines = [
+        '<a id="identified-actors"></a>',
+        "### Identified Actors",
+        "",
+        "Figures group attributed roles by access category. Grouping does not grant each role the other roles' "
+        "permissions or findings. Only roles linked to a displayed scenario contribute to its diagram group. "
+        "Configured roles remain listed; default and discovered roles require a finding assignment.",
+        "",
+        "| Actor | Access | Authority / position | Diagram group | Scenarios | Findings |",
+        "|---|---|---|---|---|---|",
+    ]
+
+    def safe(value):
+        value = html.escape(" ".join(str(value or "").split()), quote=False)
+        return re.sub(r"([\\`*_|\[\]])", r"\\\1", value) or "—"
+
+    for actor in inventory_actors(ctx.yaml_data):
+        aid = actor["id"]
+        linked = [t for t in ctx.yaml_data.get("threats", []) if aid in (t.get("actor_ids") or [])]
+        slug = actor_group(actor)
+        if not actor.get("active", True):
+            group = "Disabled; not drawn"
+        elif not slug:
+            group = "No display mapping; not drawn"
+        elif aid not in represented:
+            group = "No displayed scenario"
+        else:
+            slug = overview_actor_slug(slug, ctx.yaml_data.get("meta") or {})
+            group = (labels.get(slug) or {}).get("label") or slug
+        ids = [finding_id(t.get("id") or t.get("t_id")) for t in linked]
+        refs = ", ".join(f"[{fid}](#{fid.lower()})" for fid in ids if fid) or "—"
+        cells = [
+            safe(f"{aid} · {actor['label']}"),
+            safe(", ".join(actor["access"])),
+            safe(", ".join(actor.get("trust_positions") or [])),
+            safe(group),
+            ", ".join(sorted(represented.get(aid, set()), key=int)) or "—",
+            refs,
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """Threat Actors — §1 table over the SAME consolidated actor taxonomy the
-    Management Summary uses (the posture actors that drive the numbered attack
-    paths), NOT the raw ACT-* discovery library.
-
-    The set is derived from each finding's ``vektor`` — identical to the MS
-    "Threat actors" legend by construction — and the public-repo collapse
-    (``repo-read`` → ``internet-anon``, mirroring ``_collapse_public_repo_actors``)
-    is applied the same way, so §1 and the Management Summary never disagree on
-    who the actors are. Per-actor finding counts and components add the detail
-    the MS legend omits.
-
-    The earlier ACT-* library table (2026-07-05 user request) is gone: it
-    introduced actors absent from the MS (insider-dev / supply-chain /
-    physical-device) and carried process-only sub-subsections (Consolidated /
-    Disabled / proposed / flagged) that were noise in a delivered report.
-    Renders nothing when no finding carries a vektor (legacy runs).
-    """
+    """Render resolved role details, retaining the legacy vector table when absent."""
+    if inventory_actors(ctx.yaml_data):
+        return _render_actor_inventory(ctx)
     threats = ctx.yaml_data.get("threats") or []
     meta = ctx.yaml_data.get("meta") or {}
 
@@ -18389,16 +18451,9 @@ def render(
             # perf anomalies / recovery events). Drives the §Run Issues
             # appendix include/skip decision.
             "run_warned": _run_warned_signal(output_dir),
-            # §1 Identified Actors gate. The section now renders the consolidated
-            # posture-actor taxonomy derived from finding `vektor` values (the
-            # same set the Management Summary uses), so it is in scope exactly
-            # when at least one finding carries a vektor. Legacy runs without
-            # vektor data gracefully skip the section instead of failing the
-            # contract. (Was file-based on .actors-resolved.json before the
-            # 2026-07-05 taxonomy switch.)
-            "has_resolved_actors": any(
-                (t.get("vektor") or "").strip() for t in (yaml_data.get("threats") or []) if isinstance(t, dict)
-            ),
+            # Canonical role inventory survives cleanup; older models use finding vectors.
+            "has_resolved_actors": bool(inventory_actors(yaml_data))
+            or any((t.get("vektor") or "").strip() for t in (yaml_data.get("threats") or []) if isinstance(t, dict)),
             "has_trust_boundaries": bool(yaml_data.get("trust_boundaries")),
             # Quick-mode §7 gate. False suppresses §7 in both TOC and body
             # (resolver returned `""` — current depth is quick and no rich

@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Figure 2 connects numbered attack routes to example findings, explicit weakness references, and impact in a compact overview matching Figure 1.
 
-- Figure 1 shows evidenced authentication, flows, assets and consistent boundary counts, with compact overviews and navigable detail views that retain large architectures without overlapping boundary badges and titles.
+- Figure 1 shows evidenced authentication, flows, assets and grouped custom actors, with individual role details in the report and navigable detail views for large architectures.
 
 ### Fixed
 

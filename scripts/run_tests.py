@@ -38,6 +38,7 @@ GROUPS = {
         taxonomy_coverage
     """),
     "report": _tests("""
+        actor_presentation
         annotate_architecture
         annotate_sequences
         architect_structural_checks
@@ -481,6 +482,7 @@ MANUAL_TESTS = {
 # Extend a route only after checking imports, CLI callers, data readers, and
 # integration tests. Changes to shared contracts always use all.
 SOURCE_GROUPS = {
+    "scripts/actor_presentation.py": ("report", "incremental", "scanner", "qa-repair"),
     "scripts/export_sarif.py": ("report", "incremental", "findings"),
     "scripts/export_html.py": ("report", "qa-repair"),
     "scripts/export_pdf.py": ("report", "qa-repair"),

@@ -412,6 +412,7 @@ requirements:
 
   REQ-RPT-003:
     applies_to:
+      - scripts/actor_presentation.py
       - scripts/figure2_svg.py
       - schemas/figure2-diagram.schema.json
       - data/business-impact-taxonomy.yaml
@@ -455,6 +456,11 @@ requirements:
       - agents/shared/prose-style.md
     coverage: partial
     guards:
+      - tests/test_actor_presentation.py::test_twenty_roles_form_one_evidenced_group
+      - tests/test_actor_presentation.py::test_distinct_access_groups_do_not_gain_each_others_findings
+      - tests/test_actor_presentation.py::test_unlinked_disabled_unmapped_and_legacy_roles_do_not_invent_attribution
+      - tests/test_actor_presentation.py::test_unused_automatic_roles_never_reappear_in_report_or_diagram
+      - tests/test_actor_presentation.py::test_grouped_roles_pass_svg_geometry_without_growing_with_role_count
       - tests/test_figure2_svg.py::test_routes_keep_findings_weakness_and_impact_connected
       - tests/test_figure2_svg.py::test_unrelated_or_design_only_weakness_does_not_gain_a_reference
       - tests/test_figure2_svg.py::test_svg_checker_detects_a_missing_route_and_changed_badge

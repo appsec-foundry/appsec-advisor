@@ -3469,6 +3469,7 @@ def test_builder_preserves_named_entities_and_resolved_registration_equivalence(
         assert rebuilt["data_flows"] == data["data_flows"]
     assert model["meta"]["open_user_registration"] is (True if owner is None else owner)
     assert model["meta"]["open_registration_source"] == "actor-resolution"
+    assert model["actors"] == []  # Unused automatic roles are analysis input, not report conclusions.
     if owner is not None:
         assert model["meta"]["open_registration_resolution"] == actors["open_registration_resolution"]
         import match_abuse_cases

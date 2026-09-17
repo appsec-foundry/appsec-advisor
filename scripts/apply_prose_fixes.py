@@ -679,12 +679,9 @@ def _humanize_actor_ids(text: str) -> tuple[str, int]:
     """Replace bare ``ACT-<layer>-NN`` library ids in prose with the actor's
     human label (``ACT-D-04`` → ``a malicious insider developer``).
 
-    The §1 actor table now uses the consolidated Management-Summary taxonomy
-    (posture ``vektor`` values), so raw ACT-* ids left in LLM-authored scenario
-    prose are dangling references. Humanising them keeps the document
-    self-consistent without reintroducing the discovery-library codes. Skips
-    fenced code, is article-aware (a/an), capitalises at sentence start, and is
-    idempotent (the rendered phrase no longer matches the id pattern)."""
+    Preserve IDs in the deterministic Identified Actors inventory. Elsewhere,
+    humanise library references in prose while retaining fenced code. The pass
+    is article-aware (a/an), capitalises at sentence start, and is idempotent."""
     labels = _actor_id_labels()
     if not labels:
         return text, 0
@@ -704,12 +701,16 @@ def _humanize_actor_ids(text: str) -> tuple[str, int]:
 
     out_lines: list[str] = []
     in_fence = False
+    in_inventory = False
     for raw in text.splitlines(keepends=True):
         if raw.lstrip().startswith("```"):
             in_fence = not in_fence
             out_lines.append(raw)
             continue
-        out_lines.append(raw if in_fence else _ACTOR_ID_RE.sub(_sub, raw))
+        if not in_fence and re.match(r"^#{1,6} ", raw):
+            in_inventory = raw.strip() == "### Identified Actors"
+        inventory_row = in_inventory and re.match(r"^\| ACT-[A-Z]-\d+ · ", raw)
+        out_lines.append(raw if in_fence or inventory_row else _ACTOR_ID_RE.sub(_sub, raw))
     return "".join(out_lines), count
 
 

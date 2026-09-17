@@ -108,7 +108,9 @@ def build_figure2_data(
         components[cid] = f"{visible} · {c.get('name') or cid}"
     impacts = {i["id"]: i for i in impact_taxonomy.get("impacts") or []}
     rows = []
-    for scenario, ap in zip(scenarios, attack_paths.get("attack_paths") or []):
+    for number, ap in enumerate(attack_paths.get("attack_paths") or [], 1):
+        candidates = [s for s in scenarios if s["n"] == str(number)]
+        scenario = candidates[0]
         ids = sorted({_fid(i) for i in ap.get("findings") or []}, key=lambda s: int(s[2:]) if s else -1)
         if not ids or any(not fid or fid not in threats for fid in ids):
             raise ValueError(f"Figure 2 scenario {scenario['n']} has a missing or unresolved finding")
@@ -121,6 +123,17 @@ def build_figure2_data(
             ),
         )
         finding = threats[selected]
+        from actor_presentation import attributed_actors, projected_paths
+        from detect_open_registration import overview_actor_slug
+
+        _, example_path = next(
+            projected_paths(model, {"attack_paths": [{**ap, "findings": [selected]}]}, attack_taxonomy)
+        )
+        raw_actor = example_path["actor"]
+        projected_actor = overview_actor_slug(
+            "internet-anon" if raw_actor == "victim-required" else raw_actor, model.get("meta") or {}
+        )
+        scenario = next(s for s in candidates if int(selected[2:]) in s["fids"] and s["actor_slug"] == projected_actor)
         linked = _weaknesses(model, selected)
         cause = "\n".join(f"{_text(w['title'])} ({w['id']})" for w in linked)
         if not cause:
@@ -142,7 +155,11 @@ def build_figure2_data(
             impact = impacts[impact_id]
             harms.append(_text(impact.get("business_harm") or impact.get("label")))
         actor = actor_by_slug[scenario["actor_slug"]]
-        raw_actor = _text(ap.get("actor"))
+        # Possessing privileges does not establish that exploiting this finding
+        # requires them. Keep finding-owned prerequisites separate from roles.
+        prerequisite_actor = (
+            (finding.get("vektor") or "") if attributed_actors(model, finding) else _text(ap.get("actor"))
+        )
         rows.append(
             {
                 "number": int(scenario["n"]),
@@ -157,7 +174,7 @@ def build_figure2_data(
                 "finding_id": selected,
                 "finding_ids": ids,
                 "weakness_ids": [w["id"] for w in linked],
-                "prerequisite": _prerequisite(finding, raw_actor, scenario["victim"]),
+                "prerequisite": _prerequisite(finding, prerequisite_actor, scenario["victim"]),
                 "weakness": cause,
                 "victim": bool(scenario["victim"]),
                 "consequence": _text(finding.get("impact_description") or finding.get("impact_summary"))

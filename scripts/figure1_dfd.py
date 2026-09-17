@@ -504,7 +504,9 @@ def _finding_component_map(threats):
 
 def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None):
     """Numbered scenarios and actor cards, derived exactly like Figure 2 and the
-    Top Threats table: one scenario per attack path, in fragment order."""
+    Top Threats table: one number per path, with attributed access groups."""
+    from actor_presentation import projected_paths, represented_role_counts
+
     threats = yaml_data.get("threats") or []
     fid_comp = _finding_component_map(threats)
     sev_by_fid = {}
@@ -527,14 +529,14 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
         return (labels.get(slug) or {}).get("default_subtitle") or ""
 
     scenarios, order = [], []
-    for idx, ap in enumerate(attack_paths_data.get("attack_paths") or []):
+    for number, ap in projected_paths(yaml_data, attack_paths_data, attack_taxonomy):
         if not isinstance(ap, dict):
             continue
         slug = (ap.get("class") or "").strip()
         cl = cls_by_id.get(slug) or {}
         raw_actor = (ap.get("actor") or cl.get("default_actor") or "internet-anon").strip()
         tgt = str(ap.get("_llm_target") or ap.get("target") or cl.get("default_target_tier") or "application").lower()
-        victim = raw_actor == "victim-required" or tgt in ("client", "victim")
+        victim = bool(ap.get("_victim_required")) or raw_actor == "victim-required" or tgt in ("client", "victim")
         actor = "internet-anon" if raw_actor in ("victim-required", "") else raw_actor
         actor = overview_actor_slug(actor, meta)
         if actor not in order:
@@ -551,7 +553,7 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
         risk = min(sevs, key=lambda s: SEV_RANK.get(s, 9)) if sevs else ""
         scenarios.append(
             {
-                "n": str(idx + 1),
+                "n": str(number),
                 "title": ap.get("scenario_title")
                 or cl.get("diagram_label")
                 or cl.get("label")
@@ -566,7 +568,24 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
                 "risk": risk,
             }
         )
+    # Equivalent overview origins share one numbered scenario, retaining the
+    # union of explicitly attributed findings rather than duplicate edges.
+    combined = {}
+    for scenario in scenarios:
+        key = (scenario["n"], scenario["actor_slug"], scenario["victim"])
+        if key not in combined:
+            combined[key] = scenario
+            continue
+        existing = combined[key]
+        for field in ("cids", "fids"):
+            existing[field] = list(dict.fromkeys(existing[field] + scenario[field]))
+        existing["risk"] = min((existing["risk"], scenario["risk"]), key=lambda risk: SEV_RANK.get(risk, 9))
+    scenarios = list(combined.values())
     actors = [{"name": actor_name(s), "slug": s, "sub": actor_sub(s), "attacker": True} for s in order]
+    counts = represented_role_counts(yaml_data, attack_paths_data, attack_taxonomy)
+    for actor in actors:
+        if count := counts.get(actor["slug"]):
+            actor["sub"] = f"{count} role" + ("s" if count != 1 else "") + "; access details in Identified Actors"
     return scenarios, actors
 
 
