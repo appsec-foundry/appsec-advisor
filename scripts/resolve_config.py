@@ -3156,13 +3156,14 @@ def _render_depth_tradeoff(cfg: dict) -> list[str]:
     if depth == "quick":
         header = "⚠ Depth tradeoff"
         paras = [
-            "--quick is a triage pass, not a dependable assessment — use "
-            "--standard (default) or --thorough for one, at higher cost & time.",
+            "--quick is a triage pass, not a dependable assessment — omit the "
+            "depth flag for standard (the default) or use --thorough for one, "
+            "at higher cost & time.",
         ]
     elif depth == "standard":
         header = "ℹ Depth tradeoff"
         paras = [
-            "--standard is the balanced default. --thorough adds an architect "
+            "Standard is the balanced default. --thorough adds an architect "
             "review and deeper per-component analysis, at higher cost & time.",
         ]
     else:

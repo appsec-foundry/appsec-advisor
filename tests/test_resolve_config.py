@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -2237,7 +2238,7 @@ class TestDepthTradeoffCallout:
         body = " ".join(block)
         assert "Depth tradeoff" in block[0]
         # Names BOTH upgrade paths and the cost tradeoff.
-        assert "--standard" in body and "--thorough" in body
+        assert "standard" in body and "--thorough" in body
         assert "higher cost" in body
 
     def test_standard_is_a_neutral_reference_to_thorough(self):
@@ -2248,6 +2249,16 @@ class TestDepthTradeoffCallout:
         assert "⚠" not in block[0]
         body = " ".join(block)
         assert "--thorough" in body and "higher cost" in body
+
+    @pytest.mark.parametrize("depth", ["quick", "standard"])
+    def test_callout_names_only_flags_the_parser_accepts(self, depth):
+        # Following the callout must not abort the next run with
+        # `unrecognized arguments`.
+        accepted = {s for a in rc.build_parser()._actions for s in a.option_strings}
+        body = " ".join(rc._render_depth_tradeoff(_base_cfg(assessment_depth=depth)))
+        named = set(re.findall(r"--[a-z][a-z0-9-]*", body))
+        assert "--thorough" in named
+        assert named <= accepted, sorted(named - accepted)
 
     def test_thorough_has_no_callout(self):
         assert rc._render_depth_tradeoff(_base_cfg(assessment_depth="thorough")) == []
@@ -2315,7 +2326,7 @@ class TestRenderRunPlanNotes:
     def test_quick_leads_with_warning_callout(self):
         out = rc.render_run_plan_notes(_base_cfg(assessment_depth="quick"), None, None, None)
         assert out.startswith("⚠ Depth tradeoff")
-        assert "--standard" in out and "--thorough" in out
+        assert "standard" in out and "--thorough" in out
         assert "\nNotes\n" in out
 
     def test_thorough_omits_callout(self):

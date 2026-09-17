@@ -985,6 +985,26 @@ def test_no_dangling_section7_crossref_when_section7_omitted(tmp_path: Path) -> 
     assert "### Operational Strengths" in rendered  # the MS block itself still renders
 
 
+def test_quick_depth_rerun_hints_name_only_accepted_flags(tmp_path: Path) -> None:
+    """A quick report tells the reader how to re-run deeper. Every flag it names
+    must be one the run's argument parser accepts, or following the hint aborts
+    the next run with `unrecognized arguments`."""
+    resolve_config = sys.modules.get("resolve_config") or _load_module(
+        "resolve_config", REPO_ROOT / "scripts" / "resolve_config.py"
+    )
+    accepted = {s for a in resolve_config.build_parser()._actions for s in a.option_strings}
+    out = _prepare_output_dir(tmp_path)
+    ymlp = out / "threat-model.yaml"
+    data = yaml.safe_load(ymlp.read_text())
+    data.setdefault("meta", {})["assessment_depth"] = "quick"
+    ymlp.write_text(yaml.safe_dump(data, sort_keys=False))
+    rendered, _ = compose.render(CONTRACT, out)
+    hints = "\n".join([rendered, compose._QUICK_MODE_NOTICE_QUICK, compose._QUICK_MODE_NOTICE_STANDARD])
+    named = set(re.findall(r"`(--[a-z][a-z0-9-]*)", hints))
+    assert "--thorough" in named, "the quick report no longer tells the reader how to go deeper"
+    assert named <= accepted, sorted(named - accepted)
+
+
 def test_section7_crossref_target_exists_when_emitted(tmp_path: Path) -> None:
     """Invariant (positive control): whenever a `#6-security-architecture`
     cross-ref IS emitted (standard/thorough depth, §6 present), its heading

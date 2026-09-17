@@ -2287,8 +2287,8 @@ def _render_quick_mode_notice(ctx: RenderContext, env: jinja2.Environment, secti
             "> - **No LLM-enriched §7 architecture narrative** (scaffold + control tables only)",
             "> - **No QA reviewer pass**, no architect-level review",
             "> ",
-            "> Re-run with `--standard` (≈ +30 min) for full STRIDE coverage and QA, or",
-            "> `--thorough` (≈ +90 min) for architect review and enriched architecture sections.",
+            "> Re-run at standard depth (the default, no depth flag; ≈ +30 min) for full STRIDE coverage and QA,",
+            "> or with `--thorough` (≈ +90 min) for architect review and enriched architecture sections.",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -2308,8 +2308,8 @@ def _render_skipped_sections_placeholder(ctx: RenderContext, env: jinja2.Environ
         return ""
     return (
         "_§6 Security Architecture is omitted at "
-        "`--quick` depth. Re-run with `--standard` (≈ +30 min) or "
-        "`--thorough` (≈ +90 min) to render the per-domain analysis._\n"
+        "`--quick` depth. Re-run at standard depth (the default, no depth flag; ≈ +30 min) "
+        "or with `--thorough` (≈ +90 min) to render the per-domain analysis._\n"
     )
 
 
@@ -2594,7 +2594,7 @@ def _render_toc(ctx: RenderContext, env: jinja2.Environment, section: dict) -> s
                 _g = ", ".join(f"§{n}" for n in suppressed)
                 notes.append(
                     f"{_g} {'is' if len(suppressed) == 1 else 'are'} omitted at the current "
-                    f"(quick) depth and return at `--standard`/`--thorough`"
+                    f"(quick) depth and return at standard depth (the default) or with `--thorough`"
                 )
             if other:
                 _g = ", ".join(f"§{n}" for n in other)
@@ -13162,8 +13162,8 @@ _SECRET_PATTERNS: list[tuple[str, str, str]] = [
 
 _QUICK_MODE_NOTICE_QUICK = (
     "> ⓘ **Section narrative not rendered** — this section contains unfilled "
-    "placeholders. At `--assessment-depth quick` this is by design. Re-run with "
-    "`--standard` or `--thorough` to fill the per-domain narrative."
+    "placeholders. At `--assessment-depth quick` this is by design. Re-run at "
+    "standard depth (the default) or with `--thorough` to fill the per-domain narrative."
 )
 
 _QUICK_MODE_NOTICE_STANDARD = (
