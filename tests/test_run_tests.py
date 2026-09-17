@@ -556,6 +556,17 @@ def test_all_shipped_source_routes_remain_selective():
         assert selection.paths != ("tests/",), (source, selection.reasons)
 
 
+def test_repository_agent_guidance_routes_to_tooling_checks():
+    selection = runner.select_changed(["AGENTS.md"])
+    assert {
+        "tests/test_check_specs.py",
+        "tests/test_ci_test_workflow.py",
+        "tests/test_run_tests.py",
+    } <= set(selection.paths)
+    assert any("AGENTS.md" in reason and "tooling" in reason for reason in selection.reasons)
+    assert "tests/test_full_run_e2e.py" not in selection.paths
+
+
 def test_required_selection_commands_stay_in_agent_and_maintainer_guidance():
     for filename in ("AGENTS.md", "CONTRIBUTING.md"):
         document = (runner.ROOT / filename).read_text()

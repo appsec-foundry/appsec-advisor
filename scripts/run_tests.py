@@ -491,10 +491,12 @@ MANUAL_TESTS = {
 }
 
 # Start with bounded leaf/report and scanner entry points whose consumer tests
-# have been reviewed. All other source paths deliberately fall back to all.
-# Extend a route only after checking imports, CLI callers, data readers, and
-# integration tests. Changes to shared contracts always use all.
+# have been reviewed. The root AGENTS.md is repository-only maintainer guidance;
+# shipped Markdown under agents/ and skills/ remains runtime input and therefore
+# falls back to all. Extend a route only after checking imports, CLI callers,
+# data readers, and integration tests. Changes to shared contracts always use all.
 SOURCE_GROUPS = {
+    "AGENTS.md": ("tooling",),
     "scripts/apply_prose_fixes.py": ("prose-formatting",),
     "scripts/actor_presentation.py": ("report", "incremental", "scanner", "qa-repair"),
     "scripts/export_sarif.py": ("report", "incremental", "findings"),
