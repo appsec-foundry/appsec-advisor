@@ -37,6 +37,27 @@ def test_catalog_reuses_method_not_component_name_or_evidence():
     assert next(iter(profile_catalog([{"authentication": auth("none")}]).values()))["number"] == "0"
 
 
+def test_legend_rows_differ_in_what_they_show():
+    from figure1_security import SCHEMES
+
+    flows = [
+        {"authentication": auth(scheme, transport=transport, **extras)}
+        for scheme in SCHEMES
+        for transport in ("protected", "cleartext", "unknown")
+        for extras in (
+            {"factors": ["password", "totp"]} if scheme == "mfa" else {},
+            {"flow": "authorization-code-pkce"} if scheme in {"oauth2", "oidc"} else {"scope": "Another method"},
+        )
+    ]
+    shown = [(p["title"], p["description"], p["color"]) for p in profile_catalog(flows).values()]
+    assert len(shown) == len(set(shown))
+    only_transport_differs = [
+        {"authentication": auth("bearer", transport="protected")},
+        {"authentication": auth("bearer")},
+    ]
+    assert len(profile_catalog(only_transport_differs)) == 1
+
+
 @pytest.mark.parametrize(
     "scheme,extras,color",
     [

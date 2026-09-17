@@ -930,6 +930,60 @@ def test_capability_and_service_role_evidence_must_be_real_contained_source(tmp_
         assert any("service role llm-inference" in e for e in vf.repository_path_errors("data-flows", flows, tmp_path))
 
 
+@pytest.mark.parametrize(
+    ("source", "rejected_for_claims", "rejected_for_authentication"),
+    [
+        ("export function upload(req) { return store(req.file) }", False, False),
+        ("const token = jwt.sign(user, key, { algorithm: 'RS256' })", False, False),
+        ("client = OpenAI(api_key=settings.KEY)", False, False),
+        ("   ", True, True),
+        ("// uploads are handled below", True, True),
+        (" * Copyright (c) the contributors", True, True),
+        ("/* SPDX-License-Identifier: MIT */", True, True),
+        ("# verifies the second factor", True, True),
+        ("-- grants the service account", True, True),
+        ("<!-- login form -->", True, True),
+        ("import { tool } from 'ai'", True, False),
+        ("from openai import OpenAI", True, False),
+        ("const multer = require('multer')", True, False),
+        ("const { WebSocketProvider } = await import('ethers')", True, False),
+        ("using Microsoft.Identity.Web;", True, False),
+        ("use jsonwebtoken::encode;", True, False),
+        ("#include <openssl/evp.h>", True, False),
+        ('#[post("/upload")]', False, False),
+        ("package com.example.auth;", True, False),
+    ],
+)
+def test_function_claims_must_cite_implementing_code(
+    tmp_path, source, rejected_for_claims, rejected_for_authentication
+):
+    (tmp_path / "src.txt").write_text("first line\n" + source + "\n")
+    evidence = [{"file": "src.txt", "line": 2}]
+    components = {
+        "components": [
+            {
+                "id": "api",
+                "tier": "application",
+                "paths": ["src.txt"],
+                "capabilities": [{"capability": "file-upload", "evidence": evidence}],
+            }
+        ]
+    }
+    flows = {
+        "data_flows": [{"id": "df-001", "authentication": {"scheme": "bearer", "evidence": evidence}}],
+        "external_entities": [
+            {"id": "ext-model", "evidence": [], "service_roles": [{"role": "llm-inference", "evidence": evidence}]}
+        ],
+    }
+    component_errors = vf.repository_path_errors("components", components, tmp_path)
+    flow_errors = vf.repository_path_errors("data-flows", flows, tmp_path)
+    assert bool(component_errors) is rejected_for_claims
+    assert any("service role" in error for error in flow_errors) is rejected_for_claims
+    assert any("authentication" in error for error in flow_errors) is rejected_for_authentication
+    plain = {"data_flows": [{"id": "df-001", "evidence": evidence}]}
+    assert vf.repository_path_errors("data-flows", plain, tmp_path) == []
+
+
 def test_xss_on_database_is_rejected_even_when_a_model_path_matches():
     data = {
         "components": [{"id": "database", "tier": "data"}],

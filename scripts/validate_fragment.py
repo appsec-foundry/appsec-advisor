@@ -171,16 +171,43 @@ def _regular_repository_file(repo_root: Path, relative: str) -> Path | None:
         return None
 
 
+_COMMENT_LINE_RE = re.compile(r"^(?://|/\*|\*|<!--|--\s|#(?:\s|#|!|$))")
+_IMPORT_LINE_RE = re.compile(
+    r"^(?:import\s|from\s+\S+\s+import\s|package\s|using\s+[\w.]+\s*;|use\s+[\w:\\]+|#\s*include\b|@import\b"
+    r"|export\s+(?:\*|\{[^}]*\})\s+from\s|require(?:_once)?[\s(]"
+    r"|(?:const|let|var)\s+[\w{}\s,:]+=\s*(?:await\s+)?(?:require|import)\s*\([^)]*\)\s*;?\s*$)"
+)
+
+
+def _cited_line_problem(text: str, *, allow_imports: bool) -> str | None:
+    """Why a cited line cannot show an implemented function, or None."""
+    stripped = text.strip()
+    if not stripped:
+        return "a blank line"
+    if _COMMENT_LINE_RE.match(stripped):
+        return "a comment"
+    if not allow_imports and _IMPORT_LINE_RE.match(stripped):
+        return "an import or dependency declaration"
+    return None
+
+
 def repository_evidence_errors(
     values: Any,
     repo_root: Path,
     *,
     label: str = "evidence",
     require_line: bool = False,
+    require_code: bool = False,
+    allow_imports: bool = True,
 ) -> list[str]:
-    """Validate contained regular-file evidence and optional one-based lines."""
+    """Validate contained regular-file evidence and optional one-based lines.
+
+    `require_code` rejects a cited blank or comment line, and with
+    `allow_imports=False` an import line: claims of an implemented function
+    (capabilities, service roles, authentication) must cite the code doing it.
+    """
     errors: list[str] = []
-    line_counts: dict[Path, int] = {}
+    file_lines: dict[Path, list[str]] = {}
     rows = values if isinstance(values, list) else []
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
@@ -199,16 +226,22 @@ def repository_evidence_errors(
         if isinstance(line, bool) or not isinstance(line, int) or line < 1:
             errors.append(f"{label}[{index}] has an invalid line number: {line!r}")
             continue
-        if candidate not in line_counts:
+        if candidate not in file_lines:
             try:
                 with candidate.open("r", encoding="utf-8", errors="ignore") as handle:
-                    line_counts[candidate] = sum(1 for _ in handle)
+                    file_lines[candidate] = handle.read().splitlines()
             except OSError:
                 errors.append(f"{label}[{index}] cannot read {relative!r}")
                 continue
-        line_count = line_counts[candidate]
-        if line > line_count:
-            errors.append(f"{label}[{index}] line {line} exceeds {relative!r} ({line_count} lines)")
+        lines = file_lines[candidate]
+        if line > len(lines):
+            errors.append(f"{label}[{index}] line {line} exceeds {relative!r} ({len(lines)} lines)")
+            continue
+        problem = _cited_line_problem(lines[line - 1], allow_imports=allow_imports) if require_code else None
+        if problem:
+            errors.append(
+                f"{label}[{index}] cites {problem} ({relative}:{line}); cite the code that implements the claim"
+            )
     return errors
 
 
@@ -264,6 +297,8 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
                         item.get("evidence"),
                         root,
                         label=f"component {component_id} capability {item.get('capability')}",
+                        require_code=True,
+                        allow_imports=False,
                     )
                 )
             paths = component.get("paths", [])
@@ -286,7 +321,9 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
             auth = flow.get("authentication")
             if isinstance(auth, dict):
                 errors.extend(
-                    repository_evidence_errors(auth.get("evidence"), root, label=f"data flow {flow_id} authentication")
+                    repository_evidence_errors(
+                        auth.get("evidence"), root, label=f"data flow {flow_id} authentication", require_code=True
+                    )
                 )
         for entity in data.get("external_entities") or []:
             errors.extend(
@@ -295,7 +332,11 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
             for item in entity.get("service_roles") or []:
                 errors.extend(
                     repository_evidence_errors(
-                        item.get("evidence"), root, label=f"entity {entity.get('id')} service role {item.get('role')}"
+                        item.get("evidence"),
+                        root,
+                        label=f"entity {entity.get('id')} service role {item.get('role')}",
+                        require_code=True,
+                        allow_imports=False,
                     )
                 )
     elif fragment_type == "assets":

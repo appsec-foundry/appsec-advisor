@@ -245,6 +245,56 @@ def test_reconciles_existing_generic_flow_without_duplicate(tmp_path):
     assert result["data_flows"][0]["to_entity"] == result["external_entities"][0]["id"]
 
 
+@pytest.mark.parametrize("provenance", ["recon", "architecture", "repo-declared"])
+def test_authored_flow_to_the_provider_is_not_duplicated_whatever_its_provenance(tmp_path, provenance):
+    _write(
+        tmp_path,
+        "src/login.ts",
+        'const authorize = "https://id.example/oauth2/authorize";\nwindow.location.assign(authorize);\n',
+    )
+    doc = _flows()
+    doc["external_entities"] = [
+        {
+            "id": "ext-staff",
+            "kind": "identity-provider",
+            "name": "Staff sign-in",
+            "description": "Company identity service",
+            "evidence": [{"file": "src/login.ts", "line": 1}],
+        }
+    ]
+    authored = {
+        "id": "df-004",
+        "from": "client",
+        "to": "external",
+        "to_entity": "ext-staff",
+        "label": "Browser redirect to the staff sign-in page",
+        "provenance": provenance,
+        "evidence": [{"file": "src/login.ts", "line": 2}],
+    }
+    doc["data_flows"] = [authored]
+    assert discovery.reconcile(tmp_path, _components(), doc)["data_flows"] == [authored]
+
+    generated_other_role = {**authored, "label": "OAuth token exchange", "provenance": "recon"}
+    doc["data_flows"] = [generated_other_role]
+    labels = [f["label"] for f in discovery.reconcile(tmp_path, _components(), doc)["data_flows"]]
+    assert labels == ["OAuth token exchange", "OAuth authorization"]
+
+
+def test_every_discovered_role_is_recognised_as_generated(tmp_path):
+    sources = {
+        "src/a.ts": 'fetch("https://id.example/oauth/token")',
+        "src/b.py": 'requests.get("https://id.example/oidc/userinfo")',
+        "src/c.ts": 'new UserManager({authority: "https://login.example/realms/staff"})',
+        "src/d.js": 'new SAMLStrategy({entryPoint: "https://sso.example/signin"})',
+        "src/e.ts": 'new SAMLStrategy({metadataUrl: "https://sso.example/metadata"})',
+        "src/f.ts": 'window.location.assign("https://id.example/oauth/authorize")',
+    }
+    for rel, text in sources.items():
+        _write(tmp_path, rel, text)
+    roles = {integration.role for integration in discovery.discover(tmp_path)}
+    assert len(roles) == 6 and roles <= discovery._ROLES
+
+
 def test_respects_evidenced_internal_identity_server(tmp_path):
     _write(tmp_path, "src/login.ts", 'fetch("https://id.example/oauth/token");')
     doc = _flows()

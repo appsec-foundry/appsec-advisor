@@ -958,6 +958,87 @@ def test_port_alignment_retains_spacing_and_special_routes(occupied, attack, ski
     assert edge["yd"] == 55
 
 
+def _port_heights(nodes, edges):
+    """Port heights per node side; one attacker's bus counts as a single port."""
+    sides = {}
+    for e in edges:
+        if e["kind"] == "intra":
+            continue
+        for nid, (x, y) in ((e["src"], e["pts"][0]), (e["dst"], e["pts"][-1])):
+            node = nodes[nid]
+            if x not in (node["x"], node["x"] + node["w"]):
+                continue  # a stub starts on its attacker's bus, not on the node
+            bus = e.get("attack") and nid == e["src"] and e["kind"] == "forward" and "scen" in e
+            sides.setdefault((nid, x), {})[("bus", nid) if bus else id(e)] = y
+    return sides
+
+
+@pytest.mark.parametrize("flows", [0, 2, 7])
+@pytest.mark.parametrize("spacer", [0, 1])
+def test_attack_stub_continues_straight_when_its_target_spans_the_bus(flows, spacer):
+    nodes = {
+        "attacker": dict(id="attacker", col=0, zone="client", order=0, col_rank=0, w=190, h=76),
+        "sender": dict(id="sender", col=0, zone="client", order=1, col_rank=1, w=190, h=80),
+        "target": dict(id="target", col=1, zone="application", order=0, col_rank=1, w=190, h=240),
+        "other": dict(id="other", col=1, zone="application", order=1, col_rank=2, w=190, h=100),
+    }
+    if spacer:  # pushes the target below the attacker's bus height
+        nodes["spacer"] = dict(id="spacer", col=1, zone="application", order=0, col_rank=0, w=190, h=260)
+    edges = [dict(src="attacker", dst=target, ids=[], tb=[], attack=True, scen=["1"]) for target in ("target", "other")]
+    edges += [dict(src="sender", dst="target", ids=[f"df-{i:03d}"], tb=[]) for i in range(flows)]
+    F._layout(nodes, edges, {}, {}, ncols=2)
+    stub = next(e for e in edges if e.get("attack") and e["dst"] == "target")
+    target = nodes["target"]
+    low, high = F._port_range(target)
+    spans = low <= stub["ys"] <= high
+    assert spans is not bool(spacer)
+    for heights in _port_heights(nodes, edges).values():
+        ordered = sorted(heights.values())
+        assert all(b - a >= F.PORT_STEP - 1e-6 for a, b in zip(ordered, ordered[1:]))
+    if spans and flows < 7:
+        assert stub["yd"] == stub["ys"]
+        assert len(F._trim(stub["pts"])) == 2 or F._trim(stub["pts"])[-2][1] == stub["ys"]
+    assert low - 1e-6 <= stub["yd"] <= high + 1e-6
+    assert F._check_geometry(nodes, edges, F._Canvas(), [], boundaries=[]) == []
+
+
+def test_boxed_in_parallel_routes_straighten_together():
+    def node(nid, x, y, h):
+        return dict(id=nid, x=x, y=y, w=200, h=h, tagspace=0, col=x // 600)
+
+    nodes = {
+        "src": node("src", 0, 280, 280),
+        "dst": node("dst", 600, 260, 154),
+        "above": node("above", 600, 0, 250),
+        "below": node("below", 600, 520, 200),
+        "early": node("early", 0, 0, 250),
+        "late": node("late", 0, 600, 200),
+    }
+
+    def flow(src, dst, route, i, fixed=False):
+        ids = [] if fixed else [f"df-{i:03d}"]
+        return dict(src=src, dst=dst, kind="forward", skip=False, ids=ids, tb=[], pts=route, attack=fixed)
+
+    # Fixed neighbours leave each flow of the pair no straight height of its own.
+    edges = [
+        flow("src", "above", [(200, 313), (400, 313), (400, 200), (600, 200)], 1, fixed=True),
+        flow("src", "below", [(200, 390), (410, 390), (410, 600), (600, 600)], 2, fixed=True),
+        flow("early", "dst", [(200, 100), (420, 100), (420, 284.5), (600, 284.5)], 3, fixed=True),
+        flow("late", "dst", [(200, 700), (430, 700), (430, 381), (600, 381)], 4, fixed=True),
+        flow("src", "dst", [(200, 346), (300, 346), (300, 324), (600, 324)], 5),
+        flow("src", "dst", [(200, 368), (310, 368), (310, 352.5), (600, 352.5)], 6),
+    ]
+    for e in edges:
+        e["ys"], e["yd"] = e["pts"][0][1], e["pts"][-1][1]
+    F._improve_routes(nodes, edges, [], [])
+    pair = [e for e in edges if (e["src"], e["dst"]) == ("src", "dst")]
+    assert all(e["pts"][0][1] == e["pts"][-1][1] for e in pair)
+    for heights in _port_heights(nodes, edges).values():
+        ordered = sorted(heights.values())
+        assert all(b - a >= F.PORT_STEP - 1e-6 for a, b in zip(ordered, ordered[1:]))
+    assert F._check_geometry(nodes, edges, F._Canvas(), [], boundaries=[]) == []
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_intra_column_arrow_tips_have_a_straight_approach(reverse):
     model, paths, taxonomy = _model(intra=True)
@@ -2391,6 +2472,26 @@ def test_short_payload_candidates_never_drop_the_protocol(protocol):
     assert all("df-001" not in choice for choice in choices)
 
 
+@pytest.mark.parametrize("protocol", ["WebSocket (Socket.IO)", "SQL (in-process) / HTTPS", "HTTPS", "gRPC / HTTP/2"])
+def test_flow_labels_never_nest_parentheses(protocol):
+    def depth(text):
+        level = deepest = 0
+        for char in text:
+            level += (char == "(") - (char == ")")
+            deepest = max(deepest, level)
+        return deepest
+
+    flows = [{"id": "df-001", "diagram_label": "Challenge notifications (live)", "protocol": protocol}]
+    choices = F._flow_label_candidates(flows, False)
+    assert choices and all(protocol in choice and depth(choice) <= 1 for choice in choices)
+    model, paths, taxonomy = _model()
+    model["data_flows"][1]["protocol"] = protocol
+    model["data_flows"][1]["access_group"] = {"id": "api", "mode": "alternatives", "label": "Public or signed-in"}
+    svg, problems = F.check_diagram(model, paths, taxonomy)
+    assert problems == []
+    assert all(depth(t.text or "") <= 1 for t in ET.fromstring(svg).iter(f"{_SVG}text"))
+
+
 @pytest.mark.parametrize(
     "description",
     [
@@ -2726,6 +2827,32 @@ def test_component_titles_use_three_lines_before_shortening(name, ellipsis):
     assert lines[-1].endswith("…") is ellipsis
     if not ellipsis:
         assert " ".join(lines) == f"C-02 · {name}"
+
+
+@pytest.mark.parametrize(
+    ("name", "items", "shown"),
+    [
+        ("Chat API", ["llm-calls", "llm-tools"], ["llm-tools"]),
+        ("Identity", ["token-issuer", "jwt-issuer", "mfa-verifier"], ["jwt-issuer", "mfa-verifier"]),
+        ("Portal", ["oauth-client", "oidc-client"], ["oidc-client"]),
+        ("File Upload Service", ["file-upload", "url-fetch"], ["url-fetch"]),
+        ("Uploads", ["file-upload"], ["file-upload"]),
+        ("Real-time WebSocket Channel", ["websocket-endpoint"], ["websocket-endpoint"]),
+        ("LLM Inference Provider (local)", ["llm-inference"], []),
+        ("Identity Hub", ["oauth-authorization-server", "oidc-provider"], ["oidc-provider"]),
+        ("Ethereum RPC Node", ["blockchain-rpc"], ["blockchain-rpc"]),
+    ],
+)
+def test_capability_labels_do_not_repeat_the_name_or_a_more_specific_label(name, items, shown):
+    capabilities, roles = F._capability_vocabulary()
+    evidence = [{"file": "src/a.ts", "line": 1}]
+    vocabulary = roles if items[0] in roles else capabilities
+    key = "role" if vocabulary is roles else "capability"
+    rows = F._capability_rows([{key: value, "evidence": evidence} for value in items], vocabulary, key, name)
+    assert [row["id"] for row in rows] == shown
+    unevidenced = [{key: "llm-tools", "evidence": []}, {key: "llm-calls", "evidence": evidence}]
+    if vocabulary is capabilities:
+        assert [row["id"] for row in F._capability_rows(unevidenced, vocabulary, key, name)] == ["llm-calls"]
 
 
 def test_capability_labels_require_known_values_and_evidence():

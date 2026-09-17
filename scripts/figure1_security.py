@@ -56,9 +56,16 @@ def authentication_profile(flow):
         title += ": " + " + ".join(factors)
     if grant:
         title += " · " + grant.replace("-", " ")
-    key = (scheme, grant, factors, transport) if scheme not in {"unknown", "none"} else (scheme,)
+    # The key holds only what the legend shows: transport enters it through the
+    # colour, and the title names the transport wherever it decided that colour.
+    if scheme not in {"unknown", "none"} and (transport == "cleartext" or color == "green"):
+        title += " · " + ("cleartext" if transport == "cleartext" else "protected transport")
+    key = (scheme, grant, factors, color) if scheme not in {"unknown", "none"} else (scheme,)
     if scheme == "other":
-        key += (auth.get("scope"),)  # Equivalence of custom methods cannot be inferred from one generic name.
+        # Equivalence of custom methods cannot be inferred from one generic name,
+        # so each keeps its own number and its evidenced scope explains it.
+        description = auth["scope"]
+        key += (description,)
     return {"key": key, "scheme": scheme, "title": title, "description": description, "color": color}
 
 

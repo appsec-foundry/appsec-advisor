@@ -149,6 +149,7 @@
                     "llm-calls",
                     "llm-tools",
                     "token-issuer",
+                    "jwt-issuer",
                     "mfa-verifier",
                     "oauth-client",
                     "oidc-client",

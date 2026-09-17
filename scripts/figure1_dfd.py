@@ -236,14 +236,26 @@ def _capability_vocabulary():
     return data["component_capabilities"], data["service_roles"]
 
 
-def _capability_rows(items, vocabulary, key):
-    """Known, evidenced labels in authored order; unknown values never render."""
+def _words(text):
+    return set(re.findall(r"[a-z0-9]+", str(text).lower()))
+
+
+def _capability_rows(items, vocabulary, key, name=""):
+    """Known, evidenced labels in authored order; unknown values never render.
+
+    A label is left out when a more specific evidenced value implies it, or
+    when the node's own name already says everything the label would.
+    """
+    evidenced = [
+        item for item in items or [] if isinstance(item, dict) and item.get("evidence") and item.get(key) in vocabulary
+    ]
+    implied = {value for item in evidenced for value in vocabulary[item[key]].get("implies") or []}
     rows = []
-    for item in items or []:
-        if not isinstance(item, dict) or not item.get("evidence"):
+    for item in evidenced:
+        entry = vocabulary[item[key]]
+        if item[key] in implied or _words(entry["label"]) <= _words(name):
             continue
-        entry = vocabulary.get(item.get(key))
-        if entry and all(row["id"] != item[key] for row in rows):
+        if all(row["id"] != item[key] for row in rows):
             rows.append({"id": item[key], "label": entry["label"], "evidence": item["evidence"]})
     return rows[:CAPABILITY_CAP]
 
@@ -866,7 +878,9 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "stride": stride[cid],
             "exposed": cid in exposed or "internet" in [str(z).lower() for z in comp.get("deployment_zones") or []],
             "complex": comp.get("complexity") == "complex",
-            "capabilities": _capability_rows(comp.get("capabilities"), component_capabilities, "capability"),
+            "capabilities": _capability_rows(
+                comp.get("capabilities"), component_capabilities, "capability", comp.get("name") or cid
+            ),
             "badges": [],
             "assets": [],
             "weak": weak.get(cid, []),
@@ -993,7 +1007,9 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "w": EXT_W,
             "h": EXT_H,
             "color": GREEN if role else INK,
-            "capabilities": [] if role else _capability_rows(entity.get("service_roles"), service_roles, "role"),
+            "capabilities": []
+            if role
+            else _capability_rows(entity.get("service_roles"), service_roles, "role", entity["name"]),
             "order": len(nodes),
             "badges": [],
         }
@@ -1227,6 +1243,84 @@ def _intra_channel(count):
     return INTRA_STUB + INTRA_STEP * (count - 1) + 8 if count else 0
 
 
+def _port_range(node):
+    return node["y"] + node["tagspace"] + PORT_STEP / 2, node["y"] + node["h"] - PORT_STEP / 2
+
+
+def _bus_stub(role, edge):
+    return role == "in" and edge.get("attack") and edge["kind"] == "forward" and not edge["skip"]
+
+
+def _place_ports(ports, pinned, low, high):
+    """Heights for every port, or None when the pinned heights leave no valid slot."""
+    placed = dict(pinned)
+    free = [i for i in range(len(ports)) if i not in pinned]
+    # Attack stubs cannot move later; data flows are refined by the route optimizer.
+    free.sort(key=lambda i: (not ports[i]["attack"], ports[i]["want"], i))
+    for i in free:
+        want = ports[i]["want"]
+        candidates = {want, low, high, *(y + d for y in placed.values() for d in (-PORT_STEP, PORT_STEP))}
+        fits = [
+            y
+            for y in candidates
+            if low - 1e-6 <= y <= high + 1e-6 and all(abs(y - other) >= PORT_STEP - 1e-6 for other in placed.values())
+        ]
+        if not fits:
+            return None
+        placed[i] = min(fits, key=lambda y: (abs(y - want), y))
+    return placed
+
+
+def _align_attack_ports(nodes, sides):
+    """Let an attacker's stub continue straight from its bus when the target spans that height.
+
+    Only sides with such a stub change. Other attack stubs take the free height
+    nearest their bus and data-flow ports the free height nearest their even
+    slot; every port keeps ``PORT_STEP`` clearance. A side whose pins leave no
+    valid slot drops pins until it fits, and keeps the even spread without any.
+    """
+    for nid, sd in sides.items():
+        node = nodes[nid]
+        low, high = _port_range(node)
+        for side in ("L", "R"):
+            groups = collections.OrderedDict()
+            for role, edge in sd[side]:
+                shared_bus = role == "out" and edge.get("attack") and edge["kind"] == "forward" and not edge["skip"]
+                key = ("bus", edge["src"]) if shared_bus else id(edge)
+                groups.setdefault(key, []).append((role, edge))
+            ports = []
+            for items in groups.values():
+                role, edge = items[0]
+                current = edge["ys"] if role == "out" else edge["yd"]
+                stub = len(items) == 1 and _bus_stub(role, edge)
+                ports.append(
+                    {
+                        "items": items,
+                        "attack": stub,
+                        "want": min(high, max(low, edge["ys"])) if stub else current,
+                        "pin": edge["ys"] if stub and low <= edge["ys"] <= high else None,
+                    }
+                )
+            pins = {}
+            for i, port in enumerate(ports):
+                if port["pin"] is not None and all(abs(port["pin"] - y) >= PORT_STEP for y in pins.values()):
+                    pins[i] = port["pin"]
+            if not pins:
+                continue
+            placed = None
+            while pins:
+                placed = _place_ports(ports, pins, low, high)
+                if placed is not None:
+                    break
+                pins.pop(max(pins))
+                placed = None
+            if placed is None:
+                continue
+            for i, port in enumerate(ports):
+                for role, edge in port["items"]:
+                    edge["ys" if role == "out" else "yd"] = placed[i]
+
+
 def _align_flow_ports(nodes, edges, sides):
     """Remove sub-corner-sized jogs only where the destination port has clearance."""
     for edge in edges:
@@ -1413,6 +1507,56 @@ def _improve_routes(nodes, edges, boundaries, zones, *, straight_only=False):
         points = edge["pts"]
         for x in dict.fromkeys((points[1][0], points[-2][0])):
             consider({i: [points[0], (x, points[0][1]), (x, points[-1][1]), points[-1]]})
+    # Straighten parallel routes between one node pair together: one flow alone
+    # can be boxed in by its neighbours' clearance while the pair still fits.
+    pairs = collections.defaultdict(list)
+    for i in movable:
+        edge = edges[i]
+        if edge["kind"] != "intra" and not edge["skip"] and len(edge["pts"]) == 4:
+            pairs[(edge["src"], edge["dst"], edge["pts"][0][0], edge["pts"][-1][0])].append(i)
+    for (src, dst, x_src, x_dst), group in pairs.items():
+        group.sort(key=lambda i: (edges[i]["pts"][0][1] + edges[i]["pts"][-1][1], i))
+        if len(group) < 2 or all(edges[i]["pts"][0][1] == edges[i]["pts"][-1][1] for i in group):
+            continue
+        lower = max(_port_range(nodes[n])[0] for n in (src, dst))
+        upper = min(_port_range(nodes[n])[1] for n in (src, dst))
+        members = set(group)
+        blocked = [
+            other["pts"][p][1]
+            for j, other in enumerate(edges)
+            if j not in members
+            for r, p in (("src", 0), ("dst", -1))
+            if (other[r], other["pts"][p][0]) in ((src, x_src), (dst, x_dst))
+        ]
+        current = [(edges[i]["pts"][0][1] + edges[i]["pts"][-1][1]) / 2 for i in group]
+
+        def stack(floor):
+            heights = []
+            for _ in group:
+                options = [floor] + [y + PORT_STEP for y in blocked if y + PORT_STEP >= floor]
+                fits = [y for y in options if y <= upper and all(abs(y - b) >= PORT_STEP for b in blocked)]
+                if not fits:
+                    return None
+                heights.append(min(fits))
+                floor = heights[-1] + PORT_STEP
+            return heights
+
+        starts = {
+            lower,
+            *(y + PORT_STEP for y in blocked),
+            *(max(lower, y) for i in group for y in (edges[i]["pts"][0][1], edges[i]["pts"][-1][1])),
+        }
+        stacks = [h for h in map(stack, sorted(y for y in starts if y >= lower)) if h]
+        if not stacks:
+            continue
+        heights = min(stacks, key=lambda h: (sum(abs(a - b) for a, b in zip(h, current)), h))
+        consider(
+            {
+                i: [(edges[i]["pts"][0][0], y), (edges[i]["pts"][1][0], y), (edges[i]["pts"][2][0], y), (x_dst, y)]
+                for i, y in zip(group, heights)
+            },
+            straight=True,
+        )
     for i in movable:
         edge = edges[i]
         if edge["kind"] == "intra":
@@ -1584,6 +1728,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
                     else:
                         e["yd"] = yv
 
+    _align_attack_ports(nodes, sides)
     _align_flow_ports(nodes, edges, sides)
 
     # 6. routes
@@ -1821,22 +1966,32 @@ def _segment_hits_rect(a, b, rect):
     return x0 < a[0] < x1 and min(a[1], b[1]) < y1 and max(a[1], b[1]) > y0
 
 
+def _protocol_part(protocol, *, own_line=False):
+    """The protocol in parentheses; one with its own parentheses follows a separator or its own line."""
+    if "(" not in protocol and ")" not in protocol:
+        return f"({protocol})"
+    return protocol if own_line else f"· {protocol}"
+
+
 def _flow_label_candidates(entries, interaction):
     """Prefer authored payloads; shorten legacy prose without inventing a summary."""
     labels = list(dict.fromkeys(f.get("diagram_label") or f.get("label") or "Data exchange" for f in entries))
     protocol = " / ".join(dict.fromkeys(f["protocol"] for f in entries if f.get("protocol")))
-    full = " / ".join(labels) + (f" ({protocol})" if protocol and not interaction else "")
-    choices = [full]
-    if protocol and not interaction:
-        choices.append(" / ".join(labels) + f"\n({protocol})")
+    if interaction:
+        protocol = ""
+    part = _protocol_part(protocol) if protocol else ""
+    line = _protocol_part(protocol, own_line=True) if protocol else ""
+    choices = [" / ".join(labels) + (f" {part}" if part else "")]
+    if part:
+        choices.append(" / ".join(labels) + f"\n{line}")
     for width in (48, 30, 18):
         label = labels[0]
         if len(label) > width:
             label = label[:width].rsplit(" ", 1)[0] + "…"
         if len(labels) > 1:
             label += f" +{len(labels) - 1}"
-        if protocol and not interaction:
-            choices.extend([label + f" ({protocol})", label + f"\n({protocol})"])
+        if part:
+            choices.extend([f"{label} {part}", f"{label}\n{line}"])
         else:
             choices.append(label)
     return list(dict.fromkeys(choices))
@@ -1929,12 +2084,14 @@ def _flow_labels(canvas, model, nodes, edges, boundaries, zones):
             # words intact rather than abbreviating away an optional step.
             label = edge["access_group"]["label"]
             protocol = " / ".join(dict.fromkeys(f["protocol"] for f in entries if f.get("protocol")))
-            texts = [label + (f" ({protocol})" if protocol else "")]
-            if protocol:
-                texts.append(label + f"\n({protocol})")
+            part = _protocol_part(protocol) if protocol else ""
+            line = _protocol_part(protocol, own_line=True) if protocol else ""
+            texts = [label + (f" {part}" if part else "")]
+            if part:
+                texts.append(label + f"\n{line}")
             wrapped = _legend_wrap(label, 110, FS)
             if len(wrapped) <= 3:
-                texts.append("\n".join([*wrapped, *([f"({protocol})"] if protocol else [])]))
+                texts.append("\n".join([*wrapped, *([line] if line else [])]))
         for index, text in enumerate(texts):
             for a, b in zip(points, points[1:]):
                 length = abs(a[0] - b[0]) + abs(a[1] - b[1])
@@ -2258,7 +2415,7 @@ def _render(
         mode = e.get("access_group", {}).get("mode", "")
         c.add(f'<g data-flow-ids="{_esc(" ".join(e["ids"]))}" data-access-mode="{_esc(mode)}">')
         inventory = [f for f in d.get("data_flows", []) if f.get("id") in e["ids"]]
-        full_labels = [f"{f['id']}: {f.get('label', '')} ({f.get('protocol', '')})" for f in inventory]
+        full_labels = [f"{f['id']}: {f.get('label', '')} {_protocol_part(f.get('protocol', ''))}" for f in inventory]
         for flow in inventory:
             auth = flow.get("authentication") or {}
             if auth:
@@ -2461,7 +2618,8 @@ def _render(
                 flow = flow_inventory[fid]
                 auth = flow.get("authentication") or {}
                 operations.append(
-                    f"{fid}: {flow.get('label', '')} ({flow.get('protocol', '')}); {auth.get('scope', 'authentication not established')}"
+                    f"{fid}: {flow.get('label', '')} {_protocol_part(flow.get('protocol', ''))}; "
+                    f"{auth.get('scope', 'authentication not established')}"
                 )
             c.add(f"<title>{_esc(chr(10).join(operations))}</title>")
             c.rect(x, y, w, h, fill="#edf3f9", stroke="#b6c6d8", sw=0.7, rx=3)

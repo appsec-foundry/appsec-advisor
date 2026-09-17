@@ -416,7 +416,7 @@ properties:
               capability:
                 type: string
                 enum: [file-upload, url-fetch, xml-parsing, template-rendering, llm-calls, llm-tools,
-                       token-issuer, mfa-verifier, oauth-client, oidc-client, saml-service-provider,
+                       token-issuer, jwt-issuer, mfa-verifier, oauth-client, oidc-client, saml-service-provider,
                        websocket-endpoint, graphql-endpoint, payment-processing, email-sending,
                        admin-functions, blockchain-client, background-jobs]
               evidence:
@@ -562,7 +562,7 @@ properties:
           minLength: 1
           maxLength: 48
           pattern: '^[^\r\n\t]+$'
-          description: Short flow purpose for Figure 1; the complete label and individual flow identity remain authoritative.
+          description: Short name of the transported data for Figure 1; the complete label and individual flow identity remain authoritative.
         protocol: {type: string, minLength: 1}
         authentication: {
           "type": "object", "additionalProperties": false,

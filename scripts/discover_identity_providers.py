@@ -83,6 +83,24 @@ def _address(value: str, *, issuer: bool = False) -> tuple[str, str, str] | None
     return origin + scope, host, parsed.scheme.upper()
 
 
+_ROLES = frozenset(
+    {
+        "OIDC discovery",
+        "OAuth authorization",
+        "OAuth token exchange",
+        "OAuth profile request",
+        "SAML sign-in",
+        "SAML metadata",
+    }
+)
+
+
+def _written_by_reconcile(flow: dict) -> bool:
+    """Only a recon flow carrying a role label came from here; any other flow is authored."""
+    label = str(flow.get("label") or "")
+    return flow.get("provenance") == "recon" and label.removeprefix("Configured ") in _ROLES
+
+
 def _field_role(key: str) -> str | None:
     key = re.sub(r"[^a-z]", "", key.lower())
     if key in {
@@ -375,8 +393,10 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
             )
         existing = [f for f in flows if f.get("from") == owner and f.get("to") == "external" and same_evidence(f)]
         label = ("Configured " if integration.configured else "") + integration.role
+        # An authored flow with this evidence already represents the integration,
+        # whatever provenance its author chose; a generated one covers only its role.
         if any(
-            f.get("to_entity") == entity_id and (f.get("provenance") != "recon" or f.get("label") == label)
+            f.get("to_entity") == entity_id and (not _written_by_reconcile(f) or f.get("label") == label)
             for f in existing
         ):
             continue

@@ -7,6 +7,8 @@
 # `external_entities[].service_roles[].role` in the component, data-flow,
 # boundary-assessment and threat-model schemas; ids are unique across both maps.
 # `note` adds a legend explanation when the label alone could be misread.
+# `implies` names the generic values a more specific one already covers; the
+# figure shows only the specific label when both are evidenced.
 schema_version: 1
 
 component_capabilities:
@@ -24,14 +26,19 @@ component_capabilities:
   llm-tools:
     label: LLM + tools
     note: model calls with executable application tools
+    implies: [llm-calls]
   token-issuer:
     label: Token issuer
+  jwt-issuer:
+    label: JWT issuer
+    implies: [token-issuer]
   mfa-verifier:
     label: MFA verifier
   oauth-client:
     label: OAuth client
   oidc-client:
     label: OIDC client
+    implies: [oauth-client]
   saml-service-provider:
     label: SAML service provider
   websocket-endpoint:
@@ -56,6 +63,7 @@ service_roles:
     label: OAuth resource server
   oidc-provider:
     label: OIDC provider
+    implies: [oauth-authorization-server]
   saml-identity-provider:
     label: SAML identity provider
   llm-inference:
