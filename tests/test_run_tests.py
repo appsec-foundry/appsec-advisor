@@ -50,7 +50,7 @@ def test_exact_group_rejects_partial_rename_and_inventory_detects_addition(tmp_p
     (tmp_path / added).touch()
     monkeypatch.setattr(runner, "GROUPS", {"example": (first, added)})
     monkeypatch.setattr(runner, "MANUAL_TESTS", {})
-    monkeypatch.setattr(runner, "SOURCE_GROUPS", {})
+    monkeypatch.setattr(runner, "SOURCE_TESTS", {})
     assert runner.select_tests("example", tmp_path) == [first, added]
     assert runner.group_problems(tmp_path) == []
     (tmp_path / "tests/test_unrelated.py").touch()
@@ -214,36 +214,35 @@ def selection_repo(tmp_path, monkeypatch):
         "consumer": ("tests/test_reader.py",),
         "unrelated": ("tests/test_elsewhere.py",),
     }
-    sources = {"scripts/emitter.py": ("producer", "consumer")}
+    sources = {"scripts/emitter.py": ("tests/test_emitter.py", "tests/test_reader.py")}
     for path in [*(p for paths in groups.values() for p in paths), *sources]:
         target = tmp_path / path
         target.parent.mkdir(exist_ok=True)
         target.touch()
     monkeypatch.setattr(runner, "GROUPS", groups)
     monkeypatch.setattr(runner, "MANUAL_TESTS", {})
-    monkeypatch.setattr(runner, "SOURCE_GROUPS", sources)
+    monkeypatch.setattr(runner, "SOURCE_TESTS", sources)
     monkeypatch.setattr(runner, "requirement_tests", lambda paths, root: [])
     return tmp_path
 
 
 @pytest.mark.parametrize("name", ["emitter", "converter"])
-def test_changed_source_selects_producer_consumer_and_base_without_unrelated(selection_repo, monkeypatch, name):
+def test_changed_source_selects_producer_and_consumer_without_unrelated(selection_repo, monkeypatch, name):
     root = selection_repo
     source = f"scripts/{name}.py"
     (root / source).touch()
-    monkeypatch.setattr(runner, "SOURCE_GROUPS", {source: ("producer", "consumer")})
+    monkeypatch.setattr(runner, "SOURCE_TESTS", {source: ("tests/test_emitter.py", "tests/test_reader.py")})
     result = runner.select_changed([source], root)
     assert set(result.paths) == {
-        "tests/test_contract.py",
         "tests/test_emitter.py",
         "tests/test_reader.py",
     }
-    assert any("producer, consumer" in reason for reason in result.reasons)
+    assert any("2 reviewed test module(s)" in reason for reason in result.reasons)
 
 
-def test_changed_test_selects_itself_and_base(selection_repo):
+def test_changed_test_selects_only_itself(selection_repo):
     result = runner.select_changed(["tests/test_elsewhere.py"], selection_repo)
-    assert set(result.paths) == {"tests/test_contract.py", "tests/test_elsewhere.py"}
+    assert result.paths == ("tests/test_elsewhere.py",)
     assert any("changed test module" in reason for reason in result.reasons)
 
 
@@ -256,14 +255,24 @@ def test_changed_test_does_not_expand_overlapping_groups(selection_repo, monkeyp
 
     result = runner.select_changed(["tests/test_reader.py"], selection_repo)
 
-    assert set(result.paths) == {"tests/test_contract.py", "tests/test_reader.py"}
+    assert result.paths == ("tests/test_reader.py",)
 
 
 def test_changed_selection_adds_requirement_guards(selection_repo, monkeypatch):
-    monkeypatch.setattr(runner, "requirement_tests", lambda paths, root: ["tests/test_elsewhere.py"])
+    guard = "tests/test_elsewhere.py::test_requirement"
+    monkeypatch.setattr(runner, "requirement_tests", lambda paths, root: [guard])
     result = runner.select_changed(["scripts/emitter.py"], selection_repo)
-    assert "tests/test_elsewhere.py" in result.paths
+    assert guard in result.paths
     assert any("requirement guard" in reason for reason in result.reasons)
+
+
+def test_changed_selection_does_not_duplicate_guard_inside_selected_module(selection_repo, monkeypatch):
+    guard = "tests/test_emitter.py::test_requirement"
+    monkeypatch.setattr(runner, "requirement_tests", lambda paths, root: [guard])
+    result = runner.select_changed(["scripts/emitter.py"], selection_repo)
+    assert "tests/test_emitter.py" in result.paths
+    assert guard not in result.paths
+    assert any("0 exact pytest selector(s) added; 1 covered" in reason for reason in result.reasons)
 
 
 @pytest.mark.parametrize(
@@ -291,14 +300,13 @@ def test_unknown_and_shared_paths_fall_back_to_all(selection_repo, path):
 
 def test_multiple_reviewed_source_modules_union_their_routes(selection_repo, monkeypatch):
     (selection_repo / "scripts/second.py").touch()
-    monkeypatch.setitem(runner.SOURCE_GROUPS, "scripts/second.py", ("consumer",))
+    monkeypatch.setitem(runner.SOURCE_TESTS, "scripts/second.py", ("tests/test_reader.py",))
     result = runner.select_changed(["scripts/emitter.py", "scripts/second.py"], selection_repo)
     assert set(result.paths) == {
-        "tests/test_contract.py",
         "tests/test_emitter.py",
         "tests/test_reader.py",
     }
-    assert any("scripts/second.py" in reason and "consumer" in reason for reason in result.reasons)
+    assert any("scripts/second.py" in reason and "1 reviewed test module(s)" in reason for reason in result.reasons)
 
 
 def test_deleted_source_requires_full_suite(selection_repo):
@@ -313,8 +321,10 @@ def test_new_test_requires_inventory_review(selection_repo):
     assert any("test_new.py" in reason for reason in result.reasons)
 
 
-def test_empty_diff_still_runs_base_guards(selection_repo):
-    assert runner.select_changed([], selection_repo).paths == ("tests/test_contract.py",)
+def test_empty_diff_selects_no_tests(selection_repo):
+    result = runner.select_changed([], selection_repo)
+    assert result.paths == ()
+    assert result.reasons == ("no changed paths; no tests selected",)
 
 
 def test_escaped_test_symlink_is_rejected(selection_repo, tmp_path):
@@ -329,7 +339,7 @@ def test_escaped_test_symlink_is_rejected(selection_repo, tmp_path):
 
 
 def test_invalid_route_and_duplicate_membership_are_reported(selection_repo, monkeypatch):
-    monkeypatch.setitem(runner.SOURCE_GROUPS, "scripts/emitter.py", ("unknown",))
+    monkeypatch.setitem(runner.SOURCE_TESTS, "scripts/emitter.py", ("tests/test_missing.py",))
     monkeypatch.setitem(runner.GROUPS, "quick", ("tests/test_contract.py", "tests/test_contract.py"))
     problems = runner.group_problems(selection_repo)
     assert any("duplicate" in problem for problem in problems)
@@ -433,11 +443,11 @@ def test_changed_cli_lists_reasons_without_running_pytest(selection_repo, monkey
     assert runner.main(["--list", "--changed-against", "dev"]) == 0
     output = capsys.readouterr()
     assert "tests/test_reader.py" in output.out
-    assert "producer, consumer" in output.err
+    assert "2 reviewed test module(s)" in output.err
 
 
 def test_changed_cli_preserves_pytest_status(selection_repo, monkeypatch):
-    monkeypatch.setattr(runner, "changed_paths", lambda base: [])
+    monkeypatch.setattr(runner, "changed_paths", lambda base: ["scripts/emitter.py"])
     original = runner.select_changed
     monkeypatch.setattr(runner, "select_changed", lambda paths: original(paths, selection_repo))
     calls = []
@@ -448,13 +458,22 @@ def test_changed_cli_preserves_pytest_status(selection_repo, monkeypatch):
 
     monkeypatch.setattr(runner.subprocess, "run", run)
     assert runner.main(["--changed-against", "dev", "all", "-q"]) == 5
-    assert calls == [[sys.executable, "-m", "pytest", "tests/test_contract.py", "-q"]]
+    assert calls == [[sys.executable, "-m", "pytest", "tests/test_emitter.py", "tests/test_reader.py", "-q"]]
+
+
+def test_changed_cli_clean_selection_does_not_launch_pytest(selection_repo, monkeypatch, capsys):
+    monkeypatch.setattr(runner, "changed_paths", lambda base: [])
+    original = runner.select_changed
+    monkeypatch.setattr(runner, "select_changed", lambda paths: original(paths, selection_repo))
+    monkeypatch.setattr(runner.subprocess, "run", lambda *a, **kw: pytest.fail("pytest must not run"))
+    assert runner.main(["--changed-against", "dev", "all", "-q"]) == 0
+    assert "no tests selected" in capsys.readouterr().err
 
 
 def test_requirement_routes_load_real_bindings():
     guards = runner.requirement_tests(["scripts/merge_threats.py"])
-    assert "tests/test_merge_threats.py" in guards
-    assert all("::" not in path and (runner.ROOT / path).is_file() for path in guards)
+    assert any(guard.startswith("tests/test_merge_threats.py::") for guard in guards)
+    assert all("::" in guard and (runner.ROOT / guard.split("::", 1)[0]).is_file() for guard in guards)
 
 
 @pytest.mark.parametrize("guard", ["tests/test_missing.py", "../escaped.py", "scripts/emitter.py"])
@@ -513,11 +532,11 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
     [
         (
             "scripts/config_iac_scanner.py",
-            {"tests/test_config_iac_scanner.py", "tests/test_agent_config_checks.py", "tests/test_merge_threats.py"},
+            {"tests/test_config_iac_scanner.py", "tests/test_agent_config_checks.py", "tests/test_security_score.py"},
         ),
         (
             "scripts/export_sarif.py",
-            {"tests/test_export_sarif.py", "tests/test_threat_fixture.py", "tests/test_build_threat_model_yaml.py"},
+            {"tests/test_export_sarif.py", "tests/test_threat_fixture.py", "tests/test_sarif_validation.py"},
         ),
         (
             "scripts/figure2_svg.py",
@@ -529,41 +548,37 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
                 "tests/test_inline_code_formatter.py",
                 "tests/test_apply_prose_fixes.py",
                 "tests/test_compose_threat_model.py",
-                "tests/test_qa_checks_cov_band3.py",
+                "tests/test_qa_checks.py",
                 "tests/test_e2e_pipeline.py",
             },
         ),
         (
             "scripts/repo_scan.py",
-            {"tests/test_repo_scan.py", "tests/test_route_inventory.py", "tests/test_architecture_coverage_checks.py"},
+            {"tests/test_repo_scan.py", "tests/test_scanner_review_regressions.py"},
         ),
         (
             "scripts/run_tests.py",
-            {"tests/test_run_tests.py", "tests/test_ci_test_workflow.py", "tests/test_check_specs.py"},
+            {"tests/test_run_tests.py", "tests/test_ci_test_workflow.py"},
         ),
     ],
 )
 def test_shipped_source_routes_include_reviewed_producers_and_consumers(source, required):
     selection = runner.select_changed([source])
     assert required <= set(selection.paths)
-    assert "tests/test_run_tests.py" in selection.paths
     assert "tests/test_full_run_e2e.py" not in selection.paths
 
 
 def test_all_shipped_source_routes_remain_selective():
-    for source in runner.SOURCE_GROUPS:
+    for source in runner.SOURCE_TESTS:
         selection = runner.select_changed([source])
         assert selection.paths != ("tests/",), (source, selection.reasons)
 
 
-def test_repository_agent_guidance_routes_to_tooling_checks():
-    selection = runner.select_changed(["AGENTS.md"])
-    assert {
-        "tests/test_check_specs.py",
-        "tests/test_ci_test_workflow.py",
-        "tests/test_run_tests.py",
-    } <= set(selection.paths)
-    assert any("AGENTS.md" in reason and "tooling" in reason for reason in selection.reasons)
+@pytest.mark.parametrize("filename", ["AGENTS.md", "CONTRIBUTING.md"])
+def test_repository_guidance_routes_to_selector_checks(filename):
+    selection = runner.select_changed([filename])
+    assert selection.paths == ("tests/test_run_tests.py",)
+    assert any(filename in reason and "1 reviewed test module(s)" in reason for reason in selection.reasons)
     assert "tests/test_full_run_e2e.py" not in selection.paths
 
 

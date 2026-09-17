@@ -1,8 +1,8 @@
 """Run reviewed maintainer test groups and conservative Git-based selections.
 
-Exact membership detects additions and renames. Source routes are reviewed
-producer/consumer selections, not an inferred dependency graph. Unknown paths
-and shared inputs require the full suite; reviewed source routes may be united.
+Exact membership detects additions and renames. Source routes name reviewed
+producer and consumer modules directly; requirement bindings retain their exact
+pytest selectors. Unknown paths and shared inputs require the full suite.
 """
 
 from __future__ import annotations
@@ -490,35 +490,119 @@ MANUAL_TESTS = {
     "tests/test_full_run_e2e.py": "Assertions on live-run artifacts; only enabled by the manual E2E driver.",
 }
 
-# Start with bounded leaf/report and scanner entry points whose consumer tests
-# have been reviewed. The root AGENTS.md is repository-only maintainer guidance;
-# shipped Markdown under agents/ and skills/ remains runtime input and therefore
-# falls back to all. Extend a route only after checking imports, CLI callers,
-# data readers, and integration tests. Changes to shared contracts always use all.
-SOURCE_GROUPS = {
-    "AGENTS.md": ("tooling",),
-    "scripts/apply_prose_fixes.py": ("prose-formatting",),
-    "scripts/actor_presentation.py": ("report", "incremental", "scanner", "qa-repair"),
-    "scripts/export_sarif.py": ("report", "incremental", "findings"),
-    "scripts/export_html.py": ("report", "qa-repair"),
-    "scripts/export_pdf.py": ("report", "qa-repair"),
-    "scripts/export_threat_dragon.py": ("report",),
-    "scripts/figure2_svg.py": ("report", "qa-repair"),
-    "scripts/inline_code_formatter.py": ("prose-formatting",),
-    "scripts/run_tests.py": ("tooling",),
-    "scripts/walkthrough_renderer.py": ("report", "qa-repair", "findings"),
-    "scripts/repo_scan.py": ("scanner", "trust", "integration"),
-    "scripts/config_iac_scanner.py": ("scanner", "findings", "incremental", "report", "qa-repair", "e2e"),
-    "scripts/mass_assignment_scanner.py": ("scanner", "findings", "incremental", "report", "qa-repair", "e2e"),
-    "scripts/source_auth_scanner.py": (
-        "scanner",
-        "context",
-        "findings",
-        "incremental",
-        "report",
-        "qa-repair",
-        "e2e",
-    ),
+# These routes were reviewed across imports, subprocess callers, artifact
+# readers, and deterministic integration tests. Do not replace them with group
+# names: groups are convenient maintainer suites, not dependency boundaries.
+# The root guidance files are repository-only inputs; shipped Markdown under
+# agents/ and skills/ remains runtime input and therefore falls back to all.
+SOURCE_TESTS = {
+    "AGENTS.md": _tests("run_tests"),
+    "CONTRIBUTING.md": _tests("run_tests"),
+    "scripts/apply_prose_fixes.py": _tests("""
+        actor_presentation
+        apply_prose_fixes
+        apply_prose_fixes_coverage
+        attack_step_quality
+        compose_threat_model
+        e2e_pipeline
+        qa_checks
+        walkthrough_renderer
+    """),
+    "scripts/actor_presentation.py": _tests("""
+        actor_presentation
+        build_threat_model_yaml
+        compose_threat_model
+        detect_open_registration
+        e2e_pipeline
+        figure1_dfd
+        figure1_svg
+        figure2_svg
+    """),
+    "scripts/export_sarif.py": _tests("""
+        e2e_pipeline
+        export_sarif
+        export_threat_model_skill
+        sarif_validation
+        severity_policy
+        threat_fixture
+    """),
+    "scripts/export_html.py": _tests("""
+        e2e_pipeline
+        export_html
+        export_threat_model_skill
+    """),
+    "scripts/export_pdf.py": _tests("""
+        e2e_pipeline
+        export_html
+        export_pdf
+        export_threat_model_skill
+    """),
+    "scripts/export_threat_dragon.py": _tests("""
+        export_threat_dragon
+        export_threat_model_skill
+    """),
+    "scripts/figure2_svg.py": _tests("""
+        actor_presentation
+        compose_threat_model
+        e2e_pipeline
+        figure2_svg
+        qa_checks
+    """),
+    "scripts/inline_code_formatter.py": _tests("""
+        apply_prose_fixes
+        attack_step_quality
+        compose_threat_model
+        e2e_pipeline
+        inline_code_formatter
+        qa_checks
+        walkthrough_renderer
+    """),
+    "scripts/run_tests.py": _tests("""
+        ci_test_workflow
+        run_tests
+    """),
+    "scripts/walkthrough_renderer.py": _tests("""
+        architect_structural_checks
+        attack_step_quality
+        compose_threat_model
+        e2e_pipeline
+        pregenerate_fragments
+        qa_checks
+        walkthrough_renderer
+    """),
+    "scripts/repo_scan.py": _tests("""
+        repo_scan
+        scanner_review_regressions
+    """),
+    "scripts/config_iac_scanner.py": _tests("""
+        agent_config_checks
+        config_iac_scanner
+        orchestration_controller
+        repo_scan
+        security_score
+    """),
+    "scripts/mass_assignment_scanner.py": _tests("""
+        mass_assignment_scanner
+        merge_threats
+        repo_scan
+        scanner_review_regressions
+        validate_intermediate
+    """),
+    "scripts/source_auth_scanner.py": _tests("""
+        authz_confirm
+        credential_lifecycle_checks
+        crypto_path_xxe_checks
+        detect_impl_strategy
+        merge_threats
+        orchestration_controller
+        reclassify_components
+        repo_scan
+        scanner_review_regressions
+        security_score
+        source_auth_scanner
+        validate_intermediate
+        weakness_signals
+    """),
 }
 
 
@@ -570,8 +654,13 @@ def group_problems(root: Path = ROOT) -> list[str]:
     discovered = {path.relative_to(root).as_posix() for path in (root / "tests").rglob("test_*.py")}
     for path in sorted(discovered - grouped - MANUAL_TESTS.keys()):
         problems.append(f"test needs an explicit group or manual role: {path}")
-    for path, groups in SOURCE_GROUPS.items():
-        if not _safe_file(path, root) or not groups or any(group not in GROUPS for group in groups):
+    for path, tests in SOURCE_TESTS.items():
+        if (
+            not _safe_file(path, root)
+            or not tests
+            or len(tests) != len(set(tests))
+            or any(test not in grouped or not _safe_file(test, root) for test in tests)
+        ):
             problems.append(f"invalid source route: {path}")
     return problems
 
@@ -602,7 +691,7 @@ def changed_paths(base: str, root: Path = ROOT) -> list[str]:
 
 
 def requirement_tests(paths: list[str], root: Path = ROOT) -> list[str]:
-    """Add the full test modules containing applicable requirement guards."""
+    """Return the exact pytest selectors for applicable requirement guards."""
     import check_specs
     import yaml
 
@@ -623,7 +712,7 @@ def requirement_tests(paths: list[str], root: Path = ROOT) -> list[str]:
             for path in paths
             for pattern in binding.paths
         ):
-            selected.update(guard.split("::", 1)[0] for guard in binding.guards)
+            selected.update(binding.guards)
     return sorted(selected)
 
 
@@ -638,33 +727,39 @@ def select_changed(paths: list[str], root: Path = ROOT) -> Selection:
     problems = group_problems(root)
     if problems:
         return Selection(("tests/",), ("full suite: group inventory needs review", *problems))
-    groups = {"quick"}
-    direct_tests: set[str] = set()
+    selected: set[str] = set()
     inventoried = {path for tests in GROUPS.values() for path in tests}
     reasons = []
     for path in paths:
         if not _safe_file(path, root):
             return Selection(("tests/",), (f"full suite: deleted, renamed, or unsafe path {path!r}",))
-        affected = SOURCE_GROUPS.get(path)
+        affected = SOURCE_TESTS.get(path)
         if affected is None and path.startswith("tests/"):
             if path in inventoried:
-                direct_tests.add(path)
+                selected.add(path)
                 reasons.append(f"{path!r} -> changed test module")
                 continue
         if not affected:
             return Selection(("tests/",), (f"full suite: no reviewed source/test route for {path!r}",))
-        groups.update(affected)
-        reasons.append(f"{path!r} -> {', '.join(affected)}")
-    selected = {path for group in groups for path in select_tests(group, root)}
-    selected.update(direct_tests)
+        selected.update(affected)
+        reasons.append(f"{path!r} -> {len(affected)} reviewed test module(s)")
     guards = requirement_tests(paths, root) if paths else []
+    added_guards = 0
     for guard in guards:
-        if guard not in inventoried or not _safe_file(guard, root):
+        test_path = guard.split("::", 1)[0]
+        if test_path not in inventoried or not _safe_file(test_path, root):
             return Selection(("tests/",), (f"full suite: missing, unassigned, or unsafe requirement guard {guard!r}",))
-    selected.update(guards)
+        if test_path not in selected:
+            selected.add(guard)
+            added_guards += 1
     if guards:
-        reasons.append("requirement guard modules: " + ", ".join(guards))
-    reasons.append("shared base group: quick" if paths else "no changed paths; shared base group: quick")
+        covered_guards = len(guards) - added_guards
+        reasons.append(
+            f"requirement guards: {added_guards} exact pytest selector(s) added; "
+            f"{covered_guards} covered by selected modules"
+        )
+    if not paths:
+        reasons.append("no changed paths; no tests selected")
     return Selection(tuple(sorted(selected)), tuple(reasons))
 
 
@@ -701,6 +796,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.list:
         print("\n".join(paths))
+        return 0
+    if not paths:
         return 0
     return subprocess.run([sys.executable, "-m", "pytest", *paths, *args.pytest_args], cwd=ROOT, check=False).returncode
 
