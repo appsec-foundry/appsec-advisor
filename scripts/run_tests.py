@@ -1,8 +1,8 @@
 """Run reviewed maintainer test groups and conservative Git-based selections.
 
 Exact membership detects additions and renames. Source routes are reviewed
-producer/consumer selections, not an inferred dependency graph. Unknown paths,
-shared inputs, and changes to multiple runtime modules require the full suite.
+producer/consumer selections, not an inferred dependency graph. Unknown paths
+and shared inputs require the full suite; reviewed source routes may be united.
 """
 
 from __future__ import annotations
@@ -36,6 +36,17 @@ GROUPS = {
         runtime_cleanup
         schema_integrity
         taxonomy_coverage
+    """),
+    "prose-formatting": _tests("""
+        apply_prose_fixes
+        apply_prose_fixes_coverage
+        compose_threat_model
+        compose_threat_model_cov
+        compose_threat_model_cov3
+        e2e_pipeline
+        inline_code_formatter
+        qa_checks_cov_band3
+        walkthrough_renderer
     """),
     "report": _tests("""
         actor_presentation
@@ -484,12 +495,15 @@ MANUAL_TESTS = {
 # Extend a route only after checking imports, CLI callers, data readers, and
 # integration tests. Changes to shared contracts always use all.
 SOURCE_GROUPS = {
+    "scripts/apply_prose_fixes.py": ("prose-formatting",),
     "scripts/actor_presentation.py": ("report", "incremental", "scanner", "qa-repair"),
     "scripts/export_sarif.py": ("report", "incremental", "findings"),
     "scripts/export_html.py": ("report", "qa-repair"),
     "scripts/export_pdf.py": ("report", "qa-repair"),
     "scripts/export_threat_dragon.py": ("report",),
     "scripts/figure2_svg.py": ("report", "qa-repair"),
+    "scripts/inline_code_formatter.py": ("prose-formatting",),
+    "scripts/run_tests.py": ("tooling",),
     "scripts/walkthrough_renderer.py": ("report", "qa-repair", "findings"),
     "scripts/repo_scan.py": ("scanner", "trust", "integration"),
     "scripts/config_iac_scanner.py": ("scanner", "findings", "incremental", "report", "qa-repair", "e2e"),
@@ -622,30 +636,26 @@ def select_changed(paths: list[str], root: Path = ROOT) -> Selection:
     problems = group_problems(root)
     if problems:
         return Selection(("tests/",), ("full suite: group inventory needs review", *problems))
-    runtime = [path for path in paths if path.startswith(("scripts/", "hooks/"))]
-    if len(runtime) > 1:
-        return Selection(
-            ("tests/",),
-            (
-                "full suite: multiple runtime or tooling source files changed: "
-                + ", ".join(repr(path) for path in runtime),
-            ),
-        )
     groups = {"quick"}
+    direct_tests: set[str] = set()
+    inventoried = {path for tests in GROUPS.values() for path in tests}
     reasons = []
     for path in paths:
         if not _safe_file(path, root):
             return Selection(("tests/",), (f"full suite: deleted, renamed, or unsafe path {path!r}",))
         affected = SOURCE_GROUPS.get(path)
         if affected is None and path.startswith("tests/"):
-            affected = tuple(group for group, tests in GROUPS.items() if path in tests)
+            if path in inventoried:
+                direct_tests.add(path)
+                reasons.append(f"{path!r} -> changed test module")
+                continue
         if not affected:
             return Selection(("tests/",), (f"full suite: no reviewed source/test route for {path!r}",))
         groups.update(affected)
         reasons.append(f"{path!r} -> {', '.join(affected)}")
     selected = {path for group in groups for path in select_tests(group, root)}
+    selected.update(direct_tests)
     guards = requirement_tests(paths, root) if paths else []
-    inventoried = {path for tests in GROUPS.values() for path in tests}
     for guard in guards:
         if guard not in inventoried or not _safe_file(guard, root):
             return Selection(("tests/",), (f"full suite: missing, unassigned, or unsafe requirement guard {guard!r}",))

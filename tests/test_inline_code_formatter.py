@@ -33,13 +33,46 @@ def test_rule_6_code_matrix_formats_complete_tokens() -> None:
         "sanitize-html@1.4.2",
         "noent: true",
         "SameSite=Strict",
-        "Authorization",
         "Content-Security-Policy",
         r"^F-\d{3}$",
         "routes/**",
     )
     for token in required:
         assert f"`{token}`" in _format(token), token
+
+
+def test_ambiguous_protocol_words_require_local_identifier_context() -> None:
+    source = (
+        "Authorization is enforced independently of authentication. "
+        "Broken Authorization & Access Control remains a concept. "
+        "The Authorization header and Origin request header are identifiers. "
+        "Cookie policy remains prose while the Cookie request header carries state."
+    )
+
+    output, changes = formatter.format_inline_code(source)
+
+    assert output == (
+        "Authorization is enforced independently of authentication. "
+        "Broken Authorization & Access Control remains a concept. "
+        "The `Authorization` header and `Origin` request header are identifiers. "
+        "Cookie policy remains prose while the `Cookie` request header carries state."
+    )
+    assert changes == 3
+
+
+def test_ambiguous_protocol_literals_require_header_value_syntax() -> None:
+    source = (
+        "Authorization: access decisions remain server-side. "
+        "Authorization: Bearer token. Origin: https://example.test. Cookie: sid=123."
+    )
+
+    output, changes = formatter.format_inline_code(source)
+
+    assert output == (
+        "Authorization: access decisions remain server-side. "
+        "`Authorization`: Bearer token. `Origin`: `https://example.test`. `Cookie`: `sid=123`."
+    )
+    assert changes == 5
 
 
 def test_ambiguous_packages_require_repository_evidence() -> None:
@@ -52,10 +85,10 @@ def test_ambiguous_packages_require_repository_evidence() -> None:
 
 
 def test_evidenced_package_accepts_sentence_punctuation_but_not_qualified_suffixes() -> None:
-    source = "Replace rack. Keep rack: the adapter and rack.com unchanged."
+    source = "A rack holds equipment. Replace the rack package. Keep rack.com unchanged."
     output, changes = formatter.format_inline_code(source, {"rack"})
-    assert output == "Replace `rack`. Keep `rack`: the adapter and rack.com unchanged."
-    assert changes == 2
+    assert output == "A rack holds equipment. Replace the `rack` package. Keep rack.com unchanged."
+    assert changes == 1
 
 
 def test_balanced_expression_never_swallows_trailing_prose() -> None:
@@ -160,10 +193,10 @@ def test_repository_vocabulary_uses_shared_parser_across_ecosystems(tmp_path: Pa
     vocabulary = formatter.repository_vocabulary(tmp_path)
     assert expected <= vocabulary
 
-    source = "Replace " + ", ".join(sorted(expected)) + "."
-    formatted, changes = formatter.format_inline_code(source, vocabulary)
-    assert all(f"`{package}`" in formatted for package in expected)
-    assert changes == len(expected)
+    for package in expected:
+        formatted, changes = formatter.format_inline_code(f"Replace the {package} package.", vocabulary)
+        assert f"`{package}`" in formatted
+        assert changes == 1
 
 
 def test_repository_vocabulary_rejects_escaping_symlink(tmp_path: Path) -> None:
@@ -184,6 +217,14 @@ def test_structured_vocabulary_uses_only_code_bearing_fields() -> None:
     assert "req.body.email" in vocabulary
     assert "npm audit --omit=dev" in vocabulary
     assert "not-a-package" not in vocabulary
+
+
+def test_structured_vocabulary_does_not_promote_plain_words_document_wide() -> None:
+    vocabulary = formatter.structured_vocabulary({"snippet": "Authorization", "code": "Cookie", "excerpt": "Origin"})
+
+    assert vocabulary == frozenset()
+    prose = "Authorization, Cookie, and Origin are security concepts here."
+    assert formatter.format_inline_code(prose, vocabulary) == (prose, 0)
 
 
 def test_structured_vocabulary_terminates_on_cycles() -> None:

@@ -10,9 +10,8 @@ The recognizer is intentionally evidence-led:
 
 * balanced calls, member chains, subscripts, paths, assignments, command-line
   flags, payload literals, regexes, and globs carry structural code evidence;
-* ambiguous package names are formatted only when a repository manifest or a
-  code-bearing structured field names them — a word or symbol backticked in
-  model-authored prose is formatting, not code evidence;
+* ambiguous package names require repository evidence and a local artefact
+  context; plain words never become document-wide code vocabulary;
 * existing code spans, links, HTML, and other opaque Markdown regions are left
   byte-for-byte unchanged.
 
@@ -158,16 +157,10 @@ _BACKTICK_CONTENT_RE = re.compile(r"`([^`\n]+)`")
 _CODE_SIGNAL_RE = re.compile(r"[_./\\$:()\[\]{}<>=@#%&*+?!|~]|\d|[a-z][A-Z]")
 _LINKED_TITLE_TAIL_RE = re.compile(r"\]\(#(?:f|t|m|th)-\d+\)\s*[—–-]\s[^\n|]*?(?=<br/?>|\||$)")
 
-# Single-word protocol identifiers are otherwise indistinguishable from prose.
-# This is a protocol vocabulary, not a product/application allow-list.
-_PROTOCOL_IDENTIFIERS = frozenset(
+# Hyphenated header names are intrinsically identifier-shaped. Single-word
+# names remain ambiguous until nearby prose identifies a header or attribute.
+_INTRINSIC_PROTOCOL_IDENTIFIERS = frozenset(
     {
-        "Authorization",
-        "Cookie",
-        "ETag",
-        "Origin",
-        "Referer",
-        "SameSite",
         "Set-Cookie",
         "Strict-Transport-Security",
         "Content-Security-Policy",
@@ -176,6 +169,10 @@ _PROTOCOL_IDENTIFIERS = frozenset(
         "X-Content-Type-Options",
         "X-Frame-Options",
     }
+)
+_CONTEXTUAL_PROTOCOL_IDENTIFIERS = frozenset({"Authorization", "Cookie", "ETag", "Origin", "Referer", "SameSite"})
+_CODE_ARTEFACT_NOUNS = frozenset(
+    {"crate", "dependency", "framework", "gem", "library", "middleware", "module", "package", "plugin"}
 )
 
 _TRAILING_PUNCTUATION = ".,;:!?"
@@ -390,6 +387,75 @@ def _overlaps(ranges: Iterable[tuple[int, int]], start: int, end: int) -> bool:
     return any(start < range_end and end > range_start for range_start, range_end in ranges)
 
 
+def _is_code_shaped(token: str) -> bool:
+    """Whether ``token`` reads as code on its own: a letter plus a code signal."""
+
+    core = token.rstrip(_TRAILING_PUNCTUATION)
+    return bool(re.search(r"[A-Za-z]", core)) and bool(_CODE_SIGNAL_RE.search(core))
+
+
+def _is_unambiguous_known_token(token: str) -> bool:
+    """Return whether evidence may safely promote ``token`` across the report."""
+
+    core = token.rstrip(_TRAILING_PUNCTUATION)
+    return _is_code_shaped(core) or bool(re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+", core))
+
+
+def _has_code_artefact_context(text: str, start: int, end: int) -> bool:
+    """Return whether nearby prose explicitly treats a known word as software."""
+
+    noun = "|".join(sorted(_CODE_ARTEFACT_NOUNS))
+    before = text[max(0, start - 48) : start]
+    after = text[end : min(len(text), end + 48)]
+    return bool(
+        re.search(rf"\b(?:{noun})\s+(?:named|called)\s+$", before, re.IGNORECASE)
+        or re.match(rf"\s+(?:{noun})\b", after, re.IGNORECASE)
+    )
+
+
+def _has_protocol_context(text: str, start: int, end: int, token: str) -> bool:
+    """Return whether local syntax identifies an ambiguous protocol name."""
+
+    before = text[max(0, start - 64) : start]
+    after = text[end : min(len(text), end + 96)]
+    if re.match(
+        r"\s+(?:(?:HTTP|request|response|cookie)\s+)*(?:headers?|attributes?)\b",
+        after,
+        re.IGNORECASE,
+    ):
+        return True
+    if re.search(r"\b(?:headers?|attributes?)\s+(?:named|called)\s+$", before, re.IGNORECASE):
+        return True
+
+    value = re.match(r"\s*:\s*(\S.*)", after)
+    if value is None:
+        return False
+    literal = value.group(1)
+    literal_patterns = {
+        "Authorization": r"(?:Basic|Bearer|Digest|Negotiate)\b",
+        "Cookie": r"[!#$%&'*+.^_`|~0-9A-Za-z-]+=",
+        "ETag": r'(?:W/)?"',
+        "Origin": r"(?:https?://|null\b)",
+        "Referer": r"https?://",
+        "SameSite": r"(?:Strict|Lax|None)\b",
+    }
+    return bool(re.match(literal_patterns[token], literal, re.IGNORECASE))
+
+
+def _protocol_candidates(text: str) -> Iterator[CodeCandidate]:
+    intrinsic_pattern = _known_token_pattern(tuple(sorted(_INTRINSIC_PROTOCOL_IDENTIFIERS)))
+    if intrinsic_pattern is not None:
+        for match in intrinsic_pattern.finditer(text):
+            yield CodeCandidate(match.start(), match.end(), match.group(0), "protocol", 110)
+
+    contextual_pattern = _known_token_pattern(tuple(sorted(_CONTEXTUAL_PROTOCOL_IDENTIFIERS)))
+    if contextual_pattern is not None:
+        for match in contextual_pattern.finditer(text):
+            token = match.group(0)
+            if _has_protocol_context(text, match.start(), match.end(), token):
+                yield CodeCandidate(match.start(), match.end(), token, "protocol", 110)
+
+
 def _regex_candidates(text: str, known_tokens: frozenset[str]) -> Iterator[CodeCandidate]:
     patterns: tuple[tuple[re.Pattern[str], str, int], ...] = (
         (_URL_RE, "url", 90),
@@ -435,15 +501,15 @@ def _regex_candidates(text: str, known_tokens: frozenset[str]) -> Iterator[CodeC
             continue
         yield CodeCandidate(match.start("token"), match.end("token"), token, "identifier", 89)
 
-    evidence_tokens = sorted(
-        known_tokens - _PROTOCOL_IDENTIFIERS,
-        key=lambda item: (-len(item), item),
-    )[: _MAX_KNOWN_TOKENS - len(_PROTOCOL_IDENTIFIERS)]
-    search_tokens = tuple(sorted((*_PROTOCOL_IDENTIFIERS, *evidence_tokens), key=lambda item: (-len(item), item)))
-    known_pattern = _known_token_pattern(search_tokens)
+    yield from _protocol_candidates(text)
+
+    evidence_tokens = tuple(sorted(known_tokens, key=lambda item: (-len(item), item))[:_MAX_KNOWN_TOKENS])
+    known_pattern = _known_token_pattern(evidence_tokens)
     if known_pattern is not None:
         for match in known_pattern.finditer(text):
-            yield CodeCandidate(match.start(), match.end(), match.group(0), "known", 110)
+            token = match.group(0)
+            if _is_unambiguous_known_token(token) or _has_code_artefact_context(text, match.start(), match.end()):
+                yield CodeCandidate(match.start(), match.end(), token, "known", 110)
 
 
 @lru_cache(maxsize=16)
@@ -611,13 +677,6 @@ _STRUCTURED_CODE_KEYS = frozenset(
 )
 
 
-def _is_code_shaped(token: str) -> bool:
-    """Whether ``token`` reads as code on its own: a letter plus a code signal."""
-
-    core = token.rstrip(_TRAILING_PUNCTUATION)
-    return bool(re.search(r"[A-Za-z]", core)) and bool(_CODE_SIGNAL_RE.search(core))
-
-
 def structured_vocabulary(
     value: Any,
     *,
@@ -635,7 +694,11 @@ def structured_vocabulary(
     nodes_seen = 0
 
     def add_token(token: str) -> None:
-        if 0 < len(token) <= _MAX_KNOWN_TOKEN_LENGTH and len(tokens) < _MAX_KNOWN_TOKENS:
+        if (
+            0 < len(token) <= _MAX_KNOWN_TOKEN_LENGTH
+            and len(tokens) < _MAX_KNOWN_TOKENS
+            and _is_unambiguous_known_token(token)
+        ):
             tokens.add(token)
 
     while stack and nodes_seen < max_nodes and len(tokens) < _MAX_KNOWN_TOKENS:

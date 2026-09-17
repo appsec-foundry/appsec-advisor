@@ -30,6 +30,17 @@ def test_report_group_includes_section_presence_and_fragment_consumers():
     } <= set(runner.select_tests("report"))
 
 
+def test_prose_formatting_group_covers_producer_and_direct_consumers():
+    assert {
+        "tests/test_inline_code_formatter.py",
+        "tests/test_apply_prose_fixes.py",
+        "tests/test_compose_threat_model.py",
+        "tests/test_qa_checks_cov_band3.py",
+        "tests/test_walkthrough_renderer.py",
+        "tests/test_e2e_pipeline.py",
+    } <= set(runner.select_tests("prose-formatting"))
+
+
 @pytest.mark.parametrize("family", ["sample", "alternate"])
 def test_exact_group_rejects_partial_rename_and_inventory_detects_addition(tmp_path, monkeypatch, family):
     (tmp_path / "tests").mkdir()
@@ -230,9 +241,22 @@ def test_changed_source_selects_producer_consumer_and_base_without_unrelated(sel
     assert any("producer, consumer" in reason for reason in result.reasons)
 
 
-def test_changed_test_selects_its_group_and_base(selection_repo):
+def test_changed_test_selects_itself_and_base(selection_repo):
     result = runner.select_changed(["tests/test_elsewhere.py"], selection_repo)
     assert set(result.paths) == {"tests/test_contract.py", "tests/test_elsewhere.py"}
+    assert any("changed test module" in reason for reason in result.reasons)
+
+
+def test_changed_test_does_not_expand_overlapping_groups(selection_repo, monkeypatch):
+    monkeypatch.setitem(
+        runner.GROUPS,
+        "producer",
+        ("tests/test_emitter.py", "tests/test_reader.py"),
+    )
+
+    result = runner.select_changed(["tests/test_reader.py"], selection_repo)
+
+    assert set(result.paths) == {"tests/test_contract.py", "tests/test_reader.py"}
 
 
 def test_changed_selection_adds_requirement_guards(selection_repo, monkeypatch):
@@ -265,12 +289,16 @@ def test_unknown_and_shared_paths_fall_back_to_all(selection_repo, path):
     assert "no reviewed" in result.reasons[0]
 
 
-def test_multiple_source_modules_require_full_suite(selection_repo, monkeypatch):
+def test_multiple_reviewed_source_modules_union_their_routes(selection_repo, monkeypatch):
     (selection_repo / "scripts/second.py").touch()
     monkeypatch.setitem(runner.SOURCE_GROUPS, "scripts/second.py", ("consumer",))
     result = runner.select_changed(["scripts/emitter.py", "scripts/second.py"], selection_repo)
-    assert result.paths == ("tests/",)
-    assert "multiple" in result.reasons[0]
+    assert set(result.paths) == {
+        "tests/test_contract.py",
+        "tests/test_emitter.py",
+        "tests/test_reader.py",
+    }
+    assert any("scripts/second.py" in reason and "consumer" in reason for reason in result.reasons)
 
 
 def test_deleted_source_requires_full_suite(selection_repo):
@@ -496,8 +524,22 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             {"tests/test_figure2_svg.py", "tests/test_compose_threat_model.py", "tests/test_qa_checks.py"},
         ),
         (
+            "scripts/inline_code_formatter.py",
+            {
+                "tests/test_inline_code_formatter.py",
+                "tests/test_apply_prose_fixes.py",
+                "tests/test_compose_threat_model.py",
+                "tests/test_qa_checks_cov_band3.py",
+                "tests/test_e2e_pipeline.py",
+            },
+        ),
+        (
             "scripts/repo_scan.py",
             {"tests/test_repo_scan.py", "tests/test_route_inventory.py", "tests/test_architecture_coverage_checks.py"},
+        ),
+        (
+            "scripts/run_tests.py",
+            {"tests/test_run_tests.py", "tests/test_ci_test_workflow.py", "tests/test_check_specs.py"},
         ),
     ],
 )
@@ -519,4 +561,5 @@ def test_required_selection_commands_stay_in_agent_and_maintainer_guidance():
         document = (runner.ROOT / filename).read_text()
         assert "make test-plan BASE=origin/dev" in document
         assert "make validate test-changed BASE=origin/dev" in document
+        assert "make test-plan BASE=HEAD" in document
         assert "scripts/run_tests.py" in document
