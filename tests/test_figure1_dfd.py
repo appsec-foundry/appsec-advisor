@@ -2386,8 +2386,12 @@ def test_layer_titles_omit_internal_framework_and_deployment_notes(detail):
     assert not errors
     for title in ("Client Layer", "Application Layer", "Data Layer"):
         assert f">{title}<" in svg
-    assert "opaque-framework-label" not in svg
     assert "internal-segment-code" not in svg
+    # The framework belongs to its component box, never to a layer title.
+    root = ET.fromstring(svg)
+    shown = [(g.get("data-technology-owner"), g.get("data-framework")) for g in root.iter(f"{_SVG}g")]
+    assert [row for row in shown if row[0]] == [(model["components"][1]["id"], "opaque-framework-label")]
+    assert _visible_text(root).count("opaque-framework-label") == 1
 
 
 @pytest.mark.parametrize("tier,relation", [("application", "processed"), ("data", "stored")])
@@ -2997,4 +3001,80 @@ def test_capability_labels_require_known_values_and_evidence():
         assert "a missing label does not mean absence" in notation
         further = " ".join(root.find("{*}g[@data-legend-section='capability-notes']").itertext())
         assert "Further capabilities" in further and ": MFA verifier" in further
+    assert model == before
+
+
+@pytest.mark.parametrize(
+    ("name", "framework", "language", "shown"),
+    [
+        ("Order Service", "spring-boot", "Kotlin", {"framework": "spring-boot", "language": "Kotlin"}),
+        ("Customer Records", "postgresql", None, {"framework": "postgresql"}),
+        ("Report Worker", None, "Go", {"language": "Go"}),
+        ("Billing API", "  Ruby  on Rails ", "Ruby", {"framework": "Ruby on Rails"}),
+        ("Storefront", "vue", "Vue", {"framework": "vue"}),
+        ("Socket.IO Gateway", "socket.io", "TypeScript", {"language": "TypeScript"}),
+        ("Python Importer", None, "Python", {}),
+        ("PostgreSQL Primary", "PostgreSQL", None, {}),
+        ("Worker", "  ", None, {}),
+    ],
+)
+def test_technology_is_left_out_only_when_absent_or_already_said(name, framework, language, shown):
+    component = {"id": "worker", "name": name, "framework": framework, "language": language}
+    assert F._technology(component) == shown
+
+
+@pytest.mark.parametrize(
+    ("tech", "label"),
+    [
+        ({"framework": "spring-boot", "language": "Java"}, "[spring-boot · Java]"),
+        ({"language": "TypeScript"}, "[TypeScript]"),
+        ({"framework": "sequelize-with-custom-dialect", "language": "TypeScript"}, "[sequelize-with… · TypeScript]"),
+        ({"framework": "a-very-long-framework-name-beyond-the-line"}, "[a-very-long-framework-name-…]"),
+    ],
+)
+def test_technology_label_shortens_the_framework_before_the_language(tech, label):
+    assert F._technology_label(tech) == label
+
+
+def test_components_show_framework_language_or_engine_apart_from_labels():
+    model, paths, taxonomy = _model()
+    for comp in model["components"]:
+        comp.pop("framework", None)
+    bare, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == [] and "data-technology-owner" not in bare
+    notation = " ".join(ET.fromstring(bare).find("{*}g[@data-legend-section='notation']").itertext())
+    assert "data store: engine" not in notation
+    by_id = {comp["id"]: comp for comp in model["components"]}
+    evidence = [{"file": "src/views.py", "line": 12}]
+    by_id["app1"] |= {
+        "framework": "fastapi",
+        "language": "Python",
+        "capabilities": [{"capability": "template-rendering", "evidence": evidence}],
+    }
+    by_id["app2"] |= {"name": "Gin Gateway", "framework": "gin", "language": "Go"}
+    by_id["db0"]["framework"] = "mongodb"
+    by_id["ci"]["framework"] = "github-actions"
+    before = copy.deepcopy(model)
+    for detail in (False, True):
+        svg, problems = F.check_diagram(model, paths, taxonomy, detail=detail)
+        assert problems == []
+        root = ET.fromstring(svg)
+        groups = list(root.iter(f"{_SVG}g"))
+        shown = {g.get("data-technology-owner"): g for g in groups if g.get("data-technology-owner")}
+        assert {owner: (g.get("data-framework"), g.get("data-language")) for owner, g in shown.items()} == {
+            "app1": ("fastapi", "Python"),
+            "app2": (None, "Go"),
+            "db0": ("mongodb", None),
+            "ci": ("github-actions", None),
+        }
+        tech = shown["app1"].find(f"{_SVG}text")
+        assert tech.text == "[fastapi · Python]" and tech.get("font-style") == "italic"
+        assert shown["app1"].find(f"{_SVG}title").text == "Framework: fastapi · Language: Python"
+        assert shown["db0"].find(f"{_SVG}title").text == "Storage engine: mongodb"
+        title = next(g for g in groups if g.get("data-component-id") == "app1").find(f"{_SVG}text")
+        pill = next(g for g in groups if g.get("data-capability-owner") == "app1").find(f"{_SVG}rect")
+        assert float(title.get("y")) < float(tech.get("y")) < float(pill.get("y"))
+        assert _visible_text(root).count("github-actions") == 1
+        notation = " ".join(root.find("{*}g[@data-legend-section='notation']").itertext())
+        assert "framework · language; data store: engine" in notation
     assert model == before

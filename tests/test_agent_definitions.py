@@ -1278,3 +1278,12 @@ def test_architecture_agent_states_access_variants_and_unauthenticated_access():
         "Model every `role-units.json` unit under its ID",
     ):
         assert phrase in text, phrase
+
+
+def test_architecture_agent_records_a_datastore_engine_not_its_orm():
+    """Figure 1 names a store's technology only when the producer records the engine; ORM names are dropped."""
+    text = " ".join((AGENTS_DIR / "appsec-architecture-analyst.md").read_text(encoding="utf-8").split())
+    schema = json.loads((AGENTS_DIR.parent / "schemas/fragments/components.schema.json").read_text(encoding="utf-8"))
+    contract = schema["properties"]["components"]["items"]["properties"]["framework"]["description"]
+    assert "A datastore's `framework` names its storage engine, such as `postgresql`, never its ORM." in text
+    assert "storage engine" in contract and "never the ORM" in contract and "sequelize" not in contract

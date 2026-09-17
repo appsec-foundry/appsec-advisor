@@ -233,3 +233,78 @@ def test_orm_cannot_be_finalized_as_database_engine(tmp_path):
     _write_components(tmp_path, [_component("database", tier="data", framework="sequelize", paths=["models/**"])])
     with pytest.raises(ValueError, match="ORM"):
         finalizer.finalize(tmp_path, tmp_path)
+
+
+def _write_files(root: Path, sizes: dict[str, int]) -> None:
+    for relative, size in sizes.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x" * size, encoding="utf-8")
+
+
+def test_language_comes_from_the_largest_implementation_language_under_own_paths(tmp_path: Path):
+    _write_files(
+        tmp_path,
+        {
+            "services/orders/Order.kt": 400,
+            "services/orders/Legacy.java": 300,
+            "services/orders/schema.sql": 5000,
+            "services/orders/node_modules/dep/index.js": 9000,
+            "portal/app.tsx": 100,
+            "portal/api.ts": 60,
+            "portal/widget.jsx": 120,
+            "portal/index.html": 4000,
+            "portal/theme.scss": 4000,
+            "edge/handler.ts": 50,
+            "edge/nested/bundle.js": 9000,
+            "batch/run.go": 80,
+            "pipeline/.github/workflows/ci.yml": 500,
+            "tie/a.rb": 10,
+            "tie/b.py": 10,
+            "records/migrate.py": 500,
+        },
+    )
+    rows = [
+        _component("orders", paths=["services/orders/**"], language="COBOL"),
+        _component("portal", tier="client", paths=["portal/**"]),
+        _component("edge", paths=["edge/*.ts", "edge/*.js"]),
+        _component("batch", paths=["batch"]),
+        _component("pipeline", paths=["pipeline/.github/workflows/**"], language="YAML"),
+        _component("tie", paths=["tie/**"]),
+        _component("records", tier="data", paths=["records/**"], language="Python"),
+    ]
+    finalizer.annotate_languages(rows, tmp_path)
+    assert {row["id"]: row.get("language") for row in rows} == {
+        "orders": "Kotlin",
+        "portal": "TypeScript",
+        "edge": "TypeScript",
+        "batch": "Go",
+        "pipeline": None,
+        "tie": "Python",
+        "records": None,
+    }
+
+
+def test_language_ignores_links_out_of_the_component(tmp_path: Path):
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    _write_files(repo, {"worker/job.py": 10})
+    _write_files(outside, {"huge.java": 9000, "lib/code.rs": 9000})
+    (repo / "worker/linked.java").symlink_to(outside / "huge.java")
+    (repo / "worker/lib").symlink_to(outside / "lib", target_is_directory=True)
+    rows = [_component("worker", paths=["worker/**"])]
+    finalizer.annotate_languages(rows, repo)
+    assert rows[0]["language"] == "Python"
+
+
+def test_finalized_language_survives_the_manifest_gate_without_changing_the_fingerprint(tmp_path: Path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    output.mkdir()
+    _write_files(repo, {"src/api/server.py": 40})
+    _write_components(output, [_component("api")])
+    first, receipt = finalizer.finalize(repo, output)
+    assert first["components"][0]["language"] == "Python"
+    assert finalizer.finalize(repo, output) == (first, receipt)
+    assert manifest.reconcile_inventory(first["components"], repo) == (first["components"], [])
+    without = [{key: value for key, value in row.items() if key != "language"} for row in first["components"]]
+    assert finalizer.component_inventory_fingerprint(without) == receipt["component_inventory_fingerprint"]

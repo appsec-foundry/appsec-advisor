@@ -53,7 +53,13 @@
           },
           "framework": {
             "type": ["string", "null"],
-            "description": "Primary framework (express, angular, react, sequelize, fastapi, ...). Optional, surfaces in §2.4 layer tables."
+            "description": "Primary framework (spring-boot, express, angular, fastapi, ...); for a data component the storage engine (postgresql, sqlite, mongodb, ...), never the ORM. Optional, shown under the component name in Figure 1."
+          },
+          "language": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Implementation language holding most bytes under `paths`. Set by component finalization from file extensions; producers omit it. Absent for data components."
           },
           "deployment_zones": {
             "type": "array",

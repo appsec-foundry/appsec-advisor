@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,10 @@ FINGERPRINT_FIELDS = (
     "deployment_zones",
     "handles_sensitive_data",
     "sensitive_data",
+)
+# Code categories that do not say which language implements a component.
+NON_IMPLEMENTATION_LANGUAGES = frozenset(
+    {"C/C++ header", "C++ header", "CSS", "CSS (Less)", "CSS (Sass)", "Gradle", "HTML", "Jupyter", "Protobuf", "SQL"}
 )
 
 
@@ -55,6 +60,54 @@ def component_inventory_fingerprint(components: list[dict[str, Any]]) -> str:
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _own_files(repo_root: Path) -> list[tuple[str, int]]:
+    """Repository files with sizes, without `.git`, dependency or build directories, never following links."""
+    from repo_profile import VENDOR_DIRS
+
+    files = []
+    for directory, subdirs, names in os.walk(repo_root):
+        subdirs[:] = sorted(d for d in subdirs if d != ".git" and d not in VENDOR_DIRS)
+        base = Path(directory)
+        for name in names:
+            path = base / name
+            try:
+                if not path.is_symlink() and path.is_file():
+                    files.append((path.relative_to(repo_root).as_posix(), path.stat().st_size))
+            except OSError:
+                continue
+    return sorted(files)
+
+
+def annotate_languages(components: list[dict[str, Any]], repo_root: Path) -> None:
+    """Set each non-data component's `language` to the implementation language holding most of its bytes.
+
+    The value comes only from file extensions under the component's own paths;
+    a producer-authored value never survives. Stores name their engine in
+    `framework` instead.
+    """
+    from reclassify_components import _glob_to_regex
+    from repo_profile import classify
+
+    files = _own_files(repo_root)
+    for component in components:
+        component.pop("language", None)
+        paths = [p for p in component.get("paths") or [] if isinstance(p, str)]
+        if component.get("tier") == "data" or not paths:
+            continue
+        patterns = [_glob_to_regex(p) for p in paths]
+        directories = tuple(p.rstrip("/") + "/" for p in paths if "*" not in p and "?" not in p)
+        totals: dict[str, int] = {}
+        for path, size in files:
+            if not (path.startswith(directories) or any(rx.match(path) for rx in patterns)):
+                continue
+            language, category = classify(path)
+            if category == "code" and language not in NON_IMPLEMENTATION_LANGUAGES:
+                language = language.split(" (")[0]
+                totals[language] = totals.get(language, 0) + size
+        if totals:
+            component["language"] = min(totals, key=lambda name: (-totals[name], name))
+
+
 def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     repo_root = repo_root.resolve()
     output_dir = output_dir.resolve()
@@ -64,6 +117,7 @@ def finalize(repo_root: Path, output_dir: Path) -> tuple[dict[str, Any], dict[st
     original = document["components"]
     original_ids = [row.get("id") for row in original if isinstance(row, dict)]
     finalized, injected = reconcile_inventory(original, repo_root)
+    annotate_languages(finalized, repo_root)
     payload = dict(document)
     payload["components"] = finalized
     _validate(payload, COMPONENT_SCHEMA)

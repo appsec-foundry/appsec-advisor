@@ -123,6 +123,7 @@ INTRA_STUB, INTRA_STEP = 48, 14  # reserve authentication tabs and a straight ar
 BAR_H = 24
 CAPABILITY_CAP = 3  # Selected labels only; the legend says that absence is not implied.
 PILL_H, PILL_ROW, PILL_GAP, PILL_SIZE = 13, 17, 5, 7.5
+TECH_H, TECH_CHARS = 16, 28  # technology line under a component title, before the labels
 COLUMN = {"client": 0, "application": 1, "build": 1, "data": 2, "third-party": 0}
 ZONE_ORDER = {"client": 0, "application": 0, "build": 1, "data": 0, "third-party": 1}
 
@@ -267,6 +268,25 @@ def _capability_rows(items, vocabulary, key, name=""):
                 }
             )
     return sorted(rows, key=lambda row: rank[row["id"]])
+
+
+def _technology(comp):
+    """Framework (a store's engine) and implementation language, each left out when the name or framework says it."""
+    name = _words(comp.get("name") or comp.get("id"))
+    framework = " ".join(str(comp.get("framework") or "").split())
+    language = " ".join(str(comp.get("language") or "").split())
+    shown = {
+        "framework": "" if _words(framework) <= name else framework,
+        "language": "" if _words(language) <= name | _words(framework) else language,
+    }
+    return {key: value for key, value in shown.items() if value}
+
+
+def _technology_label(tech):
+    """One bracketed line; a long framework is shortened before the language is."""
+    framework, language = tech.get("framework", ""), _cut(tech.get("language", ""), TECH_CHARS)
+    framework = _cut(framework, max(8, TECH_CHARS - len(language) - 3) if language else TECH_CHARS)
+    return "[" + " · ".join(part for part in (framework, language) if part) + "]"
 
 
 def _capability_display(rows):
@@ -935,6 +955,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "stride": stride[cid],
             "exposed": cid in exposed or "internet" in [str(z).lower() for z in comp.get("deployment_zones") or []],
             "complex": comp.get("complexity") == "complex",
+            "technology": _technology(comp),
             "capabilities": _capability_display(
                 _capability_rows(
                     [*(comp.get("capabilities") or []), *derived_capabilities.get(cid, [])],
@@ -1010,6 +1031,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             PROC_H,
             108
             + 13 * (node["title_lines"] - 2)
+            + (TECH_H if node["technology"] else 0)
             + _pill_height(node["capabilities"], NODE_W - 44)
             + 12 * len(_weak_lines(node["weak"], NODE_W - 32))
             + (12 if node["weak_more_high"] else 0)
@@ -2357,14 +2379,12 @@ def _render(
     )
 
     # zones
-    zone_sub, zone_fw = collections.defaultdict(set), collections.defaultdict(set)
+    zone_sub = collections.defaultdict(set)
     for comp in d.get("components") or []:
         if not isinstance(comp, dict):
             continue
         for z in comp.get("deployment_zones") or []:
             zone_sub[_zone_key(comp)].add(str(z))
-        if comp.get("framework"):
-            zone_fw[_zone_key(comp)].add(str(comp["framework"]))
     for zb in [z for z in zone_boxes if not z.get("bar")]:
         title, stroke, fill = ZONE_STYLE[zb["zone"]]
         c.rect(
@@ -2380,10 +2400,8 @@ def _render(
         )
         c.text(zb["x"] + 10, zb["y"] + 16, title, size=10.5, anchor="start", weight="bold", fill=stroke)
         zk = zb["zone"]
-        sub = {"internet": "actors and their browsers", "third-party": "external integrations"}.get(zk) or (
-            ", ".join(sorted(zone_sub[zk])) + (" · " + ", ".join(sorted(zone_fw[zk])) if zone_fw[zk] else "")
-            if zone_sub[zk]
-            else ""
+        sub = {"internet": "actors and their browsers", "third-party": "external integrations"}.get(zk) or ", ".join(
+            sorted(zone_sub[zk])
         )
         if d.get("_overview"):
             sub = {
@@ -2572,6 +2590,17 @@ def _render(
             c.text(x + w / 2 - 6, title_y + i * 13, line, size=11, weight="bold", track=title_key)
         c.add("</g>")
         ty = title_y + len(lines) * 13 + 2
+        if n.get("technology"):
+            tech = n["technology"]
+            tech_key = f"node technology {n['id']}"
+            c.label_owners[tech_key] = n["id"]
+            attrs = "".join(f' data-{key}="{_esc(value)}"' for key, value in tech.items())
+            c.add(f'<g data-technology-owner="{_esc(n["id"])}"{attrs}>')
+            names = {"framework": "Storage engine" if n["kind"] == "store" else "Framework", "language": "Language"}
+            c.add(f"<title>{_esc(' · '.join(f'{names[key]}: {value}' for key, value in tech.items()))}</title>")
+            c.text(x + w / 2 - 6, ty + 2, _technology_label(tech), size=FS, fill=MUTED, italic=True, track=tech_key)
+            c.add("</g>")
+            ty += TECH_H
         if n.get("capabilities"):
             ty += _capability_pills(c, x + 20, ty - 6, n, NODE_W - 44)
         _sev_chips(c, x + ox + 2, ty, n["sev"])
@@ -2755,6 +2784,10 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     )
     c.text(lx + 40, y + 3, "data store (evidenced asset locations)", size=9, anchor="start")
     y += 20
+    if any(n.get("technology") for n in nodes.values()):
+        c.text(lx + 21, y + 3, "[ ]", size=FS, fill=MUTED, italic=True)
+        c.text(lx + 40, y + 3, "framework · language; data store: engine", size=9, anchor="start")
+        y += 20
     c.path(f"M {lx + 10} {y - 1} H {lx + 32}", CLS_COL["Confidential"], sw=1.6, marker="arw-Confidential")
     c.text(lx + 40, y + 3, "data flow · classification colour · two heads = bidirectional", size=9, anchor="start")
     y += 16
