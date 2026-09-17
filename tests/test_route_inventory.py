@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "route_inventory.py"
@@ -292,6 +293,67 @@ def test_prefix_mounted_guard_marks_routes_protected(tmp_path: Path) -> None:
     assert by_path["/api/BasketItems/:id"]["authn_signal"] == "middleware_present"
     assert by_path["/api/Users"]["authn_signal"] == "middleware_present"
     assert by_path["/api/Products"]["authn_signal"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("filename", "source", "expected"),
+    [
+        (
+            "app.ts",
+            "app.post('/a', security.isAuthorized(), h)\napp.post('/b', h)\napp.get('/c', requireAuth, h)\n",
+            {("POST", "/a"): True, ("POST", "/b"): False, ("GET", "/c"): True},
+        ),
+        (
+            "app.js",
+            "router.put(\n  '/items/:id',\n  rateLimit({ max: 5 }),\n  // authenticate() is added later\n"
+            "  update,\n)\nrouter.delete(\n  '/items/:id',\n  passport.authenticate('jwt'),\n  remove,\n)\n",
+            {("PUT", "/items/:id"): False, ("DELETE", "/items/:id"): True},
+        ),
+        (
+            "server.js",
+            "fastify.get('/open', async () => 'ok')\n"
+            "fastify.post('/secure', { preHandler: fastify.authenticate }, async () => 'ok')\n",
+            {("GET", "/open"): False, ("POST", "/secure"): True},
+        ),
+        (
+            "routes.ts",
+            "router.get('/before', h)\nrouter.use(requireAuth)\nrouter.get('/after', h)\napi.get('/other', h)\n",
+            {("GET", "/before"): False, ("GET", "/after"): True, ("GET", "/other"): False},
+        ),
+        (
+            "urls.py",
+            "from django.urls import path\nurlpatterns = [\n"
+            "    path('account/', login_required(account)),\n    path('about/', about),  # login_required(x)\n]\n",
+            {("ANY", "account/"): True, ("ANY", "about/"): False},
+        ),
+    ],
+)
+def test_a_guard_protects_only_its_own_registration(tmp_path: Path, filename, source, expected) -> None:
+    (tmp_path / filename).write_text(source)
+    inv = _run(tmp_path)
+    signals = {(r["method"], r["path"]): r["authn_signal"] == "middleware_present" for r in inv["routes"]}
+    assert signals == expected
+
+
+def test_verb_guards_cover_their_method_and_path_while_use_covers_the_prefix(tmp_path: Path) -> None:
+    (tmp_path / "server.ts").write_text(
+        "app.get('/api/users', security.isAuthorized())\n"
+        "app.use('/api/orders', security.isAuthorized())\n"
+        "app.all('/api/admin/*', requireAuth)\n"
+    )
+    (tmp_path / "routes.ts").write_text(
+        "router.get('/api/users', list)\nrouter.post('/api/users', create)\nrouter.get('/api/users/:id', show)\n"
+        "router.delete('/api/orders/:id', cancel)\nrouter.post('/api/admin/reset', reset)\n"
+    )
+    inv = _run(tmp_path)
+    guarded = {(r["method"], r["path"]) for r in inv["routes"] if r["authn_signal"] == "middleware_present"}
+    assert ("GET", "/api/users") in guarded
+    assert ("POST", "/api/users") not in guarded
+    assert ("GET", "/api/users/:id") not in guarded
+    assert ("DELETE", "/api/orders/:id") in guarded
+    assert ("POST", "/api/admin/reset") in guarded
+    suspects = {r["path"] for r in inv["routes"] if r["missing_auth_suspect"]}
+    assert "/api/users" in suspects
 
 
 def test_missing_auth_suspect_flags_sensitive_unguarded_routes(tmp_path: Path) -> None:

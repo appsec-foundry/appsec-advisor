@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The component inventory no longer adds a second embedded document store next to one the architecture analysis already modelled.
 - Authentication, CI/CD, real-time, web3 and embedded-store components are modelled before data flows are written, so they keep their connections; a run reports any component that still has none.
 - Figure 1 shows login sequences, public and authenticated API alternatives, and access to embedded databases with their authentication method instead of leaving them unknown.
+- The route inventory credits an authentication guard only to the route it belongs to, so unprotected routes next to protected ones are flagged for review.
 
 ## 0.6.0-beta.3 (2026-09-14)
 

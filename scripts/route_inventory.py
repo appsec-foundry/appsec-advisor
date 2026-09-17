@@ -21,7 +21,8 @@ Out of scope (NOT MVP):
 
 AuthN / AuthZ are SIGNALS, never verdicts. The default is `unknown`;
 `absent` is only emitted when the engine actively saw the route handler
-declared at module level with no candidate guard in the file. The
+declared at module level with no candidate guard in the file.
+A guard counts only for the registration it belongs to (FE-10). The
 `unknown-is-not-absent` gate is downstream policy (handled in
 architecture_coverage_checks.py).
 
@@ -149,7 +150,7 @@ _JS_ROUTE_RE = re.compile(
     \b(?P<obj>app|router|api|server|fastify|hapi|route|r)\b
     \s*\.\s*
     (?P<method>get|post|put|patch|delete|head|options|all|any)
-    \s*\(\s*
+    \s*(?P<open>\()\s*
     (?P<quote>['"`])
     (?P<path>[^'"`]+)
     (?P=quote)
@@ -182,7 +183,7 @@ _PY_DECORATOR_RE = re.compile(
 
 _PY_DJANGO_ROUTE_RE = re.compile(
     r"""(?ix)
-    \b(path|re_path|url)\s*\(\s*
+    \b(path|re_path|url)\s*(?P<open>\()\s*
     (?P<quote>['"])
     (?P<path>[^'"]+)
     (?P=quote)
@@ -289,15 +290,14 @@ _AUTHN_PATTERNS = re.compile(
     r"|\bjwt(?:Auth|Verify|Middleware)\s*\("
 )
 
-# Path-prefix middleware mounting that carries an auth guard, e.g.
-#   app.use('/rest/basket', security.isAuthorized())
-#   app.get('/api/Users', security.isAuthorized())
-# Juice Shop (and many Express apps) protect whole path prefixes this way,
-# separately from where the route handler is defined — so the per-handler
-# window scan cannot see the guard. build_inventory collects these prefixes
-# globally and marks routes underneath them as guarded.
+# Guard registrations away from the handler, e.g.
+#   app.use('/rest/basket', security.isAuthorized())   # every method below the prefix
+#   app.get('/api/Users', security.isAuthorized())      # this method on this exact path
+# Many Express apps protect routes this way, separately from where the handler
+# is defined. build_inventory collects them globally: `use` (and a wildcard
+# `all`) guards a prefix, any other verb guards only its own method and path.
 _GUARD_MOUNT_RE = re.compile(
-    r"""\b\w+\.(?:use|all|get|post|put|delete|patch|head|options)\(\s*"""
+    r"""\b\w+\.(?P<verb>use|all|get|post|put|delete|patch|head|options)\(\s*"""
     r"""['"](?P<path>/[^'"]*)['"]\s*,[^)]*?\b(?:isAuthorized|isAuthenticated|"""
     r"""authenticate|requireAuth|requireLogin|ensureLoggedIn|isLoggedIn|"""
     r"""restrictToLoggedIn|denyAll|passport\.authenticate)\b"""
@@ -449,7 +449,7 @@ _AUTHZ_PATTERNS = re.compile(
 # this lift, every route under a central RBAC mount stays authz=unknown and
 # floods the BOLA hypothesis with false positives.
 _AUTHZ_GUARD_MOUNT_RE = re.compile(
-    r"""\b\w+\.(?:use|all|get|post|put|delete|patch)\(\s*"""
+    r"""\b\w+\.(?P<verb>use|all|get|post|put|delete|patch)\(\s*"""
     r"""['"](?P<path>/[^'"]*)['"]\s*,[^)]*?\b(?:requireRole|hasPermission|hasRole|"""
     r"""checkPermission|authorize|RolesAllowed|requirePermission|enforce|"""
     r"""casbin|oso|opa|can|ability)\b"""
@@ -488,26 +488,63 @@ def _detect_management_surface(path: str) -> bool:
     return bool(_MANAGEMENT_PATH_PATTERN.search(path))
 
 
+def _scan_auth_text(text: str) -> tuple[str, str]:
+    authn = "middleware_present" if _AUTHN_PATTERNS.search(text) else "unknown"
+    authz = "unknown"
+    if _AUTHZ_PATTERNS.search(text):
+        authz = "decorator_present" if "@" in text else "middleware_present"
+    return authn, authz
+
+
 def _scan_auth_signals(lines: list[str], handler_line: int) -> tuple[str, str]:
     """Search a small window around the handler line for guards.
 
-    Window: 5 lines above + the handler line itself + 3 below. The window
-    is intentionally narrow — long-distance inference is out of scope for
-    the MVP and produces false-positive guard claims.
+    Only decorator- and attribute-based extractors use this window, because
+    their guards sit on neighbouring lines. It can still reach a neighbouring
+    handler's guard; call-based registrations use `_call_scope` instead.
     """
     start = max(0, handler_line - 6)
     end = min(len(lines), handler_line + 8)
-    window = "".join(lines[start:end])
+    return _scan_auth_text("".join(lines[start:end]))
 
-    authn = "unknown"
-    authz = "unknown"
 
-    if _AUTHN_PATTERNS.search(window):
-        authn = "middleware_present"
-    if _AUTHZ_PATTERNS.search(window):
-        authz = "decorator_present" if "@" in window else "middleware_present"
+def _call_scope(text: str, start: int, open_paren: int, limit: int, line_comment: str) -> str:
+    """The registration call alone: a guard in a neighbouring call never protects this route.
 
-    return authn, authz
+    Scans from `open_paren` to its closing bracket; brackets inside string
+    literals do not count and comments are left out of the returned code.
+    `limit` (the next registration) bounds an unbalanced call.
+    """
+    code, depth, i = [text[start:open_paren]], 0, open_paren
+    while i < limit:
+        ch = text[i]
+        if ch in "'\"`":
+            end = i + 1
+            while end < limit and text[end] != ch:
+                end += 2 if text[end] == "\\" else 1
+            code.append(text[i : end + 1])
+            i = end + 1
+            continue
+        if text.startswith(line_comment, i):
+            newline = text.find("\n", i)
+            i = limit if newline < 0 else newline
+            continue
+        if line_comment == "//" and text.startswith("/*", i):
+            close = text.find("*/", i + 2)
+            i = limit if close < 0 else close + 2
+            continue
+        code.append(ch)
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    return "".join(code)
+
+
+_JS_PATHLESS_USE_RE = re.compile(r"""\b(?P<obj>\w+)\s*\.\s*use\s*(?P<open>\()\s*(?!['"`])""")
 
 
 # ---------------------------------------------------------------------------
@@ -535,11 +572,24 @@ def _extract_javascript(path: Path, lines: list[str]) -> list[RouteCandidate]:
     else:
         framework = "express"
 
-    for m in _JS_ROUTE_RE.finditer(text):
+    pathless_guards = []
+    for use in _JS_PATHLESS_USE_RE.finditer(text):
+        signals = _scan_auth_text(_call_scope(text, use.start(), use.start("open"), len(text), "//"))
+        if signals != ("unknown", "unknown"):
+            pathless_guards.append((use.start(), use.group("obj").lower(), signals))
+
+    registrations = list(_JS_ROUTE_RE.finditer(text))
+    for index, m in enumerate(registrations):
         method = m.group("method").upper()
         route = m.group("path")
         n = text.count("\n", 0, m.start()) + 1
-        authn, authz = _scan_auth_signals(lines, n)
+        limit = registrations[index + 1].start() if index + 1 < len(registrations) else len(text)
+        authn, authz = _scan_auth_text(_call_scope(text, m.start(), m.start("open"), limit, "//"))
+        # A path-less `use` guards every later registration on the same router.
+        for position, owner, (use_authn, use_authz) in pathless_guards:
+            if position < m.start() and owner == m.group("obj").lower():
+                authn = use_authn if authn == "unknown" else authn
+                authz = use_authz if authz == "unknown" else authz
         out.append(
             RouteCandidate(
                 method=method,
@@ -618,25 +668,27 @@ def _extract_python(path: Path, lines: list[str]) -> list[RouteCandidate]:
                 )
 
     if framework == "django":
-        for n, line in enumerate(lines, start=1):
-            for m in _PY_DJANGO_ROUTE_RE.finditer(line):
-                route = m.group("path")
-                if not route or route == "":
-                    continue
-                authn, authz = _scan_auth_signals(lines, n)
-                out.append(
-                    RouteCandidate(
-                        method="ANY",
-                        path=route,
-                        framework="django",
-                        handler_file=str(path).replace("\\", "/"),
-                        handler_line=n,
-                        authn_signal=authn,
-                        authz_signal=authz,
-                        management_surface=_detect_management_surface(route),
-                        confidence="low",
-                    )
+        registrations = list(_PY_DJANGO_ROUTE_RE.finditer(text))
+        for index, m in enumerate(registrations):
+            route = m.group("path")
+            if not route or route == "":
+                continue
+            n = text.count("\n", 0, m.start()) + 1
+            limit = registrations[index + 1].start() if index + 1 < len(registrations) else len(text)
+            authn, authz = _scan_auth_text(_call_scope(text, m.start(), m.start("open"), limit, "#"))
+            out.append(
+                RouteCandidate(
+                    method="ANY",
+                    path=route,
+                    framework="django",
+                    handler_file=str(path).replace("\\", "/"),
+                    handler_line=n,
+                    authn_signal=authn,
+                    authz_signal=authz,
+                    management_surface=_detect_management_surface(route),
+                    confidence="low",
                 )
+            )
 
     return out
 
@@ -865,6 +917,17 @@ def build_inventory(repo_root: Path) -> dict:
     unsupported: list[str] = []
     guarded_prefixes: set[str] = set()
     authz_guarded_prefixes: set[str] = set()
+    guarded_exact: set[tuple[str, str]] = set()
+    authz_guarded_exact: set[tuple[str, str]] = set()
+
+    def _record_mount(match: re.Match, prefixes: set[str], exact: set[tuple[str, str]]) -> None:
+        verb, path = match.group("verb").lower(), match.group("path")
+        wildcard = path.endswith("*")
+        path = path.rstrip("*").rstrip("/") or "/"
+        if verb == "use" or wildcard:
+            prefixes.add(path)
+        else:
+            exact.add(("ANY" if verb == "all" else verb.upper(), path))
 
     for src in _walk_sources(repo_root):
         try:
@@ -875,10 +938,10 @@ def build_inventory(repo_root: Path) -> dict:
         # Collect path prefixes mounted with an auth guard (cross-file: a guard
         # in server.ts protects handlers defined in routes/*.ts).
         for gm in _GUARD_MOUNT_RE.finditer(blob):
-            guarded_prefixes.add(gm.group("path").rstrip("/") or "/")
+            _record_mount(gm, guarded_prefixes, guarded_exact)
         # Same, for authoriZation guards (role/permission/policy middleware).
         for gm in _AUTHZ_GUARD_MOUNT_RE.finditer(blob):
-            authz_guarded_prefixes.add(gm.group("path").rstrip("/") or "/")
+            _record_mount(gm, authz_guarded_prefixes, authz_guarded_exact)
         try:
             extracted = _extract_file(repo_root, src)
         except Exception:  # pragma: no cover
@@ -888,12 +951,11 @@ def build_inventory(repo_root: Path) -> dict:
             all_routes.append(r)
 
     # Apply prefix guards + compute the missing-auth advisory flag.
-    def _prefix_match(path: str, prefixes: set[str]) -> bool:
-        p = (path or "").rstrip("/") or "/"
-        for g in prefixes:
-            if p == g or p.startswith(g + "/"):
-                return True
-        return False
+    def _guarded(route: RouteCandidate, prefixes: set[str], exact: set[tuple[str, str]]) -> bool:
+        p = (route.path or "").rstrip("/") or "/"
+        if (route.method.upper(), p) in exact or ("ANY", p) in exact:
+            return True
+        return any(p == g or p.startswith(g.rstrip("/") + "/") for g in prefixes)
 
     for r in all_routes:
         is_graphql = r.framework == "graphql"
@@ -902,12 +964,12 @@ def build_inventory(repo_root: Path) -> dict:
         gql_sensitive = "sensitive-name signal" in gql_notes
         gql_mutation = (r.path or "").startswith("Mutation ")
         gql_subscription = (r.path or "").startswith("Subscription ")
-        if r.authn_signal == "unknown" and _prefix_match(r.path, guarded_prefixes):
+        if r.authn_signal == "unknown" and _guarded(r, guarded_prefixes, guarded_exact):
             r.authn_signal = "middleware_present"
         # Cross-file authZ lift: a route under a centrally-mounted role/permission
-        # guard is authorized even though the per-handler window scan cannot see
-        # the mount. Mirrors the authN lift above.
-        if r.authz_signal == "unknown" and _prefix_match(r.path, authz_guarded_prefixes):
+        # guard is authorized even though the per-handler scan cannot see the
+        # mount. Mirrors the authN lift above.
+        if r.authz_signal == "unknown" and _guarded(r, authz_guarded_prefixes, authz_guarded_exact):
             r.authz_signal = "middleware_present"
         # Warning (not a finding): a state-changing or management route with no
         # detected auth guard looks like it SHOULD require authentication —
