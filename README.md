@@ -57,14 +57,14 @@ For most repositories, run the Claude Code session on Sonnet 4.6. The orchestrat
 
 ### 1. Install the plugin
 
-Add the marketplace and install the plugin. This installs the current release and needs no checkout:
+Add the marketplace and install the plugin. This installs the current release from `main` and needs no checkout. If GitHub SSH access is not configured, run `export CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` in your shell before installing or updating to use HTTPS for both the marketplace and plugin downloads:
 
 ```bash
 claude plugin marketplace add appsec-foundry/appsec-advisor
 claude plugin install appsec-advisor@appsec-foundry
 ```
 
-Later releases arrive with `claude plugin update appsec-advisor`, which takes effect after a restart.
+Later releases arrive with `claude plugin update appsec-advisor@appsec-foundry`, which takes effect after a restart. `/appsec-advisor:status --check-updates` compares the core version against the release branch.
 
 Then start Claude Code from the repository you want to assess:
 

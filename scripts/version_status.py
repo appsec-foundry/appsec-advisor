@@ -101,8 +101,10 @@ def compare(local: str, published: str) -> str:
 
 
 def published_manifest_url(upstream_url: str) -> str:
-    """Raw URL of the upstream manifest, or empty for a host we cannot map.
+    """Raw URL of the upstream release manifest, or empty for an unmapped host.
 
+    Releases live on main, matching the marketplace source. HEAD can resolve
+    to the development branch and advertise versions users cannot install.
     Only GitHub is mapped. Guessing a raw-file URL for an arbitrary forge would
     produce a request that fails, or worse, one that succeeds against something
     that is not the manifest.
@@ -114,7 +116,7 @@ def published_manifest_url(upstream_url: str) -> str:
     if not match:
         return ""
     owner, repository = match.groups()
-    return f"https://raw.githubusercontent.com/{owner}/{repository}/HEAD/{MANIFEST_PATH}"
+    return f"https://raw.githubusercontent.com/{owner}/{repository}/main/{MANIFEST_PATH}"
 
 
 def _fetch(url: str) -> bytes:
