@@ -541,12 +541,40 @@ SOURCE_TESTS = {
         export_threat_dragon
         export_threat_model_skill
     """),
+    "scripts/figure1_dfd.py": _tests("""
+        actor_presentation
+        compose_threat_model
+        detect_public_repo
+        discover_identity_providers
+        e2e_pipeline
+        export_html
+        export_pdf
+        export_threat_model_skill
+        figure1_detail
+        figure1_dfd
+        figure2_svg
+        qa_checks
+    """),
     "scripts/figure2_svg.py": _tests("""
         actor_presentation
         compose_threat_model
         e2e_pipeline
         figure2_svg
         qa_checks
+    """),
+    "scripts/finalize_component_inventory.py": _tests("""
+        aggregate_run_issues
+        build_threat_model_yaml
+        build_trust_boundary_assessment_input
+        discover_identity_providers
+        dispatch_manifest
+        embedded_store_access
+        export_threat_dragon
+        finalize_component_inventory
+        orchestration_controller
+        prepare_trust_boundary_context
+        runtime_cleanup
+        validate_fragment
     """),
     "scripts/inline_code_formatter.py": _tests("""
         apply_prose_fixes

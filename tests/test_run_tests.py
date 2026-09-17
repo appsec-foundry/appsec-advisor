@@ -539,8 +539,28 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             {"tests/test_export_sarif.py", "tests/test_threat_fixture.py", "tests/test_sarif_validation.py"},
         ),
         (
+            "scripts/figure1_dfd.py",
+            {
+                "tests/test_figure1_dfd.py",
+                "tests/test_figure1_detail.py",
+                "tests/test_compose_threat_model.py",
+                "tests/test_export_html.py",
+                "tests/test_qa_checks.py",
+            },
+        ),
+        (
             "scripts/figure2_svg.py",
             {"tests/test_figure2_svg.py", "tests/test_compose_threat_model.py", "tests/test_qa_checks.py"},
+        ),
+        (
+            "scripts/finalize_component_inventory.py",
+            {
+                "tests/test_finalize_component_inventory.py",
+                "tests/test_dispatch_manifest.py",
+                "tests/test_build_trust_boundary_assessment_input.py",
+                "tests/test_build_threat_model_yaml.py",
+                "tests/test_orchestration_controller.py",
+            },
         ),
         (
             "scripts/inline_code_formatter.py",
