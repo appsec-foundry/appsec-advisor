@@ -9,76 +9,119 @@
 # `note` adds a legend explanation when the label alone could be misread.
 # `implies` names the generic values a more specific one already covers; the
 # figure shows only the specific label when both are evidenced.
+# `tier` ranks the function type by security relevance (1 = highest): the
+# figure shows the three highest-ranked labels of an element, vocabulary order
+# breaking ties, and lists the rest under "Further capabilities".
+# `cwes` lets a reported finding from a deterministic source rule add the
+# label with that finding's code location when the producer omitted it; a CWE
+# belongs to at most one value.
 schema_version: 1
 
 component_capabilities:
   file-upload:
     label: File upload
+    tier: 2
+    cwes: [CWE-434]
   url-fetch:
     label: URL fetch
     note: requests a URL that runtime input selects or influences
+    tier: 1
+    cwes: [CWE-918]
   xml-parsing:
     label: XML parsing
+    tier: 1
+    cwes: [CWE-611, CWE-776]
   template-rendering:
     label: Server-side templates
+    tier: 1
+    cwes: [CWE-1336]
   llm-calls:
     label: LLM calls
+    tier: 3
+    cwes: [CWE-1427]
   llm-tools:
     label: LLM + tools
     note: model calls with executable application tools
     implies: [llm-calls]
+    tier: 1
   token-issuer:
     label: Token issuer
+    tier: 2
   jwt-issuer:
     label: JWT issuer
     implies: [token-issuer]
+    tier: 2
   mfa-verifier:
     label: MFA verifier
+    tier: 2
   oauth-client:
     label: OAuth client
+    tier: 2
   oidc-client:
     label: OIDC client
     implies: [oauth-client]
+    tier: 2
   saml-service-provider:
     label: SAML service provider
+    tier: 2
   websocket-endpoint:
     label: WebSocket endpoint
+    tier: 3
+    cwes: [CWE-1385]
   graphql-endpoint:
     label: GraphQL endpoint
+    tier: 3
   payment-processing:
     label: Payment processing
+    tier: 3
   email-sending:
     label: Email sending
+    tier: 4
   admin-functions:
     label: Admin functions
+    tier: 3
   blockchain-client:
     label: Blockchain client
+    tier: 4
   background-jobs:
     label: Background jobs
+    tier: 4
 
 service_roles:
   oauth-authorization-server:
     label: OAuth authorization server
+    tier: 1
   oauth-resource-server:
     label: OAuth resource server
+    tier: 2
   oidc-provider:
     label: OIDC provider
     implies: [oauth-authorization-server]
+    tier: 1
   saml-identity-provider:
     label: SAML identity provider
+    tier: 1
   llm-inference:
     label: LLM inference
+    tier: 1
   blockchain-rpc:
     label: Blockchain RPC
+    tier: 3
   payment-provider:
     label: Payment provider
+    tier: 2
   email-delivery:
     label: Email delivery
+    tier: 3
   object-storage:
     label: Object storage
+    tier: 2
   message-broker:
     label: Message broker
+    tier: 2
   telemetry-service:
     label: Telemetry service
+    tier: 3
   package-registry:
     label: Package registry
+    tier: 1

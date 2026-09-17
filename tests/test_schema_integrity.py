@@ -98,9 +98,16 @@ def test_capability_vocabulary_matches_every_artifact_schema():
     assert capabilities and roles and not set(capabilities) & set(roles)
     for entry in [*vocabulary["component_capabilities"].values(), *vocabulary["service_roles"].values()]:
         assert entry["label"].strip() == entry["label"] and 0 < len(entry["label"]) <= 28
+    cwes = []
     for group in ("component_capabilities", "service_roles"):
         for value, entry in vocabulary[group].items():
             assert set(entry.get("implies") or []) <= set(vocabulary[group]) - {value}
+            assert entry.get("tier") in {1, 2, 3, 4}, value
+            for implied in entry.get("implies") or []:
+                assert vocabulary[group][implied]["tier"] >= entry["tier"], (value, implied)
+            cwes += entry.get("cwes") or []
+    assert len(cwes) == len(set(cwes)) and all(re.fullmatch(r"CWE-[1-9]\d*", cwe) for cwe in cwes)
+    assert not any("cwes" in entry for entry in vocabulary["service_roles"].values())
     schema_root = REPO_ROOT / "schemas"
     fragment = json.loads((schema_root / "fragments/components.schema.json").read_text())
     canonical = yaml.safe_load((schema_root / "threat-model.output.schema.yaml").read_text())

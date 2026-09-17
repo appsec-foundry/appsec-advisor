@@ -2855,6 +2855,101 @@ def test_capability_labels_do_not_repeat_the_name_or_a_more_specific_label(name,
         assert [row["id"] for row in F._capability_rows(unevidenced, vocabulary, key, name)] == ["llm-calls"]
 
 
+@pytest.mark.parametrize(
+    ("authored", "shown", "more"),
+    [
+        (["background-jobs", "file-upload", "url-fetch"], ["url-fetch", "file-upload", "background-jobs"], []),
+        (["admin-functions", "xml-parsing"], ["xml-parsing", "admin-functions"], []),
+        (["mfa-verifier", "token-issuer", "file-upload"], ["file-upload", "token-issuer", "mfa-verifier"], []),
+        (
+            ["email-sending", "admin-functions", "file-upload", "llm-tools", "template-rendering", "url-fetch"],
+            ["url-fetch", "template-rendering", "llm-tools"],
+            ["file-upload", "admin-functions", "email-sending"],
+        ),
+        (["graphql-endpoint", "websocket-endpoint", "payment-processing", "oauth-client"], None, None),
+    ],
+)
+def test_capability_labels_rank_by_security_relevance_and_keep_the_rest(authored, shown, more):
+    capabilities, _ = F._capability_vocabulary()
+    evidence = [{"file": "src/a.ts", "line": 1}]
+    items = [{"capability": value, "evidence": evidence} for value in authored]
+    rows = F._capability_rows(items, capabilities, "capability", "Service")
+    ranks = [(capabilities[row["id"]]["tier"], list(capabilities).index(row["id"])) for row in rows]
+    assert ranks == sorted(ranks) and {row["id"] for row in rows} == set(authored)
+    display = F._capability_display(rows)
+    assert len([cap for cap in display if not cap.get("more")]) == min(len(rows), F.CAPABILITY_CAP)
+    if shown is not None:
+        assert [cap["id"] for cap in display if not cap.get("more")] == shown
+        assert [cap["id"] for cap in (display[-1].get("more") or [])] == more
+    hidden = display[-1].get("more") or []
+    assert display[-1]["label"] == (f"+{len(hidden)}" if hidden else display[-1]["label"])
+    assert [cap["id"] for cap in display if not cap.get("more")] + [cap["id"] for cap in hidden] == [
+        row["id"] for row in rows
+    ]
+
+
+def test_reported_findings_add_capabilities_only_from_deterministic_rules():
+    capabilities, _ = F._capability_vocabulary()
+    rule = {"source": "source-scan", "evidence_check": "verified"}
+    threats = [
+        dict(rule, id="T-001", cwe="CWE-611", component="api", evidence=[{"file": "src/xml.py", "line": 8}]),
+        dict(rule, id="T-002", cwe="cwe-611", component="api", evidence=[{"file": "src/xml.py", "line": 8}]),
+        dict(
+            rule,
+            id="T-003",
+            cwe="CWE-1336",
+            component="api",
+            evidence=[{"file": "src/view.py", "line": 3}],
+            instances=[{"component_id": "worker", "file": "jobs/render.py", "line": 12}],
+        ),
+        {
+            "id": "T-004",
+            "source": "stride",
+            "cwe": "CWE-918",
+            "component": "api",
+            "evidence": [{"file": "a", "line": 1}],
+        },
+        dict(rule, id="T-005", cwe="CWE-79", component="api", evidence=[{"file": "src/page.py", "line": 2}]),
+        dict(rule, id="T-006", cwe="CWE-434", component="api", evidence=[{"file": "src/up.py"}]),
+    ]
+    derived = F._finding_capabilities(threats, capabilities)
+    assert derived == {
+        "api": [
+            {"capability": "xml-parsing", "evidence": [{"file": "src/xml.py", "line": 8}], "derived": True},
+            {"capability": "template-rendering", "evidence": [{"file": "src/view.py", "line": 3}], "derived": True},
+        ],
+        "worker": [
+            {"capability": "template-rendering", "evidence": [{"file": "jobs/render.py", "line": 12}], "derived": True}
+        ],
+    }
+    authored = [{"capability": "xml-parsing", "evidence": [{"file": "src/parser.py", "line": 40}]}]
+    rows = F._capability_rows([*authored, *derived["api"]], capabilities, "capability", "API")
+    assert [(row["id"], row["derived"], row["evidence"][0]["file"]) for row in rows] == [
+        ("xml-parsing", False, "src/parser.py"),
+        ("template-rendering", True, "src/view.py"),
+    ]
+    by_cwe = {}
+    for value, entry in capabilities.items():
+        for cwe in entry.get("cwes") or []:
+            assert cwe not in by_cwe and value not in {"llm-tools", "token-issuer", "jwt-issuer", "admin-functions"}
+            by_cwe[cwe] = value
+
+    model, paths, taxonomy = _model()
+    model["threats"].append(
+        dict(rule, id="T-090", cwe="CWE-611", component="app1", severity="Medium", stride="Information Disclosure")
+        | {"evidence": [{"file": "src/import.ts", "line": 7}]}
+    )
+    model["threats"].append(
+        dict(rule, id="T-091", cwe="CWE-918", component="app1", evidence_check="refuted", severity="Medium")
+        | {"stride": "Spoofing", "evidence": [{"file": "src/fetch.ts", "line": 9}]}
+    )
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    pills = [g for g in ET.fromstring(svg).iter(f"{_SVG}g") if g.get("data-capability")]
+    assert [(g.get("data-capability-owner"), g.get("data-capability")) for g in pills] == [("app1", "xml-parsing")]
+    assert pills[0].find(f"{_SVG}title").text.endswith("src/import.ts:7 (reported finding)")
+
+
 def test_capability_labels_require_known_values_and_evidence():
     model, paths, taxonomy = _model()
     unlabelled, problems = F.check_diagram(model, paths, taxonomy, detail=False)
@@ -2884,14 +2979,22 @@ def test_capability_labels_require_known_values_and_evidence():
         root = ET.fromstring(svg)
         pills = [g for g in root.iter(f"{_SVG}g") if g.get("data-capability")]
         assert [(g.get("data-capability-owner"), g.get("data-capability")) for g in pills] == [
-            ("app0", "file-upload"),
             ("app0", "llm-tools"),
+            ("app0", "file-upload"),
             ("app0", "token-issuer"),
             ("ext-model", "llm-inference"),
         ]
         assert "src/upload.ts:4" in pills[0].find(f"{_SVG}title").text
+        more = [g for g in root.iter(f"{_SVG}g") if g.get("data-capability-more")]
+        assert [(g.get("data-capability-owner"), g.get("data-capability-more")) for g in more] == [("app0", "1")]
+        assert "".join(more[0].itertext()).strip().endswith("+1")
+        assert "MFA verifier" in more[0].find(f"{_SVG}title").text
         notation = " ".join(root.find("{*}g[@data-legend-section='notation']").itertext())
         assert "Security-relevant capabilities / service roles" in notation
         assert "LLM + tools = model calls with executable application tools" in notation
+        flat = " ".join(notation.split())
+        assert "most security-relevant first" in flat and "+N = further labels" in flat
         assert "a missing label does not mean absence" in notation
+        further = " ".join(root.find("{*}g[@data-legend-section='capability-notes']").itertext())
+        assert "Further capabilities" in further and ": MFA verifier" in further
     assert model == before

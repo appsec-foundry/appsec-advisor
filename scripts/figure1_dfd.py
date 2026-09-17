@@ -241,23 +241,67 @@ def _words(text):
 
 
 def _capability_rows(items, vocabulary, key, name=""):
-    """Known, evidenced labels in authored order; unknown values never render.
+    """Known, evidenced labels, most security-relevant first; unknown values never render.
 
-    A label is left out when a more specific evidenced value implies it, or
-    when the node's own name already says everything the label would.
+    Order is the vocabulary `tier`, then vocabulary order. A label is left out
+    when a more specific evidenced value implies it, or when the node's own name
+    already says everything the label would. The first item per value wins.
     """
     evidenced = [
         item for item in items or [] if isinstance(item, dict) and item.get("evidence") and item.get(key) in vocabulary
     ]
     implied = {value for item in evidenced for value in vocabulary[item[key]].get("implies") or []}
+    rank = {value: (entry.get("tier", 9), index) for index, (value, entry) in enumerate(vocabulary.items())}
     rows = []
     for item in evidenced:
         entry = vocabulary[item[key]]
         if item[key] in implied or _words(entry["label"]) <= _words(name):
             continue
         if all(row["id"] != item[key] for row in rows):
-            rows.append({"id": item[key], "label": entry["label"], "evidence": item["evidence"]})
-    return rows[:CAPABILITY_CAP]
+            rows.append(
+                {
+                    "id": item[key],
+                    "label": entry["label"],
+                    "evidence": item["evidence"],
+                    "derived": bool(item.get("derived")),
+                }
+            )
+    return sorted(rows, key=lambda row: rank[row["id"]])
+
+
+def _capability_display(rows):
+    """At most CAPABILITY_CAP labels, then one `+N` label carrying the rest."""
+    if len(rows) <= CAPABILITY_CAP:
+        return rows
+    more = rows[CAPABILITY_CAP:]
+    return [*rows[:CAPABILITY_CAP], {"id": "+", "label": f"+{len(more)}", "evidence": [], "more": more}]
+
+
+# Only deterministic source rules may add a label from a finding: a model-assigned
+# CWE can name the wrong class (a prompt-injection finding once carried CWE-1336).
+_CAPABILITY_FINDING_SOURCES = frozenset({"source-scan"})
+
+
+def _finding_capabilities(threats, vocabulary):
+    """Component id → capability items proven by reported findings whose CWE the vocabulary lists."""
+    by_cwe = {cwe: value for value, entry in vocabulary.items() for cwe in entry.get("cwes") or []}
+    derived = collections.defaultdict(dict)
+    for threat in threats:
+        value = by_cwe.get(str(threat.get("cwe") or "").strip().upper())
+        if not value or threat.get("source") not in _CAPABILITY_FINDING_SOURCES:
+            continue
+        sites = [(threat.get("component"), row) for row in threat.get("evidence") or []]
+        sites += [(row.get("component_id"), row) for row in threat.get("instances") or [] if isinstance(row, dict)]
+        for component, row in sites:
+            if not isinstance(component, str) or not isinstance(row, dict):
+                continue
+            if not isinstance(row.get("file"), str) or not isinstance(row.get("line"), int):
+                continue
+            item = derived[component].setdefault(value, {"capability": value, "evidence": [], "derived": True})
+            location = {"file": row["file"], "line": row["line"]}
+            if location not in item["evidence"]:
+                item["evidence"].append(location)
+    return {component: list(items.values()) for component, items in derived.items()}
 
 
 def _pill_rows(capabilities, width):
@@ -277,19 +321,31 @@ def _pill_height(capabilities, width):
     return len(rows) * PILL_ROW + 2 if rows else 0
 
 
+def _capability_title(cap):
+    sources = ", ".join(f"{ev.get('file')}:{ev.get('line')}" for ev in cap["evidence"] if isinstance(ev, dict))
+    return f"{cap['label']} — evidence: {sources}" + (" (reported finding)" if cap.get("derived") else "")
+
+
 def _capability_pills(c, x, y, node, width):
     """Draw labels without risk colouring; evidence stays available on hover."""
     for r, row in enumerate(_pill_rows(node.get("capabilities") or [], width)):
         px = x
         for cap, w in row:
             py = y + r * PILL_ROW
-            sources = ", ".join(f"{ev.get('file')}:{ev.get('line')}" for ev in cap["evidence"] if isinstance(ev, dict))
             track = f"capability {node['id']} {cap['id']}"
             c.label_owners[track] = node["id"]
-            c.add(f'<g data-capability="{_esc(cap["id"])}" data-capability-owner="{_esc(node["id"])}">')
-            c.add(f"<title>{_esc(cap['label'] + ' — evidence: ' + sources)}</title>")
-            c.rect(px, py, w, PILL_H, fill="#eef3f8", stroke="#b6c6d8", sw=0.7, rx=3)
-            c.text(px + w / 2, py + 9.5, cap["label"], size=PILL_SIZE, fill=NAVY, track=track)
+            if cap.get("more"):
+                c.add(f'<g data-capability-more="{len(cap["more"])}" data-capability-owner="{_esc(node["id"])}">')
+                c.add(
+                    f"<title>{_esc('Further capabilities: ' + '; '.join(map(_capability_title, cap['more'])))}</title>"
+                )
+                c.rect(px, py, w, PILL_H, fill="#ffffff", stroke="#b6c6d8", sw=0.7, rx=3, dash="2 2")
+                c.text(px + w / 2, py + 9.5, cap["label"], size=PILL_SIZE, fill=MUTED, track=track)
+            else:
+                c.add(f'<g data-capability="{_esc(cap["id"])}" data-capability-owner="{_esc(node["id"])}">')
+                c.add(f"<title>{_esc(_capability_title(cap))}</title>")
+                c.rect(px, py, w, PILL_H, fill="#eef3f8", stroke="#b6c6d8", sw=0.7, rx=3)
+                c.text(px + w / 2, py + 9.5, cap["label"], size=PILL_SIZE, fill=NAVY, track=track)
             c.add("</g>")
             px += w + PILL_GAP
     return _pill_height(node.get("capabilities") or [], width)
@@ -860,6 +916,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     }
 
     component_capabilities, service_roles = _capability_vocabulary()
+    derived_capabilities = _finding_capabilities(register_threats(d), component_capabilities)
     nodes = {}
     for comp in comps:
         cid = comp["id"]
@@ -878,8 +935,13 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "stride": stride[cid],
             "exposed": cid in exposed or "internet" in [str(z).lower() for z in comp.get("deployment_zones") or []],
             "complex": comp.get("complexity") == "complex",
-            "capabilities": _capability_rows(
-                comp.get("capabilities"), component_capabilities, "capability", comp.get("name") or cid
+            "capabilities": _capability_display(
+                _capability_rows(
+                    [*(comp.get("capabilities") or []), *derived_capabilities.get(cid, [])],
+                    component_capabilities,
+                    "capability",
+                    comp.get("name") or cid,
+                )
             ),
             "badges": [],
             "assets": [],
@@ -1009,7 +1071,9 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "color": GREEN if role else INK,
             "capabilities": []
             if role
-            else _capability_rows(entity.get("service_roles"), service_roles, "role", entity["name"]),
+            else _capability_display(
+                _capability_rows(entity.get("service_roles"), service_roles, "role", entity["name"])
+            ),
             "order": len(nodes),
             "badges": [],
         }
@@ -2772,7 +2836,15 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     )
     y += 32
 
-    capabilities = list({cap["id"]: cap for n in nodes.values() for cap in n.get("capabilities") or []}.values())
+    overflow = [(n, cap["more"]) for n in nodes.values() for cap in n.get("capabilities") or [] if cap.get("more")]
+    capabilities = list(
+        {
+            cap["id"]: cap
+            for n in nodes.values()
+            for shown in n.get("capabilities") or []
+            for cap in shown.get("more") or [shown]
+        }.values()
+    )
     if capabilities:
         c.text(lx + 10, y + 3, "Security-relevant capabilities / service roles", size=9, anchor="start", weight="bold")
         y += 16
@@ -2788,7 +2860,10 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             for cap in capabilities
             if vocabulary[cap["id"]].get("note")
         ]
-        for note in [*notes, "Selected labels only; a missing label does not mean absence."]:
+        ranking = f"At most {CAPABILITY_CAP} labels per element, most security-relevant first"
+        if overflow:
+            ranking += "; +N = further labels, listed under Further capabilities"
+        for note in [*notes, ranking + ".", "Functions may go undetected: a missing label does not mean absence."]:
             for line in _legend_wrap(note, lw - 20, 8.5):
                 c.text(lx + 10, y + 3, line, size=8.5, anchor="start", fill=MUTED)
                 y += 12
@@ -2985,6 +3060,16 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
                     y += 11
             y += 12
             c.add("</g>")
+    if overflow:
+        y = head("capability-notes", "Further capabilities")
+        c.text(lx + 10, y + 3, "Labels behind +N on their element:", size=8, anchor="start", fill=MUTED)
+        y += 18
+        for node, more in overflow:
+            owner = node["name"].split(" · ")[0]
+            for line in _legend_wrap(f"{owner}: {', '.join(cap['label'] for cap in more)}", lw - 20, 8):
+                c.text(lx + 10, y + 3, line, size=8, anchor="start", fill=MUTED)
+                y += 12
+            y += 6
     if d.get("_label_notes"):
         y = head("flow-notes", "Additional flow labels")
         c.text(lx + 10, y + 3, "Labels without room on their connection:", size=8, anchor="start", fill=MUTED)

@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Attack lines in Figure 1 run straight into a component that spans their height instead of bending to a fixed port.
 - Identity-provider discovery no longer adds a second flow for an OAuth step the architecture already models.
 - Capability, service-role and authentication evidence must point to implementing code; comment and import lines are rejected, and components can be labelled `JWT issuer`.
+- Figure 1 shows at most three capability labels per element, most security-relevant first, lists the rest under "Further capabilities", and adds labels that deterministic scanner findings prove.
 
 ## 0.6.0-beta.3 (2026-09-14)
 
