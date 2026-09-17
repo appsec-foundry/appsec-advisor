@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import jsonschema
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -219,3 +220,103 @@ def test_the_llm_rank_is_what_retains_it_not_merely_having_a_tag() -> None:
 
     ranked = sorted(routes, key=context._route_order_key)
     assert ranked.index(llm) < context.MAX_ROUTES // 2, "an LLM route must rank into the guaranteed half"
+
+
+def _role_repo(root: Path, units: set[str]) -> Path:
+    dependencies = {}
+    if "realtime" in units:
+        dependencies["socket.io"] = "4"
+        (root / "lib").mkdir(exist_ok=True)
+        (root / "lib/events.ts").write_text("import { Server } from 'socket.io'\n", encoding="utf-8")
+    if "web3" in units:
+        dependencies["ethers"] = "6"
+        (root / "routes").mkdir(exist_ok=True)
+        (root / "routes/wallet.ts").write_text("// web3 wallet endpoint\n", encoding="utf-8")
+    if "embedded-store" in units:
+        dependencies["marsdb"] = "1"
+        (root / "data").mkdir(exist_ok=True)
+        (root / "data/documents.ts").write_text(
+            "import Engine from 'marsdb'\nconst records = new Engine.Collection('records')\n", encoding="utf-8"
+        )
+    if "ci-cd" in units:
+        (root / ".github/workflows").mkdir(parents=True, exist_ok=True)
+        (root / ".github/workflows/build.yml").write_text("on: push\n", encoding="utf-8")
+    if "authentication" in units:
+        (root / "routes").mkdir(exist_ok=True)
+        (root / "routes/login.ts").write_text("export function login() {}\n", encoding="utf-8")
+    (root / "package.json").write_text(json.dumps({"dependencies": dependencies}), encoding="utf-8")
+    return root
+
+
+ROLE_UNIT_SHAPES = [
+    set(),
+    {"ci-cd"},
+    {"realtime", "embedded-store"},
+    {"authentication", "ci-cd", "realtime", "web3", "embedded-store"},
+]
+
+
+@pytest.mark.parametrize("units", ROLE_UNIT_SHAPES, ids=lambda units: "+".join(sorted(units)) or "none")
+def test_role_units_name_exactly_what_finalization_would_add(tmp_path: Path, units: set[str]) -> None:
+    import build_stride_dispatch_manifest as manifest
+
+    repo = _role_repo(tmp_path, units)
+    projected = context.project_role_units(repo)
+    jsonschema.validate(projected, _schema("architecture-role-units.schema.json"))
+    assert {unit["role"] for unit in projected["units"]} == units
+    _, injected = manifest.reconcile_inventory([], repo)
+    assert [unit["id"] for unit in projected["units"]] == [card["id"] for card in injected]
+    modelled = [
+        {
+            "id": unit["id"],
+            "name": unit["name"],
+            "tier": unit["tier"],
+            "framework": unit["framework"],
+            "paths": unit["paths"],
+        }
+        for unit in projected["units"]
+    ]
+    assert manifest.reconcile_inventory(modelled, repo)[1] == []
+    rendered = (json.dumps(projected, indent=2) + "\n").encode()
+    profile = json.loads((ROOT / "data" / "context-routing-bindings.json").read_text(encoding="utf-8"))[
+        "limit_profiles"
+    ]["role_units"]
+    routing._enforce_limits(  # noqa: SLF001
+        "architecture.role_units",
+        routing._counts(rendered, record_count=len(projected["units"])),  # noqa: SLF001
+        profile,
+    )
+
+
+def test_role_unit_projection_bounds_units_and_paths_with_disclosure(tmp_path: Path, monkeypatch) -> None:
+    import build_stride_dispatch_manifest as manifest
+
+    card = {"name": "Unit", "role": "realtime", "tier": "application", "framework": None}
+    cards = [dict(card, id=f"unit-{i}", paths=[f"src/unit{i}/file{j}.ts" for j in range(30)]) for i in range(15)]
+    monkeypatch.setattr(manifest, "role_unit_candidates", lambda _repo: cards)
+    projected = context.project_role_units(tmp_path)
+    jsonschema.validate(projected, _schema("architecture-role-units.schema.json"))
+    assert len(projected["units"]) == context.MAX_ROLE_UNITS
+    assert projected["limits"]["omitted_units"] == 15 - context.MAX_ROLE_UNITS
+    assert all(len(unit["paths"]) == context.MAX_ROLE_UNIT_PATHS for unit in projected["units"])
+    assert all(unit["omitted_paths"] == 30 - context.MAX_ROLE_UNIT_PATHS for unit in projected["units"])
+
+
+def test_cli_writes_role_units_only_for_a_repository(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / ".recon-summary.md").write_text("# Recon\nsummary\n", encoding="utf-8")
+    (output / ".route-inventory.json").write_text(
+        json.dumps(
+            {"version": 1, "routes": [], "coverage": {"frameworks_detected": [], "unsupported_route_files": []}}
+        ),
+        encoding="utf-8",
+    )
+    target = output / ".dispatch-context/architecture/role-units.json"
+    assert context.main(["--output-dir", str(output)]) == 0
+    assert not target.exists()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _role_repo(repo, {"ci-cd"})
+    assert context.main(["--output-dir", str(output), "--repo-root", str(repo)]) == 0
+    assert json.loads(target.read_text()) == context.project_role_units(repo)

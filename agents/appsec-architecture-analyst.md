@@ -46,8 +46,9 @@ the Phase-6 checkpoint, retries, and the next action.
 
 ## Analysis
 
-Build a complete deployable component inventory from the admitted inputs. Preserve
-the canonical component IDs supplied by deterministic topology evidence. Treat
+Build a complete deployable component inventory from the admitted inputs. Model
+every `role-units.json` unit under its ID, or extend your component that
+implements that role, and give it its evidenced flows. Treat
 every path or source claim in recon prose as an unverified lead. Resolve it
 against `REPO_ROOT` before using it in an output; never copy a plausible file
 name from prose. Every component needs repository-relative path globs that

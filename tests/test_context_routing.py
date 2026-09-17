@@ -517,6 +517,7 @@ def test_every_context_v2_agent_declared_input_has_one_human_assignment(tmp_path
             [
                 ".dispatch-context/architecture/recon-summary-context.json",
                 ".dispatch-context/architecture/route-context.json",
+                ".dispatch-context/architecture/role-units.json",
                 ".actors-resolved.json",
             ],
             None,

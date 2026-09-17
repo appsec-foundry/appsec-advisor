@@ -793,9 +793,38 @@ def _recommend_business_context_unmapped(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_injected_component_without_flows(issue: dict, output_dir: Path) -> dict:
+    """A role unit reached the inventory only after the flows were written."""
+    component = issue.get("component_id") or "the component"
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": f"{component} has no data flow, so its exposure rests on its component card alone.",
+        "rationale": (
+            "The architecture analyst receives `.dispatch-context/architecture/role-units.json` before "
+            "it writes flows. A unit it did not model is added during finalization and never "
+            "gains a connection."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".data-flows.json",
+                "details": (
+                    f"Check which flows the code evidences for {component}, and whether the analyst "
+                    "attributed them to another component."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "editorial_pass_incomplete": _recommend_editorial_pass_incomplete,
     "business_context_unmapped": _recommend_business_context_unmapped,
+    "injected_component_without_flows": _recommend_injected_component_without_flows,
     "component_evidence_coverage": _recommend_component_evidence_coverage,
     "routing_effectiveness": _recommend_routing_effectiveness,
     "dispatch_count_inconsistent": _recommend_dispatch_count_inconsistent,

@@ -2522,6 +2522,8 @@ def _write_architecture_receipt_inputs(output: Path, *, discovery_enabled: bool 
     (output / ".actors-resolved.json").write_text(json.dumps(actors), encoding="utf-8")
     (output / ".actors-merged-static.json").write_text(json.dumps(static_actors), encoding="utf-8")
     architecture_context.build(output)
+    config = json.loads((output / ".skill-config.json").read_text(encoding="utf-8"))
+    architecture_context.build_role_units(output, Path(config["repo_root"]))
 
 
 def _valid_recon_signals() -> dict:
@@ -5604,6 +5606,32 @@ class TestContextV2PostActors:
             return _completed()
 
         return fake_script
+
+    @pytest.mark.parametrize("tamper", [None, "edited", "missing"])
+    def test_architecture_receives_current_role_units_before_writing_flows(self, tmp_path, monkeypatch, tamper):
+        output = self._prepare(tmp_path)
+        repo = Path(json.loads((output / ".skill-config.json").read_text())["repo_root"])
+        repo.mkdir(exist_ok=True)
+        (repo / ".github/workflows").mkdir(parents=True)
+        (repo / ".github/workflows/build.yml").write_text("on: push\n", encoding="utf-8")
+        architecture_context.build_role_units(output, repo)
+        target = output / ".dispatch-context/architecture/role-units.json"
+        if tamper == "edited":
+            payload = json.loads(target.read_text())
+            payload["units"] = []
+            target.write_text(json.dumps(payload), encoding="utf-8")
+        elif tamper == "missing":
+            target.unlink()
+        monkeypatch.setattr(controller, "_run_script", self._script([]))
+        if tamper:
+            with pytest.raises(controller.ControllerError, match="role-units"):
+                controller.context_v2_post_actors(output)
+            return
+        action = controller.context_v2_post_actors(output)
+        job = action["dispatch_jobs"][0]
+        assert ".dispatch-context/architecture/role-units.json" in job["input_artifacts"]
+        receipt = next(r for r in action["artifact_receipts"] if r["artifact_path"].endswith("role-units.json"))
+        assert receipt["record_count"] == 1
 
     def test_valid_discovery_feeds_the_resolver_and_dispatches_architecture(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)

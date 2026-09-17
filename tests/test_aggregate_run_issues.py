@@ -1796,3 +1796,38 @@ def test_latest_editorial_receipt_controls_the_outcome():
     assert agg._extract_editorial_outcome(log) == []
     log.append((3, _line("2026-09-11T15:02:00Z", "EDITORIAL_PASS", "outcome=partial")))
     assert agg._extract_editorial_outcome(log)[0]["evidence"]["outcome"] == "partial"
+
+
+# ---------------------------------------------------------------------------
+# A component added by inventory finalization that no data flow reaches
+# ---------------------------------------------------------------------------
+
+
+def _inventory_run(tmp_path, injected, flows):
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / ".component-inventory-finalization.json").write_text(
+        json.dumps({"injected_component_ids": injected}), encoding="utf-8"
+    )
+    (out / ".data-flows.json").write_text(json.dumps({"data_flows": flows}), encoding="utf-8")
+    return out
+
+
+def test_injected_component_without_flows_is_surfaced_once_per_component(tmp_path):
+    flows = [{"id": "df-001", "from": "external", "to": "realtime"}, {"id": "df-002", "from": "api", "to": "store"}]
+    out = _inventory_run(tmp_path, ["realtime", "store", "pipeline", "wallet"], flows)
+
+    issues = agg._extract_unconnected_injected_components(out)
+
+    assert [issue["component_id"] for issue in issues] == ["pipeline", "wallet"]
+    assert {issue["category"] for issue in issues} == {"injected_component_without_flows"}
+    assert {issue["severity"] for issue in issues} == {"warning"}
+    assert all(issue["component_id"] in issue["title"] for issue in issues)
+
+
+def test_connected_or_absent_injections_produce_no_issue(tmp_path):
+    assert agg._extract_unconnected_injected_components(tmp_path) == []
+    out = _inventory_run(tmp_path, ["api"], [{"id": "df-001", "from": "api", "to": "external"}])
+    assert agg._extract_unconnected_injected_components(out) == []
+    (out / ".data-flows.json").write_text("not json", encoding="utf-8")
+    assert agg._extract_unconnected_injected_components(out) == []

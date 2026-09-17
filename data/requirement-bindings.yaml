@@ -26,11 +26,19 @@ requirements:
     applies_to:
       - skills/create-threat-model/**
       - agents/appsec-recon-scanner.md
-    decisions: []
+      - scripts/build_architecture_analysis_context.py
+      - schemas/architecture-role-units.schema.json
+    decisions:
+      - OR-27
     documents:
       - README.md
-    coverage: advisory
-    guards: []
+      - docs/internal/contracts/schema-invariants.md
+    coverage: partial
+    guards:
+      - tests/test_build_architecture_analysis_context.py::test_role_units_name_exactly_what_finalization_would_add
+      - tests/test_orchestration_controller.py::TestContextV2PostActors::test_architecture_receives_current_role_units_before_writing_flows
+      - tests/test_aggregate_run_issues.py::test_injected_component_without_flows_is_surfaced_once_per_component
+      - tests/test_finalize_component_inventory.py::test_embedded_store_owned_by_a_modelled_data_component_is_not_duplicated
 
   REQ-PUR-002:
     applies_to:

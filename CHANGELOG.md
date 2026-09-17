@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Depth hints in the run plan and quick reports no longer recommend the nonexistent `--standard` flag.
 - Figure 1 counts findings like the Management Summary, shows each scenario number once per component, lists each attacker once in its legend and no longer draws a second user card next to the one modelled user role.
 - The component inventory no longer adds a second embedded document store next to one the architecture analysis already modelled.
+- Authentication, CI/CD, real-time, web3 and embedded-store components are modelled before data flows are written, so they keep their connections; a run reports any component that still has none.
 
 ## 0.6.0-beta.3 (2026-09-14)
 

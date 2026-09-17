@@ -1570,6 +1570,41 @@ def _extract_business_context_reach(output_dir: Path) -> list[dict]:
     ]
 
 
+def _extract_unconnected_injected_components(output_dir: Path) -> list[dict]:
+    """Report components that inventory finalization added but no data flow reaches.
+
+    The architecture analyst receives the role units before it writes flows. A
+    unit it still left out is added afterwards and appears in the report
+    without any connection, so its exposure and boundaries rest on the
+    component card alone.
+    """
+    try:
+        receipt = json.loads((output_dir / ".component-inventory-finalization.json").read_text(encoding="utf-8"))
+        flows = json.loads((output_dir / ".data-flows.json").read_text(encoding="utf-8")).get("data_flows")
+    except (OSError, ValueError, AttributeError):
+        return []
+    injected = receipt.get("injected_component_ids") if isinstance(receipt, dict) else None
+    if not isinstance(injected, list) or not isinstance(flows, list):
+        return []
+    connected = {f.get(side) for f in flows if isinstance(f, dict) for side in ("from", "to")}
+    return [
+        {
+            "category": "injected_component_without_flows",
+            "severity": "warning",
+            "title": f"Component {component_id} was added by inventory finalization and has no data flow",
+            "component_id": component_id,
+            "evidence": {
+                "log_file": ".component-inventory-finalization.json",
+                "log_line": 1,
+                "raw_event": f"injected_component_ids contains {component_id}; .data-flows.json names it in no flow",
+                "outcome": "unconnected_component",
+            },
+        }
+        for component_id in injected
+        if isinstance(component_id, str) and component_id not in connected
+    ]
+
+
 def _extract_render_integrity(output_dir: Path) -> list[dict]:
     """Flag a structurally incomplete report.
 
@@ -2188,6 +2223,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_session_stop_anomalies(agent_log))
     issues.extend(_extract_recovery_events(output_dir))
     issues.extend(_extract_business_context_reach(output_dir))
+    issues.extend(_extract_unconnected_injected_components(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))

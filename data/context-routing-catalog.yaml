@@ -228,6 +228,11 @@ contexts:
     category: architecture_and_data_flows
     description: Risk-shaped and framework-diverse route records selected from the complete deterministic inventory.
     scope: whole_run
+  - id: architecture.role_units
+    name: Required role-bearing units
+    category: architecture_and_data_flows
+    description: Deterministically detected authentication, CI/CD, realtime, web3, and embedded-store units that the finalized inventory must contain.
+    scope: whole_run
   - id: architecture.targeted_source
     name: Targeted architecture source reads
     category: architecture_and_data_flows
@@ -565,6 +570,14 @@ assignments:
     importance: essential
     applies_to: whole_run
     reason: A bounded risk-shaped and diverse route projection anchors semantic attack-surface decisions while deterministic consumers retain the complete inventory.
+  - id: role-units-for-architecture
+    context: architecture.role_units
+    agents:
+      - architecture_analyst
+    delivery: required
+    importance: essential
+    applies_to: whole_run
+    reason: Units that finalization would add later must be modelled before data flows are written, or they reach the report without connections.
   - id: no-complete-route-inventory-for-architecture
     context: architecture.routes
     agents:

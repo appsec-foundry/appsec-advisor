@@ -8,8 +8,8 @@
 - [x] Component titles use up to three lines before shortening.
 - [x] Capability and service-role vocabulary, schemas, evidence validation, producer prompt and figure labels (`data/security-capabilities.yaml`).
 - [x] Reconciliation no longer injects an embedded store that a framework-less data component already owns (`scripts/build_stride_dispatch_manifest.py`).
+- [x] The architecture analyst receives the role units finalization would add before it writes flows; a unit still added without flows is a run issue (`OR-27`).
 
 ## Open
 
-- [ ] Components injected by reconciliation after the architecture analyst wrote its flows never receive flows of their own.
 - [ ] `discover_identity_providers.py` could assign the service role of the identity providers it generates.

@@ -121,6 +121,7 @@ _RECEIPT_RECORD_KEYS = {
     "schemas/recon-patterns.schema.json#v1": "categories",
     "schemas/recon-summary-context.schema.json#v1": "sections",
     "schemas/architecture-route-context.schema.json#v1": "routes",
+    "schemas/architecture-role-units.schema.json#v1": "units",
     "schemas/recon-signals.schema.json#v2": "signals",
     "schemas/evidence-verifier-context.schema.json#v1": "samples",
     "schemas/post-stride-generated-threats.schema.json#v1": "threats",
@@ -4424,7 +4425,7 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
     )
     _run_script(
         "build_architecture_analysis_context.py",
-        ["--output-dir", str(output_dir)],
+        ["--output-dir", str(output_dir), "--repo-root", repo_root],
     )
     if depth == "thorough":
         _best_effort_script(
@@ -4602,6 +4603,30 @@ def _context_v2_route_projection_receipt(output_dir: Path) -> dict[str, Any]:
     )
 
 
+def _context_v2_role_units_receipt(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Bind the role-unit projection to what the repository still yields."""
+    from build_architecture_analysis_context import project_role_units  # noqa: PLC0415
+
+    artifact_path = ".dispatch-context/architecture/role-units.json"
+    projected = _validate_json_artifact(
+        output_dir / artifact_path,
+        PLUGIN_ROOT / "schemas" / "architecture-role-units.schema.json",
+        contract="schemas/architecture-role-units.schema.json#v1",
+    )
+    try:
+        expected = project_role_units(Path(str(cfg.get("repo_root") or output_dir)))
+    except (OSError, ValueError) as exc:
+        raise ControllerError(f"cannot reconstruct deterministic projection {artifact_path}: {exc}") from exc
+    if projected != expected:
+        raise ControllerError(f"{artifact_path} differs from its deterministic projection")
+    return _validated_json_receipt(
+        output_dir,
+        artifact_path,
+        schema_id="schemas/architecture-role-units.schema.json#v1",
+        record_count=len(projected["units"]),
+    )
+
+
 def _context_v2_actor_input_receipts(output_dir: Path) -> list[dict[str, Any]]:
     signals = _load_json_object(output_dir / ".recon-signals.json", contract="recon-signals-v2")
     signal_values = signals.get("signals")
@@ -4628,6 +4653,7 @@ def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], rec
     structured = [
         _context_v2_recon_projection_receipt(output_dir),
         _context_v2_route_projection_receipt(output_dir),
+        _context_v2_role_units_receipt(output_dir, cfg),
         _validated_json_receipt(
             output_dir,
             ".actors-resolved.json",
@@ -4644,6 +4670,7 @@ def _context_v2_dispatch_architecture(output_dir: Path, cfg: dict[str, Any], rec
         input_artifacts=[
             ".dispatch-context/architecture/recon-summary-context.json",
             ".dispatch-context/architecture/route-context.json",
+            ".dispatch-context/architecture/role-units.json",
             ".actors-resolved.json",
         ],
         output_artifacts=[

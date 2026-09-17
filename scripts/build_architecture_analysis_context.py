@@ -18,6 +18,8 @@ MAX_RECON_RETAINED_LINES = 200
 MAX_RECON_LINE_CHARS = 500
 MAX_ROUTES = 96
 MAX_UNSUPPORTED_ROUTE_FILES = 64
+MAX_ROLE_UNITS = 12
+MAX_ROLE_UNIT_PATHS = 25
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _STATE_CHANGING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -223,6 +225,41 @@ def project_routes(payload: bytes) -> dict[str, Any]:
     }
 
 
+def project_role_units(repo_root: Path) -> dict[str, Any]:
+    """Bound the role-bearing units finalization requires as components."""
+    from build_stride_dispatch_manifest import role_unit_candidates  # noqa: PLC0415
+
+    candidates = role_unit_candidates(repo_root)
+    units = [
+        {
+            "id": card["id"],
+            "name": card["name"],
+            "role": card["role"],
+            "tier": card["tier"],
+            "framework": card.get("framework"),
+            "paths": card["paths"][:MAX_ROLE_UNIT_PATHS],
+            "omitted_paths": max(0, len(card["paths"]) - MAX_ROLE_UNIT_PATHS),
+        }
+        for card in candidates[:MAX_ROLE_UNITS]
+    ]
+    return {
+        "schema_version": 1,
+        "limits": {
+            "max_units": MAX_ROLE_UNITS,
+            "max_paths": MAX_ROLE_UNIT_PATHS,
+            "omitted_units": max(0, len(candidates) - MAX_ROLE_UNITS),
+        },
+        "units": units,
+    }
+
+
+def build_role_units(output_dir: Path, repo_root: Path) -> Path:
+    target = output_dir / ".dispatch-context" / "architecture" / "role-units.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(target, project_role_units(repo_root), sort_keys=False)
+    return target
+
+
 def build(output_dir: Path) -> tuple[Path, Path]:
     recon_path = output_dir / ".recon-summary.md"
     routes_path = output_dir / ".route-inventory.json"
@@ -243,13 +280,17 @@ def build(output_dir: Path) -> tuple[Path, Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--repo-root", type=Path, help="also project the role-bearing units of this repository")
     args = parser.parse_args(argv)
     try:
         recon, routes = build(args.output_dir.resolve())
     except ContextProjectionError as exc:
         print(f"build_architecture_analysis_context: {exc}", file=sys.stderr)
         return 1
-    print(json.dumps({"recon_context": str(recon), "route_context": str(routes)}, sort_keys=True))
+    result = {"recon_context": str(recon), "route_context": str(routes)}
+    if args.repo_root is not None:
+        result["role_units"] = str(build_role_units(args.output_dir.resolve(), args.repo_root.resolve()))
+    print(json.dumps(result, sort_keys=True))
     return 0
 
 

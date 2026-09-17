@@ -1060,6 +1060,30 @@ _RECONCILE_DETECTORS = (
 )
 
 
+_ROLE_UNIT_NAMES = {
+    _detect_auth: "authentication",
+    _detect_cicd: "ci-cd",
+    _detect_realtime: "realtime",
+    _detect_web3: "web3",
+}
+
+
+def role_unit_candidates(repo_root: Path) -> list[dict]:
+    """Role-bearing units that inventory finalization would otherwise add.
+
+    The architecture analyst receives these before it writes data flows. A unit
+    modelled under its ID carries its role, so ``reconcile_inventory`` adds
+    nothing afterwards and the unit keeps the flows the analyst evidenced.
+    """
+    units = []
+    for _predicate, detect in _RECONCILE_DETECTORS:
+        card = detect(repo_root)
+        if card:
+            units.append({**card, "role": _ROLE_UNIT_NAMES[detect]})
+    units.extend({**card, "role": "embedded-store"} for card in _detect_embedded_stores(repo_root))
+    return units
+
+
 def _nonempty(value: object) -> bool:
     """True for a value worth carrying — a real datum, not a blank/empty container.
     ``False``/``0`` count (meaningful flags); ``None``/``""``/``[]``/``{}`` do not."""

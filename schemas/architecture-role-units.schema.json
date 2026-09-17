@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://appsec-advisor/schemas/architecture-role-units.schema.json",
+  "title": "Role-bearing units required in the architecture component inventory",
+  "description": "Deterministic units that component-inventory finalization adds when no modelled component carries their role. The architecture analyst receives them before it writes data flows.",
+  "type": "object",
+  "required": ["schema_version", "limits", "units"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "limits": {
+      "type": "object",
+      "required": ["max_units", "max_paths", "omitted_units"],
+      "additionalProperties": false,
+      "properties": {
+        "max_units": {"const": 12},
+        "max_paths": {"const": 25},
+        "omitted_units": {"type": "integer", "minimum": 0, "maximum": 1000}
+      }
+    },
+    "units": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "role", "tier", "framework", "paths", "omitted_paths"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]+$", "maxLength": 80},
+          "name": {"type": "string", "minLength": 1, "maxLength": 80},
+          "role": {"enum": ["authentication", "ci-cd", "realtime", "web3", "embedded-store"]},
+          "tier": {"enum": ["client", "application", "data"]},
+          "framework": {"type": ["string", "null"], "minLength": 1, "maxLength": 100},
+          "paths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 25,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "not": {"pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"}
+            }
+          },
+          "omitted_paths": {"type": "integer", "minimum": 0, "maximum": 100000}
+        }
+      }
+    }
+  }
+}
