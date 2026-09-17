@@ -82,23 +82,16 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_component_durations.py" \
   "$OUTPUT_DIR" || true
 ```
 
-When `APPSEC_PLUGIN_DEV=1` and current run issues exist, retain the existing
-post-summary diagnosis offer. It is optional and non-fatal, runs after the scan
-figures were captured, and only the diagnostician may write `.run-bugs.json`.
-
 ## 3. Cleanup and response
 
-Mark the final task complete. Unless `KEEP_RUNTIME_FILES=true`, run
-`python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa`
-and, when enabled, the same call with `--stage post-architect`. The stage is a
-`--stage` flag with its own vocabulary (`all`, `pre-qa`, `post-qa`,
-`post-architect`) — neither a positional argument nor the `stageN` labels used
-elsewhere in this pipeline. Cleanup
-must preserve canonical deliverables, audit artifacts, and
-`.appsec-cache/baseline.json`. Always release the run lock, kept runtime files
-included: `rm -f "$OUTPUT_DIR/.appsec-lock"`. Leave `.appsec-verbose` and
-`.appsec-tracing` alone: the closing Stop hook still reads them and removes them.
+Mark the final task complete. Unless `KEEP_RUNTIME_FILES=true`, run `python3 "$CLAUDE_PLUGIN_ROOT/scripts/runtime_cleanup.py" "$OUTPUT_DIR" --stage post-qa --keep-run-issues` and, when enabled, the same call with `--stage post-architect --keep-run-issues`. The stage is a `--stage` flag with its own vocabulary (`all`, `pre-qa`, `post-qa`, `post-architect`) — neither a positional argument nor the `stageN` labels used elsewhere in this pipeline. Cleanup must preserve canonical deliverables, audit artifacts, and `.appsec-cache/baseline.json`. Always release the run lock, kept runtime files included: `rm -f "$OUTPUT_DIR/.appsec-lock"`. Leave `.appsec-verbose` and `.appsec-tracing` alone: the closing Stop hook still reads them and removes them.
 
-Emit the captured completion-summary stdout verbatim as response text, then
-exit 0. On any blocking branch, call `terminate_run.py --outcome failure` with
-the run id, repo, depth, and a concise reason before reporting the error.
+Emit the captured completion-summary stdout verbatim. After releasing the lock, run:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/report_plugin_issue.py" offer --output-dir "$OUTPUT_DIR"
+```
+
+Only for `offer=true`, follow `skills/report-error/SKILL.md` with `--offer` and the run paths.
+
+On failure, first call `terminate_run.py --outcome failure` with run identity and reason. After termination, follow the same `report-error --offer` entry; skip preflight and foreign-lock refusals.

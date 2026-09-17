@@ -3,6 +3,8 @@ name: create-threat-model
 description: Perform a threat assessment of a repository and produce a threat-model.md. Supports --repo to analyze external repos and --output to set the output directory. Use --requirements <url> to check the findings against a security requirements catalog; no separate setup command is needed for that. Optionally also writes threat-model.yaml with --yaml flag.
 ---
 
+After started-run failures, use `report-error --offer` with the run paths.
+
 ## Routing — read this file top to bottom, stop as soon as a case matches
 
 **Case 1 — `--help` or `-h` in arguments:**
@@ -107,9 +109,4 @@ is a one-line hint, not a choice.
 full/rebuild run asks once whether to add business context, before the Pre-flight
 summary. Do not suppress it.
 
-In particular do **not** announce your own actions — the following are all
-contract violations, even though they are *true*: "I've read through to the
-LAZY-LOAD BOUNDARY", "Now executing the combined pre-flight preamble", "Now
-rendering the Pre-flight summary", "Let me run the pre-flight checks". The list
-is illustrative, not exhaustive: **any** sentence describing what you are about
-to do (reading, executing, running, rendering) is forbidden here. Just do it.
+Do not narrate reading, executing, or rendering steps before the Pre-flight summary.

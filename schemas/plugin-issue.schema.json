@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/appsec-advisor/plugin-issue.schema.json",
+  "title": "Opt-in plugin support artifacts",
+  "description": "Local support input, exact public draft, offer, and publication receipt. Validation does not establish prose anonymity or semantic verification.",
+  "oneOf": [
+    {"$ref": "#/$defs/input"},
+    {"$ref": "#/$defs/draft"},
+    {"$ref": "#/$defs/offer"},
+    {"$ref": "#/$defs/receipt"}
+  ],
+  "$defs": {
+    "prose": {"type": "string", "minLength": 20, "maxLength": 6000},
+    "digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "input": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "issue_id", "source_generated", "title", "expected", "actual", "cause", "verification"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "issue_id": {"type": "string", "pattern": "^ISSUE-[0-9]{3}$"},
+        "source_generated": {"type": "string", "minLength": 1, "description": "Exact generated value of the inspected run-issues snapshot; never transmitted."},
+        "title": {"type": "string", "minLength": 10, "maxLength": 120, "pattern": "^[^\r\n]+$"},
+        "expected": {"$ref": "#/$defs/prose"},
+        "actual": {"$ref": "#/$defs/prose"},
+        "cause": {"$ref": "#/$defs/prose"},
+        "verification": {
+          "type": "object", "additionalProperties": false,
+          "required": ["method", "evidence"],
+          "properties": {
+            "method": {"enum": ["source_trace", "reproduced"]},
+            "evidence": {"$ref": "#/$defs/prose"}
+          }
+        }
+      }
+    },
+    "draft": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "issue_id", "snapshot", "title", "body"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "issue_id": {"type": "string", "pattern": "^ISSUE-[0-9]{3}$"},
+        "snapshot": {"$ref": "#/$defs/digest"},
+        "title": {"type": "string", "minLength": 10, "maxLength": 120},
+        "body": {"type": "string", "minLength": 1, "maxLength": 30000}
+      }
+    },
+    "offer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "offer", "interactive", "busy"],
+      "properties": {"schema_version": {"const": 1}, "offer": {"type": "boolean"}, "interactive": {"type": "boolean"}, "busy": {"type": "boolean"}}
+    },
+    "receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "digest", "status", "url"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "digest": {"$ref": "#/$defs/digest"},
+        "status": {"enum": ["pending", "published"]},
+        "url": {"type": ["string", "null"], "pattern": "^https://github\\.com/appsec-foundry/appsec-advisor/issues/[1-9][0-9]*$"}
+      },
+      "allOf": [{"if": {"properties": {"status": {"const": "published"}}}, "then": {"properties": {"url": {"type": "string"}}}, "else": {"properties": {"url": {"type": "null"}}}}]
+    }
+  }
+}

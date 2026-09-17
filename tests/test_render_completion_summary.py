@@ -1199,7 +1199,7 @@ class TestRenderRunIssues:
     def test_report_error_pointer_shown_by_default(self):
         lines = rcs.render_run_issues(self._make_data())
         assert any("report-error" in l for l in lines)
-        assert any("Nothing is sent." in l for l in lines)
+        assert any("publication requires your review and approval" in l for l in lines)
 
     def test_report_error_pointer_hidden_with_plugin_dev(self):
         lines = rcs.render_run_issues(self._make_data(), plugin_dev=True)

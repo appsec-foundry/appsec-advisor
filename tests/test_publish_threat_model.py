@@ -536,3 +536,10 @@ class TestPreflightScansEveryPublishableFile:
         out = self._output_dir(tmp_path)
         (out / "threat-model.pdf").write_bytes(b"%PDF-1.4 password=binarynoise123 \xff\xfe")
         assert self._scan_publishable(out) == []
+
+
+def test_support_drafts_and_reproductions_are_never_published():
+    from publish_threat_model import NEVER_PUBLISH
+
+    assert ".plugin-issue-*.json" in NEVER_PUBLISH
+    assert ".plugin-issue-repro/" in NEVER_PUBLISH

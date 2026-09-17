@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Users can verify suspected plugin errors and review anonymised GitHub issue drafts before explicitly approving publication.
+
 - Security Score accepts HTTPS GitHub and GitLab URLs, emits YAML or JSON with comparison metadata, and withholds incomplete scores while preserving findings.
 - Standalone repository scans now select deterministic checks, narrow severity-filtered defaults to findings, enumerate endpoints and technology, and export YAML or JSON.
 

@@ -60,8 +60,8 @@ _REASON = (
     "Blocked: {target} is appsec-advisor's own source, and plugin self-modification "
     "is a development-only behavior. APPSEC_PLUGIN_DEV is not set to 1, so this "
     "install is read-only against the plugin. To report the problem instead, run "
-    "/appsec-advisor:report-error — it builds a local anonymised bundle and sends "
-    "nothing."
+    "/appsec-advisor:report-error — it investigates locally; publication requires "
+    "your review and approval."
 )
 
 

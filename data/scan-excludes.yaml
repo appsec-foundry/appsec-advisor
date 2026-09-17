@@ -156,6 +156,7 @@ directories:
   # Runtime artifacts
   - .cache
   - .appsec-cache   # plugin's own cache — avoid self-reference scan
+  - .plugin-issue-repro  # synthetic support reproduction, never application evidence
   - .active-tool-calls
   - tmp
 
@@ -398,6 +399,9 @@ file_patterns:
   - ".recon-summary.md"
   - ".route-inventory.json"
   - ".run-issues.json"
+  - ".plugin-issue-input.json"
+  - ".plugin-issue-draft.json"
+  - ".plugin-issue-*.receipt.json"
   - ".skill-config.json"
   - ".source-auth-findings.json"
   - ".stage-stats.jsonl"

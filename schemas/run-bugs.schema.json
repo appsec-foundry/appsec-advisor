@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/appsec-advisor/run-bugs.schema.json",
   "title": "run-bugs sidecar",
-  "description": "Post-run plugin-bug diagnosis written by appsec-run-diagnostician and rendered by scripts/render_run_diagnosis.py. Developer-mode only (APPSEC_PLUGIN_DEV=1); never part of a user deliverable.",
+  "description": "Post-run plugin-bug diagnosis written by appsec-run-diagnostician and rendered by scripts/render_run_diagnosis.py. Used in developer mode or an explicitly requested report-error investigation; never copied into a public issue.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "generated", "issues_total", "issues_examined", "summary", "diagnoses"],

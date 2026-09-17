@@ -1682,7 +1682,7 @@ def render_run_issues(data: Optional[dict], plugin_dev: bool = False) -> list[st
         lines.append("  Root causes         : /appsec-advisor:diagnose-run")
     else:
         lines.append("  Report this issue   : /appsec-advisor:report-error")
-        lines.append("                        Builds a local, anonymised bundle. Nothing is sent.")
+        lines.append("                        Checks locally; publication requires your review and approval.")
 
     lines.append("")
     return lines

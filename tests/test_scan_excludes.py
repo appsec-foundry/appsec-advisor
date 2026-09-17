@@ -47,6 +47,19 @@ def _write_yaml(path: Path, data):
     return path
 
 
+@pytest.mark.parametrize("base", ["results", "audit-output"])
+def test_support_products_are_not_scanned_as_application_source(base):
+    for name in (
+        ".plugin-issue-input.json",
+        ".plugin-issue-draft.json",
+        ".plugin-issue-" + "a" * 64 + ".receipt.json",
+        ".plugin-issue-repro/example.py",
+    ):
+        assert scan_excludes.is_excluded(f"{base}/{name}")
+    assert not scan_excludes.is_excluded(f"{base}/issue_handler.py")
+    assert not scan_excludes.is_excluded(f"{base}/plugin-issue-settings.json")
+
+
 @pytest.fixture(autouse=True)
 def _reset_cache():
     scan_excludes._reset_cache_for_tests()

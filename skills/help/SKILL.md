@@ -103,7 +103,7 @@ APPSEC_COACH=0 claude ...       off for this session
 /appsec-advisor:repo-profile            size, stack and layout
 /appsec-advisor:export-threat-model     PDF, HTML, SARIF
 /appsec-advisor:publish-threat-model    push the report to its target
-/appsec-advisor:report-error            bundle after a failed run
+/appsec-advisor:report-error            review a plugin issue
 ```
 
 Typing `/appsec-advisor:` lists every skill with its description.

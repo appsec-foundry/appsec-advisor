@@ -417,6 +417,7 @@ Agents read the repository and make the security judgments. Python checks their 
 | `/appsec-advisor:security-score` | Score the repository 0-100 from the scanner layer alone, without a threat model. |
 | `/appsec-advisor:clean-run-state` | Remove stale state after an interrupted run. |
 | `/appsec-advisor:fix-run-issues` | Show manual plugin-fix guidance from a validated diagnosis of the previous run. |
+| `/appsec-advisor:report-error` | Investigate a run error locally, review an anonymised issue draft, and optionally approve publication to the plugin repository; `--bundle-only` keeps the manual diagnostic-bundle workflow. |
 | `/appsec-advisor:status` | Show plugin version, configuration, and last-run state. |
 | `/appsec-advisor:check-permissions` | Check or update permissions for unattended runs. |
 

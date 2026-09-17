@@ -180,6 +180,7 @@ GROUPS = {
         cost_running_total
         cutoff_cause
         diagnostic_bundle
+        report_plugin_issue
         dispatch_manifest
         dispatch_model_and_diagnostics
         dispatch_prompt_cache_order

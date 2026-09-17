@@ -215,13 +215,15 @@ python3 /path/to/appsec-advisor/scripts/repo_scan.py --repo /path/to/project
 
 ## Report a failed run
 
-Create an anonymized diagnostic bundle with:
+Investigate a suspected plugin error and prepare a minimal issue draft with:
 
 ```text
 /appsec-advisor:report-error
 ```
 
-Review the bundle before attaching it to a GitHub issue. The command excludes source code, findings, evidence, and report content, and sends nothing automatically.
+The skill checks the plugin cause locally and distinguishes source inspection from an executed neutral reproduction. It shows the complete issue draft before asking for permission to publish it to `appsec-foundry/appsec-advisor`. Raw logs, project source, findings, and diagnostic attachments are excluded. Review the draft for remaining internal names; your GitHub account remains visible as the issue author. Publication requires an existing GitHub CLI login.
+
+Use `/appsec-advisor:report-error --bundle-only` for the local diagnostic archive workflow. Log scrubbing is best effort; inspect the entire archive before sharing it manually. Unattended scans never ask questions or publish issues.
 
 ## Enterprise rollout
 

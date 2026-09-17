@@ -65,6 +65,16 @@ def test_yaml_entries_are_unique():
     assert len(raw_entries) == len(set(raw_entries)), "duplicate entries in required-permissions.yaml"
 
 
+def test_issue_reporting_reuses_permissions_without_granting_publication_consent():
+    entries = cp.load_required(cp.DATA_FILE)
+    shell = next(e for e in entries if e["entry"] == "Bash(*)")
+    assert "report_plugin_issue.py" in shell["reason"]
+    assert "wait_agent_calls.py join" in shell["reason"]
+    assert "not publication consent" in shell["reason"]
+    write = next(e for e in entries if e["entry"] == "Write(${OUTPUT_DIR}/.*)")
+    assert ".plugin-issue-draft.json" in write["reason"]
+
+
 def test_overview_and_detail_use_existing_output_directory_permission():
     entries = cp.load_required(cp.DATA_FILE)
     write = next(e for e in entries if e["entry"] == "Write(${OUTPUT_DIR}/**)")

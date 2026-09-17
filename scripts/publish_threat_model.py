@@ -42,6 +42,8 @@ TIER2 = [
 
 # Never published — get explicit "never publish" exceptions in .gitignore
 NEVER_PUBLISH = [
+    ".plugin-issue-*.json",
+    ".plugin-issue-repro/",
     "pentest-tasks.yaml",
     ".dep-scan.json",
     ".threat-modeling-context.md",

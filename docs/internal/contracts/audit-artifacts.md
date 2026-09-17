@@ -4,6 +4,7 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 
 | Path | Purpose |
 |------|---------|
+| `.plugin-issue-input.json`, `.plugin-issue-draft.json`, `.plugin-issue-<digest>.receipt.json` | Local support draft and submission audit; no publication without review and explicit approval of the exact draft |
 | `.threat-modeling-context.md` | Captured project context (recon summary + scope) |
 | `.org-context.md`, `.org-context-manifest.json` | Preset-selected organization reference data and its per-document load, omission, size, and hash records |
 | `.recon-summary.md` | Authoritative recon-scanner output; semantic consumers receive bounded runtime projections |
