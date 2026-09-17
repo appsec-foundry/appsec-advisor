@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Figure 2 connects numbered attack routes to example findings, explicit weakness references, and group impact in a compact overview matching Figure 1: one statement per card, one card per actor, details in tooltips.
 
-- Figure 1 shows evidenced authentication, capability and service-role labels, flows, assets and grouped custom actors, draws trust-boundary lines only where a modelled boundary crosses, and keeps boundary details, in-process calls and individual role details in the report and navigable detail views.
+- Figure 1 shows evidenced authentication methods, up to three capability and service-role labels per element ranked by security relevance with further ones listed in the legend, flows, assets and grouped custom actors, draws trust-boundary lines only where a modelled boundary crosses, and keeps boundary details, in-process calls and individual role details in the report and navigable detail views.
 
 ### Fixed
 
@@ -40,11 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Authentication, CI/CD, real-time, web3 and embedded-store components are modelled before data flows are written, so they keep their connections; a run reports any component that still has none.
 - Figure 1 shows login sequences, public and authenticated API alternatives, and access to embedded databases with their authentication method instead of leaving them unknown.
 - The route inventory credits an authentication guard only to the route it belongs to, so unprotected routes next to protected ones are flagged for review.
-- Figure 1 lists each authentication method once, names custom methods by their scope, omits capability labels that a more specific label or the component name already states, and never nests parentheses in flow labels.
-- Attack lines in Figure 1 run straight into a component that spans their height instead of bending to a fixed port.
 - Identity-provider discovery no longer adds a second flow for an OAuth step the architecture already models.
-- Capability, service-role and authentication evidence must point to implementing code; comment and import lines are rejected, and components can be labelled `JWT issuer`.
-- Figure 1 shows at most three capability labels per element, most security-relevant first, lists the rest under "Further capabilities", and adds labels that deterministic scanner findings prove.
+- Capability, service-role and authentication claims must cite implementing code, and deterministic scanner findings add the capability labels they prove.
 
 ## 0.6.0-beta.3 (2026-09-14)
 
