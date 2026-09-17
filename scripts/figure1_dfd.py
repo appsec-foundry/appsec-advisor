@@ -2,12 +2,18 @@
 """Deterministic Figure 1 renderer: a threat-model data-flow diagram.
 
 Draws external entities, processes, data stores, labelled data flows, trust
-zones and evidenced authentication tabs, a
-STRIDE-per-element strip, severity counts and evidenced weaknesses or causes on
-every node, and the numbered attack scenarios of the Security Posture section as
-badges on the components they touch. Each attacker enters over a labelled bus that
-fans out into every exposed process its scenarios reach; a victim scenario adds
-a dashed edge back to the user.
+zones and evidenced authentication tabs, evidenced capability and service-role
+labels, a STRIDE-per-element strip, severity counts and evidenced weaknesses or
+causes on every node, and the numbered attack scenarios of the Security Posture
+section as badges on the components they touch. Each attacker enters over a
+labelled bus that fans out into every exposed process its scenarios reach; a
+victim scenario adds a dashed edge back to the user.
+
+Trust-boundary lines mark a column gap only when a resolved boundary that is not
+an internal interface connects endpoints on both sides of it. Finding tallies
+(header total, node severity counts, STRIDE strip) follow ``_severity_rollup``
+(decision RA-7); per-cause colours keep the per-finding severity the report's
+finding dots use.
 
 The layout is computed, never hand-placed: three columns (untrusted, application,
 data), zones stacked per column, nodes ordered by the barycenter of their
@@ -45,6 +51,7 @@ from itertools import product
 from pathlib import Path
 
 import yaml
+from _severity_rollup import register_severity, register_threats, risk_distribution_counts
 from detect_open_registration import overview_actor_groups, overview_actor_slug
 from figure1_security import (
     authentication_profile,
@@ -114,6 +121,8 @@ OVERVIEW_FLOW_CAP = 24  # Keep dense graphs navigable through the linked detail 
 PORT_STEP = 22  # minimum spacing between ports on one node side
 INTRA_STUB, INTRA_STEP = 48, 14  # reserve authentication tabs and a straight arrow approach
 BAR_H = 24
+CAPABILITY_CAP = 3  # Selected labels only; the legend says that absence is not implied.
+PILL_H, PILL_ROW, PILL_GAP, PILL_SIZE = 13, 17, 5, 7.5
 COLUMN = {"client": 0, "application": 1, "build": 1, "data": 2, "third-party": 0}
 ZONE_ORDER = {"client": 0, "application": 0, "build": 1, "data": 0, "third-party": 1}
 
@@ -167,16 +176,111 @@ def _internal_interface(row):
     return row.get("kind") == "process"
 
 
-def _boundary_count_label(tbs):
+def _boundary_count_label(tbs, *, interfaces=True):
     boundaries = [t for t in tbs if not _internal_interface(t)]
     inferred = sum(t.get("confidence") != "confirmed" for t in boundaries)
     label = f"{len(boundaries)} trust {'boundary' if len(boundaries) == 1 else 'boundaries'}"
     if inferred:
         label += f" ({inferred} inferred)"
-    interfaces = len(tbs) - len(boundaries)
-    if interfaces:
-        label += f" · {interfaces} internal {'interface' if interfaces == 1 else 'interfaces'}"
+    count = len(tbs) - len(boundaries)
+    if count and interfaces:
+        label += f" · {count} internal {'interface' if count == 1 else 'interfaces'}"
     return label
+
+
+def _boundary_gaps(d, nodes, tbs):
+    """Column gaps crossed by a resolved trust boundary, with its boundary IDs.
+
+    Internal interfaces never mark a gap. An ``external`` endpoint takes the
+    column of the drawn participant on a flow with the same canonical endpoints;
+    ingress without such a flow comes from the untrusted column, while egress
+    without one cannot be placed and stays in the catalogue only.
+    """
+    columns = {
+        row["id"]: COLUMN[_zone_key(row)]
+        for row in d.get("components") or []
+        if isinstance(row, dict) and row.get("id")
+    }
+    flows = [f for f in d.get("data_flows") or [] if isinstance(f, dict)]
+
+    def drawn_columns(source, target, index):
+        return {
+            nodes[_flow_endpoints(f)[index]]["col"]
+            for f in flows
+            if (f.get("from"), f.get("to")) == (source, target) and _flow_endpoints(f)[index] in nodes
+        }
+
+    gaps = collections.defaultdict(list)
+    for t in tbs:
+        source, target = t.get("from"), t.get("to")
+        if _internal_interface(t) or source == target == "external":
+            continue
+        if source == "external":
+            starts = drawn_columns(source, target, 0) or {0}
+        else:
+            starts = {columns.get(source)}
+        ends = drawn_columns(source, target, 1) if target == "external" else {columns.get(target)}
+        for start, end in product(starts, ends):
+            if start is None or end is None:
+                continue
+            for gap in range(min(start, end), max(start, end)):
+                if t["id"] not in gaps[gap]:
+                    gaps[gap].append(t["id"])
+    return {gap: sorted(ids, key=_tb_num) for gap, ids in sorted(gaps.items())}
+
+
+@cache
+def _capability_vocabulary():
+    """Display labels for evidenced component capabilities and service roles."""
+    data = yaml.safe_load((Path(__file__).resolve().parents[1] / "data/security-capabilities.yaml").read_text())
+    return data["component_capabilities"], data["service_roles"]
+
+
+def _capability_rows(items, vocabulary, key):
+    """Known, evidenced labels in authored order; unknown values never render."""
+    rows = []
+    for item in items or []:
+        if not isinstance(item, dict) or not item.get("evidence"):
+            continue
+        entry = vocabulary.get(item.get(key))
+        if entry and all(row["id"] != item[key] for row in rows):
+            rows.append({"id": item[key], "label": entry["label"], "evidence": item["evidence"]})
+    return rows[:CAPABILITY_CAP]
+
+
+def _pill_rows(capabilities, width):
+    rows, used = [], width
+    for cap in capabilities:
+        w = _tw(cap["label"], PILL_SIZE) + 12
+        if not rows or used + PILL_GAP + w > width:
+            rows.append([])
+            used = -PILL_GAP
+        rows[-1].append((cap, w))
+        used += PILL_GAP + w
+    return rows
+
+
+def _pill_height(capabilities, width):
+    rows = _pill_rows(capabilities, width)
+    return len(rows) * PILL_ROW + 2 if rows else 0
+
+
+def _capability_pills(c, x, y, node, width):
+    """Draw labels without risk colouring; evidence stays available on hover."""
+    for r, row in enumerate(_pill_rows(node.get("capabilities") or [], width)):
+        px = x
+        for cap, w in row:
+            py = y + r * PILL_ROW
+            sources = ", ".join(f"{ev.get('file')}:{ev.get('line')}" for ev in cap["evidence"] if isinstance(ev, dict))
+            track = f"capability {node['id']} {cap['id']}"
+            c.label_owners[track] = node["id"]
+            c.add(f'<g data-capability="{_esc(cap["id"])}" data-capability-owner="{_esc(node["id"])}">')
+            c.add(f"<title>{_esc(cap['label'] + ' — evidence: ' + sources)}</title>")
+            c.rect(px, py, w, PILL_H, fill="#eef3f8", stroke="#b6c6d8", sw=0.7, rx=3)
+            c.text(px + w / 2, py + 9.5, cap["label"], size=PILL_SIZE, fill=NAVY, track=track)
+            c.add("</g>")
+            px += w + PILL_GAP
+    return _pill_height(node.get("capabilities") or [], width)
 
 
 def _legend_wrap(text, width, size):
@@ -648,9 +752,10 @@ def _role_labels():
 def _project_legitimate_roles(yaml_data):
     """Fold only explicit regular access, retaining canonical identities in the input.
 
-    One merged regular role may also represent the generic victim. A second
-    regular or unclassified role makes that assignment ambiguous. Privileged
-    roles never merge and never become this default victim target.
+    One merged or single classified regular role may also represent the
+    generic victim. A second regular or unclassified role makes that assignment
+    ambiguous. Privileged roles never merge and never become this default
+    victim target.
     """
     d = copy.deepcopy(yaml_data)
     meta = d.get("meta") or {}
@@ -660,6 +765,13 @@ def _project_legitimate_roles(yaml_data):
             groups[overview_actor_slug(entity["access"], meta)].append(entity)
     groups = {slug: rows for slug, rows in groups.items() if len(rows) > 1}
     if not groups:
+        regular = [
+            row
+            for row in d.get("external_entities") or []
+            if row.get("kind") == "legitimate-role" and row.get("access") != "internet-priv-user"
+        ]
+        if len(regular) == 1 and regular[0].get("access") in ("internet-anon", "internet-user"):
+            return d, regular[0]["id"], []
         return d, USER_ID, []
     aliases, merged = {}, {}
     labels = _role_labels()
@@ -717,9 +829,9 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     stride = collections.defaultdict(collections.Counter)
     tb_threats = collections.Counter()
     weak, omitted_high = _component_weakness_summary(d)
-    for t in d.get("threats") or []:
+    for t in register_threats(d):
         for cid in _affected_components(t):
-            sev[cid][t.get("effective_severity") or t.get("risk") or t.get("severity")] += 1
+            sev[cid][register_severity(t)] += 1
             stride[cid][(t.get("stride") or "?")[0].upper()] += 1
         for b in t.get("boundary_refs") or []:
             if isinstance(b, dict):
@@ -735,14 +847,17 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         and boundary_endpoints_valid(t, component_ids)
     }
 
+    component_capabilities, service_roles = _capability_vocabulary()
     nodes = {}
     for comp in comps:
         cid = comp["id"]
         zk = _zone_key(comp)
+        name = f"{cnum[cid]} · {comp.get('name') or cid}"
         nodes[cid] = {
             "id": cid,
             "kind": "store" if zk == "data" else "process",
-            "name": f"{cnum[cid]} · {comp.get('name') or cid}",
+            "name": name,
+            "title_lines": min(3, len(_legend_wrap(name, NODE_W - 52, 11))),
             "zone": zk,
             "col": COLUMN[zk],
             "w": NODE_W,
@@ -751,6 +866,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "stride": stride[cid],
             "exposed": cid in exposed or "internet" in [str(z).lower() for z in comp.get("deployment_zones") or []],
             "complex": comp.get("complexity") == "complex",
+            "capabilities": _capability_rows(comp.get("capabilities"), component_capabilities, "capability"),
             "badges": [],
             "assets": [],
             "weak": weak.get(cid, []),
@@ -760,7 +876,8 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     for s in scenarios:
         cids = s.get("cids") or [by_cnum.get(cn) for cn in s.get("cnums") or []]
         for cid in cids:
-            if cid in nodes:
+            # Several attributed access groups can share one scenario number.
+            if cid in nodes and s["n"] not in nodes[cid]["badges"]:
                 nodes[cid]["badges"].append(s["n"])
     # Prefer evidenced storage locations. Without storage evidence, show known
     # processing or transmission instead, labelled as such rather than as storage.
@@ -789,7 +906,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
                             CLS_RANK.get(str(asset.get("classification")).title(), 9),
                             asset["id"],
                         ),
-                        _hits=[s["n"] for s in scenarios if linked & set(s.get("fids") or [])]
+                        _hits=list(dict.fromkeys(s["n"] for s in scenarios if linked & set(s.get("fids") or [])))
                         if relation == "stored"
                         else [],
                     )
@@ -816,12 +933,14 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         node["h"] = max(
             PROC_H,
             108
+            + 13 * (node["title_lines"] - 2)
+            + _pill_height(node["capabilities"], NODE_W - 44)
             + 12 * len(_weak_lines(node["weak"], NODE_W - 32))
             + (12 if node["weak_more_high"] else 0)
             + (24 + asset_height if node["assets"] else 24 if node["kind"] == "store" else 0),
         )
     # actors: one legitimate user, then the attackers
-    victim_of = [s["n"] for s in scenarios if s.get("victim")]
+    victim_of = list(dict.fromkeys(s["n"] for s in scenarios if s.get("victim")))
     nodes[USER_ID] = {
         "id": USER_ID,
         "kind": "ext",
@@ -874,6 +993,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "w": EXT_W,
             "h": EXT_H,
             "color": GREEN if role else INK,
+            "capabilities": [] if role else _capability_rows(entity.get("service_roles"), service_roles, "role"),
             "order": len(nodes),
             "badges": [],
         }
@@ -1049,6 +1169,21 @@ def _select_drawn(nodes, edges, d):
                 d["_unplaced_tbs"].append((tid, f"{n['name'].split(' · ')[0]} collapsed"))
     edges = [e for e in edges if e["src"] in drawn and e["dst"] in drawn]
     if d.get("_overview"):
+        # Calls that a canonical internal interface places inside one process
+        # carry no crossing; the detail views keep them. Stores stay visible.
+        internal = {frozenset((t.get("from"), t.get("to"))) for t in _figure_boundaries(d) if _internal_interface(t)}
+        in_process = {
+            id(e)
+            for e in edges
+            if not e.get("attack")
+            and frozenset((e["src"], e["dst"])) in internal
+            and drawn[e["src"]]["kind"] == drawn[e["dst"]]["kind"] == "process"
+            and drawn[e["src"]]["col"] == drawn[e["dst"]]["col"]
+        }
+        for edge in edges:
+            if id(edge) in in_process:
+                d["_undrawn_flows"].extend((fid, "in-process call in detail views") for fid in edge["ids"])
+        edges = [e for e in edges if id(e) not in in_process]
         flows = sorted((e for e in edges if not e.get("attack")), key=lambda e: not bool(e["tb"]))
         hidden = {id(e) for e in flows[OVERVIEW_FLOW_CAP:]}
         for edge in edges:
@@ -1669,7 +1804,13 @@ def _prepare_external_text(nodes):
         node["sub_lines"] = lines
         title_lines = min(2, len(_wrap(node["name"], width, 10)))
         node["h"] = max(
-            node["h"], 20 + title_lines * 12 + 8 + len(lines) * 10 + (12 if node.get("victim_label") else 0)
+            node["h"],
+            20
+            + title_lines * 12
+            + _pill_height(node.get("capabilities") or [], width)
+            + 8
+            + len(lines) * 10
+            + (12 if node.get("victim_label") else 0),
         )
 
 
@@ -1942,7 +2083,9 @@ def _render(
     actor_groups=(),
 ):
     actor_colors = {n["name"]: n["color"] for n in nodes.values() if n.get("attacker")}
-    scenario_colors = {s["n"]: actor_colors.get(s.get("actor"), RED) for s in scenarios}
+    scenario_colors = {}
+    for s in scenarios:  # A shared number keeps the colour of its first attributed group.
+        scenario_colors.setdefault(s["n"], actor_colors.get(s.get("actor"), RED))
     W = col_x[-1] + col_w[-1] + MARGIN
     c = _Canvas()
     c.add("")  # header, filled in once the height is known
@@ -1981,10 +2124,12 @@ def _render(
     n_comp = sum(n["kind"] != "ext" for n in nodes.values()) + sum(
         n["kind"] != "ext" for group in dropped.values() for n in group
     )
+    boundary_label = _boundary_count_label(tbs, interfaces=not d.get("_overview"))
+    threat_total = sum(risk_distribution_counts(d).values())
     c.text(
         MARGIN,
         42,
-        f"{identity} · {n_comp} components · {len(d.get('data_flows') or [])} data flows · {_boundary_count_label(tbs)} · {len(d.get('threats') or [])} threats",
+        f"{identity} · {n_comp} components · {len(d.get('data_flows') or [])} data flows · {boundary_label} · {threat_total} threats",
         size=10,
         anchor="start",
         fill=MUTED,
@@ -2041,7 +2186,19 @@ def _render(
             fill=MUTED,
         )
 
-    # Column gaps are routing coordinates, not evidence of a trust transition.
+    # A column gap is only a routing coordinate unless a resolved boundary crosses it.
+    cnums = d.get("_component_numbers") or {}
+    by_id = {t["id"]: t for t in tbs}
+    for gap, ids in (d.get("_boundary_gaps") or {}).items():
+        bx = boundaries[gap]
+        crossings = "; ".join(
+            f"{tid} " + " → ".join(cnums.get(by_id[tid].get(key), "External") for key in ("from", "to")) for tid in ids
+        )
+        c.add(f'<g data-boundary-line="{gap}" data-boundary-ids="{_esc(" ".join(ids))}">')
+        c.add(f"<title>{_esc('Trust boundary crossing: ' + crossings)}</title>")
+        c.path(f"M {bx} {TOP - 4} V {height - MARGIN}", RED, sw=2.4, dash="6 5")
+        c.text(bx, TOP - 9, "TRUST BOUNDARY", size=8, fill=RED, weight="bold", track=f"boundary line {gap}")
+        c.add("</g>")
 
     # edges
     def chip(x, y, tbid, track=True):
@@ -2138,8 +2295,11 @@ def _render(
             else:
                 tx = x + 12
             label = (n["actor_code"] + " · " if n.get("actor_code") else "") + n["name"]
-            for i, line in enumerate(_wrap(label, w - (tx - x) - 8, 10)[:2]):
+            label_lines = _wrap(label, w - (tx - x) - 8, 10)[:2]
+            for i, line in enumerate(label_lines):
                 c.text(tx, y + 19 + i * 12, line, size=10, anchor="start", weight="bold", fill=col)
+            if n.get("capabilities"):
+                _capability_pills(c, tx, y + 12 + len(label_lines) * 12, n, w - (tx - x) - 8)
             sub_y = y + h - n.get("reference_height", 0) - (20 if n.get("victim_label") else 8)
             if n.get("group_lines"):
                 for i, line in enumerate(n["group_lines"]):
@@ -2180,8 +2340,8 @@ def _render(
             )
             ox = 24
         title_lines = _legend_wrap(n["name"], w - 52, 11)
-        lines = title_lines[:2]
-        if len(title_lines) > 2:
+        lines = title_lines[:3]
+        if len(title_lines) > 3:
             lines[-1] = lines[-1][:-1] + "…"
         c.add(f'<g data-component-id="{_esc(n["id"])}"><title>{_esc(n["name"])}</title>')
         title_key = f"node title {n['id']}"
@@ -2191,6 +2351,8 @@ def _render(
             c.text(x + w / 2 - 6, title_y + i * 13, line, size=11, weight="bold", track=title_key)
         c.add("</g>")
         ty = title_y + len(lines) * 13 + 2
+        if n.get("capabilities"):
+            ty += _capability_pills(c, x + 20, ty - 6, n, NODE_W - 44)
         _sev_chips(c, x + ox + 2, ty, n["sev"])
         _stride_strip(c, x + ox, ty + 10, n["stride"])
         _weak_line(c, x + ox, ty + 36, n.get("weak") or [], w - ox - 8)
@@ -2380,12 +2542,12 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         c.text(xx + 11, y + 1, k, size=8, anchor="start", fill=col)
         xx += _tw(k, 8) + 22
     y += 18
-    c.path(f"M {lx + 10} {y - 1} H {lx + 32}", LINE, sw=1.2, dash="6 4")
-    c.text(lx + 40, y + 3, "dashed outline = zone, not a counted trust boundary", size=9, anchor="start")
-    if d.get("_overview"):
+    if d.get("_boundary_gaps"):
+        c.path(f"M {lx + 10} {y - 1} H {lx + 32}", RED, sw=2, dash="6 4")
+        c.text(lx + 40, y + 3, "trust boundary crossed between these columns", size=9, anchor="start")
         y += 20
-        c.text(lx + 10, y + 3, "tb-N", size=8.5, anchor="start", weight="bold", fill=NAVY)
-        c.text(lx + 40, y + 3, "boundary on a mapped flow; all entries in the legend", size=9, anchor="start")
+    c.path(f"M {lx + 10} {y - 1} H {lx + 32}", LINE, sw=1.2, dash="6 4")
+    c.text(lx + 40, y + 3, "dashed outline = zone, not itself a boundary", size=9, anchor="start")
     if not d.get("_overview"):
         y += 20
         c.rect(lx + 8, y - 9, 44, 16, fill="#ffffff", stroke=RED, sw=1.4, rx=8)
@@ -2452,6 +2614,28 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     )
     y += 32
 
+    capabilities = list({cap["id"]: cap for n in nodes.values() for cap in n.get("capabilities") or []}.values())
+    if capabilities:
+        c.text(lx + 10, y + 3, "Security-relevant capabilities / service roles", size=9, anchor="start", weight="bold")
+        y += 16
+        sample = capabilities[0]
+        width = _tw(sample["label"], PILL_SIZE) + 12
+        c.rect(lx + 10, y - 7, width, PILL_H, fill="#eef3f8", stroke="#b6c6d8", sw=0.7, rx=3)
+        c.text(lx + 10 + width / 2, y + 2.5, sample["label"], size=PILL_SIZE, fill=NAVY)
+        c.text(lx + 18 + width, y + 3, "function or service role; no risk rating", size=8.5, anchor="start")
+        y += 18
+        vocabulary = {**_capability_vocabulary()[0], **_capability_vocabulary()[1]}
+        notes = [
+            f"{cap['label']} = {vocabulary[cap['id']]['note']}"
+            for cap in capabilities
+            if vocabulary[cap["id"]].get("note")
+        ]
+        for note in [*notes, "Selected labels only; a missing label does not mean absence."]:
+            for line in _legend_wrap(note, lw - 20, 8.5):
+                c.text(lx + 10, y + 3, line, size=8.5, anchor="start", fill=MUTED)
+                y += 12
+        y += 14
+
     if d.get("_references"):
         c.text(lx + 10, y + 3, "↔ E1", size=9, fill=NAVY, weight="bold", anchor="start")
         for i, line in enumerate(_legend_wrap("Matching E-labels indicate a connection; lines omitted.", lw - 58, 9)):
@@ -2459,40 +2643,36 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
 
     if scenarios:
         y = head("scenarios", "Attack scenarios — by actor")
-        cur = None
+        by_actor = {}
         for s in scenarios:
             who = (s.get("actor") or "Attacker") + (" → User (victim)" if s.get("victim") else "")
-            if who != cur:
-                cur = who
-                c.text(
-                    lx + 10,
-                    y + 3,
-                    _cut(who, 52),
-                    size=9,
-                    anchor="start",
-                    weight="bold",
-                    fill=actor_colors.get(s.get("actor"), RED),
-                )
-                y += 16
-            _badge(c, lx + 20, y - 2, s["n"], col=actor_colors.get(s.get("actor"), RED))
-            title_lines = _legend_wrap(s["title"], lw - 94, 9)
-            for i, line in enumerate(title_lines):
-                c.text(lx + 34, y + 2 + i * 12, line, size=9, anchor="start", track=f"scenario {s['n']}")
-            if s.get("risk"):
-                c.text(
-                    lx + lw - 10,
-                    y + 2,
-                    s["risk"],
-                    size=8,
-                    anchor="end",
-                    fill=SEV_COL.get(s["risk"], MUTED),
-                    weight="bold",
-                    track=f"scenario severity {s['n']}",
-                )
-            y += max(17, 12 * len(title_lines) + 5)
+            by_actor.setdefault(who, []).append(s)
+        for who, members in by_actor.items():
+            col = actor_colors.get(members[0].get("actor"), RED)
+            c.add(f'<g data-scenario-actor="{_esc(who)}">')
+            c.text(lx + 10, y + 3, _cut(who, 52), size=9, anchor="start", weight="bold", fill=col)
+            y += 16
+            for s in members:
+                _badge(c, lx + 20, y - 2, s["n"], col=col)
+                title_lines = _legend_wrap(s["title"], lw - 94, 9)
+                for i, line in enumerate(title_lines):
+                    c.text(lx + 34, y + 2 + i * 12, line, size=9, anchor="start", track=f"scenario {who} {s['n']}")
+                if s.get("risk"):
+                    c.text(
+                        lx + lw - 10,
+                        y + 2,
+                        s["risk"],
+                        size=8,
+                        anchor="end",
+                        fill=SEV_COL.get(s["risk"], MUTED),
+                        weight="bold",
+                        track=f"scenario severity {who} {s['n']}",
+                    )
+                y += max(17, 12 * len(title_lines) + 5)
+            c.add("</g>")
         y += 8
 
-    if tbs:
+    if tbs and not d.get("_overview"):
         y = head("boundaries", "Trust boundaries and internal interfaces")
         cnums = d.get("_component_numbers") or {
             row["id"]: f"C-{i:02d}" for i, row in enumerate(d.get("components") or [], 1)
@@ -2690,8 +2870,8 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     else:
         for fid, why in d.get("_undrawn_flows", []):
             notes.append(f"{fid} not drawn: {why}")
-    for tid, why in d.get("_unplaced_tbs", []):
-        notes.append(f"{tid} not placed: {why}")
+        for tid, why in d.get("_unplaced_tbs", []):
+            notes.append(f"{tid} not placed: {why}")
     if notes:
         y = head("notes", "Diagram notes")
         for s in notes:
@@ -2870,12 +3050,26 @@ def _audit(d, nodes, edges, chips, boundaries, canvas=None):
     explained_boundaries = set()
     if canvas is not None:
         root = ET.fromstring("\n".join(canvas.o))
-        for entry in root.findall("{*}g[@data-legend-section='boundaries']/{*}g[@data-boundary-id]"):
-            tid = entry.get("data-boundary-id")
-            if any(text.text and text.text.startswith(tid + " · ") for text in entry.findall("{*}text")):
-                explained_boundaries.add(tid)
+        if d.get("_overview"):
+            # The overview defers every entry to the report's boundary catalogue.
+            explained_boundaries = set(d.get("_overview_tbs", []))
+        else:
+            for entry in root.findall("{*}g[@data-legend-section='boundaries']/{*}g[@data-boundary-id]"):
+                tid = entry.get("data-boundary-id")
+                if any(text.text and text.text.startswith(tid + " · ") for text in entry.findall("{*}text")):
+                    explained_boundaries.add(tid)
         for tid in sorted(tbs.keys() - explained_boundaries, key=_tb_num):
             problems.append(f"{tid}: boundary legend missing")
+        lines = {
+            int(g.get("data-boundary-line")): g.get("data-boundary-ids", "").split()
+            for g in root.iter("{http://www.w3.org/2000/svg}g")
+            if g.get("data-boundary-line") is not None
+        }
+        if lines != _boundary_gaps(d, nodes, list(tbs.values())):
+            problems.append(f"trust-boundary lines {lines} do not match resolved crossings")
+        for tid in {tid for ids in lines.values() for tid in ids}:
+            if tid not in tbs or _internal_interface(tbs[tid]):
+                problems.append(f"{tid}: trust-boundary line without a resolved trust boundary")
     placed = (
         {c["tb"] for c in chips}
         | explained_boundaries
@@ -2939,8 +3133,13 @@ def _build(
         edges, d["_references"] = select_references(d, nodes, edges, tb_threats)
         edges = bundle_access_groups(d, edges)
         _prepare_reference_rows(nodes)
+        # The overview names no boundary IDs; the report catalogue lists them all.
         for node in nodes.values():
             node.pop("tags", None)
+        for edge in edges:
+            edge["tb"] = []
+        d["_overview_tbs"] = [t["id"] for t in tbs]
+    d["_boundary_gaps"] = _boundary_gaps(d, nodes, tbs)
     col_x, col_w, zone_boxes, boundaries, chips, height = _layout(nodes, edges, dropped, tb_threats, optimize=_optimize)
     attached = {a.get("id") for n in nodes.values() for a in n.get("assets", [])}
     unattached = sorted(

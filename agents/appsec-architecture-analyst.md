@@ -56,17 +56,14 @@ application, or data tier, and a simple, moderate, or complex rating. The tier
 says where the code RUNS, not what it emits: `client` means executing in the
 browser or on the user's device, so a server-side template engine (Thymeleaf,
 JSP, Razor, Jinja, ERB, …) is `application` however much HTML it produces.
-`validate_fragment.py components` rejects that contradiction, and the tier is
-not cosmetic — `client` alone adds the browser threat lens and changes which
-questions the STRIDE pass asks. Map
+`validate_fragment.py components` rejects that contradiction; `client` also
+adds the browser threat lens to the STRIDE pass. Map
 each component to every concrete file that implements the security role you
 assign it, including handlers, middleware, and delegated initialization code;
 an entrypoint alone is insufficient when it calls implementation elsewhere.
 In a path glob `*` stays inside one segment and never crosses `/`, so
-`pkg/*.java` reaches only the files directly in `pkg`; when the component's
-sources continue into subdirectories, write `pkg/**/*.java` instead. Verify
-against `REPO_ROOT` which form the layout requires — a pattern that stops at
-the top level silently drops every nested file from the component.
+`pkg/*.java` reaches only the files directly in `pkg`; write `pkg/**/*.java`
+when `REPO_ROOT` shows nested sources, or those files silently drop out.
 Shared files may belong to multiple co-located security components when their observed behavior supports both roles. A datastore represents storage, not the application code using it: assign ORM setters, query construction, password hashing, and output handling to their executing application component. Use database initialization/configuration evidence for the datastore paths. An executable ORM model file requires an application owner even when a datastore also cites its storage schema. Include embedded document collections as well as relational storage. Verify framework names and algorithms against imports and implementation. Include login handlers and their delegated code in the auth component. Do not broaden a component to an unrelated parent directory merely to include one file. Map
 deployment zones only from the canonical access-zone values carried by the
 input. Leave reachability unknown when evidence is insufficient. Keep auth or
@@ -91,13 +88,13 @@ Use `diagram_label` for the short purpose, `label` for detail and `protocol` for
 
 Derive each receiving access's `authentication` from code: scheme, scope and file/line evidence; add transport and OAuth/OIDC flow only when proven. Unknown is not `none`; embedded calls are not network exposure. Separate login, enrolled-account MFA, settings and public routes. MFA needs independent checked factors, not enrollment UI or dependencies. OAuth is not OIDC; signing keys are not caller key possession. Omit credential values.
 
-`interaction: true` denotes a human using an evidenced client; API calls start at their technical sender. Use `protocol_group` for evidenced integration steps, preserving identity, direction, method and evidence. Keep finding-linked accesses visible.
+`interaction: true` denotes a human using an evidenced client; API calls start at their technical sender. Give all evidenced steps of one integration (e.g. OAuth redirect, token delivery, profile request) one `protocol_group`, preserving identity, direction, method and evidence. Keep finding-linked accesses visible.
 
 Use schema-defined `access_group` for evidenced alternatives or ordered checks at one receiver. Preserve each operation and its evidence; label conditional MFA. Keep settings separate from login and never infer order from names. Do not also set `protocol_group`. Inventory every evidenced store and integration even when its authentication is unknown.
 
 Persist schema-valid `external_entities[]` for evidenced roles, identity providers and services, including browser-only OAuth/OIDC and SAML/SSO clients. Each needs an `ext-*` ID, name, kind, description and file/line evidence. Keep different privileges and workflows distinct; legitimate roles are not attacker personas. Set optional `access` only when code proves the schema-defined access class. Keep `external` endpoints with `from_entity`/`to_entity` identifying the participant. Preserve separate authorities, actual directions and deployment conditions; never invent backend exchanges for browser-only integrations. In-scope identity servers remain components. Dependencies and unused URLs prove no integration. Match flow ownership to implementing components; the controller checks client endpoints before boundary assessment.
 
-Populate `components[].sensitive_data[]` only with evidenced categories (`credentials`, `personal-data`, `payment-data`, `secrets`, `business-data`), basis (`observed` or `declared`), handling (`stores`, `processes`, `transmits`), and file/line evidence. Business sensitivity requires declared context. Keep `handles_sensitive_data` for conservative scope selection; the Boolean alone does not justify a visible sensitivity claim. Assets may carry `component_refs[]` with `component_id`, relation (`stored`, `processed`, `transmitted`), and file/line evidence. Leave unknown locations unassigned; one datastore does not imply it holds all assets.
+Populate `components[].sensitive_data[]` only with evidenced categories (`credentials`, `personal-data`, `payment-data`, `secrets`, `business-data`), basis (`observed` or `declared`), handling (`stores`, `processes`, `transmits`), and file/line evidence. Business sensitivity requires declared context. Keep `handles_sensitive_data` for conservative scope selection; the Boolean alone does not justify a visible sensitivity claim. Assets may carry `component_refs[]` with `component_id`, relation (`stored`, `processed`, `transmitted`), and file/line evidence. Leave unknown locations unassigned; one datastore does not imply it holds all assets. Add `components[].capabilities[]` and entity `service_roles[]` only from their schema enums, each with file/line evidence of the implemented function (e.g. an upload handler, token signing, tool-enabled model calls); dependencies or unused routes prove none.
 
 Build the asset inventory from the projected candidates. Reserve its IDs with
 `python3 <plugin-root>/scripts/reserve_ids.py asset --count <N> --output-dir

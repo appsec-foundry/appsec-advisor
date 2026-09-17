@@ -910,6 +910,26 @@ def test_architecture_evidence_must_be_real_contained_source(tmp_path):
     assert vf.architecture_reference_errors(assets)
 
 
+def test_capability_and_service_role_evidence_must_be_real_contained_source(tmp_path):
+    (tmp_path / "upload.ts").write_text("export function upload() {}\n")
+    capability = {"capability": "file-upload", "evidence": [{"file": "upload.ts", "line": 1}]}
+    role = {"role": "llm-inference", "evidence": [{"file": "upload.ts", "line": 1}]}
+    components = {
+        "components": [{"id": "api", "tier": "application", "paths": ["upload.ts"], "capabilities": [capability]}]
+    }
+    flows = {"data_flows": [], "external_entities": [{"id": "ext-model", "evidence": [], "service_roles": [role]}]}
+    assert vf.repository_path_errors("components", components, tmp_path) == []
+    assert vf.repository_path_errors("data-flows", flows, tmp_path) == []
+    for bad in (
+        {"file": "upload.ts", "line": 2},
+        {"file": "../outside.ts", "line": 1},
+        {"file": "missing.ts", "line": 1},
+    ):
+        capability["evidence"][0] = role["evidence"][0] = bad
+        assert any("capability file-upload" in e for e in vf.repository_path_errors("components", components, tmp_path))
+        assert any("service role llm-inference" in e for e in vf.repository_path_errors("data-flows", flows, tmp_path))
+
+
 def test_xss_on_database_is_rejected_even_when_a_model_path_matches():
     data = {
         "components": [{"id": "database", "tier": "data"}],
@@ -933,7 +953,11 @@ def test_optional_architecture_schema_shapes_stay_aligned():
         fragments["data-flows"]["external_entities"]["items"]["properties"]
         == canonical["external_entities"]["items"]["properties"]
     )
-    for field, owner in [("sensitive_data", "components"), ("component_refs", "assets")]:
+    for field, owner in [
+        ("sensitive_data", "components"),
+        ("capabilities", "components"),
+        ("component_refs", "assets"),
+    ]:
         assert (
             fragments[owner][owner]["items"]["properties"][field]["items"]["properties"]
             == canonical[owner]["items"]["properties"][field]["items"]["properties"]

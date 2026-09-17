@@ -1,0 +1,76 @@
+# Security-relevant capabilities of components and service roles of external
+# entities. The architecture producer assigns them with file/line evidence;
+# Figure 1 shows the label only. A label is a function, not a finding, and
+# carries no risk rating.
+#
+# The ids are the enum values of `components[].capabilities[].capability` and
+# `external_entities[].service_roles[].role` in the component, data-flow,
+# boundary-assessment and threat-model schemas; ids are unique across both maps.
+# `note` adds a legend explanation when the label alone could be misread.
+schema_version: 1
+
+component_capabilities:
+  file-upload:
+    label: File upload
+  url-fetch:
+    label: URL fetch
+    note: requests a URL that runtime input selects or influences
+  xml-parsing:
+    label: XML parsing
+  template-rendering:
+    label: Server-side templates
+  llm-calls:
+    label: LLM calls
+  llm-tools:
+    label: LLM + tools
+    note: model calls with executable application tools
+  token-issuer:
+    label: Token issuer
+  mfa-verifier:
+    label: MFA verifier
+  oauth-client:
+    label: OAuth client
+  oidc-client:
+    label: OIDC client
+  saml-service-provider:
+    label: SAML service provider
+  websocket-endpoint:
+    label: WebSocket endpoint
+  graphql-endpoint:
+    label: GraphQL endpoint
+  payment-processing:
+    label: Payment processing
+  email-sending:
+    label: Email sending
+  admin-functions:
+    label: Admin functions
+  blockchain-client:
+    label: Blockchain client
+  background-jobs:
+    label: Background jobs
+
+service_roles:
+  oauth-authorization-server:
+    label: OAuth authorization server
+  oauth-resource-server:
+    label: OAuth resource server
+  oidc-provider:
+    label: OIDC provider
+  saml-identity-provider:
+    label: SAML identity provider
+  llm-inference:
+    label: LLM inference
+  blockchain-rpc:
+    label: Blockchain RPC
+  payment-provider:
+    label: Payment provider
+  email-delivery:
+    label: Email delivery
+  object-storage:
+    label: Object storage
+  message-broker:
+    label: Message broker
+  telemetry-service:
+    label: Telemetry service
+  package-registry:
+    label: Package registry

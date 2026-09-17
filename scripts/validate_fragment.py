@@ -258,6 +258,14 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
                         item.get("evidence"), root, label=f"component {component_id} sensitive data"
                     )
                 )
+            for item in component.get("capabilities") or []:
+                errors.extend(
+                    repository_evidence_errors(
+                        item.get("evidence"),
+                        root,
+                        label=f"component {component_id} capability {item.get('capability')}",
+                    )
+                )
             paths = component.get("paths", [])
             for raw in paths if isinstance(paths, list) else []:
                 canonical = _safe_repository_relative(raw)
@@ -284,6 +292,12 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
             errors.extend(
                 repository_evidence_errors(entity.get("evidence"), root, label=f"entity {entity.get('id')} evidence")
             )
+            for item in entity.get("service_roles") or []:
+                errors.extend(
+                    repository_evidence_errors(
+                        item.get("evidence"), root, label=f"entity {entity.get('id')} service role {item.get('role')}"
+                    )
+                )
     elif fragment_type == "assets":
         for asset in data.get("assets") or []:
             for reference in asset.get("component_refs") or []:

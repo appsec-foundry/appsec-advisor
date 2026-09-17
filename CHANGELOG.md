@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Figure 2 connects numbered attack routes to example findings, explicit weakness references, and impact in a compact overview matching Figure 1.
 
-- Figure 1 shows evidenced authentication, flows, assets and grouped custom actors, with individual role details in the report and navigable detail views for large architectures.
+- Figure 1 shows evidenced authentication, capability and service-role labels, flows, assets and grouped custom actors, draws trust-boundary lines only where a modelled boundary crosses, and keeps boundary details, in-process calls and individual role details in the report and navigable detail views.
 
 ### Fixed
 
@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agents no longer cut analysis short because another agent reaches its turn budget.
 - Weakness derivation covers verified attribute binding, code evaluation, browser credentials, and CSRF, preserves source evidence, and avoids unrelated grouping and safe-code false positives.
 - Depth hints in the run plan and quick reports no longer recommend the nonexistent `--standard` flag.
+- Figure 1 counts findings like the Management Summary, shows each scenario number once per component, lists each attacker once in its legend and no longer draws a second user card next to the one modelled user role.
+- The component inventory no longer adds a second embedded document store next to one the architecture analysis already modelled.
 
 ## 0.6.0-beta.3 (2026-09-14)
 

@@ -202,6 +202,31 @@ def test_embedded_document_store_is_not_covered_by_sql_store(tmp_path):
     assert manifest.reconcile_inventory(rows, tmp_path)[1] == []
 
 
+@pytest.mark.parametrize(
+    "row,injected",
+    [
+        ({"framework": None, "paths": ["data/documents.ts"]}, False),
+        ({"framework": None, "paths": ["data/**"]}, False),
+        ({"framework": "MarsDB", "paths": ["db/other.ts"]}, False),
+        ({"framework": None, "paths": ["data/other.ts"]}, True),
+        ({"framework": "sqlite", "paths": ["data/**"]}, True),
+        ({"framework": None, "paths": ["data/documents.ts"], "tier": "application"}, True),
+    ],
+)
+def test_embedded_store_owned_by_a_modelled_data_component_is_not_duplicated(tmp_path, row, injected):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"marsdb": "1.0"}}))
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data/documents.ts").write_text(
+        "import Engine from 'marsdb'\nconst records = new Engine.Collection('records')\n"
+    )
+    (tmp_path / "data/other.ts").write_text("export const other = true\n")
+    rows = [_component("documents", **{"tier": "data", **row})]
+    result, added = manifest.reconcile_inventory(rows, tmp_path)
+    assert bool(added) is injected
+    assert len(result) == 1 + injected
+    assert manifest.reconcile_inventory(result, tmp_path)[1] == []
+
+
 def test_orm_cannot_be_finalized_as_database_engine(tmp_path):
     (tmp_path / "models").mkdir()
     (tmp_path / "models/account.ts").write_text("export const account = true\n")

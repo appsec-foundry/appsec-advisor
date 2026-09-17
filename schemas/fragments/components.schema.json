@@ -130,6 +130,62 @@
               }
             }
           },
+          "capabilities": {
+            "type": "array",
+            "maxItems": 8,
+            "description": "Evidenced security-relevant functions of this component (data/security-capabilities.yaml). A capability is not a finding and carries no risk rating.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capability", "evidence"],
+              "properties": {
+                "capability": {
+                  "type": "string",
+                  "enum": [
+                    "file-upload",
+                    "url-fetch",
+                    "xml-parsing",
+                    "template-rendering",
+                    "llm-calls",
+                    "llm-tools",
+                    "token-issuer",
+                    "mfa-verifier",
+                    "oauth-client",
+                    "oidc-client",
+                    "saml-service-provider",
+                    "websocket-endpoint",
+                    "graphql-endpoint",
+                    "payment-processing",
+                    "email-sending",
+                    "admin-functions",
+                    "blockchain-client",
+                    "background-jobs"
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 4,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["file", "line"],
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512,
+                        "not": {
+                          "pattern": "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+                        }
+                      },
+                      "line": {"type": "integer", "minimum": 1}
+                    }
+                  }
+                }
+              }
+            }
+          },
           "handles_sensitive_data": {
             "type": "boolean",
             "default": false,

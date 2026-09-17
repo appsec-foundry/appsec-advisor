@@ -90,6 +90,63 @@ def test_external_entity_access_is_consistent_and_role_only():
             assert not validator.is_valid({**entity, "access": access})
 
 
+def test_capability_vocabulary_matches_every_artifact_schema():
+    import yaml
+
+    vocabulary = yaml.safe_load((REPO_ROOT / "data/security-capabilities.yaml").read_text())
+    capabilities, roles = list(vocabulary["component_capabilities"]), list(vocabulary["service_roles"])
+    assert capabilities and roles and not set(capabilities) & set(roles)
+    for entry in [*vocabulary["component_capabilities"].values(), *vocabulary["service_roles"].values()]:
+        assert entry["label"].strip() == entry["label"] and 0 < len(entry["label"]) <= 28
+    schema_root = REPO_ROOT / "schemas"
+    fragment = json.loads((schema_root / "fragments/components.schema.json").read_text())
+    canonical = yaml.safe_load((schema_root / "threat-model.output.schema.yaml").read_text())
+    component_fields = [
+        fragment["properties"]["components"]["items"]["properties"]["capabilities"],
+        canonical["properties"]["components"]["items"]["properties"]["capabilities"],
+    ]
+    assert component_fields[0]["items"] == component_fields[1]["items"]
+    assert component_fields[0]["items"]["properties"]["capability"]["enum"] == capabilities
+    entity_schemas = [
+        yaml.safe_load((schema_root / name).read_text())["properties"]["external_entities"]["items"]
+        for name in (
+            "fragments/data-flows.schema.json",
+            "trust-boundary-assessment-input.schema.json",
+            "threat-model.output.schema.yaml",
+        )
+    ]
+    evidence = [{"file": "src/client.ts", "line": 3}]
+    service = {
+        "id": "ext-model",
+        "name": "Model",
+        "kind": "external-service",
+        "description": "LLM",
+        "evidence": evidence,
+    }
+    for schema in entity_schemas:
+        assert schema["properties"]["service_roles"]["items"]["properties"]["role"]["enum"] == roles
+        validator = jsonschema.Draft202012Validator(schema)
+        assert validator.is_valid({**service, "service_roles": [{"role": roles[0], "evidence": evidence}]})
+        assert validator.is_valid(
+            {**service, "kind": "identity-provider", "service_roles": [{"role": roles[0], "evidence": evidence}]}
+        )
+        for invalid in (
+            {**service, "kind": "legitimate-role", "service_roles": [{"role": roles[0], "evidence": evidence}]},
+            {**service, "service_roles": [{"role": "unknown-role", "evidence": evidence}]},
+            {**service, "service_roles": [{"role": roles[0], "evidence": []}]},
+            {**service, "service_roles": [{"role": capabilities[0], "evidence": evidence}]},
+        ):
+            assert not validator.is_valid(invalid)
+    component_validator = jsonschema.Draft202012Validator(component_fields[1])
+    assert component_validator.is_valid([{"capability": capabilities[0], "evidence": evidence}])
+    for invalid in (
+        [{"capability": roles[0], "evidence": evidence}],
+        [{"capability": capabilities[0]}],
+        [{"capability": capabilities[0], "evidence": [{"file": "/etc/passwd", "line": 1}]}],
+    ):
+        assert not component_validator.is_valid(invalid)
+
+
 def _load_validate_fragment_module():
     spec = importlib.util.spec_from_file_location("validate_fragment", VALIDATE_PY)
     module = importlib.util.module_from_spec(spec)

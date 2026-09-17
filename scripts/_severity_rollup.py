@@ -24,7 +24,11 @@ sites that fold into the weakness register and drops design-risk weaknesses,
 which have no instance in ``threats[]``. A 2026-08 juice-shop run closed with
 "36 total | 17 High" while its own report led with "Total: 34 · High: 15".
 A new reader-facing tally calls :func:`risk_distribution_counts`; it does not
-re-derive the rule from ``threats[]``.
+re-derive the rule from ``threats[]``. Figure 1 (``figure1_dfd.py``) is bound
+the same way: its header total is :func:`risk_distribution_counts`, and its
+per-component severity counts and STRIDE strip use :func:`register_threats`
+with :func:`register_severity`. Its per-cause colours stay on the per-finding
+severity the report's finding dots show.
 
 Triage surfaces (``review_threat_model.py``, ``query_threat_model.py``) tally
 the finding list they operate on, which is the §8 register basis and a

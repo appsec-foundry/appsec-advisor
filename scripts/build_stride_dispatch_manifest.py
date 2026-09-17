@@ -1245,13 +1245,26 @@ def reconcile_inventory(components: list, repo_root: Path) -> tuple:
             augmented.append(cand)
             injected.append(cand)
     for candidate in _detect_embedded_stores(repo_root):
-        engine = candidate["framework"]
-        if not any(c.get("tier") == "data" and (c.get("framework") or "").lower() == engine for c in augmented):
+        if not any(_covers_embedded_store(c, candidate) for c in augmented):
             if not any(c.get("id") == candidate["id"] for c in augmented):
                 augmented.append(candidate)
                 injected.append(candidate)
     injected.extend(_reconcile_orm_ownership(augmented, repo_root))
     return augmented, injected
+
+
+def _covers_embedded_store(component: dict, candidate: dict) -> bool:
+    """A data component already models the engine it names or whose instantiation it owns.
+
+    A declared different framework never covers the engine, so an SQL store
+    with a broad path glob still leaves a document store separate.
+    """
+    if component.get("tier") != "data":
+        return False
+    framework = (component.get("framework") or "").lower()
+    if framework:
+        return framework == candidate["framework"]
+    return all(_path_owns(component.get("paths") or [], path) for path in candidate["paths"])
 
 
 def _path_owns(paths: list, fpath: str) -> bool:

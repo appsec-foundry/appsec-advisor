@@ -437,6 +437,7 @@ requirements:
       - scripts/figure1_security.py
       - scripts/figure1_svg.py
       - data/posture-actor-labels.yaml
+      - data/security-capabilities.yaml
       - scripts/walkthrough_renderer.py
       - scripts/qa_checks.py
       - scripts/render_completion_summary.py
@@ -451,6 +452,7 @@ requirements:
       - RA-11
       - RA-12
       - RA-13
+      - RA-15
     documents:
       - docs/internal/contracts/schema-invariants.md
       - agents/shared/prose-style.md
@@ -498,6 +500,19 @@ requirements:
       - tests/test_figure1_dfd.py::test_unclassified_role_keeps_the_generic_victim_separate
       - tests/test_figure1_dfd.py::test_equal_regular_access_can_fold_without_open_registration
       - tests/test_figure1_dfd.py::test_unnamed_flows_are_not_assigned_to_the_merged_victim_role
+      - tests/test_figure1_dfd.py::test_single_classified_regular_role_replaces_the_generic_victim
+      - tests/test_figure1_dfd.py::test_boundary_lines_follow_resolved_crossings_only
+      - tests/test_figure1_dfd.py::test_egress_boundary_line_follows_the_drawn_external_participant
+      - tests/test_figure1_dfd.py::test_boundary_line_audit_rejects_unbacked_or_missing_lines
+      - tests/test_figure1_dfd.py::test_overview_defers_boundary_inventory_to_the_catalogue
+      - tests/test_figure1_dfd.py::test_in_process_calls_between_processes_stay_in_detail_views
+      - tests/test_figure1_dfd.py::test_shared_scenario_numbers_render_once_per_node_asset_and_victim
+      - tests/test_figure1_dfd.py::test_scenario_legend_lists_each_actor_once
+      - tests/test_figure1_dfd.py::test_figure1_tallies_follow_the_report_basis
+      - tests/test_figure1_dfd.py::test_component_titles_use_three_lines_before_shortening
+      - tests/test_figure1_dfd.py::test_capability_labels_require_known_values_and_evidence
+      - tests/test_schema_integrity.py::test_capability_vocabulary_matches_every_artifact_schema
+      - tests/test_validate_fragment.py::test_capability_and_service_role_evidence_must_be_real_contained_source
       - tests/test_figure1_dfd.py::test_flow_lanes_separate_opposing_stubs_at_equal_port_heights
       - tests/test_figure1_detail.py::test_corner_boundary_tags_reserve_title_space
       - tests/test_figure1_detail.py::test_sizes_preserve_every_component_and_flow_in_bounded_views

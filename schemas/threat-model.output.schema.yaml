@@ -405,6 +405,38 @@ properties:
                     line:
                       type: integer
                       minimum: 1
+        capabilities:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [capability, evidence]
+            properties:
+              capability:
+                type: string
+                enum: [file-upload, url-fetch, xml-parsing, template-rendering, llm-calls, llm-tools,
+                       token-issuer, mfa-verifier, oauth-client, oidc-client, saml-service-provider,
+                       websocket-endpoint, graphql-endpoint, payment-processing, email-sending,
+                       admin-functions, blockchain-client, background-jobs]
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 4
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [file, line]
+                  properties:
+                    file:
+                      type: string
+                      minLength: 1
+                      maxLength: 512
+                      not:
+                        pattern: ^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\.\.(?:/|$)|\\
+                    line:
+                      type: integer
+                      minimum: 1
         complexity:
           type: string
           enum: [simple, moderate, complex]
@@ -428,6 +460,9 @@ properties:
         access:
           properties:
             kind: {const: legitimate-role}
+        service_roles:
+          properties:
+            kind: {enum: [identity-provider, external-service]}
       properties:
         id:
           type: string
@@ -446,6 +481,38 @@ properties:
         access:
           type: string
           enum: [internet-anon, internet-user, internet-priv-user]
+        service_roles:
+          type: array
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [role, evidence]
+            properties:
+              role:
+                type: string
+                enum: [oauth-authorization-server, oauth-resource-server, oidc-provider,
+                       saml-identity-provider, llm-inference, blockchain-rpc, payment-provider,
+                       email-delivery, object-storage, message-broker, telemetry-service,
+                       package-registry]
+              evidence:
+                type: array
+                minItems: 1
+                maxItems: 4
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [file, line]
+                  properties:
+                    file:
+                      type: string
+                      minLength: 1
+                      maxLength: 512
+                      not:
+                        pattern: ^(?:/|[A-Za-z]:[\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\.\.(?:/|$)|\\
+                    line:
+                      type: integer
+                      minimum: 1
         description:
           type: string
           minLength: 1

@@ -21,6 +21,7 @@ import math
 import re
 
 from _boundary_criticality import exposure_of, label_of, tier_of
+from _severity_rollup import register_severity, register_threats
 from detect_open_registration import overview_actor_notes, overview_actor_slug
 from prepare_trust_boundary_context import boundary_endpoints_valid
 
@@ -746,9 +747,9 @@ def build_figure1_svg(
             tier = "application"
         comp[cid] = {"cnum": f"C-{i:02d}", "name": c.get("name") or cid, "tier": tier, "crit": 0, "high": 0, "ids": []}
         order.append(cid)
-    for t in threats:
+    for t in register_threats(yaml_data):
         cid = (t.get("component") or "").strip()
-        s = (t.get("risk") or t.get("severity") or "").strip().title()
+        s = register_severity(t)
         if cid in comp and s in ("Critical", "High"):
             comp[cid]["crit" if s == "Critical" else "high"] += 1
 
