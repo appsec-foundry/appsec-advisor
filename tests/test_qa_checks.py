@@ -4310,8 +4310,16 @@ def test_linkify_anchors_skips_top_weaknesses_proof_titles(tmp_path: Path):
     assert "F-014](#f-014) — H2 Database Console" in normal_line
 
 
-def test_qa_enrichment_keeps_open_question_refs_identical_to_console_refs(tmp_path: Path):
-    line = "- [W-001](#w-001): [F-013](#f-013), [F-014](#f-014) — Which policy should own authorization?"
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- Which policy should own authorization? ([W-001](#w-001): [F-013](#f-013), [F-014](#f-014))",
+        # A truncated list keeps the `+N more` remainder inside the reference tail.
+        "- Which policy should own authorization? ([W-001](#w-001): [F-013](#f-013) (unproven) +4 more)",
+        "- Unverified evidence: confirm or rule it out before scheduling the fix. ([F-014](#f-014) +2 more)",
+    ],
+)
+def test_qa_enrichment_keeps_open_question_refs_identical_to_console_refs(tmp_path: Path, line: str):
     md = _write_tw_pair(tmp_path, f"## Management Summary\n\n### Open Questions for the Team\n\n{line}\n")
 
     _report, linked = qa.linkify_anchors(md)

@@ -9913,19 +9913,23 @@ def _render_ms_open_questions(ctx: RenderContext) -> str:
         rendered = f"[{item_id}](#{item_id.lower()})"
         return rendered + (" (unproven)" if unproven else "")
 
+    # The question leads and its references trail it in parentheses — the console
+    # order (RA-13). A reader scans the decisions first; the ids are the jump-off
+    # into §7/§8. `_team_questions.is_report_question_line` keys on that trailing
+    # parenthetical to keep the enrichment passes off these bullets.
     out = [_team_questions.REPORT_HEADING, "", _team_questions.REPORT_INTRO, ""]
     for topic in selection["questions"]:
         refs = ", ".join(link(item["id"], unproven=item["unproven"]) for item in topic["refs"])
         if topic["hidden"] > 0:
-            refs += f" (+{topic['hidden']} more)"
+            refs += f" +{topic['hidden']} more"
         if topic["weakness_id"]:
-            refs = f"{link(topic['weakness_id'])}: {refs}"
-        out.append(f"- {refs + ' — ' if refs else ''}{topic['question']}")
+            refs = f"{link(topic['weakness_id'])}: {refs}" if refs else link(topic["weakness_id"])
+        out.append(f"- {topic['question']}" + (f" ({refs})" if refs else ""))
     if selection["unverified"]:
         refs = ", ".join(link(item["id"]) for item in selection["unverified"][:5])
         if len(selection["unverified"]) > 5:
-            refs += f" (+{len(selection['unverified']) - 5} more)"
-        out.append(f"- {refs} — {_team_questions.UNVERIFIED_QUESTION}")
+            refs += f" +{len(selection['unverified']) - 5} more"
+        out.append(f"- {_team_questions.UNVERIFIED_QUESTION} ({refs})")
     out.append("")
     return "\n".join(out)
 
@@ -12997,8 +13001,12 @@ def _is_bare_finding_ref_line(line: str) -> bool:
     Four contexts (user 2026-07-15, 2026-07-31, 2026-09-13):
       • MS "Top Weaknesses" proof run — the single weakness dot owns the bullet's
         severity signal (`… _Proven by [F-NNN], …._`).
-      • MS "Open Questions for the Team" bullets — the linked W/F ids are the
-        same compact evidence references the console prints.
+      • MS "Open Questions for the Team" bullets — the linked W/F ids trail the
+        question in parentheses and are the same compact evidence references the
+        console prints. Recognised by shape (`_team_questions.is_report_question_line`),
+        not by a separator glyph: `_normalize_emdashes` rewrites mid-line em dashes,
+        so a glyph-keyed guard silently stopped matching whenever a bullet carried
+        a `+N more` tail and the block shipped dotted, titled refs (2026-09-17).
       • Critical Attack Tree findings pointer — the tree leaves above already
         carry each finding's id + title, so the pointer is a bare jump-index.
       • §1 Trust Boundaries catalogue row (carries its `<a id="tb-N">` declaration
@@ -13008,7 +13016,7 @@ def _is_bare_finding_ref_line(line: str) -> bool:
     """
     if "_Proven by " in line and "](#w-" in line:
         return True
-    if line.startswith("- [") and " — " in line and (line.rstrip().endswith("?") or " — Unverified evidence: " in line):
+    if _team_questions.is_report_question_line(line):
         return True
     if "full detail in" in line and "#8-findings-register" in line:
         return True

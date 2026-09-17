@@ -2583,9 +2583,15 @@ def test_is_bare_finding_ref_line() -> None:
     f = compose._is_bare_finding_ref_line
     # Top Weaknesses proof run.
     assert f("- 🔴 **[W-001](#w-001) — X** (Critical) — d. _Proven by [F-013](#f-013)._")
-    # Open team questions shared with the console.
-    assert f("- [W-001](#w-001): [F-013](#f-013) — Which policy should own authorization?")
-    assert f("- [F-014](#f-014) — Unverified evidence: confirm or rule it out before scheduling the fix.")
+    # Open team questions shared with the console — question first, refs trailing.
+    assert f("- Which policy should own authorization? ([W-001](#w-001): [F-013](#f-013))")
+    assert f(
+        "- Which cross-tenant accesses are intended (support, admin bulk operations)? "
+        "([W-001](#w-001): [F-013](#f-013) (unproven), [F-014](#f-014) +3 more)"
+    )
+    assert f("- Unverified evidence: confirm or rule it out before scheduling the fix. ([F-014](#f-014))")
+    # A question whose own text ends in a parenthetical is not a reference tail.
+    assert not f("- Which policy should own authorization (per route or per service)?")
     # Critical Attack Tree findings pointer.
     assert f("**Findings** (full detail in [§8 Findings Register](#8-findings-register)): [F-001](#f-001)")
     # Normal contexts keep their enrichment.
@@ -4787,9 +4793,41 @@ def test_global_finding_dot_pass_dots_bare_link_and_is_idempotent(tmp_path: Path
 
 def test_global_finding_dot_pass_keeps_open_question_refs_compact(tmp_path: Path) -> None:
     ctx = _dot_ctx(tmp_path, [{"id": "T-001", "effective_severity": "Critical", "title": "X"}])
-    line = "- [W-001](#w-001): [F-001](#f-001) — Which policy should own authorization?"
+    line = "- Which policy should own authorization? ([W-001](#w-001): [F-001](#f-001))"
 
     assert compose._prepend_finding_severity_dots(ctx, line) == line
+
+
+def test_open_question_refs_survive_the_rendering_tail_with_a_remainder(tmp_path: Path) -> None:
+    """A truncated reference list keeps its compact ids through the whole tail.
+
+    The em-dash normalizer rewrites separators it does not recognise, so a guard
+    keyed on the separator stopped protecting exactly the bullets that carry a
+    `+N more` remainder, and those shipped with severity dots and titles.
+    """
+    ctx = _dot_ctx(
+        tmp_path,
+        [
+            {"id": "T-001", "effective_severity": "Critical", "title": "Object owner not checked"},
+            {"id": "T-002", "effective_severity": "High", "title": "Price accepted from the client"},
+        ],
+    )
+
+    def tail(md: str) -> str:
+        return compose._prepend_finding_severity_dots(ctx, compose._normalize_emdashes(md))
+
+    truncated = (
+        "- Which cross-user accesses are intended, and which layer enforces ownership? "
+        "([W-001](#w-001): [F-001](#f-001), [F-002](#f-002) +3 more)"
+    )
+    complete = "- Who approves a pipeline change before it takes effect? ([W-002](#w-002): [F-002](#f-002))"
+    # Same mechanism, different incidental names and no weakness prefix.
+    unverified = "- Unverified evidence: confirm or rule it out before scheduling the fix. ([F-002](#f-002) +9 more)"
+    assert tail(truncated) == truncated
+    assert tail(complete) == complete
+    assert tail(unverified) == unverified
+    # Negative case: an ordinary prose reference still gets its severity dot.
+    assert tail("The verdict rests on [F-001](#f-001).") == "The verdict rests on 🔴 [F-001](#f-001)."
 
 
 def test_global_finding_dot_pass_tolerates_nbsp_separator(tmp_path: Path) -> None:
@@ -6460,7 +6498,7 @@ def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(mon
         assert value in report_questions
         assert value in console_questions
 
-    # RA-13: same bullets, references and question; the console only puts the question first, unlinked.
+    # RA-13: same bullets, question first in both; the report only links its ids.
     def references(line: str) -> list[str]:
         return re.findall(r"\b[WF]-\d{3,}\b|\(unproven\)|\+\d+ more", line)
 
@@ -6470,8 +6508,10 @@ def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(mon
         references(line) for line in console_bullets
     ]
     for report_line, console_line in zip(report_bullets, console_bullets, strict=True):
-        question = report_line.split(" — ", 1)[1] if " — " in report_line else report_line[2:]
+        question = report_line[2:].split(" ([", 1)[0]
         assert console_line.startswith(f"- {question}")
+        # The rendered shape is what keeps the enrichment passes off the block.
+        assert compose._is_bare_finding_ref_line(report_line)
 
     monkeypatch.setattr(compose, "_render_by_id", lambda _ctx, _env, _sid, section: section["heading"])
     monkeypatch.setattr(compose, "_render_ai_exposure", lambda _ctx, _env: "")

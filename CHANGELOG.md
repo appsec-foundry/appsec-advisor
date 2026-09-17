@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Report prose formats ambiguous protocol names such as Authorization, Cookie, and Origin as code only when local context identifies the concrete header or attribute.
+- Open questions in the Management Summary lead with the question and keep compact finding references, instead of opening some bullets with a decorated reference list.
 - Plugin update checks compare against released versions instead of advertising unreleased development builds.
 
 - Finding ratings enforce policy ceilings across reports and exports, require verified attack chains for elevation, and prioritize likelihood and CVSS consistently.

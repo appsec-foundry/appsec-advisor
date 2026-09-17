@@ -27,6 +27,28 @@ UNVERIFIED_QUESTION = (
     "Unverified evidence: confirm or rule out what the code alone could not establish before scheduling the fix."
 )
 
+# The reference tail a rendered report bullet ends with: the optional weakness
+# link, the finding links, their optional `(unproven)` marker and an optional
+# `+N more` remainder — nothing else. A question's own parenthetical ("(support,
+# admin bulk operations)") never matches because every element must be an id link.
+_REPORT_REF_TAIL_RE = re.compile(
+    r"\((?=\[[WF]-\d)"
+    r"(?:\[W-\d{3,}\]\(#w-\d{3,}\)(?:: )?)?"
+    r"(?:\[F-\d{3,}\]\(#f-\d{3,}\)(?: \(unproven\))?"
+    r"(?:, \[F-\d{3,}\]\(#f-\d{3,}\)(?: \(unproven\))?)*)?"
+    r"(?: ?\+\d+ more)?\)$"
+)
+
+
+def is_report_question_line(line: str) -> bool:
+    """True for a rendered Open-Questions bullet: question first, references last.
+
+    The finding-ref enrichment passes key on this to leave the block's ids bare.
+    It tests the bullet's own shape, so a separator rewrite elsewhere in the
+    rendering tail cannot silently turn the guard off.
+    """
+    return line.startswith("- ") and bool(_REPORT_REF_TAIL_RE.search(line.rstrip()))
+
 
 def mechanism_team_questions(plugin_root: Optional[Path] = None) -> dict[str, str]:
     """Return the explicit team question for each registered mechanism."""
