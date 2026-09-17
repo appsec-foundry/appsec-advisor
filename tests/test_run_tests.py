@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import PurePosixPath
 
 import pytest
 import run_tests as runner
@@ -580,6 +582,54 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             "scripts/run_tests.py",
             {"tests/test_run_tests.py", "tests/test_ci_test_workflow.py"},
         ),
+        (
+            "scripts/aggregate_run_issues.py",
+            {
+                "tests/test_aggregate_run_issues.py",
+                "tests/test_orchestration_controller.py",
+                "tests/test_recommend_fixes.py",
+                "tests/test_render_completion_summary.py",
+                "tests/test_terminate_run.py",
+            },
+        ),
+        (
+            "scripts/pregenerate_fragments.py",
+            {
+                "tests/test_pregenerate_fragments.py",
+                "tests/test_compose_threat_model.py",
+                "tests/test_assert_completeness.py",
+                "tests/test_threat_fixture.py",
+            },
+        ),
+        (
+            "scripts/render_completion_summary.py",
+            {
+                "tests/test_render_completion_summary.py",
+                "tests/test_report_plugin_issue.py",
+                "tests/test_completion_relay.py",
+                "tests/test_run_headless_completion.py",
+            },
+        ),
+        (
+            "scripts/security_score.py",
+            {"tests/test_security_score.py", "tests/test_repo_scan.py"},
+        ),
+        (
+            "scripts/version_status.py",
+            {"tests/test_version_status.py", "tests/test_appsec_status.py"},
+        ),
+        (
+            "CHANGELOG.md",
+            {"tests/test_requirements_verification.py"},
+        ),
+        (
+            "docs/internal/decisions.md",
+            {"tests/test_check_specs.py", "tests/test_decision_register.py", "tests/test_requirements_verification.py"},
+        ),
+        (
+            "data/requirement-bindings.yaml",
+            {"tests/test_check_specs.py", "tests/test_run_tests.py", "tests/test_requirements_hook.py"},
+        ),
     ],
 )
 def test_shipped_source_routes_include_reviewed_producers_and_consumers(source, required):
@@ -594,11 +644,35 @@ def test_all_shipped_source_routes_remain_selective():
         assert selection.paths != ("tests/",), (source, selection.reasons)
 
 
-@pytest.mark.parametrize("filename", ["AGENTS.md", "CONTRIBUTING.md"])
-def test_repository_guidance_routes_to_selector_checks(filename):
+def test_modules_on_the_golden_fixture_replay_route_to_it():
+    """threat_fixture replays these producers, so every routed module they import must select it."""
+    replayed = ("scripts/compose_threat_model.py", "scripts/build_threat_model_yaml.py")
+    source = "\n".join((runner.ROOT / path).read_text(encoding="utf-8") for path in replayed)
+    imported = set(re.findall(r"^\s*(?:from|import)\s+([A-Za-z_]\w*)", source, re.M))
+    routed = [path for path in runner.SOURCE_TESTS if path.startswith("scripts/")]
+    on_replay = [path for path in routed if PurePosixPath(path).stem in imported]
+    assert "scripts/figure1_dfd.py" in on_replay
+    for path in on_replay:
+        assert "tests/test_threat_fixture.py" in runner.SOURCE_TESTS[path], path
+
+
+@pytest.mark.parametrize(
+    ("filename", "readers"),
+    [
+        (
+            "AGENTS.md",
+            {"decision_register", "lazy_phase_group_loading", "orchestration_controller", "run_tests"},
+        ),
+        ("CONTRIBUTING.md", {"run_tests"}),
+    ],
+)
+def test_repository_guidance_routes_to_its_readers(filename, readers):
     selection = runner.select_changed([filename])
-    assert selection.paths == ("tests/test_run_tests.py",)
-    assert any(filename in reason and "1 reviewed test module(s)" in reason for reason in selection.reasons)
+    expected = {f"tests/test_{name}.py" for name in readers | {"requirements_verification"}}
+    assert set(selection.paths) == expected
+    assert any(
+        filename in reason and f"{len(expected)} reviewed test module(s)" in reason for reason in selection.reasons
+    )
     assert "tests/test_full_run_e2e.py" not in selection.paths
 
 

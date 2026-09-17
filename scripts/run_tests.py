@@ -493,11 +493,53 @@ MANUAL_TESTS = {
 # These routes were reviewed across imports, subprocess callers, artifact
 # readers, and deterministic integration tests. Do not replace them with group
 # names: groups are convenient maintainer suites, not dependency boundaries.
-# The root guidance files are repository-only inputs; shipped Markdown under
-# agents/ and skills/ remains runtime input and therefore falls back to all.
+# Repository documents (guidance, changelog, docs, specs, requirement bindings)
+# are not runtime input: their routes name the tests that read them, including
+# the tracked-file content scan. Shipped Markdown under agents/ and skills/
+# remains runtime input and therefore falls back to all. threat_fixture replays
+# build_threat_model_yaml and compose_threat_model, so modules they import
+# route to it.
 SOURCE_TESTS = {
-    "AGENTS.md": _tests("run_tests"),
-    "CONTRIBUTING.md": _tests("run_tests"),
+    "AGENTS.md": _tests("""
+        decision_register
+        lazy_phase_group_loading
+        orchestration_controller
+        requirements_verification
+        run_tests
+    """),
+    "CONTRIBUTING.md": _tests("""
+        requirements_verification
+        run_tests
+    """),
+    "CHANGELOG.md": _tests("requirements_verification"),
+    "README.md": _tests("""
+        marketplace_manifest
+        requirements_verification
+    """),
+    "data/requirement-bindings.yaml": _tests("""
+        check_specs
+        requirements_hook
+        requirements_verification
+        run_tests
+    """),
+    "docs/harvester.md": _tests("requirements_verification"),
+    "docs/headless-mode.md": _tests("requirements_verification"),
+    "docs/images/figure1-example.svg": _tests("requirements_verification"),
+    "docs/internal/contracts/orchestration-actions.md": _tests("requirements_verification"),
+    "docs/internal/contracts/schema-invariants.md": _tests("requirements_verification"),
+    "docs/internal/decisions.md": _tests("""
+        check_specs
+        decision_register
+        dispatch_prompt_cache_order
+        requirements_verification
+    """),
+    "docs/org-profiles.md": _tests("requirements_verification"),
+    "docs/threat-modeler.md": _tests("requirements_verification"),
+    "specs/requirements.md": _tests("""
+        check_specs
+        requirements_hook
+        requirements_verification
+    """),
     "scripts/apply_prose_fixes.py": _tests("""
         actor_presentation
         apply_prose_fixes
@@ -506,6 +548,7 @@ SOURCE_TESTS = {
         compose_threat_model
         e2e_pipeline
         qa_checks
+        threat_fixture
         walkthrough_renderer
     """),
     "scripts/actor_presentation.py": _tests("""
@@ -517,6 +560,7 @@ SOURCE_TESTS = {
         figure1_dfd
         figure1_svg
         figure2_svg
+        threat_fixture
     """),
     "scripts/export_sarif.py": _tests("""
         e2e_pipeline
@@ -554,6 +598,7 @@ SOURCE_TESTS = {
         figure1_dfd
         figure2_svg
         qa_checks
+        threat_fixture
     """),
     "scripts/figure2_svg.py": _tests("""
         actor_presentation
@@ -561,6 +606,7 @@ SOURCE_TESTS = {
         e2e_pipeline
         figure2_svg
         qa_checks
+        threat_fixture
     """),
     "scripts/finalize_component_inventory.py": _tests("""
         aggregate_run_issues
@@ -583,6 +629,7 @@ SOURCE_TESTS = {
         e2e_pipeline
         inline_code_formatter
         qa_checks
+        threat_fixture
         walkthrough_renderer
     """),
     "scripts/run_tests.py": _tests("""
@@ -630,6 +677,83 @@ SOURCE_TESTS = {
         source_auth_scanner
         validate_intermediate
         weakness_signals
+    """),
+    "scripts/aggregate_run_issues.py": _tests("""
+        aggregate_run_issues
+        compose_threat_model_cov
+        compose_threat_model_cov2
+        dispatch_model_and_diagnostics
+        log_shape_contract
+        orchestration_controller
+        recommend_fixes
+        render_completion_summary
+        render_integrity
+        repair_eligibility
+        report_plugin_issue
+        run_diagnostics_recovery_2026_07_20
+        run_headless_completion
+        run_issues_pipeline
+        run_path_guard
+        skill_watchdog
+        terminate_run
+        thin_runtime_regressions_2026_07_20
+    """),
+    "scripts/harvest_requirements.py": _tests("harvest_requirements"),
+    "scripts/pregenerate_fragments.py": _tests("""
+        architect_structural_checks
+        assert_completeness
+        compose_threat_model
+        compose_threat_model_cov
+        compose_threat_model_cov2
+        dispatch_manifest
+        e2e_pipeline
+        enforcement_mutations
+        normalize_security_architecture
+        orchestration_controller
+        p1_renderer_correctness
+        p2_structural_determinism
+        p4_cross_reference_coverage
+        pregenerate_fragments
+        pregenerate_fragments_coverage
+        qa_checks
+        skill_auto_retry
+        threat_fixture
+        validate_fragment
+    """),
+    "scripts/recommend_fixes.py": _tests("""
+        aggregate_run_issues
+        recommend_fixes
+        render_completion_summary
+        report_plugin_issue
+        run_issues_pipeline
+        terminate_run
+    """),
+    "scripts/render_completion_summary.py": _tests("""
+        completion_relay
+        compose_threat_model
+        p1_renderer_correctness
+        render_completion_summary
+        render_completion_summary_config
+        render_completion_summary_verdict
+        render_integrity
+        report_plugin_issue
+        run_headless_completion
+        runtime_doc_cli_contract
+        team_questions
+    """),
+    "scripts/render_progress.py": _tests("""
+        render_progress
+        run_headless_completion
+    """),
+    "scripts/security_score.py": _tests("""
+        repo_scan
+        scanner_review_regressions
+        security_score
+    """),
+    "scripts/version_status.py": _tests("""
+        appsec_status
+        appsec_status_live
+        version_status
     """),
 }
 
