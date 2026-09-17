@@ -6,6 +6,7 @@ uses the mandated model, and respects turn-count ceilings.
 All constraints are derived from AGENTS.md policy.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -1260,3 +1261,20 @@ def test_agent_budget_queries_require_their_controller_job_identity():
         text = (root / filename).read_text(encoding="utf-8")
         assert "ACTION_ID=<context_plan.action_id>" in text
         assert "JOB_ID=<dispatch_jobs[].job_id>" in text
+
+
+def test_architecture_agent_states_access_variants_and_unauthenticated_access():
+    """The renderer can only show `0 / 2` and `5 → 3` when the producer groups the accesses."""
+    text = " ".join((AGENTS_DIR / "appsec-architecture-analyst.md").read_text(encoding="utf-8").split())
+    schema = json.loads((AGENTS_DIR.parent / "schemas/fragments/data-flows.schema.json").read_text(encoding="utf-8"))
+    modes = schema["$defs"]["data_flow"]["properties"]["access_group"]["properties"]["mode"]["enum"]
+    assert set(modes) == {"alternatives", "sequence"}
+    for phrase in (
+        "public and authenticated routes of one API are `alternatives`",
+        "enrolled-account MFA is a `sequence` whose label states the condition",
+        "Use `none` when the receiving handler or engine demonstrably checks nothing",
+        "use `unknown` only when no check can be located",
+        "carries that token's scheme",
+        "Model every `role-units.json` unit under its ID",
+    ):
+        assert phrase in text, phrase

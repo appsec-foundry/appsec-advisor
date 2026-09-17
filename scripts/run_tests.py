@@ -410,6 +410,7 @@ GROUPS = {
         context_routing
         coverage_checks
         discover_identity_providers
+        embedded_store_access
         extract_data_relations
         finalize_component_inventory
         load_related_repos

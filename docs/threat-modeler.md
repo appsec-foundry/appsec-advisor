@@ -102,7 +102,7 @@ Decisions are stored separately from the generated model and survive reassessmen
 
 Figure 1 presents the Architecture and Threat Overview with attack paths and hexagonal authentication markers at component accesses. Equal methods share a number; `0` marks evidenced absence of separate authentication and `?` marks uncertainty. Marker colours describe method properties, not a security verdict. Matching E-labelled rows inside components name the peer and direction of connections whose lines are omitted. A linked detail view retains the data-flow and boundary catalogues. Existing models without authentication evidence need a new analysis to populate these markers; exporting does not infer missing controls.
 
-Figure 2 connects actors, attack routes, underlying weaknesses and impact using the same numbers as Figure 1 and the Top Threats table. Each route shows one example finding. Existing weakness links appear as W-IDs in parentheses; an absent W-ID means no explicit register link exists for that example. Potential business harm is labelled at group level. Full details remain in the linked findings and SVG tooltips.
+Figure 2 connects actors, attack routes, underlying weaknesses and impact using the same numbers as Figure 1 and the Top Threats table. Each route names one example finding with its access prerequisite. Existing weakness links appear as W-IDs in parentheses; without a register link the card says so and never substitutes finding text. Impact shows the group's potential business harm. Consecutive routes of one actor share an actor card. The attack step, component and technical consequence remain in the linked findings and SVG tooltips.
 
 ## Example report: OWASP Juice Shop
 

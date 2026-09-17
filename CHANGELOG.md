@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Figure 2 connects numbered attack routes to example findings, explicit weakness references, and impact in a compact overview matching Figure 1.
+- Figure 2 connects numbered attack routes to example findings, explicit weakness references, and group impact in a compact overview matching Figure 1: one statement per card, one card per actor, details in tooltips.
 
 - Figure 1 shows evidenced authentication, capability and service-role labels, flows, assets and grouped custom actors, draws trust-boundary lines only where a modelled boundary crosses, and keeps boundary details, in-process calls and individual role details in the report and navigable detail views.
 
@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Figure 1 counts findings like the Management Summary, shows each scenario number once per component, lists each attacker once in its legend and no longer draws a second user card next to the one modelled user role.
 - The component inventory no longer adds a second embedded document store next to one the architecture analysis already modelled.
 - Authentication, CI/CD, real-time, web3 and embedded-store components are modelled before data flows are written, so they keep their connections; a run reports any component that still has none.
+- Figure 1 shows login sequences, public and authenticated API alternatives, and access to embedded databases with their authentication method instead of leaving them unknown.
 
 ## 0.6.0-beta.3 (2026-09-14)
 

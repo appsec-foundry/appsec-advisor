@@ -21,14 +21,25 @@ from _severity_rollup import SEVERITY_ORDER, display_id, register_severity
 from figure1_dfd import FONT, INK, LINE, MUTED, NAVY, RED, scenarios_from_attack_paths
 from jsonschema import Draft202012Validator
 
-# Widths and gaps are presentation geometry, not analysis limits. Height grows
-# with wrapped text. Explicit excerpts retain the full source in SVG tooltips.
+# Widths and gaps are presentation geometry, not analysis limits. Each card
+# shows one statement; the attack step, component and consequence stay in the
+# route tooltip and the findings register.
 _PAD = 24
 _GAP = 54
-_WIDTHS = (180, 340, 310, 350)
+_WIDTHS = (170, 320, 290, 340)
 _FONT = 13
 _LINE = 17
+_ROW_GAP = 12
 _NS = {"s": "http://www.w3.org/2000/svg"}
+NO_LINKED_WEAKNESS = "No weakness linked in the register"
+_SHORT_PREREQUISITE = {
+    "No account required": "no account",
+    "Regular account required": "regular account",
+    "Elevated privileges required": "elevated privileges",
+    "Source-repository access required": "repository access",
+    "Build or dependency access required": "build access",
+    "Victim interaction required": "victim interaction",
+}
 
 
 @lru_cache(maxsize=1)
@@ -135,17 +146,8 @@ def build_figure2_data(
         )
         scenario = next(s for s in candidates if int(selected[2:]) in s["fids"] and s["actor_slug"] == projected_actor)
         linked = _weaknesses(model, selected)
-        cause = "\n".join(f"{_text(w['title'])} ({w['id']})" for w in linked)
-        if not cause:
-            cause = (
-                _text(
-                    finding.get("root_cause")
-                    or finding.get("evidence_summary")
-                    or finding.get("evidence_prose")
-                    or finding.get("title")
-                )
-                or "Underlying weakness not established."
-            )
+        # Finding prose is evidence, often a code excerpt, not a weakness name.
+        cause = "\n".join(f"{_text(w['title'])} ({w['id']})" for w in linked) or NO_LINKED_WEAKNESS
         steps = finding.get("attack_steps") or []
         action = steps[0] if steps and isinstance(steps[0], str) else finding.get("scenario")
         harms = []
@@ -235,8 +237,30 @@ def _text_width(value: str, size: int = _FONT) -> float:
 def _excerpt(value: str, width: int, limit: int) -> list[str]:
     lines = _lines(value, width)
     if len(lines) > limit:
-        return lines[: limit - 1] + [lines[limit - 1].rstrip(" .;,:") + " …"]
+        # Re-wrap the last kept line so the ellipsis still fits the card.
+        last = _lines(lines[limit - 1], width - _text_width(" …"))[0]
+        return lines[: limit - 1] + [last.rstrip(" .;,:") + " …"]
     return lines
+
+
+def _meta_line(row: dict) -> str:
+    parts = [row["finding_id"]]
+    parts += [_SHORT_PREREQUISITE[p] for p in row["prerequisite"].split("; ") if p in _SHORT_PREREQUISITE]
+    if row["unproven"]:
+        parts.append("unproven")
+    return " · ".join(parts)
+
+
+def _actor_groups(rows: list[dict]) -> list[tuple[tuple, list[int]]]:
+    """Consecutive routes of one actor and interaction mode share one actor card."""
+    groups: list[tuple[tuple, list[int]]] = []
+    for index, row in enumerate(rows):
+        key = (row["actor_slug"], row["actor"], row["victim"])
+        if groups and groups[-1][0] == key:
+            groups[-1][1].append(index)
+        else:
+            groups.append((key, [index]))
+    return groups
 
 
 def build_figure2_svg(data: dict) -> str:
@@ -269,39 +293,39 @@ def build_figure2_svg(data: dict) -> str:
             f'stroke-width="1.8" marker-end="url(#f2-{marker})"{dash}/>'
         )
 
-    headers = ("Threat Actors", "Attack Route", "Underlying Weakness", "Impact")
+    headers = ("Threat Actors", "Attack Route", "Underlying Weakness", "Impact (group)")
     for px, header in zip(x, headers):
         text(px, 22, header, 13, NAVY, True)
     y = 42
     if not rows:
         text(_PAD, 66, "No attack routes in the Top Threats groups.", color=MUTED)
         y = 84
+    prepared = []
     for row in rows:
-        # Repeat an actor card per route instead of merging independent routes
-        # through one common tier. The shared slug retains the identity.
+        linked = bool(row["weakness_ids"])
         contents = [
-            [(row["actor"], True, RED, 4)],
+            [(row["title"], True, INK, 2), (_meta_line(row), False, MUTED, 2)],
             [
-                (row["title"], True, INK, 2),
-                (f"Example: {row['finding_id']}" + (" (unproven)" if row["unproven"] else ""), False, MUTED, 1),
-                (row["route"], False, INK, 2),
-                (row["prerequisite"], False, MUTED, 3),
+                (re.sub(r" \(W-\d+\)", "", row["weakness"]), linked, NAVY if linked else MUTED, 3),
+                ("(" + ", ".join(row["weakness_ids"]) + ")" if linked else "", False, MUTED, 20),
             ],
-            [
-                (re.sub(r" \(W-\d+\)", "", row["weakness"]), True, NAVY, 4),
-                ("(" + ", ".join(row["weakness_ids"]) + ")" if row["weakness_ids"] else "", False, MUTED, 20),
-            ],
-            [
-                (row["consequence"], False, INK, 3),
-                ("Potential harm (group)", False, MUTED, 1),
-                (row["business_harm"], True, NAVY, 3),
-            ],
+            [(row["business_harm"], True, NAVY, 4)],
         ]
         wrapped = [
-            [(line, bold, color) for value, bold, color, limit in cell for line in _excerpt(value, width - 48, limit)]
-            for cell, width in zip(contents, _WIDTHS)
+            [(line, bold, color) for value, bold, color, limit in cell for line in _excerpt(value, width - 32, limit)]
+            for cell, width in zip(contents, _WIDTHS[1:])
         ]
-        height = max(90, max(len(lines) for lines in wrapped) * _LINE + 42)
+        prepared.append([wrapped, max(48, max(len(lines) for lines in wrapped) * _LINE + 22)])
+    actor_cards = []
+    for (slug, actor, victim), indices in _actor_groups(rows):
+        lines = [(line, True, RED) for line in _excerpt(actor, _WIDTHS[0] - 32, 3)]
+        if victim:
+            lines.append(("via a victim", False, MUTED))
+        span = sum(prepared[i][1] for i in indices) + _ROW_GAP * (len(indices) - 1)
+        prepared[indices[-1]][1] += max(0, len(lines) * _LINE + 22 - span)
+        actor_cards.append((slug, victim, indices, lines))
+    spans = []
+    for row, (wrapped, height) in zip(rows, prepared):
         number = row["number"]
         elements.append(
             f'<g data-route-number="{number}" data-finding-id="{row["finding_id"]}" '
@@ -322,11 +346,10 @@ def build_figure2_svg(data: dict) -> str:
             )
         )
         elements.append(f"<title>{html.escape(detail)}</title>")
-        for col, (px, width, lines) in enumerate(zip(x, _WIDTHS, wrapped)):
-            fill = "#fbf6f6" if col == 0 else "#f3f6fa" if col in (2, 3) else "#ffffff"
-            stroke = "#a04d4a" if col == 0 else "#4f6d9c" if col in (2, 3) else LINE
-            cell_height = max(60, len(lines) * _LINE + 24) if col == 0 else height
-            rect(px, y + (height - cell_height) / 2, width, cell_height, fill, stroke, attrs=f'data-column="{col}"')
+        for col, (px, width, lines) in enumerate(zip(x[1:], _WIDTHS[1:], wrapped), 1):
+            fill = "#f3f6fa" if col in (2, 3) else "#ffffff"
+            stroke = "#4f6d9c" if col in (2, 3) else LINE
+            rect(px, y, width, height, fill, stroke, attrs=f'data-column="{col}"')
             start = y + (height - len(lines) * _LINE) / 2 + 12
             for line, bold, color in lines:
                 text(px + 16, start, line, color=color, bold=bold)
@@ -339,7 +362,23 @@ def build_figure2_svg(data: dict) -> str:
         elements.append(f'<circle cx="{bx}" cy="{mid}" r="10" fill="{RED}" stroke="#ffffff" stroke-width="1.5"/>')
         text(bx, mid + 4, str(number), 11, "#ffffff", True, f'text-anchor="middle" data-badge-number="{number}"')
         elements.append("</g>")
-        y += height + 24
+        spans.append((y, height))
+        y += height + _ROW_GAP
+    for slug, victim, indices, lines in actor_cards:
+        top = spans[indices[0]][0]
+        height = spans[indices[-1]][0] + spans[indices[-1]][1] - top
+        numbers = " ".join(str(rows[i]["number"]) for i in indices)
+        elements.append(
+            f'<g data-actor-card="{html.escape(slug)}" data-actor-victim="{str(victim).lower()}" '
+            f'data-actor-routes="{numbers}">'
+        )
+        rect(x[0], top, _WIDTHS[0], height, "#fbf6f6", "#a04d4a", attrs='data-column="0"')
+        start = top + (height - len(lines) * _LINE) / 2 + 12
+        for line, bold, color in lines:
+            text(x[0] + 16, start, line, color=color, bold=bold)
+            start += _LINE
+        elements.append("</g>")
+    y = y - _ROW_GAP + 12 if rows else y
     defs = (
         "<defs>"
         + "".join(
@@ -364,8 +403,24 @@ def build_figure2_svg(data: dict) -> str:
     return svg
 
 
+def _text_outside(texts, cells) -> bool:
+    for text in texts:
+        if text.get("data-badge-number"):
+            continue
+        tx, ty = float(text.get("x")), float(text.get("y"))
+        if not any(
+            float(c.get("x")) < tx < float(c.get("x")) + float(c.get("width"))
+            and tx + _text_width(text.text or "", float(text.get("font-size", _FONT)))
+            <= float(c.get("x")) + float(c.get("width")) - 8
+            and float(c.get("y")) + 8 < ty < float(c.get("y")) + float(c.get("height")) - 4
+            for c in cells
+        ):
+            return True
+    return False
+
+
 def check_figure2_svg(svg: str) -> list[str]:
-    """Check the delivered SVG, including visible routes, badges and references."""
+    """Check the delivered SVG, including visible routes, actors, badges and references."""
     try:
         root = ET.fromstring(svg)
         metadata = root.find("s:metadata[@id='figure2-data']", _NS)
@@ -381,34 +436,48 @@ def check_figure2_svg(svg: str) -> list[str]:
         errors.append("visible route numbers differ from the presentation data")
     if root.get("data-glyphs", "").split() != expected:
         errors.append("glyph metadata differs from visible routes")
-    for group, row in zip(groups, rows):
-        badge = group.find("s:text[@data-badge-number]", _NS)
-        if badge is None or badge.text != str(row["number"]) or badge.get("data-badge-number") != str(row["number"]):
-            errors.append("scenario badge differs from its route")
-        if (
-            group.get("data-finding-id") != row["finding_id"]
-            or group.get("data-weakness-ids", "").split() != row["weakness_ids"]
-        ):
-            errors.append("route references differ from the presentation data")
-        visible_text = " ".join(t.text or "" for t in group.findall("s:text", _NS))
-        if any(ref not in visible_text for ref in [row["finding_id"], *row["weakness_ids"]]):
-            errors.append("a finding or weakness reference is missing from the visible route")
-        cells = group.findall("s:rect[@data-column]", _NS)
-        if [c.get("data-column") for c in cells] != [str(i) for i in range(4)]:
-            errors.append("route does not contain all four columns")
-        for text in group.findall("s:text", _NS):
-            if text.get("data-badge-number"):
+    actors = root.findall("s:g[@data-actor-card]", _NS)
+    covered = [number for card in actors for number in card.get("data-actor-routes", "").split()]
+    if covered != expected:
+        errors.append("actor cards do not cover each route exactly once")
+    card_of = {number: card for card in actors for number in card.get("data-actor-routes", "").split()}
+    try:
+        for card in actors:
+            cells = card.findall("s:rect[@data-column='0']", _NS)
+            if len(cells) != 1 or _text_outside(card.findall("s:text", _NS), cells):
+                errors.append("actor text falls outside its card")
+        for group, row in zip(groups, rows):
+            badge = group.find("s:text[@data-badge-number]", _NS)
+            if (
+                badge is None
+                or badge.text != str(row["number"])
+                or badge.get("data-badge-number") != str(row["number"])
+            ):
+                errors.append("scenario badge differs from its route")
+            if (
+                group.get("data-finding-id") != row["finding_id"]
+                or group.get("data-weakness-ids", "").split() != row["weakness_ids"]
+            ):
+                errors.append("route references differ from the presentation data")
+            visible_text = " ".join(t.text or "" for t in group.findall("s:text", _NS))
+            if any(ref not in visible_text for ref in [row["finding_id"], *row["weakness_ids"]]):
+                errors.append("a finding or weakness reference is missing from the visible route")
+            cells = group.findall("s:rect[@data-column]", _NS)
+            if [c.get("data-column") for c in cells] != ["1", "2", "3"]:
+                errors.append("route does not contain its three cards")
                 continue
-            try:
-                tx, ty = float(text.get("x")), float(text.get("y"))
-                if not any(
-                    float(c.get("x")) < tx < float(c.get("x")) + float(c.get("width"))
-                    and tx + _text_width(text.text or "", float(text.get("font-size", _FONT)))
-                    <= float(c.get("x")) + float(c.get("width")) - 8
-                    and float(c.get("y")) + 8 < ty < float(c.get("y")) + float(c.get("height")) - 4
-                    for c in cells
+            if _text_outside(group.findall("s:text", _NS), cells):
+                errors.append("text falls outside its card")
+            card = card_of.get(str(row["number"]))
+            if card is not None:
+                box = card.find("s:rect[@data-column='0']", _NS)
+                mid = float(cells[0].get("y")) + float(cells[0].get("height")) / 2
+                if (
+                    card.get("data-actor-card") != row["actor_slug"]
+                    or card.get("data-actor-victim") != str(row["victim"]).lower()
+                    or not float(box.get("y")) < mid < float(box.get("y")) + float(box.get("height"))
                 ):
-                    errors.append("text falls outside its card")
-            except (TypeError, ValueError):
-                errors.append("invalid card or text geometry")
+                    errors.append("route is not attached to its actor card")
+    except (TypeError, ValueError, AttributeError):
+        errors.append("invalid card or text geometry")
     return errors

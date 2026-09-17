@@ -5804,11 +5804,16 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
     flows["component_inventory_fingerprint"] = fingerprint
     from _atomic_io import atomic_write_json
     from discover_identity_providers import reconcile
+    from embedded_store_access import record_embedded_access
 
     try:
         flows = reconcile(repo_root, components.get("components") or [], flows)
     except (ValueError, OSError) as exc:
         raise ControllerError(f"identity-provider reconciliation failed: {exc}") from exc
+    try:
+        flows = record_embedded_access(repo_root, components.get("components") or [], flows)
+    except OSError as exc:
+        raise ControllerError(f"embedded store access reconciliation failed: {exc}") from exc
     # Validate the complete enriched artifact before replacing the accepted input.
     _validate_receipt_state(
         flows, PLUGIN_ROOT / "schemas" / "fragments" / "data-flows.schema.json", "identity integration data flows"

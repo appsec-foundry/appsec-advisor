@@ -3838,7 +3838,7 @@ class TestSecurityPostureV2:
         assert data["routes"][0]["weakness_ids"] == ["W-031"]
         assert all(not r["weakness_ids"] for r in data["routes"][1:])
         assert "(W-031)" in " ".join(t.text or "" for t in root.findall(".//{*}text"))
-        assert "Each numbered route shows one example finding" in out
+        assert "Each numbered route names one example finding" in out
 
     def test_v2_invalid_figure_data_stops_publication(self, tmp_path):
         ctx, _ = self._build_ctx(tmp_path, self._yaml_seven_classes())

@@ -40,7 +40,9 @@ SURFACE_MAX_BYTES_RATCHET = {
     "thin_stage4_runtime": 3800,
     "thin_completion_runtime": 6000,
     "shared_threat_analysis_kernel": 16000,
-    "architecture_analyst_role": 12000,
+    # 12000 -> 13000 (2026-09-17): role units, capability labels, and concrete
+    # access-group and `none` rules. See the note in data/context-budgets.yaml.
+    "architecture_analyst_role": 13000,
     "control_analyst_role": 12000,
     "post_stride_synthesizer_role": 12000,
     # 12000 -> 14500 (2026-08-30): requirements and blueprint provenance grew

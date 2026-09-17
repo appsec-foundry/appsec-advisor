@@ -101,7 +101,7 @@ No meaningful security boundary exists between the internet-facing attack surfac
 
 **Figure 2 - Attack Routes and Impact**
 
-Each numbered route shows one example finding from the corresponding Top Threats group, its underlying weakness and its reported consequence. Potential business harm follows the group's reported impact categories and depends on deployment and affected assets. W-IDs in parentheses link the example to an existing weakness. Ellipses mark excerpts; full details remain in findings and SVG tooltips. Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to possible consequences.
+Each numbered route names one example finding from the corresponding Top Threats group with its access prerequisite, the register weakness it is linked to, and the group's potential business harm, which depends on deployment and affected assets. W-IDs in parentheses link the example to an existing weakness. The attack step, affected component and technical consequence remain in the SVG tooltips and the findings register. Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to potential harm.
 
 ![Figure 2 - Actors, attack routes, weaknesses and impact](figure2.svg)
 

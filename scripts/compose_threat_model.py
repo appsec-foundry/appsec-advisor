@@ -7223,11 +7223,11 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
     # re-prepended so the caption text is preserved.
     figure2_svg_md = _render_figure2_svg(ctx, figure1_paths, attack_taxonomy, impact_taxonomy)
     figure2_intro = (
-        "Each numbered route shows one example finding from the corresponding Top Threats group, "
-        "its underlying weakness and its reported consequence. Potential business harm follows the group's "
-        "reported impact categories and depends on deployment and affected assets. "
-        "W-IDs in parentheses link the example to an existing weakness. Ellipses mark excerpts; full details remain in findings and SVG tooltips. "
-        "Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to possible consequences."
+        "Each numbered route names one example finding from the corresponding Top Threats group with its access "
+        "prerequisite, the register weakness it is linked to, and the group's potential business harm, which depends "
+        "on deployment and affected assets. W-IDs in parentheses link the example to an existing weakness. The attack "
+        "step, affected component and technical consequence remain in the SVG tooltips and the findings register. "
+        "Red arrows indicate attacks; dashed red arrows involve a victim; grey arrows lead to potential harm."
     )
     figure2_block = f"{figure2_intro}\n\n{figure2_svg_md}" if figure2_svg_md else diagram_md
 

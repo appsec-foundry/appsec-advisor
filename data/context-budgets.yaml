@@ -93,7 +93,11 @@ surfaces:
     max_bytes: 16000
   architecture_analyst_role:
     path: agents/appsec-architecture-analyst.md
-    max_bytes: 12000
+    # 12000 -> 13000 (2026-09-17): the role now names the pre-flow role units,
+    # evidenced capability and service-role labels, and concrete access-group
+    # and `none` rules; a juice-shop run without them lost the login sequence,
+    # the public API alternative and every embedded-store access method.
+    max_bytes: 13000
   control_analyst_role:
     path: agents/appsec-control-analyst.md
     max_bytes: 12000

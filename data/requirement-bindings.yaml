@@ -444,6 +444,7 @@ requirements:
       - scripts/figure1_detail.py
       - scripts/figure1_security.py
       - scripts/figure1_svg.py
+      - scripts/embedded_store_access.py
       - data/posture-actor-labels.yaml
       - data/security-capabilities.yaml
       - scripts/walkthrough_renderer.py
@@ -474,6 +475,11 @@ requirements:
       - tests/test_figure2_svg.py::test_routes_keep_findings_weakness_and_impact_connected
       - tests/test_figure2_svg.py::test_unrelated_or_design_only_weakness_does_not_gain_a_reference
       - tests/test_figure2_svg.py::test_svg_checker_detects_a_missing_route_and_changed_badge
+      - tests/test_figure2_svg.py::test_cards_show_one_statement_and_keep_details_in_the_tooltip
+      - tests/test_figure2_svg.py::test_consecutive_routes_of_one_actor_share_a_card
+      - tests/test_figure2_svg.py::test_route_rows_stay_compact
+      - tests/test_agent_definitions.py::test_architecture_agent_states_access_variants_and_unauthenticated_access
+      - tests/test_embedded_store_access.py::test_open_accesses_to_linked_embedded_stores_record_no_authentication
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_no_generic_questions_for_empty_or_unmatched_models
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses
       - tests/test_team_questions.py::test_selector_caps_questions_but_keeps_unverified_evidence_line
