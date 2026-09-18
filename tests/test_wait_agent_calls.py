@@ -92,6 +92,43 @@ def test_a_stopped_child_no_longer_holds_the_join(tmp_path):
     assert _join(tmp_path, _iso(now - 30)) == 0
 
 
+def test_a_handback_on_the_last_allowed_turn_releases_the_join(tmp_path):
+    """No SubagentStop follows a handback on the last turn; the join used to hold until its deadline."""
+    now = int(time.time())
+    _write_calls(
+        tmp_path,
+        _call(
+            "toolu_arch",
+            now - 900,
+            agent_type="appsec-advisor:appsec-architecture-analyst",
+            handback_at=now - 2,
+            handback_at_turn_limit=True,
+        ),
+    )
+    assert _join(tmp_path, _iso(now - 1000)) == 0
+
+
+def test_a_child_silent_after_its_handback_releases_the_join(tmp_path):
+    now = int(time.time())
+    quiet = agent_lifecycle.HANDBACK_QUIET_SECONDS
+    _write_calls(tmp_path, _call("toolu_tb", now - 400, handback_at=now - quiet - 1))
+    assert _join(tmp_path, _iso(now - 500)) == 0
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"handback_at": -5},
+        {"handback_at": -300, "child_active_at": -5},
+    ],
+    ids=["within_quiet_period", "child_still_active"],
+)
+def test_a_handed_back_child_that_may_still_work_holds_the_join(tmp_path, extra):
+    now = int(time.time())
+    _write_calls(tmp_path, _call("toolu_merger", now - 600, **{key: now + value for key, value in extra.items()}))
+    assert _join(tmp_path, _iso(now - 700)) == wac.PENDING_EXIT_CODE
+
+
 def test_calls_from_before_the_dispatch_and_foreign_agents_are_not_joined(tmp_path):
     now = int(time.time())
     _write_calls(
@@ -190,7 +227,9 @@ def test_every_runtime_that_dispatches_agents_joins_them(runtime):
         assert "scripts/wait_agent_calls.py" in text, f"{runtime} dispatches agents but never joins them"
 
 
-@pytest.mark.parametrize("shape", ["running", "stopped", "done", "past_deadline"])
+@pytest.mark.parametrize(
+    "shape", ["running", "stopped", "done", "past_deadline", "handed_back_at_limit", "handed_back_just_now"]
+)
 def test_still_waiting_is_the_rule_the_join_and_the_boundaries_share(shape):
     """OR-14 rejects a boundary exactly while this join would still wait."""
     now = 2_000_000_000
@@ -200,8 +239,11 @@ def test_still_waiting_is_the_rule_the_join_and_the_boundaries_share(shape):
         "stopped": _call("toolu_stopped", now - 30, stopped_at=now - 5),
         "done": _call("toolu_done", now - 30, state="done"),
         "past_deadline": _call("toolu_stale", now - deadline - 1),
+        "handed_back_at_limit": _call("toolu_limit", now - 30, handback_at=now - 1, handback_at_turn_limit=True),
+        "handed_back_just_now": _call("toolu_fresh", now - 30, handback_at=now - 1),
     }[shape]
-    assert wac.still_waiting([call], now, deadline) == ([call] if shape == "running" else [])
+    waiting = shape in {"running", "handed_back_just_now"}
+    assert wac.still_waiting([call], now, deadline) == ([call] if waiting else [])
 
 
 @pytest.mark.parametrize("runtime", LIFECYCLE_JOINED_RUNTIMES)

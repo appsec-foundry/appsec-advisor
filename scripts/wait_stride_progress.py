@@ -69,7 +69,7 @@ def _live_wave_calls(output_dir: Path, component_ids: list[str]) -> list[dict]:
     return [
         call
         for call in agent_lifecycle.running_calls(output_dir)
-        if call.get("component_id") in wanted and not call.get("stopped_at")
+        if call.get("component_id") in wanted and not agent_lifecycle.child_has_stopped(call)
     ]
 
 

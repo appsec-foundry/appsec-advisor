@@ -3056,7 +3056,9 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
                 resolved_model=_resolved_model_from_transcript(transcript),
             )
             agent_lifecycle.append_events(_output_dir(), events)
-            if not events:
+            # A matched call returns no event when its usage is already recorded
+            # and did not grow; only a child no call owns is unattributed.
+            if not events and runtime_call is None:
                 _write(
                     "WARN ",
                     "AGENT_USAGE_UNATTRIBUTED",
@@ -3368,6 +3370,39 @@ def _response_fields(value: object, depth: int = 0) -> str:
     return f"type={type(value).__name__}" if depth == 0 else type(value).__name__
 
 
+def _observe_child_handback(event: hook_payload.HookEvent, sid: str) -> None:
+    """Record a child's handback, or the tool use of a child that handed back (OR-29).
+
+    A child that hands back on its last allowed turn never ends that turn, so
+    no SubagentStop follows; its own handback is then the last event the call
+    gets. The host names the child in ``agent_id``; without it, the call this
+    tool use is charged to is the one the budget watchdog would charge.
+    """
+    destination = _output_dir()
+    if event.tool_name != agent_lifecycle.HANDBACK_TOOL:
+        if event.agent_id:
+            agent_lifecycle.note_child_activity(destination, event.agent_id)
+        return
+    if not agent_lifecycle.state_path(destination).is_file():
+        return
+    call = (
+        agent_lifecycle.call_by_runtime_agent_id(destination, event.agent_id)
+        if event.agent_id
+        else agent_lifecycle.unique_running_call(destination, (sid or "")[:8])
+    )
+    if call is None or call.get("state") != "running":
+        return
+    from budget_watchdog import call_turns, close_call
+
+    call_id = str(call["agent_call_id"])
+    counted = call_turns(call_id, destination)
+    at_limit = counted is not None and counted[1] > 0 and counted[0] >= counted[1]
+    events = agent_lifecycle.note_child_handback(destination, call_id, at_turn_limit=at_limit)
+    agent_lifecycle.append_events(destination, events)
+    if events and at_limit:
+        close_call(call_id, destination)
+
+
 def handle_post_tool_use(data: dict, sid: str) -> None:
     event = _hook_event(data, "PostToolUse", sid)
     tool = event.tool_name
@@ -3637,6 +3672,12 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
                 _write("WARN ", crossing["event"], format_detail(crossing), sid, component=crossing.get("agent"))
     except Exception:
         # Watchdog must never break a run.
+        pass
+
+    # After the watchdog, so a handback reads the turn count that includes it.
+    try:
+        _observe_child_handback(event, sid)
+    except Exception:
         pass
 
 

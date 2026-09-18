@@ -13,9 +13,10 @@ single job joined with it idles a full slice after its agent has finished.
 
 Completion is read from the call lifecycle, never from an agent's files: a
 renderer rewrites its fragment in place and the threat merger rewrites its
-decisions after validating a draft, so a file proves nothing, while
-SubagentStop is the single terminal boundary of an async call (see
-agent_lifecycle.acknowledge_background_call). The waiter only reads that
+decisions after validating a draft, so a file proves nothing, while the
+child's stop is the single terminal boundary of an async call: its
+SubagentStop, or its handback when no SubagentStop can follow (see
+agent_lifecycle.child_has_stopped). The waiter only reads that
 state; settling a call stays the hooks' job. ``still_waiting`` is the one rule
 for which calls still hold a join: the controller rejects a context-v2
 boundary on the same rule (OR-14), so a boundary never judges output that its
@@ -82,14 +83,14 @@ def joined_calls(output_dir: Path, since: float | None) -> list[dict] | None:
     ]
 
 
-def is_live(call: dict) -> bool:
+def is_live(call: dict, now: float | None = None) -> bool:
     """A running call whose child has not stopped; a stopped child being settled no longer holds a join."""
-    return call.get("state") == "running" and not call.get("stopped_at")
+    return call.get("state") == "running" and not agent_lifecycle.child_has_stopped(call, now)
 
 
 def still_waiting(calls: list[dict], now: float, deadline_seconds: float) -> list[dict]:
     """The live calls a join still waits for; a call past the deadline never holds one."""
-    return [call for call in calls if is_live(call) and now - call.get("spawned_at", 0) <= deadline_seconds]
+    return [call for call in calls if is_live(call, now) and now - call.get("spawned_at", 0) <= deadline_seconds]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -119,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
             observed = True
             unobserved = 0
             now = time.time()
-            live = [call for call in calls if is_live(call)]
+            live = [call for call in calls if is_live(call, now)]
             waiting = still_waiting(live, now, deadline)
             if not waiting:
                 if live:

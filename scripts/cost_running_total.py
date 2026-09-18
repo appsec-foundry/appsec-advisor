@@ -113,6 +113,8 @@ _NON_PIPELINE_ROLES = frozenset({"skill-watchdog", "shared-session"})
 _END_GRACE_SECONDS = 180
 
 _AGENT_USAGE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?\sAGENT_USAGE\s+(.*)$")
+#: A resumed child's usage growth beyond its AGENT_USAGE row; every row adds.
+_AGENT_USAGE_RESUMED_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?\sAGENT_USAGE_RESUMED\s+(.*)$")
 _AGENT_SPAWN_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?\sAGENT_SPAWN\s+(.*)$")
 _USAGE_SOURCE_ABSENT = "code=usage_source_absent"
 
@@ -297,7 +299,15 @@ def aggregate_subagent_usage(
         return result
 
     usage_rows: list[tuple[str, dict[str, str]]] = []
+    resumed_rows: list[tuple[str, dict[str, str]]] = []
     for line in lines:
+        resumed = _AGENT_USAGE_RESUMED_RE.match(line)
+        if resumed and not (
+            (window_start and resumed.group(1) < window_start) or (window_end and resumed.group(1) > window_end)
+        ):
+            fields = dict(re.findall(r"(\w+)=([^\s]+)", resumed.group(2)))
+            if fields.get("agent_call_id"):
+                resumed_rows.append((fields["agent_call_id"], fields))
         for pattern, seen in ((_AGENT_USAGE_RE, metered), (_AGENT_SPAWN_RE, spawned)):
             m = pattern.match(line)
             if not m:
@@ -322,15 +332,15 @@ def aggregate_subagent_usage(
     # to, and only then the fixed fallback table — see vrc.release_key.
     learned = vrc.learn_alias_releases([fields for _, fields in usage_rows])
     unpriced_release_tokens = 0
-    unpriced_release_calls = 0
-    for call_id, fields in usage_rows:
+    unpriced_release_calls: set[str] = set()
+    for call_id, fields in usage_rows + resumed_rows:
         counts: dict[str, int] = {}
         for log_field in ("in", "out", "cache_write", "cache_read"):
             try:
                 counts[log_field] = int(fields.get(log_field, "0").replace(",", ""))
             except ValueError:
                 counts[log_field] = 0
-        host_tokens[call_id] = sum(counts.values())
+        host_tokens[call_id] = host_tokens.get(call_id, 0) + sum(counts.values())
         alias = vrc.strip_model_id(fields.get("model", ""))
         requested = vrc.release_key(fields.get("model", ""))
         release = (
@@ -343,8 +353,8 @@ def aggregate_subagent_usage(
         if pricing is None:
             # The host ran a release the table does not know: real spend, left
             # unpriced so the total reads as a floor instead of a wrong figure.
-            unpriced_release_tokens += host_tokens[call_id]
-            unpriced_release_calls += 1
+            unpriced_release_tokens += sum(counts.values())
+            unpriced_release_calls.add(call_id)
             continue
         for log_field, attr in (
             ("in", "in_tokens"),
@@ -359,7 +369,7 @@ def aggregate_subagent_usage(
     result["subagent_count"] = len(metered | covered)
     result["unmetered_agents"] = len(spawned - metered - covered)
     result["unpriced_tokens"] = unpriced + unpriced_release_tokens
-    result["unpriced_calls"] = len(covered) + unpriced_release_calls
+    result["unpriced_calls"] = len(covered) + len(unpriced_release_calls)
     result["subagent_snapshot"] = snapshot
     result["subagent_cost"] = cost
     return result

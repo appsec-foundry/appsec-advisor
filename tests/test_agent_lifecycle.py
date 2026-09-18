@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
@@ -12,6 +13,7 @@ sys.path.insert(0, str(SCRIPTS))
 import agent_lifecycle as lifecycle  # noqa: E402
 import agent_logger  # noqa: E402
 import budget_watchdog as budget  # noqa: E402
+import wait_agent_calls  # noqa: E402
 
 
 def _identity(
@@ -562,3 +564,156 @@ def test_launch_ack_never_revives_a_terminal_call(tmp_path: Path) -> None:
 
     assert lifecycle.acknowledge_background_call(tmp_path, "toolu_done") == []
     assert not lifecycle.running_calls(tmp_path)
+
+
+# --- OR-29: a child's handback ends its turns when no SubagentStop can follow ---
+
+
+def _child_post(tool: str, agent_id: str = "", **tool_input: object) -> dict:
+    payload: dict = {
+        "tool_name": tool,
+        "tool_use_id": f"toolu_child_{tool.lower()}",
+        "tool_input": dict(tool_input),
+        "tool_response": "",
+        "is_error": False,
+    }
+    if agent_id:
+        payload["agent_id"] = agent_id
+    return payload
+
+
+def _launched_call(output_dir: Path, call_id: str, runtime_id: str, *, agent: str, max_turns: int) -> None:
+    lifecycle.register_call(output_dir, _identity(call_id, agent=agent, max_turns=max_turns))
+    lifecycle.acknowledge_background_call(output_dir, call_id)
+    lifecycle.bind_runtime_agent_id(output_dir, call_id, runtime_id)
+    budget.open_call(_running(output_dir, call_id), output_dir)
+
+
+def test_a_handback_on_the_last_allowed_turn_ends_the_call_for_every_join(tmp_path: Path, monkeypatch) -> None:
+    """The host ends no turn after a handback on the last one, so no SubagentStop follows it."""
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    _launched_call(tmp_path, "toolu_arch", "agent-arch", agent="architecture-analyst", max_turns=3)
+    for name in ("a.json", "b.json"):
+        agent_logger.handle_post_tool_use(_child_post("Read", "agent-arch", file_path=name), "shared01")
+
+    agent_logger.handle_post_tool_use(_child_post("SubagentHandback", "agent-arch"), "shared01")
+
+    stored = _running(tmp_path, "toolu_arch")
+    assert stored["handback_at_turn_limit"] is True
+    assert wait_agent_calls.still_waiting([stored], time.time(), 3600) == []
+    assert lifecycle.unique_running_call(tmp_path, "shared01") is None
+    assert "toolu_arch" not in _budget_state(tmp_path)["calls"]
+    assert "AGENT_HANDBACK" in (tmp_path / ".hook-events.log").read_text(encoding="utf-8")
+
+
+def test_a_handback_without_a_host_agent_id_goes_to_the_call_its_turns_are_charged_to(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    _launched_call(tmp_path, "toolu_boundary", "agent-boundary", agent="trust-boundary-analyst", max_turns=24)
+
+    agent_logger.handle_post_tool_use(_child_post("SubagentHandback"), "shared01")
+
+    stored = _running(tmp_path, "toolu_boundary")
+    assert "handback_at_turn_limit" not in stored
+    assert not lifecycle.child_has_stopped(stored, now=stored["handback_at"] + 1)
+    assert lifecycle.child_has_stopped(stored, now=stored["handback_at"] + lifecycle.HANDBACK_QUIET_SECONDS)
+
+
+def test_a_child_that_keeps_working_after_its_handback_keeps_its_join(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    _launched_call(tmp_path, "toolu_merge", "agent-merge", agent="threat-merger", max_turns=40)
+    quiet = lifecycle.HANDBACK_QUIET_SECONDS
+    monkeypatch.setattr(lifecycle, "_now", lambda: 1_000)
+    agent_logger.handle_post_tool_use(_child_post("SubagentHandback", "agent-merge"), "shared01")
+    monkeypatch.setattr(lifecycle, "_now", lambda: 1_050)
+    agent_logger.handle_post_tool_use(_child_post("Read", "agent-merge", file_path="c.json"), "shared01")
+
+    stored = _running(tmp_path, "toolu_merge")
+    assert stored["child_active_at"] == 1_050
+    assert not lifecycle.child_has_stopped(stored, now=1_000 + quiet)
+    assert lifecycle.child_has_stopped(stored, now=1_050 + quiet)
+
+
+def test_a_handback_no_call_can_be_named_for_changes_no_call(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    _launched_call(tmp_path, "toolu_ms", "agent-ms", agent="ms-renderer", max_turns=1)
+    _launched_call(tmp_path, "toolu_sa", "agent-sa", agent="secarch-renderer", max_turns=1)
+
+    agent_logger.handle_post_tool_use(_child_post("SubagentHandback"), "shared01")
+    agent_logger.handle_post_tool_use(_child_post("SubagentHandback", "agent-foreign"), "shared01")
+
+    assert all("handback_at" not in call for call in lifecycle.running_calls(tmp_path))
+
+
+def test_terminal_cleanup_closes_a_handed_back_call_as_done(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    _launched_call(tmp_path, "toolu_render", "agent-render", agent="ms-renderer", max_turns=1)
+    agent_logger.handle_post_tool_use(_child_post("SubagentHandback", "agent-render"), "shared01")
+    lifecycle.register_call(tmp_path, _identity("toolu_cut", agent="stride-analyzer-v2", max_turns=5))
+
+    events = lifecycle.fail_all_running(tmp_path, "outer_session_terminal")
+
+    assert sorted((event.event, event.call["agent_call_id"], event.reason) for event in events) == [
+        ("AGENT_DONE", "toolu_render", lifecycle.HANDBACK_WITHOUT_STOP),
+        ("AGENT_FAILED", "toolu_cut", "outer_session_terminal"),
+    ]
+
+
+def test_a_resumed_childs_later_usage_is_recorded_as_its_growth(tmp_path: Path) -> None:
+    lifecycle.register_call(tmp_path, _identity("toolu_resumed"))
+    lifecycle.bind_runtime_agent_id(tmp_path, "toolu_resumed", "agent-resumed")
+    first = {
+        "input_tokens": 100,
+        "output_tokens": 2_000,
+        "cache_creation_input_tokens": 50,
+        "cache_read_input_tokens": 9_000,
+    }
+    grown = {
+        "input_tokens": 110,
+        "output_tokens": 2_600,
+        "cache_creation_input_tokens": 50,
+        "cache_read_input_tokens": 9_400,
+    }
+
+    assert [event.event for event in lifecycle.record_runtime_usage(tmp_path, "agent-resumed", first)] == [
+        "AGENT_USAGE"
+    ]
+    lifecycle.finish_call(tmp_path, "toolu_resumed")
+    events = lifecycle.record_runtime_usage(tmp_path, "agent-resumed", grown)
+
+    assert [event.event for event in events] == ["AGENT_USAGE_RESUMED"]
+    assert events[0].call["usage"] == {
+        "input_tokens": 10,
+        "output_tokens": 600,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 400,
+    }
+    assert lifecycle.record_runtime_usage(tmp_path, "agent-resumed", grown) == []
+    assert lifecycle.record_runtime_usage(tmp_path, "agent-resumed", first) == []
+
+
+def test_a_repeated_stop_of_a_known_child_is_not_reported_unattributed(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    lifecycle.register_call(tmp_path, _identity("toolu_again"))
+    lifecycle.bind_runtime_agent_id(tmp_path, "toolu_again", "agent-again")
+    stop = {"agent_id": "agent-again", "stop_reason": "end_turn", "usage": {"input_tokens": 100, "output_tokens": 20}}
+
+    agent_logger.handle_stop(stop, "shared01", "SubagentStop")
+    agent_logger.handle_stop(stop, "shared01", "SubagentStop")
+
+    log = (tmp_path / ".hook-events.log").read_text(encoding="utf-8")
+    assert "AGENT_USAGE_UNATTRIBUTED" not in log
+
+
+def test_persisted_handback_fields_match_the_published_schema(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    _launched_call(tmp_path, "toolu_schema_hb", "agent-schema", agent="threat-merger", max_turns=1)
+    agent_logger.handle_post_tool_use(_child_post("SubagentHandback", "agent-schema"), "shared01")
+    lifecycle.note_child_stop(tmp_path, "toolu_schema_hb")
+    schema = json.loads(
+        (Path(__file__).parent.parent / "schemas" / "agent-call-lifecycle.schema.json").read_text(encoding="utf-8")
+    )
+    value = json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))
+    assert value["calls"][0]["handback_at_turn_limit"] is True
+    assert list(Draft202012Validator(schema).iter_errors(value)) == []

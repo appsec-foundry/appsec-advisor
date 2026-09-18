@@ -469,6 +469,17 @@ def observe_tool_uses(call: dict, turns: int, output_dir: str | Path) -> Optiona
         return crossing
 
 
+def call_turns(agent_call_id: str, output_dir: str | Path) -> tuple[int, int] | None:
+    """``(turns, max_turns)`` counted for one call, or ``None`` without a counter."""
+    if not agent_call_id or not output_dir:
+        return None
+    with _state_lock(output_dir):
+        entry = _read_state(output_dir)["calls"].get(agent_call_id)
+    if not isinstance(entry, dict):
+        return None
+    return int(entry.get("turns") or 0), int(entry.get("max_turns") or 0)
+
+
 def close_call(agent_call_id: str, output_dir: str | Path) -> None:
     """Atomically retire counter ownership; stale markers become inert immediately."""
     if not agent_call_id or not output_dir:

@@ -27,7 +27,9 @@ events are no-ops; missing, reordered, or conflicting transitions emit
 `AGENT_LIFECYCLE_REJECTED`. The host `agent_id` binds SubagentStart and
 SubagentStop usage to the call. SubagentStop reads the child-specific
 `agent_transcript_path` and retires the budget; a missing or later Agent
-PostToolUse cannot reopen the call. The common `transcript_path` belongs to the
+PostToolUse cannot reopen the call. A child's own `SubagentHandback` ends its
+turns and every join once it came on the last allowed turn, when no
+SubagentStop can follow, or the child stayed silent after it (OR-29). The common `transcript_path` belongs to the
 parent session. A headless session persists neither transcript: SubagentStop
 then defers the outcome instead of recording a failure, and the Agent
 PostToolUse terminalizes the call and supplies its usage. A run or session ID

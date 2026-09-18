@@ -18,6 +18,11 @@ arrive (``note_child_stop``, ``acknowledge_background_call``).  A call that
 leaves ``running`` only at the run's terminal cleanup is a leak, not a late
 answer — ``unique_running_call`` then attributes the parent's own tool uses to a
 finished child and re-opens the turn counter its stop retired.
+
+A child that hands back its report on its last allowed turn never ends that
+turn, so no ``SubagentStop`` follows. ``child_has_stopped`` therefore also
+accepts the child's own handback, once it came at the turn limit or the child
+stayed silent after it (OR-29).
 """
 
 from __future__ import annotations
@@ -49,6 +54,16 @@ _TERMINAL = frozenset({"done", "failed"})
 #: — that much the stop proves — but neither the child transcript nor the Agent
 #: return said how, so the event must not read as verified success.
 OUTCOME_UNOBSERVED = "outcome_unobserved"
+
+#: The tool a child calls to deliver its final report to the parent.
+HANDBACK_TOOL = "SubagentHandback"
+#: How long a child may stay silent after its handback before it counts as
+#: stopped. A host ends the child's turn within seconds of a handback; only a
+#: handback on the last allowed turn is never followed by ``SubagentStop``.
+HANDBACK_QUIET_SECONDS = 60
+#: Reason on the terminal event of a call whose child handed back its report
+#: but never sent ``SubagentStop``.
+HANDBACK_WITHOUT_STOP = "handback_without_subagent_stop"
 
 
 class LifecycleError(RuntimeError):
@@ -116,6 +131,9 @@ def validate_state(state: object) -> dict[str, Any]:
             "launch_acknowledged_at",
             "background_promoted",
             "stopped_at",
+            "handback_at",
+            "handback_at_turn_limit",
+            "child_active_at",
             "finished_at",
             "failure_reason",
             "usage_recorded_at",
@@ -123,6 +141,8 @@ def validate_state(state: object) -> dict[str, Any]:
         }
         if not set(call).issubset(allowed):
             raise LifecycleError("agent lifecycle call has unknown fields")
+        if "handback_at_turn_limit" in call and not isinstance(call["handback_at_turn_limit"], bool):
+            raise LifecycleError("agent lifecycle handback turn-limit flag is invalid")
         call_id = call.get("agent_call_id")
         if not isinstance(call_id, str) or not _ID_RE.fullmatch(call_id) or call_id in seen:
             raise LifecycleError("agent lifecycle call id is invalid or duplicated")
@@ -131,7 +151,15 @@ def validate_state(state: object) -> dict[str, Any]:
             raise LifecycleError("agent lifecycle state is invalid")
         if not isinstance(call.get("background"), bool):
             raise LifecycleError("agent lifecycle background flag is invalid")
-        for key in ("spawned_at", "running_at", "stopped_at", "finished_at", "usage_recorded_at"):
+        for key in (
+            "spawned_at",
+            "running_at",
+            "stopped_at",
+            "handback_at",
+            "child_active_at",
+            "finished_at",
+            "usage_recorded_at",
+        ):
             if key in call and (isinstance(call[key], bool) or not isinstance(call[key], int) or call[key] < 0):
                 raise LifecycleError(f"agent lifecycle {key} is invalid")
         attempt = call.get("attempt")
@@ -402,6 +430,53 @@ def note_child_stop(output_dir: str | Path, call_id: str) -> bool:
         return bool(call.get("launch_acknowledged_at"))
 
 
+def child_has_stopped(call: dict[str, Any], now: float | None = None) -> bool:
+    """Whether a call's child takes no further turns (OR-20, OR-29).
+
+    ``SubagentStop`` proves it. A handback proves it too once it came on the
+    child's last allowed turn, or once the child stayed silent for
+    ``HANDBACK_QUIET_SECONDS`` after it: a handback on the last turn is never
+    followed by ``SubagentStop``, and waiting for that event held every join
+    until its deadline.
+    """
+    if call.get("stopped_at"):
+        return True
+    handback_at = call.get("handback_at")
+    if not handback_at:
+        return False
+    if call.get("handback_at_turn_limit"):
+        return True
+    now = time.time() if now is None else now
+    return now - max(handback_at, call.get("child_active_at") or 0) >= HANDBACK_QUIET_SECONDS
+
+
+def note_child_handback(output_dir: str | Path, call_id: str, *, at_turn_limit: bool) -> list[LifecycleEvent]:
+    """Record the child's own handback of its final report; the first one counts."""
+    with _locked(output_dir):
+        state = _read_state_unlocked(output_dir)
+        call = next((row for row in state["calls"] if row.get("agent_call_id") == call_id), None)
+        if call is None or call.get("state") in _TERMINAL or call.get("handback_at"):
+            return []
+        call["handback_at"] = _now()
+        if at_turn_limit:
+            call["handback_at_turn_limit"] = True
+        _write_state_unlocked(output_dir, state)
+        return [LifecycleEvent("AGENT_HANDBACK", dict(call), "turn_limit" if at_turn_limit else "")]
+
+
+def note_child_activity(output_dir: str | Path, runtime_agent_id: str) -> None:
+    """Restart the quiet period of a handed-back child that keeps using tools."""
+    if not _ID_RE.fullmatch(runtime_agent_id or "") or not state_path(output_dir).is_file():
+        return
+    with _locked(output_dir):
+        state = _read_state_unlocked(output_dir)
+        call = next((row for row in state["calls"] if row.get("runtime_agent_id") == runtime_agent_id), None)
+        if call is None or call.get("state") != "running" or not call.get("handback_at"):
+            return
+        call["child_active_at"] = _now()
+        _write_state_unlocked(output_dir, state)
+
+
 def acknowledge_background_call(output_dir: str | Path, call_id: str) -> list[LifecycleEvent]:
     """Record launch acknowledgement without treating it as Agent completion."""
     with _locked(output_dir):
@@ -475,7 +550,7 @@ def unique_running_call(output_dir: str | Path, session_id: str) -> dict[str, An
     to the finished child is what re-opened a budget entry `close_call` had just
     retired.
     """
-    calls = [call for call in running_calls(output_dir, session_id) if not call.get("stopped_at")]
+    calls = [call for call in running_calls(output_dir, session_id) if not child_has_stopped(call)]
     return calls[0] if len(calls) == 1 else None
 
 
@@ -562,41 +637,51 @@ def _record_usage_for_call(
     tool_uses: int | None = None,
     resolved_model: str = "",
 ) -> list[LifecycleEvent]:
-    """Record a call's usage once and return its ``AGENT_USAGE`` event.
+    """Record a call's usage once as ``AGENT_USAGE``; a resumed child's growth as ``AGENT_USAGE_RESUMED``.
 
     ``resolved_model`` is the release the host reports the call ran on; pricing
     needs it because an alias such as ``opus`` names no release. It rides on the
     event only — the persisted call shape is schema-bound
     (``schemas/agent-call-lifecycle.schema.json``) and nothing reads it back.
     """
+    token_keys = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
     with _locked(output_dir):
         state = _read_state_unlocked(output_dir)
         # Terminal calls accept usage too: SubagentStop is the only per-call
         # usage source and always arrives after the Agent tool's async return
-        # has already closed the call. `usage_recorded_at` keeps this single-shot.
+        # has already closed the call. `usage_recorded_at` keeps AGENT_USAGE
+        # single-shot.
         call = next(
             (row for row in state["calls"] if row.get("agent_call_id") == call_id),
             None,
         )
-        if call is None or call.get("usage_recorded_at"):
+        if call is None:
             return []
-        call["usage_recorded_at"] = _now()
-        call["usage"] = {
-            key: int(usage.get(key) or 0)
-            for key in (
-                "input_tokens",
-                "output_tokens",
-                "cache_creation_input_tokens",
-                "cache_read_input_tokens",
-            )
-        }
-        if tool_uses is not None:
-            call["usage"]["tool_uses"] = max(0, int(tool_uses))
-        _write_state_unlocked(output_dir, state)
-        event_call = dict(call)
+        totals = {key: int(usage.get(key) or 0) for key in token_keys}
+        if call.get("usage_recorded_at"):
+            # A resumed child stops again with its transcript total, which
+            # includes the usage already recorded. Only the growth is new.
+            recorded = call.get("usage") or {}
+            increment = {key: totals[key] - int(recorded.get(key) or 0) for key in token_keys}
+            if any(value < 0 for value in increment.values()) or not any(increment.values()):
+                return []
+            call["usage"] = dict(totals)
+            if tool_uses is not None:
+                call["usage"]["tool_uses"] = max(0, int(tool_uses))
+            _write_state_unlocked(output_dir, state)
+            event_call = dict(call, usage=increment)
+            event = "AGENT_USAGE_RESUMED"
+        else:
+            call["usage_recorded_at"] = _now()
+            call["usage"] = dict(totals)
+            if tool_uses is not None:
+                call["usage"]["tool_uses"] = max(0, int(tool_uses))
+            _write_state_unlocked(output_dir, state)
+            event_call = dict(call)
+            event = "AGENT_USAGE"
         if _MODEL_ID_RE.fullmatch(resolved_model or ""):
             event_call["resolved_model"] = resolved_model
-        return [LifecycleEvent("AGENT_USAGE", event_call)]
+        return [LifecycleEvent(event, event_call)]
 
 
 def record_call_usage(
@@ -664,8 +749,13 @@ def fail_all_running(output_dir: str | Path, reason: str) -> list[LifecycleEvent
         for call in state["calls"]:
             if call.get("state") != "running":
                 continue
-            call["state"] = "failed"
             call["finished_at"] = _now()
+            if call.get("handback_at") and child_has_stopped(call):
+                # The child delivered its report; only its stop event is missing.
+                call["state"] = "done"
+                events.append(LifecycleEvent("AGENT_DONE", dict(call), HANDBACK_WITHOUT_STOP))
+                continue
+            call["state"] = "failed"
             call["failure_reason"] = _bounded(reason, 512)
             events.append(LifecycleEvent("AGENT_FAILED", dict(call), reason))
         if events:
@@ -738,7 +828,7 @@ def is_current_claim(output_dir: str | Path, call: dict[str, Any]) -> bool:
     # STRIDE progress write routinely lands after its stop and must still be
     # attributed (see `write_stride_progress._owning_call`). Turn ownership and
     # attempt ownership end at different moments (`authoritative_call`).
-    if not call_id or live is None or live.get("stopped_at"):
+    if not call_id or live is None or child_has_stopped(live):
         return False
     return claim_is_authoritative(output_dir, call)
 
@@ -756,7 +846,7 @@ def event_detail(event: LifecycleEvent) -> str:
     for key in ("action_id", "job_id", "component_id", "attempt", "analysis_depth"):
         if call.get(key) not in (None, ""):
             fields.append(f"{key}={call[key]}")
-    if event.event == "AGENT_USAGE":
+    if event.event in {"AGENT_USAGE", "AGENT_USAGE_RESUMED"}:
         usage = call.get("usage") or {}
         fields.extend(
             [

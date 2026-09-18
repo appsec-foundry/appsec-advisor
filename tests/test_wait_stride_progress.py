@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import stride_dispatch_waves as waves
@@ -351,3 +352,13 @@ def test_live_wave_calls_select_this_waves_unstopped_analyzers(tmp_path, monkeyp
     monkeypatch.setattr(wsp.agent_lifecycle, "running_calls", lambda _out: calls)
 
     assert [call["agent_call_id"] for call in wsp._live_wave_calls(tmp_path, ["ci-cd"])] == ["a"]
+
+
+def test_an_analyzer_that_handed_back_on_its_last_turn_holds_no_wave(tmp_path, monkeypatch):
+    calls = [
+        {"component_id": "billing", "agent_call_id": "d", "handback_at": 1, "handback_at_turn_limit": True},
+        {"component_id": "billing", "agent_call_id": "e", "handback_at": int(time.time())},
+    ]
+    monkeypatch.setattr(wsp.agent_lifecycle, "running_calls", lambda _out: calls)
+
+    assert [call["agent_call_id"] for call in wsp._live_wave_calls(tmp_path, ["billing"])] == ["e"]

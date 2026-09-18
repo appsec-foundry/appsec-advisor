@@ -24,7 +24,7 @@ model identifier.
 | Scope | Events |
 |-------|--------|
 | Controller / skill only | `ASSESSMENT_START`, `ASSESSMENT_END`, `PHASE_START`, `PHASE_END`, `AGENT_INVOKE`, `AGENT_DONE`, `AGENT_DISPATCH`, `MAX_TURNS`, `BASH_WARN`, `CACHE_HIT`, `TELEMETRY_MISMATCH` |
-| Hook lifecycle | `AGENT_SPAWN`, `AGENT_RUNNING`, `AGENT_USAGE`, `AGENT_DONE`, `AGENT_FAILED`, `AGENT_LIFECYCLE_REJECTED`, `HOOK_PAYLOAD_UNEXPECTED` |
+| Hook lifecycle | `AGENT_SPAWN`, `AGENT_RUNNING`, `AGENT_USAGE`, `AGENT_USAGE_RESUMED`, `AGENT_HANDBACK`, `AGENT_DONE`, `AGENT_FAILED`, `AGENT_LIFECYCLE_REJECTED`, `HOOK_PAYLOAD_UNEXPECTED` |
 | Semantic agents | `AGENT_START`, `AGENT_END`, `FILE_WRITE`, `AGENT_ERROR`, `WRAP_UP_TRIGGERED` |
 | Watchdog-emitted | `BUDGET_WARN` (75% of `maxTurns`), `BUDGET_CRITICAL` (90%), `MAX_TURNS` (100%). The watchdog counts only a concrete running `agent_call_id`. SubagentStop reconciles the distinct tool-use count, terminalizes the call, and retires its budget; a later PostToolUse is idempotent. Parent tools and shared sessions never select a budget owner. |
 
@@ -39,7 +39,7 @@ depends on emits `HOOK_PAYLOAD_UNEXPECTED` instead of degrading silently.
 
 SubagentStop takes stop reason and usage from the host's child-specific
 `agent_transcript_path`; the common `transcript_path` names the parent session.
-A headless session persists no transcript, so neither answers there. `SubagentStop` and the Agent `PostToolUse` then hand the outcome over once, in whichever order they arrive: the first to find the question unanswerable emits `AGENT_OUTCOME_DEFERRED` rather than recording a failure, and the second terminalizes as `AGENT_DONE` with `reason=outcome_unobserved`. A host whose Agent return is a launch acknowledgement sends it at dispatch, so `SubagentStop` is the second event and closes the call there; a host that answers on completion carries per-call usage in that return's `usage` block and `totalToolUseCount`. No call may end a run in `running`. The turn budget retires at the stop either way, and a stopped call owns no further turns even before its outcome is settled.
+A headless session persists no transcript, so neither answers there. `SubagentStop` and the Agent `PostToolUse` then hand the outcome over once, in whichever order they arrive: the first to find the question unanswerable emits `AGENT_OUTCOME_DEFERRED` rather than recording a failure, and the second terminalizes as `AGENT_DONE` with `reason=outcome_unobserved`. A host whose Agent return is a launch acknowledgement sends it at dispatch, so `SubagentStop` is the second event and closes the call there; a host that answers on completion carries per-call usage in that return's `usage` block and `totalToolUseCount`. No call may end a run in `running`. The turn budget retires at the stop either way, and a stopped call owns no further turns even before its outcome is settled. A child's own `SubagentHandback` counts as its stop once it came on the last allowed turn, which no `SubagentStop` follows, or the child stayed silent for 60 seconds after it (`AGENT_HANDBACK`). A resumed child's later usage growth is `AGENT_USAGE_RESUMED`.
 | Sub-agent step events | stride-analyzer / context-resolver / triage-validator: `STEP_START` / `STEP_END`. recon-scanner: `SCAN_START` / `SCAN_END`. qa-reviewer: `CHECK_START` / `CHECK_END`. Orchestrator inline phases also use `STEP_START` / `STEP_END`. |
 
 `AGENT_DONE` and `AGENT_FAILED` are the only terminal outcome of a call. A
