@@ -1941,7 +1941,12 @@ def test_report_composer_publishes_compact_annotations_without_fallback(tmp_path
     svg = (tmp_path / "report.figure1.svg").read_text()
     assert context.warnings == []
     assert "(report.figure1.svg)" in markdown
-    assert "Numbered hexagons identify authentication" in markdown
+    facts = F.overview_facts(model, paths, taxonomy)
+    intro = markdown.split("\n", 1)[0]
+    assert f"has {facts['components']} components in {facts['layers']} layers" in intro
+    assert f"each of the {facts['scenarios']} attack scenarios below begins" in intro
+    # The in-figure legend explains the notation; the introduction does not repeat it.
+    assert "hexagon" not in intro and "not established" not in intro
     assert "Detailed architecture diagram" in markdown
     assert "All Critical · High fills to 5 · +N = omitted High categories" in svg
     assert "Unsafe Query Construction (SQLi)" in svg
@@ -2230,6 +2235,89 @@ def test_flow_lines_use_payload_names_instead_of_identifiers(detail):
     text = " ".join(node.text or "" for node in root.iter("{http://www.w3.org/2000/svg}text"))
     assert "Orders" in text
     assert "df-001" not in text
+
+
+@pytest.mark.parametrize("prefix", ["kiosk", "ledger"])
+def test_overview_facts_count_what_the_overview_draws(prefix):
+    model = _routing_model(["client", "application", "data", "application"], [(0, 1), (1, 2)], prefix)
+    model["components"][3]["deployment_zones"] = ["ci-runner"]
+    model["external_entities"] = [
+        {"id": "ext-person", "kind": "legitimate-role", "name": "Operator", "description": "Uses the client"},
+        {"id": "ext-idp", "kind": "identity-provider", "name": "Sign-in", "description": "Account provider"},
+    ]
+    model["data_flows"].append({"id": "df-009", "from": f"{prefix}-1", "to": "external", "label": "Webhook"})
+    # People are not external services; an unnamed external recipient is drawn and counted.
+    assert F.overview_facts(model, {}, {}) == {"components": 4, "layers": 4, "external_services": 2, "scenarios": 0}
+    model, paths, taxonomy = _model()
+    numbers = {s["n"] for s in F.scenarios_from_attack_paths(model, paths, taxonomy)[0]}
+    assert numbers and F.overview_facts(model, paths, taxonomy)["scenarios"] == len(numbers)
+
+
+@pytest.mark.parametrize("payload", ["Bundle download", "Static assets"])
+@pytest.mark.parametrize("detail", [False, True])
+def test_human_interaction_edges_describe_use_not_the_authored_payload(payload, detail):
+    model = _routing_model(["client", "application"], [(0, 1)], "portal")
+    model["external_entities"] = [
+        {"id": "ext-person", "kind": "legitimate-role", "name": "Portal operator", "description": "Uses the portal"}
+    ]
+    model["data_flows"].append(
+        {
+            "id": "df-002",
+            "from": "external",
+            "from_entity": "ext-person",
+            "to": "portal-0",
+            "interaction": True,
+            "diagram_label": payload,
+            "label": f"{payload} served by the web server",
+            "protocol": "HTTPS",
+            "direction": "unidirectional",
+            "data_classification": "Internal",
+            "evidence": [{"file": "server/static.js", "line": 14}],
+        }
+    )
+    model["data_flows"][0]["diagram_label"] = "Account records"
+    svg, _ = F._build(model, [], [], detail=detail)
+    root = ET.fromstring(svg)
+    text = " ".join(root.itertext())
+    assert F.INTERACTION_LABEL in text
+    # Neither the visible label nor any hover text repeats the authored payload or its description.
+    assert payload not in text and "served by" not in svg
+    edges = [g for g in root.iter() if g.get("data-flow-ids") == "df-002" and g.get("data-access-mode") is not None]
+    hovers = [t.text or "" for g in edges for t in g.findall("{*}title")]
+    assert hovers and all(h == f"df-002: {F.INTERACTION_LABEL}; evidence: server/static.js:14" for h in hovers)
+    # Technical flows keep the payload their author named.
+    assert "Account records" in text
+
+
+@pytest.mark.parametrize("server_file", ["routes/static.ts", "app/views/assets.py"])
+def test_existing_model_with_server_evidenced_interaction_still_exports_and_renders(server_file):
+    from validate_intermediate import _check_export_trace_invariants
+
+    model = _routing_model(["client", "application"], [(0, 1)], "shop")
+    model["components"][0]["paths"] = ["web/**"]
+    model["components"][1]["paths"] = [server_file]
+    model["external_entities"] = [
+        {"id": "ext-person", "kind": "legitimate-role", "name": "Shopper", "description": "Uses the shop"}
+    ]
+    model["data_flows"].append(
+        {
+            "id": "df-002",
+            "from": "external",
+            "from_entity": "ext-person",
+            "to": "shop-0",
+            "interaction": True,
+            "diagram_label": "Client bundle",
+            "label": "Browser loads the client bundle",
+            "protocol": "HTTP",
+            "evidence": [{"file": server_file, "line": 14}],
+        }
+    )
+    # Models written before the producer rule stay exportable and re-renderable.
+    assert _check_export_trace_invariants(model) == []
+    svg, problems = F.check_diagram(model, {}, {}, detail=False)
+    assert problems == []
+    text = " ".join(ET.fromstring(svg).itertext())
+    assert F.INTERACTION_LABEL in text and "bundle" not in text
 
 
 @pytest.mark.parametrize("prefix", ["archive", "ledger"])

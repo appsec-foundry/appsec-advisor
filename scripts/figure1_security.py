@@ -6,7 +6,7 @@ Colours describe method properties, not the effectiveness of an implementation.
 """
 
 SCHEMES = {
-    "unknown": ("Not established", "The inspected evidence does not establish authentication."),
+    "unknown": ("Unknown", "Authentication could not be determined from the code."),
     "none": ("No Authentication", "The recipient performs no authentication check on this connection."),
     "password": ("Password login", "The recipient checks the supplied password."),
     "basic": ("HTTP Basic", "Username and password accompany the request."),

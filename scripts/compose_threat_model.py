@@ -5890,6 +5890,19 @@ def _figure_basename_for_md(md_name: str) -> str:
     return f"{Path(md_name).stem}.figure1.svg"
 
 
+def _figure1_intro(project: str, facts: dict) -> str:
+    """Introduce Figure 1 with this system's facts; the in-figure legend explains the notation."""
+    system = f"{project} has {pluralize(facts['components'], 'component')} in {pluralize(facts['layers'], 'layer')}"
+    if facts["external_services"]:
+        system += f" and exchanges data with {pluralize(facts['external_services'], 'external service')}"
+    shown = "Figure 1 shows these data flows"
+    if facts["scenarios"] == 1:
+        shown += " and where the attack scenario below begins"
+    elif facts["scenarios"]:
+        shown += f" and where each of the {facts['scenarios']} attack scenarios below begins"
+    return f"{system}. {shown}. The complete boundary catalogue remains in [§1 Trust Boundaries](#trust-boundaries)."
+
+
 def _figure1_display_data(ctx: RenderContext) -> dict:
     """Use recorded identity or the infobox's manifest sources without changing the model."""
     data = ctx.yaml_data
@@ -5944,7 +5957,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     detail_basename = f"{Path(ctx.figure_basename).stem}-detail.svg"
     role_notes = []
     try:
-        from figure1_dfd import check_diagram, legitimate_role_notes
+        from figure1_dfd import check_diagram, legitimate_role_notes, overview_facts
 
         figure_data = _figure1_display_data(ctx)
         svg, problems = check_diagram(
@@ -5958,15 +5971,9 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
             svg = ""
         else:
             role_notes = legitimate_role_notes(ctx.yaml_data)
-            intro = (
-                (
-                    "Numbered hexagons identify authentication at each access; `0` means no authentication and `?` means "
-                    "not established. Colours describe method properties, not implementation assurance. "
-                    if "data-authentication=" in svg
-                    else ""
-                )
-                + "Attack numbers match the scenarios below. The complete boundary catalogue remains in "
-                "[§1 Trust Boundaries](#trust-boundaries)."
+            intro = _figure1_intro(
+                (figure_data.get("project") or {}).get("name") or "The system",
+                overview_facts(figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels),
             )
             try:
                 detail_svg, detail_problems = check_diagram(

@@ -5938,13 +5938,42 @@ def test_render_figure1_svg_skill_config_false_is_file_reference(tmp_path: Path)
     assert "](figure1.svg)" in md and "data:image" not in md
 
 
+@pytest.mark.parametrize(
+    "project,facts,expected",
+    [
+        (
+            "Kiosk Portal",
+            {"components": 8, "layers": 4, "external_services": 3, "scenarios": 7},
+            "Kiosk Portal has 8 components in 4 layers and exchanges data with 3 external services. "
+            "Figure 1 shows these data flows and where each of the 7 attack scenarios below begins.",
+        ),
+        (
+            "ledger",
+            {"components": 1, "layers": 1, "external_services": 1, "scenarios": 1},
+            "ledger has 1 component in 1 layer and exchanges data with 1 external service. "
+            "Figure 1 shows these data flows and where the attack scenario below begins.",
+        ),
+        (
+            "Archive",
+            {"components": 2, "layers": 2, "external_services": 0, "scenarios": 0},
+            "Archive has 2 components in 2 layers. Figure 1 shows these data flows.",
+        ),
+    ],
+)
+def test_figure1_intro_states_what_the_figure_shows_for_this_system(project, facts, expected):
+    intro = compose._figure1_intro(project, facts)
+    assert intro == expected + " The complete boundary catalogue remains in [§1 Trust Boundaries](#trust-boundaries)."
+
+
 def test_render_figure1_svg_prefers_the_data_flow_diagram(tmp_path: Path) -> None:
     out = tmp_path / "out"
     out.mkdir()
     ctx = _fig1_ctx(out)
     md = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
-    assert md.startswith("Attack numbers match the scenarios below.")
-    assert "Numbered hexagons" not in md  # This legacy fixture has no data-flow authentication ports.
+    # Without a recorded or manifest name the subject stays neutral instead of a directory name.
+    assert md.startswith(
+        "The system has 3 components in 3 layers. Figure 1 shows these data flows and where the attack scenario below begins."
+    )
     assert "Architecture and Threat Overview" in md
     assert (out / "figure1-detail.svg").is_file()
     assert "Architecture tiers top-to-bottom" not in md
@@ -6493,8 +6522,9 @@ def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(mon
     console_questions = completion.build_manual_review_step(_Ctx.yaml_data, report)
 
     assert report_questions.startswith("### Open Questions for the Team\n\n")
-    assert "The code cannot settle these points." in report_questions
-    for value in ("W-001", "F-001", "which single policy layer should enforce ownership"):
+    assert "The analysis could not fully resolve these points from the code." in report_questions
+    assert "Discuss them with the people who know the deployment" in report_questions
+    for value in ("W-001", "F-001", "Which cross-user or cross-tenant accesses through these routes are intended"):
         assert value in report_questions
         assert value in console_questions
 
@@ -6907,8 +6937,9 @@ def test_figure1_uses_project_manifest_identity_in_both_images(tmp_path, manifes
     ctx = _fig1_ctx(out)
     ctx.yaml_data["meta"] = {"project": "working-copy-2", "plugin_version": "9.9.9"}
     original = copy.deepcopy(ctx.yaml_data)
-    compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    markdown = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
     assert ctx.warnings == []
+    assert markdown.startswith(f"{name} has 3 components in 3 layers.")
     for filename in ("figure1.svg", "figure1-detail.svg"):
         svg = (out / filename).read_text()
         assert f"{name} · {version}" in svg

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -147,4 +148,62 @@ def test_disputed_registration_still_respects_three_question_cap():
         team_questions={f"mechanism-{n}": f"Decision {n}?" for n in range(1, 5)},
     )
     assert len(result["questions"]) == 3
-    assert result["questions"][0]["question"].startswith("Self-registration:")
+    assert result["questions"][0]["question"] == "Can anyone create an account, or does onboarding require approval?"
+
+
+def _selected(model: dict, *ids: str) -> list[str]:
+    return [item["question"] for item in tq.select_open_questions(model, anchors(*ids))["questions"]]
+
+
+def _generated_questions(component: str) -> list[str]:
+    """Every built-in question the selector can phrase, with its subject resolved from the findings."""
+    components = [{"id": "svc", "name": component}]
+    chain = {
+        "status": "completed",
+        "cases": [
+            {
+                "chain_verdict": "inconclusive",
+                "verification_complete": True,
+                "unverified_steps": [],
+                "matched_finding_ids": ["F-001", "F-002"],
+                "steps": [{"finding_id": "F-002", "verdict": "inconclusive", "unverified": False}],
+            }
+        ],
+    }
+    tools = "The language model invokes a refund tool."
+    return [
+        *_selected({"components": components, "threats": [finding(1, cwe="CWE-94", component="svc")]}, "F-001"),
+        *_selected({"components": components, "threats": [finding(1, cwe="CWE-78", component="svc")]}, "F-001"),
+        *_selected({"components": components, "threats": [finding(1, cwe="CWE-918", component="svc")]}, "F-001"),
+        *_selected(
+            {
+                "components": components,
+                "threats": [finding(1, cwe="CWE-862", component="svc", title="LLM tool call", evidence_summary=tools)],
+            },
+            "F-001",
+        ),
+        *_selected({"threats": [finding(1), finding(2)], "abuse_case_analysis": chain}, "F-001", "F-002"),
+        *_selected(
+            {"meta": {"open_registration_resolution": {"disputed": True, "evidence": [{"file": "a.ts", "line": 1}]}}}
+        ),
+    ]
+
+
+@pytest.mark.parametrize("component", ["Order Service", "billing-worker"])
+def test_every_team_question_is_one_plain_question_with_a_subject(component):
+    generated = _generated_questions(component)
+    assert len(generated) == 6
+    # Questions about code a finding sits in name that component.
+    assert all(component in question for question in generated[:4])
+    questions = [*generated, *tq.mechanism_team_questions().values()]
+    for question in questions:
+        assert question.endswith("?") and question.count("?") == 1, question
+        assert not re.match(r"^[A-Z][\w -]{0,40}:\s", question), question  # no "Topic:" label
+        assert not re.search(r"\bshould\b|\bplanned\b", question, re.I), question  # no proposed fix
+    unverified = tq.UNVERIFIED_QUESTION
+    assert unverified.count("?") == 1 and not re.match(r"^[A-Z][\w -]{0,40}:\s", unverified)
+
+
+def test_questions_without_a_resolvable_component_do_not_invent_one():
+    question = _selected({"threats": [finding(1, cwe="CWE-918", component="unknown-id")]}, "F-001")[0]
+    assert "from this application" in question

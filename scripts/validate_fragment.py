@@ -350,6 +350,47 @@ def repository_path_errors(fragment_type: str, data: Any, repo_root: Path) -> li
     return errors
 
 
+def _component_claims(component: dict, file: str) -> bool:
+    """True when a component's paths cover the file; a component without paths claims everything."""
+    from reclassify_components import _glob_to_regex
+
+    patterns = [p.strip() for p in component.get("paths") or [] if isinstance(p, str) and p.strip()]
+    return not patterns or any(
+        _glob_to_regex(p).fullmatch(file) or (not re.search(r"[*?\[]", p) and file.startswith(p.rstrip("/") + "/"))
+        for p in patterns
+    )
+
+
+def interaction_evidence_errors(flows: Any, components: Any) -> list[str]:
+    """Producer-stage rule: a human interaction cites the client it uses, not a server serving it.
+
+    Only the architecture stage can still correct the evidence, so export and
+    rerender of an existing model never run it; the renderer labels interaction
+    edges from vocabulary and does not depend on the evidence.
+    """
+    clients = {
+        c["id"]: c
+        for c in components or []
+        if isinstance(c, dict) and isinstance(c.get("id"), str) and c.get("tier") == "client"
+    }
+    errors = []
+    for flow in flows or []:
+        client = clients.get(flow.get("to")) if isinstance(flow, dict) and flow.get("interaction") else None
+        if client is None:
+            continue
+        outside = [
+            str(row.get("file"))
+            for row in flow.get("evidence") or []
+            if isinstance(row, dict) and not _component_claims(client, str(row.get("file") or ""))
+        ]
+        if outside:
+            errors.append(
+                f"{flow.get('id')}: human interaction evidence {outside[0]} is not code of client "
+                f"{client['id']}; a server delivering client code is its own flow to that client"
+            )
+    return errors
+
+
 def architecture_reference_errors(data: dict) -> list[str]:
     """Validate optional identities; schema-invalid shapes remain validation errors."""
     from figure1_security import access_groups
@@ -468,8 +509,10 @@ def fragment_invariant_errors(
         if components is None:
             return architecture_reference_errors(data) + data_flow_endpoint_errors(data.get("data_flows"))
         ids = [row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)]
-        return architecture_reference_errors({**data, "components": components}) + data_flow_endpoint_errors(
-            data.get("data_flows"), ids
+        return (
+            architecture_reference_errors({**data, "components": components})
+            + interaction_evidence_errors(data.get("data_flows"), components)
+            + data_flow_endpoint_errors(data.get("data_flows"), ids)
         )
     if fragment_type == "assets" and isinstance(data, dict) and components is not None:
         return architecture_reference_errors({"assets": data.get("assets"), "components": components})

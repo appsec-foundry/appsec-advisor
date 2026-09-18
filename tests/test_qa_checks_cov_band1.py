@@ -555,7 +555,7 @@ def test_ms_structure_requires_selected_team_questions_in_the_canonical_slot(tmp
         "### Security Posture & Top Threats",
         "### Top Weaknesses\nbody\n"
         "### Open Questions for the Team\n"
-        "The code cannot settle these points.\n"
+        "The analysis could not fully resolve these points from the code.\n"
         "- [W-001](#w-001): [F-001](#f-001) — Which policy owns authorization?\n"
         "### Security Posture & Top Threats",
     ).replace("## 1. Overview", '<a id="w-001"></a>\n<a id="f-001"></a>\n## 1. Overview')

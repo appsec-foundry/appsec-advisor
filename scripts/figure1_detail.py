@@ -220,9 +220,10 @@ def build_views(model, scenarios, actors, actor_groups):
     flow_entries = []
     for flow in model.get("data_flows", []):
         direction = "↔" if flow.get("direction") == "bidirectional" else "→"
+        payload, protocol = F.flow_payload(flow)
         text = (
             f"{flow['id']} · {endpoint(flow, 'from')} {direction} {endpoint(flow, 'to')} · "
-            f"{flow.get('protocol', '')} · {flow.get('label', '')} · {flow.get('data_classification', 'Public')}"
+            f"{protocol} · {payload} · {flow.get('data_classification', 'Public')}"
         )
         flow_entries.append(({"data-catalogue-flow": flow["id"]}, text, None))
     boundary_entries = []

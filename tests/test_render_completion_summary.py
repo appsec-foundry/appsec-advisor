@@ -653,9 +653,9 @@ class TestManualReviewStep:
         # unclassified takeover signal (F-041), and the cap holds at three.
         assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:]] == [["W-002"], ["W-003"], ["W-004"]]
         assert re.findall(r"\b(F-\d+)\b", text) == ["F-001", "F-002", "F-020", "F-030"]
-        assert "which single policy layer should enforce ownership" in lines[1]
-        assert "who\nrotates".replace("\n", " ") in lines[2]
-        assert "intentionally public" in lines[3]
+        assert "Which cross-user or cross-tenant accesses through these routes are intended" in lines[1]
+        assert "still accept these secrets from the git history" in lines[2]
+        assert "meant to be reachable without login" in lines[3]
         assert len(lines) == 4
         # RA-13: plain IDs after each question, no link target and no report path.
         assert all(line.startswith("- ") and line.endswith(")") for line in lines[1:])
@@ -685,17 +685,16 @@ class TestManualReviewStep:
     def test_unproven_evidence_keeps_its_status(self, state):
         text = self.render([self.finding(1, evidence_check=state)])
         assert "F-001 (unproven)" in text
-        assert "could a takeover" in text
+        assert "which other services, secrets or credentials can that process reach?" in text
         assert text.splitlines()[-1] == (
-            "- Unverified evidence: confirm or rule out what the code alone could not establish "
-            "before scheduling the fix. (F-001)"
+            "- Do these findings hold in the deployed system? The code alone could not confirm them. (F-001)"
         )
 
     def test_practice_evidence_does_not_become_confirmed_exploitation(self):
         text = self.render([self.finding(1, evidence_tier="insecure-practice")])
         assert "(unproven)" in text
         # The insecure state is observed and verified: nothing left to confirm.
-        assert "Unverified evidence" not in text
+        assert "The code alone could not confirm" not in text
 
     def test_unverified_findings_close_the_block_outside_the_question_cap(self):
         findings = [self.finding(n, "CWE-639", "Object owner not checked") for n in range(1, 5)]
@@ -712,16 +711,16 @@ class TestManualReviewStep:
         assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:4]] == [["W-001"], ["W-002"], ["W-003"]]
         # The verified practice-tier F-010 is not listed; only the ambiguous F-009.
         assert lines[4] == (
-            "- Unverified evidence: confirm or rule out what the code alone could not establish "
-            "before scheduling the fix. (F-009)"
+            "- Do these findings hold in the deployed system? The code alone could not confirm them. (F-009)"
         )
         # A verified-only model raises no closing line; six unverified findings list five.
-        assert "Unverified evidence" not in self.render(findings[:4], weaknesses[:1])
+        assert "The code alone could not confirm" not in self.render(findings[:4], weaknesses[:1])
         many = [self.finding(n, "CWE-89", "SQL injection", evidence_check="ambiguous") for n in range(1, 7)]
         assert self.render(many).splitlines() == [
             rcs.TEAM_QUESTIONS_HEADER,
-            "- Unverified evidence: confirm or rule out what the code alone could not establish "
-            "before scheduling the fix. (" + ", ".join(f"F-{n:03}" for n in range(1, 6)) + " +1 more)",
+            "- Do these findings hold in the deployed system? The code alone could not confirm them. ("
+            + ", ".join(f"F-{n:03}" for n in range(1, 6))
+            + " +1 more)",
         ]
 
     @pytest.mark.parametrize(
@@ -747,8 +746,8 @@ class TestManualReviewStep:
         finding = self.finding(1, evidence=[{"file": ".github/workflows/package.yml", "line": 20}])
         assert self.render([finding]) == ""
         text = self.render([finding], [self.weakness(6, "build-pipeline-mutable-refs", 1)])
-        assert "Who can change build inputs or publish artifacts" in text
-        assert "takeover" not in text
+        assert "Who can change these build inputs or publish artifacts" in text
+        assert "that process reach" not in text
 
     def test_weakness_questions_come_from_mechanism_guidance_not_cwe_membership(self):
         # AC-7: the same CWE-639 finding asks nothing on its own, asks the
@@ -758,7 +757,7 @@ class TestManualReviewStep:
         assert self.render([owner]) == ""
         text = self.render([owner], [self.weakness(2, "route-by-route-authorization", 1)])
         assert text.splitlines()[1].endswith(" (W-002: F-001)")
-        assert "which single policy layer should enforce ownership" in text
+        assert "Which cross-user or cross-tenant accesses through these routes are intended" in text
         assert self.render([owner], [self.weakness(2, "database-query-concatenation", 1)]) == ""
         assert self.render([owner], [self.weakness(2, "no-such-mechanism", 1)]) == ""
         questions = rcs.mechanism_team_questions()
@@ -788,12 +787,12 @@ class TestManualReviewStep:
         no_tools = self.finding(1, "CWE-1427", "LLM prompt injection")
         assert self.render([no_tools]) == ""
         tools = {**no_tools, "evidence_summary": "The language model invokes a purchase tool without approval."}
-        assert "which business decisions need authorization outside the assistant?" in self.render([tools])
+        assert "without a separate authorization decision?" in self.render([tools])
 
     def test_ssrf_question_does_not_assert_process_takeover(self):
         text = self.render([self.finding(1, "CWE-918", "Unrestricted URL fetching")])
-        assert "Server-side requests" in text
-        assert "takeover" not in text
+        assert "can server-side requests from" in text
+        assert "that process reach" not in text
 
     @staticmethod
     def chain_analysis(**overrides):
@@ -817,10 +816,10 @@ class TestManualReviewStep:
     def test_unresolved_investigated_chain_gets_priority_without_becoming_a_finding(self):
         findings = [self.finding(1), self.finding(2, "CWE-89", "SQL injection in invoice search")]
         text = self.render(findings, abuse_case_analysis=self.chain_analysis())
-        assert "Unproven attack chain" in text.splitlines()[1]
+        assert "Can an attacker combine these findings" in text.splitlines()[1]
         assert "F-001" in text.splitlines()[1] and "F-002" in text.splitlines()[1]
         assert "Critical" not in text
-        assert "takeover" not in text  # Already addressed by the chain question.
+        assert "that process reach" not in text  # Already addressed by the chain question.
 
     def test_multiple_inconclusive_chains_are_stable_and_do_not_repeat_the_question(self):
         findings = [self.finding(n) for n in range(1, 5)]
@@ -832,7 +831,7 @@ class TestManualReviewStep:
             )["cases"][0]
         )
         text = self.render(findings, abuse_case_analysis=analysis)
-        assert text.count("Unproven attack chain") == 1
+        assert text.count("Can an attacker combine these findings") == 1
         analysis["cases"].reverse()
         assert self.render(findings, abuse_case_analysis=analysis) == text
 

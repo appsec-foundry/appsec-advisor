@@ -5833,9 +5833,10 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
     _validate_receipt_state(
         flows, PLUGIN_ROOT / "schemas" / "fragments" / "data-flows.schema.json", "identity integration data flows"
     )
-    from validate_fragment import architecture_reference_errors, repository_path_errors
+    from validate_fragment import architecture_reference_errors, interaction_evidence_errors, repository_path_errors
 
     errors = architecture_reference_errors({**flows, "components": components.get("components") or []})
+    errors.extend(interaction_evidence_errors(flows.get("data_flows"), components.get("components") or []))
     errors.extend(repository_path_errors("data-flows", flows, repo_root))
     if errors:
         raise ControllerError("identity integration validation failed: " + "; ".join(errors))

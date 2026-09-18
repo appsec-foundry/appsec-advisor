@@ -25,6 +25,9 @@ def test_missing_authentication_never_becomes_none(name):
     assert authentication_profile(flow)["scheme"] == "unknown"
     flow["authentication"] = {"scheme": "none"}
     assert authentication_profile(flow)["scheme"] == "unknown"
+    # Readers see a plain statement of what the analysis could not determine.
+    assert authentication_profile(flow)["title"] == "Unknown"
+    assert authentication_profile(flow)["description"] == "Authentication could not be determined from the code."
 
 
 def test_catalog_reuses_method_not_component_name_or_evidence():
@@ -197,6 +200,37 @@ def test_human_interaction_is_not_an_api_or_provider_exchange(client):
     api = {**flow, "interaction": False, "to": "service", "authentication": auth("bearer")}
     assert architecture_reference_errors({**model, "data_flows": [api]}) == []
     assert next(iter(profile_catalog([api]).values()))["scheme"] == "bearer"
+
+
+@pytest.mark.parametrize(
+    "client_paths,client_file,server_file",
+    [
+        (["console/**"], "console/src/app.tsx", "gateway/static.js"),
+        (["mobile/app/"], "mobile/app/main.dart", "server/serve.py"),
+    ],
+)
+def test_human_interaction_cites_the_client_it_uses(client_paths, client_file, server_file):
+    from validate_fragment import fragment_invariant_errors, interaction_evidence_errors
+
+    components = [
+        {"id": "ui", "tier": "client", "paths": client_paths},
+        {"id": "service", "tier": "application", "paths": [server_file]},
+    ]
+    entities = [{"id": "ext-reader", "kind": "legitimate-role"}]
+    flow = {"id": "df-001", "from": "external", "from_entity": "ext-reader", "to": "ui", "interaction": True}
+    used = {**flow, "evidence": [{"file": client_file, "line": 3}]}
+    assert interaction_evidence_errors([used], components) == []
+    # Serving the client's bundle is the server's flow to the client, not the person's use of it.
+    served = {**flow, "evidence": [{"file": server_file, "line": 14}]}
+    errors = interaction_evidence_errors([served], components)
+    assert errors and server_file in errors[0] and "its own flow" in errors[0]
+    # The architecture self-check reports the same rule when it holds the component inventory.
+    fragment = {"external_entities": entities, "data_flows": [served]}
+    assert errors[0] in fragment_invariant_errors("data-flows", fragment, context={"components": components})
+    delivery = {"id": "df-002", "from": "service", "to": "ui", "evidence": [{"file": server_file, "line": 14}]}
+    assert interaction_evidence_errors([used, delivery], components) == []
+    # A client that declares no paths cannot be checked, so its evidence is not rejected.
+    assert interaction_evidence_errors([served], [{"id": "ui", "tier": "client"}, components[1]]) == []
 
 
 @pytest.mark.parametrize("group", ["federation-session", "device-handshake"])

@@ -20,12 +20,10 @@ from _shared_sources import DESIGN_LEVEL_SOURCES
 CONSOLE_HEADER = "Open questions for the team:"
 REPORT_HEADING = "### Open Questions for the Team"
 REPORT_INTRO = (
-    "The code cannot settle these points. They depend on deployment or business decisions and are the input for "
-    "a manual threat-modeling session."
+    "The analysis could not fully resolve these points from the code. Discuss them with the people who know the "
+    "deployment and the business requirements; the answers can change the severity or the fix of the linked findings."
 )
-UNVERIFIED_QUESTION = (
-    "Unverified evidence: confirm or rule out what the code alone could not establish before scheduling the fix."
-)
+UNVERIFIED_QUESTION = "Do these findings hold in the deployed system? The code alone could not confirm them."
 
 # The reference tail a rendered report bullet ends with: the optional weakness
 # link, the finding links, their optional `(unproven)` marker and an optional
@@ -143,6 +141,7 @@ def select_open_questions(
                 "title": title,
                 "context": context,
                 "build_time": build_time,
+                "component": str(threat.get("component") or threat.get("component_id") or ""),
                 "unproven": threat.get("evidence_tier") != "confirmed-exploitable"
                 or threat.get("evidence_check") not in {"verified", "verified-prior"},
                 "unverified": threat.get("evidence_check") not in {"verified", "verified-prior"},
@@ -150,6 +149,18 @@ def select_open_questions(
         )
     candidates.sort(key=lambda item: (item["rank"], int(item["id"][2:])))
     by_id = {item["id"]: item for item in candidates}
+    component_names = {
+        str(component.get("id")): str(component.get("name") or component.get("id"))
+        for component in yaml_data.get("components") or []
+        if isinstance(component, dict) and component.get("id")
+    }
+
+    def subject(items: list[dict]) -> str:
+        """Name the components the cited findings sit in, so the question has a concrete subject."""
+        names = list(dict.fromkeys(component_names[i["component"]] for i in items if i["component"] in component_names))
+        if not names:
+            return "this application"
+        return " or ".join(names[:2]) + (" and other components" if len(names) > 2 else "")
 
     def matching(cwes: set[str], pattern: str = "", *, title_only: bool = False) -> list[dict]:
         return [
@@ -166,7 +177,7 @@ def select_open_questions(
             {
                 "rank": -1,
                 "order": -1,
-                "question": "Self-registration: can anyone create an account, or does onboarding require approval?",
+                "question": "Can anyone create an account, or does onboarding require approval?",
                 "refs": [],
                 "hidden": 0,
                 "weakness_id": "",
@@ -218,7 +229,7 @@ def select_open_questions(
         related = [by_id[fid] for fid in case.get("matched_finding_ids") or [] if fid in by_id]
         if unresolved and len({item["id"] for item in unresolved + related}) >= 2:
             add(
-                "Unproven attack chain: what would confirm or rule out this combination in the deployed system?",
+                "Can an attacker combine these findings into one attack in the deployed system?",
                 unresolved,
                 related,
                 priority=-1,
@@ -244,21 +255,27 @@ def select_open_questions(
 
     execution = [item for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-95"}) if not item["build_time"]]
     if execution:
-        mechanism = (
-            "Command execution" if all(item["cwes"] & {"CWE-77", "CWE-78"} for item in execution) else "Code execution"
-        )
-        add(f"{mechanism}: could a takeover reach other services or shared credentials?", execution)
-    else:
+        runs = "commands" if all(item["cwes"] & {"CWE-77", "CWE-78"} for item in execution) else "code"
         add(
-            "Server-side requests: could these reach internal services or infrastructure credentials?",
-            matching({"CWE-918"}),
+            f"If an attacker runs {runs} in {subject(execution)}, "
+            "which other services, secrets or credentials can that process reach?",
+            execution,
+        )
+    else:
+        requests = matching({"CWE-918"})
+        add(
+            f"Which internal services or infrastructure credentials can server-side requests from {subject(requests)} reach?",
+            requests,
         )
     model_tools = [
         item
         for item in matching({"CWE-1427", "CWE-20", "CWE-863", "CWE-862"}, r"\b(llm|prompt injection|language model)\b")
         if re.search(r"\b(tool|tools|tool-calling|agent|actions?)\b", item["context"], re.I)
     ]
-    add("Model-controlled actions: which business decisions need authorization outside the assistant?", model_tools)
+    add(
+        f"Which actions can the model trigger in {subject(model_tools)} without a separate authorization decision?",
+        model_tools,
+    )
 
     selected: list[dict] = []
     used: set[str] = set()

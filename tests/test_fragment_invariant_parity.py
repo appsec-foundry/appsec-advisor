@@ -197,6 +197,15 @@ def _interaction_targets_server(doc: dict) -> dict:
     raise AssertionError("fixture has no interaction flow to retarget")
 
 
+def _interaction_cites_server_code(doc: dict) -> dict:
+    """A human interaction cites the server route that delivers the client instead of the client's code."""
+    for flow in doc["data_flows"]:
+        if flow.get("interaction"):
+            flow["evidence"] = [{"file": "src/api/component.ts", "line": 1}]
+            return doc
+    raise AssertionError("fixture has no interaction flow to re-cite")
+
+
 def _flow_unknown_endpoint(doc: dict) -> dict:
     """A flow names a component the inventory does not contain."""
     doc["data_flows"][1]["to"] = "component-that-does-not-exist"
@@ -291,6 +300,7 @@ FRAGMENTS = {
         "gate": _gate_rejects_data_flows,
         "mutations": {
             "interaction-targets-server": _interaction_targets_server,
+            "interaction-cites-server-code": _interaction_cites_server_code,
             "unknown-endpoint": _flow_unknown_endpoint,
             "self-flow": _self_flow,
             "duplicate-flow-id": _duplicate_flow_id,

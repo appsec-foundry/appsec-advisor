@@ -95,6 +95,7 @@ _FALLBACK_ACTOR = {
     "b2b-partner": "B2B Partner",
 }
 USER_ID = "actor:user"
+INTERACTION_LABEL = "User input"
 ACTOR_COLORS = ("#b3453f", "#79439b", "#8c2545", "#b85283", "#552660", "#d05c61", "#9b4890", "#732e38")
 
 # ---- geometry -------------------------------------------------------------------
@@ -434,6 +435,22 @@ def _legend_wrap(text, width, size):
     return lines
 
 
+def flow_payload(flow):
+    """(payload, protocol) shown for a flow; a human interaction states use, never an authored payload."""
+    if flow.get("interaction"):
+        return INTERACTION_LABEL, ""
+    return flow.get("label") or "", flow.get("protocol") or ""
+
+
+def flow_hover_text(flow):
+    """One flow's hover line; an interaction adds its evidence instead of a payload description."""
+    payload, protocol = flow_payload(flow)
+    if flow.get("interaction"):
+        sources = ", ".join(f"{ev.get('file')}:{ev.get('line')}" for ev in flow.get("evidence") or [])
+        return f"{flow['id']}: {payload}" + (f"; evidence: {sources}" if sources else "")
+    return f"{flow['id']}: {payload} {_protocol_part(protocol)}"
+
+
 def _flow_ids_label(ids):
     return ids[0] + "".join("/" + fid.removeprefix("df-") for fid in ids[1:])
 
@@ -448,8 +465,8 @@ def _flow_legend_detail(entries, nodes, edge):
 
     by_protocol = collections.OrderedDict()
     for flow in entries:
-        protocol = flow.get("protocol") or ""
-        label = flow.get("diagram_label") or flow.get("label") or ""
+        protocol = "" if edge.get("interaction") else flow.get("protocol") or ""
+        label = INTERACTION_LABEL if edge.get("interaction") else flow.get("diagram_label") or flow.get("label") or ""
         labels = by_protocol.setdefault(protocol, [])
         if label and label not in labels:
             labels.append(label)
@@ -957,6 +974,26 @@ def _project_legitimate_roles(yaml_data):
 def legitimate_role_notes(yaml_data):
     """Describe actual role grouping for the report caption, not the SVG legend."""
     return _project_legitimate_roles(yaml_data)[2]
+
+
+def overview_facts(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None):
+    """Counts of what the overview draws, for the report sentence that introduces it."""
+    comps = [c for c in yaml_data.get("components") or [] if isinstance(c, dict) and c.get("id")]
+    flows = [f for f in yaml_data.get("data_flows") or [] if isinstance(f, dict)]
+    services = {
+        e["id"]
+        for e in yaml_data.get("external_entities") or []
+        if isinstance(e, dict) and e.get("id") and e.get("kind") != "legitimate-role"
+    } | {f"ext:{f.get('from')}" for f in flows if f.get("to") == "external" and not f.get("to_entity")}
+    scenarios, _actors = scenarios_from_attack_paths(
+        yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
+    )
+    return {
+        "components": len(comps),
+        "layers": len({_zone_key(c) for c in comps}),
+        "external_services": len(services),
+        "scenarios": len({s["n"] for s in scenarios}),
+    }
 
 
 def _build_model(d, scenarios, actors, victim_target=USER_ID):
@@ -2117,7 +2154,8 @@ def _flow_label_candidates(entries, interaction):
     labels = list(dict.fromkeys(f.get("diagram_label") or f.get("label") or "Data exchange" for f in entries))
     protocol = " / ".join(dict.fromkeys(f["protocol"] for f in entries if f.get("protocol")))
     if interaction:
-        protocol = ""
+        # A person operates the client; an authored payload here describes delivery, not use.
+        labels, protocol = [INTERACTION_LABEL], ""
     part = _protocol_part(protocol) if protocol else ""
     line = _protocol_part(protocol, own_line=True) if protocol else ""
     choices = [" / ".join(labels) + (f" {part}" if part else "")]
@@ -2550,7 +2588,7 @@ def _render(
         mode = e.get("access_group", {}).get("mode", "")
         c.add(f'<g data-flow-ids="{_esc(" ".join(e["ids"]))}" data-access-mode="{_esc(mode)}">')
         inventory = [f for f in d.get("data_flows", []) if f.get("id") in e["ids"]]
-        full_labels = [f"{f['id']}: {f.get('label', '')} {_protocol_part(f.get('protocol', ''))}" for f in inventory]
+        full_labels = [flow_hover_text(f) for f in inventory]
         for flow in inventory:
             auth = flow.get("authentication") or {}
             if auth:
@@ -2765,7 +2803,7 @@ def _render(
                 auth = flow.get("authentication") or {}
                 operations.append(
                     f"{fid}: {flow.get('label', '')} {_protocol_part(flow.get('protocol', ''))}; "
-                    f"{auth.get('scope', 'authentication not established')}"
+                    f"{auth.get('scope', 'authentication unknown')}"
                 )
             c.add(f"<title>{_esc(chr(10).join(operations))}</title>")
             c.rect(x, y, w, h, fill="#edf3f9", stroke="#b6c6d8", sw=0.7, rx=3)
@@ -3056,8 +3094,9 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             details = []
             for fid, f in zip(e["ids"], entries):
                 src, dst = _flow_endpoints(f)
+                payload, protocol = flow_payload(f)
                 details.append(
-                    f"{fid}: {nodes.get(src, {}).get('name', src)} → {nodes.get(dst, {}).get('name', dst)} · {f.get('protocol') or ''} · {f.get('label') or ''} · {f.get('data_classification') or ''} · {f.get('direction') or ''}"
+                    f"{fid}: {nodes.get(src, {}).get('name', src)} → {nodes.get(dst, {}).get('name', dst)} · {protocol} · {payload} · {f.get('data_classification') or ''} · {f.get('direction') or ''}"
                 )
             c.add(f"<title>{_esc(chr(10).join(details))}</title>")
             id_lines = _legend_wrap(fid_label.replace("/", "/ "), 66, 8)
@@ -3097,7 +3136,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             y += 8
         for line in [
             "Numbered hexagon: authentication · circle: attack scenario",
-            "0: no authentication · ?: not established",
+            "0: no authentication · ?: unknown",
             "Red: absent / unsafe · yellow: standard / limited · green: stronger",
             "Method properties, not proof of a secure implementation.",
         ]:
