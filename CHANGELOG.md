@@ -20,14 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Figure 2 connects numbered attack routes to example findings, explicit weakness references, and group impact in a compact overview matching Figure 1: one statement per card, one card per actor, details in tooltips.
 
-- Figure 1 shows each component's framework and implementation language or database engine, evidenced authentication methods, up to three capability and service-role labels per element ranked by security relevance with further ones listed in the legend, flows, assets and grouped custom actors, draws trust-boundary lines only where a modelled boundary crosses, and keeps boundary details, in-process calls and individual role details in the report and navigable detail views.
+- Figure 1 shows each component's framework and implementation language or database engine, evidenced authentication methods, up to three capability and service-role labels per element ranked by their most severe linked finding with further ones listed in the legend, flows, assets and grouped custom actors, draws trust-boundary lines only where a modelled boundary crosses, and keeps boundary details, in-process calls and individual role details in the report and navigable detail views.
 
 ### Fixed
 
 - The architecture analyst corrects data flows and asset locations that do not fit its component inventory before it finishes, instead of the run aborting after architecture modelling.
 - Actor discovery appends to the run log instead of replacing it, so earlier events stay in the log and a monitored run is no longer reported as unmonitored.
 - Report prose formats ambiguous protocol names such as Authorization, Cookie, and Origin as code only when local context identifies the concrete header or attribute.
-- Open questions in the Management Summary lead with the question and keep compact finding references, instead of opening some bullets with a decorated reference list.
+- Open questions in the Management Summary are plain questions about a named component with compact finding references, introduced as points the analysis could not resolve, instead of topic-prefixed prompts behind a decorated reference list.
 - Plugin update checks compare against released versions instead of advertising unreleased development builds.
 
 - Finding ratings enforce policy ceilings across reports and exports, require verified attack chains for elevation, and prioritize likelihood and CVSS consistently.
@@ -43,8 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Authentication, CI/CD, real-time, web3 and embedded-store components are modelled before data flows are written, so they keep their connections; a run reports any component that still has none.
 - Figure 1 shows login sequences, public and authenticated API alternatives, and access to embedded databases with their authentication method instead of leaving them unknown.
 - The route inventory credits an authentication guard only to the route it belongs to, so unprotected routes next to protected ones are flagged for review.
-- Identity-provider discovery no longer adds a second flow for an OAuth step the architecture already models.
-- Capability, service-role and authentication claims must cite implementing code, and deterministic scanner findings add the capability labels they prove.
+- Identity-provider discovery no longer adds a second service and flow for an OAuth step the architecture already models, also when the model cites the call of a wrapper function.
+- Capability, service-role and authentication claims must cite implementing code, and deterministic scanner findings add the capability labels they prove, also after merging into a model finding.
+- Config and IaC findings reach the report again, and a rejected configuration scan is reported as a run error instead of as a repository without IaC files.
+- The completion summary reports the measured run cost again and names the reason when it cannot.
+- Runs no longer stall until the join deadline when a sub-agent hands back on its last allowed turn, and self-checks report every violation at once instead of one per turn.
+- Figure 1 names users and administrators after the project, shows confirmed administrators, and keeps supply-chain and insider attackers on the components they can reach.
+- Figure 1 labels a user's access to a client as user input, calls undeterminable authentication unknown, and opens with facts about the system instead of repeating the legend.
 
 ## 0.6.0-beta.3 (2026-09-14)
 
