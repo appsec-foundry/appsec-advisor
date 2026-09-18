@@ -16,9 +16,8 @@
              findings anchor a fully-viable abuse chain, else '' (abuse-cases.json).
              Finding references remain provenance data and are intentionally not
              rendered in this product-owner-facing block.
-             basis (renderer-computed, unconditional): the method boundary —
-             what kind of statement the report makes, as opposed to
-             scope_coverage, which states how much of the system it covers.
+             method_limits (renderer-computed, unconditional): method, analysis
+             depth and coverage, and what the method cannot establish.
 -#}
 ### Verdict
 
@@ -26,11 +25,8 @@
 {% if risk_distribution %}
 {{ risk_distribution }}
 {% endif %}
-{% if scope_coverage %}
-{{ scope_coverage }}
-{% endif %}
-{% if basis %}
-{{ basis }}
+{% if method_limits %}
+{{ method_limits }}
 {% endif %}
 <br/>
 

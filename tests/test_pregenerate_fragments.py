@@ -136,12 +136,12 @@ class TestSystemOverview:
         what kind of model this is, so the section is not read as design-time
         coverage."""
         md = pf.gen_system_overview(minimal_yaml_data)
-        assert "**Basis:** a code-derived threat model at implementation level" in md
+        assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
         assert "as built, not as designed" in md
 
     def test_method_boundary_is_independent_of_meta_scope(self):
         md = pf.gen_system_overview({"meta": {}, "components": []})
-        assert "**Basis:** a code-derived threat model at implementation level" in md
+        assert f"**Basis:** {pf.METHOD_SENTENCE}" in md
 
 
 class TestArchitectureDiagrams:
@@ -2311,8 +2311,8 @@ class TestOutOfScope:
 
     def test_method_boundary_names_what_the_model_cannot_see(self, minimal_yaml_data):
         md = pf.gen_out_of_scope(minimal_yaml_data)
-        assert "code-derived threat model at implementation level" in md
-        assert "does not replace a design-time review" in md
+        assert pf.METHOD_SENTENCE in md
+        assert pf.limits_statement(minimal_yaml_data.get("meta") or {}) in md
         assert "Design intent" in md
         assert "Runtime behaviour, deployment topology and production-only configuration." in md
         assert "review input, not sign-off" in md
@@ -3432,9 +3432,9 @@ def test_system_overview_renders_component_selection_transparency():
     yaml_data = {"meta": {"project": {"name": "Acme"}, "component_selection": cs}, "components": comps}
     out = mod.gen_system_overview(yaml_data)
     assert "**2 of 4**" in out
-    assert "not individually analyzed" in out
-    assert "Worker" in out and "Database" in out
+    assert "Not analysed at this depth: Worker, Database" in out
     assert "Selection criteria" in out
+    assert "business-critical surface" not in out
 
 
 def test_system_overview_no_selection_falls_back_to_plain_scope():
@@ -4227,3 +4227,58 @@ class TestControlCoverageSparseFallback:
         report = qa.check_control_subsection_coverage(p)
         flagged = [i for i in report.issues if "6.8" in i]
         assert not flagged, f"§6.8 still trips control_subsection_coverage: {flagged}"
+
+
+def _selection(n_full: int, n_screen: int, n_excluded: int) -> dict:
+    selected = [{"id": f"f{i}", "name": f"Full {i}", "reasons": ["internet-exposed"]} for i in range(n_full)]
+    selected += [
+        {"id": f"s{i}", "name": f"Light {i}", "reasons": ["ci-cd"], "analysis_depth": "screening"}
+        for i in range(n_screen)
+    ]
+    excluded = [{"id": f"x{i}", "name": f"Left {i}", "reason": "not selected"} for i in range(n_excluded)]
+    return {"total": n_full + n_screen + n_excluded, "selected": selected, "excluded": excluded}
+
+
+@pytest.mark.parametrize("depth", ["quick", "standard", "thorough", None])
+@pytest.mark.parametrize(
+    "shape", [(3, 0, 0), (2, 1, 0), (2, 0, 2), (1, 2, 1)], ids=["full", "screened", "excluded", "mixed"]
+)
+@pytest.mark.parametrize("context", [None, "docs/business-context.md", ".business-context-input.md"])
+def test_method_and_limits_states_depth_coverage_and_context_plainly(depth, shape, context):
+    """One method block per variant: depth, coverage and business context come from
+    the model, every surface shares the wording, and no template jargon remains."""
+    n_full, n_screen, n_excluded = shape
+    meta = {"component_selection": _selection(*shape), "assessment_depth": depth, "business_context_source": context}
+    comps = [{"id": e["id"], "name": e["name"]} for e in meta["component_selection"]["selected"]]
+    comps += [{"id": e["id"], "name": e["name"]} for e in meta["component_selection"]["excluded"]]
+    block = pf.method_and_limits(meta)
+    overview = pf.gen_system_overview({"meta": meta, "components": comps})
+    out_of_scope = pf.gen_out_of_scope({"meta": meta})
+
+    assert block.startswith(f"**Method and limits:** {pf.METHOD_SENTENCE}")
+    assert pf.METHOD_SENTENCE in overview and pf.METHOD_SENTENCE in out_of_scope
+    assert pf.limits_statement(meta) in block and pf.limits_statement(meta) in out_of_scope
+    total = n_full + n_screen + n_excluded
+    assert bool(depth and f"{depth.capitalize()} depth:" in block) is bool(depth)
+    if n_screen or n_excluded:
+        assert f"{n_full} of {total} components analysed with full STRIDE" in block
+        assert f"**{n_full} of {total}**" in overview
+    else:
+        assert f"all {total} components analysed with full STRIDE" in block.lower().replace("stride", "STRIDE")
+        assert f"All {total} modeled components were analysed with full STRIDE." in overview
+    screened = [e for e in meta["component_selection"]["selected"] if e.get("analysis_depth") == "screening"]
+    assert bool(screened and pf.screening_clause(screened) in block) is bool(n_screen)
+    assert ("--assessment-depth" in block) is bool(n_excluded or depth == "quick")
+    if context:
+        assert "business context, design intent" not in block
+        assert ("supplied for this run" in block) is (context == ".business-context-input.md")
+        assert ".business-context-input.md" not in block + overview + out_of_scope
+        assert "beyond the supplied business context" in out_of_scope
+    else:
+        assert (
+            "business context, design intent, runtime behaviour and production configuration are not covered" in block
+        )
+        assert "that leave the code" in out_of_scope
+    for text in (block, overview, out_of_scope):
+        for jargon in ("(s)", "reduced-budget", "verification greps", "business-critical surface", "code-derived"):
+            assert jargon not in text

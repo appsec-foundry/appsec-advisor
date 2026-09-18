@@ -110,6 +110,7 @@ from pregenerate_fragments import _TIER_HINTS as _pregen_tier_hints
 from pregenerate_fragments import _classify_tier as _pregen_classify_tier
 from pregenerate_fragments import component_coverage as _pregen_component_coverage
 from pregenerate_fragments import gen_architecture_diagrams
+from pregenerate_fragments import method_and_limits as _pregen_method_and_limits
 from prepare_trust_boundary_context import (
     CROSSING_TYPE_LEGS,
     boundary_assumption_state,
@@ -2705,41 +2706,10 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
             f"<br/>**Assessment evidence:** {confirmed} confirmed-exploitable finding(s) · "
             f"{impl} implementation weakness(es) · {design} design weakness(es)"
         )
-    # Deterministic scope-coverage line — PL-facing. States how many components
-    # were analyzed in depth vs. modeled, computed from meta.component_selection
-    # (.stride-selection.json), so the executive verdict never implies the whole
-    # system was assessed when only a criteria-selected subset was.
-    scope_coverage = ""
-    coverage = _pregen_component_coverage(ctx.yaml_data.get("meta") or {})
-    n_screen = len((coverage or {}).get("screened") or [])
-    if coverage and (coverage["excluded"] or n_screen):
-        total_comp = coverage["total"]
-        n_exc = len(coverage["excluded"])
-        scope_coverage = (
-            f"**Scope:** {len(coverage['full'])} of {total_comp} components received full STRIDE analysis — "
-            f"the externally-reachable, authentication-bearing, and business-critical surface. "
-        )
-        if n_screen:
-            scope_coverage += (
-                f"{n_screen} further component(s) received a reduced-budget screening pass "
-                f"(all six STRIDE categories, no verification greps) and are marked "
-                f"`Screened` in the component table. "
-            )
-        if n_exc:
-            scope_coverage += (
-                f"The other {n_exc} (lower-priority / internal) were not individually assessed at this depth "
-            )
-        scope_coverage += "(see [§1 Scope](#scope))."
-    # Method boundary — unconditional, unlike the coverage line above. That line
-    # says how much of the system was analyzed; this says what kind of statement
-    # the report makes at all, so an executive reader cannot take a model derived
-    # from the implementation for a design-time review. §11 carries the full list.
-    basis = (
-        "**Basis:** a code-derived threat model at implementation level — built from repository "
-        "evidence, not a planning document. Design intent, business processes, runtime behaviour "
-        "and production-only configuration are outside what this analysis can see "
-        "(see [§11 Out of Scope](#11-out-of-scope))."
-    )
+    # Method, depth and limits in one block, from the rules §1 and §11 share, so the
+    # executive verdict states what kind of analysis this is and how much of the
+    # system it covered without a second wording to drift.
+    method_limits = _pregen_method_and_limits(ctx.yaml_data.get("meta") or {})
     # Badge worst-case bullets whose findings anchor a code-verified
     # (fully_viable) abuse chain. Data-level (per bullet.refs) — no fuzzy
     # markdown parsing. Empty suffix when no viable chain / abuse skipped.
@@ -2760,8 +2730,7 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
         tpl.render(
             data=data,
             risk_distribution=risk_distribution,
-            scope_coverage=scope_coverage,
-            basis=basis,
+            method_limits=method_limits,
             verified_suffixes=verified_suffixes,
         ).rstrip()
         + "\n"

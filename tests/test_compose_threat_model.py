@@ -5172,14 +5172,16 @@ def test_verdict_scope_coverage_line(tmp_path: Path) -> None:
     env = compose._build_jinja_env(ctx)
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
     out = compose._render_verdict(ctx, env, section)
-    assert "**Scope:** 2 of 4 components received full STRIDE analysis" in out
-    assert "other 2 (lower-priority / internal) were not individually assessed" in out
+    import pregenerate_fragments as pregen
+
+    assert pregen.coverage_statement(yaml_data["meta"]) in out
+    assert "2 of 4 components analysed with full STRIDE; not analysed: Worker and DB." in out
+    assert "**Scope:**" not in out and "lower-priority / internal" not in out
 
 
 def test_verdict_basis_line_is_unconditional(tmp_path: Path) -> None:
-    """The coverage line is conditional on a narrowed component selection; the
-    method boundary is not. A full-coverage run still has to say that the model
-    is code-derived, so the verdict is never read as a design-time review."""
+    """The method and limits block is unconditional: without a component selection
+    it still says how the model was produced and what it cannot establish."""
     frag = tmp_path / ".fragments"
     frag.mkdir(parents=True)
     (frag / "ms-verdict.json").write_text(
@@ -5211,10 +5213,15 @@ def test_verdict_basis_line_is_unconditional(tmp_path: Path) -> None:
     env = compose._build_jinja_env(ctx)
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
     out = compose._render_verdict(ctx, env, section)
-    assert "**Scope:**" not in out
-    assert "**Basis:** a code-derived threat model at implementation level" in out
-    assert "not a planning document" in out
+    import pregenerate_fragments as pregen
+
+    assert "**Scope:**" not in out and "**Basis:**" not in out
+    assert f"**Method and limits:** {pregen.METHOD_SENTENCE}" in out
+    assert pregen.limits_statement({}) in out
+    assert "components analysed" not in out
     assert "[§11 Out of Scope](#11-out-of-scope)" in out
+    # Without a selection §1 carries no coverage detail, so the block links §11 only.
+    assert "](#scope)" not in out.split("**Method and limits:**", 1)[1].split("\n", 1)[0]
 
 
 def test_verdict_scope_coverage_counts_screening_separately(tmp_path: Path) -> None:
@@ -5251,14 +5258,13 @@ def test_verdict_scope_coverage_counts_screening_separately(tmp_path: Path) -> N
     env = compose._build_jinja_env(ctx)
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
     out = compose._render_verdict(ctx, env, section)
-    assert "**Scope:** 1 of 4 components received full STRIDE analysis" in out
-    # Never "internal component(s)": the screening set is not necessarily internal
-    # (a crown-jewel API with runtime-only zones used to land in it), and claiming
-    # so would misreport where the depth tradeoff was made.
-    assert "1 further component(s) received a reduced-budget screening pass" in out
-    assert "internal component(s) received a reduced-budget" not in out
-    assert "marked `Screened` in the component table" in out
-    assert "other 2 (lower-priority / internal) were not individually assessed" in out
+    assert "1 of 4 components analysed with full STRIDE" in out
+    # The screening set is named, not characterised: it is not necessarily
+    # internal (a crown-jewel API with runtime-only zones used to land in it).
+    assert "Auth was only screened, a shorter pass without follow-up code checks per finding" in out
+    assert "not analysed: Worker and DB" in out
+    for jargon in ("(s)", "reduced-budget", "verification greps", "internal"):
+        assert jargon not in out.split("**Method and limits:**", 1)[1].split("\n", 1)[0]
 
 
 def test_components_table_scope_column_marks_screened(tmp_path: Path) -> None:
@@ -5366,7 +5372,8 @@ def test_scope_surfaces_state_one_coverage_rule(tmp_path: Path, depths: list[str
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
     verdict = compose._render_verdict(ctx, compose._build_jinja_env(ctx), section)
     table = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n")
-    screening = f"**{n_screen}** further component(s) received a reduced-budget screening pass"
+    screened_rows = [e for e in selected if e.get("analysis_depth") == "screening"]
+    screening = pregen.screening_clause(screened_rows, bold=True) if screened_rows else "\x00"
 
     assert table.count(" Analyzed |") == (n_full if n_screen or n_excluded else 0)
     assert table.count(" Screened |") == n_screen
@@ -5374,13 +5381,14 @@ def test_scope_surfaces_state_one_coverage_rule(tmp_path: Path, depths: list[str
     assert (screening in overview) is bool(n_screen)
     if n_screen or n_excluded:
         assert f"**{n_full} of {total}**" in overview
-        assert "modeled components received full STRIDE threat analysis." not in overview.replace(
-            f"**{n_full} of {total}** modeled components received full STRIDE threat analysis.", ""
-        )
-        assert f"**Scope:** {n_full} of {total} components received full STRIDE analysis" in verdict
+        assert f"All {total} modeled components were analysed with full STRIDE." not in overview
+        assert f"{n_full} of {total} components analysed with full STRIDE" in verdict
+        if screened_rows:
+            assert pregen.screening_clause(screened_rows) in verdict
     else:
-        assert f"All {total} modeled components received full STRIDE threat analysis." in overview
-        assert "**Scope:**" not in verdict
+        assert f"All {total} modeled components were analysed with full STRIDE." in overview
+        assert f"all {total} components analysed with full stride." in verdict.lower()
+    assert pregen.coverage_statement(meta) in verdict
 
 
 def _verdict_ctx_with_abuse(tmp_path: Path, bullets: list[dict], abuse_cases: list[dict] | None):

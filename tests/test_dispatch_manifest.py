@@ -1670,7 +1670,7 @@ def test_selection_report_flows_into_scope_rendering():
 
     assert "**4 of 5**" in out
     assert "Internal Worker" in out  # out-of-scope component is named
-    assert "not individually analyzed" in out
+    assert "Not analysed at this depth: Internal Worker" in out
     # the selector's OWN reason strings survive the handoff into the criteria line
     crit_line = next(line for line in out.splitlines() if "Selection criteria" in line)
     assert "crown-jewel" in crit_line

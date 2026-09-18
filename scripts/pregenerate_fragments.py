@@ -60,6 +60,7 @@ from typing import Any, Iterable
 
 import yaml
 from _severity_rollup import register_severity
+from load_business_context import RUN_ONLY_NAME
 
 # Sibling module — deterministic §3 walkthrough renderer. Imported here
 # (and not lazily) so its GENERATORS entry below resolves at import time.
@@ -204,13 +205,94 @@ def component_coverage(meta: dict) -> dict | None:
     }
 
 
-def _screening_sentence(screened: list[dict]) -> str:
-    return (
-        f"**{len(screened)}** further component(s) received a reduced-budget screening pass "
-        "(all six STRIDE categories, no verification greps): "
-        + ", ".join(f"**{e.get('name') or e.get('id')}**" for e in screened)
-        + "."
+METHOD_SENTENCE = (
+    "An automated, AI-assisted threat model built from the repository's source code and configuration — "
+    "static analysis only, no dynamic or penetration testing."
+)
+
+_DEPTH_LABELS = {"quick": "Quick", "standard": "Standard", "thorough": "Thorough"}
+
+
+def _component_names(rows: list[dict], bold: bool) -> str:
+    names = [str(e.get("name") or e.get("id")) for e in rows]
+    if bold:
+        names = [f"**{n}**" for n in names]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def screening_clause(screened: list[dict], bold: bool = False) -> str:
+    """`<names> was/were only screened, …` — the plain wording for screening-depth components.
+
+    A screening pass covers all six STRIDE categories in a short turn budget and
+    skips the follow-up code searches that confirm each finding; its findings
+    still cite code evidence, so the clause never calls them unverified.
+    """
+    verb = "was" if len(screened) == 1 else "were"
+    return f"{_component_names(screened, bold)} {verb} only screened, a shorter pass without follow-up code checks per finding"
+
+
+def coverage_statement(meta: dict) -> str | None:
+    """The Management Summary depth sentence, from `component_coverage` and `meta.assessment_depth`."""
+    coverage = component_coverage(meta)
+    if not coverage:
+        return None
+    depth = _DEPTH_LABELS.get(str(meta.get("assessment_depth") or "").strip().lower())
+    total = coverage["total"]
+    if not coverage["screened"] and not coverage["excluded"]:
+        body = (
+            f"all {total} components analysed with full STRIDE"
+            if total != 1
+            else "its one component analysed with full STRIDE"
+        )
+    else:
+        clauses = [f"{len(coverage['full'])} of {total} components analysed with full STRIDE"]
+        if coverage["screened"]:
+            clauses.append(screening_clause(coverage["screened"]))
+        if coverage["excluded"]:
+            clauses.append(f"not analysed: {_component_names(coverage['excluded'], False)}")
+        body = "; ".join(clauses)
+    sentence = f"{depth} depth: {body}." if depth else body[0].upper() + body[1:] + "."
+    if depth == "Quick":
+        sentence += " Only the top findings per STRIDE category are reported."
+    if depth == "Quick" or coverage["excluded"]:
+        sentence += " A higher `--assessment-depth` analyses in more detail."
+    return sentence
+
+
+def business_context_clause(meta: dict) -> str | None:
+    """The business-context source as the report states it: one of two fixed labels, never a raw path."""
+    source = meta.get("business_context_source") if isinstance(meta, dict) else None
+    if not source:
+        return None
+    if source == RUN_ONLY_NAME:
+        return "Business context supplied for this run was used"
+    return f"Business context was taken from `{source}`"
+
+
+def limits_statement(meta: dict) -> str:
+    """What the method cannot establish; names the business-context source when one was supplied."""
+    context = business_context_clause(meta)
+    lead = "It does not replace a threat-modeling session with the team"
+    tail = "and each finding still needs confirmation in the deployed system."
+    if context:
+        return (
+            f"{lead}. {context}; design intent, runtime behaviour and production configuration are not covered, {tail}"
+        )
+    return f"{lead}: business context, design intent, runtime behaviour and production configuration are not covered, {tail}"
+
+
+def method_and_limits(meta: dict) -> str:
+    """The Management Summary method block; §1 and §11 reuse `METHOD_SENTENCE` and `limits_statement`."""
+    coverage = coverage_statement(meta)
+    # §1 carries the coverage detail only when a component selection exists; a §1
+    # fragment without one need not have a Scope anchor, so the link follows it.
+    details = (
+        "[§1 Scope](#scope), [§11 Out of Scope](#11-out-of-scope)"
+        if coverage
+        else "[§11 Out of Scope](#11-out-of-scope)"
     )
+    parts = [METHOD_SENTENCE, coverage, limits_statement(meta)]
+    return "**Method and limits:** " + " ".join(p for p in parts if p) + f" Details: {details}."
 
 
 def gen_system_overview(yaml_data: dict) -> str:
@@ -309,21 +391,15 @@ def gen_system_overview(yaml_data: dict) -> str:
                     crit.append(head)
         crit_clause = (" Selection criteria: " + "; ".join(crit) + ".") if crit else ""
         lines.append(
-            f"{name} comprises **{total}** modeled components. This threat model applied full "
-            f"STRIDE threat analysis to **{analyzed} of {total}** — the components on the "
-            f"externally-reachable, authentication-bearing, and business-critical surface: "
-            + ", ".join(f"**{n}**" for n in sel_names)
-            + f".{crit_clause}"
+            f"{name} comprises **{total}** modeled components; **{analyzed} of {total}** were analysed "
+            "with full STRIDE: " + ", ".join(f"**{n}**" for n in sel_names) + f".{crit_clause}"
         )
         lines.append("")
         if screened:
-            lines.append(_screening_sentence(screened))
+            lines.append(screening_clause(screened, bold=True) + ".")
             lines.append("")
         lines.append(
-            f"The remaining **{len(exc_names)}** component(s) were **not individually analyzed** at this "
-            f"assessment depth (lower-priority / internal surface): "
-            + ", ".join(exc_names)
-            + ". Re-run at a higher `--assessment-depth` to extend STRIDE coverage to them."
+            "Not analysed at this depth: " + ", ".join(exc_names) + "; a higher `--assessment-depth` covers them."
         )
         lines.append("")
     else:
@@ -336,13 +412,11 @@ def gen_system_overview(yaml_data: dict) -> str:
             lines.append("")
             lines.append(
                 f"**{len(coverage['full'])} of {coverage['total'] or len(components)}** modeled components "
-                "received full STRIDE threat analysis. " + _screening_sentence(screened)
+                "were analysed with full STRIDE; " + screening_clause(screened, bold=True) + "."
             )
         elif cs:
             lines.append("")
-            lines.append(
-                f"All {cs.get('total') or len(components)} modeled components received full STRIDE threat analysis."
-            )
+            lines.append(f"All {cs.get('total') or len(components)} modeled components were analysed with full STRIDE.")
         lines.append("")
 
     out_of_scope = (meta.get("scope") if isinstance(meta.get("scope"), dict) else {}).get("out_of_scope") or []
@@ -357,10 +431,7 @@ def gen_system_overview(yaml_data: dict) -> str:
     # Method boundary next to the system boundary: the line above names the parts
     # of the system that are excluded, this one names what kind of model this is.
     # §11 → "Not Covered by This Method" carries the itemised version.
-    lines.append(
-        "**Basis:** a code-derived threat model at implementation level, built from source, "
-        "configuration and git history. It describes the system as built, not as designed."
-    )
+    lines.append(f"**Basis:** {METHOD_SENTENCE} It describes the system as built, not as designed.")
     lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -3526,16 +3597,16 @@ def gen_out_of_scope(yaml_data: dict) -> str:
     # system-specific exclusions below.
     lines.append("### Not Covered by This Method")
     lines.append("")
-    lines.append(
-        "This is a code-derived threat model at implementation level: it is built from source, "
-        "configuration and git history, models the system as built rather than as designed, and "
-        "does not replace a design-time review."
-    )
+    lines.append(f"{METHOD_SENTENCE} It models the system as built rather than as designed. {limits_statement(meta)}")
     lines.append("")
     lines.append(
         "- Design intent and the reasoning behind it — no design documents, ADRs or workshop context are read."
     )
-    lines.append("- Business processes and user journeys that leave the code.")
+    lines.append(
+        "- Business processes and user journeys beyond the supplied business context."
+        if business_context_clause(meta)
+        else "- Business processes and user journeys that leave the code."
+    )
     lines.append("- Runtime behaviour, deployment topology and production-only configuration.")
     lines.append("- External and organizational controls.")
     lines.append("")
