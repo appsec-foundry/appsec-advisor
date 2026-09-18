@@ -59,6 +59,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
+from _severity_rollup import register_severity
 
 # Sibling module — deterministic §3 walkthrough renderer. Imported here
 # (and not lazily) so its GENERATORS entry below resolves at import time.
@@ -3354,23 +3355,11 @@ def gen_attack_surface(yaml_data: dict) -> str:
     def _displayed_severity(threat: dict) -> str:
         """The severity the reader sees beside a finding link.
 
-        `effective_severity` is the post-triage rating the report renders,
-        groups and prioritises by (`RenderContext._build_severity_index`).
-        Reading `risk` alone made the Risk column contradict its own row —
-        stating High next to a finding shown as Critical — and would order the
-        Notes cell by a severity that appears nowhere.
+        The §8 register basis every finding dot uses
+        (`RenderContext._build_severity_index`, RA-20); a second basis here made
+        the Risk column contradict the dot in its own row.
         """
-        return (
-            (
-                threat.get("effective_severity")
-                or threat.get("risk")
-                or threat.get("severity")
-                or threat.get("impact")
-                or ""
-            )
-            .strip()
-            .title()
-        )
+        return register_severity(threat) or str(threat.get("impact") or "").strip().title()
 
     def _entry_risk(entry: dict) -> str:
         """Highest severity across the entry's linked threats. `—` when none."""
@@ -4974,7 +4963,7 @@ _AUTH_INV_RISK_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
 def _auth_mech_finding_sort_key(threat: dict) -> tuple[int, int]:
     """Order findings worst-severity first, then by numeric id."""
-    sev = (threat.get("effective_severity") or threat.get("risk") or threat.get("severity") or "").strip().lower()
+    sev = register_severity(threat).lower()
     m = re.search(r"(\d+)$", (threat.get("id") or threat.get("t_id") or "").strip())
     return (-_AUTH_INV_RISK_RANK.get(sev, 0), int(m.group(1)) if m else 10**6)
 
@@ -6061,7 +6050,7 @@ def gen_ai_exposure(yaml_data: dict):
         bucket = buckets.setdefault(llm_id, {"name": name, "description": description, "threats": [], "sev_rank": -1})
         if threat not in bucket["threats"]:
             bucket["threats"].append(threat)
-        sev = str(threat.get("effective_severity") or threat.get("risk") or "").lower()
+        sev = register_severity(threat).lower()
         bucket["sev_rank"] = max(bucket["sev_rank"], _SEVERITY_RANK.get(sev, 1))
 
     for th in threats:
@@ -6128,7 +6117,7 @@ def gen_ai_exposure(yaml_data: dict):
         group_sorted = sorted(
             group,
             key=lambda t: (
-                -_SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1),
+                -_SEVERITY_RANK.get(register_severity(t).lower(), 1),
                 str(t.get("id", "")),
             ),
         )
@@ -6187,7 +6176,7 @@ def gen_ai_exposure(yaml_data: dict):
         group_sorted = sorted(
             group,
             key=lambda t: (
-                -_SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1),
+                -_SEVERITY_RANK.get(register_severity(t).lower(), 1),
                 str(t.get("id", "")),
             ),
         )
@@ -6205,10 +6194,7 @@ def gen_ai_exposure(yaml_data: dict):
             "owasp_asi_id": asi_id,
             "name": details[0],
             "severity": _llm_severity_glyph(
-                max(
-                    _SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1)
-                    for t in group_sorted
-                )
+                max(_SEVERITY_RANK.get(register_severity(t).lower(), 1) for t in group_sorted)
             ),
             "description": details[1],
             "findings": findings,
@@ -6217,10 +6203,7 @@ def gen_ai_exposure(yaml_data: dict):
             risk["affected_components"] = affected[:8]
         ai_risks.append(
             (
-                max(
-                    _SEVERITY_RANK.get(str(t.get("effective_severity") or t.get("risk") or "").lower(), 1)
-                    for t in group_sorted
-                ),
+                max(_SEVERITY_RANK.get(register_severity(t).lower(), 1) for t in group_sorted),
                 asi_id,
                 risk,
             )

@@ -345,7 +345,7 @@ def _capability_severity(threats, vocabulary, component_ids=None):
     worst = collections.defaultdict(dict)
     for threat in threats:
         values = by_cwe.get(str(threat.get("cwe") or "").strip().upper())
-        rank = SEV_RANK.get(threat.get("effective_severity") or threat.get("risk") or threat.get("severity"))
+        rank = SEV_RANK.get(register_severity(threat))
         if not values or rank is None:
             continue
         components = {threat.get("component")} | {component for component, _ in _finding_sites(threat, component_ids)}
@@ -619,10 +619,7 @@ def _component_weakness_summary(model):
     """Keep all Critical causes; fill to five with High causes from the full register."""
     by_cwe, by_mechanism, priority_groups, tie_break_order, families, qualifiers = _annotation_vocabulary()
     threats = {t.get("id"): t for t in model.get("threats") or [] if isinstance(t, dict)}
-    ranks = {
-        tid: SEV_RANK.get(t.get("effective_severity") or t.get("risk") or t.get("severity"), 9)
-        for tid, t in threats.items()
-    }
+    ranks = {tid: SEV_RANK.get(register_severity(t), 9) for tid, t in threats.items()}
     rows, covered = collections.defaultdict(dict), collections.defaultdict(set)
 
     def add(cid, label, rank, ids, structural):
@@ -774,7 +771,7 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
     for t in threats:
         m = re.match(r"^[FT]-(\d+)$", str(t.get("id") or "").upper())
         if m:
-            sev_by_fid[int(m.group(1))] = t.get("effective_severity") or t.get("risk") or t.get("severity")
+            sev_by_fid[int(m.group(1))] = register_severity(t)
     cls_by_id = {c.get("id"): c for c in (attack_taxonomy.get("classes") or []) if isinstance(c, dict)}
     labels = actor_labels or {}
     meta = yaml_data.get("meta") or {}
@@ -1112,10 +1109,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
                 nodes[cid]["badges"].append(s["n"])
     # Prefer evidenced storage locations. Without storage evidence, show known
     # processing or transmission instead, labelled as such rather than as storage.
-    asset_risk = {
-        t.get("id"): SEV_RANK.get(t.get("effective_severity") or t.get("risk") or t.get("severity"), 3)
-        for t in d.get("threats") or []
-    }
+    asset_risk = {t.get("id"): SEV_RANK.get(register_severity(t), 3) for t in d.get("threats") or []}
     for asset in d.get("assets") or []:
         if not isinstance(asset, dict):
             continue

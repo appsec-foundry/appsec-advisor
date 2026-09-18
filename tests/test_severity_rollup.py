@@ -234,3 +234,37 @@ def test_low_cell_reports_na_only_when_nothing_could_be_counted():
     assert sr.low_cell({"meta": {"register_severity_floor": "medium"}}, counts) == "n/a"
     assert sr.low_cell({"meta": {"register_severity_floor": "low"}}, counts) == "0"
     assert sr.low_cell({"meta": {"register_severity_floor": "low"}}, {"low": 3}) == "3"
+
+
+# ---------------------------------------------------------------------------
+# per-finding display basis (RA-20)
+# ---------------------------------------------------------------------------
+
+_DISPLAY_SHAPES = [
+    pytest.param({"risk": "High", "effective_severity": "Critical", "chain_role": "keystone"}, id="chain-elevated"),
+    pytest.param({"risk": "Medium", "effective_severity": "High", "chain_role": "contributor"}, id="contributor"),
+    pytest.param({"risk": "Critical", "effective_severity": "Critical"}, id="same-rating"),
+    pytest.param({"severity": "Low"}, id="legacy-severity"),
+    pytest.param({"risk": "high"}, id="lower-case"),
+]
+
+
+@pytest.mark.parametrize("shape", _DISPLAY_SHAPES)
+def test_every_per_finding_surface_shows_the_register_severity(tmp_path, shape):
+    """A finding's dot, index entry and walkthrough phrase all equal its §8 heading."""
+    import compose_threat_model as compose
+    import walkthrough_renderer as wr
+
+    threat = {"id": "T-001", "title": "X", **shape}
+    expected = sr.register_severity(threat)
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"threats": [threat]},
+        triage={},
+        fragments_dir=tmp_path / ".fragments",
+    )
+    assert ctx.severity_for_ref("F-001") == expected
+    assert compose._severity_by_finding_num([threat])[1] == (expected or "low").lower()
+    phrase = wr.SEVERITY_PHRASES.get(expected.lower(), wr.SEVERITY_PHRASES["high"])
+    assert wr.render_business_impact(threat, []).startswith(phrase)

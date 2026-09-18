@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -118,19 +119,39 @@ def _load_boundary_renumber(output_dir: Path) -> dict[str, str]:
     return {str(old): new for old, new in mapping.items() if isinstance(new, str)}
 
 
+def _load_triage_flags(output_dir: Path) -> dict:
+    try:
+        doc = json.loads((output_dir / ".triage-flags.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
 def _load_external_boundary_elevations(output_dir: Path) -> dict[str, tuple[str, ...]]:
+    return _external_boundary_elevations(_load_triage_flags(output_dir), _load_boundary_renumber(output_dir))
+
+
+def _elevation_reasons(flags_doc: dict) -> dict[str, list[str]]:
+    """`{threat id: [reason code]}` from the ranking's severity-reconciliation flags."""
+    result: dict[str, list[str]] = {}
+    for flag in flags_doc.get("flags") or []:
+        if not isinstance(flag, dict) or flag.get("type") != "severity_reconciliation":
+            continue
+        match = re.search(r"\(([^()]*(?:\([^()]*\)[^()]*)*)\)\.\s*$", str(flag.get("message") or ""))
+        codes = [code.strip() for code in match.group(1).split(";")] if match else []
+        for threat_id in flag.get("threat_ids") or []:
+            if threat_id:
+                result[str(threat_id)] = [code for code in codes if code]
+    return result
+
+
+def _external_boundary_elevations(doc: dict, renumber: dict[str, str]) -> dict[str, tuple[str, ...]]:
     """Map threat IDs to the confirmed ingress boundaries that raised them.
 
     The triage flag is the persisted audit record. Reading that record keeps
     this emitter independent from ranking internals and ensures a later rerun
     clears stale prose when the elevation no longer applies.
     """
-    path = output_dir / ".triage-flags.json"
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-    renumber = _load_boundary_renumber(output_dir)
     result: dict[str, tuple[str, ...]] = {}
     source_prefix = "triage_compute_ranking.py:external_boundary:"
     for flag in doc.get("flags") or []:
@@ -220,6 +241,7 @@ def _rationale_for(
     ac_titles: dict[str, str],
     *,
     external_boundary_ids: tuple[str, ...] = (),
+    reasons: list[str] | None = None,
 ) -> str:
     """Compose the §8 Story-Card severity-line rationale.
 
@@ -227,7 +249,36 @@ def _rationale_for(
     user wants surfaced; the intrinsic CWE/vektor note explains why the rating
     is above the class baseline. When both apply they are combined (intrinsic
     first, chain provenance second) so neither signal is lost.
+
+    Every report surface shows the register severity (RA-20), so this note is
+    the only place an ``effective_severity`` above it appears: an elevated
+    finding's note always names the elevated rating.
     """
+    note = _base_rationale(t, baseline_high, ac_titles, external_boundary_ids)
+    effective = (t.get("effective_severity") or "").strip()
+    register = (t.get("risk") or t.get("severity") or "").strip()
+    if _sev_rank(effective) <= _sev_rank(register) or f"elevated to {effective}" in note:
+        return note
+    if note == _KEYSTONE_NOTE:
+        return f"elevated to {effective} as an attack-chain keystone (individual baseline: {register})"
+    if note:
+        return f"elevated to {effective}: {note}"
+    codes = reasons or []
+    rule = next((code.split(":", 1)[1] for code in codes if code.startswith("always_crit_promoted:")), "")
+    if rule:
+        return f"elevated to {effective} by the always-critical rule for {rule}"
+    role = (t.get("chain_role") or "").strip().lower()
+    if role in ("keystone", "contributor"):
+        return f"elevated to {effective} as an attack-chain {role}"
+    return f"elevated to {effective} during prioritisation"
+
+
+def _base_rationale(
+    t: dict,
+    baseline_high: set[str],
+    ac_titles: dict[str, str],
+    external_boundary_ids: tuple[str, ...],
+) -> str:
     externally_elevated = bool(external_boundary_ids) and _sev_rank(t.get("effective_severity") or "") > _sev_rank(
         t.get("risk") or t.get("severity") or ""
     )
@@ -250,24 +301,19 @@ def _rationale_for(
     return "; ".join(notes)
 
 
-def emit(output_dir: Path) -> tuple[int, int]:
-    """Returns (total_threats, annotated)."""
-    yaml_path = output_dir / "threat-model.yaml"
-    if not yaml_path.is_file():
-        print(f"emit_severity_rationale: no yaml at {yaml_path}", file=sys.stderr)
-        return (0, 0)
-    try:
-        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-    except (yaml.YAMLError, OSError) as exc:
-        print(f"emit_severity_rationale: parse failed: {exc}", file=sys.stderr)
-        return (0, 0)
-    if not isinstance(data, dict):
-        return (0, 0)
+def refresh_rationales(threats: list, output_dir: Path, flags_doc: dict | None = None) -> tuple[int, bool]:
+    """Recompute every auto-written ``severity_rationale`` in place; ``(annotated, changed)``.
 
+    Any writer of ``effective_severity`` calls this in the same write, so the
+    only report surface that shows an elevated rating never lags behind it.
+    ``flags_doc`` is the triage-flags document about to be persisted; it
+    defaults to the one on disk.
+    """
+    flags = _load_triage_flags(output_dir) if flags_doc is None else flags_doc
     baseline_high = _load_baseline_high_cwes()
     ac_titles = _load_abuse_case_titles(output_dir)
-    external_elevations = _load_external_boundary_elevations(output_dir)
-    threats = data.get("threats") or []
+    external_elevations = _external_boundary_elevations(flags, _load_boundary_renumber(output_dir))
+    reasons = _elevation_reasons(flags)
     annotated = 0
     changed = False
     for t in threats:
@@ -282,6 +328,7 @@ def emit(output_dir: Path) -> tuple[int, int]:
             baseline_high,
             ac_titles,
             external_boundary_ids=external_elevations.get(threat_id, ()),
+            reasons=reasons.get(threat_id),
         )
         prior = t.get("severity_rationale")
         if note:
@@ -293,7 +340,25 @@ def emit(output_dir: Path) -> tuple[int, int]:
             # stale auto-note (e.g. finding was downgraded) — clear it.
             t.pop("severity_rationale", None)
             changed = True
+    return annotated, changed
 
+
+def emit(output_dir: Path) -> tuple[int, int]:
+    """Returns (total_threats, annotated)."""
+    yaml_path = output_dir / "threat-model.yaml"
+    if not yaml_path.is_file():
+        print(f"emit_severity_rationale: no yaml at {yaml_path}", file=sys.stderr)
+        return (0, 0)
+    try:
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    except (yaml.YAMLError, OSError) as exc:
+        print(f"emit_severity_rationale: parse failed: {exc}", file=sys.stderr)
+        return (0, 0)
+    if not isinstance(data, dict):
+        return (0, 0)
+
+    threats = data.get("threats") or []
+    annotated, changed = refresh_rationales(threats, output_dir)
     if changed:
         yaml_path.write_text(
             yaml.safe_dump(

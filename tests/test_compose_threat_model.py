@@ -570,17 +570,14 @@ def test_figure1_caps_tier_width_for_complex_apps(tmp_path: Path) -> None:
     assert "Critical/High finding in §8" in fig1, "capped Crit/High components must be named in the muted note"
 
 
-def test_attack_paths_table_uses_effective_severity(tmp_path: Path, monkeypatch) -> None:
-    """Regression (2026-07-25 insecure-spring-app): the attack-paths table read
-    the raw ``risk`` field while every other section resolves severity through
-    ``ctx.severity_for_ref`` (which prefers post-triage ``effective_severity``,
-    incl. abuse-chain elevation). One finding therefore rendered two different
-    severities inside one report — F-024 was 🟠 High in this table and 🔴
-    Critical in the Management Summary, component table, attack-surface table and
-    roadmap. 7 of that run's 49 findings had risk != effective_severity.
+def test_attack_paths_table_uses_the_register_severity(tmp_path: Path, monkeypatch) -> None:
+    """One finding renders one severity in the whole report (RA-20): the §8
+    register rating. An elevated ``effective_severity`` once made F-024 🟠 High
+    under its §8 heading and 🔴 Critical in this table (2026-07-25
+    insecure-spring-app, 2026-09 juice-shop).
 
-    Both the per-finding dot AND the path's aggregate Risk cell must follow the
-    canonical resolver, so a path can never be rated below a member finding.
+    Both the per-finding dot AND the path's aggregate Risk cell follow
+    ``ctx.severity_for_ref``, so a path can never be rated below a member finding.
     """
     out = tmp_path / "out"
     (out / ".fragments").mkdir(parents=True)
@@ -626,11 +623,12 @@ def test_attack_paths_table_uses_effective_severity(tmp_path: Path, monkeypatch)
     rows = compose._compute_top_threats_rows(ctx)
     assert rows, "expected a Top Threats row"
     cell = rows[0]["findings_cell"]
-    # The elevated finding carries its effective Critical dot, not raw-risk High.
+    # The elevated finding carries its register High dot, the same as its §8 heading.
     before_ref = cell.split("[F-024]")[0]
-    assert "🔴" in before_ref[-40:], f"F-024 must render its effective Critical severity: {cell[:400]}"
+    assert "🟠" in before_ref[-40:], f"F-024 must render its register High severity: {cell[:400]}"
+    assert ctx.severity_for_ref("F-024") == "High"
     # The path's aggregate Risk must not sit below its worst member finding.
-    assert "critical" in (rows[0]["risk_cell"] or "").strip().lower(), rows[0]["risk_cell"]
+    assert "high" in (rows[0]["risk_cell"] or "").strip().lower(), rows[0]["risk_cell"]
 
 
 def test_components_table_scope_column_marks_out_of_scope(tmp_path: Path) -> None:
@@ -4666,15 +4664,15 @@ def _dot_ctx(tmp_path: Path, threats: list[dict], mitigations: list[dict] | None
 
 
 def test_linkify_prepends_severity_dot_for_findings(tmp_path: Path) -> None:
-    ctx = _dot_ctx(tmp_path, [{"id": "T-002", "effective_severity": "Critical", "title": "Hardcoded key"}])
+    ctx = _dot_ctx(tmp_path, [{"id": "T-002", "risk": "Critical", "title": "Hardcoded key"}])
     out = ctx.linkify_with_label("T-002")
     assert out.startswith("🔴 [F-002](#f-002)")
 
 
-def test_linkify_dot_uses_effective_severity(tmp_path: Path) -> None:
-    # raw High but chain-elevated to Critical → the dot reflects effective.
+def test_linkify_dot_uses_the_register_severity(tmp_path: Path) -> None:
+    # RA-20: raw High but chain-elevated to Critical → the dot matches the §8 heading.
     ctx = _dot_ctx(tmp_path, [{"id": "T-019", "risk": "High", "effective_severity": "Critical", "title": "SSRF"}])
-    assert ctx.linkify_with_label("F-019").startswith("🔴 ")
+    assert ctx.linkify_with_label("F-019").startswith("🟠 ")
 
 
 def test_linkify_no_dot_for_mitigation_or_component(tmp_path: Path) -> None:
@@ -4783,7 +4781,7 @@ def test_abuse_chain_ms_note_reports_elevation(tmp_path: Path) -> None:
 
 
 def test_global_finding_dot_pass_dots_bare_link_and_is_idempotent(tmp_path: Path) -> None:
-    ctx = _dot_ctx(tmp_path, [{"id": "T-001", "effective_severity": "Critical", "title": "X"}])
+    ctx = _dot_ctx(tmp_path, [{"id": "T-001", "risk": "Critical", "title": "X"}])
     md = "**Source:** [F-001](#f-001) — `lib/insecurity.ts:54`"
     once = compose._prepend_finding_severity_dots(ctx, md)
     assert once == "**Source:** 🔴 [F-001](#f-001) — `lib/insecurity.ts:54`"
@@ -4808,8 +4806,8 @@ def test_open_question_refs_survive_the_rendering_tail_with_a_remainder(tmp_path
     ctx = _dot_ctx(
         tmp_path,
         [
-            {"id": "T-001", "effective_severity": "Critical", "title": "Object owner not checked"},
-            {"id": "T-002", "effective_severity": "High", "title": "Price accepted from the client"},
+            {"id": "T-001", "risk": "Critical", "title": "Object owner not checked"},
+            {"id": "T-002", "risk": "High", "title": "Price accepted from the client"},
         ],
     )
 
@@ -6210,22 +6208,21 @@ def test_domain_required_pattern_enforced_when_subsection_present(tmp_path: Path
 
 
 # ---------------------------------------------------------------------------
-# Regression: severity helpers honour effective_severity (2026-06-24)
+# Regression: the findings index follows the register severity (RA-20)
 # ---------------------------------------------------------------------------
 
 
-def test_severity_by_finding_num_uses_effective_severity() -> None:
-    """Threats with only effective_severity (no risk/severity) must not default to 'low'."""
-    threats = [{"id": "T-001", "effective_severity": "Critical"}]
+def test_severity_by_finding_num_follows_the_register_severity() -> None:
+    """An elevated finding keeps its register rating in the index, like its §8 heading."""
+    threats = [{"id": "T-001", "risk": "High", "effective_severity": "Critical"}]
     result = compose._severity_by_finding_num(threats)
-    assert result[1] == "critical", f"expected 'critical', got {result[1]!r}"
+    assert result[1] == "high", f"expected 'high', got {result[1]!r}"
 
 
-def test_severity_by_finding_num_effective_severity_wins_over_risk() -> None:
-    """effective_severity takes priority over risk when both present."""
+def test_severity_by_finding_num_ignores_a_differing_effective_severity() -> None:
     threats = [{"id": "T-007", "effective_severity": "High", "risk": "Low"}]
     result = compose._severity_by_finding_num(threats)
-    assert result[7] == "high", f"expected 'high', got {result[7]!r}"
+    assert result[7] == "low", f"expected 'low', got {result[7]!r}"
 
 
 def test_severity_by_finding_num_falls_back_to_risk_when_no_effective() -> None:

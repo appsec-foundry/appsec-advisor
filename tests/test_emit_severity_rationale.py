@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -398,3 +399,68 @@ def test_external_boundary_ids_are_translated_through_the_delivery_renumber(tmp_
     note = _reload(out)[0]["severity_rationale"]
     assert "confirmed internet ingress tb-1, tb-4" in note
     assert "tb-37" not in note
+
+
+def _flag(threat_id: str, reasons: str) -> dict:
+    return {
+        "type": "severity_reconciliation",
+        "threat_ids": [threat_id],
+        "message": f"Assessed risk High; policy risk High; effective severity Critical ({reasons}).",
+        "source": "triage_compute_ranking.py",
+    }
+
+
+@pytest.mark.parametrize(
+    ("threat", "reasons", "expected"),
+    [
+        pytest.param(
+            {"id": "T-004", "risk": "High", "effective_severity": "Critical", "cwe": "CWE-89"},
+            "always_crit_promoted:CWE-89",
+            "elevated to Critical by the always-critical rule for CWE-89",
+            id="always-critical-rule",
+        ),
+        pytest.param(
+            {
+                "id": "T-039",
+                "risk": "High",
+                "effective_severity": "Critical",
+                "cwe": "CWE-306",
+                "vektor": "internet-anon",
+            },
+            "always_crit_promoted:CWE-306",
+            "elevated to Critical: reaches a privileged operation on an unauthenticated endpoint",
+            id="context-promoted-cwe",
+        ),
+        pytest.param(
+            {
+                "id": "T-012",
+                "risk": "Medium",
+                "effective_severity": "High",
+                "chain_role": "contributor",
+                "cwe": "CWE-79",
+            },
+            "elevated:contributor_cap(High)",
+            "elevated to High as an attack-chain contributor",
+            id="unverified-chain-contributor",
+        ),
+    ],
+)
+def test_every_elevated_finding_names_its_elevated_rating(tmp_path: Path, threat, reasons, expected) -> None:
+    """RA-20: report surfaces show the register rating, so the note is where the elevation appears."""
+    out = _write(tmp_path, [threat])
+    (out / ".triage-flags.json").write_text(json.dumps({"flags": [_flag(threat["id"], reasons)]}), encoding="utf-8")
+    esr.emit(out)
+    assert _reload(out)[0]["severity_rationale"] == expected
+
+
+@pytest.mark.parametrize(
+    "threat",
+    [
+        {"id": "T-001", "risk": "Critical", "effective_severity": "Critical", "cwe": "CWE-89"},
+        {"id": "T-002", "risk": "High", "effective_severity": "High", "cwe": "CWE-89"},
+    ],
+)
+def test_unelevated_finding_gets_no_elevation_note(tmp_path: Path, threat) -> None:
+    out = _write(tmp_path, [threat])
+    esr.emit(out)
+    assert "severity_rationale" not in _reload(out)[0]

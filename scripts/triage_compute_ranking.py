@@ -1358,6 +1358,11 @@ def write_outputs(output_dir: Path, ranking: dict) -> None:
     }
     flags["ranking"] = {key: value for key, value in ranking.items() if not key.startswith("_")}
 
+    # The rationale is the only surface that shows an elevated rating (RA-20),
+    # so it is recomputed in the same write that sets effective_severity.
+    from emit_severity_rationale import refresh_rationales
+
+    refresh_rationales(yaml_data.get("threats") or [], output_dir, flags)
     continuation.refresh(yaml_data)
     yaml_path.write_text(
         yaml.safe_dump(yaml_data, sort_keys=False, allow_unicode=True, width=120),

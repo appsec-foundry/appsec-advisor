@@ -27,8 +27,18 @@ A new reader-facing tally calls :func:`risk_distribution_counts`; it does not
 re-derive the rule from ``threats[]``. Figure 1 (``figure1_dfd.py``) is bound
 the same way: its header total is :func:`risk_distribution_counts`, and its
 per-component severity counts and STRIDE strip use :func:`register_threats`
-with :func:`register_severity`. Its per-cause colours stay on the per-finding
-severity the report's finding dots show.
+with :func:`register_severity`.
+
+Every per-finding severity the report shows — finding dots, the §8 cards and
+their grouping, the findings index, Figure 1 and 2 scenario ratings, per-cause
+colours and capability ranking, walkthrough dots and coverage counts — is
+:func:`register_severity` (decision RA-20). A finding whose
+``effective_severity`` differs shows that rating only as its explicit
+``severity_rationale`` (``emit_severity_rationale.py``). Surfaces that
+prioritise work rather than state a finding's rating stay on
+``effective_severity`` by design: §9 abuse cases, mitigation priority and the
+top-mitigation Critical floor (and the QA check that mirrors it), Top Findings
+and walkthrough selection, and the YAML export, which carries both fields.
 
 Triage surfaces (``review_threat_model.py``, ``query_threat_model.py``) tally
 the finding list they operate on, which is the §8 register basis and a
@@ -40,9 +50,9 @@ Three tallies exist in the model and they are deliberately different:
     Per-finding severity as rated. The §8 Findings Register buckets on this.
 
 ``effective_severity``
-    ``risk`` plus abuse-chain elevation. Drives §9 and the mitigation
-    ranking. It is NOT a finding-inventory basis — using it double-counts the
-    chain view into the per-finding view.
+    ``risk`` plus abuse-chain, ingress and always-critical elevation. Drives
+    §9 and the prioritisation surfaces above. It is NOT a per-finding display
+    basis — using it double-counts the chain view into the per-finding view.
 
 Management-Summary basis
     ``risk``, minus ``insecure-practice`` sites folded into the weakness

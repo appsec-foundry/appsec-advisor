@@ -411,17 +411,18 @@ class RenderContext:
     def _build_severity_index(self) -> dict[str, str]:
         """Map every finding ref (T-NNN + F-NNN alias) → its rated severity.
 
-        Prefers ``effective_severity`` (the post-triage rating that drives the
-        §8 grouping, including abuse-chain elevation) and falls back to
-        ``risk`` / ``severity``. Only findings are indexed — mitigations,
-        components, and threat categories carry no criticality dot.
+        The §8 register basis (`_severity_rollup.register_severity`, RA-20), so
+        every finding dot agrees with the §8 heading the finding sits under; an
+        elevated ``effective_severity`` shows only as the card's rationale. Only
+        findings are indexed — mitigations, components, and threat categories
+        carry no criticality dot.
         """
         idx: dict[str, str] = {}
         for t in (self.yaml_data or {}).get("threats", []) or []:
             tid = (t.get("t_id") or t.get("id") or "").strip().upper()
             if not tid:
                 continue
-            sev = (t.get("effective_severity") or t.get("risk") or t.get("severity") or "").strip()
+            sev = _severity_rollup.register_severity(t)
             if not sev:
                 continue
             idx.setdefault(tid, sev)
@@ -5150,9 +5151,7 @@ def _severity_by_finding_num(threats: list) -> dict:
     for t in threats or []:
         m = re.search(r"(\d+)$", (t.get("id") or t.get("t_id") or "").strip())
         if m:
-            out[int(m.group(1))] = (
-                (t.get("effective_severity") or t.get("risk") or t.get("severity") or "low").strip().lower()
-            )
+            out[int(m.group(1))] = (_severity_rollup.register_severity(t) or "low").lower()
     return out
 
 
@@ -9689,13 +9688,9 @@ def _compute_top_threats_rows(ctx: RenderContext) -> list[dict[str, Any]]:
             # indices). Keep it BEFORE the non-breaking link unit; the ` — `
             # title separator downstream passes key on is preserved.
             # Severity must come from the SAME source every other section uses —
-            # `ctx.severity_for_ref`, which prefers post-triage
-            # `effective_severity` (incl. abuse-chain elevation) over raw `risk`.
-            # Reading `risk` directly here made one finding render two different
-            # severities inside one document (2026-07-25 insecure-spring-app:
-            # F-024 was 🟠 High in this table and 🔴 Critical in the Management
-            # Summary, component table, attack-surface table and roadmap — 7 of
-            # 49 findings had risk != effective_severity).
+            # `ctx.severity_for_ref`, the §8 register basis (RA-20). A second
+            # basis here once made one finding render two different severities
+            # inside one document (2026-07-25 insecure-spring-app: F-024).
             f_emoji = _TOP_THREATS_SEVERITY_EMOJI.get(
                 (ctx.severity_for_ref(visible) or t.get("risk") or t.get("severity") or "").strip().lower(),
                 "",

@@ -1787,3 +1787,26 @@ def test_refuted_row_records_its_verdict_without_neighbour_ids(tmp_path: Path) -
     row = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["trust_boundaries"][0]
     assert row["assumption_verdict"] == "refuted"
     assert "adjacent_finding_ids" not in row
+
+
+@pytest.mark.parametrize(
+    ("effective", "reasons", "expected"),
+    [
+        ("Critical", ["always_crit_promoted:CWE-89"], "elevated to Critical by the always-critical rule for CWE-89"),
+        ("High", ["deterministic:other"], "elevated to High during prioritisation"),
+        ("Medium", [], None),
+    ],
+)
+def test_write_outputs_explains_an_elevated_rating_in_the_same_write(tmp_path: Path, effective, reasons, expected):
+    """RA-20: the rationale is the only surface that shows an elevated rating, so the
+    ranking that sets effective_severity also refreshes it — a later rebuild never
+    leaves an elevation unexplained."""
+    tcr = _tcr()
+    threats = [{"id": "T-001", "t_id": "T-001", "title": "x", "risk": "Medium", "cwe": "CWE-89"}]
+    _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
+    ranking = tcr.compute_ranking(tmp_path)
+    for update in ranking["_finding_updates"]:
+        update.update(raw_severity="Medium", effective_severity=effective, reasons=reasons)
+    tcr.write_outputs(tmp_path, ranking)
+    written = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
+    assert written.get("severity_rationale") == expected

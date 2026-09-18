@@ -1016,16 +1016,16 @@ class TestRenderContextLookups:
 
     def test_severity_for_ref(self, tmp_path):
         ctx = _make_ctx(tmp_path, {"threats": [{"id": "T-001", "risk": "high"}]})
-        assert ctx.severity_for_ref("F-001") == "high"
+        assert ctx.severity_for_ref("F-001") == "High"
         assert ctx.severity_for_ref("F-999") == ""
         assert ctx.severity_for_ref("") == ""
 
-    def test_severity_effective_wins(self, tmp_path):
+    def test_severity_follows_the_register_not_the_elevation(self, tmp_path):
         ctx = _make_ctx(
             tmp_path,
             {"threats": [{"id": "T-001", "risk": "low", "effective_severity": "critical"}]},
         )
-        assert ctx.severity_for_ref("T-001") == "critical"
+        assert ctx.severity_for_ref("T-001") == "Low"
 
     def test_priority_for_ref_explicit_key(self, tmp_path):
         ctx = _make_ctx(tmp_path, {"mitigations": [{"id": "M-001", "priority": "p1"}]})

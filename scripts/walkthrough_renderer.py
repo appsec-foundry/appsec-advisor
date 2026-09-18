@@ -32,6 +32,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import yaml
+from _severity_rollup import register_severity
 from apply_prose_fixes import format_inline_code
 
 # ---------------------------------------------------------------------------
@@ -727,7 +728,10 @@ _ACCESS_CONTROL_CWES = frozenset({"CWE-284", "CWE-285", "CWE-639", "CWE-862", "C
 
 
 def _risk_of(t: dict) -> str:
-    """Return the displayed, post-triage severity used throughout the report."""
+    """Prioritisation severity for walkthrough selection, including chain elevation.
+
+    Never displayed: a walkthrough shows the finding's register severity (RA-20).
+    """
     return (t.get("effective_severity") or t.get("risk") or t.get("impact") or "").strip().lower()
 
 
@@ -1284,7 +1288,7 @@ def render_sequence_diagram(
 def render_business_impact(threat: dict, asset_ids: list[str]) -> str:
     """Severity-phrase + exposed-asset citation; one paragraph."""
 
-    severity = _risk_of(threat) or "high"
+    severity = register_severity(threat).lower() or "high"
     phrase = SEVERITY_PHRASES.get(severity, SEVERITY_PHRASES["high"])
     component = (threat.get("component") or "the affected component").strip()
     asset_phrase = ""
@@ -1485,7 +1489,7 @@ def _render_walkthrough_block(
     lines: list[str] = []
     lines.append(heading)
     lines.append("")
-    _sev_key = (threat.get("effective_severity") or threat.get("risk") or "").strip().lower()
+    _sev_key = register_severity(threat).lower()
     _dot = SEVERITY_DOT.get(_sev_key, "")
     _dot_prefix = f"{_dot} " if _dot else ""
     lines.append(
@@ -1493,7 +1497,7 @@ def _render_walkthrough_block(
     )
     lines.append("")
     lines.append(
-        f"Severity **{(threat.get('risk') or 'High').strip()}** "
+        f"Severity **{register_severity(threat) or 'High'}** "
         f"({cwe or 'CWE-?'}). STRIDE: {threat.get('stride') or 'n/a'}. "
         f"See [§8 {fid}](#{_anchor(fid)}) for the full register row."
     )
@@ -1551,8 +1555,8 @@ def render_attack_walkthroughs_md(
     templates = load_templates(template_dir or DEFAULT_TEMPLATE_DIR)
     picks = select_walkthrough_picks(yaml_data)
     _all_threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)]
-    _n_critical_total = sum(1 for t in _all_threats if _risk_of(t) == "critical")
-    _n_walked = sum(1 for t in picks if _risk_of(t) == "critical")
+    _n_critical_total = sum(1 for t in _all_threats if register_severity(t) == "Critical")
+    _n_walked = sum(1 for t in picks if register_severity(t) == "Critical")
     _capped = _n_critical_total > _n_walked
 
     indexes = {

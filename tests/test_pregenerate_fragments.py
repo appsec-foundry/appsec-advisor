@@ -2676,11 +2676,12 @@ class TestAttackSurfaceRiskColumn:
             },
         }
 
-    def test_promoted_finding_sets_the_row_risk(self):
+    def test_row_risk_follows_the_register_not_the_promotion(self):
+        """RA-20: the Risk column matches the finding dot, which is the register rating."""
         out = pf.gen_attack_surface(self._model(risk="High", effective_severity="Critical"))
         row = next(ln for ln in out.splitlines() if "/fetch" in ln)
-        assert "🔴 Critical" in row
-        assert "🟠 High" not in row
+        assert "🟠 High" in row
+        assert "🔴 Critical" not in row
 
     def test_falls_back_to_risk_when_untriaged(self):
         out = pf.gen_attack_surface(self._model(risk="High"))

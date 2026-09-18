@@ -2913,6 +2913,11 @@ def test_figure1_tallies_follow_the_report_basis(shape):
             )
     before = copy.deepcopy(model)
     scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    by_number = {int(t["id"].rsplit("-", 1)[1]): t for t in model["threats"]}
+    for scenario in scenarios:
+        ratings = [register_severity(by_number[f]) for f in scenario["fids"] if f in by_number]
+        ratings = [rating for rating in ratings if rating]
+        assert scenario["risk"] == (min(ratings, key=F.SEV_RANK.get) if ratings else "")
     svg, state = F._build(model, scenarios, actors, detail=False)
     assert f"· {sum(risk_distribution_counts(model).values())} threats" in svg
     expected = collections.Counter((t["component"], register_severity(t)) for t in register_threats(model))
@@ -3091,7 +3096,7 @@ def test_capability_labels_rank_linked_finding_severity_before_tier():
         {"id": "T-3", "cwe": "CWE-918", "risk": "Medium", "component": "svc"},
         {"id": "T-4", "cwe": "CWE-611", "risk": "Critical", "component": "other"},
         {"id": "T-5", "cwe": "CWE-79", "risk": "Critical", "component": "svc"},
-        {"id": "T-6", "cwe": "CWE-1427", "effective_severity": "Medium", "component": "gateway"},
+        {"id": "T-6", "cwe": "CWE-1427", "risk": "Medium", "effective_severity": "Critical", "component": "gateway"},
         {
             "id": "T-7",
             "cwe": "CWE-95",
