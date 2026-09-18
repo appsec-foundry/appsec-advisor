@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Iterable
 
 from _path_guard import is_safe_to_read
+from handler_resolver import HandlerResolver
 
 try:
     import yaml  # noqa: F401  (kept for parity with sibling scripts; not used here yet)
@@ -482,6 +483,9 @@ class RouteCandidate:
     relevance_tags: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     confidence: str = "medium"
+    authn_handler_signal: str | None = None
+    authn_handler_scheme: str | None = None
+    authn_handler_evidence: list[dict] = field(default_factory=list)
 
 
 def _detect_management_surface(path: str) -> bool:
@@ -957,6 +961,7 @@ def build_inventory(repo_root: Path) -> dict:
             return True
         return any(p == g or p.startswith(g.rstrip("/") + "/") for g in prefixes)
 
+    resolver = HandlerResolver(repo_root)
     for r in all_routes:
         is_graphql = r.framework == "graphql"
         gql_notes = set(r.notes or [])
@@ -971,12 +976,25 @@ def build_inventory(repo_root: Path) -> dict:
         # mount. Mirrors the authN lift above.
         if r.authz_signal == "unknown" and _guarded(r, authz_guarded_prefixes, authz_guarded_exact):
             r.authz_signal = "middleware_present"
+        # The handler chain itself: a verified credential check proves authentication;
+        # `absent` needs a fully resolved chain that never checks a credential.
+        handler = resolver.route_signal(
+            {"framework": r.framework, "handler_file": r.handler_file, "handler_line": r.handler_line, "path": r.path}
+        )
+        if handler is not None:
+            r.authn_handler_signal = handler.signal
+            r.authn_handler_scheme = handler.scheme
+            r.authn_handler_evidence = handler.evidence
+            if r.authn_signal == "unknown" and handler.signal == "verified":
+                r.authn_signal = "present"
+            elif r.authn_signal == "unknown" and handler.signal in ("none", "decode_only"):
+                r.authn_signal = "absent"
         # Warning (not a finding): a state-changing or management route with no
         # detected auth guard looks like it SHOULD require authentication —
         # unless it is an auth-flow / public-probe endpoint (login, register,
         # captcha, health…) which is unauthenticated by design.
         if (
-            r.authn_signal == "unknown"
+            r.authn_signal in ("unknown", "absent")
             and (r.method.upper() in _STATE_CHANGING or r.management_surface)
             and not _is_public_by_design(r.path)
         ):
@@ -1061,6 +1079,12 @@ def build_inventory(repo_root: Path) -> dict:
             "notes": d["notes"],
             "confidence": d["confidence"],
         }
+        if d["authn_handler_signal"]:
+            ordered["authn_handler_signal"] = d["authn_handler_signal"]
+            if d["authn_handler_scheme"]:
+                ordered["authn_handler_scheme"] = d["authn_handler_scheme"]
+            if d["authn_handler_evidence"]:
+                ordered["authn_handler_evidence"] = d["authn_handler_evidence"]
         routes_out.append(ordered)
 
     mgmt_count = sum(1 for r in routes_out if r["management_surface"])

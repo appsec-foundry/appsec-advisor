@@ -163,6 +163,30 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Optional short explanatory tokens (free-text discouraged)."
+        },
+        "authn_handler_signal": {
+          "type": "string",
+          "enum": ["verified", "decode_only", "none", "unresolved"],
+          "description": "What the resolved handler chain (registration arguments and mounted middlewares) proves: a checked credential with a rejecting branch, a token decoded without signature verification, no credential read in a fully resolved chain, or unresolved. Absent for stacks handler_resolver.py does not cover."
+        },
+        "authn_handler_scheme": {
+          "type": "string",
+          "enum": ["cookie", "bearer", "other", "none"],
+          "description": "Credential kind behind authn_handler_signal; `none` for decode_only and none."
+        },
+        "authn_handler_evidence": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["file", "line"],
+            "properties": {
+              "file": { "type": "string" },
+              "line": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "description": "Code that decided authn_handler_signal: the check, the decode, or the inspected handler definitions."
         }
       }
     },
@@ -176,7 +200,7 @@
         "decorator_present",
         "inherited_unknown"
       ],
-      "description": "Signal — NOT a verdict. 'unknown' / 'inherited_unknown' MUST NOT be silently coerced to 'absent' by downstream consumers."
+      "description": "Signal — NOT a verdict. 'present'/'absent' on authn come from the resolved handler chain (authn_handler_signal verified, or none/decode_only). 'unknown' / 'inherited_unknown' MUST NOT be silently coerced to 'absent' by downstream consumers."
     }
   }
 }

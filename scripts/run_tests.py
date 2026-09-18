@@ -129,6 +129,7 @@ GROUPS = {
         crypto_path_xxe_checks
         database_privilege_separation
         detect_open_registration
+        handler_resolver
         lib_manifest
         manifest_readers
         mass_assignment_scanner
@@ -683,6 +684,12 @@ SOURCE_TESTS = {
         repo_scan
         scanner_review_regressions
         validate_intermediate
+    """),
+    "scripts/handler_resolver.py": _tests("""
+        architecture_coverage_checks
+        authz_confirm
+        handler_resolver
+        route_inventory
     """),
     "scripts/source_auth_scanner.py": _tests("""
         authz_confirm

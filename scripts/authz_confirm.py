@@ -45,6 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from handler_resolver import RESOLVED_FRAMEWORKS, HandlerResolver  # noqa: E402
 from source_auth_scanner import _source_type_for  # noqa: E402  (reuse ext→enum map)
 
 # --- handler-body extraction ------------------------------------------------
@@ -185,6 +186,7 @@ def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
         return []
     findings: list[dict] = []
     seq = 0
+    resolver = HandlerResolver(repo_root)
     for r in routes:
         if not isinstance(r, dict):
             continue
@@ -199,7 +201,9 @@ def confirm_instances(repo_root: Path, inventory: dict) -> list[dict]:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError:
             continue
-        body = extract_body(lines, hl, path)
+        # A call-registered route's line is its registration, not its handler: read the
+        # handler through the shared resolver, and emit nothing when it does not resolve.
+        body = resolver.handler_code(r) if r.get("framework") in RESOLVED_FRAMEWORKS else extract_body(lines, hl, path)
         if not body:
             continue
         method = (r.get("method") or "").upper()
