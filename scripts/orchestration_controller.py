@@ -5838,6 +5838,20 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
         flows = record_embedded_access(repo_root, components.get("components") or [], flows)
     except OSError as exc:
         raise ControllerError(f"embedded store access reconciliation failed: {exc}") from exc
+    from reconcile_privileged_roles import reconcile as reconcile_privileged_roles
+
+    try:
+        resolved = json.loads((output_dir / ".actors-resolved.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        resolved = {}
+    flows, added = reconcile_privileged_roles(repo_root, components.get("components") or [], flows, resolved)
+    if added:
+        _append_event(
+            output_dir,
+            "PRIVILEGED_ROLE_ADDED",
+            f"actor={added['actor_id']} entity={added['entity_id']} flow={added['flow_id'] or '-'}",
+            level="WARN",
+        )
     # Validate the complete enriched artifact before replacing the accepted input.
     _validate_receipt_state(
         flows, PLUGIN_ROOT / "schemas" / "fragments" / "data-flows.schema.json", "identity integration data flows"

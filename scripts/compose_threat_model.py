@@ -5658,7 +5658,7 @@ def _build_attack_arrows(
     # edge of victim-targeting classes. We prefer the most-privileged
     # adversary already present in the diagram so the edge originates
     # at a node the user actually sees.
-    attacker_priority = ("internet-anon", "internet-user", "internet-priv-user", "build-time", "repo-read")
+    attacker_priority = ("internet-anon", "internet-user", "internet-priv-user", "build-time", "repo-read", "insider")
     attacker_for_injection: str | None = None
     for slug in attacker_priority:
         if slug in actor_node_by_slug and slug != "victim-required":
@@ -7416,6 +7416,10 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
             "has source-repository access as an internal developer or through an exposed clone; "
             "extracts committed secrets, hardcoded keys, and algorithm details "
             "offline without touching the running service."
+        ),
+        "insider": (
+            "holds repository write, pipeline or production access; abuses that "
+            "authority directly rather than reaching the service from outside."
         ),
         "victim-required": (
             "legitimate registered customer whose session and PII are the "
@@ -15522,10 +15526,13 @@ def _render_actor_inventory(ctx: RenderContext) -> str:
     taxonomy = _load_attack_class_taxonomy()
     paths = _load_attack_paths_fragment(ctx, taxonomy, ctx.yaml_data.get("threats") or [])
     represented = {}
+    drawn_groups: dict[str, dict[str, None]] = {}
+    meta = ctx.yaml_data.get("meta") or {}
     for number, path in enumerate(paths.get("attack_paths", []), 1):
         for group in path_groups(ctx.yaml_data, path):
             for aid in group["actor_ids"]:
                 represented.setdefault(aid, set()).add(str(number))
+                drawn_groups.setdefault(aid, {})[overview_actor_slug(group["actor"], meta)] = None
     labels = (_load_posture_actor_labels() or {}).get("actors") or {}
     lines = [
         '<a id="identified-actors"></a>',
@@ -15554,8 +15561,7 @@ def _render_actor_inventory(ctx: RenderContext) -> str:
         elif aid not in represented:
             group = "No displayed scenario"
         else:
-            slug = overview_actor_slug(slug, ctx.yaml_data.get("meta") or {})
-            group = (labels.get(slug) or {}).get("label") or slug
+            group = " / ".join((labels.get(slug) or {}).get("label") or slug for slug in drawn_groups[aid])
         ids = [finding_id(t.get("id") or t.get("t_id")) for t in linked]
         refs = ", ".join(f"[{fid}](#{fid.lower()})" for fid in ids if fid) or "—"
         cells = [

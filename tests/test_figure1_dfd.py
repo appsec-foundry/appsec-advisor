@@ -1373,8 +1373,48 @@ def test_equal_regular_access_can_fold_without_open_registration():
     _, state = F._build(model, scenarios, actors)
     assert sum(key in state["nodes"] for key in ids) == 1
     target = next(key for key in ids if key in state["nodes"])
-    assert state["nodes"][target]["name"] == "Authenticated user"
+    assert state["nodes"][target]["name"] == f"{model['meta']['project']} User"
     assert F.check_diagram(model, paths, taxonomy)[1] == []
+
+
+@pytest.mark.parametrize(("project", "prefix"), [({"name": "Order Gateway"}, "Order Gateway "), (None, "")])
+def test_classified_roles_carry_the_project_name_and_privileged_roles_stay_distinct(project, prefix):
+    model, paths, taxonomy, ids = _role_access_model(registration=False)
+    model["meta"].pop("project")
+    if project:
+        model["project"] = project
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    svg, state = F._build(model, scenarios, actors, detail=False)
+    names = {key: state["nodes"][key]["name"] for key in (*ids, "ext-operator", "ext-auditor")}
+    # Two privileged roles would share one name, so both keep their authored names.
+    assert names == {
+        ids[0]: prefix + "Visitor",
+        ids[1]: prefix + "User",
+        "ext-operator": "User",
+        "ext-auditor": "Member",
+    }
+    assert "Application users and administrators" in svg
+    model["external_entities"] = [e for e in model["external_entities"] if e["id"] != "ext-auditor"]
+    svg, state = F._build(model, scenarios, actors, detail=False)
+    assert state["nodes"]["ext-operator"]["name"] == prefix + "Admin"
+    model["external_entities"] = [e for e in model["external_entities"] if e["id"] != "ext-operator"]
+    svg, state = F._build(model, scenarios, actors, detail=False)
+    assert "Application users and administrators" not in svg and "Application users" in svg
+    assert "Browser" not in " ".join(n["name"] for n in state["nodes"].values())
+
+
+@pytest.mark.parametrize("second", ["app1", "app2"])
+def test_attack_edge_targets_the_finding_component_and_names_other_affected_ones_in_its_tooltip(second):
+    model, paths, taxonomy = _model(exposed=("app0", second))
+    next(t for t in model["threats"] if t["id"] == "T-003")["merged_from"] = ["app0", second]
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    svg, state = F._build(model, scenarios, actors)
+    injection = [e for e in state["edges"] if e.get("attack") and "1" in e["scen"]]
+    assert [e["dst"] for e in injection] == ["app0"]
+    second_name = state["nodes"][second]["name"]
+    assert injection[0]["also"] == [second_name]
+    assert f"its findings also affect {second_name}" in svg
+    assert "1" in state["nodes"][second]["badges"]
 
 
 def test_unnamed_flows_are_not_assigned_to_the_merged_victim_role():

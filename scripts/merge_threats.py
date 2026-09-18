@@ -3122,6 +3122,17 @@ def _load_impl_strategy(out_dir: Path) -> dict[str, str]:
     return out
 
 
+def _reconcile_actor_attribution(out_dir: Path, threats: list[dict]) -> list[dict]:
+    """Apply the attribution rules against the finalized inventory, route inventory and resolved actors."""
+    from actor_attribution import reconcile_attribution
+
+    components = (_read_json_file(out_dir / ".components.json", {}) or {}).get("components") or []
+    actors = (_read_json_file(out_dir / ".actors-resolved.json", {}) or {}).get("resolved_actors") or []
+    if not components or not actors:
+        return []
+    return reconcile_attribution(threats, components, actors, _read_json_file(out_dir / ".route-inventory.json"))
+
+
 def cmd_finalize(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir).resolve()
     cand_path = out_dir / ".merge-candidates.json"
@@ -3145,6 +3156,7 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     # Rewrite analyzer-local scenario cross-refs (F-NNN with a stray T- prefix)
     # to the global T-ids just assigned — must run AFTER _assign_t_ids.
     threats = _remap_scenario_local_refs(threats)
+    attribution_corrections = _reconcile_actor_attribution(out_dir, threats)
 
     # Reconcile mechanism observations after assigning their stable finding IDs.
     # Additive: `threats[]` is untouched. `weaknesses` omitted when empty so
@@ -3160,6 +3172,8 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     }
     if weaknesses:
         payload["weaknesses"] = weaknesses
+    if attribution_corrections:
+        payload["actor_attribution_corrections"] = attribution_corrections
 
     out_path = out_dir / ".threats-merged.json"
     # Atomic write — `.threats-merged.json` is a canonical intermediate

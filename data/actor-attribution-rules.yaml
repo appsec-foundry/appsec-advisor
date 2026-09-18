@@ -1,0 +1,87 @@
+# Finding attribution rules for the access groups of data/posture-actor-labels.yaml.
+#
+# A STRIDE finding names the actors that can exploit it (`actor_ids`). After the
+# merge, scripts/actor_attribution.py applies three rules in order:
+#
+# 1. An attribution to a group under `restricted_groups` stays only when the
+#    finding meets one of that group's conditions. Other groups are unchanged.
+# 2. A finding whose evidence file handles a registered route on a component in
+#    an `exposed_zones` zone keeps or gains an internet actor: anonymous unless
+#    every linked route registers authentication middleware.
+# 3. A finding left without an actor gains the first active actor in
+#    `fallback_order` (then by ID) whose attribution is valid; a group outside
+#    `restricted_groups` qualifies when its access reaches a component zone.
+
+schema_version: 1
+
+evidence_paths:
+  # Pipeline definitions, container builds and dependency manifests.
+  build:
+    - ".github/workflows/*"
+    - ".github/actions/*"
+    - ".gitlab-ci.yml"
+    - ".circleci/*"
+    - "azure-pipelines.yml"
+    - "bitbucket-pipelines.yml"
+    - "Jenkinsfile"
+    - "Dockerfile"
+    - "Dockerfile.*"
+    - "*.Dockerfile"
+    - "*.dockerfile"
+    - "Containerfile"
+    - "docker-compose*.yml"
+    - "docker-compose*.yaml"
+    - "package.json"
+    - "package-lock.json"
+    - "npm-shrinkwrap.json"
+    - "yarn.lock"
+    - "pnpm-lock.yaml"
+    - ".npmrc"
+    - "requirements*.txt"
+    - "Pipfile"
+    - "Pipfile.lock"
+    - "pyproject.toml"
+    - "poetry.lock"
+    - "setup.py"
+    - "go.mod"
+    - "go.sum"
+    - "Cargo.toml"
+    - "Cargo.lock"
+    - "pom.xml"
+    - "build.gradle"
+    - "build.gradle.kts"
+    - "gradle.lockfile"
+    - "composer.json"
+    - "composer.lock"
+    - "Gemfile"
+    - "Gemfile.lock"
+  # Infrastructure definitions and deployment configuration.
+  infrastructure:
+    - "*.tf"
+    - "*.tfvars"
+    - "k8s/*"
+    - "kubernetes/*"
+    - "helm/*"
+    - "charts/*"
+    - "ansible/*"
+    - "config/*"
+
+restricted_groups:
+  build-time:
+    component_zones: [build-pipeline, ci-cd-runtime, deployment-pipeline]
+    cwes: [CWE-494, CWE-506, CWE-829, CWE-830, CWE-1104, CWE-1357, CWE-1395]
+    evidence_paths: [build]
+  insider:
+    # A data store, or a zone the insider's own access reaches.
+    component_tiers: [data]
+    component_zones_from_actor_access: true
+    # Data at rest and stored secrets.
+    cwes: [CWE-256, CWE-311, CWE-312, CWE-522]
+    # Committed secrets and other repository content need only source access.
+    repository_content: true
+    evidence_paths: [build, infrastructure]
+
+internet_groups: [internet-anon, internet-user, internet-priv-user]
+exposed_zones: [internet, dmz]
+
+fallback_order: [internet-anon, internet-user, internet-priv-user, build-time, insider]

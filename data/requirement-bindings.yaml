@@ -441,6 +441,9 @@ requirements:
       - scripts/emit_auth_coverage.py
       - scripts/match_abuse_cases.py
       - scripts/figure1_dfd.py
+      - scripts/actor_attribution.py
+      - data/actor-attribution-rules.yaml
+      - scripts/reconcile_privileged_roles.py
       - scripts/figure1_detail.py
       - scripts/figure1_security.py
       - scripts/figure1_svg.py
@@ -462,12 +465,21 @@ requirements:
       - RA-12
       - RA-13
       - RA-15
+      - RA-17
+      - RA-18
     documents:
       - docs/internal/contracts/schema-invariants.md
       - agents/shared/prose-style.md
     coverage: partial
     guards:
       - tests/test_actor_presentation.py::test_twenty_roles_form_one_evidenced_group
+      - tests/test_actor_attribution.py::test_supply_chain_attribution_leaves_a_committed_secret_on_an_application_component
+      - tests/test_actor_attribution.py::test_insider_only_route_handler_finding_regains_an_internet_actor
+      - tests/test_actor_attribution.py::test_at_rest_finding_on_a_data_store_stays_insider_only
+      - tests/test_actor_attribution.py::test_insider_reading_committed_content_projects_to_repository_read_but_keeps_its_own_group_otherwise
+      - tests/test_reconcile_privileged_roles.py::test_confirmed_privileged_actor_gains_its_own_role_and_client_interaction
+      - tests/test_figure1_dfd.py::test_classified_roles_carry_the_project_name_and_privileged_roles_stay_distinct
+      - tests/test_figure1_dfd.py::test_attack_edge_targets_the_finding_component_and_names_other_affected_ones_in_its_tooltip
       - tests/test_actor_presentation.py::test_distinct_access_groups_do_not_gain_each_others_findings
       - tests/test_actor_presentation.py::test_unlinked_disabled_unmapped_and_legacy_roles_do_not_invent_attribution
       - tests/test_actor_presentation.py::test_unused_automatic_roles_never_reappear_in_report_or_diagram

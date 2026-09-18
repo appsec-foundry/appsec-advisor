@@ -49,6 +49,7 @@ GROUPS = {
         walkthrough_renderer
     """),
     "report": _tests("""
+        actor_attribution
         actor_presentation
         annotate_architecture
         annotate_sequences
@@ -331,6 +332,7 @@ GROUPS = {
         hydrate_mitigation_details
         merge_threats
         promote_verified_abuse_cases
+        reconcile_privileged_roles
         sanitize_perimeter_claims
         security_relevance_filter
         security_score
@@ -556,7 +558,19 @@ SOURCE_TESTS = {
         threat_fixture
         walkthrough_renderer
     """),
+    "scripts/actor_attribution.py": _tests("""
+        actor_attribution
+        merge_threats
+    """),
+    "data/actor-attribution-rules.yaml": _tests("""
+        actor_attribution
+    """),
+    "scripts/reconcile_privileged_roles.py": _tests("""
+        orchestration_controller
+        reconcile_privileged_roles
+    """),
     "scripts/actor_presentation.py": _tests("""
+        actor_attribution
         actor_presentation
         build_threat_model_yaml
         compose_threat_model

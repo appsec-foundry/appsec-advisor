@@ -317,6 +317,19 @@ properties:
                   type: [string, "null"]
                   enum: ["3.1", null]
 
+  actor_attribution_corrections:
+    description: Findings whose actor attribution data/actor-attribution-rules.yaml changed after the merge; absent when none changed.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [finding, removed, added, actor_ids]
+      properties:
+        finding: {type: string, pattern: "^T-\\d{3,}$"}
+        removed: {type: array, items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}}
+        added: {type: array, items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}}
+        actor_ids: {type: array, items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}}
+
   weaknesses:
     # P1 (weakness-class evidence model) — the unified register's PARENT rows.
     # Produced by the merge_threats.py reconciler: grouping key

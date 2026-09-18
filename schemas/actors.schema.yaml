@@ -169,9 +169,10 @@ properties:
       - internet-priv-user
       - build-time
       - repo-read
+      - insider
       - victim-required
     description: |
-      Maps this actor to one of the 6 heatmap display slugs.
+      Maps this actor to one of the heatmap display groups.
       Required for custom actors (ACT-E-*, ACT-R-*, ACT-X-*).
       Default actors (ACT-D-*) are covered by data/actor-id-to-heatmap-slug.yaml.
 

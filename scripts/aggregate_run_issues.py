@@ -1655,6 +1655,58 @@ def _extract_unconnected_injected_components(output_dir: Path) -> list[dict]:
     ]
 
 
+def _extract_actor_model_corrections(output_dir: Path, agent_log: list[tuple[int, str]]) -> list[dict]:
+    """Report where deterministic rules corrected the analysts' actor model.
+
+    Filling an unattributed finding is normal operation. Removing an
+    attribution means a STRIDE analyst named an access group the evidence does
+    not support; adding a privileged role means the architecture analyst folded
+    a confirmed administrator into a regular role.
+    """
+    issues: list[dict] = []
+    try:
+        merged = json.loads((output_dir / ".threats-merged.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        merged = {}
+    corrections = merged.get("actor_attribution_corrections") if isinstance(merged, dict) else None
+    moved = [c for c in corrections or [] if isinstance(c, dict) and c.get("removed")]
+    if moved:
+        issues.append(
+            {
+                "category": "actor_attribution_corrected",
+                "severity": "info",
+                "title": f"{len(moved)} finding attribution(s) moved to an access group the evidence supports",
+                "findings": [c.get("finding") for c in moved],
+                "evidence": {
+                    "log_file": ".threats-merged.json",
+                    "log_line": 1,
+                    "raw_event": "; ".join(
+                        f"{c.get('finding')}: -{','.join(c['removed'])} +{','.join(c.get('added') or []) or 'none'}"
+                        for c in moved[:10]
+                    ),
+                    "outcome": "attribution_corrected",
+                },
+            }
+        )
+    for ln, raw in agent_log:
+        ev = _parse_event_line(raw)
+        if ev and ev["event"] == "PRIVILEGED_ROLE_ADDED":
+            issues.append(
+                {
+                    "category": "privileged_role_added",
+                    "severity": "info",
+                    "title": "A confirmed privileged actor had no modelled role; the architecture stage added one",
+                    "evidence": {
+                        "log_file": ".agent-run.log",
+                        "log_line": ln,
+                        "raw_event": ev["detail"],
+                        "outcome": "privileged_role_added",
+                    },
+                }
+            )
+    return issues
+
+
 def _extract_render_integrity(output_dir: Path) -> list[dict]:
     """Flag a structurally incomplete report.
 
@@ -2312,6 +2364,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_recovery_events(output_dir))
     issues.extend(_extract_business_context_reach(output_dir))
     issues.extend(_extract_unconnected_injected_components(output_dir))
+    issues.extend(_extract_actor_model_corrections(output_dir, agent_log))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))

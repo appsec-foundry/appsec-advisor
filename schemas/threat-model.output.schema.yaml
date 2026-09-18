@@ -39,7 +39,7 @@ properties:
         access: {type: array, minItems: 1, items: {type: string}}
         trust_positions: {type: array, items: {type: string}}
         heatmap_slug:
-          enum: [internet-anon, internet-user, internet-priv-user, build-time, repo-read, victim-required, null]
+          enum: [internet-anon, internet-user, internet-priv-user, build-time, repo-read, insider, victim-required, null]
         active: {type: boolean}
         origin: {type: string, enum: [plugin, enterprise, repo, discovery]}
 

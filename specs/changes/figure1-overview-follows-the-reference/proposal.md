@@ -23,6 +23,6 @@ The operator chose, in this session:
 
 ## Non-goals
 
-- Changing actor attribution or the attack-bus geometry.
+- Changing the attack-bus geometry. Actor attribution and per-finding attack targets were later brought into scope by the operator (`RA-17`, `RA-18`).
 - Inferring `protocol_group` or `access_group` in the renderer. The architecture prompt now asks for a shared `protocol_group` on the steps of one integration; the renderer still uses only explicit values.
 - Adding data flows for components that reconciliation injects after the architecture analyst wrote its flows. That ordering gap is open work.

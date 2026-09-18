@@ -261,7 +261,7 @@ def _default_heatmap_slug(actor: dict) -> str:
     if access & {"build-pipeline", "ci-cd-runtime", "ci-cd-secrets", "deployment-pipeline"}:
         return "build-time"
     if access & {"local-fs", "internal-network", "staging-env", "prod-env"}:
-        return "repo-read"
+        return "insider"
     if access & {"client-device", "mobile-device"}:
         return "victim-required"
     if any("privileged" in value or "admin" in value for value in trust_positions):

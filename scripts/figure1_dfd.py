@@ -800,12 +800,15 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
         actor = overview_actor_slug(actor, meta)
         if actor not in order:
             order.append(actor)
-        cids, fids = [], []
+        cids, fids, targets = [], [], []
         for f in ap.get("findings") or []:
             m = re.match(r"^[FT]-(\d+)$", str(f or "").upper())
             if m:
                 fids.append(int(m.group(1)))
-            for cid in fid_comp.get(str(f or "").upper(), []):
+            affected = fid_comp.get(str(f or "").upper(), [])
+            if affected and affected not in targets:
+                targets.append(affected)
+            for cid in affected:
                 if cid not in cids:
                     cids.append(cid)
         sevs = [sev_by_fid[f] for f in fids if sev_by_fid.get(f)]
@@ -824,6 +827,7 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
                 "victim": victim,
                 "cids": cids,
                 "fids": fids,
+                "targets": targets,
                 "risk": risk,
             }
         )
@@ -838,6 +842,7 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
         existing = combined[key]
         for field in ("cids", "fids"):
             existing[field] = list(dict.fromkeys(existing[field] + scenario[field]))
+        existing["targets"] += [row for row in scenario["targets"] if row not in existing["targets"]]
         existing["risk"] = min((existing["risk"], scenario["risk"]), key=lambda risk: SEV_RANK.get(risk, 9))
     scenarios = list(combined.values())
     actors = [{"name": actor_name(s), "slug": s, "sub": actor_sub(s), "attacker": True} for s in order]
@@ -904,7 +909,44 @@ def _role_labels():
     ]
 
 
+def _project_name(d):
+    meta = d.get("meta") or {}
+    project = d.get("project") if isinstance(d.get("project"), dict) else {}
+    legacy = (
+        meta.get("project")
+        if isinstance(meta.get("project"), str)
+        else (meta.get("project") or {}).get("name")
+        if isinstance(meta.get("project"), dict)
+        else None
+    )
+    return project.get("name") or d.get("project_name") or meta.get("project_name") or legacy
+
+
+def _role_name(d, access):
+    """`<project> <noun>` for a classified legitimate role; the noun alone without a project name."""
+    entry = _role_labels().get(access) or {}
+    noun = entry.get("legitimate_role_noun")
+    if access == "internet-anon" and (d.get("meta") or {}).get("open_user_registration") is True:
+        noun = entry.get("open_registration_role_noun") or noun
+    return " ".join(part for part in (str(_project_name(d) or "").strip(), noun) if part) if noun else None
+
+
 def _project_legitimate_roles(yaml_data):
+    """Name classified roles after the project and their access, then fold equal regular access.
+
+    A name that two unmerged roles would share keeps the authored names apart.
+    """
+    d, victim, notes = _fold_legitimate_roles(yaml_data)
+    roles = [e for e in d.get("external_entities") or [] if e.get("kind") == "legitimate-role"]
+    names = {e["id"]: _role_name(d, e.get("access")) for e in roles}
+    counts = collections.Counter(names.values())
+    for entity in roles:
+        if names[entity["id"]] and counts[names[entity["id"]]] == 1:
+            entity["name"] = names[entity["id"]]
+    return d, victim, notes
+
+
+def _fold_legitimate_roles(yaml_data):
     """Fold only explicit regular access, retaining canonical identities in the input.
 
     One merged or single classified regular role may also represent the
@@ -1132,7 +1174,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     nodes[USER_ID] = {
         "id": USER_ID,
         "kind": "ext",
-        "name": "User",
+        "name": " ".join(part for part in (str(_project_name(d) or "").strip(), "User") if part),
         "sub": "legitimate client"
         + (
             " · victim of " + " ".join("①②③④⑤⑥⑦⑧⑨"[int(n) - 1] for n in victim_of[:4])
@@ -1176,6 +1218,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "kind": "ext",
             "name": entity["name"],
             "sub": entity.get("description") or "",
+            "access": entity.get("access") if role else None,
             "zone": "internet" if role else "third-party",
             "col": 0,
             "w": EXT_W,
@@ -1265,13 +1308,22 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     attacker_by_name = {n["name"]: n["id"] for n in nodes.values() if n.get("attacker")}
     default_attacker = next(iter(attacker_by_name.values()), None)
     atk = collections.OrderedDict()
+    also = collections.defaultdict(dict)
     for s in scenarios:
         src = attacker_by_name.get(s.get("actor")) or default_attacker
         if not src:
             continue
         cids = s.get("cids") or [by_cnum.get(cn) for cn in s.get("cnums") or []]
         app = [c for c in cids if c in nodes and nodes[c]["col"] == 1 and nodes[c]["kind"] == "process"]
-        hit = [c for c in app if nodes[c].get("exposed")]
+        # One edge per finding, to its own component when exposed, else to the
+        # first exposed affected one; the other affected components go into
+        # the edge's tooltip instead of fanning the attack out.
+        hit = []
+        for affected in s.get("targets") or [cids]:
+            exposed = [c for c in affected if c in app and nodes[c].get("exposed")]
+            if exposed:
+                hit += [exposed[0]] if exposed[0] not in hit else []
+                also[(src, exposed[0])].update(dict.fromkeys(c for c in affected if c in nodes and c != exposed[0]))
         if not hit and not s.get("victim"):  # a victim scenario reaches the user, not an unexposed process
             hit = app[:1]
         for dst in hit:
@@ -1289,6 +1341,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
                 "attack": True,
                 "scen": ns,
                 "victim": dst == victim_target,
+                "also": [nodes[c]["name"] for c in also[(src, dst)] if c != dst],
             }
         )
     # trust boundaries: chip on the flow that crosses them, else a tag on the guarded node
@@ -2434,14 +2487,7 @@ def _render(
     c.add(defs + "</defs>")
     meta = d.get("meta") or {}
     project_data = d.get("project") if isinstance(d.get("project"), dict) else {}
-    legacy_project = (
-        meta.get("project")
-        if isinstance(meta.get("project"), str)
-        else (meta.get("project") or {}).get("name")
-        if isinstance(meta.get("project"), dict)
-        else None
-    )
-    project = project_data.get("name") or d.get("project_name") or meta.get("project_name") or legacy_project
+    project = _project_name(d)
     version = project_data.get("version") or meta.get("project_version")
     identity = str(project or "Project")
     if isinstance(version, (str, int, float)) and not isinstance(version, bool) and str(version).strip():
@@ -2495,9 +2541,12 @@ def _render(
             sorted(zone_sub[zk])
         )
         if d.get("_overview"):
+            privileged = any(
+                n.get("access") == "internet-priv-user" for n in nodes.values() if n.get("zone") == "users"
+            )
             sub = {
                 "attackers": "Untrusted threat actors",
-                "users": "Application users and administrators",
+                "users": "Application users and administrators" if privileged else "Application users",
                 "client": "User-facing applications",
             }.get(zk, sub)
         if zk in {"client", "application", "data"}:
@@ -2559,6 +2608,10 @@ def _render(
 
     for e in edges:
         if e.get("attack"):
+            tip = f"{nodes[e['src']]['name']} → {nodes[e['dst']]['name']}: scenario " + ", ".join(e["scen"])
+            if e.get("also"):
+                tip += "; its findings also affect " + ", ".join(e["also"])
+            c.add(f'<g data-attack-edge="{_esc(e["src"])} {_esc(e["dst"])}"><title>{_esc(tip)}</title>')
             c.path(
                 _orth(_trim(e["pts"]), r=0 if d.get("_overview") else 8),
                 nodes[e["src"]]["color"],
@@ -2580,6 +2633,7 @@ def _render(
                     halo=True,
                     track=f"attack label {source['actor_code']} {bool(e.get('victim'))}",
                 )
+            c.add("</g>")
             continue
         col = CLS_COL.get(e["cls"], LINE)
         mk = f"arw-{e['cls'] if e['cls'] in CLS_COL else 'grey'}"

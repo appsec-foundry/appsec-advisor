@@ -21,6 +21,12 @@ def default_groups() -> dict[str, str]:
     return data["mappings"]
 
 
+@cache
+def display_groups() -> frozenset[str]:
+    data = yaml.safe_load((Path(__file__).resolve().parent.parent / "data/posture-actor-labels.yaml").read_text())
+    return frozenset(data["actors"])
+
+
 def actor_group(actor: dict) -> str | None:
     """Use declared presentation metadata, or the plugin's default ID map."""
     slug = actor.get("heatmap_slug")
@@ -28,7 +34,13 @@ def actor_group(actor: dict) -> str | None:
         aid = str(actor.get("id") or "")
         match = re.fullmatch(r"ACT-D-(\d+)", aid)
         slug = default_groups().get(f"ACT-D-{int(match[1]):02d}") if match else None
-    return slug if slug in set(default_groups().values()) else None
+    return slug if slug in display_groups() else None
+
+
+def finding_group(actor: dict, threat: dict) -> str | None:
+    """An insider reading committed repository content needs only repository read access (RA-10)."""
+    slug = actor_group(actor)
+    return "repo-read" if slug == "insider" and threat.get("vektor") == "repo-read" else slug
 
 
 def export_actors(resolution: dict) -> list[dict]:
@@ -94,7 +106,7 @@ def path_groups(model: dict, path: dict, default: str = "internet-anon") -> list
     for ref in path.get("findings") or []:
         threat = threats.get(finding_id(ref), {})
         actors = attributed_actors(model, threat)
-        pairs = [(actor_group(a), a["id"]) for a in actors if actor_group(a)]
+        pairs = [(finding_group(a, threat), a["id"]) for a in actors if actor_group(a)]
         if not pairs:
             pairs = [(fallback, None)]
         for slug, aid in pairs:

@@ -910,10 +910,60 @@ def _recommend_injected_component_without_flows(issue: dict, output_dir: Path) -
     }
 
 
+def _recommend_actor_attribution_corrected(issue: dict, output_dir: Path) -> dict:
+    """A STRIDE analyst named an access group the finding's evidence does not support."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": "The report already uses the corrected attribution; the STRIDE prompt produced the rejected one.",
+        "rationale": (
+            "data/actor-attribution-rules.yaml admits build-time and insider groups only with a matching "
+            "component, CWE or evidence path, and keeps an internet actor on exposed request handlers. "
+            "Repeated corrections of one group point at the attribution instruction in the STRIDE prompt."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".threats-merged.json",
+                "details": "Compare actor_attribution_corrections with each finding's component, CWE and evidence.",
+            },
+        ],
+        "verification": [],
+    }
+
+
+def _recommend_privileged_role_added(issue: dict, output_dir: Path) -> dict:
+    """The architecture analyst folded a confirmed privileged actor into a regular role."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": "Figure 1 shows the added privileged role; its flows rest on the actor's evidence alone.",
+        "rationale": (
+            "Actor discovery confirmed a privileged actor with code evidence, but no legitimate role in "
+            ".data-flows.json carried privileged access. The architecture stage added the role and, where a "
+            "regular role uses a client, the same interaction."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".data-flows.json",
+                "details": "Check which privileged routes the added role uses and whether the analyst saw the actor.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "editorial_pass_incomplete": _recommend_editorial_pass_incomplete,
     "business_context_unmapped": _recommend_business_context_unmapped,
     "injected_component_without_flows": _recommend_injected_component_without_flows,
+    "actor_attribution_corrected": _recommend_actor_attribution_corrected,
+    "privileged_role_added": _recommend_privileged_role_added,
     "component_evidence_coverage": _recommend_component_evidence_coverage,
     "routing_effectiveness": _recommend_routing_effectiveness,
     "dispatch_count_inconsistent": _recommend_dispatch_count_inconsistent,

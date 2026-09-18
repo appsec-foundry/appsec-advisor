@@ -196,7 +196,7 @@ actors:
       TH-04: 1.3   # Info disclosure — has direct repo access
       TH-05: 0.8
       TH-06: 1.2
-    heatmap_slug: repo-read
+    heatmap_slug: insider
     _provenance:
       layer: plugin
       source_file: data/actors/default-library.yaml
@@ -234,7 +234,7 @@ actors:
       TH-04: 1.5   # Info disclosure — direct prod-db access
       TH-05: 1.1
       TH-06: 1.2
-    heatmap_slug: repo-read
+    heatmap_slug: insider
     _provenance:
       layer: plugin
       source_file: data/actors/default-library.yaml

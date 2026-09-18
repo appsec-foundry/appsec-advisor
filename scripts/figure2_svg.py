@@ -88,6 +88,8 @@ def _prerequisite(finding: dict, raw_actor: str, victim: bool) -> str:
         parts.append("Source-repository access required")
     elif raw_actor == "build-time":
         parts.append("Build or dependency access required")
+    elif raw_actor == "insider":
+        parts.append("Repository write, pipeline or production access required")
     if victim:
         parts.append("Victim interaction required")
     return "; ".join(parts) or "Access prerequisites: see the finding"
