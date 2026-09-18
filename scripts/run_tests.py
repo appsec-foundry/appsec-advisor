@@ -428,6 +428,7 @@ GROUPS = {
         embedded_store_access
         extract_data_relations
         finalize_component_inventory
+        flow_route_auth
         load_related_repos
         match_abuse_cases
         normalize_security_architecture
@@ -686,10 +687,17 @@ SOURCE_TESTS = {
         validate_intermediate
     """),
     "scripts/handler_resolver.py": _tests("""
+        actor_attribution
         architecture_coverage_checks
         authz_confirm
+        flow_route_auth
         handler_resolver
         route_inventory
+    """),
+    "scripts/flow_route_auth.py": _tests("""
+        flow_route_auth
+        fragment_invariant_parity
+        validate_fragment
     """),
     "scripts/source_auth_scanner.py": _tests("""
         authz_confirm

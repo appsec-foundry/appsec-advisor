@@ -98,6 +98,14 @@ def test_insider_only_route_handler_finding_regains_an_internet_actor(tmp_path, 
     assert corrections[0]["removed"] == ["ACT-D-05"] and corrections[0]["added"] == [expected]
 
 
+def test_a_route_whose_handler_verifies_a_credential_counts_as_authenticated(tmp_path):
+    inventory = routes(tmp_path, "app.get('/items', productNotes())")
+    inventory["routes"][0]["authn_signal"] = "present"
+    threats = [finding("T-004", "orders-api", "CWE-94", "routes/productNotes.ts", ["ACT-D-05"])]
+    reconcile_attribution(threats, components(), ACTORS, inventory)
+    assert threats[0]["actor_ids"] == ["ACT-D-02"]
+
+
 def test_route_rule_adds_an_internet_actor_beside_a_valid_insider(tmp_path):
     threats = [finding("T-002", "orders-api", "CWE-312", "routes/exportCards.ts", ["ACT-D-05"])]
     reconcile_attribution(threats, components(), ACTORS, routes(tmp_path, "app.get('/items', exportCards())"))

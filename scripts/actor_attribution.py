@@ -22,6 +22,7 @@ from pathlib import Path
 import yaml
 from actor_presentation import actor_group
 from emit_threat_vektors import _CWE_VEKTOR
+from route_inventory import route_authenticated
 
 RULES_PATH = Path(__file__).resolve().parent.parent / "data" / "actor-attribution-rules.yaml"
 # Setup files register every route; their name identifies no handler.
@@ -161,7 +162,7 @@ def _route_actor(threat: dict, actors: list[dict], inventory: _Inventory) -> str
     routes = inventory.handler_routes(threat)
     if not routes:
         return None
-    authenticated = all(route.get("authn_signal") == "middleware_present" for route in routes)
+    authenticated = all(route_authenticated(route) for route in routes)
     internet = rules["internet_groups"]
     preferred = ["internet-user", *internet] if authenticated else internet
     candidates = _ordered(actors, list(dict.fromkeys(preferred)))

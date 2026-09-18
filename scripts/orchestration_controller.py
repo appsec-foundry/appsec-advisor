@@ -5852,6 +5852,17 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
             f"actor={added['actor_id']} entity={added['entity_id']} flow={added['flow_id'] or '-'}",
             level="WARN",
         )
+    from flow_route_auth import reconcile as reconcile_flow_authentication
+
+    try:
+        routes = json.loads((output_dir / ".route-inventory.json").read_text(encoding="utf-8")).get("routes") or []
+    except (OSError, json.JSONDecodeError, AttributeError):
+        routes = []
+    flows, filled, mixed = reconcile_flow_authentication(flows, routes)
+    if filled:
+        _append_event(output_dir, "FLOW_AUTH_RECONCILED", "flows=" + ",".join(filled))
+    if mixed:
+        _append_event(output_dir, "FLOW_AUTH_MIXED", "flows=" + ",".join(mixed), level="WARN")
     # Validate the complete enriched artifact before replacing the accepted input.
     _validate_receipt_state(
         flows, PLUGIN_ROOT / "schemas" / "fragments" / "data-flows.schema.json", "identity integration data flows"

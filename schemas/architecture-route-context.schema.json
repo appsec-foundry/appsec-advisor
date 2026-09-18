@@ -62,7 +62,19 @@
         "missing_authz_suspect": {"type": "boolean"},
         "relevance_tags": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 100}},
         "confidence": {"enum": ["low", "medium", "high"]},
-        "notes": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 200}}
+        "notes": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 200}},
+        "authn_handler_signal": {"enum": ["verified", "decode_only", "none", "unresolved"]},
+        "authn_handler_scheme": {"enum": ["cookie", "bearer", "other", "none"]},
+        "authn_handler_evidence": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": ["file", "line"],
+            "properties": {"file": {"type": "string", "minLength": 1, "maxLength": 1000}, "line": {"type": "integer", "minimum": 1}},
+            "additionalProperties": false
+          }
+        }
       },
       "additionalProperties": false
     }

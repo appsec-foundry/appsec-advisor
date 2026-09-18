@@ -729,6 +729,17 @@ def _report_violations(path: Path, fragment_type: str, errors: list[str]) -> Non
         )
 
 
+def _route_split_errors(data: Any, inventory_path: Path) -> list[str]:
+    """Self-check only: a flow whose cited routes authenticate differently must be split."""
+    from flow_route_auth import mixed_route_auth_errors
+
+    try:
+        routes = json.loads(inventory_path.read_text(encoding="utf-8")).get("routes") or []
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return []
+    return mixed_route_auth_errors((data or {}).get("data_flows"), routes)
+
+
 def validate(
     fragment_type: str,
     path: Path,
@@ -758,6 +769,8 @@ def validate(
     # trust-boundary analyst among them — unable to see what the gate enforces.
     context = _load_fragment(context_path) if context_path is not None else None
     errors = errors + fragment_invariant_errors(fragment_type, data, context=context)
+    if fragment_type == "data-flows" and context_path is not None:
+        errors = errors + _route_split_errors(data, context_path.parent / ".route-inventory.json")
     if errors:
         _report_violations(path, fragment_type, errors)
         return 1

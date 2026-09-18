@@ -468,6 +468,11 @@ _AUTHN_PRESENT = {"present", "middleware_present", "decorator_present"}
 _AUTHZ_PRESENT = {"present", "middleware_present", "decorator_present"}
 
 
+def route_authenticated(route: dict) -> bool:
+    """Whether the inventory proves a route authenticated: a registration guard or a verified handler check."""
+    return route.get("authn_signal") in _AUTHN_PRESENT
+
+
 @dataclass
 class RouteCandidate:
     method: str
