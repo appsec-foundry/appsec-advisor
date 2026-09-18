@@ -355,6 +355,75 @@ def test_data_flow_repo_gate_rejects_missing_file_and_line(tmp_path: Path):
     assert "line 2 exceeds" in result.stderr
 
 
+def _two_flows(first_label: str, second_label: str) -> dict:
+    data = _data_flows([{"file": "routes/login.ts", "line": 2}])
+    second = dict(data["data_flows"][0], id="df-002", label=second_label)
+    data["data_flows"][0]["label"] = first_label
+    data["data_flows"].append(second)
+    return data
+
+
+def test_one_self_check_reports_every_schema_violation(tmp_path: Path):
+    """An agent fixes what one run reports; a first-error check cost a turn per violation."""
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(json.dumps(_two_flows("x" * 130, "y" * 125)), encoding="utf-8")
+
+    result = _run(["data-flows", str(frag)])
+
+    assert result.returncode == 1
+    assert "schema violation at data_flows/0/label" in result.stderr
+    assert "schema violation at data_flows/1/label" in result.stderr
+
+
+def test_schema_violations_of_different_kinds_arrive_in_document_order(tmp_path: Path):
+    data = _two_flows("Session token", "Profile read")
+    data["data_flows"][1]["protocol"] = 7
+    data["component_inventory_fingerprint"] = "md5:abc"
+    for index in range(10, 12):
+        data["data_flows"].append(dict(data["data_flows"][0], id=f"df-{index:03d}", label="z" * 121))
+    frag = tmp_path / "flows.json"
+    frag.write_text(json.dumps(data), encoding="utf-8")
+
+    result = _run(["data-flows", str(frag)])
+
+    places = [line.split(" at ", 1)[1].split(":", 1)[0] for line in result.stderr.splitlines()]
+    assert places == [
+        "component_inventory_fingerprint",
+        "data_flows/1/protocol",
+        "data_flows/2/label",
+        "data_flows/3/label",
+    ]
+
+
+def test_repository_and_relational_violations_arrive_in_the_same_run(tmp_path: Path, monkeypatch, capsys):
+    repo = tmp_path / "repo"
+    (repo / "routes").mkdir(parents=True)
+    (repo / "routes" / "login.ts").write_text("only\n", encoding="utf-8")
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(json.dumps(_data_flows([{"file": "routes/login.ts", "line": 2}])), encoding="utf-8")
+    monkeypatch.setattr(vf, "fragment_invariant_errors", lambda *_args, **_kwargs: ["df-001: relational rule"])
+
+    assert vf.validate("data-flows", frag, repo_root=repo) == 1
+
+    err = capsys.readouterr().err
+    assert "line 2 exceeds" in err
+    assert "df-001: relational rule" in err
+
+
+def test_a_valid_fragment_still_passes_and_a_long_report_is_capped(tmp_path: Path, monkeypatch, capsys):
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(json.dumps(_two_flows("Session token", "Profile read")), encoding="utf-8")
+    assert vf.validate("data-flows", frag) == 0
+
+    monkeypatch.setattr(vf, "MAX_REPORTED_VIOLATIONS", 2)
+    monkeypatch.setattr(vf, "fragment_invariant_errors", lambda *_args, **_kwargs: [f"rule {n}" for n in range(5)])
+    capsys.readouterr()
+    assert vf.validate("data-flows", frag) == 1
+    err = capsys.readouterr().err.splitlines()
+    assert len(err) == 3
+    assert err[-1].endswith("3 more violation(s) not shown")
+
+
 # ---------------------------------------------------------------------------
 # In-process tests (drive functions directly for coverage of error branches)
 # ---------------------------------------------------------------------------

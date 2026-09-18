@@ -703,6 +703,32 @@ def _load_fragment(path: Path) -> object:
         )
 
 
+#: Violations one self-check prints before it summarizes the rest.
+MAX_REPORTED_VIOLATIONS = 50
+
+
+def _schema_violations(data: object, schema: dict) -> list[str]:
+    """Every schema violation, in document order, not only the first one."""
+    validator_cls = jsonschema.validators.validator_for(schema)
+    validator_cls.check_schema(schema)
+    errors = sorted(
+        validator_cls(schema).iter_errors(data),
+        key=lambda e: ([(0, p, "") if isinstance(p, int) else (1, 0, str(p)) for p in e.absolute_path], e.message),
+    )
+    return [f"schema violation at {'/'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}" for e in errors]
+
+
+def _report_violations(path: Path, fragment_type: str, errors: list[str]) -> None:
+    for error in errors[:MAX_REPORTED_VIOLATIONS]:
+        print(f"VALIDATE_FAILED: {path.name} ({fragment_type}) — {error}", file=sys.stderr)
+    if len(errors) > MAX_REPORTED_VIOLATIONS:
+        print(
+            f"VALIDATE_FAILED: {path.name} ({fragment_type}) — "
+            f"{len(errors) - MAX_REPORTED_VIOLATIONS} more violation(s) not shown",
+            file=sys.stderr,
+        )
+
+
 def validate(
     fragment_type: str,
     path: Path,
@@ -710,32 +736,30 @@ def validate(
     repo_root: Path | None = None,
     context_path: Path | None = None,
 ) -> int:
+    """Report every violation a stage can see in one run.
+
+    An authoring agent fixes what one run reports and runs again, so a check
+    that stops at the first violation costs one agent turn per violation.
+    Schema violations come first because the other rules read schema-valid
+    data; the repository and invariant rules do not depend on each other and
+    report together.
+    """
     schema = _load_schema(fragment_type)
     data = _load_fragment(path)
-    try:
-        jsonschema.validate(instance=data, schema=schema)
-    except jsonschema.ValidationError as e:
-        where = "/".join(str(p) for p in e.absolute_path) or "<root>"
-        print(
-            f"VALIDATE_FAILED: {path.name} ({fragment_type}) — schema violation at {where}: {e.message}",
-            file=sys.stderr,
-        )
+    errors = _schema_violations(data, schema)
+    if errors:
+        _report_violations(path, fragment_type, errors)
         return 1
     if repo_root is not None:
         errors = repository_path_errors(fragment_type, data, repo_root)
-        if errors:
-            for error in errors:
-                print(f"VALIDATE_FAILED: {path.name} ({fragment_type}) — {error}", file=sys.stderr)
-            return 1
     # Unconditional, unlike the repository checks above: these rules need no
     # repository, and three of the five agents that self-validate omit
     # --repo-root. Gating them on it would leave exactly those agents — the
     # trust-boundary analyst among them — unable to see what the gate enforces.
     context = _load_fragment(context_path) if context_path is not None else None
-    errors = fragment_invariant_errors(fragment_type, data, context=context)
+    errors = errors + fragment_invariant_errors(fragment_type, data, context=context)
     if errors:
-        for error in errors:
-            print(f"VALIDATE_FAILED: {path.name} ({fragment_type}) — {error}", file=sys.stderr)
+        _report_violations(path, fragment_type, errors)
         return 1
     print(f"VALIDATE_OK: {path.name} matches {fragment_type}")
     return 0
