@@ -1416,14 +1416,18 @@ def _group_bucket_key(t: dict, g: dict) -> tuple:
 def _instances_of(m: dict) -> list[dict]:
     """Per-instance records for one member. If the member already carries
     ``instances[]`` (e.g. a config-scan survivor), flatten those; otherwise
-    synthesize one from its evidence. Each instance carries its own severity +
-    provenance ref so instance-level delta / suppression stays possible."""
+    synthesize one from its evidence. Each instance carries its own severity,
+    source and provenance ref so instance-level delta / suppression stays
+    possible and a deterministic rule hit stays recognizable after a
+    model-authored finding absorbs it."""
     insts = m.get("instances")
     if isinstance(insts, list) and insts:
         out: list[dict] = []
         for i in insts:
             inst = dict(i) if isinstance(i, dict) else {}
             inst.setdefault("severity", m.get("risk"))
+            if m.get("source"):
+                inst.setdefault("source", m["source"])
             out.append(inst)
         return out
     ev = m.get("evidence")
@@ -1432,6 +1436,8 @@ def _instances_of(m: dict) -> list[dict]:
     elif not isinstance(ev, dict):
         ev = {}
     inst = {"file": (ev.get("file") or "").strip(), "line": ev.get("line"), "severity": m.get("risk")}
+    if m.get("source"):
+        inst["source"] = m["source"]
     sn = (ev.get("snippet") or ev.get("excerpt") or "").strip()
     if sn:
         inst["snippet"] = sn

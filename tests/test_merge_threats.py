@@ -225,6 +225,32 @@ class TestEvidenceDedup:
         assert result[0]["config_check_id"] == "IAC-010"
         assert result[0]["mitigation_title"] == "Set an explicit permissions block"
 
+    def test_folded_rule_hit_keeps_its_source_on_the_instance(self, mt):
+        """A deterministic source-rule hit absorbed by a model-authored finding
+        stays recognizable per instance, so rule-only consumers still see it."""
+        evidence = {"file": "handlers/xml_import.py", "line": 12}
+        stride = _threat(cwe="CWE-611", risk="Critical", title="XXE in import", evidence=dict(evidence))
+        rule = _threat(
+            cwe="CWE-611",
+            risk="High",
+            title="XML parsed with external entities enabled",
+            source="source-scan",
+            source_scan_ref="SAF-007",
+            evidence=dict(evidence),
+        )
+
+        [kept] = mt._dedupe_evidence([stride, rule])
+
+        assert kept["source"] == "stride"
+        assert [(i.get("source"), i.get("source_ref")) for i in kept["instances"]] == [
+            ("stride", None),
+            ("source-scan", "SAF-007"),
+        ]
+        # A member that already carries instances keeps each instance's own source.
+        flattened = mt._instances_of({"risk": "High", "source": "stride", "instances": [dict(kept["instances"][1])]})
+        assert flattened[0]["source"] == "source-scan"
+        assert mt._instances_of({"risk": "High", "evidence": dict(evidence)})[0].get("source") is None
+
     def test_higher_risk_member_wins(self, mt):
         ev = {"file": "routes/x.ts", "line": 9}
         low = _threat(
@@ -1056,7 +1082,9 @@ class TestEndToEnd:
         assert member["scenario_excerpt"] == "Attacker reaches the first unsafe SQL sink."
         assert member["cwe"] == "CWE-89"
         assert member["source"] == "stride"
-        assert member["instances"] == [{"file": "src/auth/login.py", "line": 42, "severity": "High"}]
+        assert member["instances"] == [
+            {"file": "src/auth/login.py", "line": 42, "severity": "High", "source": "stride"}
+        ]
 
     def test_collect_drops_an_empty_boundary_refs_list(self, mt, tmp_path):
         """An analyzer that found no crossing still emits the key as `[]`. Both

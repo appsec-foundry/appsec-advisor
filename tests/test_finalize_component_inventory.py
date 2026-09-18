@@ -308,3 +308,69 @@ def test_finalized_language_survives_the_manifest_gate_without_changing_the_fing
     assert manifest.reconcile_inventory(first["components"], repo) == (first["components"], [])
     without = [{key: value for key, value in row.items() if key != "language"} for row in first["components"]]
     assert finalizer.component_inventory_fingerprint(without) == receipt["component_inventory_fingerprint"]
+
+
+def _write_sources(root: Path, files: dict[str, str]) -> None:
+    for relative, text in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+
+def _llm_calls(*files: str) -> list[dict]:
+    return [{"capability": "llm-calls", "evidence": [{"file": relative, "line": 1} for relative in files]}]
+
+
+def test_tool_enabled_model_calls_refine_llm_calls(tmp_path: Path):
+    repo, outside = tmp_path / "repo", tmp_path / "outside"
+    _write_sources(
+        repo,
+        {
+            "assist/chat.ts": "export async function answer(registry) {\n  const out = streamText({\n"
+            "    model: provider(name),\n    tools: registry,\n  })\n}\n",
+            "bots/agent.py": "resp = client.chat.completions.create(\n    model=name,\n    tools=TOOLS,\n)\n",
+            "bots/lc.py": "bound = chat_model.bind_tools([search])\n",
+            "plain/ask.ts": "const out = await generateText({ model: provider(name), tools: [] })\n",
+            "commented/ask.js": "const out = await generateText({\n  model,\n  // tools: registry,\n})\n",
+            "config/settings.ts": "const out = await generateText({ model, prompt })\n"
+            "export const settings = {\n  tools: ['lint'],\n}\n",
+        },
+    )
+    _write_sources(outside, {"agent.py": "resp = client.chat.completions.create(model=m, tools=T)\n"})
+    (repo / "linked").mkdir()
+    (repo / "linked/agent.py").symlink_to(outside / "agent.py")
+    upload = {"capability": "file-upload", "evidence": [{"file": "assist/chat.ts", "line": 2}]}
+    tools = [{"capability": "llm-tools", "evidence": [{"file": "plain/ask.ts", "line": 1}]}]
+    rows = [
+        _component("assist", capabilities=[upload, *_llm_calls("assist/chat.ts")]),
+        _component("bots", capabilities=_llm_calls("bots/agent.py", "bots/lc.py")),
+        _component("plain", capabilities=_llm_calls("plain/ask.ts")),
+        _component("commented", capabilities=_llm_calls("commented/ask.js")),
+        _component("config", capabilities=_llm_calls("config/settings.ts")),
+        _component("linked", capabilities=_llm_calls("linked/agent.py", "../outside/agent.py")),
+        _component("done", capabilities=[*tools, *_llm_calls("assist/chat.ts")]),
+    ]
+    finalizer.refine_model_capabilities(rows, repo.resolve())
+    by_id = {row["id"]: row["capabilities"] for row in rows}
+    assert by_id["assist"] == [upload, {"capability": "llm-tools", "evidence": [{"file": "assist/chat.ts", "line": 4}]}]
+    assert by_id["bots"] == [
+        {
+            "capability": "llm-tools",
+            "evidence": [{"file": "bots/agent.py", "line": 3}, {"file": "bots/lc.py", "line": 1}],
+        }
+    ]
+    for unchanged in ("plain", "commented", "config", "linked"):
+        assert [item["capability"] for item in by_id[unchanged]] == ["llm-calls"], unchanged
+    assert by_id["done"] == [*tools, *_llm_calls("assist/chat.ts")]
+
+
+def test_refined_llm_tools_pass_the_finalization_evidence_gate(tmp_path: Path):
+    repo = tmp_path / "repo"
+    output = tmp_path / "out"
+    output.mkdir()
+    _write_sources(repo, {"src/api/assistant.py": "resp = model.invoke(\n    messages,\n    tool_choice='auto',\n)\n"})
+    _write_components(output, [_component("api", capabilities=_llm_calls("src/api/assistant.py"))])
+    finalized, _ = finalizer.finalize(repo, output)
+    assert finalized["components"][0]["capabilities"] == [
+        {"capability": "llm-tools", "evidence": [{"file": "src/api/assistant.py", "line": 3}]}
+    ]
