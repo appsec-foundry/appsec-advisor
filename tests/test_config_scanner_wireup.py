@@ -13,6 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import config_iac_scanner as scanner
 import pytest
 import yaml
 
@@ -20,7 +21,8 @@ ROOT = Path(__file__).parent.parent
 SCHEMAS_DIR = ROOT / "schemas"
 SCHEMA_PATH = SCHEMAS_DIR / "config-scan-findings.schema.yaml"
 VALIDATE = ROOT / "scripts" / "validate_intermediate.py"
-CATALOG_SIZE = len(yaml.safe_load((ROOT / "data" / "config-iac-checks.yaml").read_text(encoding="utf-8"))["checks"])
+CATALOG = yaml.safe_load((ROOT / "data" / "config-iac-checks.yaml").read_text(encoding="utf-8"))["checks"]
+CATALOG_SIZE = len(CATALOG)
 
 
 # ---------------------------------------------------------------------------
@@ -54,15 +56,10 @@ def valid_findings_doc():
             {
                 "local_id": "CFG-001",
                 "check_id": "IAC-001",
-                "iac_type": "Dockerfile",
+                **scanner.canonical_finding_fields(next(check for check in CATALOG if check["id"] == "IAC-001")),
                 "file": "Dockerfile",
                 "line": 1,
                 "evidence_snippet": "FROM node:24",
-                "title": "Dockerfile base image must be digest-pinned",
-                "severity": "Medium",
-                "cwe": ["CWE-1104"],
-                "finding_type_id": "FT-140",
-                "recommended_mitigation_title": "Pin base image to @sha256:<digest>",
                 "breach_vector": "Build-Time",
             },
             {
@@ -150,6 +147,60 @@ class TestSchemaValidation:
         stub = {"parse_error": "yaml load failed", "findings": []}
         rc, _, err = _validate_with_schema(stub)
         assert rc == 0, f"Error stub must be accepted: {err}"
+
+
+# ---------------------------------------------------------------------------
+# Producer → validator round trip over the shipped catalog
+# ---------------------------------------------------------------------------
+
+
+def _scan_then_validate(repo: Path, output: Path) -> tuple[int, str, list[dict]]:
+    assert scanner.main(["--repo-root", str(repo), "--output", str(output)]) == 0
+    result = subprocess.run(
+        [sys.executable, str(VALIDATE), "config_scan_findings", str(output)], capture_output=True, text=True
+    )
+    return result.returncode, result.stdout + result.stderr, json.loads(output.read_text(encoding="utf-8"))["findings"]
+
+
+def _write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+WORKFLOW = "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: vendor/action@v1\n"
+
+
+class TestScannerOutputPassesItsValidator:
+    def test_container_and_workflow_violations_validate(self, tmp_path):
+        repo = tmp_path / "service"
+        _write(repo / "Dockerfile", "FROM runtime:latest\nRUN make\n")
+        _write(repo / ".github" / "workflows" / "build.yml", WORKFLOW)
+        rc, detail, findings = _scan_then_validate(repo, tmp_path / "scan.json")
+        assert findings
+        assert rc == 0, detail
+
+    def test_nested_images_and_workflows_with_other_names_validate(self, tmp_path):
+        repo = tmp_path / "platform"
+        _write(repo / "images" / "worker" / "Dockerfile.release", "FROM base-image:3\nUSER root\n")
+        _write(repo / "deploy" / ".github" / "workflows" / "release.yaml", WORKFLOW)
+        rc, detail, findings = _scan_then_validate(repo, tmp_path / "scan.json")
+        assert {finding["iac_type"] for finding in findings} >= {"Dockerfile", "github_workflow"}
+        assert rc == 0, detail
+
+    def test_a_title_restated_as_the_desired_state_is_still_rejected(self, tmp_path):
+        repo = tmp_path / "service"
+        _write(repo / "Dockerfile", "FROM runtime:latest\n")
+        output = tmp_path / "scan.json"
+        _scan_then_validate(repo, output)
+        doc = json.loads(output.read_text(encoding="utf-8"))
+        first = doc["findings"][0]
+        first["title"] = next(check["name"] for check in CATALOG if check["id"] == first["check_id"])
+        output.write_text(json.dumps(doc), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(VALIDATE), "config_scan_findings", str(output)], capture_output=True, text=True
+        )
+        assert result.returncode != 0
+        assert f"findings[0].title differs from canonical check {first['check_id']}" in result.stdout + result.stderr
 
 
 # ---------------------------------------------------------------------------

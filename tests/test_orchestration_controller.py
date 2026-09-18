@@ -5206,47 +5206,60 @@ class TestContextV2PostRecon:
         with pytest.raises(controller.ControllerError, match="recon-summary"):
             controller.context_v2_post_recon(output)
 
-    def test_invalid_optional_config_scan_is_replaced_before_downstream_use(self, tmp_path, monkeypatch):
-        output = self._prepare(tmp_path)
-        (output / ".config-scan-findings.json").write_text("not json\n", encoding="utf-8")
-        monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: _completed())
+    @staticmethod
+    def _config_scripts(monkeypatch, output, *, failing=None, scan_bytes="{}\n"):
+        """Record controller script calls; `failing` names the (script, first arg) that exits non-zero."""
+        calls = []
 
-        def best_effort(_output, name, args, _receipts, **_kwargs):
-            return not (name == "validate_intermediate.py" and args[0] == "config_scan_findings")
+        def run_script(name, args, **_kwargs):
+            calls.append((name, args))
+            if failing and (name, args[0]) == failing:
+                raise controller.ControllerError(f"{name} failed with exit 1: INVALID: first\nINVALID: second", 1)
+            if name == "config_iac_scanner.py":
+                (output / ".config-scan-findings.json").write_text(scan_bytes, encoding="utf-8")
+            return _completed()
 
-        monkeypatch.setattr(controller, "_best_effort_script", best_effort)
+        monkeypatch.setattr(controller, "_run_script", run_script)
         monkeypatch.setattr(
             controller,
             "_context_v2_dispatch_architecture",
             lambda *_a, **_k: {"action": "dispatch_agent"},
         )
+        return calls
+
+    def test_invalid_config_scan_is_withheld_with_its_reason_not_as_no_surface(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        (tmp_path / "repo" / "Dockerfile").write_text("FROM runtime:latest\n", encoding="utf-8")
+        self._config_scripts(monkeypatch, output, failing=("validate_intermediate.py", "config_scan_findings"))
 
         controller.context_v2_post_recon(output)
 
         config = json.loads((output / ".config-scan-findings.json").read_text(encoding="utf-8"))
-        assert config == {"parse_error": "skipped: no IaC surface detected", "findings": []}
+        assert config == {
+            "parse_error": "invalid: validate_intermediate.py failed with exit 1: INVALID: first (+1 more)",
+            "findings": [],
+        }
+        log = (output / ".agent-run.log").read_text(encoding="utf-8")
+        assert "CONFIG_SCAN_INVALID" in log and "ERROR" in log
+
+    def test_valid_config_scan_is_kept_and_logs_no_error(self, tmp_path, monkeypatch):
+        output = self._prepare(tmp_path)
+        (tmp_path / "repo" / "Dockerfile").write_text("FROM runtime:latest\n", encoding="utf-8")
+        scan = '{"version": 1, "checks_run": 1, "violations": 0, "findings": []}\n'
+        self._config_scripts(monkeypatch, output, scan_bytes=scan)
+
+        controller.context_v2_post_recon(output)
+
+        assert (output / ".config-scan-findings.json").read_text(encoding="utf-8") == scan
+        log_path = output / ".agent-run.log"
+        assert not log_path.exists() or "CONFIG_SCAN_INVALID" not in log_path.read_text(encoding="utf-8")
 
     def test_post_recon_reproduces_config_scan_from_catalog_before_validation(self, tmp_path, monkeypatch):
         output = self._prepare(tmp_path)
         repo = tmp_path / "repo"
         (repo / "Dockerfile").write_text("FROM runtime:latest\n", encoding="utf-8")
         (output / ".config-scan-findings.json").write_text("{}\n", encoding="utf-8")
-        calls = []
-
-        monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: _completed())
-
-        def best_effort(_output, name, args, _receipts, **_kwargs):
-            calls.append((name, args))
-            if name == "config_iac_scanner.py":
-                (output / ".config-scan-findings.json").write_text("{}\n", encoding="utf-8")
-            return True
-
-        monkeypatch.setattr(controller, "_best_effort_script", best_effort)
-        monkeypatch.setattr(
-            controller,
-            "_context_v2_dispatch_architecture",
-            lambda *_a, **_k: {"action": "dispatch_agent"},
-        )
+        calls = self._config_scripts(monkeypatch, output)
 
         controller.context_v2_post_recon(output)
 
@@ -5271,22 +5284,12 @@ class TestContextV2PostRecon:
         (repo / "Dockerfile").write_text("FROM runtime:latest\n", encoding="utf-8")
         config_path = output / ".config-scan-findings.json"
         config_path.write_text('{"version": 1, "checks_run": 24, "violations": 0, "findings": []}\n')
-
-        monkeypatch.setattr(controller, "_run_script", lambda *_a, **_k: _completed())
-        monkeypatch.setattr(
-            controller,
-            "_best_effort_script",
-            lambda _output, name, _args, _receipts, **_kwargs: name != "config_iac_scanner.py",
-        )
-        monkeypatch.setattr(
-            controller,
-            "_context_v2_dispatch_architecture",
-            lambda *_a, **_k: {"action": "dispatch_agent"},
-        )
+        self._config_scripts(monkeypatch, output, failing=("config_iac_scanner.py", "--repo-root"))
 
         controller.context_v2_post_recon(output)
 
-        assert not config_path.exists()
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        assert config["findings"] == [] and config["parse_error"].startswith("invalid: config_iac_scanner.py failed")
 
     def test_post_recon_requires_the_context_artifact(self, tmp_path, monkeypatch):
         output = _context_v2_run(tmp_path)

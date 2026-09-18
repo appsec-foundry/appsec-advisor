@@ -1544,6 +1544,8 @@ def validate_config_scan_findings(data: Any) -> tuple[bool, list[str]]:
     # to the shipped catalog and to its own counters so an LLM cannot silently
     # skip checks or rewrite authoritative check metadata.
     if "parse_error" not in data:
+        from config_iac_scanner import canonical_finding_fields  # noqa: PLC0415
+
         catalog_path = Path(__file__).resolve().parent.parent / "data" / "config-iac-checks.yaml"
         try:
             catalog_doc = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
@@ -1581,15 +1583,7 @@ def validate_config_scan_findings(data: Any) -> tuple[bool, list[str]]:
             if check is None:
                 errors.append(f"findings[{i}].check_id '{check_id}' is not in the canonical catalog")
                 continue
-            expected_fields = {
-                "iac_type": check.get("iac_type"),
-                "title": check.get("name"),
-                "severity": check.get("severity_if_violated"),
-                "finding_type_id": check.get("finding_type"),
-                "cwe": [check.get("cwe")],
-                "recommended_mitigation_title": check.get("remediation"),
-            }
-            for field, expected in expected_fields.items():
+            for field, expected in canonical_finding_fields(check).items():
                 if f.get(field) != expected:
                     errors.append(f"findings[{i}].{field} differs from canonical check {check_id}")
     return len(errors) == 0, errors

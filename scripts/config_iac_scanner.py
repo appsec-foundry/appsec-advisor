@@ -32,6 +32,18 @@ class ConfigScanError(RuntimeError):
     """Raised when the catalog or a scan path violates the producer contract."""
 
 
+def canonical_finding_fields(check: dict[str, Any]) -> dict[str, Any]:
+    """The finding fields a catalog check owns; the producer and its validator both read them from here."""
+    return {
+        "finding_type_id": check.get("finding_type"),
+        "iac_type": check.get("iac_type"),
+        "title": check.get("violation_title"),
+        "severity": check.get("severity_if_violated"),
+        "cwe": [check.get("cwe")],
+        "recommended_mitigation_title": check.get("remediation"),
+    }
+
+
 def _canonical_file(repo_root: Path, path: Path) -> Path:
     root = repo_root.resolve()
     resolved = path.resolve()
@@ -238,20 +250,16 @@ def scan(repo_root: Path, checks_path: Path, *, depth: str, output: Path) -> dic
     for index, row in enumerate(pending, start=1):
         check = row["check"]
         relative = check["file_pattern"] if row["path"] is None else row["path"].relative_to(repo_root).as_posix()
+        canonical = canonical_finding_fields(check)
         findings.append(
             {
                 "local_id": f"CFG-{index:03d}",
                 "check_id": check["id"],
-                "finding_type_id": check.get("finding_type"),
-                "iac_type": check["iac_type"],
+                **canonical,
                 "file": relative,
                 "line": row["line"],
                 "evidence_snippet": row["snippet"],
-                "title": check["violation_title"],
-                "scenario": f"{check['violation_title']}: {check.get('rationale', '').strip()}",
-                "severity": check["severity_if_violated"],
-                "cwe": [check["cwe"]],
-                "recommended_mitigation_title": check.get("remediation"),
+                "scenario": f"{canonical['title']}: {check.get('rationale', '').strip()}",
                 "breach_vector": "Build-Time",
             }
         )

@@ -2569,6 +2569,30 @@ def _best_effort_script(
         return False
 
 
+def _script_failure(name: str, args: list[str]) -> str | None:
+    """Run a script and return its failure reason instead of raising."""
+    try:
+        _run_script(name, args)
+    except ControllerError as exc:
+        return str(exc)
+    return None
+
+
+def _withhold_config_scan(output_dir: Path, config_findings: Path, reason: str, receipts: list[str]) -> None:
+    """A failed deterministic config scan is a plugin defect: withhold its findings and record why.
+
+    The no-surface stub would claim the repository has no IaC files, so the
+    replacement names the failure instead.
+    """
+    from _atomic_io import atomic_write_json
+
+    lines = [line.strip() for line in reason.splitlines() if line.strip()] or ["config scan failed"]
+    summary = lines[0][:300] + (f" (+{len(lines) - 1} more)" if len(lines) > 1 else "")
+    atomic_write_json(config_findings, {"parse_error": f"invalid: {summary}", "findings": []}, sort_keys=False)
+    receipts.append("invalid config scan withheld")
+    _append_event(output_dir, "CONFIG_SCAN_INVALID", summary, level="ERROR")
+
+
 def _run_auto_emitter_pass(output_dir: Path, cfg: dict[str, Any], receipts: list[str]) -> None:
     """Apply the shared deterministic YAML enrichment before quality gates."""
     try:
@@ -4372,10 +4396,10 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
     # producer. Clear any prior bytes first so a failed fresh scan cannot admit
     # a stale but shape-valid enrichment artifact.
     config_findings = output_dir / ".config-scan-findings.json"
+    config_failure = None
     if _has_iac_surface(Path(repo_root)):
         config_findings.unlink(missing_ok=True)
-        config_scan_valid = _best_effort_script(
-            output_dir,
+        config_failure = _script_failure(
             "config_iac_scanner.py",
             [
                 "--repo-root",
@@ -4385,23 +4409,14 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
                 "--assessment-depth",
                 depth,
             ],
-            receipts,
         )
-        if config_scan_valid:
+        if config_failure is None:
             receipts.append("config scan produced deterministically from the complete catalog")
-    if config_findings.is_file():
+    if config_failure is None and config_findings.is_file():
         _best_effort_script(output_dir, "normalize_config_scan.py", [str(config_findings)], receipts)
-        config_valid = _best_effort_script(
-            output_dir,
-            "validate_intermediate.py",
-            ["config_scan_findings", str(config_findings)],
-            receipts,
-        )
-        if not config_valid:
-            from _atomic_io import atomic_write_text
-
-            atomic_write_text(config_findings, _CONFIG_SCAN_STUB)
-            receipts.append("invalid config scan replaced with no-surface stub")
+        config_failure = _script_failure("validate_intermediate.py", ["config_scan_findings", str(config_findings)])
+    if config_failure is not None:
+        _withhold_config_scan(output_dir, config_findings, config_failure, receipts)
 
     # Phase 2.5 Step 1c — cross-repository register.
     register_args = [

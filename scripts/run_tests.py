@@ -652,9 +652,11 @@ SOURCE_TESTS = {
     "scripts/config_iac_scanner.py": _tests("""
         agent_config_checks
         config_iac_scanner
+        config_scanner_wireup
         orchestration_controller
         repo_scan
         security_score
+        validate_intermediate
     """),
     "scripts/mass_assignment_scanner.py": _tests("""
         mass_assignment_scanner
