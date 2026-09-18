@@ -314,8 +314,9 @@ def _finding_sites(threat, component_ids=None, sources=None):
     """(component, location) pairs of a finding, limited to `sources` provenance when given.
 
     An instance carries the provenance of the finding it was merged from and
-    otherwise inherits the finding's own; an instance outside `component_ids`
-    belongs to the finding's component.
+    otherwise inherits the finding's own. An instance outside `component_ids`
+    belongs to the finding's component: current runs resolve every owner (FE-12),
+    but a rerender composes an existing model without that pass.
     """
     own = threat.get("source")
     sites = []
@@ -733,6 +734,7 @@ def _zone_key(comp):
 
 
 def _affected_components(threat):
+    """Owners of a finding; an unregistered owner (older models, FE-12) matches no node and adds nothing."""
     return list(
         dict.fromkeys(
             c

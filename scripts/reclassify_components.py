@@ -20,6 +20,9 @@ This script applies a conservative deterministic reassignment:
   - If 0 or >1 other components match (ambiguous), leave the threat alone
     and emit an advisory line on stderr — same shape as the existing
     validate_intermediate.py advisory.
+  - Instance `component_id`s and `merged_from` entries that name a datastore
+    or no registered component resolve by the same rule; an unclaimed
+    placeholder site stays with its finding (FE-12).
 
 The normal mode mutates both `threat-model.yaml.threats[].component` and
 `.threats-merged.json.threats[].component_id` (when present) so the two
@@ -428,10 +431,14 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         )
 
     # Consolidation provenance can still name a datastore even when the primary
-    # finding already belongs to the application. Reconcile those instance sites too.
+    # finding already belongs to the application, or a scanner's provisional
+    # owner that is no registered component. Reconcile those instance sites with
+    # the same rule as a finding; a site no component claims stays with its finding.
     for threat in threats:
         replacements: dict[str, set[str]] = {}
         unresolved: set[str] = set()
+        home = (threat.get("component") or threat.get("component_id") or "").strip()
+        home = home if home in known_ids else None
         for instance in threat.get("instances") or []:
             if not isinstance(instance, dict):
                 continue
@@ -440,17 +447,28 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
                 local_id = instance.get("local_id") or instance.get("source_ref") or ""
                 matches = [cid for cid in known_ids if local_id.startswith(cid + "-")]
                 owner = max(matches, key=len) if matches else None
-            if tiers.get(owner) != "data":
+            placeholder = bool(owner) and owner not in known_ids
+            if tiers.get(owner) != "data" and not placeholder:
                 continue
             probe = {"id": threat.get("id"), "component": owner, "cwe": threat.get("cwe"), "evidence": [instance]}
             result, moved = reclassify({"components": copy.deepcopy(components), "threats": [probe]})
-            if not moved:
+            claimed = moved and not any(
+                flag.startswith("pseudo_component_reassigned_from_")
+                for flag in result["threats"][0].get("evidence_flags") or []
+            )
+            if claimed:
+                new_owner = result["threats"][0]["component"]
+            elif placeholder and home:
+                new_owner = home
+            else:
                 unresolved.add(owner)
                 continue
-            new_owner = result["threats"][0]["component"]
             instance.setdefault("original_component_id", owner)
             instance["component_id"] = new_owner
             replacements.setdefault(owner, set()).add(new_owner)
+        for owner in threat.get("merged_from") or []:
+            if owner and owner not in known_ids and owner not in replacements and home:
+                replacements[owner] = {home}
         if replacements:
             merged = threat.get("merged_from") or []
             threat["merged_from"] = sorted(
@@ -463,16 +481,16 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
                 }
                 | {target for targets in replacements.values() for target in targets}
             )
-            changes.append(
-                {
-                    "id": threat.get("t_id") or threat.get("id"),
-                    "from": threat.get("component") or threat.get("component_id"),
-                    "to": threat.get("component") or threat.get("component_id"),
-                    "instance_only": True,
-                    "instances": threat["instances"],
-                    "merged_from": threat["merged_from"],
-                }
-            )
+            change = {
+                "id": threat.get("t_id") or threat.get("id"),
+                "from": threat.get("component") or threat.get("component_id"),
+                "to": threat.get("component") or threat.get("component_id"),
+                "instance_only": True,
+                "merged_from": threat["merged_from"],
+            }
+            if "instances" in threat:
+                change["instances"] = threat["instances"]
+            changes.append(change)
 
     if changes:
         _sync_component_threat_ids(components, changes)
@@ -481,15 +499,17 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
     return data, changes
 
 
-def unresolved_phantoms(data: dict) -> list[tuple[str, str]]:
-    """Postcondition check: return (threat_id, component) for every threat whose
-    component is NOT a registered components[].id after reclassification.
+def unresolved_phantoms(data: dict, *, instances: bool = True) -> list[tuple[str, str]]:
+    """Postcondition check: return (threat_id, component) for every owner that is
+    NOT a registered components[].id after reclassification.
 
-    A non-empty result means the resolver could not land a threat on a real
-    component (e.g. zero registered components, or a threat with no evidence
-    file) — the §8/§6/§3 Component link for those threats will dangle at a
-    missing anchor. The contract is "every threats[].component ∈ registered
-    set"; this surfaces violations instead of letting them ship silently.
+    The contract is "every threats[].component, instances[].component_id and
+    merged_from entry ∈ registered set". A primary phantom dangles the §8/§6/§3
+    Component link at a missing anchor; an instance or merged_from phantom
+    misattributes the finding in Figure 1, weaknesses and exports. With
+    `instances=False` only primary owners count — the rendered-anchor gate
+    (`--check`) uses that, because instance owners render no anchor and every
+    curing pass resolves them first. Violations surface instead of shipping.
     """
     components = data.get("components") or []
     known = {(c.get("id") or "").strip() for c in components if isinstance(c, dict) and (c.get("id") or "").strip()}
@@ -499,10 +519,27 @@ def unresolved_phantoms(data: dict) -> list[tuple[str, str]]:
     for t in data.get("threats") or []:
         if not isinstance(t, dict):
             continue
-        cur = (t.get("component") or t.get("component_id") or "").strip()
-        if cur and cur not in known:
-            out.append((t.get("t_id") or t.get("id") or "<anon>", cur))
+        owners = [(t.get("component") or t.get("component_id") or "").strip()]
+        if instances:
+            owners += [str(c).strip() for c in t.get("merged_from") or [] if isinstance(c, str)]
+            owners += [
+                str(i.get("component_id") or "").strip() for i in t.get("instances") or [] if isinstance(i, dict)
+            ]
+        tid = t.get("t_id") or t.get("id") or "<anon>"
+        out.extend((tid, cur) for cur in dict.fromkeys(owners) if cur and cur not in known)
     return out
+
+
+def _warn_instance_owners(owners: list[tuple[str, str]], primary: list[tuple[str, str]]) -> None:
+    """Report on-disk instance and merged_from phantoms the anchor gate does not block on."""
+    misattributed = [row for row in owners if row not in primary]
+    if misattributed:
+        sample = ", ".join(f"{tid}:{cid}" for tid, cid in misattributed[:6])
+        print(
+            f"WARNING reclassify_components: {len(misattributed)} instance or merged_from owner(s) "
+            f"(on disk) are no registered component [{sample}]; a curing pass reassigns them.",
+            file=sys.stderr,
+        )
 
 
 def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
@@ -544,7 +581,8 @@ def _sync_threats_merged(output_dir: Path, changes: list[dict]) -> int:
             continue
         for instance_change in matching:
             if instance_change.get("instance_only"):
-                t["instances"] = instance_change["instances"]
+                if "instances" in instance_change:
+                    t["instances"] = instance_change["instances"]
                 t["merged_from"] = instance_change["merged_from"]
         c = next((item for item in matching if not item.get("instance_only")), None)
         if c is None:
@@ -620,7 +658,8 @@ def _run_merged_only(output_dir: Path, *, strict: bool, check_only: bool) -> int
         "threats": threats,
         "weaknesses": merged.get("weaknesses") or [],
     }
-    on_disk_phantoms = unresolved_phantoms(working)
+    on_disk_phantoms = unresolved_phantoms(working, instances=False)
+    on_disk_owners = unresolved_phantoms(working)
     working, changes = reclassify(working)
     if changes and not check_only:
         atomic_write_json(merged_path, merged, sort_keys=False)
@@ -633,6 +672,8 @@ def _run_merged_only(output_dir: Path, *, strict: bool, check_only: bool) -> int
     else:
         print("reclassify_components: no merged tier-confusion drift found — nothing to reassign")
 
+    if check_only:
+        _warn_instance_owners(on_disk_owners, on_disk_phantoms)
     leftovers = on_disk_phantoms if check_only else unresolved_phantoms(working)
     if leftovers:
         sample = ", ".join(f"{tid}:{cid}" for tid, cid in leftovers[:6])
@@ -692,7 +733,8 @@ def main(argv: list[str]) -> int:
     # the yaml as it is on disk, so a phantom here means a dangling §8 anchor
     # ALREADY shipped — even if reclassify could resolve it in memory, that cure
     # is worthless until the yaml is rewritten AND the report recomposed.
-    on_disk_phantoms = unresolved_phantoms(data)
+    on_disk_phantoms = unresolved_phantoms(data, instances=False)
+    on_disk_owners = unresolved_phantoms(data)
 
     continuation = EnrichmentContinuation(data)
     data, changes = reclassify(data)
@@ -726,6 +768,8 @@ def main(argv: list[str]) -> int:
     #     Loop" case, where the cure exists in memory but never reached disk.
     #   • normal (curing): judge the post-reassignment state — only truly
     #     unresolvable phantoms (evidence file matches no component glob) remain.
+    if check_only:
+        _warn_instance_owners(on_disk_owners, on_disk_phantoms)
     leftovers = on_disk_phantoms if check_only else unresolved_phantoms(data)
     if leftovers:
         sample = ", ".join(f"{tid}:{cid}" for tid, cid in leftovers[:6])

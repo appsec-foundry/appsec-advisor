@@ -787,8 +787,9 @@ def _guess_component_from_path(file_path: str) -> tuple[str, str]:
 
     reclassify_components.py later refines this against the orchestrator's
     actual components[].paths globs — when exactly one component matches
-    the evidence file the threat is reassigned automatically. The values
-    we emit here only matter when the auto-reassignment can't decide.
+    the evidence file the threat is reassigned automatically, and so is every
+    instance or merged_from entry that still carries the guess (FE-12). The
+    values we emit here only matter when the auto-reassignment can't decide.
     """
     p = file_path.replace("\\", "/").lower()
     if any(
