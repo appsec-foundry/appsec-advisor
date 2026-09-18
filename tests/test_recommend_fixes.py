@@ -246,6 +246,23 @@ def test_tool_error(tmp_path):
     assert "7" in rec["actions"][0]["details"]
 
 
+@pytest.mark.parametrize(
+    "category,evidence",
+    [
+        ("orchestration_gate_warn", {"log_line": 12, "script": "enrichment_pass.sh", "occurrences": 2}),
+        ("orchestration_gate_warn", {"log_line": 3}),
+        ("config_scan_invalid", {"log_line": 5, "script": "validate_intermediate.py"}),
+    ],
+)
+def test_controller_gate_failures_point_at_the_producer_without_edits(tmp_path, category, evidence):
+    rec = rf.RECOMMENDERS[category]({"category": category, "evidence": evidence}, tmp_path)
+    assert rec["category"] == "investigate"
+    assert rec["auto_applicable"] is False
+    assert "degraded" not in rec
+    assert not any(action["type"] == "edit_file" for action in rec["actions"])
+    assert str(evidence["log_line"]) in rec["actions"][0]["details"]
+
+
 def test_bash_warn(tmp_path):
     rec = rf._recommend_bash_warn({"evidence": {"log_line": 9}}, tmp_path)
     assert rec["confidence"] == "low"

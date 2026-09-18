@@ -369,6 +369,65 @@ def _recommend_tool_error(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_orchestration_gate_warn(issue: dict, output_dir: Path) -> dict:
+    """A best-effort controller gate failed and the run continued without its output."""
+    ev = issue["evidence"]
+    script = ev.get("script") or "the named script"
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "medium",
+        "risk_level": "medium",
+        "summary": f"{script} failed as a best-effort gate; the report lacks what it would have added.",
+        "rationale": (
+            "The controller tolerates this failure so the run can finish, but the "
+            "step's output is missing or unvalidated. A deterministic script that "
+            "fails on valid input is a plugin defect in that script or its contract."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".agent-run.log",
+                "details": (
+                    f"Read line {ev.get('log_line', 0)} for the failure reason "
+                    f"({ev.get('occurrences', 1)} occurrence(s)), reproduce it by running {script} "
+                    "on this output directory, and fix the producer or the contract it violates."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
+def _recommend_config_scan_invalid(issue: dict, output_dir: Path) -> dict:
+    """The deterministic config scan failed or failed validation; its findings were withheld."""
+    ev = issue["evidence"]
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "high",
+        "summary": "Config/IaC findings were withheld because the deterministic scan was rejected.",
+        "rationale": (
+            "config_iac_scanner.py and its validator read check-owned fields from one "
+            "catalog mapping, so a rejection points at a scanner, catalog, or validator "
+            "defect, not at the scanned repository. Every configuration finding of the run is missing."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".config-scan-findings.json",
+                "details": (
+                    f"Read parse_error and .agent-run.log line {ev.get('log_line', 0)}, rerun "
+                    "config_iac_scanner.py plus validate_intermediate.py config_scan_findings on the "
+                    "repository, and fix the side that disagrees with data/config-iac-checks.yaml."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_bash_warn(issue: dict, output_dir: Path) -> dict:
     """Bash output contained error/warning keywords."""
     ev = issue["evidence"]
@@ -843,6 +902,8 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "high_token_usage": _recommend_high_token_usage,
     "abuse_case_inconclusive": _recommend_abuse_case_inconclusive,
     "tool_error": _recommend_tool_error,
+    "orchestration_gate_warn": _recommend_orchestration_gate_warn,
+    "config_scan_invalid": _recommend_config_scan_invalid,
     "bash_warn": _recommend_bash_warn,
     "auto_retry_fired": _recommend_auto_retry_fired,
     "compose_retries_section": _recommend_compose_retries_section,

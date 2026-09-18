@@ -784,6 +784,55 @@ def _extract_budget_events(agent_log: list[tuple[int, str]]) -> list[dict]:
     return issues
 
 
+_GATE_SCRIPT_RE = re.compile(r"^(?P<script>[\w.-]+) failed with exit (?P<exit>-?\d+)")
+_GATE_EVENT_CATEGORIES = {
+    "ORCHESTRATION_GATE_WARN": "orchestration_gate_warn",
+    "CONFIG_SCAN_INVALID": "config_scan_invalid",
+}
+
+
+def _extract_controller_gate_events(agent_log: list[tuple[int, str]]) -> list[dict]:
+    """Controller gates that failed without stopping the run.
+
+    ``ORCHESTRATION_GATE_WARN`` marks a best-effort script whose failure the
+    controller tolerated; ``CONFIG_SCAN_INVALID`` marks a deterministic config
+    scan whose findings were withheld. Both left the report short of work it
+    should contain, so neither may pass as a clean run. Repeats of one failing
+    script collapse into one issue with an occurrence count.
+    """
+    issues: list[dict] = []
+    by_key: dict[tuple[str, str], dict] = {}
+    for ln, raw in agent_log:
+        ev = _parse_event_line(raw)
+        if not ev or ev["event"] not in _GATE_EVENT_CATEGORIES:
+            continue
+        m = _GATE_SCRIPT_RE.match(ev["detail"])
+        script = m.group("script") if m else ""
+        key = (ev["event"], script or ev["detail"])
+        if key in by_key:
+            by_key[key]["evidence"]["occurrences"] += 1
+            continue
+        invalid_scan = ev["event"] == "CONFIG_SCAN_INVALID"
+        lead = "Config/IaC scan withheld as invalid" if invalid_scan else "Best-effort gate failed"
+        issue = {
+            "category": _GATE_EVENT_CATEGORIES[ev["event"]],
+            "severity": "error" if invalid_scan else "warning",
+            "title": f"{lead}: {_clip(ev['detail'], 90)}",
+            "evidence": {
+                "log_file": ".agent-run.log",
+                "log_line": ln,
+                "raw_event": raw[:300],
+                "timestamp_iso": ev["ts"],
+                "script": script,
+                "exit_code": int(m.group("exit")) if m else None,
+                "occurrences": 1,
+            },
+        }
+        by_key[key] = issue
+        issues.append(issue)
+    return issues
+
+
 _BASH_WARN_SCRIPT_RE = re.compile(r"([\w.-]+\.(?:py|sh|mjs|js))")
 _BASH_WARN_RESP_RE = re.compile(r"resp=(?P<resp>.*)$", re.DOTALL)
 _BASH_WARN_VOLATILE_RE = re.compile(r"[0-9]+|/[^\s'\"]+")
@@ -2219,6 +2268,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_dispatch_count_consistency(output_dir, hook_log))
     issues.extend(_extract_requirements_export_consistency(output_dir))
     issues.extend(_extract_budget_events(agent_log))
+    issues.extend(_extract_controller_gate_events(agent_log))
     issues.extend(_extract_perf_anomalies(phase_durs, depth, file_count=file_count, economy=economy))
     issues.extend(_extract_session_stop_anomalies(agent_log))
     issues.extend(_extract_recovery_events(output_dir))

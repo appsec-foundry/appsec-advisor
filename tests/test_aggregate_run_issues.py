@@ -943,6 +943,53 @@ class TestExtractBudgetEvents:
         assert agg._extract_budget_events([(1, _line("2026-04-26T18:00:00Z", "PHASE_START", "x"))]) == []
 
 
+def _controller_line(event: str, detail: str, level: str) -> str:
+    return format_line(event, detail, level=level, component="skill-controller", sid="--------")
+
+
+class TestControllerGateEvents:
+    def test_a_tolerated_gate_failure_is_not_a_clean_run(self, tmp_path):
+        (tmp_path / ".agent-run.log").write_text(
+            _controller_line(
+                "ORCHESTRATION_GATE_WARN",
+                "validate_intermediate.py failed with exit 1: INVALID: findings[0].title differs",
+                "WARN",
+            ),
+            encoding="utf-8",
+        )
+        data = agg.aggregate(tmp_path, "standard")
+        (issue,) = [i for i in data["issues"] if i["category"] == "orchestration_gate_warn"]
+        assert data["run_status"] == "issues"
+        assert issue["severity"] == "warning"
+        assert issue["evidence"]["script"] == "validate_intermediate.py"
+        assert issue["evidence"]["exit_code"] == 1
+
+    def test_repeats_of_another_script_collapse_with_a_count(self):
+        detail = "enrichment_pass.sh failed with exit 3: step timed out"
+        log = [(n, _controller_line("ORCHESTRATION_GATE_WARN", detail, "WARN")) for n in (4, 9)]
+        (issue,) = agg._extract_controller_gate_events(log)
+        assert issue["evidence"]["script"] == "enrichment_pass.sh"
+        assert issue["evidence"]["occurrences"] == 2
+        assert issue["evidence"]["log_line"] == 4
+
+    def test_a_withheld_config_scan_is_an_error(self, tmp_path):
+        (tmp_path / ".agent-run.log").write_text(
+            _controller_line("CONFIG_SCAN_INVALID", "config_iac_scanner.py failed with exit 2: bad catalog", "ERROR"),
+            encoding="utf-8",
+        )
+        data = agg.aggregate(tmp_path, "standard")
+        (issue,) = [i for i in data["issues"] if i["category"] == "config_scan_invalid"]
+        assert issue["severity"] == "error"
+        assert data["summary"]["errors"] >= 1
+
+    def test_other_controller_warnings_and_info_events_stay_silent(self):
+        log = [
+            (1, _controller_line("RECON_SUMMARY_TARGET_EXCEEDED", "lines=535 target=200", "WARN")),
+            (2, _controller_line("ORCHESTRATION_READY", "mode=full", "INFO")),
+        ]
+        assert agg._extract_controller_gate_events(log) == []
+
+
 class TestExtractWarnings:
     def test_bash_warn_flagged(self):
         hook = [(1, _hline("2026-04-26T18:00:00Z", "BASH_WARN", "error: something"))]
