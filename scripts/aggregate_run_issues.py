@@ -51,6 +51,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stride_outputs  # noqa: E402
+import verify_run_costs  # noqa: E402
 from _path_guard import run_path_arg  # noqa: E402
 
 # Phase budgets — single source of truth in data/phase-budgets.yaml. Loaded
@@ -345,19 +346,11 @@ def _read_log(path: Path) -> list[tuple[int, str]]:
 _RUN_WINDOW_SECONDS = 5400  # 1.5 h — outer envelope of the longest thorough run
 
 
-def _run_start_epoch(output_dir: Path) -> int | None:
-    """Exact run-start epoch from ``.scan-start-epoch``, or None when absent."""
-    try:
-        raw = (output_dir / ".scan-start-epoch").read_text(encoding="utf-8").strip()
-        value = int(raw)
-    except (OSError, ValueError):
-        return None
-    return value if value > 0 else None
-
-
 def _scope_to_current_run(
     lines: list[tuple[int, str]],
     run_root: Path | None = None,
+    *,
+    through_end: bool = True,
 ) -> list[tuple[int, str]]:
     """Limit the log slice to events from the current run only.
 
@@ -385,6 +378,12 @@ def _scope_to_current_run(
 
     Fallback: if no parseable timestamps exist (legacy log format),
     return all lines unchanged.
+
+    A run root with recorded markers replaces the heuristic by
+    ``verify_run_costs.recorded_run_window``, the rule cost accounting uses:
+    lines before the run's start and, with ``through_end``, after its
+    ``ASSESSMENT_END`` are dropped. Work in the same session after the run ended
+    is not the run's.
     """
     if not lines:
         return lines
@@ -411,7 +410,9 @@ def _scope_to_current_run(
     # invisible to issue aggregation. `.scan-start-epoch` is written once per
     # invocation and is exact; cutoff_cause.py already reads it for the same
     # purpose. The heuristic stays as the fallback for logs with no marker.
-    cutoff = _run_start_epoch(run_root) if run_root else None
+    run_start, run_end = verify_run_costs.recorded_run_window(run_root) if run_root else (None, None)
+    cutoff = _parse_iso(run_start) if run_start else None
+    end = _parse_iso(run_end) if run_end and through_end else None
     if cutoff is None:
         cutoff = latest_ts - _RUN_WINDOW_SECONDS
     out = []
@@ -425,7 +426,7 @@ def _scope_to_current_run(
             out.append((ln, raw))
             continue
         ts_e = _parse_iso(ev["ts"])
-        if ts_e is None or ts_e >= cutoff:
+        if ts_e is None or (ts_e >= cutoff and (end is None or ts_e <= end)):
             out.append((ln, raw))
     return out
 
@@ -1733,6 +1734,43 @@ def _extract_watchdog_absence(output_dir: Path, agent_log: list[tuple[int, str]]
     ]
 
 
+_COST_WINDOW_FAILURES = ("no_run_window", "no_window_activity")
+
+
+def _extract_cost_accounting(output_dir: Path) -> list[dict]:
+    """Flag a run whose cost cannot be attributed to its own window.
+
+    ``verify_run_costs`` prices usage between the run's start and end markers.
+    A missing start, or a window that holds none of the run's usage, means a
+    marker was not written or was written at the wrong point, and the summary
+    then reports the cost as unavailable. A host that logs no token usage at
+    all is an environment condition and stays out, and so does a directory
+    without ``.scan-start-epoch``: preflight writes it before any dispatch, so
+    its absence means no run reached the point where it spends.
+    """
+    if not (output_dir / ".scan-start-epoch").is_file() or not (output_dir / ".hook-events.log").is_file():
+        return []
+    try:
+        result = verify_run_costs.verify_run_costs(output_dir)
+    except Exception:  # noqa: BLE001 — an unreadable log must not stop aggregation
+        return []
+    if result.get("error_kind") not in _COST_WINDOW_FAILURES:
+        return []
+    return [
+        {
+            "category": "cost_accounting_failed",
+            "severity": "warning",
+            "title": f"Run cost cannot be measured: {result['error']}",
+            "evidence": {
+                "log_file": ".agent-run.log",
+                "log_line": 0,
+                "raw_event": result["error"],
+                "error_kind": result["error_kind"],
+            },
+        }
+    ]
+
+
 def _extract_abuse_case_outcomes(output_dir: Path) -> list[dict]:
     """Flag abuse-case chains the verifier fan-out could not confirm.
 
@@ -2132,9 +2170,9 @@ def _extract_run_outcome(agent_log: list[tuple[int, str]], output_dir: Path) -> 
     # left unrecovered abort/FATAL events. A clean external stop (budget or
     # subscription usage-limit kill) after the merge is caught by the first clause
     # even though `unrecovered` is 0. A bare ASSESSMENT_START is deliberately NOT
-    # enough — a dry-run, a scope preview, or an empty output directory logs it
-    # too, and flagging those was the false-positive that reported clean runs as
-    # incomplete.
+    # enough — the controller logs it at every preflight, so a dry-run, a scope
+    # preview, or a run stopped before any work carries it too, and flagging
+    # those was the false-positive that reported clean runs as incomplete.
     started = (output_dir / ".threats-merged.json").exists() or unrecovered > 0
     if not started:
         return []
@@ -2277,6 +2315,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))
+    issues.extend(_extract_cost_accounting(output_dir))
     issues.extend(_extract_stride_ceiling_events(output_dir))
     issues.extend(_extract_gate_events(output_dir))
     issues.extend(_extract_editorial_outcome(agent_log))
@@ -2305,9 +2344,11 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     # forensic log with a single RUN_RECONCILED line so transient-but-recovered
     # SESSION_ABORTED_MIDRUN / build-FATAL events are visibly reconciled against
     # the final run state, sparing a reader the abort/resume correlation by hand.
-    # Skip if already present (a re-run within the same scope) so it stays unique.
+    # Skip if already present (a re-run within the same scope) so it stays unique;
+    # a re-run after the run ended appends past ASSESSMENT_END, so look there too.
     try:
-        if not any("RUN_RECONCILED" in raw for _ln, raw in agent_log):
+        since_start = _scope_to_current_run(agent_log_full, output_dir, through_end=False)
+        if not any("RUN_RECONCILED" in raw for _ln, raw in since_start):
             _append_reconciliation_line(output_dir, reconcile_recovered_events(agent_log, output_dir))
     except Exception:
         pass  # never let the annotation break aggregation

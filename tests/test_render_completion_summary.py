@@ -577,7 +577,7 @@ class TestCostExtraction:
             raise AssertionError("verify_run_costs.py should not be called")
 
         monkeypatch.setattr(rcs.subprocess, "run", fail_run)
-        assert rcs.extract_costs(tmp_path, plugin_root) is None
+        assert rcs.extract_costs(tmp_path, plugin_root)["error_kind"] == "no_usage_data"
 
     def test_extract_costs_runs_when_usage_signal_exists(self, tmp_path: Path, monkeypatch):
         plugin_root = tmp_path / "plugin"
@@ -592,6 +592,35 @@ class TestCostExtraction:
 
         monkeypatch.setattr(rcs.subprocess, "run", lambda *args, **kwargs: Result())
         assert rcs.extract_costs(tmp_path, plugin_root) == {"ok": True}
+
+    def test_a_failed_measurement_keeps_its_reason_for_the_summary(self, tmp_path: Path, monkeypatch):
+        plugin_root = tmp_path / "plugin"
+        scripts = plugin_root / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "verify_run_costs.py").write_text("# exists\n")
+        (tmp_path / ".hook-events.log").write_text("SESSION_STOP in=1 out=2\n")
+
+        class Result:
+            returncode = 2
+            stdout = '{"error": "Could not determine run start", "error_kind": "no_run_window"}'
+
+        monkeypatch.setattr(rcs.subprocess, "run", lambda *args, **kwargs: Result())
+        cost = rcs.extract_costs(tmp_path, plugin_root)
+
+        assert rcs._summary_cost(cost) == "unavailable (run start not recorded)"
+        stats = {
+            "assess_secs": 60,
+            "qa_secs": None,
+            "arch_secs": None,
+            "phases": [],
+            "stage_rows": [],
+            "agents": {},
+            "total_secs_from_stages": None,
+            "wall_secs": 120,
+            "timing": {},
+        }
+        lines = rcs.render_run_statistics(stats, cost, verbose=True)
+        assert "  Tokens/Cost         : unavailable (run start not recorded)" in lines
 
 
 # ---------------------------------------------------------------------------
@@ -2179,8 +2208,8 @@ class TestSummaryHelpers:
         assert rcs._summary_duration({"timing": {"wall_secs": 90}}) == "1m 30s"
 
     def test_summary_cost_variants(self):
-        assert rcs._summary_cost(None) == "unavailable"
-        assert rcs._summary_cost({"error": "x"}) == "unavailable"
+        assert rcs._summary_cost(None) == "unavailable (verify_run_costs.py failed)"
+        assert rcs._summary_cost({"error": "x"}) == "unavailable (x)"
         assert rcs._summary_cost({"billing": "subscription", "totals": {}}) == "subscription"
         assert rcs._summary_cost({"billing": "api", "totals": {"cost": 1.5}}) == "$1.50"
         assert rcs._summary_cost({"billing": "api", "totals": {"cost": 0}}) == "not captured"

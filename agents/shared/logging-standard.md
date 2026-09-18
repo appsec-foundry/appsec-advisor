@@ -214,9 +214,9 @@ controller proxy event must never claim to be an agent-authored semantic event.
 
 ## Orchestrator-specific logging (threat-analyst only)
 
-The orchestrator emits `ASSESSMENT_START` / `ASSESSMENT_END`, `PHASE_START` / `PHASE_END`, and `AGENT_INVOKE` / `AGENT_DONE` / `AGENT_DISPATCH` events.
+The orchestrator emits `PHASE_START` / `PHASE_END` and `AGENT_INVOKE` / `AGENT_DONE` / `AGENT_DISPATCH` events.
 
-**`ASSESSMENT_START` overwrites the log file (`>`, not `>>`)** — every subsequent entry appends. Includes CET time, mode (`full`/`incremental`), and all flags.
+No agent writes `ASSESSMENT_START` or `ASSESSMENT_END`: the controller appends the start when the run begins, the Stop hook appends the end once after the run released its lock, and cost accounting bounds the run by the two.
 
 **Phase events** (one per `▶`/`✓` line):
 ```bash

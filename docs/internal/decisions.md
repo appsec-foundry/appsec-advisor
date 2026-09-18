@@ -134,6 +134,7 @@ Removing an entry means listing it here in the same change.
 | MD-5 | Session-model detection is advisory and fails open; routing resolves with no session model present | `test_effective_routing_empty_session_model` | `scripts/resolve_config.py` |
 | MD-6 | An organization may cap Opus org-wide; absent policy defaults to permitted | `test_policy_disable_opus_absent_defaults_false` | `schemas/org-profile.schema.yaml` → `policy.disable_opus` |
 | MD-7 | A sub-agent call is priced as the release the host reports it ran on; a bare alias takes the release this run's host resolved it to, then a fallback table, and a reported release the table does not know stays unpriced | `tests/test_model_release_pricing.py` | `scripts/verify_run_costs.py` → `release_key`, `learn_alias_releases` |
+| MD-8 | A run's cost window is bounded only by deterministic markers read from the event column: it opens at the later of `.scan-start-epoch` and the controller's `ASSESSMENT_START`, and closes at the Stop hook's `ASSESSMENT_END`, written once at the summary claim after the run released its lock — the controller's completion action precedes exports, the summary, and the lock release, and may repeat | `tests/test_verify_run_costs.py::TestRecordedRunWindow` | `docs/internal/cost-model.md` → findings log |
 
 ## Trust boundaries
 

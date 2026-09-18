@@ -172,3 +172,5 @@ same log within twenty minutes.
 **2026-08-17 — cost scales with how much source the analyzers read.** That
 reading is the product. The levers above are either efficiency at the margin or
 a trade of tokens against latency; beyond them, savings come out of coverage.
+
+**2026-09-18 — the run window now has recorded markers on both ends.** The controller appends `ASSESSMENT_START` where it writes `.scan-start-epoch` (a rerender, which keeps the epoch, appends only the event), and the Stop hook appends `ASSESSMENT_END` once, at the claim that also writes the run's `ASSESSMENT_SUMMARY`, after the run released its lock. `verify_run_costs.find_run_window` reads both from the event column only; before, a logged shell command that grepped for `SCAN_START` after the run moved the start to 14:21 and priced $6.58 of later work as the run, while the run itself (07:42–09:47 with the grace window) comes to $9.20 for the host session.

@@ -645,6 +645,36 @@ def _recommend_architect_status_not_pass(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_cost_accounting_failed(issue: dict, output_dir: Path) -> dict:
+    """The run's usage could not be attributed to the run's own window."""
+    ev = issue.get("evidence", {})
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": f"The run's cost was not measured: {ev.get('raw_event', '?')}.",
+        "rationale": (
+            "verify_run_costs.py prices usage between the run's start and end markers. The controller "
+            "writes .scan-start-epoch and ASSESSMENT_START before the first dispatch; the Stop hook "
+            "appends ASSESSMENT_END once after the run released its lock. A missing start, or a window "
+            "that holds none of the run's SESSION_STOP usage, points at a marker written late or not at all."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".agent-run.log",
+                "details": (
+                    "Check that ASSESSMENT_START follows PREFLIGHT_CLEANUP and that the run's SESSION_STOP "
+                    "lines fall between it and ASSESSMENT_END; `verify_run_costs.py <output-dir> --verbose` "
+                    "prints the window it used."
+                ),
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_component_evidence_coverage(issue: dict, output_dir: Path) -> dict:
     """A component reached STRIDE with evidence for few of its in-scope files."""
     ev = issue.get("evidence", {})
@@ -900,6 +930,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "stage1_excessive_duration": _recommend_stage1_excessive_duration,
     "session_stop_unknown": _recommend_session_stop_unknown,
     "high_token_usage": _recommend_high_token_usage,
+    "cost_accounting_failed": _recommend_cost_accounting_failed,
     "abuse_case_inconclusive": _recommend_abuse_case_inconclusive,
     "tool_error": _recommend_tool_error,
     "orchestration_gate_warn": _recommend_orchestration_gate_warn,

@@ -8,8 +8,9 @@ post-assessment activity (e.g. user-interactive exploration after the QA
 reviewer completes).
 
 To isolate the cost of a single assessment run, this script:
-  1. Determines the run window (start boundary from ASSESSMENT_START,
-     end boundary from ASSESSMENT_END + QA completion heuristic).
+  1. Determines the run window (start from .scan-start-epoch and the
+     controller's ASSESSMENT_START, end from the Stop hook's ASSESSMENT_END;
+     see find_run_window).
   2. For each session with activity inside the window, computes the delta
      between the last snapshot before/at window-start and the last snapshot
      within the window.
@@ -42,6 +43,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import event_log  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Pricing models (USD per 1M tokens)
@@ -462,63 +466,108 @@ def parse_assessment_tokens(hook_log: Path) -> list[AssessmentTokensEntry]:
     return entries
 
 
+_LOOSE_EVENT_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+(?:\[[^\]]*\]\s+)?"
+    r"(?:(?:INFO|WARN|ERROR|DEBUG|TRACE)\s+)?(?:(?P<component>[a-z][\w.:-]*)\s+)?"
+    r"(?P<event>[A-Z][A-Z0-9_]*)(?:\s|$)"
+)
+
+
+def log_events(path: Path) -> list[tuple[str, str | None, str]]:
+    """``(timestamp, component, event)`` for every event line of one run log.
+
+    Run-boundary markers are read from the event column only: a marker name in
+    another event's detail — a logged shell command that greps for it — is not
+    the marker. Canonical lines go through ``event_log.parse_line``; the compact
+    ``<ts> <LEVEL> [component] <EVENT>`` shape of hand-written lines is read
+    event column first as well.
+    """
+    events: list[tuple[str, str | None, str]] = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                parsed = event_log.parse_line(line)
+                if parsed is not None:
+                    events.append((parsed.timestamp, parsed.component, parsed.event))
+                    continue
+                match = _LOOSE_EVENT_RE.match(line)
+                if match:
+                    events.append((match["ts"], match["component"], match["event"]))
+    except OSError:
+        return []
+    return events
+
+
+def _start_epoch_iso(output_dir: Path) -> str | None:
+    """The run start the controller recorded in ``.scan-start-epoch``, as ISO time."""
+    from datetime import datetime, timezone
+
+    try:
+        epoch = int((output_dir / ".scan-start-epoch").read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+    if epoch <= 0:
+        return None
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def recorded_run_window(output_dir: Path) -> tuple[str | None, str | None]:
+    """The current run's recorded ``(start, end)`` marker times, or ``(None, None)``.
+
+    Only a directory with ``.scan-start-epoch`` has recorded markers. The run
+    starts at the later of that epoch and the last ``ASSESSMENT_START`` event of
+    ``.agent-run.log``: the controller writes both before the first dispatch, and
+    a rerender appends only the event. It ends at the first ``ASSESSMENT_END``
+    event after that start, which the Stop hook appends once after the run
+    released its lock; that same claim writes ``ASSESSMENT_SUMMARY``, the end of
+    logs written before the marker existed. ``end`` is None while the run is open.
+    """
+    epoch_start = _start_epoch_iso(output_dir)
+    if epoch_start is None:
+        return None, None
+    events = log_events(output_dir / ".agent-run.log")
+    start = max([epoch_start, *(ts for ts, _component, event in events if event == "ASSESSMENT_START")])
+    ends = [ts for ts, _component, event in events if event in ("ASSESSMENT_END", "ASSESSMENT_SUMMARY") and ts >= start]
+    return start, (min(ends) if ends else None)
+
+
 def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | None]:
     """Find the assessment start and end boundaries.
 
-    The start boundary is the earliest of:
-      - ASSESSMENT_START / SCAN_START in .agent-run.log
-      - The first AGENT_SPAWN in .hook-events.log for this assessment
-        (the skill spawns the orchestrator *before* ASSESSMENT_START is logged,
-        so pre-assessment setup costs — permissions, config — are captured too)
+    A run with ``.scan-start-epoch`` beside its logs uses ``recorded_run_window``.
 
-    Returns (start_boundary, end_boundary). The end boundary is the latest of
-    ASSESSMENT_END, the last qa-reviewer CHECK_END, and the last
-    architect-reviewer STEP_END/AGENT_END, plus a 180-second buffer to capture
-    trailing SESSION_STOP entries.
+    Logs without the epoch predate the compact runtime. There the start is the
+    first ``ASSESSMENT_START``/``SCAN_START`` event of ``.agent-run.log``, else
+    the last ``SCAN_START`` event of ``.hook-events.log``, pulled back to an
+    ``AGENT_SPAWN`` up to 30 minutes earlier; the end is the latest of
+    ``ASSESSMENT_END`` and the QA and architect reviewer completions.
+
+    Returns (start_boundary, end_boundary); an end carries a 180-second buffer
+    for trailing SESSION_STOP entries.
     """
+    recorded_start, recorded_end = recorded_run_window(agent_log.parent)
+    if recorded_start is not None:
+        return recorded_start, (_add_seconds_to_iso(recorded_end, 180) if recorded_end else None)
+
+    agent_events = log_events(agent_log)
     start: str | None = None
     assess_end: str | None = None
     qa_end: str | None = None
     arch_end: str | None = None
+    for ts, component, event in agent_events:
+        if start is None and event in ("ASSESSMENT_START", "SCAN_START"):
+            start = ts
+        if event == "ASSESSMENT_END":
+            assess_end = ts
+        if (component or "").endswith("qa-reviewer") and event in ("CHECK_END", "AGENT_COMPLETE", "AGENT_END"):
+            qa_end = ts  # keep updating — want the LAST one
+        if (component or "").endswith("architect-reviewer") and event in ("STEP_END", "AGENT_COMPLETE", "AGENT_END"):
+            arch_end = ts  # keep updating — want the LAST one
 
-    boundary_start_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?(ASSESSMENT_START|SCAN_START)")
-    boundary_end_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?ASSESSMENT_END")
-    qa_end_re = re.compile(
-        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?qa-reviewer\s+(?:CHECK_END|AGENT_COMPLETE|AGENT_END)"
-    )
-    arch_end_re = re.compile(
-        r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?architect-reviewer\s+(?:STEP_END|AGENT_COMPLETE|AGENT_END)"
-    )
-
-    try:
-        with open(agent_log) as f:
-            for line in f:
-                m = boundary_start_re.match(line)
-                if m and start is None:
-                    start = m.group(1)
-                m = boundary_end_re.match(line)
-                if m:
-                    assess_end = m.group(1)
-                m = qa_end_re.match(line)
-                if m:
-                    qa_end = m.group(1)  # keep updating — want the LAST one
-                m = arch_end_re.match(line)
-                if m:
-                    arch_end = m.group(1)  # keep updating — want the LAST one
-    except FileNotFoundError:
-        pass
-
-    # Fallback: try SCAN_START from hook-events.log
+    # Fallback: the last SCAN_START event of the append-only hook log.
     if not start:
-        scan_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\s+.*?SCAN_START")
-        try:
-            with open(hook_log) as f:
-                for line in f:
-                    m = scan_re.match(line)
-                    if m:
-                        start = m.group(1)
-        except FileNotFoundError:
-            pass
+        scans = [ts for ts, _component, event in log_events(hook_log) if event == "SCAN_START"]
+        start = scans[-1] if scans else None
 
     # Extend start boundary backwards to capture pre-ASSESSMENT_START activity.
     # The skill runs configuration steps (permissions, settings) in the same
@@ -565,30 +614,22 @@ def find_run_window(agent_log: Path, hook_log: Path) -> tuple[str | None, str | 
 def _run_duration_seconds(agent_log: Path, start: str | None, end: str | None) -> int | None:
     """Return wall-clock seconds of assessment work from .agent-run.log phase timestamps.
 
-    Reads ASSESSMENT_START and ASSESSMENT_END (or the last AGENT_END / CHECK_END)
-    from the agent log to get the true elapsed time, independent of hook-events.log.
-    Returns None when the log cannot be parsed.
+    Runs from ``start`` (else the first ASSESSMENT_START event) to the last
+    ASSESSMENT_END / AGENT_END / CHECK_END event inside the window, independent
+    of hook-events.log. Returns None when the log cannot be parsed.
     """
     if not agent_log.is_file():
         return None
-    iso_re = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)")
-    t_start: str | None = None
-    t_end: str | None = None
     end_markers = {"ASSESSMENT_END", "AGENT_END", "CHECK_END", "SCAN_COMPLETE", "RUNTIME_CLEANUP"}
-    try:
-        with open(agent_log) as f:
-            for line in f:
-                m = iso_re.match(line)
-                if not m:
-                    continue
-                ts = m.group(1)
-                if "ASSESSMENT_START" in line and t_start is None:
-                    t_start = ts
-                if any(marker in line for marker in end_markers):
-                    t_end = ts
-    except OSError:
+    events = log_events(agent_log)
+    t_start = start or next((ts for ts, _component, event in events if event == "ASSESSMENT_START"), None)
+    if not t_start:
         return None
-    if not t_start or not t_end or t_end <= t_start:
+    ends = [
+        ts for ts, _component, event in events if event in end_markers and ts > t_start and (end is None or ts <= end)
+    ]
+    t_end = max(ends) if ends else None
+    if not t_end:
         return None
     try:
         from datetime import datetime, timezone
@@ -817,6 +858,25 @@ def _add_seconds_to_iso(ts: str, seconds: int) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+_AGENT_TYPE_FIELD_RE = re.compile(r"\bagent_type=(\S+)")
+
+
+def _spawned_agent(line: str, first_field: str) -> str:
+    """Short agent name of one AGENT_SPAWN line.
+
+    Current hooks lead the detail with ``agent_call_id=`` and name the agent in
+    ``agent_type=``; older lines lead with the agent name itself.
+    """
+    typed = _AGENT_TYPE_FIELD_RE.search(line)
+    agent = typed.group(1) if typed else first_field
+    agent = agent.split(":")[-1] if ":" in agent else agent
+    # Drop common prefixes for readability
+    for prefix in ("appsec-advisor:appsec-", "appsec-advisor:", "appsec-"):
+        if agent.startswith(prefix):
+            return agent[len(prefix) :]
+    return agent
+
+
 def find_session_agents(hook_log: Path, start: str | None, end: str | None) -> dict[str, list[str]]:
     """Map session IDs to agent names from AGENT_SPAWN lines within the run window."""
     sid_agents: dict[str, set[str]] = {}
@@ -827,7 +887,7 @@ def find_session_agents(hook_log: Path, start: str | None, end: str | None) -> d
                 m = AGENT_SPAWN_RE.match(line)
                 if not m:
                     continue
-                ts, sid, agent_raw = m.group(1), m.group(2), m.group(3)
+                ts, sid = m.group(1), m.group(2)
 
                 # Only consider spawns within the run window
                 if start and ts < start:
@@ -835,15 +895,7 @@ def find_session_agents(hook_log: Path, start: str | None, end: str | None) -> d
                 if end and ts > end:
                     continue
 
-                # Simplify agent names
-                agent = agent_raw.split(":")[-1] if ":" in agent_raw else agent_raw
-                # Drop common prefixes for readability
-                for prefix in ("appsec-advisor:appsec-", "appsec-advisor:", "appsec-"):
-                    if agent.startswith(prefix):
-                        agent = agent[len(prefix) :]
-                        break
-
-                sid_agents.setdefault(sid, set()).add(agent)
+                sid_agents.setdefault(sid, set()).add(_spawned_agent(line, m.group(3)))
     except FileNotFoundError:
         pass
 
@@ -867,19 +919,14 @@ def find_session_agent_counts(hook_log: Path, start: str | None, end: str | None
                 m = AGENT_SPAWN_RE.match(line)
                 if not m:
                     continue
-                ts, sid, agent_raw = m.group(1), m.group(2), m.group(3)
+                ts, sid = m.group(1), m.group(2)
 
                 if start and ts < start:
                     continue
                 if end and ts > end:
                     continue
 
-                agent = agent_raw.split(":")[-1] if ":" in agent_raw else agent_raw
-                for prefix in ("appsec-advisor:appsec-", "appsec-advisor:", "appsec-"):
-                    if agent.startswith(prefix):
-                        agent = agent[len(prefix) :]
-                        break
-
+                agent = _spawned_agent(line, m.group(3))
                 bucket = sid_counts.setdefault(sid, {})
                 bucket[agent] = bucket.get(agent, 0) + 1
     except FileNotFoundError:
@@ -1053,7 +1100,7 @@ def verify_run_costs(
     agent_log = output_dir / ".agent-run.log"
 
     if not hook_log.exists():
-        return {"error": "No .hook-events.log found", "exit_code": 2}
+        return {"error": "No .hook-events.log found", "error_kind": "no_hook_log", "exit_code": 2}
 
     # Resolve pricing: CLI --pricing flag takes precedence over plugin config.
     # Plugin config is a fallback default, not an override.
@@ -1068,7 +1115,11 @@ def verify_run_costs(
     # Find run window
     start, end = find_run_window(agent_log, hook_log)
     if not start:
-        return {"error": "Could not determine run start from .agent-run.log", "exit_code": 2}
+        return {
+            "error": "Could not determine run start: no .scan-start-epoch and no ASSESSMENT_START event",
+            "error_kind": "no_run_window",
+            "exit_code": 2,
+        }
 
     if verbose:
         print(f"Run window: {start} → {end or 'open'}", file=sys.stderr)
@@ -1076,7 +1127,7 @@ def verify_run_costs(
     # Parse all SESSION_STOP entries
     entries = parse_session_stops(hook_log)
     if not entries:
-        return {"error": "No SESSION_STOP entries with token data found", "exit_code": 1}
+        return {"error": "No SESSION_STOP entries with token data found", "error_kind": "no_usage_data", "exit_code": 1}
 
     # Group by session ID
     by_session: dict[str, list[SessionEntry]] = {}
@@ -1157,7 +1208,11 @@ def verify_run_costs(
         )
 
     if not results:
-        return {"error": "No sessions had activity during the assessment window", "exit_code": 1}
+        return {
+            "error": "No sessions had activity during the assessment window",
+            "error_kind": "no_window_activity",
+            "exit_code": 1,
+        }
 
     # Aggregate totals
     totals = TokenSnapshot()

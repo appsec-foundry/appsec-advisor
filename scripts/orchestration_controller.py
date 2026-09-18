@@ -2284,6 +2284,9 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
 
     first_lock_line = (lock.stdout or "").strip().splitlines()
     receipts = [first_lock_line[0] if first_lock_line else "lock acquired", "rerender artifacts verified"]
+    # A rerender keeps the assessed run's `.scan-start-epoch` (its identity in
+    # the model changelog), so this event alone marks where its own cost starts.
+    _append_event(output_dir, "ASSESSMENT_START", f"mode=rerender run_id={cfg['run_id']}")
     _append_event(output_dir, "ORCHESTRATION_READY", "mode=rerender runtime=thin-rerender")
     return {
         "schema_version": 1,
@@ -2432,7 +2435,13 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
         # already read the marker too.
         from _atomic_io import atomic_write_text  # noqa: PLC0415
 
-        atomic_write_text(output_dir / ".scan-start-epoch", f"{int(time.time())}")
+        start_epoch = int(time.time())
+        atomic_write_text(output_dir / ".scan-start-epoch", f"{start_epoch}")
+        _append_event(
+            output_dir,
+            "ASSESSMENT_START",
+            f"mode={cfg['mode']} depth={cfg.get('assessment_depth')} run_id={cfg['run_id']} epoch={start_epoch}",
+        )
         _capture_business_context(cfg, receipts)
         _prepasses(cfg, receipts)
         _fetch_requirements(cfg)

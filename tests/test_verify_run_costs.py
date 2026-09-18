@@ -224,6 +224,118 @@ class TestRunWindow:
         assert start is None and end is None
 
 
+def _canonical(ts: str, event: str, detail: str = "", *, component: str | None = None, sid: str = "--------") -> str:
+    """One line in the shape event_log.format_line writes."""
+    if component is None:
+        return f"{ts}  [{sid}]  INFO   {event:<18}  {detail}\n"
+    return f"{ts}  [{sid}]  INFO   {component:<18}  {event:<18}  {detail}\n"
+
+
+def _epoch(ts: str) -> str:
+    from datetime import datetime, timezone
+
+    return str(int(datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()))
+
+
+class TestRecordedRunWindow:
+    """Compact runs: the controller's start and the Stop hook's end bound the window."""
+
+    def test_the_recorded_epoch_starts_the_window_not_a_logged_command(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-01-01T00:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-01-01T00:00:00Z", "PREFLIGHT_CLEANUP", "mode=full", component="skill-controller")
+            ],
+            hook_lines=[
+                session_stop("2026-01-01T00:10:00Z", "5a1", in_=10, cost=0.1),
+                _canonical("2026-01-01T05:00:00Z", "BASH_OK", "cmd=grep -c SCAN_START .agent-run.log", sid="5a1"),
+            ],
+        )
+        start, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert (start, end) == ("2026-01-01T00:00:00Z", None)
+
+    def test_the_stop_hook_end_marker_closes_the_window(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-03-04T10:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-03-04T10:00:01Z", "ASSESSMENT_START", "mode=rebuild", component="skill-controller"),
+                _canonical("2026-03-04T11:30:00Z", "ASSESSMENT_END", "session=77aa", component="hook-logger"),
+                _canonical("2026-03-04T15:00:00Z", "SESSION_STOP", "in=5", component="shared-session"),
+            ],
+            hook_lines=[],
+        )
+        start, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert (start, end) == ("2026-03-04T10:00:01Z", "2026-03-04T11:33:00Z")
+
+    def test_a_run_logged_before_the_end_marker_ends_at_its_closing_summary(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-02-02T08:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-02-02T09:00:00Z", "ASSESSMENT_SUMMARY", "mode=full", component="hook-logger")
+            ],
+            hook_lines=[],
+        )
+        _, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert end == "2026-02-02T09:03:00Z"
+
+    def test_a_rerender_opens_its_own_window_after_the_assessed_run(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-01-01T00:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-01-01T00:00:00Z", "ASSESSMENT_START", "mode=full", component="skill-controller"),
+                _canonical("2026-01-01T01:00:00Z", "ASSESSMENT_END", "session=5a1", component="hook-logger"),
+                _canonical("2026-01-01T03:00:00Z", "ASSESSMENT_START", "mode=rerender", component="skill-controller"),
+            ],
+            hook_lines=[],
+        )
+        start, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert (start, end) == ("2026-01-01T03:00:00Z", None)
+
+    def test_marker_names_inside_details_do_not_move_the_window(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-01-01T00:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical(
+                    "2026-01-01T00:20:00Z",
+                    "ORCHESTRATION_GATE_WARN",
+                    "gate expected ASSESSMENT_END and ASSESSMENT_START",
+                    component="skill-controller",
+                ),
+            ],
+            hook_lines=[_canonical("2026-01-01T02:00:00Z", "BASH_OK", "cmd=grep ASSESSMENT_START log", sid="5a1")],
+        )
+        start, end = vrc.find_run_window(tmp_path / ".agent-run.log", tmp_path / ".hook-events.log")
+        assert (start, end) == ("2026-01-01T00:00:00Z", None)
+
+    def test_usage_after_the_run_ended_is_not_priced(self, tmp_path):
+        (tmp_path / ".scan-start-epoch").write_text(_epoch("2026-01-01T00:00:00Z"))
+        write_logs(
+            tmp_path,
+            agent_lines=[
+                _canonical("2026-01-01T00:00:00Z", "PREFLIGHT_CLEANUP", "mode=full", component="skill-controller"),
+                _canonical("2026-01-01T00:30:00Z", "ASSESSMENT_END", "session=5a1", component="hook-logger"),
+            ],
+            hook_lines=[
+                session_stop("2026-01-01T00:29:00Z", "5a1", in_=1_000_000, cost=3.0),
+                _canonical("2026-01-01T04:00:00Z", "BASH_OK", "cmd=grep SCAN_START .agent-run.log", sid="5a1"),
+                session_stop("2026-01-01T04:00:05Z", "5a1", in_=9_000_000, cost=27.0),
+            ],
+        )
+        res = vrc.verify_run_costs(tmp_path)
+        assert res["run_window"] == {"start": "2026-01-01T00:00:00Z", "end": "2026-01-01T00:33:00Z"}
+        assert res["totals"]["in"] == 1_000_000
+        assert res["totals"]["cost"] == pytest.approx(3.0)
+
+    def test_a_missing_start_names_its_kind(self, tmp_path):
+        write_logs(tmp_path, hook_lines=["irrelevant\n"], agent_lines=["nothing\n"])
+        assert vrc.verify_run_costs(tmp_path)["error_kind"] == "no_run_window"
+
+
 # ===========================================================================
 # Duration
 # ===========================================================================
@@ -388,6 +500,26 @@ class TestSessionAgents:
         agents = vrc.find_session_agents(hook, "2026-01-01T00:00:00Z", "2026-01-01T00:30:00Z")
         assert agents["5a1"] == sorted(["threat-analyst", "stride-analyzer"])
         assert "5a2" not in agents
+
+    def test_current_spawn_lines_are_named_by_their_agent_type(self, tmp_path):
+        hook = tmp_path / "h.log"
+        hook.write_text(
+            _canonical(
+                "2026-01-01T00:05:00Z",
+                "AGENT_SPAWN",
+                "agent_call_id=toolu_01AbC  agent_type=appsec-advisor:appsec-recon-scanner  model=haiku",
+                sid="5a1",
+            )
+            + _canonical(
+                "2026-01-01T00:06:00Z",
+                "AGENT_SPAWN",
+                "agent_call_id=toolu_02XyZ  agent_type=review-helper  model=sonnet",
+                sid="5a1",
+            )
+        )
+        window = ("2026-01-01T00:00:00Z", "2026-01-01T00:30:00Z")
+        assert vrc.find_session_agents(hook, *window) == {"5a1": ["recon-scanner", "review-helper"]}
+        assert vrc.find_session_agent_counts(hook, *window) == {"5a1": {"recon-scanner": 1, "review-helper": 1}}
 
     def test_counts(self, tmp_path):
         hook = tmp_path / "h.log"

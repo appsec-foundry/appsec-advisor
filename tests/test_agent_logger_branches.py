@@ -329,6 +329,21 @@ class TestHandleStopBranches:
         assert not (tmp_path / ".appsec-tracing").exists()
         assert not (tmp_path / ".appsec-verbose").exists()
 
+    def test_the_released_run_is_closed_by_one_end_marker(self, al, tmp_path):
+        (tmp_path / ".agent-run.log").write_text("")
+        (tmp_path / ".hook-events.log").write_text("2026-06-14T10:00:00Z  [sidone12]  INFO   SCAN_START  repo=/r\n")
+        al.handle_stop({"stop_reason": "end_turn"}, "sidone12", "Stop")
+        al.handle_stop({"stop_reason": "end_turn"}, "sidone12", "Stop")
+        run_log = (tmp_path / ".agent-run.log").read_text()
+        assert run_log.count("ASSESSMENT_END") == 1
+
+    def test_a_stop_inside_the_running_run_does_not_end_it(self, monkeypatch, tmp_path):
+        logger = _load(monkeypatch, tmp_path, name="al_running_stop_end_marker")
+        (tmp_path / ".agent-run.log").write_text("")
+        monkeypatch.setattr(logger, "_run_lock_is_ours", lambda sid: True)
+        logger.handle_stop({"stop_reason": "end_turn"}, "sidrun12", "Stop")
+        assert "ASSESSMENT_END" not in (tmp_path / ".agent-run.log").read_text()
+
     def test_stop_while_the_run_holds_its_lock_keeps_markers(self, monkeypatch, tmp_path):
         (tmp_path / ".appsec-tracing").write_text("")
         traced = _load(monkeypatch, tmp_path, name="al_traced_running_stop")

@@ -7145,6 +7145,57 @@ def test_preflight_writes_the_run_start_marker(tmp_path, monkeypatch):
     assert seen["at_prepass"] == written, "the prepasses must already see this run's marker"
 
 
+def _logged_events(output: Path, name: str) -> list:
+    import event_log
+
+    lines = (output / ".agent-run.log").read_text(encoding="utf-8").splitlines(keepends=True)
+    return [event for event in map(event_log.parse_line, lines) if event and event.event == name]
+
+
+def test_preflight_logs_the_run_start_with_its_marker_epoch(tmp_path, monkeypatch):
+    """Cost accounting reads the run start from the log; the event names the
+    same epoch as `.scan-start-epoch`, so both sources give one start."""
+    monkeypatch.delenv("APPSEC_HEADLESS", raising=False)
+    cfg = _cfg(tmp_path)
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
+    monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "plan\n")
+
+    controller.prepare(["--full"])
+
+    starts = _logged_events(output, "ASSESSMENT_START")
+    assert len(starts) == 1
+    assert f"epoch={(output / '.scan-start-epoch').read_text().strip()}" in starts[0].detail
+    assert "mode=full" in starts[0].detail
+
+
+def test_rerender_logs_its_own_start_and_keeps_the_assessed_run_epoch(monkeypatch, tmp_path):
+    cfg = _cfg(tmp_path, "rerender")
+    cfg["rerender"] = True
+    output = Path(cfg["output_dir"])
+    output.mkdir(parents=True)
+    Path(cfg["repo_root"]).mkdir()
+    for name in ("threat-model.yaml", ".threats-merged.json", ".triage-flags.json"):
+        (output / name).write_text("{}", encoding="utf-8")
+    fragments = output / ".fragments"
+    fragments.mkdir()
+    for name in ("system-overview.md", "assets.md", "security-architecture.md"):
+        (fragments / name).write_text("fragment", encoding="utf-8")
+    (output / ".scan-start-epoch").write_text("1700000000", encoding="utf-8")
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed("lock acquired\n"))
+
+    controller.prepare(["--rerender"])
+
+    assert ["mode=rerender" in event.detail for event in _logged_events(output, "ASSESSMENT_START")] == [True]
+    assert (output / ".scan-start-epoch").read_text() == "1700000000"
+
+
 def test_the_runtime_no_longer_writes_the_run_start_marker():
     """One producer for the marker. Both writing it would let the later write
     move the run boundary after the prepasses already read the earlier one."""

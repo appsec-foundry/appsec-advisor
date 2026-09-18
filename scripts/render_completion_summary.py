@@ -839,12 +839,16 @@ def extract_run_statistics(output_dir: Path, yaml_data: dict) -> dict:
 
 
 def extract_costs(output_dir: Path, plugin_root: Path) -> Optional[dict]:
-    """Return the parsed JSON from verify_run_costs.py, or None on failure."""
+    """Return the parsed JSON from verify_run_costs.py, or None when it produced none.
+
+    A result that names its failure keeps the reason (``error``, ``error_kind``)
+    so the summary can say why the cost is missing.
+    """
     script = plugin_root / "scripts" / "verify_run_costs.py"
     if not script.is_file():
         return None
     if not _has_cost_signal(output_dir):
-        return None
+        return {"error": "No token usage was logged for this run", "error_kind": "no_usage_data"}
     try:
         r = subprocess.run(
             ["python3", str(script), str(output_dir), "--json"],
@@ -854,13 +858,28 @@ def extract_costs(output_dir: Path, plugin_root: Path) -> Optional[dict]:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    if r.returncode >= 2 or not r.stdout:
+    if not r.stdout:
         return None
     try:
         parsed = json.loads(r.stdout)
     except json.JSONDecodeError:
         return None
     return _add_unpriced_tokens(parsed, output_dir, plugin_root)
+
+
+_COST_FAILURE_REASONS = {
+    "no_hook_log": "no hook event log",
+    "no_run_window": "run start not recorded",
+    "no_usage_data": "no token usage logged",
+    "no_window_activity": "no usage inside the run window",
+}
+
+
+def _cost_failure_reason(cost: Optional[dict]) -> str:
+    """Why a run has no cost figure, in the words the summary prints."""
+    if not isinstance(cost, dict):
+        return "verify_run_costs.py failed"
+    return _COST_FAILURE_REASONS.get(str(cost.get("error_kind")), str(cost.get("error") or "unknown error")[:80])
 
 
 def _add_unpriced_tokens(parsed: object, output_dir: Path, plugin_root: Path) -> Optional[dict]:
@@ -1474,8 +1493,8 @@ def render_run_statistics(stats: dict, cost: Optional[dict], verbose: bool = Fal
         # is still measured, and reporting nothing here while the phase banner
         # reports it is the divergence this branch exists to close.
         lines.extend(_unpriced_token_lines(cost["unpriced_tokens"]))
-    elif cost is None:
-        lines.append("  Tokens/Cost         : unavailable (verify_run_costs.py failed)")
+    else:
+        lines.append(f"  Tokens/Cost         : unavailable ({_cost_failure_reason(cost)})")
     return lines
 
 
@@ -1974,7 +1993,7 @@ def _summary_duration(stats: dict) -> str:
 
 def _summary_cost(cost: Optional[dict]) -> str:
     if not cost or "error" in cost:
-        return "unavailable"
+        return f"unavailable ({_cost_failure_reason(cost)})"
     totals = cost.get("totals") or {}
     billing = cost.get("billing") or "unknown"
     if billing == "subscription":

@@ -1878,3 +1878,96 @@ def test_connected_or_absent_injections_produce_no_issue(tmp_path):
     assert agg._extract_unconnected_injected_components(out) == []
     (out / ".data-flows.json").write_text("not json", encoding="utf-8")
     assert agg._extract_unconnected_injected_components(out) == []
+
+
+def _cost_run(tmp_path, *, start: str, stop_at: str | None, usage: bool = True) -> Path:
+    from datetime import datetime, timezone
+
+    epoch = int(datetime.strptime(start, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp())
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".scan-start-epoch").write_text(str(epoch), encoding="utf-8")
+    (tmp_path / ".agent-run.log").write_text(
+        f"{start}  [--------]  INFO   skill-controller    PREFLIGHT_CLEANUP   mode=full\n", encoding="utf-8"
+    )
+    tokens = "in=1,000 out=10 cache_write=0 cache_read=0 cost=$0.01" if usage else "cost=n/a"
+    stop = f"{stop_at}  [5a1bc2d3]  INFO   SESSION_STOP        {tokens}\n" if stop_at else ""
+    (tmp_path / ".hook-events.log").write_text(stop, encoding="utf-8")
+    return tmp_path
+
+
+def _ended_run(tmp_path, *after_end: str) -> Path:
+    """A run whose Stop hook closed it at 10:30, with later lines appended."""
+    from datetime import datetime, timezone
+
+    start = int(datetime(2026, 5, 6, 10, 0, tzinfo=timezone.utc).timestamp())
+    (tmp_path / ".scan-start-epoch").write_text(str(start), encoding="utf-8")
+    (tmp_path / ".agent-run.log").write_text(
+        "2026-05-06T10:00:00Z  [--------]  INFO   skill-controller    ASSESSMENT_START    mode=full\n"
+        "2026-05-06T10:20:00Z  [--------]  ERROR  stride-analyzer     TOOL_ERROR          in-run tool failure\n"
+        "2026-05-06T10:30:00Z  [--------]  INFO   hook-logger         ASSESSMENT_END      session=5a1bc2d3\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".hook-events.log").write_text(
+        "2026-05-06T10:10:00Z  [5a1bc2d3]  WARN   BASH_WARN           cmd=python3 build.py  resp=in-run warning\n"
+        + "".join(after_end),
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+def _reported(out: Path) -> list[str]:
+    return [issue["evidence"]["raw_event"] for issue in agg.aggregate(out, "standard")["issues"]]
+
+
+def test_warnings_logged_after_the_run_ended_are_not_the_runs_issues(tmp_path):
+    out = _ended_run(
+        tmp_path,
+        "2026-05-06T13:00:00Z  [5a1bc2d3]  WARN   BASH_WARN           cmd=grep x  resp=post-run warning\n",
+    )
+    reported = _reported(out)
+    assert not any("post-run" in raw for raw in reported)
+    assert any("in-run warning" in raw for raw in reported)
+
+
+def test_errors_logged_after_the_run_ended_are_not_the_runs_issues(tmp_path):
+    out = _ended_run(
+        tmp_path,
+        "2026-05-06T14:45:00Z  [5a1bc2d3]  ERROR  TOOL_ERROR          Edit failed after the run\n",
+    )
+    reported = _reported(out)
+    assert not any("after the run" in raw for raw in reported)
+    assert any("in-run tool failure" in raw for raw in reported)
+
+
+def test_reaggregating_an_ended_run_keeps_one_reconciliation_line(tmp_path):
+    out = _ended_run(tmp_path)
+    (out / "threat-model.md").write_text("# report\n", encoding="utf-8")
+    with (out / ".agent-run.log").open("a", encoding="utf-8") as handle:
+        handle.write("2026-05-06T10:05:00Z  [--------]  WARN   skill-controller    SESSION_ABORTED_MIDRUN  resumed\n")
+    agg.aggregate(out, "standard")
+    agg.aggregate(out, "standard")
+    assert (out / ".agent-run.log").read_text(encoding="utf-8").count("RUN_RECONCILED") == 1
+
+
+def test_a_run_window_without_its_usage_is_surfaced(tmp_path):
+    out = _cost_run(tmp_path, start="2026-05-06T12:00:00Z", stop_at="2026-05-06T11:00:00Z")
+
+    issues = agg._extract_cost_accounting(out)
+
+    assert [(issue["category"], issue["severity"]) for issue in issues] == [("cost_accounting_failed", "warning")]
+    assert issues[0]["evidence"]["error_kind"] == "no_window_activity"
+
+
+def test_measured_or_host_unlogged_usage_is_not_a_cost_issue(tmp_path):
+    measured = _cost_run(tmp_path / "measured", start="2026-05-06T12:00:00Z", stop_at="2026-05-06T12:10:00Z")
+    unlogged = _cost_run(
+        tmp_path / "unlogged", start="2026-05-06T12:00:00Z", stop_at="2026-05-06T12:10:00Z", usage=False
+    )
+
+    unstarted = _cost_run(tmp_path / "unstarted", start="2026-05-06T12:00:00Z", stop_at="2026-05-06T11:00:00Z")
+    (unstarted / ".scan-start-epoch").unlink()
+
+    assert agg._extract_cost_accounting(measured) == []
+    assert agg._extract_cost_accounting(unlogged) == []
+    assert agg._extract_cost_accounting(unstarted) == []
+    assert agg._extract_cost_accounting(tmp_path / "absent") == []

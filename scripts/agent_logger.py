@@ -3271,7 +3271,10 @@ def handle_stop(data: dict, sid: str, event_name: str = "") -> None:
         except Exception:
             pass  # never crash a hook
         else:
-            # Only reached when this process successfully claimed the sentinel
+            # Only reached when this process successfully claimed the sentinel.
+            # The claim is the run's end: its lock is released and every later
+            # event belongs to other work, which cost accounting must not count.
+            _write_agent_run("INFO", "hook-logger", "ASSESSMENT_END", f"session={sid[:8] if sid else 'unknown'}")
             try:
                 _write_assessment_summary(sid)
             except Exception:

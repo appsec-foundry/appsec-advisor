@@ -516,6 +516,10 @@ SOURCE_TESTS = {
         marketplace_manifest
         requirements_verification
     """),
+    "agents/shared/logging-standard.md": _tests("""
+        agent_definitions
+        budget_watchdog
+    """),
     "data/requirement-bindings.yaml": _tests("""
         check_specs
         requirements_hook
@@ -527,6 +531,7 @@ SOURCE_TESTS = {
     "docs/images/figure1-example.svg": _tests("requirements_verification"),
     "docs/internal/contracts/orchestration-actions.md": _tests("requirements_verification"),
     "docs/internal/contracts/schema-invariants.md": _tests("requirements_verification"),
+    "docs/internal/cost-model.md": _tests("requirements_verification"),
     "docs/internal/decisions.md": _tests("""
         check_specs
         decision_register
@@ -742,6 +747,18 @@ SOURCE_TESTS = {
         run_headless_completion
         runtime_doc_cli_contract
         team_questions
+    """),
+    "scripts/verify_run_costs.py": _tests("""
+        aggregate_run_issues
+        context_window_report
+        cost_running_total
+        measure_run
+        model_release_pricing
+        recommend_fixes
+        render_completion_summary
+        run_diagnostics_recovery_2026_07_20
+        run_issues_pipeline
+        verify_run_costs
     """),
     "scripts/render_progress.py": _tests("""
         render_progress
