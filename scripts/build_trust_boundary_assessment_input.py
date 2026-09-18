@@ -16,7 +16,7 @@ import validate_intermediate as intermediate_contract
 import yaml
 from _atomic_io import atomic_write_json
 from finalize_component_inventory import validate_receipt
-from validate_fragment import architecture_reference_errors, repository_path_errors
+from validate_fragment import architecture_reference_errors, data_flow_endpoint_errors, repository_path_errors
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 INPUT_SCHEMA = PLUGIN_ROOT / "schemas" / "trust-boundary-assessment-input.schema.json"
@@ -478,15 +478,9 @@ def _semantic_flow_validation(flows: dict[str, Any], receipt: dict[str, Any]) ->
         raise ValueError("; ".join(errors))
     if flows["component_inventory_fingerprint"] != receipt["component_inventory_fingerprint"]:
         raise ValueError("data-flow sidecar carries a stale component inventory fingerprint")
-    allowed = set(receipt["component_ids"]) | {"external"}
-    ids = [row["id"] for row in flows["data_flows"]]
-    if len(ids) != len(set(ids)):
-        raise ValueError("data-flow IDs must be unique")
-    for row in flows["data_flows"]:
-        if row["from"] not in allowed or row["to"] not in allowed:
-            raise ValueError(f"{row['id']} references an unknown component endpoint")
-        if row["from"] == row["to"]:
-            raise ValueError(f"{row['id']} is not a cross-component flow")
+    errors = data_flow_endpoint_errors(flows["data_flows"], receipt["component_ids"])
+    if errors:
+        raise ValueError("; ".join(errors))
 
 
 def _flow_identity(row: dict[str, Any]) -> tuple[str, ...]:

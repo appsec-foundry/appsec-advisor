@@ -402,6 +402,30 @@ def architecture_reference_errors(data: dict) -> list[str]:
     return errors
 
 
+def data_flow_endpoint_errors(flows: Any, component_ids: Any | None = None) -> list[str]:
+    """Unique flow IDs, two distinct endpoints, and endpoints the inventory knows.
+
+    The trust-boundary input builder checks the finalized inventory and the
+    architecture self-check checks the analyst's own; finalization keeps every
+    authored ID, so both reach one verdict. Without IDs the endpoint rule is skipped.
+    """
+    rows = [row for row in flows if isinstance(row, dict)] if isinstance(flows, list) else []
+    ids = [row.get("id") for row in rows]
+    errors = ["data-flow IDs must be unique"] if len(ids) != len(set(ids)) else []
+    allowed = None if component_ids is None else {*component_ids, "external"}
+    for row in rows:
+        if allowed is not None and (row.get("from") not in allowed or row.get("to") not in allowed):
+            errors.append(f"{row.get('id')} references an unknown component endpoint")
+        if row.get("from") == row.get("to"):
+            errors.append(f"{row.get('id')} is not a cross-component flow")
+    return errors
+
+
+def _context_components(context: Any) -> list | None:
+    components = context.get("components") if isinstance(context, dict) else None
+    return components if isinstance(components, list) else None
+
+
 def fragment_invariant_errors(
     fragment_type: str,
     data: Any,
@@ -427,17 +451,28 @@ def fragment_invariant_errors(
     the agent the moment it is added.
 
     `context` is the companion artifact the rules need — for trust-boundary
-    candidates the assessment input the agent reads as `ASSESSMENT_INPUT_PATH`.
-    Rules that need it are skipped when it is absent, so the intra-fragment
-    rules still work for a caller that has only the fragment.
+    candidates the assessment input the agent reads as `ASSESSMENT_INPUT_PATH`,
+    for data flows and assets the analyst's own `.components.json`. Rules that
+    need it are skipped when it is absent, so the intra-fragment rules still
+    work for a caller that has only the fragment. The same blind spot recurred
+    on 2026-09-18: without component tiers the self-check accepted a human
+    interaction aimed at a server, which the architecture gate then aborted on.
 
     Returns plain-text errors, never raises: the caller decides between abort,
     repair and report.
     """
     if fragment_type == "trust-boundary-candidates":
         return _trust_boundary_candidate_errors(data, context)
+    components = _context_components(context)
     if fragment_type == "data-flows" and isinstance(data, dict):
-        return architecture_reference_errors(data)
+        if components is None:
+            return architecture_reference_errors(data) + data_flow_endpoint_errors(data.get("data_flows"))
+        ids = [row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)]
+        return architecture_reference_errors({**data, "components": components}) + data_flow_endpoint_errors(
+            data.get("data_flows"), ids
+        )
+    if fragment_type == "assets" and isinstance(data, dict) and components is not None:
+        return architecture_reference_errors({"assets": data.get("assets"), "components": components})
     return []
 
 
@@ -1022,7 +1057,8 @@ def main(argv: list[str] | None = None) -> int:
         "--context",
         type=Path,
         help="Companion input artifact the relational rules need "
-        "(trust-boundary-candidates: .trust-boundary-assessment-input.json). "
+        "(trust-boundary-candidates: .trust-boundary-assessment-input.json; "
+        "data-flows, assets: .components.json). "
         "Without it the cross-artifact rules are skipped.",
     )
     largs = legacy.parse_args(args)

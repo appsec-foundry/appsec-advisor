@@ -125,8 +125,8 @@ OUTPUT_DIR="<OUTPUT_DIR from the dispatch>"
 REPO_ROOT="<REPO_ROOT from the dispatch>"
 CLAUDE_PLUGIN_ROOT="<CLAUDE_PLUGIN_ROOT from the dispatch>"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" components "$OUTPUT_DIR/.components.json" --repo-root "$REPO_ROOT"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT"
-python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json" --repo-root "$REPO_ROOT"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" data-flows "$OUTPUT_DIR/.data-flows.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" assets "$OUTPUT_DIR/.assets.json" --repo-root "$REPO_ROOT" --context "$OUTPUT_DIR/.components.json"
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/validate_fragment.py" attack-surface-overrides "$OUTPUT_DIR/.attack-surface-overrides.json"
 ```
 

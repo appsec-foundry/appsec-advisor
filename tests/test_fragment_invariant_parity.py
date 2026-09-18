@@ -23,17 +23,23 @@ registry — that is, until the authoring agent can see it.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = REPO_ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import build_trust_boundary_assessment_input as boundary_input  # noqa: E402
+import finalize_component_inventory as finalizer  # noqa: E402
+import orchestration_controller as controller  # noqa: E402
 import prepare_trust_boundary_context as prep  # noqa: E402
 from validate_fragment import fragment_invariant_errors  # noqa: E402
+from validate_intermediate import _check_export_trace_invariants  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "fragment_invariants"
 
@@ -176,6 +182,95 @@ def _gate_rejects_trust_boundary_candidates(doc: dict, context: dict, tmp_path: 
     return False
 
 
+def _interaction_targets_server(doc: dict) -> dict:
+    """A human interaction points at a server instead of the client the human uses.
+
+    The 2026-09-18 shape: "browser fetches the app bundle" modelled as
+    `interaction: true` from the user straight to the backend. The self-check
+    had no component tiers, printed VALIDATE_OK, and the architecture gate
+    aborted the run after an 18-minute analyst dispatch.
+    """
+    for flow in doc["data_flows"]:
+        if flow.get("interaction"):
+            flow["to"] = "api"
+            return doc
+    raise AssertionError("fixture has no interaction flow to retarget")
+
+
+def _flow_unknown_endpoint(doc: dict) -> dict:
+    """A flow names a component the inventory does not contain."""
+    doc["data_flows"][1]["to"] = "component-that-does-not-exist"
+    return doc
+
+
+def _self_flow(doc: dict) -> dict:
+    """A flow starts and ends at the same component."""
+    doc["data_flows"][2]["to"] = doc["data_flows"][2]["from"]
+    return doc
+
+
+def _duplicate_flow_id(doc: dict) -> dict:
+    """Two flows share one ID."""
+    doc["data_flows"][2]["id"] = doc["data_flows"][1]["id"]
+    return doc
+
+
+def _asset_unknown_component(doc: dict) -> dict:
+    """An asset location names a component the inventory does not contain."""
+    doc["assets"][0]["component_refs"][0]["component_id"] = "component-that-does-not-exist"
+    return doc
+
+
+def _cited_lines(node: object, found: dict[str, int]) -> dict[str, int]:
+    if isinstance(node, dict):
+        if isinstance(node.get("file"), str) and isinstance(node.get("line"), int):
+            found[node["file"]] = max(found.get(node["file"], 1), node["line"])
+        for value in node.values():
+            _cited_lines(value, found)
+    elif isinstance(node, list):
+        for value in node:
+            _cited_lines(value, found)
+    return found
+
+
+def _materialize_repository(components: list[dict], doc: dict, repo_root: Path) -> None:
+    """Create each component directory and every cited file with code lines.
+
+    Finalization requires every component glob to match an entry, and flow
+    evidence must name an existing line.
+    """
+    for component in components:
+        directory = repo_root / "src" / component["id"]
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "component.ts").write_text("export const component = true\n", encoding="utf-8")
+    for name, lines in _cited_lines(doc, {}).items():
+        path = repo_root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("export const value = 1;\n" * lines, encoding="utf-8")
+
+
+def _gate_rejects_data_flows(doc: dict, context: dict, tmp_path: Path) -> bool:
+    """Run the Stage-1a gate steps that judge data flows, in the controller's order."""
+    repo = tmp_path / "repo"
+    out = tmp_path / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    _materialize_repository(context["components"], doc, repo)
+    (out / ".components.json").write_text(json.dumps(context), encoding="utf-8")
+    (out / ".data-flows.json").write_text(json.dumps(doc), encoding="utf-8")
+    try:
+        finalizer.finalize(repo, out)
+        controller._bind_finalized_component_fingerprint(out, repo)
+        boundary_input.build(repo, out, "standard")
+    except (ValueError, controller.ControllerError):
+        return True
+    return False
+
+
+def _gate_rejects_assets(doc: dict, context: dict, tmp_path: Path) -> bool:
+    """The final-export trace check, the first gate that relates assets to components."""
+    return bool(_check_export_trace_invariants({"assets": doc["assets"], "components": context["components"]}))
+
+
 FRAGMENTS = {
     "trust-boundary-candidates": {
         "gate": _gate_rejects_trust_boundary_candidates,
@@ -191,6 +286,19 @@ FRAGMENTS = {
             "covers-nothing": _covers_nothing,
             "unknown-signal": _unknown_signal,
         },
+    },
+    "data-flows": {
+        "gate": _gate_rejects_data_flows,
+        "mutations": {
+            "interaction-targets-server": _interaction_targets_server,
+            "unknown-endpoint": _flow_unknown_endpoint,
+            "self-flow": _self_flow,
+            "duplicate-flow-id": _duplicate_flow_id,
+        },
+    },
+    "assets": {
+        "gate": _gate_rejects_assets,
+        "mutations": {"unknown-component": _asset_unknown_component},
     },
 }
 
@@ -236,3 +344,17 @@ def test_self_check_rejects_what_the_gate_rejects(fragment_type: str, mutation: 
         f"to it. Move the check into fragment_invariant_errors instead of enforcing it only in "
         f"the consumer."
     )
+
+
+def test_every_self_check_passes_the_context_its_rules_need():
+    """A self-check without `--context` skips the rules that need it and passes silently."""
+    needs_context = {ftype for ftype in FRAGMENTS if (FIXTURES / ftype / "context.json").is_file()}
+    checked: set[str] = set()
+    for prompt in sorted((REPO_ROOT / "agents").glob("*.md")):
+        text = prompt.read_text(encoding="utf-8").replace("\\\n", " ")
+        for line in text.splitlines():
+            match = re.search(r"validate_fragment\.py\"?\s+([a-z-]+)\s", line)
+            if match and match.group(1) in needs_context:
+                checked.add(match.group(1))
+                assert "--context" in line, f"{prompt.name}: the {match.group(1)} self-check omits --context"
+    assert checked == needs_context
