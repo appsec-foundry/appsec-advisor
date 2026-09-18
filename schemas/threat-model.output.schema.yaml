@@ -1157,7 +1157,7 @@ properties:
           type: string
           minLength: 10
           maxLength: 80
-          pattern: "^[A-Z][^()@`]+?(?:\\s*\\([^()]+\\))?$"
+          pattern: "^(?:[A-Z]|[0-9]+[A-Za-z])[^()@`]+?(?:\\s*\\([^()]+\\))?$"
           not:
             anyOf:
               - { pattern: "@\\d" }

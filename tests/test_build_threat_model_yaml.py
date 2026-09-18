@@ -26,6 +26,7 @@ def _load():
 
 
 b = _load()
+import emit_clean_finding_titles as ecf  # noqa: E402  (scripts/ is on sys.path via the builder)
 
 
 def test_clamp_title_short_passthrough():
@@ -139,7 +140,7 @@ def _title_pattern():
     schema = yaml.safe_load(OUTPUT_SCHEMA.read_text(encoding="utf-8"))
     for n in _walk(schema):
         p = n.get("pattern") if isinstance(n, dict) else None
-        if isinstance(p, str) and p.startswith("^[A-Z][^()@"):
+        if isinstance(p, str) and p.startswith("^(?:[A-Z]|[0-9]+[A-Za-z])[^()@"):
             return p
     raise AssertionError("threats[].title pattern not found in output schema")
 
@@ -2944,7 +2945,7 @@ def test_main_delivers_contiguous_boundary_ids_from_a_sparse_ledger(tmp_path, mo
 # letter, so the acceptance criterion here is the schema's own pattern applied
 # to arbitrary input.
 
-_TITLE_PATTERN = re.compile(r"^[A-Z][^()@`]+?(?:\s*\([^()]+\))?$")
+_TITLE_PATTERN = re.compile(r"^(?:[A-Z]|[0-9]+[A-Za-z])[^()@`]+?(?:\s*\([^()]+\))?$")
 
 _HOSTILE_TITLES = [
     "14 Named Accounts Seeded with Hardcoded Password (SecurityConfig.java:71)",
@@ -2999,10 +3000,42 @@ def test_conform_title_is_identity_on_conforming_input():
 
 
 def test_lossy_repair_is_reported_and_stashes_the_original():
-    threat = {"title": "404 handler leaks stack traces (ErrorController.java:18)"}
+    threat = {"title": "/admin routes are unauthenticated (SecurityConfig.java:41)"}
     assert b._conform_title(threat) is True
-    assert threat["_title_source"] == "404 handler leaks stack traces (ErrorController.java:18)"
-    assert threat["title"].startswith("Handler leaks stack traces")
+    assert threat["_title_source"] == "/admin routes are unauthenticated (SecurityConfig.java:41)"
+    assert threat["title"].startswith("Admin routes are unauthenticated")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "2FA not enforced for non-enrolled accounts",
+        "3DS challenge skipped for saved cards (Checkout.kt:12)",
+        "5G modem firmware accepted unsigned",
+    ],
+)
+def test_digit_led_acronym_conforms_without_loss(raw):
+    """A digit joined to letters in one token is a name, not a count; it leads a title as it stands."""
+    threat = {"title": raw}
+    assert b._conform_title(threat) is False
+    assert threat["title"] == raw and "_title_source" not in threat
+    assert re.match(_TITLE_PATTERN, raw)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("__2fa secret logged in debug mode", "2fa secret logged in debug mode"),
+        ("14 Named Accounts Seeded with Hardcoded Password", "Named Accounts Seeded with Hardcoded Password"),
+        ("404 handler leaks stack traces", "Handler leaks stack traces"),
+        ("--mfa bypass flag", "Mfa bypass flag"),
+    ],
+)
+def test_dropped_lead_never_cuts_a_letter_or_digit_out_of_a_token(raw, expected):
+    """A bare count or punctuation lead is dropped whole; the kept token loses nothing."""
+    assert b._ensure_pattern_lead(raw) == (expected, True)
+    assert ecf._force_pattern_lead(raw) == expected
+    assert re.match(_TITLE_PATTERN, expected)
 
 
 def test_lowercase_lead_is_repaired_without_loss():
@@ -3032,7 +3065,7 @@ def test_dropping_the_lead_frees_budget_for_the_locator():
     lead and nothing else.
     """
     body = "Unauthenticated Admin Promotion Allows Role Escalation Everywhere"
-    raw = f"14 {body} (Sec.java:41)"
+    raw = f"// {body} (Sec.java:41)"
     assert len(raw) > 80 and len(raw) - 3 <= 80, "fixture must sit in the band where the lead alone overflows"
 
     single_pass, lossy = b._ensure_pattern_lead(b._clean_title(raw))

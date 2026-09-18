@@ -539,3 +539,5 @@ Vorbestehend, unabhängig von diesen Änderungen.
 | `minLength`-Verstoß auf Prosa (`attack_steps`, `rationale`) | nicht deterministisch reparierbar — nur der Producer kann das | N6 (Producer-Klassifikation, `bb8e158c`) |
 | Titel wird still zu Unsinn umgeschrieben | V3 — verlustbehaftete Notreparatur ohne Signal | N1b |
 | Lauf stirbt erst in `context-v2-finalize`, Stage 1 komplett bezahlt | D4 — Regel existiert nicht am Attempt-Schema | N3 (Qualität), N1 (Sicherheit) |
+
+**Follow-up (FE-13).** The lead rule later cut digit-led acronyms mid-token (`2FA not enforced …` became `FA not enforced …`). The schema now also accepts a digit run joined to a letter in the same token (`2FA`, `3DS`), a bare count such as `14 Named Accounts` still does not conform as argued in §5, and the repair drops only whole non-conforming leading tokens or punctuation.

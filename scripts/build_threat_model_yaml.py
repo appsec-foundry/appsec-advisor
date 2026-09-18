@@ -1212,41 +1212,17 @@ def _drop_partial_markup(fragment: str) -> str:
 
 
 _TITLE_MINLEN = 10  # schemas/threat-model.output.schema.yaml (threats[].title)
-_TITLE_FIRST_LETTER_RE = re.compile(r"[A-Za-z]")
 
 
 def _ensure_pattern_lead(title: str) -> tuple[str, bool]:
-    """Guarantee the schema's ``^[A-Z]`` lead. Returns ``(title, lossy)``.
+    """The shared title-lead rule; a lossy repair is stashed by the caller.
 
-    ``str.upper()`` is the identity on every character without a case pairing,
-    so a bare ``s[0].upper()`` silently no-ops for a digit, path, quote or
-    underscore lead and yields a title the schema can never accept. That ended
-    a paid run at the Stage-2 handoff, 75 minutes after the title was written
-    (2026-08-21, `analysis-title-contract-abort-2026-08-21.md`).
-
-    A lead that is merely lower-case is fixed without loss. A lead that carries
-    no case at all can only be dropped, which costs information — `404 handler
-    …` becomes `Handler …` and loses which handler. There is no purely
-    syntactic repair that is also semantically sound, so the caller is told and
-    stashes the original rather than rewriting it silently.
+    ``emit_clean_finding_titles.ensure_pattern_lead`` owns the rule so the
+    builder and the emitter that re-derives titles after the gate cannot drift.
     """
-    s = (title or "").strip()
-    if not s or s[0].isupper():
-        return s, False
-    if s[0].isalpha():
-        return s[0].upper() + s[1:], False
-    match = _TITLE_FIRST_LETTER_RE.search(s)
-    if not match:
-        return "", True
-    kept = s[match.start() :].strip()
-    # Dropping the lead can orphan the opening half of a quoted token
-    # (`"password" is …` → `Password" is …`). An odd count proves the orphan;
-    # apostrophes are left alone because ordinary prose makes them odd.
-    if kept.count('"') % 2:
-        kept = kept.replace('"', "").strip()
-    if not kept:
-        return "", True
-    return kept[0].upper() + kept[1:], True
+    from emit_clean_finding_titles import ensure_pattern_lead  # noqa: PLC0415
+
+    return ensure_pattern_lead(title)
 
 
 def _fallback_title(threat: dict) -> str:
@@ -1371,8 +1347,8 @@ def _clamp_title(title: str, limit: int = _TITLE_MAXLEN) -> str:
 def _clean_title(raw: str) -> str:
     """Best-effort transform of merged-threat title to schema pattern.
 
-    Schema pattern: ^[A-Z][^()@`]+?(?:\\s*\\([^()]+\\))?$
-      - first char uppercase
+    Schema pattern: ^(?:[A-Z]|[0-9]+[A-Za-z])[^()@`]+?(?:\\s*\\([^()]+\\))?$
+      - leads with a capital letter or a digit-led acronym (2FA)
       - no parens/at/backtick in body
       - optionally one parenthesized suffix at end
 

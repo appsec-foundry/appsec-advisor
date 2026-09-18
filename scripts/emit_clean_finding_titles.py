@@ -137,34 +137,51 @@ def clean_weakness(raw_title: str) -> str:
     return _force_pattern_lead(s)
 
 
-def _force_pattern_lead(s: str) -> str:
-    """Guarantee the schema's ``^[A-Z]`` lead on the derived title.
+# A title opens with a capital letter or with a digit run joined to a letter in
+# the same token (2FA, 3DS, 5G); a bare count such as "14 Named Accounts" names
+# a quantity, not a weakness class, and stays non-conforming.
+_CONFORMING_LEAD_RE = re.compile(r"[A-Z]|[0-9]+[A-Za-z]")
+_KEEPABLE_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])(?:[A-Za-z]|[0-9]+[A-Za-z])")
 
-    This module declares itself the single point responsible for schema-clean
-    titles, but enforced only the *lower-case* half: ``s[0].islower()`` is
-    False for a digit, path, quote or underscore, and ``.upper()`` is the
-    identity on all of them. Because the title is re-derived from the stashed
-    original on every run, a ``14 Named Accounts …`` source came back **after**
-    the schema gate had passed, leaving an invalid yaml on disk with nothing
-    downstream to catch it (2026-08-21,
+
+def ensure_pattern_lead(title: str) -> tuple[str, bool]:
+    """Guarantee the schema's title lead. Returns ``(title, lossy)``.
+
+    The one lead rule for every title producer: the YAML builder applies it
+    before the schema gate and reports the loss, and this module re-applies it
+    to every title it re-derives from the stashed original, so a
+    non-conforming source cannot come back after the gate (2026-08-21,
     ``analysis-title-contract-abort-2026-08-21.md``).
 
-    Sibling of ``build_threat_model_yaml._ensure_pattern_lead``, which owns the
-    same rule before the gate and additionally reports when the repair costs
-    information; here that loss is already accounted for upstream.
+    A capital or digit-led acronym lead (``2FA``) conforms as it stands and a
+    lower-case lead is capitalised without loss. Any other lead — a bare
+    number, path, quote, underscore or sigil — is dropped up to the first
+    alphanumeric token that may lead, so no letter or digit is ever cut out of
+    a token; the caller is told because the dropped text may have carried
+    meaning.
     """
-    s = (s or "").strip()
-    if not s or s[0].isupper():
-        return s
+    s = (title or "").strip()
+    if not s or _CONFORMING_LEAD_RE.match(s):
+        return s, False
     if s[0].isalpha():
-        return s[0].upper() + s[1:]
-    match = re.search(r"[A-Za-z]", s)
+        return s[0].upper() + s[1:], False
+    match = _KEEPABLE_TOKEN_RE.search(s)
     if not match:
-        return s
+        return "", True
     kept = s[match.start() :].strip()
+    # Dropping the lead can orphan the opening half of a quoted token
+    # (`"password" is …` → `Password" is …`). An odd count proves the orphan;
+    # apostrophes are left alone because ordinary prose makes them odd.
     if kept.count('"') % 2:
         kept = kept.replace('"', "").strip()
-    return (kept[0].upper() + kept[1:]) if kept else s
+    if not kept:
+        return "", True
+    return kept[0].upper() + kept[1:], True
+
+
+def _force_pattern_lead(s: str) -> str:
+    """The shared lead rule on a derived title; the loss is already accounted for upstream."""
+    return ensure_pattern_lead(s)[0] or (s or "").strip()
 
 
 # Constraints for threats[].title, read from the schema that actually gates the

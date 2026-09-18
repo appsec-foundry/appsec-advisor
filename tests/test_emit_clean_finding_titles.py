@@ -214,7 +214,7 @@ import re as _re
 
 import pytest
 
-_TITLE_PATTERN = _re.compile(r"^[A-Z][^()@`]+?(?:\s*\([^()]+\))?$")
+_TITLE_PATTERN = _re.compile(r"^(?:[A-Z]|[0-9]+[A-Za-z])[^()@`]+?(?:\s*\([^()]+\))?$")
 
 
 @pytest.mark.parametrize(
