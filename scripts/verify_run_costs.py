@@ -1013,49 +1013,27 @@ def aggregate_by_agent(
 
 
 def _detect_agent_models(output_dir: Path, alias_releases: dict[str, str] | None = None) -> dict[str, str]:
-    """Read agent_models from threat-model.yaml, return normalized model map.
+    """The STRIDE model the run recorded as ``meta.model``, keyed by its role.
 
-    ``alias_releases`` resolves a bare alias the way ``_normalize_model_name`` does.
+    ``build_threat_model_yaml`` writes ``meta.model`` from ``stride_model``;
+    nothing records other roles' models in the YAML. ``alias_releases``
+    resolves a bare alias the way ``_normalize_model_name`` does.
 
-    Returns a dict like {"threat-analyst": "sonnet-4-6", "stride-analyzer": "opus-4-6"}.
+    Returns ``{"stride-analyzer": "sonnet-4-6"}``, or ``{}`` when unrecorded.
     """
-    yaml_path = output_dir / "threat-model.yaml"
-    if not yaml_path.exists():
-        return {}
-
-    models: dict[str, str] = {}
-    in_agent_models = False
-    base_model: str | None = None
-
+    in_meta = False
     try:
-        with open(yaml_path) as f:
+        with open(output_dir / "threat-model.yaml") as f:
             for line in f:
-                # Top-level model field (orchestrator model)
-                m = re.match(r"^\s{2}model:\s+\"?([^\"]+)\"?\s*$", line)
-                if m and not in_agent_models:
-                    raw = m.group(1).strip()
-                    base_model = _normalize_model_name(raw, alias_releases)
-
-                # agent_models: block
-                if re.match(r"^\s{2}agent_models:\s*$", line):
-                    in_agent_models = True
+                if line.strip() and not line[0].isspace():
+                    in_meta = line.rstrip() == "meta:"
                     continue
-                if in_agent_models:
-                    am = re.match(r"^\s{4}(\S+):\s+\"?([^\"]+)\"?\s*$", line)
-                    if am:
-                        agent = am.group(1).strip()
-                        model = _normalize_model_name(am.group(2).strip(), alias_releases)
-                        models[agent] = model
-                    elif not line.startswith("    "):
-                        in_agent_models = False
+                m = re.match(r"^\s{2}model:\s+\"?([^\"]+)\"?\s*$", line) if in_meta else None
+                if m:
+                    return {"stride-analyzer": _normalize_model_name(m.group(1).strip(), alias_releases)}
     except OSError:
-        return {}
-
-    # Add orchestrator under its base model
-    if base_model:
-        models.setdefault("threat-analyst", base_model)
-
-    return models
+        pass
+    return {}
 
 
 def _normalize_model_name(raw: str, alias_releases: dict[str, str] | None = None) -> str:
@@ -1237,7 +1215,7 @@ def verify_run_costs(
 
     has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
-    # Detect mixed-model runs from threat-model.yaml agent_models
+    # Compare the run's recorded STRIDE model with the pricing model
     agent_models = _detect_agent_models(output_dir, learned_alias_releases(agent_log, start, end))
     mixed_model_costs: dict[str, Any] | None = None
     if agent_models:

@@ -103,13 +103,12 @@ def test_a_release_the_table_does_not_know_stays_unpriced(tmp_path: Path) -> Non
 
 
 def test_mixed_model_reference_uses_the_run_s_alias_resolution(tmp_path: Path) -> None:
-    (tmp_path / "threat-model.yaml").write_text(
-        'meta:\n  model: "sonnet"\n  agent_models:\n    stride-analyzer: "opus"\n  other: x\n'
-    )
     (tmp_path / ".agent-run.log").write_text(_usage_line("toolu_a", "opus", resolved="claude-opus-5"))
-    models = vrc._detect_agent_models(tmp_path, vrc.learned_alias_releases(tmp_path / ".agent-run.log"))
-    assert models["stride-analyzer"] == "opus-5"
-    assert models["threat-analyst"] == vrc.ALIAS_FALLBACK_RELEASES["sonnet"]
+    learned = vrc.learned_alias_releases(tmp_path / ".agent-run.log")
+    (tmp_path / "threat-model.yaml").write_text('meta:\n  model: "opus"\n  other: x\n')
+    assert vrc._detect_agent_models(tmp_path, learned) == {"stride-analyzer": "opus-5"}
+    (tmp_path / "threat-model.yaml").write_text('meta:\n  model: "sonnet"\n  other: x\n')
+    assert vrc._detect_agent_models(tmp_path, learned) == {"stride-analyzer": vrc.ALIAS_FALLBACK_RELEASES["sonnet"]}
 
 
 def _identity(call_id: str) -> dict:

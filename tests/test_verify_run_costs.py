@@ -424,20 +424,15 @@ class TestModels:
     def test_detect_no_yaml(self, tmp_path):
         assert vrc._detect_agent_models(tmp_path) == {}
 
-    def test_detect_agent_models(self, tmp_path):
+    def test_detect_reads_the_stride_model_from_meta_only(self, tmp_path):
         (tmp_path / "threat-model.yaml").write_text(
-            "meta:\n"
-            '  model: "claude-sonnet-4-6"\n'
-            "  agent_models:\n"
-            '    stride-analyzer: "claude-opus-4-6"\n'
-            '    qa-reviewer: "sonnet"\n'
-            "  other: x\n"
+            'components:\n- id: api\n  model: "claude-haiku-4-5"\nmeta:\n  model: "claude-opus-4-6"\n  other: x\n'
         )
-        models = vrc._detect_agent_models(tmp_path)
-        assert models["stride-analyzer"] == "opus-4-6"
-        assert models["qa-reviewer"] == "sonnet-4-6"
-        # orchestrator added under base model
-        assert models["threat-analyst"] == "sonnet-4-6"
+        assert vrc._detect_agent_models(tmp_path) == {"stride-analyzer": "opus-4-6"}
+
+    def test_detect_without_meta_model(self, tmp_path):
+        (tmp_path / "threat-model.yaml").write_text("meta:\n  mode: full\ncomponents: []\n")
+        assert vrc._detect_agent_models(tmp_path) == {}
 
 
 # ===========================================================================
@@ -751,9 +746,7 @@ class TestVerifyRunCosts:
 
     def test_mixed_model_costs(self, tmp_path):
         self._good_run(tmp_path, cost_final=10.0)
-        (tmp_path / "threat-model.yaml").write_text(
-            'meta:\n  model: "claude-sonnet-4-6"\n  agent_models:\n    stride-analyzer: "claude-opus-4-6"\n'
-        )
+        (tmp_path / "threat-model.yaml").write_text('meta:\n  model: "claude-opus-4-6"\n')
         res = vrc.verify_run_costs(tmp_path)
         assert res["mixed_model_costs"] is not None
         assert "opus-4-6" in res["mixed_model_costs"]
@@ -761,9 +754,7 @@ class TestVerifyRunCosts:
 
     def test_verbose_prints(self, tmp_path, capsys):
         self._good_run(tmp_path, cost_final=26.78)
-        (tmp_path / "threat-model.yaml").write_text(
-            'meta:\n  model: "claude-sonnet-4-6"\n  agent_models:\n    stride-analyzer: "claude-opus-4-6"\n'
-        )
+        (tmp_path / "threat-model.yaml").write_text('meta:\n  model: "claude-opus-4-6"\n')
         res = vrc.verify_run_costs(tmp_path, verbose=True)
         err = capsys.readouterr().err
         assert "Run window:" in err
@@ -815,7 +806,7 @@ class TestPrintVerbose:
             "mixed_model_costs": {
                 "opus-4-6": {"cached": 1.0, "no_cache": 2.0, "pricing": vrc.PRICING_MODELS["opus-4-6"]}
             },
-            "agent_models": {"threat-analyst": "sonnet-4-6"},
+            "agent_models": {"stride-analyzer": "sonnet-4-6"},
             "subagent_estimate": {
                 "assessment_tokens_cost": 5.0,
                 "multiplier_estimate": 4.0,
