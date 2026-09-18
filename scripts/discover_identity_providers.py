@@ -38,6 +38,15 @@ _CLIENT = re.compile(
     r"(?:UserManager|ClientApplication|OAuth2?(?:Session)?|OpenIDConnect|Saml2Client|SAMLStrategy|Strategy|register)\s*\("
 )
 _CONFIG_CONTEXT = re.compile(r"oauth|oidc|openid|saml|sso|singlesignon|relyingparty", re.I)
+# Function headers across the supported source languages: `def`/`function`/`func`/`fun`
+# declarations, functions bound to a name, and methods with a brace body.
+_DEFINITION = re.compile(
+    r"(?:\b(?:def|function|func|fun)\s+(?:\([^()\n]*\)\s*)?(?P<keyword>[A-Za-z_$][\w$]*)\s*\("
+    r"|(?<![\w$.])(?P<bound>[A-Za-z_$][\w$]*)\s*[:=]\s*(?:async\s+)?(?:function\b|\([^()]*\)[^=;{\n]*=>|[A-Za-z_$][\w$]*\s*=>)"
+    r"|(?<![\w$.])(?P<method>[A-Za-z_$][\w$]*)\s*\([^()]*\)\s*(?::[^{;=\n]+|throws[\w.,\s]+)?\{)"
+)
+_NOT_FUNCTIONS = frozenset({"if", "for", "while", "switch", "catch", "return", "with", "new", "else", "do", "try"})
+_MAX_DEFINITIONS = 200
 
 
 @dataclass(frozen=True)
@@ -298,6 +307,115 @@ def discover(repo_root: Path) -> list[Integration]:
     return sorted(set(result), key=lambda c: (c.file, c.line, c.authority, c.role))
 
 
+def _masked(text: str) -> str:
+    """Blank strings and comments, keeping offsets and line numbers."""
+    code = list(text)
+    for token in _LEX.finditer(text):
+        code[token.start() : token.end()] = ["\n" if c == "\n" else " " for c in token.group()]
+    return "".join(code)
+
+
+def _balanced(masked: str, index: int) -> int:
+    """Offset after the bracket that closes the one at `index`; -1 when it never closes."""
+    depth = 0
+    for i in range(index, len(masked)):
+        if masked[i] in "({[":
+            depth += 1
+        elif masked[i] in ")}]":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
+
+
+def _statement_end(masked: str, index: int) -> int:
+    depth = 0
+    for i in range(index, len(masked)):
+        depth += (masked[i] in "({[") - (masked[i] in ")}]")
+        if depth <= 0 and masked[i] in ";\n":
+            return i
+    return len(masked)
+
+
+def _definitions(masked: str) -> list[tuple[str, re.Match]]:
+    return [
+        (name, match)
+        for match in _DEFINITION.finditer(masked)
+        if (name := match.group(match.lastgroup)) not in _NOT_FUNCTIONS
+    ]
+
+
+def _body_end(masked: str, match: re.Match) -> int:
+    """End offset of a definition's body; -1 when the header has no delimitable body."""
+    header = match.group()
+    if header.startswith("def "):
+        close = _balanced(masked, match.end() - 1)
+        line_start = masked.rfind("\n", 0, match.start()) + 1
+        indent = match.start() - line_start
+        pos = masked.find("\n", close) if close != -1 else -1
+        while pos != -1:
+            nxt = masked.find("\n", pos + 1)
+            line = masked[pos + 1 : nxt if nxt != -1 else len(masked)]
+            if line.strip() and len(line) - len(line.lstrip()) <= indent:
+                return pos + 1
+            pos = nxt
+        return len(masked) if close != -1 else -1
+    if header.endswith("{"):
+        return _balanced(masked, match.end() - 1)
+    index = match.end()
+    if header.endswith("("):
+        index = _balanced(masked, index - 1)
+    elif header.endswith("function"):
+        paren = masked.find("(", index)
+        index = _balanced(masked, paren) if paren != -1 else -1
+    if index == -1:
+        return -1
+    if header.endswith("=>"):
+        index += len(masked[index:]) - len(masked[index:].lstrip())
+        return _balanced(masked, index) if masked[index : index + 1] == "{" else _statement_end(masked, index)
+    # Return types and `throws` clauses may precede the brace; `=` starts an expression body.
+    brace = re.compile(r"[^{;=]*\{").match(masked, index)
+    return _balanced(masked, brace.end() - 1) if brace else -1
+
+
+def _enclosing_function(masked: str, line: int) -> str | None:
+    """Name of the innermost function whose body contains the line."""
+    offset = 0
+    for _ in range(line - 1):
+        offset = masked.find("\n", offset) + 1
+        if not offset:
+            return None
+    offset += len(masked[offset:].split("\n", 1)[0]) - len(masked[offset:].split("\n", 1)[0].lstrip())
+    before = [(name, match) for name, match in _definitions(masked) if match.start() <= offset]
+    for name, match in reversed(before[-_MAX_DEFINITIONS:]):
+        end = _body_end(masked, match)
+        if end != -1 and offset < end:
+            return name
+    return None
+
+
+def _call_lines(masked: str, name: str) -> list[tuple[int, int]]:
+    """Line spans of calls to `name`, including member calls chained onto their result."""
+    headers = {match.start(match.lastgroup) for found, match in _definitions(masked) if found == name}
+    spans = []
+    for call in re.finditer(r"(?<![\w$])" + re.escape(name) + r"\s*\(", masked):
+        if call.start() in headers:
+            continue
+        end = _balanced(masked, call.end() - 1)
+        while end != -1 and (chained := re.compile(r"\s*\??\.\s*[A-Za-z_$][\w$]*\s*\(").match(masked, end)):
+            end = _balanced(masked, chained.end() - 1)
+        if end != -1:
+            spans.append((masked.count("\n", 0, call.start()) + 1, masked.count("\n", 0, end) + 1))
+    return spans
+
+
+def _read_source(root: Path, rel: str) -> str:
+    path = (root / rel).resolve()
+    if not path.is_relative_to(root) or not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
 def _owner(file: str, components: list[dict], *, browser: bool = False) -> str:
     matches = []
     for component in components:
@@ -319,6 +437,38 @@ def _owner(file: str, components: list[dict], *, browser: bool = False) -> str:
     raise ValueError(f"identity integration in {file} needs a unique component owner")
 
 
+def _authored_callers(integration: Integration, owner: str, flows: list[dict], root: Path, masked: dict) -> list[dict]:
+    """Authored outbound flows of the owner whose evidence calls the function that makes this request."""
+    if integration.configured or Path(integration.file).suffix not in _SOURCE_EXT:
+        return []
+
+    def source(rel: str) -> str:
+        if rel not in masked:
+            masked[rel] = _masked(_read_source(root, rel))
+        return masked[rel]
+
+    name = _enclosing_function(source(integration.file), integration.line)
+    if not name:
+        return []
+    spans: dict[str, list[tuple[int, int]]] = {}
+    covering = []
+    for flow in flows:
+        if flow.get("from") != owner or flow.get("to") != "external" or not flow.get("to_entity"):
+            continue
+        if _written_by_reconcile(flow):
+            continue
+        for row in flow.get("evidence") or []:
+            rel, line = str(row.get("file") or ""), row.get("line")
+            if Path(rel).suffix not in _SOURCE_EXT or not isinstance(line, int):
+                continue
+            if rel not in spans:
+                spans[rel] = _call_lines(source(rel), name)
+            if any(first <= line <= last for first, last in spans[rel]):
+                covering.append(flow)
+                break
+    return covering
+
+
 def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
     """Fill omitted providers/flows before boundary assessment; retain authored topology."""
     result = copy.deepcopy(document)
@@ -328,6 +478,8 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
     entities = result.setdefault("external_entities", [])
     flows = result.setdefault("data_flows", [])
     next_flow = max((int(f["id"][3:]) for f in flows), default=0) + 1
+    root = repo_root.resolve()
+    masked: dict[str, str] = {}
     for integration in integrations:
         owner = _owner(integration.file, components, browser=integration.browser)
         evidence = [
@@ -346,6 +498,13 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
                 raise ValueError(
                     f"ambiguous internal identity-server evidence at {integration.file}:{integration.line}"
                 )
+            continue
+        covering = _authored_callers(integration, owner, flows, root, masked)
+        if len({f["to_entity"] for f in covering}) == 1:
+            # The author modelled this request where its wrapper is called; record the URL there.
+            covering[0]["evidence"] = (covering[0].get("evidence") or []) + [
+                e for e in evidence if e not in (covering[0].get("evidence") or [])
+            ]
             continue
         digest = hashlib.sha256(integration.authority.encode()).hexdigest()[:16]
         entity_id = f"ext-idp-{digest}"

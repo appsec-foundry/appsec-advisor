@@ -280,6 +280,115 @@ def test_authored_flow_to_the_provider_is_not_duplicated_whatever_its_provenance
     assert labels == ["OAuth token exchange", "OAuth authorization"]
 
 
+_WRAPPER_SOURCES = {
+    "typescript": (
+        "src/services/account.ts",
+        "export class AccountClient {\n"
+        "  constructor (private readonly http: HttpClient) {}\n"
+        "\n"
+        "  fetchProfile (token: string) {\n"
+        "    return this.http.get('https://accounts.example.net/oauth2/v3/userinfo?access_token=' + token)\n"
+        "  }\n"
+        "}\n",
+        "src/pages/callback.ts",
+        "export class CallbackPage {\n"
+        "  init (): void {\n"
+        "    this.accounts.fetchProfile(this.tokenFromHash()).subscribe({\n"
+        "      next: (profile) => {\n"
+        "        this.session.start(profile.email)\n"
+        "      }\n"
+        "    })\n"
+        "  }\n"
+        "}\n",
+        5,
+    ),
+    "python": (
+        "src/identity/gateway.py",
+        "import requests\n"
+        "\n"
+        "\n"
+        "def load_member(token):\n"
+        '    reply = requests.get("https://login.example.org/oidc/userinfo", headers={"Authorization": token})\n'
+        "    return reply.json()\n",
+        "src/web/views.py",
+        "from identity.gateway import load_member\n"
+        "\n"
+        "def dashboard(request):\n"
+        '    member = load_member(request.session["token"])\n'
+        "    return render(request, member)\n",
+        4,
+    ),
+}
+
+
+def _authored_profile_flow(caller, line, entity="ext-accounts"):
+    return {
+        "id": "df-003",
+        "from": "client",
+        "to": "external",
+        "to_entity": entity,
+        "label": "Profile lookup with the received access token",
+        "provenance": "architecture",
+        "evidence": [{"file": caller, "line": line}],
+    }
+
+
+def _entities(*ids):
+    return [
+        {
+            "id": entity,
+            "kind": "identity-provider",
+            "name": f"Provider {entity}",
+            "description": "Account provider",
+            "evidence": [{"file": "src/pages/other.ts", "line": 1}],
+        }
+        for entity in ids
+    ]
+
+
+@pytest.mark.parametrize("language", sorted(_WRAPPER_SOURCES))
+def test_request_modelled_at_its_wrapper_call_is_not_duplicated(tmp_path, language):
+    wrapper, wrapper_text, caller, caller_text, line = _WRAPPER_SOURCES[language]
+    _write(tmp_path, wrapper, wrapper_text)
+    _write(tmp_path, caller, caller_text)
+    _write(tmp_path, "src/pages/other.ts", "export {}\n")
+    doc = _flows()
+    doc["external_entities"] = _entities("ext-accounts")
+    doc["data_flows"] = [_authored_profile_flow(caller, line)]
+    result = discovery.reconcile(tmp_path, _components(), doc)
+    assert [flow["id"] for flow in result["data_flows"]] == ["df-003"]
+    assert [entity["id"] for entity in result["external_entities"]] == ["ext-accounts"]
+    url_line = next(n for n, text in enumerate(wrapper_text.splitlines(), 1) if "userinfo" in text)
+    assert {"file": wrapper, "line": url_line} in result["data_flows"][0]["evidence"]
+    assert repository_path_errors("data-flows", result, tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "caller_text,entities",
+    [
+        # The authored flow cites code that never calls the wrapper.
+        ("export class CallbackPage {\n  init (): void {\n    this.orders.load()\n  }\n}\n", ["ext-accounts"]),
+        # Two providers claim the same call; neither representation is chosen.
+        (_WRAPPER_SOURCES["typescript"][3], ["ext-accounts", "ext-backup"]),
+    ],
+)
+def test_unrelated_or_ambiguous_callers_keep_the_generated_request(tmp_path, caller_text, entities):
+    wrapper, wrapper_text, caller, _text, line = _WRAPPER_SOURCES["typescript"]
+    _write(tmp_path, wrapper, wrapper_text)
+    _write(tmp_path, caller, caller_text)
+    _write(tmp_path, "src/pages/other.ts", "export {}\n")
+    doc = _flows()
+    doc["external_entities"] = _entities(*entities)
+    doc["data_flows"] = [
+        {**_authored_profile_flow(caller, line if "fetchProfile" in caller_text else 3, entity), "id": f"df-00{i}"}
+        for i, entity in enumerate(entities, 3)
+    ]
+    authored = copy.deepcopy(doc["data_flows"])
+    result = discovery.reconcile(tmp_path, _components(), doc)
+    assert result["data_flows"][: len(authored)] == authored
+    assert [flow["label"] for flow in result["data_flows"][len(authored) :]] == ["OAuth profile request"]
+
+
 def test_every_discovered_role_is_recognised_as_generated(tmp_path):
     sources = {
         "src/a.ts": 'fetch("https://id.example/oauth/token")',
