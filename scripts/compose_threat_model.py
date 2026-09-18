@@ -108,6 +108,7 @@ from build_posture_verdict import build_posture_verdict as _build_posture_verdic
 from detect_open_registration import overview_actor_notes, overview_actor_slug
 from pregenerate_fragments import _TIER_HINTS as _pregen_tier_hints
 from pregenerate_fragments import _classify_tier as _pregen_classify_tier
+from pregenerate_fragments import component_coverage as _pregen_component_coverage
 from pregenerate_fragments import gen_architecture_diagrams
 from prepare_trust_boundary_context import (
     CROSSING_TYPE_LEGS,
@@ -2708,19 +2709,13 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
     # (.stride-selection.json), so the executive verdict never implies the whole
     # system was assessed when only a criteria-selected subset was.
     scope_coverage = ""
-    cs = (ctx.yaml_data.get("meta") or {}).get("component_selection")
-    # Screening-depth components (--cheap-stride) were analyzed, but not at full
-    # depth — counting them as "full STRIDE analysis" would overstate coverage,
-    # so they get their own clause and are subtracted from the full-depth count.
-    n_screen = sum(
-        1 for e in ((cs or {}).get("selected") or []) if isinstance(e, dict) and e.get("analysis_depth") == "screening"
-    )
-    if isinstance(cs, dict) and ((cs.get("excluded") or []) or n_screen):
-        analyzed = cs.get("analyzed", 0)
-        total_comp = cs.get("total", analyzed)
-        n_exc = len(cs.get("excluded") or [])
+    coverage = _pregen_component_coverage(ctx.yaml_data.get("meta") or {})
+    n_screen = len((coverage or {}).get("screened") or [])
+    if coverage and (coverage["excluded"] or n_screen):
+        total_comp = coverage["total"]
+        n_exc = len(coverage["excluded"])
         scope_coverage = (
-            f"**Scope:** {analyzed - n_screen} of {total_comp} components received full STRIDE analysis — "
+            f"**Scope:** {len(coverage['full'])} of {total_comp} components received full STRIDE analysis — "
             f"the externally-reachable, authentication-bearing, and business-critical surface. "
         )
         if n_screen:
@@ -10638,20 +10633,9 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     # depth. Marks each row Analyzed / Screened / Out of scope so the reader can
     # see which components received a STRIDE pass, and at which depth.
     # Absent in passthrough/legacy runs → original column layout is preserved.
-    cs = (ctx.yaml_data.get("meta") or {}).get("component_selection")
-    excluded_ids = set()
-    screened_ids = set()
-    if isinstance(cs, dict):
-        excluded_ids = {
-            (e.get("id") or "").strip()
-            for e in (cs.get("excluded") or [])
-            if isinstance(e, dict) and (e.get("id") or "").strip()
-        }
-        screened_ids = {
-            (e.get("id") or "").strip()
-            for e in (cs.get("selected") or [])
-            if isinstance(e, dict) and e.get("analysis_depth") == "screening" and (e.get("id") or "").strip()
-        }
+    coverage = _pregen_component_coverage(ctx.yaml_data.get("meta") or {}) or {}
+    excluded_ids = {(e.get("id") or "").strip() for e in coverage.get("excluded") or []} - {""}
+    screened_ids = {(e.get("id") or "").strip() for e in coverage.get("screened") or []} - {""}
     show_scope = bool(excluded_ids or screened_ids)
     scope_hdr = " Scope |" if show_scope else ""
     scope_sep = "-------|" if show_scope else ""

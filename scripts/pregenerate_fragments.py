@@ -181,6 +181,37 @@ def _components_by_tier(components: list[dict]) -> dict[str, list[dict]]:
 # ---------------------------------------------------------------------------
 
 
+def component_coverage(meta: dict) -> dict | None:
+    """Full-depth, screened and excluded rows of `meta.component_selection`, or None without one.
+
+    The one coverage rule behind §1 Scope, the Management Summary scope line and
+    the §2.3 Scope column: a screening-depth component received all six STRIDE
+    categories without verification, so it never counts as full analysis. The
+    completion summary's "STRIDE-analyzed" count deliberately includes screened
+    components, because a screening pass is a STRIDE pass.
+    """
+    cs = meta.get("component_selection") if isinstance(meta, dict) else None
+    if not isinstance(cs, dict):
+        return None
+    selected = [e for e in cs.get("selected") or [] if isinstance(e, dict)]
+    excluded = [e for e in cs.get("excluded") or [] if isinstance(e, dict)]
+    return {
+        "total": cs.get("total") or len(selected) + len(excluded),
+        "full": [e for e in selected if e.get("analysis_depth") != "screening"],
+        "screened": [e for e in selected if e.get("analysis_depth") == "screening"],
+        "excluded": excluded,
+    }
+
+
+def _screening_sentence(screened: list[dict]) -> str:
+    return (
+        f"**{len(screened)}** further component(s) received a reduced-budget screening pass "
+        "(all six STRIDE categories, no verification greps): "
+        + ", ".join(f"**{e.get('name') or e.get('id')}**" for e in screened)
+        + "."
+    )
+
+
 def gen_system_overview(yaml_data: dict) -> str:
     """## 1. System Overview — business purpose + perimeter, NO deployment topology
     (that lives in §2.1).
@@ -256,14 +287,16 @@ def gen_system_overview(yaml_data: dict) -> str:
     lines.append("### Scope")
     lines.append("")
     cs = meta.get("component_selection") if isinstance(meta.get("component_selection"), dict) else None
-    excluded = (cs or {}).get("excluded") or []
+    coverage = component_coverage(meta)
+    excluded = (coverage or {}).get("excluded") or []
+    screened = (coverage or {}).get("screened") or []
     if cs and excluded:
         # Components were narrowed to a STRIDE-analyzed subset — make the coverage
         # and the selection rationale explicit instead of implying every modeled
         # component was assessed equally.
-        total = cs.get("total") or len(components)
-        analyzed = cs.get("analyzed") or 0
-        sel_names = [s.get("name") or s.get("id") for s in (cs.get("selected") or [])]
+        total = coverage["total"] or len(components)
+        analyzed = len(coverage["full"])
+        sel_names = [s.get("name") or s.get("id") for s in coverage["full"]]
         exc_names = [e.get("name") or e.get("id") for e in excluded]
         # Distinct selection criteria actually triggered (truthful — only mention
         # ci-cd / crown-jewel etc. if a selected component matched on it).
@@ -282,6 +315,9 @@ def gen_system_overview(yaml_data: dict) -> str:
             + f".{crit_clause}"
         )
         lines.append("")
+        if screened:
+            lines.append(_screening_sentence(screened))
+            lines.append("")
         lines.append(
             f"The remaining **{len(exc_names)}** component(s) were **not individually analyzed** at this "
             f"assessment depth (lower-priority / internal surface): "
@@ -295,7 +331,13 @@ def gen_system_overview(yaml_data: dict) -> str:
             + ", ".join(f"**{c.get('name', c.get('id', '?'))}**" for c in components)
             + "."
         )
-        if cs and not excluded:
+        if cs and screened:
+            lines.append("")
+            lines.append(
+                f"**{len(coverage['full'])} of {coverage['total'] or len(components)}** modeled components "
+                "received full STRIDE threat analysis. " + _screening_sentence(screened)
+            )
+        elif cs:
             lines.append("")
             lines.append(
                 f"All {cs.get('total') or len(components)} modeled components received full STRIDE threat analysis."

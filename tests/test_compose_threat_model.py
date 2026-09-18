@@ -5299,6 +5299,92 @@ def test_components_table_scope_column_marks_screened(tmp_path: Path) -> None:
     assert next(ln for ln in rows if "API" in ln and "Worker" not in ln).rstrip().endswith("Analyzed |")
 
 
+@pytest.mark.parametrize(
+    ("depths", "n_excluded"),
+    [
+        (["full", "full", "screening"], 0),
+        (["full", "screening", "screening"], 1),
+        (["full", "full"], 2),
+        (["full", "full", "full"], 0),
+    ],
+    ids=["screened-only", "screened-and-excluded", "excluded-only", "all-full"],
+)
+def test_scope_surfaces_state_one_coverage_rule(tmp_path: Path, depths: list[str], n_excluded: int) -> None:
+    """§1 Scope, the verdict scope line and the component table count full and screened components alike."""
+    import pregenerate_fragments as pregen
+
+    total = len(depths) + n_excluded
+    names = [f"Unit {i}" for i in range(total)]
+    selected = [
+        {"id": f"u{i}", "name": names[i], "reasons": ["internet-exposed"]}
+        | ({"analysis_depth": "screening"} if depth == "screening" else {})
+        for i, depth in enumerate(depths)
+    ]
+    excluded = [{"id": f"u{i}", "name": names[i], "reason": "not selected"} for i in range(len(depths), total)]
+    meta = {
+        "component_selection": {
+            "mode": "criteria",
+            "analyzed": len(selected),
+            "total": total,
+            "selected": selected,
+            "excluded": excluded,
+        }
+    }
+    n_full, n_screen = depths.count("full"), depths.count("screening")
+    comps = [{"id": f"u{i}", "name": names[i], "tier": "application", "paths": [f"src/u{i}"]} for i in range(total)]
+
+    overview = pregen.gen_system_overview({"meta": meta, "components": comps})
+    frag = tmp_path / ".fragments"
+    frag.mkdir(parents=True)
+    (frag / "ms-verdict.json").write_text(
+        json.dumps(
+            {
+                "severity": "red",
+                "opening": "Not production-ready. The application leaves its most sensitive operations open.",
+                "bullets": [
+                    {
+                        "title": "Anyone can act as admin",
+                        "body": "A caller reaches every privileged action.",
+                        "refs": ["F-001"],
+                    },
+                    {
+                        "title": "Customer data is reachable",
+                        "body": "A user can read other records.",
+                        "refs": ["F-002"],
+                    },
+                ],
+                "closing": "Address authentication and authorization before any production use.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        yaml_data={"meta": meta, "components": comps, "threats": []},
+        triage={},
+        fragments_dir=frag,
+    )
+    section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
+    verdict = compose._render_verdict(ctx, compose._build_jinja_env(ctx), section)
+    table = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n")
+    screening = f"**{n_screen}** further component(s) received a reduced-budget screening pass"
+
+    assert table.count(" Analyzed |") == (n_full if n_screen or n_excluded else 0)
+    assert table.count(" Screened |") == n_screen
+    assert table.count(" Out of scope |") == n_excluded
+    assert (screening in overview) is bool(n_screen)
+    if n_screen or n_excluded:
+        assert f"**{n_full} of {total}**" in overview
+        assert "modeled components received full STRIDE threat analysis." not in overview.replace(
+            f"**{n_full} of {total}** modeled components received full STRIDE threat analysis.", ""
+        )
+        assert f"**Scope:** {n_full} of {total} components received full STRIDE analysis" in verdict
+    else:
+        assert f"All {total} modeled components received full STRIDE threat analysis." in overview
+        assert "**Scope:**" not in verdict
+
+
 def _verdict_ctx_with_abuse(tmp_path: Path, bullets: list[dict], abuse_cases: list[dict] | None):
     """Build a RenderContext + section for _render_verdict, writing the verdict
     fragment and (optionally) the abuse-cases.json sidecar."""
