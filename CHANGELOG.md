@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The architecture analyst corrects data flows and asset locations that do not fit its component inventory before it finishes, instead of the run aborting after architecture modelling.
+- Actor discovery appends to the run log instead of replacing it, so earlier events stay in the log and a monitored run is no longer reported as unmonitored.
 - Report prose formats ambiguous protocol names such as Authorization, Cookie, and Origin as code only when local context identifies the concrete header or attribute.
 - Open questions in the Management Summary lead with the question and keep compact finding references, instead of opening some bullets with a decorated reference list.
 - Plugin update checks compare against released versions instead of advertising unreleased development builds.

@@ -525,6 +525,19 @@ class TestBodyContentConsistency:
         _, body = parse_frontmatter(agent_file)
         assert ".agent-run.log" in body, f"{agent_file.name}: must reference '.agent-run.log' for structured logging"
 
+    @pytest.mark.parametrize("agent_file", agent_files(), ids=lambda f: f.stem)
+    def test_agent_names_the_canonical_log_writer(self, agent_file):
+        """An agent told only to write .agent-run.log improvises the writer.
+
+        The actor discoverer had no emitter; on 2026-09-18 it replaced the shared
+        log instead of appending, erasing WATCHDOG_START and every earlier event,
+        and the run was reported as unmonitored although its watchdog ran.
+        """
+        _, body = parse_frontmatter(agent_file)
+        assert "log_event.py" in body or "logging-standard.md" in body, (
+            f"{agent_file.name}: name scripts/log_event.py or shared/logging-standard.md as the log writer"
+        )
+
     def test_step_logging_guidance_forbids_inline_format_line(self):
         """Regression guard (2026-06-20 Sonnet run): step/check logging must route
         through log_event.py, and the shared standard must explicitly forbid calling
