@@ -2954,6 +2954,111 @@ def test_reported_findings_add_capabilities_only_from_deterministic_rules():
     assert pills[0].find(f"{_SVG}title").text.endswith("src/import.ts:7 (reported finding)")
 
 
+def test_capability_labels_rank_linked_finding_severity_before_tier():
+    capabilities, _ = F._capability_vocabulary()
+    evidence = [{"file": "src/a.ts", "line": 1}]
+    threats = [
+        {"id": "T-1", "cwe": "CWE-434", "risk": "Critical", "component": "svc"},
+        {"id": "T-2", "cwe": "cwe-918", "risk": "High", "component": "svc"},
+        {"id": "T-3", "cwe": "CWE-918", "risk": "Medium", "component": "svc"},
+        {"id": "T-4", "cwe": "CWE-611", "risk": "Critical", "component": "other"},
+        {"id": "T-5", "cwe": "CWE-79", "risk": "Critical", "component": "svc"},
+        {"id": "T-6", "cwe": "CWE-1427", "effective_severity": "Medium", "component": "gateway"},
+        {
+            "id": "T-7",
+            "cwe": "CWE-95",
+            "risk": "High",
+            "component": "gateway",
+            "instances": [{"component_id": "jobs", "file": "w.py", "line": 3}, {"component_id": "guess", "line": 4}],
+        },
+    ]
+    severity = F._capability_severity(threats, capabilities, {"svc", "other", "gateway", "jobs"})
+    assert severity == {
+        "svc": {"file-upload": 0, "url-fetch": 1},
+        "other": {"xml-parsing": 0},
+        "gateway": {"llm-calls": 2, "llm-tools": 2, "code-evaluation": 1},
+        "jobs": {"code-evaluation": 1},
+    }
+    authored = ["admin-functions", "xml-parsing", "url-fetch", "file-upload"]
+    items = [{"capability": value, "evidence": evidence} for value in authored]
+    rows = F._capability_rows(items, capabilities, "capability", "Service", severity["svc"])
+    assert [row["id"] for row in rows] == ["file-upload", "url-fetch", "xml-parsing", "admin-functions"]
+    items = [
+        {"capability": value, "evidence": evidence}
+        for value in ("template-rendering", "llm-tools", "blockchain-client")
+    ]
+    rows = F._capability_rows(items, capabilities, "capability", "Gateway", severity["gateway"])
+    assert [row["id"] for row in rows] == ["llm-tools", "template-rendering", "blockchain-client"]
+    # Without a linked finding the order stays the vocabulary tier.
+    rows = F._capability_rows(items, capabilities, "capability", "Gateway", severity.get("none"))
+    assert [row["id"] for row in rows] == ["template-rendering", "llm-tools", "blockchain-client"]
+
+    model, paths, taxonomy = _model()
+    model["components"][1]["capabilities"] = [
+        {"capability": value, "evidence": [{"file": "src/upload.ts", "line": 4}]}
+        for value in ("url-fetch", "xml-parsing", "template-rendering", "background-jobs")
+    ]
+    model["threats"].append(
+        {"id": "T-095", "source": "stride", "cwe": "CWE-1336", "component": "app0", "severity": "Critical"}
+        | {"stride": "Tampering", "evidence": [{"file": "src/view.ts", "line": 5}]}
+    )
+    model["threats"].append(
+        {"id": "T-096", "source": "stride", "cwe": "CWE-918", "component": "app0", "severity": "Critical"}
+        | {"stride": "Spoofing", "evidence_check": "refuted", "evidence": [{"file": "src/fetch.ts", "line": 9}]}
+    )
+    svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
+    assert problems == []
+    pills = [g.get("data-capability") for g in ET.fromstring(svg).iter(f"{_SVG}g") if g.get("data-capability")]
+    assert pills == ["template-rendering", "url-fetch", "xml-parsing"]
+
+
+def test_merged_rule_hits_keep_adding_their_capability():
+    capabilities, _ = F._capability_vocabulary()
+    rule_hit = {"file": "src/xml.py", "line": 8, "source": "source-scan", "component_id": "backend-guess"}
+    threats = [
+        {
+            "id": "T-001",
+            "source": "stride",
+            "cwe": "CWE-611",
+            "component": "api",
+            "evidence": [{"file": "src/xml.py", "line": 8}],
+            "instances": [{"file": "src/xml.py", "line": 8, "source": "stride", "component_id": "api"}, rule_hit],
+        },
+        {
+            "id": "T-002",
+            "source": "stride",
+            "cwe": "CWE-94",
+            "component": "jobs",
+            "evidence": [{"file": "lib/run.js", "line": 30}],
+            "instances": [{"file": "lib/run.js", "line": 31, "source": "source-scan", "component_id": "jobs"}],
+        },
+        {
+            "id": "T-003",
+            "source": "stride",
+            "cwe": "CWE-918",
+            "component": "api",
+            "evidence": [{"file": "src/fetch.py", "line": 2}],
+            "instances": [{"file": "src/fetch.py", "line": 2, "component_id": "api"}],
+        },
+        {
+            "id": "T-004",
+            "source": "source-scan",
+            "cwe": "CWE-1336",
+            "component": "api",
+            "evidence": [{"file": "src/view.py", "line": 3}],
+            "instances": [{"file": "src/view.py", "line": 9, "source": "stride", "component_id": "api"}],
+        },
+    ]
+    derived = F._finding_capabilities(threats, capabilities, {"api", "jobs"})
+    assert derived == {
+        "api": [
+            {"capability": "xml-parsing", "evidence": [{"file": "src/xml.py", "line": 8}], "derived": True},
+            {"capability": "template-rendering", "evidence": [{"file": "src/view.py", "line": 3}], "derived": True},
+        ],
+        "jobs": [{"capability": "code-evaluation", "evidence": [{"file": "lib/run.js", "line": 31}], "derived": True}],
+    }
+
+
 def test_capability_labels_require_known_values_and_evidence():
     model, paths, taxonomy = _model()
     unlabelled, problems = F.check_diagram(model, paths, taxonomy, detail=False)
@@ -2997,7 +3102,8 @@ def test_capability_labels_require_known_values_and_evidence():
         assert "Security-relevant capabilities / service roles" in notation
         assert "LLM + tools = model calls with executable application tools" in notation
         flat = " ".join(notation.split())
-        assert "most security-relevant first" in flat and "+N = further labels" in flat
+        assert "most severe linked finding first, then most security-relevant" in flat
+        assert "+N = further labels" in flat
         assert "a missing label does not mean absence" in notation
         further = " ".join(root.find("{*}g[@data-legend-section='capability-notes']").itertext())
         assert "Further capabilities" in further and ": MFA verifier" in further

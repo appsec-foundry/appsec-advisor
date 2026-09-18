@@ -241,18 +241,24 @@ def _words(text):
     return set(re.findall(r"[a-z0-9]+", str(text).lower()))
 
 
-def _capability_rows(items, vocabulary, key, name=""):
-    """Known, evidenced labels, most security-relevant first; unknown values never render.
+def _capability_rows(items, vocabulary, key, name="", severity=None):
+    """Known, evidenced labels, most critical first; unknown values never render.
 
-    Order is the vocabulary `tier`, then vocabulary order. A label is left out
-    when a more specific evidenced value implies it, or when the node's own name
-    already says everything the label would. The first item per value wins.
+    Order is the most severe linked finding (`severity`: value → SEV_RANK), then
+    the vocabulary `tier`, then vocabulary order; a label without a linked
+    finding follows every label with one. A label is left out when a more
+    specific evidenced value implies it, or when the node's own name already
+    says everything the label would. The first item per value wins.
     """
     evidenced = [
         item for item in items or [] if isinstance(item, dict) and item.get("evidence") and item.get(key) in vocabulary
     ]
     implied = {value for item in evidenced for value in vocabulary[item[key]].get("implies") or []}
-    rank = {value: (entry.get("tier", 9), index) for index, (value, entry) in enumerate(vocabulary.items())}
+    severity = severity or {}
+    rank = {
+        value: (severity.get(value, len(SEV_RANK)), entry.get("tier", 9), index)
+        for index, (value, entry) in enumerate(vocabulary.items())
+    }
     rows = []
     for item in evidenced:
         entry = vocabulary[item[key]]
@@ -299,20 +305,64 @@ def _capability_display(rows):
 
 # Only deterministic source rules may add a label from a finding: a model-assigned
 # CWE can name the wrong class (a prompt-injection finding once carried CWE-1336).
+# Ranking may use any reported finding: a wrong CWE can reorder labels, never add one.
 _CAPABILITY_FINDING_SOURCES = frozenset({"source-scan"})
 
 
-def _finding_capabilities(threats, vocabulary):
-    """Component id → capability items proven by reported findings whose CWE the vocabulary lists."""
+def _finding_sites(threat, component_ids=None, sources=None):
+    """(component, location) pairs of a finding, limited to `sources` provenance when given.
+
+    An instance carries the provenance of the finding it was merged from and
+    otherwise inherits the finding's own; an instance outside `component_ids`
+    belongs to the finding's component.
+    """
+    own = threat.get("source")
+    sites = []
+    if sources is None or own in sources:
+        sites = [(threat.get("component"), row) for row in threat.get("evidence") or []]
+    for row in threat.get("instances") or []:
+        if not isinstance(row, dict) or (sources is not None and (row.get("source") or own) not in sources):
+            continue
+        component = row.get("component_id")
+        if component_ids is not None and component not in component_ids:
+            component = threat.get("component")
+        sites.append((component, row))
+    return sites
+
+
+def _capability_severity(threats, vocabulary, component_ids=None):
+    """Component id → {value: SEV_RANK of its most severe reported finding with a CWE the value links}.
+
+    A value links its own `cwes` and those of the values it implies.
+    """
+    by_cwe = collections.defaultdict(set)
+    for value, entry in vocabulary.items():
+        for linked in [value, *(entry.get("implies") or [])]:
+            for cwe in vocabulary[linked].get("cwes") or []:
+                by_cwe[cwe].add(value)
+    worst = collections.defaultdict(dict)
+    for threat in threats:
+        values = by_cwe.get(str(threat.get("cwe") or "").strip().upper())
+        rank = SEV_RANK.get(threat.get("effective_severity") or threat.get("risk") or threat.get("severity"))
+        if not values or rank is None:
+            continue
+        components = {threat.get("component")} | {component for component, _ in _finding_sites(threat, component_ids)}
+        for component in components:
+            if isinstance(component, str):
+                for value in values:
+                    worst[component][value] = min(rank, worst[component].get(value, rank))
+    return dict(worst)
+
+
+def _finding_capabilities(threats, vocabulary, component_ids=None):
+    """Component id → capability items proven by deterministic-rule findings whose CWE the vocabulary lists."""
     by_cwe = {cwe: value for value, entry in vocabulary.items() for cwe in entry.get("cwes") or []}
     derived = collections.defaultdict(dict)
     for threat in threats:
         value = by_cwe.get(str(threat.get("cwe") or "").strip().upper())
-        if not value or threat.get("source") not in _CAPABILITY_FINDING_SOURCES:
+        if not value:
             continue
-        sites = [(threat.get("component"), row) for row in threat.get("evidence") or []]
-        sites += [(row.get("component_id"), row) for row in threat.get("instances") or [] if isinstance(row, dict)]
-        for component, row in sites:
+        for component, row in _finding_sites(threat, component_ids, _CAPABILITY_FINDING_SOURCES):
             if not isinstance(component, str) or not isinstance(row, dict):
                 continue
             if not isinstance(row.get("file"), str) or not isinstance(row.get("line"), int):
@@ -936,7 +986,9 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     }
 
     component_capabilities, service_roles = _capability_vocabulary()
-    derived_capabilities = _finding_capabilities(register_threats(d), component_capabilities)
+    reported = register_threats(d)
+    derived_capabilities = _finding_capabilities(reported, component_capabilities, component_ids)
+    capability_severity = _capability_severity(reported, component_capabilities, component_ids)
     nodes = {}
     for comp in comps:
         cid = comp["id"]
@@ -962,6 +1014,7 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
                     component_capabilities,
                     "capability",
                     comp.get("name") or cid,
+                    capability_severity.get(cid),
                 )
             ),
             "badges": [],
@@ -2893,7 +2946,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             for cap in capabilities
             if vocabulary[cap["id"]].get("note")
         ]
-        ranking = f"At most {CAPABILITY_CAP} labels per element, most security-relevant first"
+        ranking = f"At most {CAPABILITY_CAP} labels per element: most severe linked finding first, then most security-relevant"
         if overflow:
             ranking += "; +N = further labels, listed under Further capabilities"
         for note in [*notes, ranking + ".", "Functions may go undetected: a missing label does not mean absence."]:

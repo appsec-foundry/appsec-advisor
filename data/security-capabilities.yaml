@@ -9,12 +9,13 @@
 # `note` adds a legend explanation when the label alone could be misread.
 # `implies` names the generic values a more specific one already covers; the
 # figure shows only the specific label when both are evidenced.
-# `tier` ranks the function type by security relevance (1 = highest): the
-# figure shows the three highest-ranked labels of an element, vocabulary order
-# breaking ties, and lists the rest under "Further capabilities".
-# `cwes` lets a reported finding from a deterministic source rule add the
-# label with that finding's code location when the producer omitted it; a CWE
-# belongs to at most one value.
+# `cwes` links the element's reported findings to a value (a more specific
+# value also takes the CWEs of the values it implies). The figure shows the
+# three labels whose linked findings are most severe first, then by `tier`
+# (security relevance of the function type, 1 = highest), vocabulary order
+# breaking ties, and lists the rest under "Further capabilities". A finding
+# from a deterministic source rule also adds the label with its code location
+# when the producer omitted it; a CWE belongs to at most one value.
 schema_version: 1
 
 component_capabilities:
@@ -22,6 +23,11 @@ component_capabilities:
     label: File upload
     tier: 2
     cwes: [CWE-434]
+  code-evaluation:
+    label: Dynamic code evaluation
+    note: runs runtime data as program code
+    tier: 1
+    cwes: [CWE-94, CWE-95]
   url-fetch:
     label: URL fetch
     note: requests a URL that runtime input selects or influences

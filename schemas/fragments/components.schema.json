@@ -149,6 +149,7 @@
                   "type": "string",
                   "enum": [
                     "file-upload",
+                    "code-evaluation",
                     "url-fetch",
                     "xml-parsing",
                     "template-rendering",
