@@ -3016,7 +3016,8 @@ def test_capability_labels_rank_by_security_relevance_and_keep_the_rest(authored
     assert ranks == sorted(ranks) and {row["id"] for row in rows} == set(authored)
     display = F._capability_display(rows)
     critical = sum(1 for row in rows if capabilities[row["id"]]["tier"] == 1)
-    assert len([cap for cap in display if not cap.get("more")]) == min(len(rows), max(F.CAPABILITY_CAP, critical))
+    visible = min(max(F.CAPABILITY_CAP, critical), F.CAPABILITY_CRITICAL_MAX)
+    assert len([cap for cap in display if not cap.get("more")]) == min(len(rows), visible)
     if shown is not None:
         assert [cap["id"] for cap in display if not cap.get("more")] == shown
         assert [cap["id"] for cap in (display[-1].get("more") or [])] == more
@@ -3024,6 +3025,29 @@ def test_capability_labels_rank_by_security_relevance_and_keep_the_rest(authored
     assert display[-1]["label"] == (f"+{len(hidden)}" if hidden else display[-1]["label"])
     assert [cap["id"] for cap in display if not cap.get("more")] + [cap["id"] for cap in hidden] == [
         row["id"] for row in rows
+    ]
+
+
+@pytest.mark.parametrize("vocabulary", [0, 1])
+def test_the_vocabulary_keeps_tier_one_within_the_visible_bound(vocabulary):
+    # Raising a sixth value to tier 1 must be a deliberate change of this bound.
+    entries = F._capability_vocabulary()[vocabulary]
+    assert sum(1 for entry in entries.values() if entry.get("tier") == 1) <= F.CAPABILITY_CRITICAL_MAX
+
+
+@pytest.mark.parametrize("critical", [4, 5, 7, 10])
+def test_critical_labels_beyond_the_bound_go_to_the_overflow_label(critical):
+    rows = [
+        {"id": f"crit-{i}", "label": f"C{i}", "evidence": [{"file": "a", "line": 1}], "tier": 1}
+        for i in range(critical)
+    ]
+    rows.append({"id": "other", "label": "O", "evidence": [{"file": "a", "line": 1}], "tier": 3})
+    display = F._capability_display(rows)
+    shown = [cap["id"] for cap in display if not cap.get("more")]
+    assert shown == [row["id"] for row in rows[: min(critical, F.CAPABILITY_CRITICAL_MAX)]]
+    hidden = display[-1].get("more") or []
+    assert display[-1]["label"] == f"+{len(hidden)}" and shown + [cap["id"] for cap in hidden] == [
+        r["id"] for r in rows
     ]
 
 

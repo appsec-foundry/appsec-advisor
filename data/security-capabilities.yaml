@@ -13,7 +13,7 @@
 # value also takes the CWEs of the values it implies). `tier` is the security
 # criticality of the function type (1 = highest): the figure orders labels by
 # tier, then by their most severe linked finding, then vocabulary order; it
-# always shows every tier-1 label, fills up to three labels with the next
+# always shows every tier-1 label (at most five; keep tier 1 that small), fills up to three labels with the next
 # ones, and lists the rest under "Further capabilities". A label with a linked
 # finding carries that finding's severity colour on its border. A finding
 # from a deterministic source rule also adds the label with its code location

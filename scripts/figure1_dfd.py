@@ -129,6 +129,8 @@ PORT_STEP = 22  # minimum spacing between ports on one node side
 INTRA_STUB, INTRA_STEP = 48, 14  # reserve authentication tabs and a straight arrow approach
 BAR_H = 24
 CAPABILITY_CAP = 3  # Selected labels only; the legend says that absence is not implied.
+# Tier-1 labels may exceed CAPABILITY_CAP up to this bound; the vocabulary test keeps tier 1 within it.
+CAPABILITY_CRITICAL_MAX = 5
 PILL_H, PILL_ROW, PILL_GAP, PILL_SIZE = 13, 17, 5, 7.5
 TECH_H, TECH_CHARS = 16, 28  # technology line under a component title, before the labels
 COLUMN = {"client": 0, "application": 1, "build": 1, "data": 2, "third-party": 0}
@@ -308,8 +310,9 @@ def _technology_label(tech):
 
 
 def _capability_display(rows):
-    """Every tier-1 label, filled up to CAPABILITY_CAP, then one `+N` label carrying the rest."""
-    shown = max(CAPABILITY_CAP, sum(1 for row in rows if row.get("tier") == 1))
+    """Every tier-1 label (at most CAPABILITY_CRITICAL_MAX), filled up to CAPABILITY_CAP, then `+N` for the rest."""
+    critical = sum(1 for row in rows if row.get("tier") == 1)
+    shown = min(max(CAPABILITY_CAP, critical), CAPABILITY_CRITICAL_MAX)
     if len(rows) <= shown:
         return rows
     more = rows[shown:]
@@ -3052,7 +3055,8 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             if vocabulary[cap["id"]].get("note")
         ]
         ranking = (
-            f"Most security-critical functions always shown, others up to {CAPABILITY_CAP} labels per element: "
+            f"Most security-critical functions always shown (at most {CAPABILITY_CRITICAL_MAX}), "
+            f"others up to {CAPABILITY_CAP} labels per element: "
             "most critical first, then most severe linked finding"
         )
         if overflow:
