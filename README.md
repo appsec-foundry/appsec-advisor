@@ -117,35 +117,39 @@ does it cover SSRF?
 
 Updates preserve finding IDs. Review decisions are stored separately, and publishing remains optional. Run `/appsec-advisor:help` for the complete command list.
 
+## What's new in 0.6.0-beta.4
+
+- `scripts/repo_scan.py` runs standalone checks with severity filtering and endpoint and technology inventories; both it and `/appsec-advisor:security-score` support local repositories and HTTPS GitHub/GitLab URLs, with YAML or JSON exports.
+- Architecture and attack-route diagrams show technology, authentication evidence, attacker prerequisites, weaknesses, impact, and linked findings, with detail views for large architectures. Existing models need a new analysis to populate missing authentication evidence.
+- Malicious insiders and attackers holding a user's device now require opt-in through `.appsec/actors.yaml` or the organization profile; otherwise, they are listed as not assessed.
+- `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` keeps diagnostics local.
+- Fixes restore Config and IaC findings in reports and improve authentication checks, severity consistency, and run reliability. Security Score withholds a score when a required scanner fails or returns invalid output.
+
 ## What's new in 0.6.0-beta.3
 
-- Figure 1 has been redesigned as a data-flow diagram showing roles, external services, assets, trust boundaries, key weaknesses, and attack paths. Actors with equivalent access are grouped while each finding keeps its login and privilege requirements.
-- The Management Summary and completion summary show up to three open threat-modeling questions that the code cannot settle, linked to the relevant weaknesses and findings. Refuted abuse-case steps are excluded from these questions.
-- Worst-case scenarios appear in a compact table with weakness classes and attack-path verification status.
-- Headless runs show live progress, token use, and cost. A new `--soft-budget` checks projected spend and warns about overruns without stopping an active run.
-- `/appsec-advisor:repo-profile` reports repository size, languages, build manifests, and tracked-versus-untracked content before a scan without using a model or network access.
-- Baseline installation and updates use the latest signed AI Secure Coding Baseline release after verifying its signature and checksum.
-- Source scans now cover executable NoSQL predicates and input-driven code or template compilation.
+- Redesigned architecture diagrams show actors, services, assets, data flows, trust boundaries, weaknesses, and attack paths while preserving login and privilege requirements. Worst-case scenario tables show attack-path verification status.
+- Management and completion summaries highlight up to three open threat-modeling questions, linked to findings, for assumptions the code cannot settle.
+- Headless runs show live progress, token use, and cost; `--soft-budget` warns about projected overruns without stopping an active run.
+- `/appsec-advisor:repo-profile` inspects repository size, languages, build manifests, and tracked-versus-untracked content without model calls or network access.
+- Baseline installation and updates verify signed releases and checksums.
+- Source scans cover executable NoSQL predicates and input-driven code or template compilation, alongside fixes to run recovery, reports, and cost tracking.
 
 ## What's new in 0.6.0-beta.2
 
-- Findings name the requirements they break, and mitigations quote the blueprint section that prescribes the fix.
-- The Management Summary states compliance and lists the failed requirements.
-- `/appsec-advisor:security-score` scores a repository from 0 to 100 using the scanners alone.
-- `/appsec-advisor:status` reports the versions, skills, profile, and config in effect; `--check-updates` checks whether they are current.
-- `/appsec-advisor:authnz-review` exports its findings as pentest tasks, with the discovered routes as the endpoint catalog.
-- Source scans flag LLM output that reaches rendering, interpreters, or privileged actions unchecked.
-- `/appsec-advisor:update-baseline` refreshes an installed secure-coding baseline where it is loaded from; an organization profile can vendor its own source for it.
+- Findings name violated requirements, mitigations quote the relevant blueprint sections, and the Management Summary states compliance and failed requirements.
+- `/appsec-advisor:security-score` provides a scanner-only score from 0 to 100; `/appsec-advisor:status` shows installed versions, skills, profile, and configuration, with update checks through `--check-updates`.
+- `/appsec-advisor:authnz-review` exports pentest tasks with discovered routes as the endpoint catalog; source scans flag unchecked LLM output reaching rendering, interpreters, or privileged actions.
+- `/appsec-advisor:update-baseline` refreshes installed secure-coding baselines, including organization-provided sources.
+- Fixes improve run recovery, business-context handling, and exports.
 
 ## What's new in 0.6.0-beta.1
 
-- Runs support only full, rebuild, and rerender; reassess a changed repository with `--full`.
-- Threat analysis costs 39.8% less at quick depth and 26.8% less at thorough depth in reference runs.
-- Trust boundaries are assessed, drawn in the architecture diagram, and linked to findings that cross them.
-- `install-baseline` and `verify-baseline` put the bundled [AI Secure Coding Baseline](https://github.com/appsec-foundry/aiscb) into Claude Code's instruction files and let CI verify it.
-- Scans can take business context interactively or through `--context`; named sensitive assets keep their component in scope, and the report says which file was read and how many findings it applied to.
-- `--formats threatdragon` exports alpha Threat Dragon v2 JSON for Threat Dragon and OWASP ThreatAtlas.
-- Organization profiles can include custom skills and baselines, configure the session banner, and disable individual skills.
+- Runs support only full, rebuild, and rerender; use `--full` to reassess changed code while preserving report history. Reference runs reduced analysis costs by 39.8% at quick depth and 26.8% at thorough depth.
+- Trust boundaries appear in diagrams and link to crossing findings. Optional business context, collected interactively or through `--context`, keeps named sensitive assets in scope and informs finding impact and priority.
+- `install-baseline`, `verify-baseline`, and `remove-baseline` manage the [AI Secure Coding Baseline](https://github.com/appsec-foundry/aiscb), including CI enforcement; `/appsec-advisor:help` lists available commands.
+- Organization profiles can ship custom skills and baselines, configure the session banner, and disable individual skills.
+- `--formats threatdragon` adds alpha Threat Dragon v2 exports for Threat Dragon and OWASP ThreatAtlas.
+- Fixes improve analysis coverage, run recovery, and report consistency.
 
 See the [full changelog](CHANGELOG.md) for all changes.
 
