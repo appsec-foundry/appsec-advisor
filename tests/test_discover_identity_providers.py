@@ -272,7 +272,10 @@ def test_authored_flow_to_the_provider_is_not_duplicated_whatever_its_provenance
         "evidence": [{"file": "src/login.ts", "line": 2}],
     }
     doc["data_flows"] = [authored]
-    assert discovery.reconcile(tmp_path, _components(), doc)["data_flows"] == [authored]
+    # Not duplicated; its unknown authentication is filled from the sign-in step (FE-14).
+    flows = discovery.reconcile(tmp_path, _components(), doc)["data_flows"]
+    assert [{k: v for k, v in f.items() if k != "authentication"} for f in flows] == [authored]
+    assert flows[0]["authentication"]["scheme"] == "oauth2"
 
     generated_other_role = {**authored, "label": "OAuth token exchange", "provenance": "recon"}
     doc["data_flows"] = [generated_other_role]
@@ -492,3 +495,148 @@ def test_controller_does_not_publish_invalid_enrichment(tmp_path, monkeypatch):
     with pytest.raises(controller.ControllerError, match="schema validation"):
         controller._bind_finalized_component_fingerprint(out, tmp_path)
     assert (out / ".data-flows.json").read_bytes() == previous
+
+
+# ---------------------------------------------------------------------------
+# Authentication of identity-provider steps (sign-in, profile, token, metadata)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "rel,source,expected",
+    [
+        (  # browser sign-in, implicit grant
+            "src/login.ts",
+            'const u = "https://id.example/o/oauth2/v2/auth";\n'
+            "location.replace(`${u}?client_id=${id}&response_type=token&scope=email`);",
+            {"scheme": "oauth2", "flow": "implicit", "transport": "protected"},
+        ),
+        (  # OIDC sign-in with PKCE
+            "src/login.ts",
+            'window.location.assign("https://id.example/oauth2/authorize?response_type=code&scope=openid&code_challenge=" + c);',
+            {"scheme": "oidc", "flow": "authorization-code-pkce", "transport": "protected"},
+        ),
+        (  # sign-in without a stated grant
+            "src/login.ts",
+            'window.location.assign("https://id.example/oauth2/authorize");',
+            {"scheme": "oauth2", "transport": "protected"},
+        ),
+        (  # SAML in code and in configuration
+            "src/sso.js",
+            'new SAMLStrategy({entryPoint: "https://sso.example/signin"});',
+            {"scheme": "saml", "transport": "protected"},
+        ),
+        (
+            "config/sso.yaml",
+            "saml:\n  entryPoint: https://sso.example/signin\n",
+            {"scheme": "saml", "transport": "protected"},
+        ),
+        (  # profile request with the user's access token
+            "src/profile.py",
+            'requests.get("https://identity.example/oidc/userinfo")',
+            {"scheme": "bearer", "transport": "protected"},
+        ),
+        (  # token request: client secret, private_key_jwt, PKCE-only public client
+            "src/token.py",
+            'requests.post("https://id.example/oauth/token", data={"client_secret": secret, "code": code})',
+            {"scheme": "other", "transport": "protected"},
+        ),
+        (
+            "src/token.py",
+            'requests.post("https://id.example/oauth/token", data={"client_assertion": jwt})',
+            {"scheme": "private-key", "transport": "protected"},
+        ),
+        (
+            "src/token.ts",
+            'fetch("https://id.example/oauth/token", {method: "POST", body: `code_verifier=${v}`});',
+            {"scheme": "oauth2", "flow": "authorization-code-pkce", "transport": "protected"},
+        ),
+        (  # public metadata
+            "src/client.ts",
+            'Issuer.discover("https://identity.example")',
+            {"scheme": "none", "transport": "protected"},
+        ),
+    ],
+)
+def test_identity_provider_steps_carry_the_authentication_their_protocol_proves(tmp_path, rel, source, expected):
+    _write(tmp_path, rel, source)
+    result = discovery.reconcile(tmp_path, _components(), _flows())
+    auth = result["data_flows"][0]["authentication"]
+    assert {k: auth[k] for k in expected} == expected
+    assert set(auth) - set(expected) == {"scope", "evidence"}
+    schema = json.loads((Path(__file__).parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
+    jsonschema.validate(result, schema)
+    assert result["external_entities"][0]["service_roles"][0]["evidence"] == result["data_flows"][0]["evidence"]
+
+
+def test_an_unproven_client_authentication_stays_unknown(tmp_path):
+    _write(tmp_path, "src/login.js", 'fetch("https://identity.example/oauth/token", {method:"POST"});')
+    assert "authentication" not in discovery.reconcile(tmp_path, _components(), _flows())["data_flows"][0]
+
+
+@pytest.mark.parametrize(
+    "authored,filled",
+    [
+        (None, "oauth2"),
+        ({"scheme": "unknown", "scope": "not determined", "evidence": [{"file": "src/login.ts", "line": 2}]}, "oauth2"),
+        ({"scheme": "cookie", "scope": "authored", "evidence": [{"file": "src/login.ts", "line": 2}]}, "cookie"),
+    ],
+)
+def test_only_an_unknown_authored_scheme_is_filled(tmp_path, authored, filled):
+    _write(tmp_path, "src/login.ts", 'const a = "https://id.example/oauth2/authorize";\nwindow.location.assign(a);\n')
+    doc = _flows()
+    doc["external_entities"] = [
+        {
+            "id": "ext-staff",
+            "kind": "identity-provider",
+            "name": "Staff sign-in",
+            "description": "IdP",
+            "evidence": [{"file": "src/login.ts", "line": 1}],
+        }
+    ]
+    flow = {
+        "id": "df-001",
+        "from": "client",
+        "to": "external",
+        "to_entity": "ext-staff",
+        "label": "Sign-in",
+        "provenance": "architecture",
+        "evidence": [{"file": "src/login.ts", "line": 2}],
+    }
+    if authored:
+        flow["authentication"] = authored
+    doc["data_flows"] = [flow]
+    assert discovery.reconcile(tmp_path, _components(), doc)["data_flows"][0]["authentication"]["scheme"] == filled
+
+
+@pytest.mark.parametrize(
+    "source,cited_line,errors",
+    [
+        ('const a = "https://id.example/oauth2/authorize";\nwindow.location.assign(a);\n', 2, 1),
+        ('requests.get("https://identity.example/oidc/userinfo")\n', 1, 1),
+        ('new SAMLStrategy({entryPoint: "https://sso.example/signin"});\n', 1, 1),
+        ('Issuer.discover("https://identity.example")\n', 1, 0),  # public metadata may be unauthenticated
+    ],
+)
+def test_self_check_rejects_none_on_a_step_where_the_provider_authenticates(tmp_path, source, cited_line, errors):
+    _write(tmp_path, "src/login.ts", source)
+    flow = {
+        "id": "df-001",
+        "from": "client",
+        "to": "external",
+        "to_entity": "ext-x",
+        "label": "Step",
+        "evidence": [{"file": "src/login.ts", "line": cited_line}],
+        "authentication": {
+            "scheme": "none",
+            "scope": "authored",
+            "evidence": [{"file": "src/login.ts", "line": cited_line}],
+        },
+    }
+    assert len(discovery.identity_authentication_errors(tmp_path, [flow])) == errors
+
+
+def test_identity_provider_pill_names_the_idp_and_machine_servers_keep_the_protocol_term():
+    vocabulary = figure1_dfd._capability_vocabulary()[1]
+    role = [{"role": "oauth-authorization-server", "evidence": [{"file": "a.ts", "line": 1}]}]
+    idp = figure1_dfd._capability_rows(role, vocabulary, "role", "Staff sign-in", label_key="identity_provider_label")
+    m2m = figure1_dfd._capability_rows(role, vocabulary, "role", "Token service")
+    assert idp[0]["label"] == "IdP · OAuth 2.0" and m2m[0]["label"] == "OAuth authorization server"

@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Figure 1 shows how identity-provider sign-in, profile and token requests authenticate (OAuth 2.0, OpenID Connect, SAML, bearer token, client secret or key) instead of "no authentication" or "unknown", and labels sign-in providers as IdP.
 - The architecture analyst corrects data flows and asset locations that do not fit its component inventory before it finishes, instead of the run aborting after architecture modelling.
 - Actor discovery appends to the run log instead of replacing it, so earlier events stay in the log and a monitored run is no longer reported as unmonitored.
 - Report prose formats ambiguous protocol names such as Authorization, Cookie, and Origin as code only when local context identifies the concrete header or attribute.

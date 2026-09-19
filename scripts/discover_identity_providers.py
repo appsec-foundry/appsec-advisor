@@ -5,6 +5,13 @@ configuration, not dependency names or vulnerability signals. It emits no findin
 and assigns no CWE or severity. Its only persisted output is the existing,
 schema-validated data-flow fragment. Unknown dynamic addresses remain for semantic
 discovery; a concrete integration without a unique owner fails the handoff.
+
+A flow to an identity provider takes its authentication from the protocol step
+the integration performs (``integration_authentication``): the provider
+authenticates the user at a sign-in step, checks the access token of a profile
+request, and authenticates the client at a token request only as its call or
+configuration proves. Only an unknown scheme is filled (FE-14); an authored
+`none` on a sign-in or profile step is a self-check error instead.
 """
 
 from __future__ import annotations
@@ -12,7 +19,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -60,6 +67,8 @@ class Integration:
     role: str
     configured: bool = False
     browser: bool = False
+    # The call expression or configuration block; protocol markers are read here only.
+    window: str = field(default="", compare=False)
 
 
 def _address(value: str, *, issuer: bool = False) -> tuple[str, str, str] | None:
@@ -102,6 +111,107 @@ _ROLES = frozenset(
         "SAML metadata",
     }
 )
+
+
+_TRANSPORT = {"HTTPS": "protected", "HTTP": "cleartext"}
+# Steps whose receiver always authenticates its caller; `none` there is a modelling error.
+_CALLER_CHECKED = frozenset({"OAuth authorization", "SAML sign-in", "OAuth profile request"})
+
+
+def _grant(window: str) -> str | None:
+    """The OAuth grant a sign-in request states; nothing is inferred from names."""
+    if re.search(r"code[-_]?challenge", window, re.I):
+        return "authorization-code-pkce"
+    if re.search(r"response[-_]?type\W{0,6}(?:id_token\W+)?token\b", window, re.I):
+        return "implicit"
+    if re.search(r"response[-_]?type\W{0,6}code\b", window, re.I):
+        return "authorization-code"
+    return None
+
+
+def _client_authentication(window: str) -> dict | None:
+    """How a token request authenticates the client, only as its call or configuration shows."""
+    if re.search(r"client[-_]?assertion|private[-_]?key[-_]?jwt", window, re.I):
+        return {"scheme": "private-key", "scope": "The client signs a JWT assertion with its private key"}
+    if re.search(r"tls[-_]client[-_]auth", window, re.I):
+        return {"scheme": "mtls", "scope": "The client authenticates with its TLS client certificate"}
+    if re.search(r"client[-_]?secret", window, re.I):
+        return {"scheme": "other", "scope": "The client presents its OAuth client ID and client secret"}
+    if re.search(r"code[-_]?verifier", window, re.I):
+        return {
+            "scheme": "oauth2",
+            "flow": "authorization-code-pkce",
+            "scope": "A public client proves the PKCE code verifier",
+        }
+    return None
+
+
+def integration_authentication(integration: Integration, evidence: list[dict]) -> dict | None:
+    """The authentication the provider applies to this protocol step, or None when unproven."""
+    window, role = integration.window, integration.role
+    if role == "OAuth authorization":
+        auth = {
+            "scheme": "oidc" if re.search(r"\bopenid\b", window) else "oauth2",
+            "scope": "The identity provider authenticates the user at its sign-in endpoint",
+        }
+        if grant := _grant(window):
+            auth["flow"] = grant
+    elif role == "SAML sign-in":
+        auth = {"scheme": "saml", "scope": "The identity provider authenticates the user and issues a SAML assertion"}
+    elif role == "OAuth profile request":
+        auth = {"scheme": "bearer", "scope": "The provider checks the OAuth access token sent with the request"}
+    elif role == "OAuth token exchange":
+        auth = _client_authentication(window)
+    else:  # OIDC discovery, SAML metadata
+        auth = {"scheme": "none", "scope": "Public provider metadata; the provider checks no caller"}
+    if auth is None:
+        return None
+    if transport := _TRANSPORT.get(integration.protocol):
+        auth["transport"] = transport
+    auth["evidence"] = evidence
+    return auth
+
+
+def _service_role(integration: Integration) -> str:
+    if integration.role == "OAuth profile request":
+        return "oauth-resource-server"
+    if integration.role.startswith("SAML"):
+        return "saml-identity-provider"
+    if integration.role == "OIDC discovery" or re.search(r"\bopenid\b", integration.window):
+        return "oidc-provider"
+    return "oauth-authorization-server"
+
+
+def _fill_authentication(flow: dict, integration: Integration, evidence: list[dict]) -> None:
+    """FE-14: only an unknown scheme is filled; an authored scheme stays."""
+    if flow.get("interaction") or (flow.get("authentication") or {}).get("scheme", "unknown") != "unknown":
+        return
+    if auth := integration_authentication(integration, evidence):
+        flow["authentication"] = auth
+
+
+def identity_authentication_errors(repo_root: Path, flows: list) -> list[str]:
+    """Self-check: a flow citing a sign-in or profile step cannot claim that the provider checks nothing."""
+    try:
+        steps = [i for i in discover(repo_root) if i.role in _CALLER_CHECKED]
+    except ValueError:
+        return []
+    errors = []
+    for flow in flows or []:
+        auth = flow.get("authentication") if isinstance(flow, dict) else None
+        if not isinstance(auth, dict) or auth.get("scheme") != "none" or flow.get("to") != "external":
+            continue
+        rows = [*(flow.get("evidence") or []), *(auth.get("evidence") or [])]
+        cited = {(row.get("file"), row.get("line")) for row in rows if isinstance(row, dict)}
+        for step in steps:
+            if {(step.file, step.line), (step.file, step.use_line)} & cited:
+                expected = integration_authentication(step, [])
+                errors.append(
+                    f"{flow.get('id')}: it cites the {step.role} at {step.file}:{step.use_line}, where the provider "
+                    f"authenticates the caller; use scheme `{expected['scheme']}` instead of `none`"
+                )
+                break
+    return errors
 
 
 def _written_by_reconcile(flow: dict) -> bool:
@@ -213,6 +323,7 @@ def _source_integrations(text: str, rel: str) -> list[Integration]:
                     *address,
                     role,
                     browser=bool(re.search(r"\blocation\.(?:assign|replace)|(?:window|Window)\.open", call.group())),
+                    window=value + "\n" + text[call.start() : call_end],
                 )
             )
             break
@@ -234,7 +345,7 @@ def _config_integrations(text: str, rel: str) -> list[Integration]:
                 and (role := _field_role(match[1].split(".")[-1]))
                 and (address := _address(match[2], issuer=role == "OIDC discovery"))
             ):
-                result.append(Integration(rel, number, number, *address, role, True))
+                result.append(Integration(rel, number, number, *address, role, True, window=line))
         return result
     # YAML's node tree preserves evidence line numbers for JSON as well. Reject
     # aliases rather than expanding recursive or exponential configuration data.
@@ -272,7 +383,8 @@ def _config_integrations(text: str, rel: str) -> list[Integration]:
                         address := _address(value.value, issuer=role == "OIDC discovery")
                     ):
                         line = value.start_mark.line + 1
-                        result.append(Integration(rel, line, line, *address, role, True))
+                        block = text[node.start_mark.index : node.end_mark.index]
+                        result.append(Integration(rel, line, line, *address, role, True, window=block))
                 walk(value, (*path, key), depth + 1)
         elif isinstance(node, yaml.SequenceNode):
             for value in node.value:
@@ -505,6 +617,7 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
             covering[0]["evidence"] = (covering[0].get("evidence") or []) + [
                 e for e in evidence if e not in (covering[0].get("evidence") or [])
             ]
+            _fill_authentication(covering[0], integration, evidence)
             continue
         digest = hashlib.sha256(integration.authority.encode()).hexdigest()[:16]
         entity_id = f"ext-idp-{digest}"
@@ -548,21 +661,28 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
                         :240
                     ],
                     "evidence": evidence,
+                    "service_roles": [{"role": _service_role(integration), "evidence": evidence}],
                 }
             )
         existing = [f for f in flows if f.get("from") == owner and f.get("to") == "external" and same_evidence(f)]
         label = ("Configured " if integration.configured else "") + integration.role
         # An authored flow with this evidence already represents the integration,
         # whatever provenance its author chose; a generated one covers only its role.
-        if any(
-            f.get("to_entity") == entity_id and (not _written_by_reconcile(f) or f.get("label") == label)
+        represented = [
+            f
             for f in existing
-        ):
+            if f.get("to_entity") == entity_id and (not _written_by_reconcile(f) or f.get("label") == label)
+        ]
+        if represented:
+            for flow in represented:
+                _fill_authentication(flow, integration, evidence)
             continue
         generic = [f for f in existing if not f.get("to_entity")]
         if len(generic) == 1 and unambiguous_line:
             generic[0]["to_entity"] = entity_id
+            _fill_authentication(generic[0], integration, evidence)
             continue
+        authentication = integration_authentication(integration, evidence)
         flows.append(
             {
                 "id": f"df-{next_flow:03d}",
@@ -578,6 +698,7 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
                 if integration.role in {"OAuth authorization", "SAML sign-in"}
                 else "request-response",
                 "evidence": evidence,
+                **({"authentication": authentication} if authentication else {}),
                 "provenance": "recon",
             }
         )

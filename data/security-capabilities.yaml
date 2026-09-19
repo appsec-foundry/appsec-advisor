@@ -93,19 +93,24 @@ component_capabilities:
     label: Background jobs
     tier: 4
 
+# `identity_provider_label` replaces `label` on an entity users sign in at
+# (kind identity-provider); a machine-to-machine server keeps the protocol term.
 service_roles:
   oauth-authorization-server:
     label: OAuth authorization server
+    identity_provider_label: IdP · OAuth 2.0
     tier: 1
   oauth-resource-server:
     label: OAuth resource server
     tier: 2
   oidc-provider:
     label: OIDC provider
+    identity_provider_label: IdP · OpenID Connect
     implies: [oauth-authorization-server]
     tier: 1
   saml-identity-provider:
     label: SAML identity provider
+    identity_provider_label: IdP · SAML
     tier: 1
   llm-inference:
     label: LLM inference

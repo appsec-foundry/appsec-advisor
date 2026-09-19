@@ -242,14 +242,16 @@ def _words(text):
     return set(re.findall(r"[a-z0-9]+", str(text).lower()))
 
 
-def _capability_rows(items, vocabulary, key, name="", severity=None):
+def _capability_rows(items, vocabulary, key, name="", severity=None, label_key="label"):
     """Known, evidenced labels, most critical first; unknown values never render.
 
     Order is the most severe linked finding (`severity`: value → SEV_RANK), then
     the vocabulary `tier`, then vocabulary order; a label without a linked
     finding follows every label with one. A label is left out when a more
     specific evidenced value implies it, or when the node's own name already
-    says everything the label would. The first item per value wins.
+    says everything the label would. The first item per value wins. `label_key`
+    selects an alternative wording, such as the identity-provider term, where
+    the vocabulary defines one.
     """
     evidenced = [
         item for item in items or [] if isinstance(item, dict) and item.get("evidence") and item.get(key) in vocabulary
@@ -263,13 +265,14 @@ def _capability_rows(items, vocabulary, key, name="", severity=None):
     rows = []
     for item in evidenced:
         entry = vocabulary[item[key]]
-        if item[key] in implied or _words(entry["label"]) <= _words(name):
+        label = entry.get(label_key) or entry["label"]
+        if item[key] in implied or _words(label) <= _words(name):
             continue
         if all(row["id"] != item[key] for row in rows):
             rows.append(
                 {
                     "id": item[key],
-                    "label": entry["label"],
+                    "label": label,
                     "evidence": item["evidence"],
                     "derived": bool(item.get("derived")),
                 }
@@ -1223,7 +1226,13 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "capabilities": []
             if role
             else _capability_display(
-                _capability_rows(entity.get("service_roles"), service_roles, "role", entity["name"])
+                _capability_rows(
+                    entity.get("service_roles"),
+                    service_roles,
+                    "role",
+                    entity["name"],
+                    label_key="identity_provider_label" if entity.get("kind") == "identity-provider" else "label",
+                )
             ),
             "order": len(nodes),
             "badges": [],

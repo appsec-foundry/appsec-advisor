@@ -97,7 +97,8 @@ def test_capability_vocabulary_matches_every_artifact_schema():
     capabilities, roles = list(vocabulary["component_capabilities"]), list(vocabulary["service_roles"])
     assert capabilities and roles and not set(capabilities) & set(roles)
     for entry in [*vocabulary["component_capabilities"].values(), *vocabulary["service_roles"].values()]:
-        assert entry["label"].strip() == entry["label"] and 0 < len(entry["label"]) <= 28
+        for label in (entry["label"], entry.get("identity_provider_label", entry["label"])):
+            assert label.strip() == label and 0 < len(label) <= 28
     cwes = []
     for group in ("component_capabilities", "service_roles"):
         for value, entry in vocabulary[group].items():

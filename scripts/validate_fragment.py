@@ -763,6 +763,10 @@ def validate(
         return 1
     if repo_root is not None:
         errors = repository_path_errors(fragment_type, data, repo_root)
+        if fragment_type == "data-flows":
+            from discover_identity_providers import identity_authentication_errors
+
+            errors = errors + identity_authentication_errors(repo_root, (data or {}).get("data_flows"))
     # Unconditional, unlike the repository checks above: these rules need no
     # repository, and three of the five agents that self-validate omit
     # --repo-root. Gating them on it would leave exactly those agents — the

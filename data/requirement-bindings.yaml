@@ -164,11 +164,14 @@ requirements:
       - scripts/discover_identity_providers.py
     decisions:
       - FE-4
+      - FE-15
     documents: []
     coverage: partial
     guards:
       - tests/test_agent_definitions.py::test_cross_repo_mismatch_requires_target_evidence
       - tests/test_discover_identity_providers.py::test_client_integrations_are_generic_and_evidenced
+      - tests/test_discover_identity_providers.py::test_identity_provider_steps_carry_the_authentication_their_protocol_proves
+      - tests/test_discover_identity_providers.py::test_self_check_rejects_none_on_a_step_where_the_provider_authenticates
       - tests/test_build_threat_modeling_context.py::test_supplied_reference_document_is_admitted_as_fenced_and_named_data
 
   REQ-MOD-009:
