@@ -22,11 +22,11 @@
 <rect x="698.0" y="1094.0" width="218.0" height="181.0" rx="7" fill="#f3f8fa" stroke="#4b7a94" stroke-width="1.2" stroke-dasharray="7 4"/>
 <text x="708.0" y="1110.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#4b7a94" text-anchor="start" font-weight="bold">Build pipeline</text>
 <text x="708.0" y="1123.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">CI/CD and release tooling</text>
-<rect x="1180.0" y="66.0" width="218.0" height="732.0" rx="7" fill="#f7f5fa" stroke="#7b62a6" stroke-width="1.2" stroke-dasharray="7 4"/>
+<rect x="1180.0" y="66.0" width="218.0" height="606.0" rx="7" fill="#f7f5fa" stroke="#7b62a6" stroke-width="1.2" stroke-dasharray="7 4"/>
 <text x="1190.0" y="82.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#7b62a6" text-anchor="start" font-weight="bold">Data Layer</text>
-<rect x="1180.0" y="824.0" width="218.0" height="120.0" rx="7" fill="#f3f9f8" stroke="#3f857c" stroke-width="1.2" stroke-dasharray="7 4"/>
-<text x="1190.0" y="840.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#3f857c" text-anchor="start" font-weight="bold">Third-party</text>
-<text x="1190.0" y="853.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">external integrations</text>
+<rect x="1180.0" y="698.0" width="218.0" height="120.0" rx="7" fill="#f3f9f8" stroke="#3f857c" stroke-width="1.2" stroke-dasharray="7 4"/>
+<text x="1190.0" y="714.0" font-family="Helvetica, Arial, sans-serif" font-size="10.5" fill="#3f857c" text-anchor="start" font-weight="bold">Third-party</text>
+<text x="1190.0" y="727.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">external integrations</text>
 <g data-boundary-line="0" data-boundary-ids="tb-1 tb-2 tb-5">
 <title>Trust boundary crossing: tb-1 External → C-01; tb-2 External → C-02; tb-5 External → C-08</title>
 <path d="M 454 62 V 1333" fill="none" stroke="#b3453f" stroke-width="2.4" stroke-linejoin="round" stroke-dasharray="6 5"/>
@@ -82,22 +82,22 @@ df-008 authentication: no authentication check found in Socket.IO event registra
 <g data-flow-ids="df-009" data-access-mode="">
 <title>df-009: Sequelize ORM query to SQLite: user lookup by email for login credential verification (SQL)
 df-009 authentication: in-process SQLite accessed via Sequelize ORM; no network authentication; evidence: models/index.ts:34</title>
-<path d="M 903.2 404.7 L 1170.0 404.7" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Confidential)"/>
+<path d="M 903.2 437.0 L 1170.0 437.0" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Confidential)"/>
 </g>
 <g data-flow-ids="df-010" data-access-mode="">
 <title>df-010: Sequelize ORM reads/writes to SQLite for all application data (users, orders, products, baskets, payments) (SQL)
 df-010 authentication: in-process SQLite file accessed via Sequelize; no network authentication layer; evidence: models/index.ts:34</title>
-<path d="M 903.2 113.0 L 1170.0 113.0" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+<path d="M 903.2 178.2 L 1170.0 178.2" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
 </g>
 <g data-flow-ids="df-011" data-access-mode="">
 <title>df-011: MarsDB in-process reads/writes for product reviews (posts collection) and orders collection (in-process)
 df-011 authentication: MarsDB is an in-process embedded store; no network transport or authentication; evidence: data/mongodb.ts:9</title>
-<path d="M 903.2 308.8 L 1076.0 308.8 L 1076.0 672.0 L 1170.0 672.0" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+<path d="M 903.2 308.8 L 1076.0 308.8 L 1076.0 555.0 L 1170.0 555.0" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
 </g>
 <g data-flow-ids="df-012" data-access-mode="">
 <title>df-012: POST /rest/chat proxies user message to Ollama LLM or OpenAI-compatible endpoint for chatbot/hint generation (HTTP)
 df-012 authentication: Ollama local API at port 11434 has no authentication; OpenAI-compatible provider may use api-key not verified in code; evidence: lib/startup/validatePreconditions.ts:236</title>
-<path d="M 903.2 178.2 L 1086.0 178.2 L 1086.0 884.0 L 1179.0 884.0" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
+<path d="M 903.2 243.5 L 1086.0 243.5 L 1086.0 758.0 L 1179.0 758.0" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round" marker-end="url(#arw-Internal)"/>
 </g>
 <g data-flow-ids="df-016" data-access-mode="">
 <title>df-016: User input; evidence: frontend/src/app/app.component.ts:6</title>
@@ -199,16 +199,16 @@ df-012 authentication: Ollama local API at port 11434 has no authentication; Ope
 <circle cx="886.0" cy="117.0" r="6.5" fill="#ffffff" stroke="#b3453f" stroke-width="1.3"/>
 <path d="M 879.5 117 H 892.5 M 886.0 110.5 V 123.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
 <path d="M 886.0 110.5 A 3.25 6.5 0 0 0 886.0 123.5 A 3.25 6.5 0 0 0 886.0 110.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
-<text x="790.6" y="365.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="808.0" cy="362.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<text x="790.6" y="365.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
+<circle cx="808.0" cy="362.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="808.0" y="365.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
-<circle cx="827.0" cy="362.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="827.0" cy="362.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="827.0" y="365.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
-<circle cx="846.0" cy="362.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="846.0" cy="362.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="846.0" y="365.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
-<circle cx="865.0" cy="362.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="865.0" cy="362.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="865.0" y="365.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">4</text>
-<circle cx="884.0" cy="362.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="884.0" cy="362.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="884.0" y="365.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
 <rect x="712.0" y="389.0" width="190.0" height="278.0" rx="22" fill="#ffffff" stroke="#b3453f" stroke-width="2"/>
 <g data-component-id="juice-shop-auth"><title>C-02 · Authentication and Session Surface</title>
@@ -270,12 +270,12 @@ df-012 authentication: Ollama local API at port 11434 has no authentication; Ope
 <text x="742.0" y="611.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Secret</text>
 <text x="742.0" y="622.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
 </g>
-<text x="828.6" y="669.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="846.0" cy="666.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<text x="828.6" y="669.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
+<circle cx="846.0" cy="666.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="846.0" y="669.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
-<circle cx="865.0" cy="666.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="865.0" cy="666.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="865.0" y="669.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
-<circle cx="884.0" cy="666.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="884.0" cy="666.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="884.0" y="669.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
 <g data-actor-grouping="A1">
 <rect x="43.0" y="138.0" width="172.0" height="76.0" rx="0" fill="#ffffff" stroke="#b3453f" stroke-width="1.8"/>
@@ -333,14 +333,14 @@ df-012 authentication: Ollama local API at port 11434 has no authentication; Ope
 <text x="63.0" y="950.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">(CSRF)</text>
 <rect x="54.0" y="955.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
 <text x="63.0" y="962.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Broken Authentication</text>
-<text x="131.6" y="1050.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="149.0" cy="1047.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<text x="131.6" y="1050.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
+<circle cx="149.0" cy="1047.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="149.0" y="1050.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
-<circle cx="168.0" cy="1047.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="168.0" cy="1047.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="168.0" y="1050.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
-<circle cx="187.0" cy="1047.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="187.0" cy="1047.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="187.0" y="1050.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">6</text>
-<circle cx="206.0" cy="1047.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="206.0" cy="1047.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="206.0" y="1050.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">7</text>
 <rect x="43.0" y="240.0" width="172.0" height="72.0" rx="0" fill="#ffffff" stroke="#b3453f" stroke-width="1.8"/>
 <circle cx="59.0" cy="260.0" r="5" fill="none" stroke="#b3453f" stroke-width="1.5"/>
@@ -349,8 +349,8 @@ df-012 authentication: Ollama local API at port 11434 has no authentication; Ope
 <text x="75.0" y="271.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#b3453f" text-anchor="start" font-weight="bold">Build Attacker</text>
 <text x="75.0" y="294.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">1 role; access details in</text>
 <text x="75.0" y="304.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Identified Actors</text>
-<rect x="1194.0" y="102.0" width="190.0" height="454.0" rx="0" fill="#ffffff" stroke="none" stroke-width="1"/>
-<path d="M 1194.0 102 H 1384.0 M 1194.0 556 H 1384.0 M 1194.0 102 V 556 M 1202.0 102 V 556" fill="none" stroke="#cf8a3e" stroke-width="1.8" stroke-linejoin="round"/>
+<rect x="1194.0" y="102.0" width="190.0" height="346.0" rx="0" fill="#ffffff" stroke="none" stroke-width="1"/>
+<path d="M 1194.0 102 H 1384.0 M 1194.0 448 H 1384.0 M 1194.0 102 V 448 M 1202.0 102 V 448" fill="none" stroke="#cf8a3e" stroke-width="1.8" stroke-linejoin="round"/>
 <g data-component-id="juice-shop-db"><title>C-04 · SQLite Relational Database</title>
 <text x="1283.0" y="124.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-04 · SQLite</text>
 <text x="1283.0" y="137.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">Relational Database</text>
@@ -379,133 +379,92 @@ df-012 authentication: Ollama local API at port 11434 has no authentication; Ope
 <title>C-04 · SQLite Relational Database: User Credentials</title>
 <rect x="1218.0" y="224.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
 <text x="1228.0" y="230.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-001 User Credentials</text>
-<text x="1294.2" y="258.2" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="1309.0" cy="255.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1309.0" y="258.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">1</text>
-<circle cx="1324.0" cy="255.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1324.0" y="258.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">3</text>
-<circle cx="1339.0" cy="255.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1339.0" y="258.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">5</text>
-<circle cx="1354.0" cy="255.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1354.0" y="258.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">6</text>
 <text x="1228.0" y="241.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
 </g>
 <g data-asset-id="A-002" data-asset-component="juice-shop-db" data-asset-relation="stored" data-asset-display="inline">
 <title>C-04 · SQLite Relational Database: Payment Data</title>
-<rect x="1218.0" y="270.0" width="6.0" height="6.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
-<text x="1228.0" y="276.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-002 Payment Data</text>
-<text x="1264.5" y="304.2" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="1279.4" cy="301.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1279.4" y="304.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">1</text>
-<circle cx="1294.4" cy="301.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1294.4" y="304.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">2</text>
-<circle cx="1309.4" cy="301.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1309.4" y="304.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">5</text>
-<circle cx="1324.4" cy="301.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1324.4" y="304.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">6</text>
-<text x="1339.2" y="304.2" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A2</text>
-<circle cx="1354.0" cy="301.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1354.0" y="304.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">5</text>
-<text x="1228.0" y="287.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
+<rect x="1218.0" y="252.0" width="6.0" height="6.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
+<text x="1228.0" y="258.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-002 Payment Data</text>
+<text x="1228.0" y="269.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
 </g>
 <g data-asset-id="A-003" data-asset-component="juice-shop-db" data-asset-relation="stored" data-asset-display="inline">
 <title>C-04 · SQLite Relational Database: Order History</title>
-<rect x="1218.0" y="316.0" width="6.0" height="6.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
-<text x="1228.0" y="322.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-003 Order History</text>
-<text x="1324.2" y="350.2" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="1339.0" cy="347.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1339.0" y="350.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">1</text>
-<circle cx="1354.0" cy="347.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1354.0" y="350.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">2</text>
-<text x="1228.0" y="333.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
+<rect x="1218.0" y="280.0" width="6.0" height="6.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
+<text x="1228.0" y="286.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-003 Order History</text>
+<text x="1228.0" y="297.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
 </g>
 <g data-asset-id="A-004" data-asset-component="juice-shop-db" data-asset-relation="stored" data-asset-display="inline">
 <title>C-04 · SQLite Relational Database: Personal Data</title>
-<rect x="1218.0" y="362.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
-<text x="1228.0" y="368.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-004 Personal Data</text>
-<text x="1294.2" y="396.2" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="1309.0" cy="393.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1309.0" y="396.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">1</text>
-<circle cx="1324.0" cy="393.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1324.0" y="396.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">2</text>
-<circle cx="1339.0" cy="393.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1339.0" y="396.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">5</text>
-<circle cx="1354.0" cy="393.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1354.0" y="396.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">6</text>
-<text x="1228.0" y="379.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
+<rect x="1218.0" y="308.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
+<text x="1228.0" y="314.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-004 Personal Data</text>
+<text x="1228.0" y="325.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
 </g>
 <g data-asset-id="A-006" data-asset-component="juice-shop-db" data-asset-relation="stored" data-asset-display="inline">
 <title>C-04 · SQLite Relational Database: SQLite Database File</title>
-<rect x="1218.0" y="408.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
-<text x="1228.0" y="414.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-006 SQLite Database</text>
-<text x="1228.0" y="425.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">File</text>
-<text x="1294.2" y="453.2" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="1309.0" cy="450.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1309.0" y="453.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">1</text>
-<circle cx="1324.0" cy="450.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1324.0" y="453.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">3</text>
-<circle cx="1339.0" cy="450.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1339.0" y="453.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">5</text>
-<circle cx="1354.0" cy="450.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1354.0" y="453.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">6</text>
-<text x="1228.0" y="436.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
+<rect x="1218.0" y="336.0" width="6.0" height="6.0" rx="0" fill="#b46a38" stroke="none" stroke-width="1"/>
+<text x="1228.0" y="342.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-006 SQLite Database</text>
+<text x="1228.0" y="353.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">File</text>
+<text x="1228.0" y="364.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#b46a38" text-anchor="start" font-weight="normal">Confidential</text>
 </g>
 <g data-asset-id="A-007" data-asset-component="juice-shop-db" data-asset-relation="stored" data-asset-display="inline">
 <title>C-04 · SQLite Relational Database: Challenge Progress and CTF State</title>
-<rect x="1218.0" y="465.0" width="6.0" height="6.0" rx="0" fill="#6f7d8f" stroke="none" stroke-width="1"/>
-<text x="1228.0" y="471.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-007 Challenge</text>
-<text x="1228.0" y="482.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Progress and CTF State</text>
-<text x="1339.2" y="510.2" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="1354.0" cy="507.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1354.0" y="510.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">5</text>
-<text x="1228.0" y="493.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6f7d8f" text-anchor="start" font-weight="normal">Internal</text>
+<rect x="1218.0" y="375.0" width="6.0" height="6.0" rx="0" fill="#6f7d8f" stroke="none" stroke-width="1"/>
+<text x="1228.0" y="381.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-007 Challenge</text>
+<text x="1228.0" y="392.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Progress and CTF State</text>
+<text x="1228.0" y="403.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6f7d8f" text-anchor="start" font-weight="normal">Internal</text>
 </g>
-<text x="1329.6" y="558.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="1347.0" cy="555.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
-<text x="1347.0" y="558.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
-<circle cx="1366.0" cy="555.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
-<text x="1366.0" y="558.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
-<rect x="1194.0" y="582.0" width="190.0" height="202.0" rx="0" fill="#ffffff" stroke="none" stroke-width="1"/>
-<path d="M 1194.0 582 H 1384.0 M 1194.0 784 H 1384.0 M 1194.0 582 V 784 M 1202.0 582 V 784" fill="none" stroke="#cf8a3e" stroke-width="1.8" stroke-linejoin="round"/>
+<text x="1237.9" y="450.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
+<circle cx="1255.3" cy="447.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1255.3" y="450.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
+<circle cx="1274.3" cy="447.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1274.3" y="450.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
+<circle cx="1293.3" cy="447.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1293.3" y="450.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
+<circle cx="1312.3" cy="447.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1312.3" y="450.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
+<circle cx="1331.3" cy="447.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1331.3" y="450.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">6</text>
+<text x="1348.6" y="450.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A2</text>
+<circle cx="1366.0" cy="447.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1366.0" y="450.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
+<rect x="1194.0" y="474.0" width="190.0" height="184.0" rx="0" fill="#ffffff" stroke="none" stroke-width="1"/>
+<path d="M 1194.0 474 H 1384.0 M 1194.0 658 H 1384.0 M 1194.0 474 V 658 M 1202.0 474 V 658" fill="none" stroke="#cf8a3e" stroke-width="1.8" stroke-linejoin="round"/>
 <g data-component-id="juice-shop-marsdb"><title>C-05 · MarsDB Embedded Document Store</title>
-<text x="1283.0" y="604.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-05 · MarsDB Embedded</text>
-<text x="1283.0" y="617.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">Document Store</text>
+<text x="1283.0" y="496.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-05 · MarsDB Embedded</text>
+<text x="1283.0" y="509.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">Document Store</text>
 </g>
-<circle cx="1220.0" cy="632.0" r="4.5" fill="#cf8a3e" stroke="none" stroke-width="1"/>
-<text x="1228.0" y="635.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">1</text>
-<circle cx="1243.1" cy="632.0" r="4.5" fill="#c4a441" stroke="none" stroke-width="1"/>
-<text x="1251.1" y="635.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">1</text>
-<rect x="1218.0" y="642.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
-<text x="1224.5" y="652.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">S</text>
-<rect x="1233.0" y="642.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
-<text x="1239.5" y="652.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">T</text>
-<rect x="1248.0" y="642.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
-<text x="1254.5" y="652.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">R</text>
-<rect x="1263.0" y="642.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
-<text x="1269.5" y="652.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">I</text>
-<rect x="1278.0" y="642.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
-<text x="1284.5" y="652.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">D</text>
-<rect x="1293.0" y="642.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
-<text x="1299.5" y="652.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">E</text>
-<text x="1311.0" y="652.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
-<rect x="1218.0" y="661.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
-<text x="1227.0" y="668.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Unsafe Query Construction</text>
-<text x="1227.0" y="680.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">(NoSQLi)</text>
-<text x="1218.0" y="694.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Assets</text>
+<circle cx="1220.0" cy="524.0" r="4.5" fill="#cf8a3e" stroke="none" stroke-width="1"/>
+<text x="1228.0" y="527.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">1</text>
+<circle cx="1243.1" cy="524.0" r="4.5" fill="#c4a441" stroke="none" stroke-width="1"/>
+<text x="1251.1" y="527.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#1f2937" text-anchor="start" font-weight="bold">1</text>
+<rect x="1218.0" y="534.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1224.5" y="544.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">S</text>
+<rect x="1233.0" y="534.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="1239.5" y="544.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">T</text>
+<rect x="1248.0" y="534.0" width="13.0" height="13.0" rx="2" fill="#334d6e" stroke="#ffffff" stroke-width="0.8"/>
+<text x="1254.5" y="544.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#ffffff" text-anchor="middle" font-weight="bold">R</text>
+<rect x="1263.0" y="534.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1269.5" y="544.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">I</text>
+<rect x="1278.0" y="534.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1284.5" y="544.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">D</text>
+<rect x="1293.0" y="534.0" width="13.0" height="13.0" rx="2" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.8"/>
+<text x="1299.5" y="544.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle" font-weight="bold">E</text>
+<text x="1311.0" y="544.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal">STRIDE</text>
+<rect x="1218.0" y="553.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
+<text x="1227.0" y="560.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Unsafe Query Construction</text>
+<text x="1227.0" y="572.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">(NoSQLi)</text>
+<text x="1218.0" y="586.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Assets</text>
 <g data-asset-id="A-003" data-asset-component="juice-shop-marsdb" data-asset-relation="stored" data-asset-display="inline">
 <title>C-05 · MarsDB Embedded Document Store: Order History</title>
-<rect x="1218.0" y="704.0" width="6.0" height="6.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
-<text x="1228.0" y="710.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-003 Order History</text>
-<text x="1324.2" y="738.2" font-family="Helvetica, Arial, sans-serif" font-size="8" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="1339.0" cy="735.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1339.0" y="738.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">1</text>
-<circle cx="1354.0" cy="735.0" r="5.75" fill="#ffffff" stroke="#1f2937" stroke-width="1.5"/>
-<text x="1354.0" y="738.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="middle" font-weight="bold">2</text>
-<text x="1228.0" y="721.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
+<rect x="1218.0" y="596.0" width="6.0" height="6.0" rx="0" fill="#9c3d3d" stroke="none" stroke-width="1"/>
+<text x="1228.0" y="602.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#1f2937" text-anchor="start" font-weight="normal">Stored: A-003 Order History</text>
+<text x="1228.0" y="613.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#9c3d3d" text-anchor="start" font-weight="normal">Restricted</text>
 </g>
-<text x="1348.6" y="786.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="1366.0" cy="783.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
-<text x="1366.0" y="786.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
+<text x="1329.6" y="660.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
+<circle cx="1347.0" cy="657.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1347.0" y="660.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">1</text>
+<circle cx="1366.0" cy="657.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
+<text x="1366.0" y="660.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
 <rect x="712.0" y="693.0" width="190.0" height="180.0" rx="22" fill="#ffffff" stroke="#cf8a3e" stroke-width="1.4"/>
 <g data-component-id="juice-shop-realtime"><title>C-06 · Socket.IO Real-Time WebSocket Channel</title>
 <text x="801.0" y="715.0" font-family="Helvetica, Arial, sans-serif" font-size="11" fill="#1f2937" text-anchor="middle" font-weight="bold">C-06 · Socket.IO</text>
@@ -545,8 +504,8 @@ df-012 authentication: Ollama local API at port 11434 has no authentication; Ope
 <circle cx="886.0" cy="708.0" r="6.5" fill="#ffffff" stroke="#b3453f" stroke-width="1.3"/>
 <path d="M 879.5 708 H 892.5 M 886.0 701.5 V 714.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
 <path d="M 886.0 701.5 A 3.25 6.5 0 0 0 886.0 714.5 A 3.25 6.5 0 0 0 886.0 701.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
-<text x="866.6" y="875.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="884.0" cy="872.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<text x="866.6" y="875.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
+<circle cx="884.0" cy="872.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="884.0" y="875.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
 <rect x="712.0" y="899.0" width="190.0" height="155.0" rx="22" fill="#ffffff" stroke="#cf8a3e" stroke-width="1.4"/>
 <g data-component-id="juice-shop-web3"><title>C-07 · Web3 / NFT Surface</title>
@@ -584,12 +543,12 @@ df-012 authentication: Ollama local API at port 11434 has no authentication; Ope
 <circle cx="886.0" cy="914.0" r="6.5" fill="#ffffff" stroke="#b3453f" stroke-width="1.3"/>
 <path d="M 879.5 914 H 892.5 M 886.0 907.5 V 920.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
 <path d="M 886.0 907.5 A 3.25 6.5 0 0 0 886.0 920.5 A 3.25 6.5 0 0 0 886.0 907.5" fill="none" stroke="#b3453f" stroke-width="1" stroke-linejoin="round"/>
-<text x="828.6" y="1056.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
-<circle cx="846.0" cy="1053.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<text x="828.6" y="1056.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A1</text>
+<circle cx="846.0" cy="1053.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="846.0" y="1056.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
-<circle cx="865.0" cy="1053.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="865.0" cy="1053.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="865.0" y="1056.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
-<circle cx="884.0" cy="1053.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="884.0" cy="1053.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="884.0" y="1056.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
 <rect x="712.0" y="1130.0" width="190.0" height="131.0" rx="22" fill="#ffffff" stroke="#cf8a3e" stroke-width="1.4"/>
 <g data-component-id="juice-shop-cicd"><title>C-08 · CI/CD Pipeline</title>
@@ -618,12 +577,12 @@ df-012 authentication: Ollama local API at port 11434 has no authentication; Ope
 <text x="741.0" y="1215.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Improper Privilege Management</text>
 <rect x="732.0" y="1220.0" width="6.0" height="6.0" rx="1" fill="#d39a4a" stroke="none" stroke-width="1"/>
 <text x="741.0" y="1227.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Improper Authenticity Checks</text>
-<text x="828.6" y="1263.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A2</text>
-<circle cx="846.0" cy="1260.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<text x="828.6" y="1263.2" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#b3453f" text-anchor="middle" font-weight="bold" paint-order="stroke" stroke="#ffffff" stroke-width="3" stroke-linejoin="round">A2</text>
+<circle cx="846.0" cy="1260.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="846.0" y="1263.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">2</text>
-<circle cx="865.0" cy="1260.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="865.0" cy="1260.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="865.0" y="1263.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">3</text>
-<circle cx="884.0" cy="1260.0" r="8" fill="#1f2937" stroke="#ffffff" stroke-width="1.5"/>
+<circle cx="884.0" cy="1260.0" r="8" fill="#b3453f" stroke="#ffffff" stroke-width="1.5"/>
 <text x="884.0" y="1263.5" font-family="Helvetica, Arial, sans-serif" font-size="9.5" fill="#ffffff" text-anchor="middle" font-weight="bold">5</text>
 <g data-external-id="ext-browser"><title>End-user web browser loading the Angular SPA and interacting with the Juice Shop REST API and WebSocket channel.</title>
 <rect x="43.0" y="388.0" width="172.0" height="176.0" rx="0" fill="#ffffff" stroke="#3f8a5e" stroke-width="1.8"/>
@@ -654,11 +613,11 @@ df-012 authentication: Ollama local API at port 11434 has no authentication; Ope
 <text x="55.0" y="1217.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">login feature in the Angular…</text>
 </g>
 <g data-external-id="ext-ollama"><title>Local Ollama server (port 11434) or OpenAI-compatible LLM endpoint contacted by the backend chat route for AI-powered hint and chatbot responses.</title>
-<rect x="1203.0" y="860.0" width="172.0" height="70.0" rx="0" fill="#ffffff" stroke="#1f2937" stroke-width="1.8"/>
-<text x="1215.0" y="879.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">Ollama LLM Inference Server</text>
-<text x="1215.0" y="902.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Local Ollama server (port 11434) or</text>
-<text x="1215.0" y="912.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">OpenAI-compatible LLM endpoint</text>
-<text x="1215.0" y="922.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">contacted by the backend chat route…</text>
+<rect x="1203.0" y="734.0" width="172.0" height="70.0" rx="0" fill="#ffffff" stroke="#1f2937" stroke-width="1.8"/>
+<text x="1215.0" y="753.0" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1f2937" text-anchor="start" font-weight="bold">Ollama LLM Inference Server</text>
+<text x="1215.0" y="776.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">Local Ollama server (port 11434) or</text>
+<text x="1215.0" y="786.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">OpenAI-compatible LLM endpoint</text>
+<text x="1215.0" y="796.0" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-style="italic">contacted by the backend chat route…</text>
 </g>
 <g data-external-id="ext-privileged-role"><title>Application role with elevated rights, evidenced by its access check.</title>
 <rect x="43.0" y="590.0" width="172.0" height="70.0" rx="0" fill="#ffffff" stroke="#3f8a5e" stroke-width="1.8"/>
@@ -735,19 +694,19 @@ df-015: OAuth profile request (HTTPS); The provider checks the OAuth access toke
 <title>Unknown</title>
 <polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#edf2f7" stroke="#64748b" stroke-width="1.2" stroke-linejoin="round"/>
 <text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#64748b">?</text></g>
-<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-009" transform="translate(1194.0 404.7) scale(-1 1)">
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-009" transform="translate(1194.0 437.0) scale(-1 1)">
 <title>No Authentication</title>
 <polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
 <text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
-<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-010" transform="translate(1194.0 113.0) scale(-1 1)">
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-010" transform="translate(1194.0 178.2) scale(-1 1)">
 <title>No Authentication</title>
 <polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
 <text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
-<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-011" transform="translate(1194.0 672.0) scale(-1 1)">
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-011" transform="translate(1194.0 555.0) scale(-1 1)">
 <title>No Authentication</title>
 <polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
 <text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
-<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-012" transform="translate(1203.0 884.0) scale(-1 1)">
+<g data-authentication="0" data-authentication-shape="hexagon" data-auth-flows="df-012" transform="translate(1203.0 758.0) scale(-1 1)">
 <title>No Authentication</title>
 <polygon points="0,0 5,-9 15,-9 20,0 15,9 5,9" fill="#fff0ee" stroke="#b3453f" stroke-width="1.2" stroke-linejoin="round"/>
 <text x="-10" y="3.5" transform="scale(-1 1)" text-anchor="middle" font-size="10" font-weight="bold" fill="#b3453f">0</text></g>
@@ -797,12 +756,12 @@ df-015: OAuth profile request (HTTPS); The provider checks the OAuth access toke
 <path d="M 564 799.0 V 805.0" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
 <path d="M 574 799.0 V 805.0" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
 <path d="M 574 799.0 V 805.0" fill="none" stroke="#b3453f" stroke-width="1.8" stroke-linejoin="round"/>
-<path d="M 1073 404.6666666666667 H 1079" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
-<path d="M 1073 404.6666666666667 H 1079" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round"/>
-<path d="M 1083 404.6666666666667 H 1089" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
-<path d="M 1083 404.6666666666667 H 1089" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round"/>
-<path d="M 1083 672.0 H 1089" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
-<path d="M 1083 672.0 H 1089" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 1073 437.0 H 1079" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 1073 437.0 H 1079" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 1083 437.0 H 1089" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 1083 437.0 H 1089" fill="none" stroke="#b46a38" stroke-width="1.1" stroke-linejoin="round"/>
+<path d="M 1083 555.0 H 1089" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round"/>
+<path d="M 1083 555.0 H 1089" fill="none" stroke="#6f7d8f" stroke-width="1.1" stroke-linejoin="round"/>
 <text x="260.1" y="536.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">User input</text>
 <text x="619.6" y="237.5" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">SPA static assets (HTTP)</text>
 <text x="298.4" y="514.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Login credentials (HTTP)</text>
@@ -816,13 +775,12 @@ df-015: OAuth profile request (HTTPS); The provider checks the OAuth access toke
 <g transform="rotate(-90 528.0 639.0)">
 <text x="528.0" y="639.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">WebSocket events (WebSocket)</text>
 </g>
-<text x="978.8" y="418.7" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">User credential…</text>
-<text x="978.8" y="430.7" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">(SQL)</text>
-<text x="1085.3" y="107.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Application data queries (SQL)</text>
-<g transform="rotate(-90 1070.0 494.7)">
-<text x="1070.0" y="494.7" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Review and order documents (in-process)</text>
-</g>
-<text x="974.2" y="172.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Chat prompt (HTTP)</text>
+<text x="978.8" y="451.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">User credential…</text>
+<text x="978.8" y="463.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">(SQL)</text>
+<text x="1085.3" y="172.2" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Application data queries (SQL)</text>
+<text x="976.5" y="322.8" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Review and order…</text>
+<text x="976.5" y="334.8" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">(in-process)</text>
+<text x="974.2" y="237.5" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">Chat prompt (HTTP)</text>
 <text x="267.1" y="619.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="middle" font-weight="normal">User input</text>
 <g data-legend-section="notation" data-legend-column="1" transform="translate(20.0 1363.0)">
 <rect x="0.0" y="0.0" width="350.0" height="26.0" rx="4" fill="#334d6e" stroke="none" stroke-width="1"/>
