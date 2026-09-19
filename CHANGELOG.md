@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Figure 1 always shows the most security-critical functions of a component (admin functions, LLM tools, file upload, code evaluation, URL fetch) before less critical ones, and marks a label with a linked finding by its severity-coloured border.
 - Findings a regular or anonymous user can exploit no longer add the privileged user as a separate attacker, and scanner findings keep their internet attacker once their component is resolved.
 - Figure 1 shows the administrator role again when actor discovery cites its access check by file name only, and warns in Run Issues when no cited location resolves.
 - Figure 2 states whether an account is needed for anonymous and regular-account attack routes instead of pointing to the finding.

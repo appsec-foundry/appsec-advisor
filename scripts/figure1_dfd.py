@@ -87,6 +87,7 @@ ZONE_SUBTITLE = {
 }
 SEV_COL = {"Critical": RED, "High": ORANGE, "Medium": YELLOW}
 SEV_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+_PILL_FINDING_BORDER = {SEV_RANK[sev]: col for sev, col in SEV_COL.items()}
 _FALLBACK_ACTOR = {
     "internet-anon": "Anonymous Internet Attacker",
     "internet-user": "Authenticated Internet Attacker",
@@ -250,13 +251,13 @@ def _words(text):
 def _capability_rows(items, vocabulary, key, name="", severity=None, label_key="label"):
     """Known, evidenced labels, most critical first; unknown values never render.
 
-    Order is the most severe linked finding (`severity`: value → SEV_RANK), then
-    the vocabulary `tier`, then vocabulary order; a label without a linked
-    finding follows every label with one. A label is left out when a more
-    specific evidenced value implies it, or when the node's own name already
-    says everything the label would. The first item per value wins. `label_key`
-    selects an alternative wording, such as the identity-provider term, where
-    the vocabulary defines one.
+    Order is the vocabulary `tier` (criticality of the function type), then the
+    most severe linked finding (`severity`: value → SEV_RANK), then vocabulary
+    order. Each row carries its `tier` and linked `severity`. A label is left
+    out when a more specific evidenced value implies it, or when the node's own
+    name already says everything the label would. The first item per value
+    wins. `label_key` selects an alternative wording, such as the
+    identity-provider term, where the vocabulary defines one.
     """
     evidenced = [
         item for item in items or [] if isinstance(item, dict) and item.get("evidence") and item.get(key) in vocabulary
@@ -264,7 +265,7 @@ def _capability_rows(items, vocabulary, key, name="", severity=None, label_key="
     implied = {value for item in evidenced for value in vocabulary[item[key]].get("implies") or []}
     severity = severity or {}
     rank = {
-        value: (severity.get(value, len(SEV_RANK)), entry.get("tier", 9), index)
+        value: (entry.get("tier", 9), severity.get(value, len(SEV_RANK)), index)
         for index, (value, entry) in enumerate(vocabulary.items())
     }
     rows = []
@@ -280,6 +281,8 @@ def _capability_rows(items, vocabulary, key, name="", severity=None, label_key="
                     "label": label,
                     "evidence": item["evidence"],
                     "derived": bool(item.get("derived")),
+                    "tier": entry.get("tier", 9),
+                    "severity": severity.get(item[key]),
                 }
             )
     return sorted(rows, key=lambda row: rank[row["id"]])
@@ -305,11 +308,12 @@ def _technology_label(tech):
 
 
 def _capability_display(rows):
-    """At most CAPABILITY_CAP labels, then one `+N` label carrying the rest."""
-    if len(rows) <= CAPABILITY_CAP:
+    """Every tier-1 label, filled up to CAPABILITY_CAP, then one `+N` label carrying the rest."""
+    shown = max(CAPABILITY_CAP, sum(1 for row in rows if row.get("tier") == 1))
+    if len(rows) <= shown:
         return rows
-    more = rows[CAPABILITY_CAP:]
-    return [*rows[:CAPABILITY_CAP], {"id": "+", "label": f"+{len(more)}", "evidence": [], "more": more}]
+    more = rows[shown:]
+    return [*rows[:shown], {"id": "+", "label": f"+{len(more)}", "evidence": [], "more": more}]
 
 
 # Only deterministic source rules may add a label from a finding: a model-assigned
@@ -407,7 +411,7 @@ def _capability_title(cap):
 
 
 def _capability_pills(c, x, y, node, width):
-    """Draw labels without risk colouring; evidence stays available on hover."""
+    """Draw labels; a linked finding colours only the border, evidence stays available on hover."""
     for r, row in enumerate(_pill_rows(node.get("capabilities") or [], width)):
         px = x
         for cap, w in row:
@@ -422,9 +426,10 @@ def _capability_pills(c, x, y, node, width):
                 c.rect(px, py, w, PILL_H, fill="#ffffff", stroke="#b6c6d8", sw=0.7, rx=3, dash="2 2")
                 c.text(px + w / 2, py + 9.5, cap["label"], size=PILL_SIZE, fill=MUTED, track=track)
             else:
+                linked = _PILL_FINDING_BORDER.get(cap.get("severity"))
                 c.add(f'<g data-capability="{_esc(cap["id"])}" data-capability-owner="{_esc(node["id"])}">')
                 c.add(f"<title>{_esc(_capability_title(cap))}</title>")
-                c.rect(px, py, w, PILL_H, fill="#eef3f8", stroke="#b6c6d8", sw=0.7, rx=3)
+                c.rect(px, py, w, PILL_H, fill="#eef3f8", stroke=linked or "#b6c6d8", sw=1.2 if linked else 0.7, rx=3)
                 c.text(px + w / 2, py + 9.5, cap["label"], size=PILL_SIZE, fill=NAVY, track=track)
             c.add("</g>")
             px += w + PILL_GAP
@@ -3033,15 +3038,23 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         width = _tw(sample["label"], PILL_SIZE) + 12
         c.rect(lx + 10, y - 7, width, PILL_H, fill="#eef3f8", stroke="#b6c6d8", sw=0.7, rx=3)
         c.text(lx + 10 + width / 2, y + 2.5, sample["label"], size=PILL_SIZE, fill=NAVY)
-        c.text(lx + 18 + width, y + 3, "function or service role; no risk rating", size=8.5, anchor="start")
+        c.text(lx + 18 + width, y + 3, "function or service role", size=8.5, anchor="start")
         y += 18
+        if any(cap.get("severity") in _PILL_FINDING_BORDER for cap in capabilities):
+            c.rect(lx + 10, y - 7, width, PILL_H, fill="#eef3f8", stroke=RED, sw=1.2, rx=3)
+            c.text(lx + 10 + width / 2, y + 2.5, sample["label"], size=PILL_SIZE, fill=NAVY)
+            c.text(lx + 18 + width, y + 3, "border: most severe linked finding", size=8.5, anchor="start")
+            y += 18
         vocabulary = {**_capability_vocabulary()[0], **_capability_vocabulary()[1]}
         notes = [
             f"{cap['label']} = {vocabulary[cap['id']]['note']}"
             for cap in capabilities
             if vocabulary[cap["id"]].get("note")
         ]
-        ranking = f"At most {CAPABILITY_CAP} labels per element: most severe linked finding first, then most security-relevant"
+        ranking = (
+            f"Most security-critical functions always shown, others up to {CAPABILITY_CAP} labels per element: "
+            "most critical first, then most severe linked finding"
+        )
         if overflow:
             ranking += "; +N = further labels, listed under Further capabilities"
         for note in [*notes, ranking + ".", "Functions may go undetected: a missing label does not mean absence."]:

@@ -1,7 +1,7 @@
 # Security-relevant capabilities of components and service roles of external
 # entities. The architecture producer assigns them with file/line evidence;
-# Figure 1 shows the label only. A label is a function, not a finding, and
-# carries no risk rating.
+# Figure 1 shows the label. A label is a function, not a finding; only its
+# border shows the severity of a linked reported finding.
 #
 # The ids are the enum values of `components[].capabilities[].capability` and
 # `external_entities[].service_roles[].role` in the component, data-flow,
@@ -10,10 +10,12 @@
 # `implies` names the generic values a more specific one already covers; the
 # figure shows only the specific label when both are evidenced.
 # `cwes` links the element's reported findings to a value (a more specific
-# value also takes the CWEs of the values it implies). The figure shows the
-# three labels whose linked findings are most severe first, then by `tier`
-# (security relevance of the function type, 1 = highest), vocabulary order
-# breaking ties, and lists the rest under "Further capabilities". A finding
+# value also takes the CWEs of the values it implies). `tier` is the security
+# criticality of the function type (1 = highest): the figure orders labels by
+# tier, then by their most severe linked finding, then vocabulary order; it
+# always shows every tier-1 label, fills up to three labels with the next
+# ones, and lists the rest under "Further capabilities". A label with a linked
+# finding carries that finding's severity colour on its border. A finding
 # from a deterministic source rule also adds the label with its code location
 # when the producer omitted it; a CWE belongs to at most one value.
 schema_version: 1
@@ -21,7 +23,7 @@ schema_version: 1
 component_capabilities:
   file-upload:
     label: File upload
-    tier: 2
+    tier: 1
     cwes: [CWE-434]
   code-evaluation:
     label: Dynamic code evaluation
@@ -35,11 +37,11 @@ component_capabilities:
     cwes: [CWE-918]
   xml-parsing:
     label: XML parsing
-    tier: 1
+    tier: 2
     cwes: [CWE-611, CWE-776]
   template-rendering:
     label: Server-side templates
-    tier: 1
+    tier: 2
     cwes: [CWE-1336]
   llm-calls:
     label: LLM calls
@@ -85,7 +87,7 @@ component_capabilities:
     tier: 4
   admin-functions:
     label: Admin functions
-    tier: 3
+    tier: 1
   blockchain-client:
     label: Blockchain client
     tier: 4

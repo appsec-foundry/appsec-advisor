@@ -2995,13 +2995,14 @@ def test_capability_labels_do_not_repeat_the_name_or_a_more_specific_label(name,
 @pytest.mark.parametrize(
     ("authored", "shown", "more"),
     [
-        (["background-jobs", "file-upload", "url-fetch"], ["url-fetch", "file-upload", "background-jobs"], []),
-        (["admin-functions", "xml-parsing"], ["xml-parsing", "admin-functions"], []),
+        (["background-jobs", "file-upload", "url-fetch"], ["file-upload", "url-fetch", "background-jobs"], []),
+        (["admin-functions", "xml-parsing"], ["admin-functions", "xml-parsing"], []),
         (["mfa-verifier", "token-issuer", "file-upload"], ["file-upload", "token-issuer", "mfa-verifier"], []),
         (
             ["email-sending", "admin-functions", "file-upload", "llm-tools", "template-rendering", "url-fetch"],
-            ["url-fetch", "template-rendering", "llm-tools"],
-            ["file-upload", "admin-functions", "email-sending"],
+            # Every tier-1 function stays visible, even beyond the cap of three.
+            ["file-upload", "url-fetch", "llm-tools", "admin-functions"],
+            ["template-rendering", "email-sending"],
         ),
         (["graphql-endpoint", "websocket-endpoint", "payment-processing", "oauth-client"], None, None),
     ],
@@ -3014,7 +3015,8 @@ def test_capability_labels_rank_by_security_relevance_and_keep_the_rest(authored
     ranks = [(capabilities[row["id"]]["tier"], list(capabilities).index(row["id"])) for row in rows]
     assert ranks == sorted(ranks) and {row["id"] for row in rows} == set(authored)
     display = F._capability_display(rows)
-    assert len([cap for cap in display if not cap.get("more")]) == min(len(rows), F.CAPABILITY_CAP)
+    critical = sum(1 for row in rows if capabilities[row["id"]]["tier"] == 1)
+    assert len([cap for cap in display if not cap.get("more")]) == min(len(rows), max(F.CAPABILITY_CAP, critical))
     if shown is not None:
         assert [cap["id"] for cap in display if not cap.get("more")] == shown
         assert [cap["id"] for cap in (display[-1].get("more") or [])] == more
@@ -3087,7 +3089,7 @@ def test_reported_findings_add_capabilities_only_from_deterministic_rules():
     assert pills[0].find(f"{_SVG}title").text.endswith("src/import.ts:7 (reported finding)")
 
 
-def test_capability_labels_rank_linked_finding_severity_before_tier():
+def test_capability_labels_rank_tier_before_linked_finding_severity():
     capabilities, _ = F._capability_vocabulary()
     evidence = [{"file": "src/a.ts", "line": 1}]
     threats = [
@@ -3115,16 +3117,20 @@ def test_capability_labels_rank_linked_finding_severity_before_tier():
     authored = ["admin-functions", "xml-parsing", "url-fetch", "file-upload"]
     items = [{"capability": value, "evidence": evidence} for value in authored]
     rows = F._capability_rows(items, capabilities, "capability", "Service", severity["svc"])
-    assert [row["id"] for row in rows] == ["file-upload", "url-fetch", "xml-parsing", "admin-functions"]
+    assert [row["id"] for row in rows] == ["file-upload", "url-fetch", "admin-functions", "xml-parsing"]
+    # Within a tier the most severe linked finding comes first.
+    ties = [{"capability": value, "evidence": evidence} for value in ("file-upload", "url-fetch")]
+    rows = F._capability_rows(ties, capabilities, "capability", "Service", {"url-fetch": 0})
+    assert [(row["id"], row["severity"]) for row in rows] == [("url-fetch", 0), ("file-upload", None)]
     items = [
         {"capability": value, "evidence": evidence}
         for value in ("template-rendering", "llm-tools", "blockchain-client")
     ]
     rows = F._capability_rows(items, capabilities, "capability", "Gateway", severity["gateway"])
     assert [row["id"] for row in rows] == ["llm-tools", "template-rendering", "blockchain-client"]
-    # Without a linked finding the order stays the vocabulary tier.
-    rows = F._capability_rows(items, capabilities, "capability", "Gateway", severity.get("none"))
-    assert [row["id"] for row in rows] == ["template-rendering", "llm-tools", "blockchain-client"]
+    # A linked finding never lifts a label above a more critical function type.
+    rows = F._capability_rows(items, capabilities, "capability", "Gateway", {"template-rendering": 0})
+    assert [row["id"] for row in rows] == ["llm-tools", "template-rendering", "blockchain-client"]
 
     model, paths, taxonomy = _model()
     model["components"][1]["capabilities"] = [
@@ -3141,8 +3147,11 @@ def test_capability_labels_rank_linked_finding_severity_before_tier():
     )
     svg, problems = F.check_diagram(model, paths, taxonomy, detail=False)
     assert problems == []
-    pills = [g.get("data-capability") for g in ET.fromstring(svg).iter(f"{_SVG}g") if g.get("data-capability")]
-    assert pills == ["template-rendering", "url-fetch", "xml-parsing"]
+    pills = [g for g in ET.fromstring(svg).iter(f"{_SVG}g") if g.get("data-capability")]
+    assert [g.get("data-capability") for g in pills] == ["url-fetch", "template-rendering", "xml-parsing"]
+    # Only the label with a reported linked finding carries its severity colour on the border.
+    borders = {g.get("data-capability"): g.find(f"{_SVG}rect").get("stroke") for g in pills}
+    assert borders == {"url-fetch": "#b6c6d8", "template-rendering": F.RED, "xml-parsing": "#b6c6d8"}
 
 
 def test_merged_rule_hits_keep_adding_their_capability():
@@ -3221,8 +3230,8 @@ def test_capability_labels_require_known_values_and_evidence():
         root = ET.fromstring(svg)
         pills = [g for g in root.iter(f"{_SVG}g") if g.get("data-capability")]
         assert [(g.get("data-capability-owner"), g.get("data-capability")) for g in pills] == [
-            ("app0", "llm-tools"),
             ("app0", "file-upload"),
+            ("app0", "llm-tools"),
             ("app0", "token-issuer"),
             ("ext-model", "llm-inference"),
         ]
@@ -3235,7 +3244,8 @@ def test_capability_labels_require_known_values_and_evidence():
         assert "Security-relevant capabilities / service roles" in notation
         assert "LLM + tools = model calls with executable application tools" in notation
         flat = " ".join(notation.split())
-        assert "most severe linked finding first, then most security-relevant" in flat
+        assert "Most security-critical functions always shown" in flat
+        assert "most critical first, then most severe linked finding" in flat
         assert "+N = further labels" in flat
         assert "a missing label does not mean absence" in notation
         further = " ".join(root.find("{*}g[@data-legend-section='capability-notes']").itertext())
