@@ -109,25 +109,43 @@ def build_figure2_data(
 ) -> dict:
     """Project one example per reconciled scenario without changing the model.
 
-    Selection prefers verified findings, then severity and numeric ID. Group impacts
-    remain explicitly labelled as group impacts, since class-level impact
-    membership does not prove that every finding reaches every consequence.
+    A scenario is one path number and one displayed actor group, exactly as
+    Figure 1 and the actor legend project them, so a path that two actor groups
+    drive has one row per group. Rows of one actor stay together under a single
+    card. Selection prefers verified findings, then severity and numeric ID,
+    among the scenario's own findings. Group impacts remain explicitly labelled
+    as group impacts, since class-level impact membership does not prove that
+    every finding reaches every consequence.
     """
+    from actor_presentation import attributed_actors, projected_paths
+    from detect_open_registration import overview_actor_slug
+
     scenarios, actors = scenarios_from_attack_paths(model, attack_paths, attack_taxonomy, actor_labels)
     actor_by_slug = {a["slug"]: a for a in actors}
     threats = {_fid(t.get("id") or t.get("t_id")): t for t in model.get("threats") or []}
+    by_number = {int(fid[2:]): fid for fid in threats if fid}
     components = {}
     for i, c in enumerate(model.get("components") or [], 1):
         cid = str(c.get("id") or "")
         visible = cid if re.fullmatch(r"C-\d+", cid) else f"C-{i:02d}"
         components[cid] = f"{visible} · {c.get('name') or cid}"
     impacts = {i["id"]: i for i in impact_taxonomy.get("impacts") or []}
+    paths = attack_paths.get("attack_paths") or []
+    meta = model.get("meta") or {}
+    # Raw (unprojected) groups per path: the prerequisite belongs to the group, not its display fold.
+    raw_groups: dict[int, list[dict]] = {}
+    for number, group in projected_paths(model, attack_paths, attack_taxonomy):
+        raw_groups.setdefault(number, []).append(group)
+    first_seen: dict[tuple, int] = {}
+    for scenario in scenarios:
+        first_seen.setdefault((scenario["actor_slug"], scenario["victim"]), len(first_seen))
+    ordered = sorted(scenarios, key=lambda s: (first_seen[(s["actor_slug"], s["victim"])], int(s["n"])))
     rows = []
-    for number, ap in enumerate(attack_paths.get("attack_paths") or [], 1):
-        candidates = [s for s in scenarios if s["n"] == str(number)]
-        scenario = candidates[0]
-        ids = sorted({_fid(i) for i in ap.get("findings") or []}, key=lambda s: int(s[2:]) if s else -1)
-        if not ids or any(not fid or fid not in threats for fid in ids):
+    for scenario in ordered:
+        number = int(scenario["n"])
+        ap = paths[number - 1]
+        ids = sorted({by_number.get(fid, f"F-{fid}") for fid in scenario["fids"]}, key=lambda s: int(s[2:]))
+        if not ids or any(fid not in threats for fid in ids):
             raise ValueError(f"Figure 2 scenario {scenario['n']} has a missing or unresolved finding")
         selected = min(
             ids,
@@ -138,17 +156,13 @@ def build_figure2_data(
             ),
         )
         finding = threats[selected]
-        from actor_presentation import attributed_actors, projected_paths
-        from detect_open_registration import overview_actor_slug
-
-        _, example_path = next(
-            projected_paths(model, {"attack_paths": [{**ap, "findings": [selected]}]}, attack_taxonomy)
+        raw_actor = next(
+            group["actor"]
+            for group in raw_groups.get(number, [])
+            if selected in {_fid(ref) for ref in group["findings"]}
+            and overview_actor_slug("internet-anon" if group["actor"] == "victim-required" else group["actor"], meta)
+            == scenario["actor_slug"]
         )
-        raw_actor = example_path["actor"]
-        projected_actor = overview_actor_slug(
-            "internet-anon" if raw_actor == "victim-required" else raw_actor, model.get("meta") or {}
-        )
-        scenario = next(s for s in candidates if int(selected[2:]) in s["fids"] and s["actor_slug"] == projected_actor)
         linked = _weaknesses(model, selected)
         # Finding prose is evidence, often a code excerpt, not a weakness name.
         cause = "\n".join(f"{_text(w['title'])} ({w['id']})" for w in linked) or NO_LINKED_WEAKNESS
@@ -172,7 +186,7 @@ def build_figure2_data(
         )
         rows.append(
             {
-                "number": int(scenario["n"]),
+                "number": number,
                 "actor_slug": scenario["actor_slug"],
                 "actor": actor["name"],
                 "actor_note": actor["sub"],
@@ -440,7 +454,9 @@ def check_figure2_svg(svg: str) -> list[str]:
     groups = root.findall("s:g[@data-route-number]", _NS)
     expected = [str(r["number"]) for r in rows]
     errors = []
-    if len(set(expected)) != len(expected) or [g.get("data-route-number") for g in groups] != expected:
+    # A path number repeats only for a different actor group, never under one actor.
+    scenario_keys = [(r["number"], r["actor_slug"], r["victim"]) for r in rows]
+    if len(set(scenario_keys)) != len(scenario_keys) or [g.get("data-route-number") for g in groups] != expected:
         errors.append("visible route numbers differ from the presentation data")
     if root.get("data-glyphs", "").split() != expected:
         errors.append("glyph metadata differs from visible routes")
@@ -448,13 +464,15 @@ def check_figure2_svg(svg: str) -> list[str]:
     covered = [number for card in actors for number in card.get("data-actor-routes", "").split()]
     if covered != expected:
         errors.append("actor cards do not cover each route exactly once")
-    card_of = {number: card for card in actors for number in card.get("data-actor-routes", "").split()}
+    if len({(card.get("data-actor-card"), card.get("data-actor-victim")) for card in actors}) != len(actors):
+        errors.append("an actor has more than one card")
+    row_cards = [card for card in actors for _ in card.get("data-actor-routes", "").split()]
     try:
         for card in actors:
             cells = card.findall("s:rect[@data-column='0']", _NS)
             if len(cells) != 1 or _text_outside(card.findall("s:text", _NS), cells):
                 errors.append("actor text falls outside its card")
-        for group, row in zip(groups, rows):
+        for index, (group, row) in enumerate(zip(groups, rows)):
             badge = group.find("s:text[@data-badge-number]", _NS)
             if (
                 badge is None
@@ -476,7 +494,7 @@ def check_figure2_svg(svg: str) -> list[str]:
                 continue
             if _text_outside(group.findall("s:text", _NS), cells):
                 errors.append("text falls outside its card")
-            card = card_of.get(str(row["number"]))
+            card = row_cards[index] if index < len(row_cards) else None
             if card is not None:
                 box = card.find("s:rect[@data-column='0']", _NS)
                 mid = float(cells[0].get("y")) + float(cells[0].get("height")) / 2

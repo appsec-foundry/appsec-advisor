@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Figure 2 draws every attacker the actor legend names, with one example per attack route and actor, so a build or supply-chain attacker on a shared route gets its own row.
 - Figure 1 always shows the most security-critical functions of a component (admin functions, LLM tools, file upload, code evaluation, URL fetch) before less critical ones, and marks a label with a linked finding by its severity-coloured border.
 - Findings a regular or anonymous user can exploit no longer add the privileged user as a separate attacker, and scanner findings keep their internet attacker once their component is resolved.
 - Figure 1 shows the administrator role again when actor discovery cites its access check by file name only, and warns in Run Issues when no cited location resolves.

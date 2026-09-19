@@ -234,13 +234,14 @@ def _routes(actors):
             [("internet-anon", "application"), ("internet-anon", "application"), ("internet-anon", "client")],
             [("internet-anon", "false", "1 2"), ("internet-anon", "true", "3")],
         ),
+        # One card per actor: interleaved paths are regrouped under the actor's single card.
         (
             [("internet-anon", "application"), ("build-time", "application"), ("internet-anon", "application")],
-            [("internet-anon", "false", "1"), ("build-time", "false", "2"), ("internet-anon", "false", "3")],
+            [("internet-anon", "false", "1 3"), ("build-time", "false", "2")],
         ),
     ],
 )
-def test_consecutive_routes_of_one_actor_share_a_card(actors, cards):
+def test_routes_of_one_actor_share_a_single_card(actors, cards):
     data, ap = _routes(actors)
     svg = figure2.build_figure2_svg(diagram(data, ap))
     root = ET.fromstring(svg)
@@ -282,3 +283,76 @@ def test_prerequisite_follows_the_least_privileged_attributed_actor(actor, vekto
     data["actors"] = [{**actor, "access": ["internet"], "active": True}]
     data["threats"][0].update(actor_ids=[actor["id"]], primary_actor=actor["id"], vektor=vektor)
     assert diagram(data, paths(actor="internet-anon"))["routes"][0]["prerequisite"] == prerequisite
+
+
+_GROUP_ACTORS = {
+    "internet-anon": {"id": "ACT-D-01", "heatmap_slug": "internet-anon"},
+    "internet-user": {"id": "ACT-D-02", "heatmap_slug": "internet-user"},
+    "build-time": {"id": "ACT-D-06", "heatmap_slug": "build-time"},
+}
+
+
+def _grouped(groups, open_registration=False, actor="internet-anon", target="application"):
+    """One path whose findings are attributed to the given access groups, one finding each."""
+    data = model()
+    base = data["threats"].pop()
+    data["actors"] = [{**a, "label": a["id"], "access": ["internet"], "active": True} for a in _GROUP_ACTORS.values()]
+    data["meta"] = {"open_user_registration": open_registration}
+    findings = []
+    for index, group in enumerate(groups, 1):
+        fid = f"T-{index:03d}"
+        actor_id = _GROUP_ACTORS[group]["id"]
+        data["threats"].append({**base, "id": fid, "actor_ids": [actor_id], "primary_actor": actor_id})
+        findings.append(fid)
+    ap = {"attack_paths": [{**paths()["attack_paths"][0], "actor": actor, "target": target, "findings": findings}]}
+    return data, ap
+
+
+def _legend_attackers(data, ap):
+    import compose_threat_model as composer
+
+    legend = composer._build_security_posture_actor_legend(ap, TAXONOMY, data.get("meta"), data)
+    return {line.split("**")[1] for line in legend.splitlines() if line.startswith("- **") and " drives " in line}
+
+
+@pytest.mark.parametrize(
+    ("groups", "open_registration", "target", "expected"),
+    [
+        (["internet-anon"], False, "application", [("internet-anon", "F-001")]),
+        (["internet-anon", "build-time"], False, "application", [("internet-anon", "F-001"), ("build-time", "F-002")]),
+        (
+            ["internet-user", "internet-anon"],
+            False,
+            "application",
+            [("internet-user", "F-001"), ("internet-anon", "F-002")],
+        ),
+        # Open registration folds the regular account into the anonymous attacker: one row, not two.
+        (["internet-user", "internet-anon"], True, "application", [("internet-anon", "F-001")]),
+        (["internet-anon"], False, "client", [("internet-anon", "F-001")]),
+    ],
+)
+def test_each_actor_group_of_a_path_gets_its_own_row_and_example(groups, open_registration, target, expected):
+    data, ap = _grouped(groups, open_registration, target=target)
+    rows = figure2.build_figure2_data(data, ap, TAXONOMY, IMPACTS)["routes"]
+    assert [(r["actor_slug"], r["finding_id"]) for r in rows] == expected
+    assert all(r["number"] == 1 for r in rows)
+    # Each row lists only its own group's findings; a folded group keeps the union.
+    assert sorted(fid for r in rows for fid in r["finding_ids"]) == [f"F-{i:03d}" for i in range(1, len(groups) + 1)]
+    svg = figure2.build_figure2_svg({"schema_version": 2, "routes": rows})
+    assert not figure2.check_figure2_svg(svg)
+    cards = [g.get("data-actor-card") for g in ET.fromstring(svg).iter(f"{{{SVG}}}g") if g.get("data-actor-card")]
+    assert len(cards) == len(set(cards)) == len({slug for slug, _ in expected})
+
+
+@pytest.mark.parametrize(
+    "groups",
+    [["internet-anon"], ["internet-anon", "build-time"], ["internet-user", "internet-anon"], ["build-time"]],
+)
+@pytest.mark.parametrize("open_registration", [False, True])
+def test_figure2_draws_every_attacker_the_legend_names(groups, open_registration):
+    import compose_threat_model as composer
+
+    data, ap = _grouped(groups, open_registration)
+    labels = (composer._load_posture_actor_labels() or {}).get("actors") or {}
+    rows = figure2.build_figure2_data(data, ap, TAXONOMY, IMPACTS, labels)["routes"]
+    assert {r["actor"] for r in rows if not r["victim"]} == _legend_attackers(data, ap)
