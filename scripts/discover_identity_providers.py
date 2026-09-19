@@ -11,7 +11,9 @@ the integration performs (``integration_authentication``): the provider
 authenticates the user at a sign-in step, checks the access token of a profile
 request, and authenticates the client at a token request only as its call or
 configuration proves. Only an unknown scheme is filled (FE-14); an authored
-`none` on a sign-in or profile step is a self-check error instead.
+`none` on a sign-in or profile step is a self-check error instead. A client
+configured with its ID and secret whose library hides the token endpoint gains
+the token request to its sign-in provider (``reconcile_confidential_clients``).
 """
 
 from __future__ import annotations
@@ -136,7 +138,7 @@ def _client_authentication(window: str) -> dict | None:
     if re.search(r"tls[-_]client[-_]auth", window, re.I):
         return {"scheme": "mtls", "scope": "The client authenticates with its TLS client certificate"}
     if re.search(r"client[-_]?secret", window, re.I):
-        return {"scheme": "other", "scope": "The client presents its OAuth client ID and client secret"}
+        return {"scheme": "client-secret", "scope": "The client presents its OAuth client ID and client secret"}
     if re.search(r"code[-_]?verifier", window, re.I):
         return {
             "scheme": "oauth2",
@@ -394,10 +396,10 @@ def _config_integrations(text: str, rel: str) -> list[Integration]:
     return result
 
 
-def discover(repo_root: Path) -> list[Integration]:
-    """Find bounded, source-backed client integrations without fetching URLs."""
+def _runtime_files(repo_root: Path):
+    """Runtime source and configuration files within the discovery budget, as (rel, suffix, text)."""
     root = repo_root.resolve()
-    total, count, result = 0, 0, []
+    total, count = 0, 0
     for path in _walk_repo(root):
         rel = path.relative_to(root).as_posix()
         if path.suffix not in _SOURCE_EXT | _CONFIG_EXT or _NON_RUNTIME.search(rel):
@@ -410,13 +412,110 @@ def discover(repo_root: Path) -> list[Integration]:
         total, count = total + size, count + 1
         if total > MAX_BYTES or count > MAX_FILES:
             raise ValueError("identity-provider discovery exceeded its source budget")
-        text = path.read_text(encoding="utf-8", errors="replace")
+        yield rel, path.suffix, path.read_text(encoding="utf-8", errors="replace")
+
+
+def discover(repo_root: Path) -> list[Integration]:
+    """Find bounded, source-backed client integrations without fetching URLs."""
+    result = []
+    for rel, suffix, text in _runtime_files(repo_root):
         if "http" not in text:
             continue
-        result.extend(
-            _config_integrations(text, rel) if path.suffix in _CONFIG_EXT else _source_integrations(text, rel)
-        )
+        result.extend(_config_integrations(text, rel) if suffix in _CONFIG_EXT else _source_integrations(text, rel))
     return sorted(set(result), key=lambda c: (c.file, c.line, c.authority, c.role))
+
+
+@dataclass(frozen=True)
+class ConfidentialClient:
+    """An OAuth/OIDC client configured with its ID and secret; its library performs the token request."""
+
+    file: str
+    line: int
+    window: str = field(default="", compare=False)
+
+
+_CLIENT_ID = re.compile(r"client[-_]?id", re.I)
+_CLIENT_SECRET = re.compile(r"client[-_]?secret", re.I)
+# Constructors whose name alone does not say OAuth (`Strategy`, `register`) need protocol context.
+_OAUTH_CONSTRUCTOR = re.compile(r"OAuth|OpenIDConnect|ClientApplication|Saml", re.I)
+_OAUTH_CALL_CONTEXT = re.compile(r"oauth|oidc|openid|callback[-_]?ur[il]|redirect[-_]?ur[il]|authoriz", re.I)
+
+
+def _source_confidential_clients(text: str, rel: str) -> list[ConfidentialClient]:
+    masked = _masked(text)
+    result = []
+    for call in _CLIENT.finditer(masked):
+        depth, end = 1, call.end()
+        while end < min(len(masked), call.end() + 4096) and depth:
+            depth += (masked[end] == "(") - (masked[end] == ")")
+            end += 1
+        window = text[call.start() : end]
+        if depth or not (_CLIENT_ID.search(window) and _CLIENT_SECRET.search(window)):
+            continue
+        if not (_OAUTH_CONSTRUCTOR.search(call.group()) or _OAUTH_CALL_CONTEXT.search(window)):
+            continue
+        result.append(ConfidentialClient(rel, text.count("\n", 0, call.start()) + 1, window))
+    return result
+
+
+def _config_confidential_clients(text: str, rel: str) -> list[ConfidentialClient]:
+    """A client-secret key under an OAuth/OIDC configuration path; its value is never read out."""
+    if rel.endswith(".properties"):
+        text = re.sub(r"(?m)^\s*[#!].*$", "", text)
+        return [
+            ConfidentialClient(rel, number, line)
+            for number, line in enumerate(text.splitlines(), 1)
+            if (match := re.match(r"\s*([\w.-]+)\s*[=:]\s*\S", line))
+            and _CLIENT_SECRET.search(match[1].split(".")[-1])
+            and _CONFIG_CONTEXT.search(match[1])
+        ]
+    try:
+        if any(isinstance(event, yaml.AliasEvent) for event in yaml.parse(text)):
+            return []
+        root = yaml.compose(text)
+    except (yaml.YAMLError, RecursionError):
+        return []
+    result = []
+
+    def walk(node, path=(), depth=0):
+        if depth > 40:
+            return
+        if isinstance(node, yaml.MappingNode):
+            # A client ID beside the secret identifies an OAuth client registration as well.
+            sibling_id = any(isinstance(k, yaml.ScalarNode) and _CLIENT_ID.search(k.value) for k, _v in node.value)
+            for key, value in node.value:
+                if not isinstance(key, yaml.ScalarNode):
+                    continue
+                context = ".".join((*path, key.value))
+                if (
+                    _CLIENT_SECRET.search(key.value.split(".")[-1])
+                    and (_CONFIG_CONTEXT.search(context) or sibling_id)
+                    and isinstance(value, yaml.ScalarNode)
+                    and value.value.strip()
+                ):
+                    block = text[node.start_mark.index : node.end_mark.index]
+                    result.append(ConfidentialClient(rel, key.start_mark.line + 1, block))
+                walk(value, (*path, key.value), depth + 1)
+        elif isinstance(node, yaml.SequenceNode):
+            for value in node.value:
+                walk(value, path, depth + 1)
+
+    walk(root)
+    return result
+
+
+def discover_confidential_clients(repo_root: Path) -> list[ConfidentialClient]:
+    """OAuth/OIDC clients configured with an ID and secret, found without fetching anything."""
+    result = []
+    for rel, suffix, text in _runtime_files(repo_root):
+        if not _CLIENT_SECRET.search(text):
+            continue
+        result.extend(
+            _config_confidential_clients(text, rel)
+            if suffix in _CONFIG_EXT
+            else _source_confidential_clients(text, rel)
+        )
+    return sorted(set(result), key=lambda c: (c.file, c.line))
 
 
 def _masked(text: str) -> str:
@@ -665,12 +764,75 @@ def reconcile_sign_in_results(flows: list[dict], entities: list[dict]) -> list[s
     return changed
 
 
+def reconcile_confidential_clients(
+    repo_root: Path, components: list[dict], flows: list[dict], entities: list[dict]
+) -> list[str]:
+    """Draw the token request a library performs for a client configured with its ID and secret.
+
+    The request goes to the provider the component, or else the system, signs
+    users in at (`_sign_in_provider`); without one provider, or when the
+    component already models a token request to it, nothing is added. The
+    client authentication is what the configuration shows, the protocol and
+    group those of the sign-in.
+    """
+    added = []
+    for client in discover_confidential_clients(repo_root):
+        try:
+            owner = _owner(client.file, components)
+        except ValueError:
+            continue
+        provider = _sign_in_provider(owner, flows, entities)
+        auth = _client_authentication(client.window)
+        if provider is None or auth is None:
+            continue
+        # A token request the component already draws, for instance from a token
+        # URL in the same call, represents the client; a sign-in flow does not.
+        if any(
+            f.get("from") == owner
+            and f.get("to") == "external"
+            and (
+                str(f.get("label") or "").removeprefix("Configured ") == "OAuth token exchange"
+                or (f.get("authentication") or {}).get("scheme") in {"client-secret", "private-key", "mtls"}
+            )
+            for f in flows
+        ):
+            continue
+        sign_ins = [f for f in _sign_in_flows(flows, entities) if f["to_entity"] == provider["id"]]
+        protocol = next((f.get("protocol") for f in sign_ins if f.get("protocol")), "HTTPS")
+        groups = {f.get("protocol_group") for f in sign_ins if f.get("protocol_group")}
+        evidence = [{"file": client.file, "line": client.line}]
+        if transport := _TRANSPORT.get(protocol):
+            auth["transport"] = transport
+        flow_id = f"df-{max((int(f['id'][3:]) for f in flows), default=0) + 1:03d}"
+        flows.append(
+            {
+                "id": flow_id,
+                "from": owner,
+                "to": "external",
+                "to_entity": provider["id"],
+                "label": "OAuth token exchange",
+                "protocol": protocol,
+                "data_classification": "Confidential",
+                "direction": "request-response",
+                "evidence": evidence,
+                "authentication": {**auth, "evidence": evidence},
+                **({"protocol_group": groups.pop()} if len(groups) == 1 else {}),
+                "provenance": "recon",
+            }
+        )
+        added.append(flow_id)
+    return added
+
+
 def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
     """Fill omitted providers/flows before boundary assessment; retain authored topology."""
     result = copy.deepcopy(document)
     integrations = discover(repo_root)
     if not integrations:
-        reconcile_sign_in_results(result.get("data_flows") or [], result.get("external_entities") or [])
+        flows, entities = result.get("data_flows") or [], result.get("external_entities") or []
+        reconcile_sign_in_results(flows, entities)
+        if flows and entities:
+            reconcile_confidential_clients(repo_root, components, flows, entities)
         return result
     entities = result.setdefault("external_entities", [])
     flows = result.setdefault("data_flows", [])
@@ -802,4 +964,5 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
         )
         next_flow += 1
     reconcile_sign_in_results(flows, entities)
+    reconcile_confidential_clients(repo_root, components, flows, entities)
     return result

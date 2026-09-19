@@ -578,7 +578,7 @@ properties:
           "type": "object", "additionalProperties": false,
           "required": ["scheme","scope","evidence"],
           "properties": {
-            "scheme": {"type":"string","enum":["unknown","none","password","basic","bearer","cookie","api-key","oauth2","oidc","saml","mtls","private-key","mfa","other"]},
+            "scheme": {"type":"string","enum":["unknown","none","password","basic","bearer","cookie","api-key","oauth2","oidc","saml","mtls","private-key","client-secret","mfa","other"]},
             "scope": {"type":"string","minLength":1,"maxLength":240,"pattern":"^[^\\r\\n\\t]+$"},
             "transport": {"type":"string","enum":["protected","cleartext","unknown"]},
             "flow": {"type":"string","enum":["implicit","authorization-code","authorization-code-pkce","client-credentials","device-code"]},

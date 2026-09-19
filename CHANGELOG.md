@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Findings a regular or anonymous user can exploit no longer add the privileged user as a separate attacker, and scanner findings keep their internet attacker once their component is resolved.
 - Figure 1 shows the administrator role again when actor discovery cites its access check by file name only, and warns in Run Issues when no cited location resolves.
 - Figure 2 states whether an account is needed for anonymous and regular-account attack routes instead of pointing to the finding.
+- Figure 1 labels an OAuth token request authenticated with a client secret as "Client ID + secret" and also draws that request when an OAuth library performs it for a client configured with ID and secret.
 - Figure 1 draws an identity provider's sign-in, redirect back and profile API as one provider with consistent authentication instead of "no authentication" on the redirect and a separate third party for the profile request.
 - The build pipeline zone in Figure 1 reads "CI/CD and release tooling" instead of internal zone identifiers.
 - Abuse-case IDs such as AC-T-002 are no longer linked as findings.

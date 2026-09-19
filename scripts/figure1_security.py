@@ -21,6 +21,7 @@ SCHEMES = {
         "Private-key authentication",
         "The caller proves key possession; a key name alone is insufficient.",
     ),
+    "client-secret": ("Client ID + secret", "The client presents its registered ID and shared secret."),
     "mfa": ("Multiple factors", "Independent factors are checked for this access."),
     "other": ("Other authentication", "See the access-specific evidence and scope."),
 }

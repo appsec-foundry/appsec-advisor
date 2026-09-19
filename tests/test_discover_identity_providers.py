@@ -537,7 +537,7 @@ def test_controller_does_not_publish_invalid_enrichment(tmp_path, monkeypatch):
         (  # token request: client secret, private_key_jwt, PKCE-only public client
             "src/token.py",
             'requests.post("https://id.example/oauth/token", data={"client_secret": secret, "code": code})',
-            {"scheme": "other", "transport": "protected"},
+            {"scheme": "client-secret", "transport": "protected"},
         ),
         (
             "src/token.py",
@@ -739,3 +739,119 @@ def test_the_redirect_back_keeps_an_authored_scheme_and_needs_a_matching_sign_in
     other_group = _sign_in_doc(back={})
     other_group["data_flows"][-1]["protocol_group"] = "unrelated"
     assert "authentication" not in discovery.reconcile(tmp_path, _components(), other_group)["data_flows"][-1]
+
+
+def _two_tier():
+    return [
+        {
+            "id": "client",
+            "name": "Web client",
+            "tier": "client",
+            "paths": ["web/**"],
+            "deployment_zones": ["client-device"],
+        },
+        {
+            "id": "server",
+            "name": "Backend",
+            "tier": "application",
+            "paths": ["srv/**", "config/**"],
+            "deployment_zones": ["dmz"],
+        },
+    ]
+
+
+def _with_sign_in(doc=None):
+    doc = doc or _sign_in_doc()
+    for flow in doc["data_flows"]:
+        flow["evidence"] = flow["authentication"]["evidence"] = [{"file": "web/login.ts", "line": 1}]
+    for entity in doc["external_entities"]:
+        entity["evidence"] = [{"file": "web/login.ts", "line": 1}]
+    return doc
+
+
+_CONFIDENTIAL_CLIENTS = {
+    "passport": (
+        "srv/auth.ts",
+        "passport.use(new GoogleStrategy({\n  clientID: process.env.GOOGLE_ID,\n"
+        "  clientSecret: process.env.GOOGLE_SECRET,\n  callbackURL: '/auth/callback',\n}, verify));\n",
+        1,
+    ),
+    "authlib": (
+        "srv/app.py",
+        "oauth.register(\n    name='staff',\n    client_id=CONFIG['id'],\n    client_secret=CONFIG['secret'],\n"
+        "    client_kwargs={'scope': 'openid email'},\n)\n",
+        1,
+    ),
+    "spring-yaml": (
+        "config/application.yml",
+        "spring:\n  security:\n    oauth2:\n      client:\n        registration:\n          staff:\n"
+        "            client-id: portal\n            client-secret: ${STAFF_SECRET}\n",
+        8,
+    ),
+    "properties": (
+        "config/application.properties",
+        "spring.security.oauth2.client.registration.staff.client-id=portal\n"
+        "spring.security.oauth2.client.registration.staff.client-secret=${STAFF_SECRET}\n",
+        2,
+    ),
+    "json-sibling": (
+        "config/auth.json",
+        '{"google": {"clientID": "abc", "clientSecret": "from-vault", "callback": "/cb"}}',
+        1,
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_CONFIDENTIAL_CLIENTS))
+def test_a_library_token_request_shows_the_client_secret_it_is_configured_with(tmp_path, shape):
+    rel, source, line = _CONFIDENTIAL_CLIENTS[shape]
+    _write(tmp_path, rel, source)
+    _write(tmp_path, "web/login.ts", "export {}\n")
+    result = discovery.reconcile(tmp_path, _two_tier(), _with_sign_in())
+    token = [f for f in result["data_flows"] if f["label"] == "OAuth token exchange"]
+    assert len(token) == 1
+    assert (token[0]["from"], token[0]["to_entity"], token[0]["protocol_group"]) == (
+        "server",
+        "ext-accounts",
+        "social-login",
+    )
+    auth = token[0]["authentication"]
+    assert (auth["scheme"], auth["transport"], auth["evidence"]) == (
+        "client-secret",
+        "protected",
+        [{"file": rel, "line": line}],
+    )
+    assert "secret" not in json.dumps(token[0]["evidence"]).lower().replace(rel.lower(), "")
+    schema = json.loads((Path(__file__).parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
+    jsonschema.validate(result, schema)
+    assert discovery.reconcile(tmp_path, _two_tier(), result) == result
+
+
+@pytest.mark.parametrize(
+    "variant", ["no-provider", "two-providers", "public-client", "token-url-already-drawn", "no-oauth-context"]
+)
+def test_no_token_request_is_invented_without_a_provider_or_secret(tmp_path, variant):
+    rel, source, _line = _CONFIDENTIAL_CLIENTS["passport"]
+    doc = _with_sign_in()
+    if variant == "no-provider":
+        doc = {**_flows(), "external_entities": [], "data_flows": []}
+    elif variant == "two-providers":
+        doc = _with_sign_in(_sign_in_doc(("ext-accounts", "ext-staff")))
+    elif variant == "public-client":
+        source = source.replace("  clientSecret: process.env.GOOGLE_SECRET,\n", "")
+    elif variant == "token-url-already-drawn":
+        source = (
+            "const client = new OAuth2({clientId: ID, clientSecret: SECRET, "
+            "tokenUrl: 'https://tokens.example/oauth/token'});\nclient.post('https://tokens.example/oauth/token');\n"
+        )
+    else:
+        source = "app.register(cache, {clientId: 'x', clientSecret: 'y'});\n"
+    _write(tmp_path, rel, source)
+    _write(tmp_path, "web/login.ts", "export {}\n")
+    result = discovery.reconcile(tmp_path, _two_tier(), doc)
+    token = [f for f in result["data_flows"] if "token exchange" in f["label"]]
+    if variant == "token-url-already-drawn":
+        # Only the URL-derived requests remain; none is added towards the sign-in provider.
+        assert token and all(f["to_entity"] != "ext-accounts" for f in token)
+    else:
+        assert token == []
