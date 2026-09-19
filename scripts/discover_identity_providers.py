@@ -581,18 +581,104 @@ def _authored_callers(integration: Integration, owner: str, flows: list[dict], r
     return covering
 
 
+_SIGN_IN_SCHEMES = frozenset({"oauth2", "oidc", "saml"})
+
+
+def _sign_in_flows(flows: list[dict], entities: list[dict]) -> list[dict]:
+    """Flows in which a component sends the user to an identity provider to sign in."""
+    providers = {e["id"] for e in entities if e.get("kind") == "identity-provider"}
+    return [
+        f
+        for f in flows
+        if f.get("to") == "external"
+        and f.get("to_entity") in providers
+        and not f.get("interaction")
+        and (f.get("authentication") or {}).get("scheme") in _SIGN_IN_SCHEMES
+    ]
+
+
+def _sign_in_provider(owner: str, flows: list[dict], entities: list[dict]) -> dict | None:
+    """The one identity provider this component, or else the whole system, signs users in at.
+
+    A profile request presents the access token that provider issued, so it
+    calls that provider's API rather than an unrelated third party. Several
+    candidate providers stay ambiguous and keep their own entities.
+    """
+    sign_ins = _sign_in_flows(flows, entities)
+    for candidates in (
+        {f["to_entity"] for f in sign_ins if f.get("from") == owner},
+        {f["to_entity"] for f in sign_ins},
+    ):
+        if len(candidates) == 1:
+            provider = candidates.pop()
+            return next(e for e in entities if e["id"] == provider)
+    return None
+
+
+def reconcile_sign_in_results(flows: list[dict], entities: list[dict]) -> list[str]:
+    """Give the provider's redirect back to the client the sign-in step's protocol.
+
+    The authorization response (or SAML assertion post) completes the sign-in:
+    the provider has authenticated the user and delivers the result to the
+    client's registered redirect URI. `none` or `unknown` there contradicts the
+    sign-in step drawn beside it, so the step takes the sign-in's scheme and
+    grant with its own evidence. Any other authored scheme stays (FE-15).
+    """
+    changed = []
+    sign_ins = _sign_in_flows(flows, entities)
+    for flow in flows:
+        auth = flow.get("authentication") or {}
+        if (
+            flow.get("from") != "external"
+            or flow.get("interaction")
+            or auth.get("scheme", "unknown")
+            not in {
+                "none",
+                "unknown",
+            }
+        ):
+            continue
+        matches = [
+            s
+            for s in sign_ins
+            if s.get("to_entity") == flow.get("from_entity")
+            and s.get("from") == flow.get("to")
+            and (s.get("protocol_group") or None) == (flow.get("protocol_group") or None)
+        ]
+        schemes = {
+            ((s.get("authentication") or {}).get("scheme"), (s.get("authentication") or {}).get("flow"))
+            for s in matches
+        }
+        if len(schemes) != 1:
+            continue
+        scheme, grant = schemes.pop()
+        sign_in = matches[0]["authentication"]
+        evidence = flow.get("evidence") or auth.get("evidence") or sign_in.get("evidence") or []
+        flow["authentication"] = {
+            "scheme": scheme,
+            **({"flow": grant} if grant else {}),
+            "scope": "Completes the sign-in: the provider returns its result to the client's registered redirect URI",
+            **({"transport": sign_in["transport"]} if sign_in.get("transport") else {}),
+            "evidence": evidence,
+        }
+        changed.append(flow["id"])
+    return changed
+
+
 def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
     """Fill omitted providers/flows before boundary assessment; retain authored topology."""
     result = copy.deepcopy(document)
     integrations = discover(repo_root)
     if not integrations:
+        reconcile_sign_in_results(result.get("data_flows") or [], result.get("external_entities") or [])
         return result
     entities = result.setdefault("external_entities", [])
     flows = result.setdefault("data_flows", [])
     next_flow = max((int(f["id"][3:]) for f in flows), default=0) + 1
     root = repo_root.resolve()
     masked: dict[str, str] = {}
-    for integration in integrations:
+    # Sign-in providers first, so a profile request can join the provider it calls.
+    for integration in sorted(integrations, key=lambda i: i.role == "OAuth profile request"):
         owner = _owner(integration.file, components, browser=integration.browser)
         evidence = [
             {"file": integration.file, "line": line} for line in sorted({integration.line, integration.use_line})
@@ -637,6 +723,13 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
         matching = [
             e for e in entities if e["id"] == entity_id or (e.get("kind") == "identity-provider" and represents(e))
         ]
+        profile = integration.role == "OAuth profile request"
+        provider = _sign_in_provider(owner, flows, entities) if profile and not matching else None
+        if provider is not None:
+            roles = provider.setdefault("service_roles", [])
+            if not any(r.get("role") == "oauth-resource-server" for r in roles):
+                roles.append({"role": "oauth-resource-server", "evidence": evidence})
+            matching = [provider]
         if len(matching) > 1:
             raise ValueError(f"ambiguous identity-provider representation at {integration.file}:{integration.line}")
         if matching:
@@ -651,7 +744,6 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
                 matching[0]["kind"] = "identity-provider"
                 matching[0]["name"] = f"Identity provider · {integration.host}"[:80]
         else:
-            profile = integration.role == "OAuth profile request"
             entities.append(
                 {
                     "id": entity_id,
@@ -683,6 +775,11 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
             _fill_authentication(generic[0], integration, evidence)
             continue
         authentication = integration_authentication(integration, evidence)
+        groups = {
+            f.get("protocol_group")
+            for f in _sign_in_flows(flows, entities)
+            if f.get("to_entity") == entity_id and f.get("from") == owner and f.get("protocol_group")
+        }
         flows.append(
             {
                 "id": f"df-{next_flow:03d}",
@@ -699,8 +796,10 @@ def reconcile(repo_root: Path, components: list[dict], document: dict) -> dict:
                 else "request-response",
                 "evidence": evidence,
                 **({"authentication": authentication} if authentication else {}),
+                **({"protocol_group": groups.pop()} if len(groups) == 1 else {}),
                 "provenance": "recon",
             }
         )
         next_flow += 1
+    reconcile_sign_in_results(flows, entities)
     return result

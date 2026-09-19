@@ -640,3 +640,102 @@ def test_identity_provider_pill_names_the_idp_and_machine_servers_keep_the_proto
     idp = figure1_dfd._capability_rows(role, vocabulary, "role", "Staff sign-in", label_key="identity_provider_label")
     m2m = figure1_dfd._capability_rows(role, vocabulary, "role", "Token service")
     assert idp[0]["label"] == "IdP · OAuth 2.0" and m2m[0]["label"] == "OAuth authorization server"
+
+
+def _sign_in_doc(providers=("ext-accounts",), group="social-login", back=None):
+    doc = _flows()
+    doc["external_entities"] = _entities(*providers)
+    doc["data_flows"] = [
+        {
+            "id": f"df-00{index}",
+            "from": "client",
+            "to": "external",
+            "to_entity": provider,
+            "label": "Sign-in redirect",
+            "protocol": "HTTPS",
+            "data_classification": "Confidential",
+            "direction": "request-response",
+            "protocol_group": group,
+            "provenance": "architecture",
+            "evidence": [{"file": "src/pages/other.ts", "line": 1}],
+            "authentication": {
+                "scheme": "oauth2",
+                "flow": "implicit",
+                "scope": "The provider authenticates the user",
+                "transport": "protected",
+                "evidence": [{"file": "src/pages/other.ts", "line": 1}],
+            },
+        }
+        for index, provider in enumerate(providers, 1)
+    ]
+    if back is not None:
+        doc["data_flows"].append(
+            {
+                "id": "df-009",
+                "from": "external",
+                "from_entity": providers[0],
+                "to": "client",
+                "label": "Token delivery to the callback route",
+                "protocol": "HTTPS",
+                "data_classification": "Confidential",
+                "direction": "request-response",
+                "protocol_group": group,
+                "provenance": "architecture",
+                "evidence": [{"file": "src/pages/other.ts", "line": 1}],
+                **({"authentication": back} if back else {}),
+            }
+        )
+    return doc
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'requests.get("https://api.example/oauth2/v1/userinfo")\n',
+        'fetch("https://profile.example/oidc/userinfo?alt=json")\n',
+    ],
+)
+def test_profile_request_calls_the_provider_the_user_signed_in_at(tmp_path, source):
+    _write(tmp_path, "src/profile.ts", source)
+    _write(tmp_path, "src/pages/other.ts", "export {}\n")
+    result = discovery.reconcile(tmp_path, _components(), _sign_in_doc())
+    assert [e["id"] for e in result["external_entities"]] == ["ext-accounts"]
+    profile = next(f for f in result["data_flows"] if f["label"] == "OAuth profile request")
+    assert profile["to_entity"] == "ext-accounts" and profile["protocol_group"] == "social-login"
+    assert profile["authentication"]["scheme"] == "bearer"
+    roles = [r["role"] for r in result["external_entities"][0]["service_roles"]]
+    assert roles == ["oauth-resource-server"]
+
+
+def test_profile_request_keeps_its_own_party_when_several_providers_sign_users_in(tmp_path):
+    _write(tmp_path, "src/profile.ts", 'requests.get("https://api.example/oauth2/v1/userinfo")\n')
+    _write(tmp_path, "src/pages/other.ts", "export {}\n")
+    result = discovery.reconcile(tmp_path, _components(), _sign_in_doc(("ext-accounts", "ext-staff")))
+    profile = next(f for f in result["data_flows"] if f["label"] == "OAuth profile request")
+    assert profile["to_entity"].startswith("ext-idp-") and "protocol_group" not in profile
+
+
+@pytest.mark.parametrize(
+    "back",
+    [
+        {},
+        {"scheme": "none", "scope": "Redirect response", "evidence": [{"file": "src/pages/other.ts", "line": 1}]},
+        {"scheme": "unknown", "scope": "not determined", "evidence": [{"file": "src/pages/other.ts", "line": 1}]},
+    ],
+)
+def test_the_redirect_back_completes_the_sign_in_and_carries_its_protocol(tmp_path, back):
+    result = discovery.reconcile(tmp_path, _components(), _sign_in_doc(back=back))
+    auth = result["data_flows"][-1]["authentication"]
+    assert (auth["scheme"], auth["flow"], auth["transport"]) == ("oauth2", "implicit", "protected")
+    assert auth["evidence"] == [{"file": "src/pages/other.ts", "line": 1}]
+    schema = json.loads((Path(__file__).parents[1] / "schemas/fragments/data-flows.schema.json").read_text())
+    jsonschema.validate(result, schema)
+
+
+def test_the_redirect_back_keeps_an_authored_scheme_and_needs_a_matching_sign_in(tmp_path):
+    authored = {"scheme": "cookie", "scope": "authored", "evidence": [{"file": "src/pages/other.ts", "line": 1}]}
+    kept = discovery.reconcile(tmp_path, _components(), _sign_in_doc(back=authored))
+    assert kept["data_flows"][-1]["authentication"]["scheme"] == "cookie"
+    other_group = _sign_in_doc(back={})
+    other_group["data_flows"][-1]["protocol_group"] = "unrelated"
+    assert "authentication" not in discovery.reconcile(tmp_path, _components(), other_group)["data_flows"][-1]

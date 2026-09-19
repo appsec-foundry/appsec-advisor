@@ -102,6 +102,7 @@ service_roles:
     tier: 1
   oauth-resource-server:
     label: OAuth resource server
+    identity_provider_label: Profile API
     tier: 2
   oidc-provider:
     label: OIDC provider
