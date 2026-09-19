@@ -87,7 +87,8 @@ ZONE_SUBTITLE = {
 }
 SEV_COL = {"Critical": RED, "High": ORANGE, "Medium": YELLOW}
 SEV_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
-_PILL_FINDING_BORDER = {SEV_RANK[sev]: col for sev, col in SEV_COL.items()}
+_PILL_FINDING_DOT = {SEV_RANK[sev]: col for sev, col in SEV_COL.items()}
+PILL_DOT = 8  # room for the severity dot inside a pill with a linked finding
 _FALLBACK_ACTOR = {
     "internet-anon": "Anonymous Internet Attacker",
     "internet-user": "Authenticated Internet Attacker",
@@ -391,10 +392,14 @@ def _finding_capabilities(threats, vocabulary, component_ids=None):
     return {component: list(items.values()) for component, items in derived.items()}
 
 
+def _pill_width(cap):
+    return _tw(cap["label"], PILL_SIZE) + 12 + (PILL_DOT if cap.get("severity") in _PILL_FINDING_DOT else 0)
+
+
 def _pill_rows(capabilities, width):
     rows, used = [], width
     for cap in capabilities:
-        w = _tw(cap["label"], PILL_SIZE) + 12
+        w = _pill_width(cap)
         if not rows or used + PILL_GAP + w > width:
             rows.append([])
             used = -PILL_GAP
@@ -414,7 +419,7 @@ def _capability_title(cap):
 
 
 def _capability_pills(c, x, y, node, width):
-    """Draw labels; a linked finding colours only the border, evidence stays available on hover."""
+    """Draw labels; a linked finding adds a severity dot, evidence stays available on hover."""
     for r, row in enumerate(_pill_rows(node.get("capabilities") or [], width)):
         px = x
         for cap, w in row:
@@ -429,11 +434,14 @@ def _capability_pills(c, x, y, node, width):
                 c.rect(px, py, w, PILL_H, fill="#ffffff", stroke="#b6c6d8", sw=0.7, rx=3, dash="2 2")
                 c.text(px + w / 2, py + 9.5, cap["label"], size=PILL_SIZE, fill=MUTED, track=track)
             else:
-                linked = _PILL_FINDING_BORDER.get(cap.get("severity"))
+                linked = _PILL_FINDING_DOT.get(cap.get("severity"))
                 c.add(f'<g data-capability="{_esc(cap["id"])}" data-capability-owner="{_esc(node["id"])}">')
                 c.add(f"<title>{_esc(_capability_title(cap))}</title>")
-                c.rect(px, py, w, PILL_H, fill="#eef3f8", stroke=linked or "#b6c6d8", sw=1.2 if linked else 0.7, rx=3)
-                c.text(px + w / 2, py + 9.5, cap["label"], size=PILL_SIZE, fill=NAVY, track=track)
+                c.rect(px, py, w, PILL_H, fill="#eef3f8", stroke="#b6c6d8", sw=0.7, rx=3)
+                if linked:
+                    c.circle(px + 7, py + PILL_H / 2, 2.8, fill=linked)
+                label_x = px + (w + (PILL_DOT if linked else 0)) / 2
+                c.text(label_x, py + 9.5, cap["label"], size=PILL_SIZE, fill=NAVY, track=track)
             c.add("</g>")
             px += w + PILL_GAP
     return _pill_height(node.get("capabilities") or [], width)
@@ -556,6 +564,65 @@ class _Canvas:
 def _badge(c, cx, cy, n, col=RED, r=8):
     c.circle(cx, cy, r, fill=col, stroke="#ffffff", sw=1.5)
     c.text(cx, cy + 3.5, n, size=9.5, fill="#ffffff", weight="bold")
+
+
+def _attackers(nodes):
+    return {n["name"]: n for n in nodes.values() if n.get("attacker")}
+
+
+def _badge_groups(badges, attackers):
+    """(code, colour, numbers) per attacker; the code is None while only one attacker is drawn.
+
+    A path number is shared across attackers, so with several attackers the
+    code is what tells which of them reaches the element.
+    """
+    groups = {}
+    for n, actor in badges:
+        groups.setdefault(actor, []).append(n)
+    tagged = len(attackers) > 1
+    out = []
+    for actor in sorted(groups, key=lambda a: (a not in attackers, attackers.get(a, {}).get("order", 0))):
+        node = attackers.get(actor) or {}
+        code = node.get("actor_code") if tagged else None
+        out.append((code, node.get("color", RED), sorted(groups[actor], key=int)))
+    return out
+
+
+def _badge_tokens(badges, attackers, step, tag_size):
+    tokens = []
+    for code, col, numbers in _badge_groups(badges, attackers):
+        if code:
+            tokens.append(("tag", code, col, _tw(code, tag_size) + 6))
+        tokens += [("badge", n, col, step) for n in numbers]
+    return tokens
+
+
+def _scenario_list(badges, attackers):
+    """Text form of a badge row: `1, 5` or, with several attackers, `A1 1, 5 · A2 5`."""
+    return " · ".join(
+        " ".join(filter(None, [code, ", ".join(numbers)])) for code, _, numbers in _badge_groups(badges, attackers)
+    )
+
+
+def _badge_row_rects(right, cy, badges, attackers, r=8, step=19, tag_size=9):
+    tokens = _badge_tokens(badges, attackers, step, tag_size)
+    x = right - sum(t[3] for t in tokens)
+    rects = []
+    for token in tokens:
+        rects.append((x, cy - r - 1, x + token[3], cy + r + 1, token))
+        x += token[3]
+    return rects
+
+
+def _badge_row(c, right, cy, badges, attackers, r=8, step=19, tag_size=9):
+    """Draw a right-aligned scenario badge row and return its occupied rectangles."""
+    rects = _badge_row_rects(right, cy, badges, attackers, r, step, tag_size)
+    for x0, _, x1, _, (kind, label, col, _) in rects:
+        if kind == "tag":
+            c.text((x0 + x1) / 2, cy + 3.2, label, size=tag_size, fill=col, weight="bold", halo=True)
+        else:
+            _badge(c, (x0 + x1) / 2, cy, label, col=col, r=r)
+    return [rect[:4] for rect in rects]
 
 
 def _sev_chips(c, x, y, counts):
@@ -1120,9 +1187,11 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
     for s in scenarios:
         cids = s.get("cids") or [by_cnum.get(cn) for cn in s.get("cnums") or []]
         for cid in cids:
-            # Several attributed access groups can share one scenario number.
-            if cid in nodes and s["n"] not in nodes[cid]["badges"]:
-                nodes[cid]["badges"].append(s["n"])
+            # Several attributed access groups can share one scenario number;
+            # each keeps its own badge so the attacker stays identifiable.
+            badge = (s["n"], s.get("actor"))
+            if cid in nodes and badge not in nodes[cid]["badges"]:
+                nodes[cid]["badges"].append(badge)
     # Prefer evidenced storage locations. Without storage evidence, show known
     # processing or transmission instead, labelled as such rather than as storage.
     asset_risk = {t.get("id"): SEV_RANK.get(register_severity(t), 3) for t in d.get("threats") or []}
@@ -1147,7 +1216,11 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
                             CLS_RANK.get(str(asset.get("classification")).title(), 9),
                             asset["id"],
                         ),
-                        _hits=list(dict.fromkeys(s["n"] for s in scenarios if linked & set(s.get("fids") or [])))
+                        _hits=list(
+                            dict.fromkeys(
+                                (s["n"], s.get("actor")) for s in scenarios if linked & set(s.get("fids") or [])
+                            )
+                        )
                         if relation == "stored"
                         else [],
                     )
@@ -1628,10 +1701,11 @@ def _improve_routes(nodes, edges, boundaries, zones, *, straight_only=False):
     movable = [i for i, e in enumerate(edges) if not e.get("attack") and not e.get("ui_top_entry")]
     regular = [] if straight_only else movable
     headings = [(z["x"], z["y"], z["x"] + z["w"], z["y"] + ZONE_HEAD - 3) for z in zones if not z.get("bar")]
+    attackers = _attackers(nodes)
     badges = [
-        (n["x"] + n["w"] - 26 - i * 19, n["y"] + n["h"] - 9, n["x"] + n["w"] - 10 - i * 19, n["y"] + n["h"] + 7)
+        rect[:4]
         for n in nodes.values()
-        for i, _ in enumerate(n.get("badges", []))
+        for rect in _badge_row_rects(n["x"] + n["w"] - 8.5, n["y"] + n["h"] - 1, n.get("badges", []), attackers)
     ]
 
     def shape_cost(index, points):
@@ -2488,9 +2562,7 @@ def _render(
     actor_groups=(),
 ):
     actor_colors = {n["name"]: n["color"] for n in nodes.values() if n.get("attacker")}
-    scenario_colors = {}
-    for s in scenarios:  # A shared number keeps the colour of its first attributed group.
-        scenario_colors.setdefault(s["n"], actor_colors.get(s.get("actor"), RED))
+    attackers = _attackers(nodes)
     W = col_x[-1] + col_w[-1] + MARGIN
     c = _Canvas()
     c.add("")  # header, filled in once the height is known
@@ -2631,6 +2703,20 @@ def _render(
                 dash=("5 4" if e.get("victim") else None),
             )
             source = nodes[e["src"]]
+            if len(attackers) > 1:
+                (xp, _), (xe, ye) = e["pts"][-2:]
+                ahead = 1 if xp < xe else -1
+                c.text(
+                    xe - ahead * 16,
+                    ye - 5,
+                    source["actor_code"],
+                    size=FS,
+                    fill=source["color"],
+                    anchor="end" if ahead > 0 else "start",
+                    weight="bold",
+                    halo=True,
+                    track=f"attack target {source['actor_code']} {e['dst']}",
+                )
             if abs(e["pts"][0][0] - source["x"] - source["w"]) < 0.6:
                 x0, y0 = e["pts"][0]
                 c.text(
@@ -2822,9 +2908,7 @@ def _render(
                     c.text(x + ox + 10, yy + 6 + index * 11, line, size=8.5, anchor="start")
                 yy += len(lines) * 11
                 hits = a.get("_hits", [])
-                badge_x0 = x + w - 30 - (len(hits) - 1) * 15 if hits else x + w - 26
-                for j, s in enumerate(hits):
-                    _badge(c, badge_x0 + j * 15, yy + 20, s, col=scenario_colors.get(s, RED), r=6.5)
+                _badge_row(c, x + w - 22.5, yy + 20, hits, attackers, r=6.5, step=15, tag_size=8)
                 c.text(x + ox + 10, yy + 6, str(a.get("classification")), size=7.5, anchor="start", fill=col)
                 yy += 17 + (18 if hits else 0)
                 c.add("</g>")
@@ -2839,9 +2923,8 @@ def _render(
                     fill=MUTED,
                     italic=True,
                 )
-        for i, b in enumerate(n["badges"]):
-            _badge(c, x + w - 18 - i * 19, y + h - 1, b, col=scenario_colors.get(b, RED))
-            c.badges.append((x + w - 26 - i * 19, y + h - 9, x + w - 10 - i * 19, y + h + 7, f"badge {b} on {n['id']}"))
+        for rect in _badge_row(c, x + w - 8.5, y + h - 1, n["badges"], attackers):
+            c.badges.append((*rect, f"scenario badges on {n['id']}"))
 
     for ch in chips:
         chip(ch["x"], ch["y"], ch["tb"])
@@ -3015,6 +3098,16 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         fill=MUTED,
     )
     y += 13
+    if len(_attackers(nodes)) > 1:
+        c.text(
+            lx + 10,
+            y + 16,
+            "A1 ①② = scenarios of attacker A1 · A1 at an arrowhead = its attack",
+            size=8.5,
+            anchor="start",
+            fill=MUTED,
+        )
+        y += 13
     c.text(
         lx + 10,
         y + 16,
@@ -3043,10 +3136,12 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         c.text(lx + 10 + width / 2, y + 2.5, sample["label"], size=PILL_SIZE, fill=NAVY)
         c.text(lx + 18 + width, y + 3, "function or service role", size=8.5, anchor="start")
         y += 18
-        if any(cap.get("severity") in _PILL_FINDING_BORDER for cap in capabilities):
-            c.rect(lx + 10, y - 7, width, PILL_H, fill="#eef3f8", stroke=RED, sw=1.2, rx=3)
-            c.text(lx + 10 + width / 2, y + 2.5, sample["label"], size=PILL_SIZE, fill=NAVY)
-            c.text(lx + 18 + width, y + 3, "border: most severe linked finding", size=8.5, anchor="start")
+        if any(cap.get("severity") in _PILL_FINDING_DOT for cap in capabilities):
+            dotted = width + PILL_DOT
+            c.rect(lx + 10, y - 7, dotted, PILL_H, fill="#eef3f8", stroke="#b6c6d8", sw=0.7, rx=3)
+            c.circle(lx + 17, y - 7 + PILL_H / 2, 2.8, fill=RED)
+            c.text(lx + 10 + (dotted + PILL_DOT) / 2, y + 2.5, sample["label"], size=PILL_SIZE, fill=NAVY)
+            c.text(lx + 18 + dotted, y + 3, "dot: most severe linked finding", size=8.5, anchor="start")
             y += 18
         vocabulary = {**_capability_vocabulary()[0], **_capability_vocabulary()[1]}
         notes = [
@@ -3078,10 +3173,13 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
         for s in scenarios:
             who = (s.get("actor") or "Attacker") + (" → User (victim)" if s.get("victim") else "")
             by_actor.setdefault(who, []).append(s)
+        attackers = _attackers(nodes)
         for who, members in by_actor.items():
             col = actor_colors.get(members[0].get("actor"), RED)
+            code = (attackers.get(members[0].get("actor")) or {}).get("actor_code") if len(attackers) > 1 else None
             c.add(f'<g data-scenario-actor="{_esc(who)}">')
-            c.text(lx + 10, y + 3, _cut(who, 52), size=9, anchor="start", weight="bold", fill=col)
+            heading = f"{code} · {who}" if code else who
+            c.text(lx + 10, y + 3, _cut(heading, 52), size=9, anchor="start", weight="bold", fill=col)
             y += 16
             for s in members:
                 _badge(c, lx + 20, y - 2, s["n"], col=col)
@@ -3254,7 +3352,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
                 y += 11
             hits = list(dict.fromkeys(hit for _, placed_asset in occurrences for hit in placed_asset.get("_hits", [])))
             if hits:
-                for line in _legend_wrap("Attack scenarios: " + ", ".join(hits), lw - 32, 8):
+                for line in _legend_wrap("Attack scenarios: " + _scenario_list(hits, _attackers(nodes)), lw - 32, 8):
                     c.text(lx + 22, y + 1, line, size=8, anchor="start", fill=RED)
                     y += 11
             y += 12

@@ -901,7 +901,7 @@ def test_scenario_badges_only_on_processes_and_linked_assets():
     ]
     scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
     _, state = F._build(model, scenarios, actors)
-    assert state["nodes"]["db0"]["assets"][0]["_hits"] == ["1"]
+    assert [n for n, _ in state["nodes"]["db0"]["assets"][0]["_hits"]] == ["1"]
     model["assets"][0]["linked_threats"] = []
     _, state = F._build(model, scenarios, actors)
     assert state["nodes"]["db0"]["assets"][0]["_hits"] == []
@@ -1414,7 +1414,7 @@ def test_attack_edge_targets_the_finding_component_and_names_other_affected_ones
     second_name = state["nodes"][second]["name"]
     assert injection[0]["also"] == [second_name]
     assert f"its findings also affect {second_name}" in svg
-    assert "1" in state["nodes"][second]["badges"]
+    assert "1" in {n for n, _ in state["nodes"][second]["badges"]}
 
 
 def test_unnamed_flows_are_not_assigned_to_the_merged_victim_role():
@@ -2672,7 +2672,14 @@ def test_attack_paths_use_slightly_heavier_lines_and_descriptive_labels():
     assert attacks and all(float(p.get("stroke-width")) == 1.8 for p in attacks)
     text = [t.text for t in root.iter("{http://www.w3.org/2000/svg}text")]
     assert "Direct attack" in text and "Via user" in text
-    assert "A1" not in text
+    # A bare actor code never labels the attacker end; it only marks arrowheads and badge groups.
+    _, state = F._build(model, *F.scenarios_from_attack_paths(model, paths, taxonomy), detail=False)
+    nodes, attackers = state["nodes"], F._attackers(state["nodes"])
+    arrowheads = [track for *_, track in state["canvas"].labels if track.startswith("attack target ")]
+    rows = [n["badges"] for n in nodes.values()] + [a["_hits"] for n in nodes.values() for a in n.get("assets", [])]
+    tags = sum(kind == "tag" for row in rows for kind, *_ in F._badge_tokens(row, attackers, 0, 8))
+    assert arrowheads and tags
+    assert sum(t in {a["actor_code"] for a in attackers.values()} for t in text) == len(arrowheads) + tags
 
 
 @pytest.mark.parametrize("port", [12345, 7443])
@@ -2854,7 +2861,7 @@ def _shared_number_scenarios():
 
 
 @pytest.mark.parametrize("detail", [False, True])
-def test_shared_scenario_numbers_render_once_per_node_asset_and_victim(detail):
+def test_shared_scenario_numbers_render_once_per_attacker_on_node_and_asset_and_once_per_victim(detail):
     model, _, _ = _model()
     model["assets"][0]["component_refs"] = [
         {"component_id": "db0", "relation": "stored", "evidence": [{"file": "src/store.ts", "line": 1}]}
@@ -2862,10 +2869,11 @@ def test_shared_scenario_numbers_render_once_per_node_asset_and_victim(detail):
     scenarios, actors = _shared_number_scenarios()
     svg, state = F._build(model, scenarios, actors, detail=detail)
     nodes = state["nodes"]
-    assert nodes["app0"]["badges"] == ["1", "3"]
-    assert nodes["db0"]["badges"] == ["1"]
-    assert nodes["spa"]["badges"] == ["2"]
-    assert nodes["db0"]["assets"][0]["_hits"] == ["1"]
+    web, build = "Internet Attacker", "Build Attacker"
+    assert nodes["app0"]["badges"] == [("1", web), ("1", build), ("3", web)]
+    assert nodes["db0"]["badges"] == [("1", web), ("1", build)]
+    assert nodes["spa"]["badges"] == [("2", web), ("2", build)]
+    assert nodes["db0"]["assets"][0]["_hits"] == [("1", web), ("1", build)]
     assert nodes[F.USER_ID]["sub"].count("②") == 1
     args = (state["nodes"], state["edges"], state["canvas"], state["chips"])
     assert F._check_geometry(*args, boundaries=state["boundaries"]) == []
@@ -2890,6 +2898,40 @@ def test_scenario_legend_lists_each_actor_once():
         "Internet Attacker → User (victim)": ["2"],
         "Build Attacker → User (victim)": ["2"],
     }
+
+
+def test_several_attackers_mark_badges_arrowheads_and_legend_with_their_code():
+    model, _, _ = _model()
+    model["assets"][0]["component_refs"] = [
+        {"component_id": "db0", "relation": "stored", "evidence": [{"file": "src/store.ts", "line": 1}]}
+    ]
+    scenarios, actors = _shared_number_scenarios()
+    svg, state = F._build(model, scenarios, actors, detail=False)
+    nodes, attackers = state["nodes"], F._attackers(state["nodes"])
+    assert {a["actor_code"] for a in attackers.values()} == {"A1", "A2"}
+    assert F._scenario_list(nodes["app0"]["badges"], attackers) == "A1 1, 3 · A2 1"
+    assert F._scenario_list(nodes["db0"]["assets"][0]["_hits"], attackers) == "A1 1 · A2 1"
+    targets = {track.split()[2] for *_, track in state["canvas"].labels if track.startswith("attack target ")}
+    assert targets == {"A1", "A2"}
+    root = ET.fromstring(svg)
+    headings = [next(g.iter(f"{_SVG}text")).text for g in root.findall(".//{*}g[@data-scenario-actor]")]
+    assert headings[:2] == ["A1 · Internet Attacker", "A2 · Build Attacker"]
+    assert "scenarios of attacker A1" in " ".join(root.find("{*}g[@data-legend-section='notation']").itertext())
+    args = (state["nodes"], state["edges"], state["canvas"], state["chips"])
+    assert F._check_geometry(*args, boundaries=state["boundaries"]) == []
+
+
+def test_a_single_attacker_needs_no_code_on_badges_or_arrowheads():
+    model, _, _ = _model()
+    scenarios, actors = _shared_number_scenarios()
+    scenarios = [s for s in scenarios if s["actor"] == "Internet Attacker"]
+    svg, state = F._build(model, scenarios, actors[:1], detail=False)
+    assert F._scenario_list(state["nodes"]["app0"]["badges"], F._attackers(state["nodes"])) == "1, 3"
+    assert not [track for *_, track in state["canvas"].labels if track.startswith("attack target ")]
+    root = ET.fromstring(svg)
+    headings = [next(g.iter(f"{_SVG}text")).text for g in root.findall(".//{*}g[@data-scenario-actor]")]
+    assert headings[0] == "Internet Attacker"
+    assert "scenarios of attacker" not in " ".join(root.find("{*}g[@data-legend-section='notation']").itertext())
 
 
 @pytest.mark.parametrize("shape", ["plain", "elevated", "refuted", "folded-practice", "design-risk"])
@@ -3173,9 +3215,14 @@ def test_capability_labels_rank_tier_before_linked_finding_severity():
     assert problems == []
     pills = [g for g in ET.fromstring(svg).iter(f"{_SVG}g") if g.get("data-capability")]
     assert [g.get("data-capability") for g in pills] == ["url-fetch", "template-rendering", "xml-parsing"]
-    # Only the label with a reported linked finding carries its severity colour on the border.
-    borders = {g.get("data-capability"): g.find(f"{_SVG}rect").get("stroke") for g in pills}
-    assert borders == {"url-fetch": "#b6c6d8", "template-rendering": F.RED, "xml-parsing": "#b6c6d8"}
+    # Only the label with a reported linked finding carries a dot in its severity colour; borders stay neutral.
+    dots = {g.get("data-capability"): [d.get("fill") for d in g.iter(f"{_SVG}circle")] for g in pills}
+    assert dots == {"url-fetch": [], "template-rendering": [F.RED], "xml-parsing": []}
+    assert {g.find(f"{_SVG}rect").get("stroke") for g in pills} == {"#b6c6d8"}
+    for g in pills:
+        extra = F.PILL_DOT if g.get("data-capability") == "template-rendering" else 0
+        label = F._tw(g.find(f"{_SVG}text").text, F.PILL_SIZE)
+        assert float(g.find(f"{_SVG}rect").get("width")) == pytest.approx(label + 12 + extra, abs=0.1)
 
 
 def test_merged_rule_hits_keep_adding_their_capability():

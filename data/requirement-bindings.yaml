@@ -543,8 +543,10 @@ requirements:
       - tests/test_figure1_dfd.py::test_boundary_line_audit_rejects_unbacked_or_missing_lines
       - tests/test_figure1_dfd.py::test_overview_defers_boundary_inventory_to_the_catalogue
       - tests/test_figure1_dfd.py::test_in_process_calls_between_processes_stay_in_detail_views
-      - tests/test_figure1_dfd.py::test_shared_scenario_numbers_render_once_per_node_asset_and_victim
+      - tests/test_figure1_dfd.py::test_shared_scenario_numbers_render_once_per_attacker_on_node_and_asset_and_once_per_victim
       - tests/test_figure1_dfd.py::test_scenario_legend_lists_each_actor_once
+      - tests/test_figure1_dfd.py::test_several_attackers_mark_badges_arrowheads_and_legend_with_their_code
+      - tests/test_figure1_dfd.py::test_a_single_attacker_needs_no_code_on_badges_or_arrowheads
       - tests/test_figure1_dfd.py::test_figure1_tallies_follow_the_report_basis
       - tests/test_figure1_dfd.py::test_component_titles_use_three_lines_before_shortening
       - tests/test_figure1_dfd.py::test_capability_labels_require_known_values_and_evidence

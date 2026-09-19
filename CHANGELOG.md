@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Figure 1 names the attacker behind each scenario badge and attack arrowhead when several attackers are drawn, so a scenario shared by two attackers no longer shows as one badge; a capability label with a linked finding shows its severity as a dot instead of a coloured border.
 - With architecture enrichment on, the first report pass writes the Security Architecture prose, and unfilled §6 placeholders trigger a repair instead of passing QA; quick scans keep the scaffold.
 - Figure 2 draws every attacker the actor legend names, with one example per attack route and actor, so a build or supply-chain attacker on a shared route gets its own row.
 - Figure 2 and the weakness register link NoSQL query injection, database-side JavaScript evaluation and OAuth sign-in requests without state to their weaknesses, prefer an example finding with a linked weakness, and runs warn about findings that carry only a class-level CWE.
