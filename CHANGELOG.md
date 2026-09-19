@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Findings a regular or anonymous user can exploit no longer add the privileged user as a separate attacker, and scanner findings keep their internet attacker once their component is resolved.
+- Figure 1 shows the administrator role again when actor discovery cites its access check by file name only, and warns in Run Issues when no cited location resolves.
+- Figure 2 states whether an account is needed for anonymous and regular-account attack routes instead of pointing to the finding.
 - Figure 1 shows how identity-provider sign-in, profile and token requests authenticate (OAuth 2.0, OpenID Connect, SAML, bearer token, client secret or key) instead of "no authentication" or "unknown", and labels sign-in providers as IdP.
 - The architecture analyst corrects data flows and asset locations that do not fit its component inventory before it finishes, instead of the run aborting after architecture modelling.
 - Actor discovery appends to the run log instead of replacing it, so earlier events stay in the log and a monitored run is no longer reported as unmonitored.

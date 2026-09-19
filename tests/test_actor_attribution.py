@@ -221,3 +221,96 @@ def test_fills_alone_are_no_run_issue_but_a_privileged_role_event_is(tmp_path):
     )
     issues = _extract_actor_model_corrections(tmp_path, [(7, line.rstrip("\n"))])
     assert [(i["category"], i["evidence"]["log_line"]) for i in issues] == [("privileged_role_added", 7)]
+
+
+PRIVILEGED = {
+    "id": "ACT-D-03",
+    "access": ["internet", "authenticated-admin-session"],
+    "heatmap_slug": "internet-priv-user",
+}
+
+
+@pytest.mark.parametrize(
+    ("named", "kept", "superseded"),
+    [
+        (["ACT-D-02", "ACT-D-03"], ["ACT-D-02"], ["ACT-D-03"]),
+        (["ACT-D-03", "ACT-D-01", "ACT-D-02"], ["ACT-D-01"], ["ACT-D-03", "ACT-D-02"]),
+        (["ACT-D-01", "ACT-D-02"], ["ACT-D-01"], ["ACT-D-02"]),
+        (["ACT-D-03"], ["ACT-D-03"], []),
+        (["ACT-D-02", "ACT-D-06"], ["ACT-D-02", "ACT-D-06"], []),
+    ],
+)
+def test_only_the_least_privileged_internet_actor_stays_on_a_finding(named, kept, superseded):
+    threats = [finding("T-004", "release-ci", "CWE-829", ".github/workflows/ci.yml", named)]
+    corrections = reconcile_attribution(threats, components(), [*ACTORS, PRIVILEGED])
+    assert threats[0]["actor_ids"] == kept
+    assert threats[0]["primary_actor"] in kept
+    assert [c.get("superseded", []) for c in corrections] == ([superseded] if superseded else [])
+    groups = [
+        g["actor"] for g in path_groups({"actors": [*ACTORS, PRIVILEGED], "threats": threats}, {"findings": ["T-004"]})
+    ]
+    assert "internet-priv-user" not in groups or kept == ["ACT-D-03"]
+
+
+def test_superseded_actors_are_no_evidence_correction_and_validate(tmp_path):
+    import jsonschema
+    import yaml
+
+    threats = [finding("T-001", "orders-api", "CWE-639", "src/orders.ts", ["ACT-D-02", "ACT-D-03"])]
+    corrections = reconcile_attribution(threats, components(), [*ACTORS, PRIVILEGED])
+    assert corrections == [
+        {"finding": "T-001", "removed": [], "added": [], "actor_ids": ["ACT-D-02"], "superseded": ["ACT-D-03"]}
+    ]
+    schema = yaml.safe_load((Path(__file__).resolve().parents[1] / "schemas/threats-merged.schema.yaml").read_text())
+    jsonschema.validate(corrections, schema["properties"]["actor_attribution_corrections"])
+    merged = {"threats": [], "actor_attribution_corrections": corrections}
+    (tmp_path / ".threats-merged.json").write_text(json.dumps(merged))
+    assert _extract_actor_model_corrections(tmp_path, []) == []
+
+
+def test_resolving_a_provisional_scanner_owner_reattributes_the_finding(tmp_path):
+    import reclassify_components
+
+    routes_doc = routes(tmp_path, 'app.get("/items", listItems)')
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/listItems.ts").write_text("export function listItems() {}\n")
+    comps = [{**c, "paths": [p]} for c, p in zip(components(), ["src/**", "db/**", ".github/**"])]
+    threat = {
+        **finding("T-007", "backend-api", "CWE-89", "src/listItems.ts", []),
+        "source": "source-scan",
+        "title": "SQL injection",
+        "stride": "Tampering",
+        "risk": "High",
+    }
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": [threat]}))
+    (tmp_path / ".components.json").write_text(json.dumps({"components": comps}))
+    (tmp_path / ".actors-resolved.json").write_text(json.dumps({"resolved_actors": ACTORS}))
+    (tmp_path / ".route-inventory.json").write_text(json.dumps(routes_doc))
+
+    assert reclassify_components.main(["--merged-only", str(tmp_path)]) == 0
+    merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+    assert merged["threats"][0]["component_id"] == "orders-api"
+    assert merged["threats"][0]["actor_ids"] == ["ACT-D-01"]
+    assert merged["actor_attribution_corrections"][0]["added"] == ["ACT-D-01"]
+
+
+def test_a_later_pass_updates_the_finding_record_instead_of_adding_a_second_one():
+    from actor_attribution import merge_corrections
+
+    first = [{"finding": "T-001", "removed": ["ACT-D-06"], "added": [], "actor_ids": ["ACT-D-01"]}]
+    later = [{"finding": "T-001", "removed": [], "added": ["ACT-D-02"], "actor_ids": ["ACT-D-01", "ACT-D-02"]}]
+    assert merge_corrections(first, later) == [
+        {"finding": "T-001", "removed": ["ACT-D-06"], "added": ["ACT-D-02"], "actor_ids": ["ACT-D-01", "ACT-D-02"]}
+    ]
+
+
+def test_an_unevidenced_privileged_role_is_a_run_warning(tmp_path):
+    from event_log import format_line
+
+    line = format_line(
+        "PRIVILEGED_ROLE_UNEVIDENCED", "actors=ACT-D-03 reason=x", level="WARN", component="skill-controller"
+    )
+    issues = _extract_actor_model_corrections(tmp_path, [(9, line.rstrip("\n"))])
+    assert [(i["category"], i["severity"], i["evidence"]["log_line"]) for i in issues] == [
+        ("privileged_role_unevidenced", "warning", 9)
+    ]

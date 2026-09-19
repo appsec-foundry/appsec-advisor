@@ -17,6 +17,7 @@ from pathlib import Path
 
 from actor_presentation import actor_group
 from reclassify_components import _glob_to_regex
+from validate_evidence_lines import _resolve_evidence_file
 from validate_fragment import repository_evidence_errors
 
 ENTITY_ID = "ext-privileged-role"
@@ -24,18 +25,48 @@ MAX_EVIDENCE = 4
 _LOCATION = re.compile(r"(?<![\w./-])([\w.-][\w./-]*\.[A-Za-z0-9]+):(\d+)\b")
 
 
-def privileged_evidence(resolved: dict, repo_root: Path) -> tuple[str, list[dict]] | None:
-    """Return the first confirmed, active privileged actor with contained file/line evidence."""
+def _repository_path(repo_root: Path, cited: str) -> str:
+    """Resolve a citation that dropped leading directories (`app.guard.ts`) to its one repository file."""
+    found = _resolve_evidence_file(repo_root, cited)
+    if not found:
+        return cited
+    relative = found.resolve().relative_to(repo_root.resolve()).as_posix()
+    return relative if relative == cited or relative.endswith("/" + cited) else cited
+
+
+def _confirmed_privileged(resolved: dict) -> list[tuple[dict, dict]]:
+    """Confirmed, active privileged actors with their discovery row, by ID."""
     confirmed = {row.get("id"): row for row in resolved.get("confirmed_relevant") or [] if isinstance(row, dict)}
+    rows = []
     for actor in sorted(resolved.get("resolved_actors") or [], key=lambda a: str(a.get("id"))):
         if actor_group(actor) != "internet-priv-user" or (actor.get("_provenance") or {}).get("active") is False:
             continue
         row = confirmed.get(actor.get("id"))
-        if not row or row.get("confidence") == "low":
-            continue
+        if row and row.get("confidence") != "low":
+            rows.append((actor, row))
+    return rows
+
+
+def unevidenced_privileged_actors(document: dict, resolved: dict, repo_root: Path) -> list[str]:
+    """Confirmed privileged actors that still have no role because no cited location resolved."""
+    if any(
+        e.get("kind") == "legitimate-role" and e.get("access") == "internet-priv-user"
+        for e in document.get("external_entities") or []
+    ):
+        return []
+    return (
+        [actor["id"] for actor, _ in _confirmed_privileged(resolved)]
+        if not privileged_evidence(resolved, repo_root)
+        else []
+    )
+
+
+def privileged_evidence(resolved: dict, repo_root: Path) -> tuple[str, list[dict]] | None:
+    """Return the first confirmed, active privileged actor with contained file/line evidence."""
+    for actor, row in _confirmed_privileged(resolved):
         locations: list[dict] = []
         for file, line in _LOCATION.findall(str(row.get("relevance_evidence") or "")):
-            location = {"file": file, "line": int(line)}
+            location = {"file": _repository_path(repo_root, file), "line": int(line)}
             if location not in locations and not repository_evidence_errors([location], repo_root, require_line=True):
                 locations.append(location)
         if locations:

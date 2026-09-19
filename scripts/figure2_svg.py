@@ -80,6 +80,8 @@ def _prerequisite(finding: dict, raw_actor: str, victim: bool) -> str:
     parts = []
     if pr:
         parts.append(access[pr.group(1)])
+    elif raw_actor == "internet-anon":
+        parts.append(access["N"])
     elif raw_actor == "internet-user":
         parts.append(access["L"])
     elif raw_actor == "internet-priv-user":
@@ -159,10 +161,14 @@ def build_figure2_data(
             impact = impacts[impact_id]
             harms.append(_text(impact.get("business_harm") or impact.get("label")))
         actor = actor_by_slug[scenario["actor_slug"]]
-        # Possessing privileges does not establish that exploiting this finding
-        # requires them. Keep finding-owned prerequisites separate from roles.
+        # The unprojected group is the least privileged actor attributed to the
+        # finding (RA-17), or the path's own actor when none is attributed. A
+        # privileged attribution alone does not prove that exploitation needs
+        # those privileges, so it defers to the finding's own vector.
         prerequisite_actor = (
-            (finding.get("vektor") or "") if attributed_actors(model, finding) else _text(ap.get("actor"))
+            (finding.get("vektor") or "")
+            if raw_actor == "internet-priv-user" and attributed_actors(model, finding)
+            else raw_actor
         )
         rows.append(
             {

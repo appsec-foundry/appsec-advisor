@@ -190,7 +190,7 @@ Write to `$OUTPUT_DIR/.actors-discovered.json`:
     {
       "id": "ACT-D-06",
       "label": "supply-chain-attacker",
-      "relevance_evidence": "<recon-summary section or file:line>",
+      "relevance_evidence": "<recon-summary section, and repository-relative path:line such as frontend/src/app/app.guard.ts:12, never a bare file name>",
       "confidence": "high | medium | low"
     }
   ],

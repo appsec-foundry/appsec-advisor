@@ -958,8 +958,32 @@ def _recommend_privileged_role_added(issue: dict, output_dir: Path) -> dict:
     }
 
 
+def _recommend_privileged_role_unevidenced(issue: dict, output_dir: Path) -> dict:
+    """A confirmed privileged actor has no Figure 1 role because none of its citations resolves."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": "Figure 1 shows no administrator role although actor discovery confirmed one.",
+        "rationale": (
+            "The privileged role is added only from a cited file:line that resolves to one repository file. "
+            "The discovery row cites no such location, so the role was not drawn."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".actors-discovered.json",
+                "details": "Check the privileged actor's relevance_evidence for repository-relative path:line citations.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "editorial_pass_incomplete": _recommend_editorial_pass_incomplete,
+    "privileged_role_unevidenced": _recommend_privileged_role_unevidenced,
     "business_context_unmapped": _recommend_business_context_unmapped,
     "injected_component_without_flows": _recommend_injected_component_without_flows,
     "actor_attribution_corrected": _recommend_actor_attribution_corrected,

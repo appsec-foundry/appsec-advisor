@@ -265,3 +265,20 @@ def test_route_rows_stay_compact(count):
     root = ET.fromstring(figure2.build_figure2_svg(diagram(data, ap)))
     per_route = (float(root.get("height")) - 42 - 36) / count
     assert per_route <= 4 * figure2._LINE + 22 + figure2._ROW_GAP
+
+
+@pytest.mark.parametrize(
+    ("actor", "vektor", "prerequisite"),
+    [
+        ({"id": "ACT-D-01", "heatmap_slug": "internet-anon"}, "internet-user", "No account required"),
+        ({"id": "ACT-D-02", "heatmap_slug": "internet-user"}, "internet-anon", "Regular account required"),
+        # A privileged attribution alone proves no privilege requirement; the finding's vector decides.
+        ({"id": "ACT-D-03", "heatmap_slug": "internet-priv-user"}, "internet-anon", "No account required"),
+        ({"id": "ACT-D-03", "heatmap_slug": "internet-priv-user"}, None, "Access prerequisites: see the finding"),
+    ],
+)
+def test_prerequisite_follows_the_least_privileged_attributed_actor(actor, vektor, prerequisite):
+    data = model()
+    data["actors"] = [{**actor, "access": ["internet"], "active": True}]
+    data["threats"][0].update(actor_ids=[actor["id"]], primary_actor=actor["id"], vektor=vektor)
+    assert diagram(data, paths(actor="internet-anon"))["routes"][0]["prerequisite"] == prerequisite

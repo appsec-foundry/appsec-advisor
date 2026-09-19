@@ -3125,13 +3125,9 @@ def _load_impl_strategy(out_dir: Path) -> dict[str, str]:
 
 def _reconcile_actor_attribution(out_dir: Path, threats: list[dict]) -> list[dict]:
     """Apply the attribution rules against the finalized inventory, route inventory and resolved actors."""
-    from actor_attribution import reconcile_attribution
+    from actor_attribution import reconcile_output_dir
 
-    components = (_read_json_file(out_dir / ".components.json", {}) or {}).get("components") or []
-    actors = (_read_json_file(out_dir / ".actors-resolved.json", {}) or {}).get("resolved_actors") or []
-    if not components or not actors:
-        return []
-    return reconcile_attribution(threats, components, actors, _read_json_file(out_dir / ".route-inventory.json"))
+    return reconcile_output_dir(out_dir, threats)
 
 
 def cmd_finalize(args: argparse.Namespace) -> int:

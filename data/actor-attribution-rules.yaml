@@ -81,6 +81,8 @@ restricted_groups:
     repository_content: true
     evidence_paths: [build, infrastructure]
 
+# Ordered by privilege: of several internet actors on one finding only the
+# least privileged stays (actor_attribution._superseded).
 internet_groups: [internet-anon, internet-user, internet-priv-user]
 exposed_zones: [internet, dmz]
 

@@ -153,3 +153,44 @@ def test_without_a_regular_client_interaction_only_the_role_is_added(tmp_path):
     result, receipt = reconcile(root, components, flows, resolved("RoleGuard at web/guards/admin.guard.ts:3"))
     assert receipt["flow_id"] is None
     assert [f["id"] for f in result["data_flows"]] == ["df-001"]
+
+
+@pytest.mark.parametrize(
+    ("guard", "cited"),
+    [
+        ("web/app/admin.guard.ts", "admin.guard.ts:3"),
+        ("portal/src/auth/staff_only.ts", "auth/staff_only.ts:3"),
+    ],
+)
+def test_a_citation_without_leading_directories_resolves_to_its_one_repository_file(tmp_path, guard, cited):
+    root = repo(tmp_path, guard)
+    components, flows = model("storefront" if guard.startswith("web") else "portal")
+    result, receipt = reconcile(root, components, flows, resolved(f"Section 7.2: RBAC via {cited}"))
+    added = next(e for e in result["external_entities"] if e["access"] == "internet-priv-user")
+    assert added["evidence"] == [{"file": guard, "line": 3}]
+    assert receipt and not repository_path_errors("data-flows", result, root)
+
+
+@pytest.mark.parametrize("cited", ["admin.guard.ts:3", "other/admin.guard.ts:3", "missing.ts:3"])
+def test_an_ambiguous_or_foreign_citation_adds_no_role_and_is_reported(tmp_path, cited):
+    from reconcile_privileged_roles import unevidenced_privileged_actors
+
+    root = repo(tmp_path, "web/app/admin.guard.ts")
+    if cited == "admin.guard.ts:3":
+        (root / "portal/admin.guard.ts").parent.mkdir(parents=True)
+        (root / "portal/admin.guard.ts").write_text("a\nb\nc\n")
+    components, flows = model()
+    actors = resolved(f"RoleGuard at {cited}")
+    result, receipt = reconcile(root, components, flows, actors)
+    assert receipt is None
+    assert unevidenced_privileged_actors(result, actors, root) == ["ACT-D-03"]
+
+
+def test_a_modelled_privileged_role_needs_no_report(tmp_path):
+    from reconcile_privileged_roles import unevidenced_privileged_actors
+
+    root = repo(tmp_path, "web/app/admin.guard.ts")
+    components, flows = model()
+    result, _ = reconcile(root, components, flows, resolved("RoleGuard at admin.guard.ts:3"))
+    assert unevidenced_privileged_actors(result, resolved("RoleGuard at admin.guard.ts:3"), root) == []
+    assert unevidenced_privileged_actors(flows, resolved("none", slug="internet-user"), root) == []

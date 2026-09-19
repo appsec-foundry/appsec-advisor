@@ -329,6 +329,10 @@ properties:
         removed: {type: array, items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}}
         added: {type: array, items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}}
         actor_ids: {type: array, items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}}
+        superseded:
+          description: Internet actors dropped because a less privileged internet actor already exploits the finding.
+          type: array
+          items: {type: string, pattern: "^ACT-[A-Z]-\\d+$"}
 
   weaknesses:
     # P1 (weakness-class evidence model) — the unified register's PARENT rows.

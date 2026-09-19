@@ -1704,6 +1704,20 @@ def _extract_actor_model_corrections(output_dir: Path, agent_log: list[tuple[int
                     },
                 }
             )
+        elif ev and ev["event"] == "PRIVILEGED_ROLE_UNEVIDENCED":
+            issues.append(
+                {
+                    "category": "privileged_role_unevidenced",
+                    "severity": "warning",
+                    "title": "A confirmed privileged actor has no role in Figure 1: none of its cited locations resolves",
+                    "evidence": {
+                        "log_file": ".agent-run.log",
+                        "log_line": ln,
+                        "raw_event": ev["detail"],
+                        "outcome": "privileged_role_missing",
+                    },
+                }
+            )
     return issues
 
 

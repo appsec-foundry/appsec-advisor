@@ -662,6 +662,14 @@ def _run_merged_only(output_dir: Path, *, strict: bool, check_only: bool) -> int
     on_disk_owners = unresolved_phantoms(working)
     working, changes = reclassify(working)
     if changes and not check_only:
+        from actor_attribution import merge_corrections, reconcile_output_dir
+
+        moved = {c["id"] for c in changes}
+        corrections = reconcile_output_dir(output_dir, [t for t in threats if t.get("t_id") in moved])
+        if corrections:
+            merged["actor_attribution_corrections"] = merge_corrections(
+                merged.get("actor_attribution_corrections") or [], corrections
+            )
         atomic_write_json(merged_path, merged, sort_keys=False)
 
     if changes:
