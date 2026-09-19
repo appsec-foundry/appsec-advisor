@@ -48,7 +48,7 @@ PDF export (mermaid drives a headless Chrome over a local socket) and any write 
 make test-quick                    # shared base drift guards
 make test-group GROUP=report        # focused report and export tests
 make test-plan BASE=origin/dev      # explain the selection without running tests
-make test-changed BASE=origin/dev   # branch and local changes, with base guards
+make test-changed BASE=origin/dev   # branch and local changes plus requirement guards
 make test-plan BASE=HEAD            # explain only staged, unstaged, and untracked work
 make test-full                     # complete suite without coverage
 make check                         # lint, validators, and complete suite
@@ -127,6 +127,8 @@ Group membership and source routes live in [`scripts/run_tests.py`](scripts/run_
 
 When adding or renaming a test, update its exact membership or its justified manual role. When changing a producer or consumer, review the source routes and the tests at that boundary. `make validate` checks the inventory and rejects unassigned tests, stale paths, and invalid routes. File assignment prevents omission but does not prove semantic coverage. Do not infer sufficient coverage from filenames or Python imports alone; tests also invoke subprocesses and read schemas, templates, and prompts.
 
+Run `make audit-test-routes` after adding or changing a source route. It runs every test module under coverage, including subprocesses, and records the repository files each test reads. It fails when a route misses a test that executes the routed script, uses one of its module-level constants or classes, or reads the routed file. It also reports routed tests without a measured dependency; remove them only when they were not skipped or failed during the measurement and do not stop a subprocess with a signal other than SIGTERM. The audit runs eight test modules in parallel by default; `python3 scripts/audit_test_routes.py --jobs <n>` sets another number.
+
 ```bash
 make test-group GROUP=scanner
 python3 scripts/run_tests.py --list report  # inspect the selected files
@@ -150,7 +152,16 @@ APPSEC_UPDATE_GOLDEN=1 python3 -m pytest tests/test_e2e_pipeline.py -k golden
 
 Do not edit golden output by hand to hide a producer defect.
 
-If the repo already has failing tests, capture the baseline and clearly distinguish pre-existing failures from new failures caused by the current change. Do not normalize or hide new failures. When targeted tests fail outside touched files, report failing test names and error heads instead of stale global counts.
+Do not run tests before a change to capture a baseline. When a selected test fails, rerun only the failing tests at the merge base in a temporary worktree. Replace `<failing test ids>` with the pytest node IDs from the failed run, and omit tests whose file does not exist at the merge base; they belong to the current change. Use `HEAD` instead of the merge base when the selection used `BASE=HEAD`.
+
+```bash
+base_dir=$(mktemp -d)
+GIT_LFS_SKIP_SMUDGE=1 git worktree add -d "$base_dir" "$(git merge-base origin/dev HEAD)"
+(cd "$base_dir" && python3 -m pytest <failing test ids> -q)
+git worktree remove --force "$base_dir"
+```
+
+A test that also fails at the merge base is a pre-existing failure. A test that passes there is a regression caused by the current change. A test that is skipped there has no baseline; tests that read git-ignored local data, such as `tests/fixtures/e2e/_last-run`, skip in the worktree. Do not normalize or hide new failures. When targeted tests fail outside touched files, report failing test names and error heads instead of stale global counts.
 
 ### Validation scripts
 

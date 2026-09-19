@@ -113,6 +113,10 @@ test-changed:  ## Run reviewed tests for branch and local changes: make test-cha
 test-plan:  ## Explain changed-file selection without running pytest: make test-plan BASE=origin/dev
 	@$(PYTHON) scripts/run_tests.py --list --changed-against "$(or $(BASE),origin/dev)"
 
+.PHONY: audit-test-routes
+audit-test-routes:  ## Verify source routes by measuring every test module under coverage (slow)
+	@$(PYTHON) scripts/audit_test_routes.py
+
 .PHONY: lint
 lint:  ## Ruff check + format check
 	@ruff check scripts/ tests/ hooks/

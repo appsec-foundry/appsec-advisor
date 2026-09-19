@@ -1,6 +1,6 @@
 """Run reviewed maintainer test groups and conservative Git-based selections.
 
-Exact membership detects additions and renames. Source routes name reviewed
+Exact membership detects additions and renames. Source routes name measured
 producer and consumer modules directly; requirement bindings retain their exact
 pytest selectors. Unknown paths and shared inputs require the full suite.
 """
@@ -469,6 +469,7 @@ GROUPS = {
     """),
     "tooling": _tests("""
         acceptance_invocation
+        audit_test_routes
         check_fragment_registry
         check_specs
         check_target_specificity
@@ -494,9 +495,10 @@ MANUAL_TESTS = {
     "tests/test_full_run_e2e.py": "Assertions on live-run artifacts; only enabled by the manual E2E driver.",
 }
 
-# These routes were reviewed across imports, subprocess callers, artifact
-# readers, and deterministic integration tests. Do not replace them with group
-# names: groups are convenient maintainer suites, not dependency boundaries.
+# Each route lists every test module that executes the file, uses its
+# module-level constants or classes, or reads it; `make audit-test-routes`
+# measures this and rejects a route that misses one. Do not replace them with
+# group names: groups are convenient maintainer suites, not dependency boundaries.
 # Repository documents (guidance, changelog, docs, specs, requirement bindings)
 # are not runtime input: their routes name the tests that read them, including
 # the tracked-file content scan. Shipped Markdown under agents/ and skills/
@@ -505,6 +507,7 @@ MANUAL_TESTS = {
 # route to it.
 SOURCE_TESTS = {
     "AGENTS.md": _tests("""
+        context_prompt_budgets
         decision_register
         lazy_phase_group_loading
         orchestration_controller
@@ -522,19 +525,28 @@ SOURCE_TESTS = {
     """),
     "agents/shared/logging-standard.md": _tests("""
         agent_definitions
+        agent_doc_shell_snippets
         budget_watchdog
+        check_target_specificity
+        requirements_verification
+        stride_outputs
     """),
     "data/requirement-bindings.yaml": _tests("""
         check_specs
+        check_target_specificity
         requirements_hook
         requirements_verification
         run_tests
+        weakness_class_config_consistency
     """),
     "docs/harvester.md": _tests("requirements_verification"),
     "docs/headless-mode.md": _tests("requirements_verification"),
     "docs/images/figure1-example.svg": _tests("requirements_verification"),
     "docs/internal/contracts/orchestration-actions.md": _tests("requirements_verification"),
-    "docs/internal/contracts/schema-invariants.md": _tests("requirements_verification"),
+    "docs/internal/contracts/schema-invariants.md": _tests("""
+        report_plugin_issue
+        requirements_verification
+    """),
     "docs/internal/cost-model.md": _tests("requirements_verification"),
     "docs/internal/decisions.md": _tests("""
         check_specs
@@ -551,12 +563,28 @@ SOURCE_TESTS = {
     """),
     "scripts/apply_prose_fixes.py": _tests("""
         actor_presentation
+        analysis_version_upgrade
         apply_prose_fixes
         apply_prose_fixes_coverage
         attack_step_quality
+        check_target_specificity
         compose_threat_model
+        compose_threat_model_cov2
+        compose_threat_model_cov3
         e2e_pipeline
+        enforcement_mutations
+        gate_preconditions
+        p1_renderer_correctness
         qa_checks
+        qa_checks_cov_band2
+        qa_checks_cov_band4
+        reference_format
+        render_integrity
+        render_properties
+        requirements_mapping
+        requirements_verification
+        run_path_guard
+        stride_outputs
         threat_fixture
         walkthrough_renderer
     """),
@@ -574,117 +602,250 @@ SOURCE_TESTS = {
     "scripts/actor_presentation.py": _tests("""
         actor_attribution
         actor_presentation
+        analysis_version_upgrade
         build_threat_model_yaml
+        check_target_specificity
+        compose_depth_scoped_crossrefs
         compose_threat_model
-        detect_open_registration
+        compose_threat_model_cov
+        compose_threat_model_cov2
+        compose_threat_model_cov3
+        detect_public_repo
         e2e_pipeline
+        emit_verdict_to_model
+        enforcement_mutations
+        export_html
+        figure1_detail
         figure1_dfd
+        figure1_layout_harness
         figure1_svg
         figure2_svg
+        fragment_authoring_fidelity
+        gate_preconditions
+        p1_renderer_correctness
+        p3_behavior_tuning
+        p4_cross_reference_coverage
+        qa_checks
+        qa_checks_cov_band1
+        qa_checks_cov_band2
+        qa_checks_cov_band4
+        reconcile_privileged_roles
+        reference_format
+        render_integrity
+        render_properties
+        requirements_mapping
+        requirements_trace
+        requirements_verification
+        run_path_guard
+        run_statistics_appendix
+        runtime_doc_cli_contract
+        safe_cond
+        severity_rollup
+        stride_outputs
+        taxonomy_coverage
+        team_questions
         threat_fixture
     """),
     "scripts/export_sarif.py": _tests("""
+        check_target_specificity
         e2e_pipeline
         export_sarif
         export_threat_model_skill
-        sarif_validation
+        gate_preconditions
+        requirements_verification
+        run_path_guard
+        runtime_doc_cli_contract
         severity_policy
+        stride_outputs
         threat_fixture
     """),
     "scripts/export_html.py": _tests("""
+        check_target_specificity
         e2e_pipeline
         export_html
         export_threat_model_skill
+        gate_preconditions
+        requirements_verification
+        run_path_guard
+        runtime_doc_cli_contract
+        stride_outputs
     """),
     "scripts/export_pdf.py": _tests("""
+        check_target_specificity
         e2e_pipeline
         export_html
         export_pdf
         export_threat_model_skill
+        gate_preconditions
+        requirements_verification
+        run_path_guard
+        runtime_doc_cli_contract
+        stride_outputs
     """),
     "scripts/export_threat_dragon.py": _tests("""
+        check_target_specificity
         export_threat_dragon
         export_threat_model_skill
+        gate_preconditions
+        orchestration_controller
+        render_completion_summary
+        requirements_verification
+        run_path_guard
+        runtime_doc_cli_contract
+        stride_outputs
     """),
     "scripts/figure1_dfd.py": _tests("""
         actor_presentation
+        analysis_version_upgrade
+        check_target_specificity
         compose_threat_model
+        compose_threat_model_cov2
         detect_public_repo
         discover_identity_providers
         e2e_pipeline
+        enforcement_mutations
         export_html
-        export_pdf
-        export_threat_model_skill
         figure1_detail
         figure1_dfd
         figure2_svg
+        gate_preconditions
+        p1_renderer_correctness
         qa_checks
+        reference_format
+        render_integrity
+        render_properties
+        requirements_mapping
+        requirements_verification
+        run_path_guard
+        stride_outputs
         threat_fixture
     """),
     "scripts/figure2_svg.py": _tests("""
         actor_presentation
+        analysis_version_upgrade
+        check_target_specificity
         compose_threat_model
+        compose_threat_model_cov2
         e2e_pipeline
+        enforcement_mutations
         figure2_svg
+        gate_preconditions
+        p1_renderer_correctness
         qa_checks
+        reference_format
+        render_integrity
+        render_properties
+        requirements_mapping
+        requirements_verification
+        run_path_guard
+        stride_outputs
         threat_fixture
     """),
     "scripts/finalize_component_inventory.py": _tests("""
-        aggregate_run_issues
-        build_threat_model_yaml
         build_trust_boundary_assessment_input
+        check_target_specificity
         discover_identity_providers
-        dispatch_manifest
-        embedded_store_access
-        export_threat_dragon
         finalize_component_inventory
-        orchestration_controller
-        prepare_trust_boundary_context
-        runtime_cleanup
-        validate_fragment
+        fragment_invariant_parity
+        gate_preconditions
+        requirements_verification
+        run_path_guard
+        stride_outputs
     """),
     "scripts/inline_code_formatter.py": _tests("""
+        analysis_version_upgrade
         apply_prose_fixes
+        apply_prose_fixes_coverage
         attack_step_quality
+        check_target_specificity
         compose_threat_model
+        compose_threat_model_cov
+        compose_threat_model_cov2
+        compose_threat_model_cov3
         e2e_pipeline
+        enforcement_mutations
+        gate_preconditions
         inline_code_formatter
+        p1_renderer_correctness
         qa_checks
+        qa_checks_cov_band2
+        qa_checks_cov_band3
+        qa_checks_cov_band4
+        reference_format
+        render_integrity
+        render_properties
+        requirements_mapping
+        requirements_verification
+        run_path_guard
+        stride_outputs
         threat_fixture
         walkthrough_renderer
     """),
     "scripts/run_tests.py": _tests("""
-        ci_test_workflow
+        audit_test_routes
+        check_target_specificity
+        gate_preconditions
+        requirements_verification
+        run_path_guard
         run_tests
+        stride_outputs
+    """),
+    "scripts/audit_test_routes.py": _tests("""
+        audit_test_routes
+        check_target_specificity
+        gate_preconditions
+        run_path_guard
+        stride_outputs
     """),
     "scripts/walkthrough_renderer.py": _tests("""
         architect_structural_checks
         attack_step_quality
+        check_target_specificity
         compose_threat_model
         e2e_pipeline
+        gate_preconditions
+        p1_renderer_correctness
         pregenerate_fragments
+        pregenerate_fragments_coverage
         qa_checks
+        qa_checks_cov_band3
+        render_integrity
+        requirements_verification
+        run_path_guard
+        stride_outputs
         walkthrough_renderer
     """),
     "scripts/repo_scan.py": _tests("""
+        check_target_specificity
+        gate_preconditions
         repo_scan
+        requirements_verification
+        run_path_guard
         scanner_review_regressions
+        stride_outputs
     """),
     "scripts/config_iac_scanner.py": _tests("""
         agent_config_checks
+        check_target_specificity
         config_iac_scanner
         config_scanner_wireup
-        orchestration_controller
+        gate_preconditions
         repo_scan
+        requirements_verification
+        run_path_guard
         security_score
+        stride_outputs
         validate_intermediate
     """),
     "scripts/mass_assignment_scanner.py": _tests("""
+        check_target_specificity
+        gate_preconditions
         mass_assignment_scanner
-        merge_threats
         repo_scan
+        requirements_verification
+        run_path_guard
         scanner_review_regressions
-        validate_intermediate
+        stride_outputs
     """),
     "scripts/handler_resolver.py": _tests("""
         actor_attribution
@@ -701,106 +862,186 @@ SOURCE_TESTS = {
     """),
     "scripts/source_auth_scanner.py": _tests("""
         authz_confirm
+        build_architecture_analysis_context
+        build_trust_boundary_assessment_input
+        check_target_specificity
         credential_lifecycle_checks
         crypto_path_xxe_checks
         detect_impl_strategy
-        merge_threats
+        finalize_component_inventory
+        fragment_invariant_parity
+        gate_preconditions
         orchestration_controller
         reclassify_components
         repo_scan
+        requirements_verification
+        run_path_guard
+        runtime_doc_cli_contract
         scanner_review_regressions
         security_score
         source_auth_scanner
-        validate_intermediate
+        stride_outputs
+        threat_fixture
+        validate_fragment
         weakness_signals
     """),
     "scripts/aggregate_run_issues.py": _tests("""
+        actor_attribution
         aggregate_run_issues
-        compose_threat_model_cov
-        compose_threat_model_cov2
+        check_target_specificity
         dispatch_model_and_diagnostics
+        gate_preconditions
         log_shape_contract
         orchestration_controller
         recommend_fixes
-        render_completion_summary
         render_integrity
-        repair_eligibility
-        report_plugin_issue
+        requirements_verification
         run_diagnostics_recovery_2026_07_20
         run_headless_completion
         run_issues_pipeline
         run_path_guard
-        skill_watchdog
+        runtime_doc_cli_contract
+        stride_outputs
         terminate_run
         thin_runtime_regressions_2026_07_20
     """),
-    "scripts/harvest_requirements.py": _tests("harvest_requirements"),
+    "scripts/harvest_requirements.py": _tests("""
+        check_target_specificity
+        gate_preconditions
+        harvest_requirements
+        requirements_verification
+        run_path_guard
+        stride_outputs
+    """),
     "scripts/pregenerate_fragments.py": _tests("""
-        architect_structural_checks
+        actor_presentation
+        analysis_version_upgrade
         assert_completeness
+        build_threat_model_yaml
+        check_target_specificity
+        compose_depth_scoped_crossrefs
         compose_threat_model
         compose_threat_model_cov
         compose_threat_model_cov2
+        compose_threat_model_cov3
         dispatch_manifest
         e2e_pipeline
+        emit_verdict_to_model
         enforcement_mutations
-        normalize_security_architecture
-        orchestration_controller
+        figure1_dfd
+        figure1_layout_harness
+        fragment_authoring_fidelity
+        gate_preconditions
         p1_renderer_correctness
         p2_structural_determinism
+        p3_behavior_tuning
         p4_cross_reference_coverage
         pregenerate_fragments
         pregenerate_fragments_coverage
         qa_checks
+        qa_checks_cov_band1
+        qa_checks_cov_band2
+        qa_checks_cov_band4
+        reference_format
+        render_integrity
+        render_properties
+        requirements_mapping
+        requirements_trace
+        requirements_verification
+        run_path_guard
+        run_statistics_appendix
+        runtime_doc_cli_contract
+        safe_cond
+        severity_rollup
         skill_auto_retry
+        stride_outputs
+        taxonomy_coverage
+        team_questions
         threat_fixture
-        validate_fragment
     """),
     "scripts/recommend_fixes.py": _tests("""
         aggregate_run_issues
+        check_target_specificity
+        gate_preconditions
+        orchestration_controller
         recommend_fixes
-        render_completion_summary
         report_plugin_issue
+        requirements_verification
+        run_diagnostics_recovery_2026_07_20
+        run_headless_completion
         run_issues_pipeline
+        run_path_guard
+        runtime_doc_cli_contract
+        stride_outputs
         terminate_run
     """),
     "scripts/render_completion_summary.py": _tests("""
+        actor_presentation
+        check_target_specificity
         completion_relay
         compose_threat_model
+        gate_preconditions
         p1_renderer_correctness
         render_completion_summary
         render_completion_summary_config
         render_completion_summary_verdict
         render_integrity
         report_plugin_issue
+        requirements_verification
         run_headless_completion
+        run_path_guard
         runtime_doc_cli_contract
+        stride_outputs
         team_questions
     """),
     "scripts/verify_run_costs.py": _tests("""
         aggregate_run_issues
+        check_target_specificity
         context_window_report
         cost_running_total
+        gate_preconditions
         measure_run
         model_release_pricing
+        orchestration_controller
+        persist_run_baseline
         recommend_fixes
         render_completion_summary
+        requirements_verification
         run_diagnostics_recovery_2026_07_20
+        run_headless_completion
         run_issues_pipeline
+        run_path_guard
+        runtime_doc_cli_contract
+        skill_watchdog
+        stride_outputs
         verify_run_costs
     """),
     "scripts/render_progress.py": _tests("""
+        check_target_specificity
+        gate_preconditions
         render_progress
+        requirements_verification
         run_headless_completion
+        run_path_guard
+        stride_outputs
     """),
     "scripts/security_score.py": _tests("""
+        check_target_specificity
+        gate_preconditions
         repo_scan
-        scanner_review_regressions
+        requirements_verification
+        run_path_guard
+        runtime_doc_cli_contract
         security_score
+        stride_outputs
     """),
     "scripts/version_status.py": _tests("""
         appsec_status
-        appsec_status_live
+        check_target_specificity
+        gate_preconditions
+        requirements_verification
+        run_path_guard
+        stride_outputs
         version_status
     """),
 }

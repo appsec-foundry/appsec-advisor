@@ -538,7 +538,7 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
         ),
         (
             "scripts/export_sarif.py",
-            {"tests/test_export_sarif.py", "tests/test_threat_fixture.py", "tests/test_sarif_validation.py"},
+            {"tests/test_export_sarif.py", "tests/test_threat_fixture.py", "tests/test_e2e_pipeline.py"},
         ),
         (
             "scripts/figure1_dfd.py",
@@ -558,10 +558,8 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
             "scripts/finalize_component_inventory.py",
             {
                 "tests/test_finalize_component_inventory.py",
-                "tests/test_dispatch_manifest.py",
+                "tests/test_fragment_invariant_parity.py",
                 "tests/test_build_trust_boundary_assessment_input.py",
-                "tests/test_build_threat_model_yaml.py",
-                "tests/test_orchestration_controller.py",
             },
         ),
         (
@@ -580,7 +578,7 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
         ),
         (
             "scripts/run_tests.py",
-            {"tests/test_run_tests.py", "tests/test_ci_test_workflow.py"},
+            {"tests/test_run_tests.py", "tests/test_audit_test_routes.py"},
         ),
         (
             "scripts/aggregate_run_issues.py",
@@ -588,7 +586,6 @@ def test_group_validator_cli_stops_on_inventory_drift(monkeypatch, capsys):
                 "tests/test_aggregate_run_issues.py",
                 "tests/test_orchestration_controller.py",
                 "tests/test_recommend_fixes.py",
-                "tests/test_render_completion_summary.py",
                 "tests/test_terminate_run.py",
             },
         ),
@@ -661,7 +658,13 @@ def test_modules_on_the_golden_fixture_replay_route_to_it():
     [
         (
             "AGENTS.md",
-            {"decision_register", "lazy_phase_group_loading", "orchestration_controller", "run_tests"},
+            {
+                "context_prompt_budgets",
+                "decision_register",
+                "lazy_phase_group_loading",
+                "orchestration_controller",
+                "run_tests",
+            },
         ),
         ("CONTRIBUTING.md", {"run_tests"}),
     ],
