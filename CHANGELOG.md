@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The component inventory no longer adds a second embedded document store next to one the architecture analysis already modelled.
 - Authentication, CI/CD, real-time, web3 and embedded-store components are modelled before data flows are written, so they keep their connections; a run reports any component that still has none.
 - Figure 1 shows login sequences, public and authenticated API alternatives, and access to embedded databases with their authentication method instead of leaving them unknown.
-- The route inventory credits an authentication guard only to the route it belongs to, so unprotected routes next to protected ones are flagged for review.
+- The route inventory credits an authentication guard only to the route it belongs to and reads authentication from the resolved handler code, so unprotected routes next to protected ones are flagged for review, session checks inside handlers count, decoded-only tokens do not, and Figure 1 flows show the resolved scheme instead of unknown.
 - Identity-provider discovery no longer adds a second service and flow for an OAuth step the architecture already models, also when the model cites the call of a wrapper function.
 - Capability, service-role and authentication claims must cite implementing code, and deterministic scanner findings add the capability labels they prove, also after merging into a model finding.
 - Config and IaC findings reach the report again, and a rejected configuration scan is reported as a run error instead of as a repository without IaC files.
@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Runs no longer stall until the join deadline when a sub-agent hands back on its last allowed turn, and self-checks report every violation at once instead of one per turn.
 - Figure 1 names users and administrators after the project, shows confirmed administrators, and keeps supply-chain and insider attackers on the components they can reach.
 - Figure 1 labels a user's access to a client as user input, calls undeterminable authentication unknown, and opens with facts about the system instead of repeating the legend.
+- The Management Summary states in one block how the threat model was produced, how deep each component was analysed and what it cannot establish, and §1 no longer claims full STRIDE analysis for screened components.
+- Each finding shows one severity everywhere in the report, the one it is filed under in the Findings Register, and a higher attack-chain or policy rating is stated on the finding's card.
+- Finding titles keep digit-led names such as 2FA intact.
 
 ## 0.6.0-beta.3 (2026-09-14)
 
