@@ -7,7 +7,9 @@
   },
   "baseline": {
     "enabled": true,
-    "id": "aiscb-0.1.14",
+    "id": "aiscb-0.1.17",
+    "mode": "modular",
+    "bundle_dir": "data/baselines/aiscb",
     "name": "AI Secure Coding Baseline",
     "release": {
       "repository": "appsec-foundry/aiscb",

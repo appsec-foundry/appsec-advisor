@@ -440,3 +440,40 @@ def test_shipped_readme_row_matches_the_configured_id():
     edited = sb.edit_readme_id(readme.read_text(encoding="utf-8"), target.name, config["id"], "probe-9.9")
     assert "`probe-9.9`" in edited
     assert bc.is_match(bc.find_ids(target.read_text(encoding="utf-8"))[0], config["id"])
+
+
+def test_modular_sync_moves_verified_bundle_and_id_together(tmp_path, monkeypatch):
+    import shutil
+
+    import baseline_modular as bm
+    import baseline_release as br
+
+    root = tmp_path / "plugin"
+    root.mkdir()
+    shutil.copytree(REPO_ROOT / "data/baselines", root / "data/baselines")
+    config = json.loads((REPO_ROOT / "config.json").read_text())
+    config["baseline"]["id"] = "aiscb-0.1.14"
+    (root / "config.json").write_text(json.dumps(config, indent=2) + "\n")
+    readme = root / "data/baselines/README.md"
+    readme.write_text(readme.read_text().replace("aiscb-0.1.17", "aiscb-0.1.14"))
+    target = root / "data/baselines/secure-coding-baseline.md"
+    target.write_text("`baseline-id: aiscb-0.1.14`\n")
+    current = bc.load_config(REPO_ROOT)
+    bundle = bm.bundled(current)
+    released = br.Release(bundle[br.BASELINE_FILE].decode(), "aiscb-0.1.17", "verified test release", bundle)
+
+    def fetch(release, minimum, *, include_bundle):
+        assert minimum is None and include_bundle
+        return released
+
+    monkeypatch.setattr(br, "fetch_latest", fetch)
+    before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    with pytest.raises(sb.VersionChange):
+        sb.sync(root)
+    assert before == {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    sb.sync(root, accept_id="aiscb-0.1.17", dry_run=True)
+    assert target.read_text() == "`baseline-id: aiscb-0.1.14`\n"
+    sb.sync(root, accept_id="aiscb-0.1.17")
+    assert json.loads((root / "config.json").read_text())["baseline"]["id"] == "aiscb-0.1.17"
+    assert target.read_bytes() == bundle[br.BASELINE_FILE]
+    assert (root / "data/baselines/aiscb/install.py").read_bytes() == bundle["install.py"]

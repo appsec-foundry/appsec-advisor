@@ -389,6 +389,7 @@ GROUPS = {
     "baseline": _tests("""
         baseline_check
         baseline_content_unchanged
+        baseline_modular
         baseline_release
         baseline_state_coverage
         install_baseline

@@ -65,6 +65,8 @@ MAX_API_BYTES = 512 * 1024
 MAX_MANIFEST_BYTES = 16 * 1024
 MAX_SIGNATURE_BYTES = 8 * 1024
 MAX_BASELINE_BYTES = 256 * 1024
+MAX_INSTALLER_BYTES = 1024 * 1024
+ASSET_HOSTS = frozenset({"github.com", "release-assets.githubusercontent.com"})
 
 REPOSITORY_RE = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 _ID_RE = re.compile(r"(?P<name>[a-z][a-z0-9-]*)-(?P<version>\d+(?:\.\d+)*)")
@@ -83,6 +85,43 @@ class Release:
     text: str
     baseline_id: str
     origin: str
+    bundle: dict[str, bytes] | None = None
+
+
+class _AssetRedirect(urllib.request.HTTPRedirectHandler):
+    """Only GitHub's release service and its asset CDN may serve signed data."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _asset_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _asset_url(url: str) -> None:
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in ASSET_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+    ):
+        raise ReleaseError("refused a release asset outside GitHub's HTTPS asset service")
+    verdict = _url_guard.validate_target_url(url, check_ip_safety=False)
+    if not verdict.ok:
+        raise ReleaseError(f"blocked by URL guard: {verdict.reason}")
+
+
+def _get_asset(url: str, limit: int) -> bytes:
+    _asset_url(url)
+    request = urllib.request.Request(url, headers={"User-Agent": "appsec-advisor"})
+    try:
+        with urllib.request.build_opener(_AssetRedirect()).open(request, timeout=TIMEOUT_SECONDS) as response:
+            raw = response.read(limit + 1)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise ReleaseError("could not download the release asset") from exc
+    if len(raw) > limit:
+        raise ReleaseError("release asset exceeds its size limit")
+    return raw
 
 
 def _parse_id(value: object) -> tuple[str, tuple[int, ...]] | None:
@@ -136,7 +175,7 @@ def _get_json(url: str) -> object:
         raise ReleaseError("the release response is not JSON") from exc
 
 
-def _latest_tag(fetch_json: Callable[[str], object], repository: str) -> str:
+def _latest_release(fetch_json: Callable[[str], object], repository: str) -> dict:
     """The tag of the repository's latest stable release."""
     release = fetch_json(f"https://{API_HOST}/repos/{repository}/releases/latest")
     if not isinstance(release, dict):
@@ -146,7 +185,11 @@ def _latest_tag(fetch_json: Callable[[str], object], repository: str) -> str:
     tag = release.get("tag_name")
     if not isinstance(tag, str) or not _TAG_RE.fullmatch(tag):
         raise ReleaseError("the latest release has no usable tag")
-    return tag
+    return release
+
+
+def _latest_tag(fetch_json: Callable[[str], object], repository: str) -> str:
+    return _latest_release(fetch_json, repository)["tag_name"]
 
 
 def _release_file(fetch_json: Callable[[str], object], repository: str, tag: str, path: str, limit: int) -> bytes:
@@ -240,6 +283,8 @@ def fetch_latest(
     *,
     fetch_json: Callable[[str], object] = _get_json,
     verify: Callable[[bytes, bytes, list[str]], None] = verify_signature,
+    fetch_asset: Callable[[str, int], bytes] = _get_asset,
+    include_bundle: bool = False,
 ) -> Release:
     """Return the latest release of ``release['repository']``, verified end to end.
 
@@ -260,9 +305,27 @@ def fetch_latest(
     if minimum is not None and floor is None:
         raise ReleaseError(f"the configured id {minimum} names no released version")
 
-    tag = _latest_tag(fetch_json, repository)
-    manifest = _release_file(fetch_json, repository, tag, MANIFEST_NAME, MAX_MANIFEST_BYTES)
-    signature = _release_file(fetch_json, repository, tag, SIGNATURE_NAME, MAX_SIGNATURE_BYTES)
+    metadata = _latest_release(fetch_json, repository)
+    tag = metadata["tag_name"]
+    assets = metadata.get("assets", [])
+    if not isinstance(assets, list):
+        raise ReleaseError("invalid release asset inventory")
+
+    def read_file(path: str, limit: int) -> bytes:
+        if assets:
+            name = path.rsplit("/", 1)[-1]
+            matches = [item for item in assets if isinstance(item, dict) and item.get("name") == name]
+            if len(matches) != 1:
+                raise ReleaseError(f"release {tag} has no unique {name} asset")
+            # Never follow a URL selected by release metadata.
+            raw = fetch_asset(f"https://github.com/{repository}/releases/download/{tag}/{name}", limit)
+            if len(raw) > limit:
+                raise ReleaseError(f"release asset {name} exceeds its size limit")
+            return raw
+        return _release_file(fetch_json, repository, tag, path, limit)
+
+    manifest = read_file(MANIFEST_NAME, MAX_MANIFEST_BYTES)
+    signature = read_file(SIGNATURE_NAME, MAX_SIGNATURE_BYTES)
     verify(manifest, signature, signers)
 
     baseline_id, size, digest = _pinned_baseline(manifest)
@@ -276,7 +339,7 @@ def fetch_latest(
     if floor is not None and (name != floor[0] or version < floor[1]):
         raise ReleaseError(f"the latest release is {baseline_id}, not {minimum} or a later version of it")
 
-    content = _release_file(fetch_json, repository, tag, BASELINE_FILE, size)
+    content = read_file(BASELINE_FILE, size)
     if len(content) != size or hashlib.sha256(content).hexdigest() != digest:
         raise ReleaseError(f"release {tag} serves a {BASELINE_FILE} that does not match its signed manifest")
     try:
@@ -285,4 +348,21 @@ def fetch_latest(
         raise ReleaseError(f"release {tag} serves a {BASELINE_FILE} that is not UTF-8") from exc
     if baseline_id not in bc.find_ids(text):
         raise ReleaseError(f"release {tag} serves a baseline that does not declare {baseline_id}")
-    return Release(text, str(baseline_id), f"{repository} release {tag}, signature verified")
+    bundle = None
+    if include_bundle:
+        document = json.loads(manifest)
+        entry = document["files"].get("scripts/install.py")
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"size", "sha256"}
+            or type(entry["size"]) is not int
+            or not 0 < entry["size"] <= MAX_INSTALLER_BYTES
+            or not isinstance(entry["sha256"], str)
+            or not _DIGEST_RE.fullmatch(entry["sha256"])
+        ):
+            raise ReleaseError("the manifest pins no valid modular installer")
+        installer = read_file("scripts/install.py", entry["size"])
+        if len(installer) != entry["size"] or hashlib.sha256(installer).hexdigest() != entry["sha256"]:
+            raise ReleaseError("the modular installer does not match its signed manifest")
+        bundle = {MANIFEST_NAME: manifest, SIGNATURE_NAME: signature, "install.py": installer, BASELINE_FILE: content}
+    return Release(text, str(baseline_id), f"{repository} release {tag}, signature verified", bundle)

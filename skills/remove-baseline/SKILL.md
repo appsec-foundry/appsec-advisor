@@ -21,6 +21,8 @@ never done without asking.
 script is the only thing that touches `CLAUDE.md` or the baseline file, so the
 removal stays line-exact and backed up.
 
+For modular installations, the same import and carrier removal rules apply. Snapshot directories are retained for existing sessions, including with `--delete-file`; do not delete them automatically. Modified modular adapters are refused. Upstream-managed aiscb blocks and snapshots belong to the upstream installer and are not removed by this skill.
+
 ## `--help` — inline help (early exit)
 
 If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.

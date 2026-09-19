@@ -246,3 +246,64 @@ def test_the_shipped_baseline_comes_from_a_signed_release():
     assert block["release"]["repository"] == "appsec-foundry/aiscb"
     assert block["release"]["allowed_signers"]
     assert all(line.split()[0] == br.SIGNER_PRINCIPAL for line in block["release"]["allowed_signers"])
+
+
+@pytest.mark.parametrize("repository", ["example-org/baseline", "neutral-team/security-policy"])
+def test_release_assets_are_verified_without_reading_the_git_tree(key, repository):
+    import ast
+
+    installer = (REPO_ROOT / "data/baselines/aiscb/install.py").read_bytes()
+    # The real distribution is only data to this test; its manifest is signed
+    # with the test publisher's disposable key.
+    assert ast.parse(installer)
+    document = json.loads(manifest_for(TEXT))
+    document["files"]["scripts/install.py"] = {"size": len(installer), "sha256": hashlib.sha256(installer).hexdigest()}
+    manifest = json.dumps(document).encode()
+    files = {
+        "bundle.json": manifest,
+        "bundle.json.sig": sign(key[0], manifest),
+        "secure-coding-baseline.md": TEXT.encode(),
+        "install.py": installer,
+    }
+    config = {"repository": repository, "allowed_signers": [key[1]]}
+
+    def metadata(url):
+        assert url == f"https://api.github.com/repos/{repository}/releases/latest"
+        return {
+            "tag_name": TAG,
+            "assets": [{"name": name, "browser_download_url": "https://untrusted.invalid/payload"} for name in files],
+        }
+
+    def asset(url, limit):
+        assert url.startswith(f"https://github.com/{repository}/releases/download/{TAG}/")
+        return files[url.rsplit("/", 1)[-1]]
+
+    result = br.fetch_latest(config, "aiscb-0.1.14", fetch_json=metadata, fetch_asset=asset, include_bundle=True)
+    assert result.text == TEXT and result.bundle["install.py"] == installer
+    files["install.py"] = b'print("untrusted")'
+    with pytest.raises(br.ReleaseError, match="signed manifest"):
+        br.fetch_latest(config, "aiscb-0.1.14", fetch_json=metadata, fetch_asset=asset, include_bundle=True)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://github.com/file",
+        "https://attacker.invalid/file",
+        "https://github.com@attacker.invalid/file",
+        "https://github.com:444/file",
+        "https://user:pass@github.com/file",
+    ],
+)
+def test_asset_redirects_reject_untrusted_destinations(url):
+    with pytest.raises(br.ReleaseError):
+        br._asset_url(url)
+
+
+def test_missing_release_asset_never_falls_back_to_unsigned_tree(key):
+    def metadata(url):
+        assert url.endswith("/releases/latest")
+        return {"tag_name": TAG, "assets": [{"name": "unrelated.zip"}]}
+
+    with pytest.raises(br.ReleaseError, match="unique bundle.json"):
+        br.fetch_latest(trusting(key), None, fetch_json=metadata)

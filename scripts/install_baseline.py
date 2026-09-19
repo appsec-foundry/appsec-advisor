@@ -63,6 +63,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import _url_guard  # noqa: E402
 import baseline_check as bc  # noqa: E402
+import baseline_modular as bm  # noqa: E402
 import baseline_release as br  # noqa: E402
 
 # A markdown instruction file. Large enough for any real baseline, small enough
@@ -155,6 +156,12 @@ def _validated(text: str, expected: str, origin: str) -> str:
     if not any(bc.is_match(f, expected) for f in found):
         got = ", ".join(found) if found else "no baseline id at all"
         raise InstallError(f"{origin} declares {got}, not {expected}")
+    if (
+        bm.MARKER in text
+        or "Installation mode: modular." in text
+        or ("aiscb-MODULES-001" in text and "`module-id:" not in text)
+    ):
+        raise InstallError("a standalone source must contain complete policy, not a modular core or adapter")
     return text
 
 
@@ -297,6 +304,13 @@ def find_existing_carrier(repo: Path, home: Path, config: dict, scope: str) -> t
         if not (bc.is_match(found, config["id"]) or bc.is_newer(found, config["id"])):
             continue
         path = Path(item["file"])
+        text = bc._read(path)
+        if (
+            bm.MARKER in text
+            or "Installation mode: modular." in text
+            or ("aiscb-MODULES-001" in text and "`module-id:" not in text)
+        ):
+            raise InstallError("a modular carrier for another client must be installed with its own verified adapter")
         # Both sides resolved, or the comparison is between a symlinked spelling
         # and a real one: on macOS /tmp is a link to /private/tmp, and a repo
         # reached through any symlink would silently fail the containment test
@@ -325,12 +339,18 @@ def install(
     dry_run: bool = False,
     force: bool = False,
     reuse: bool = True,
+    mode: str | None = None,
+    migrate: bool = False,
 ) -> list[str]:
     """Perform the install and return the report lines."""
     if scope not in SCOPES:
         raise InstallError(f"unknown scope '{scope}' (expected one of: {', '.join(SCOPES)})")
     if not config["enabled"]:
         raise InstallError("no secure-coding baseline is configured for this build")
+
+    selected_mode = mode or config.get("mode", "complete")
+    if selected_mode not in ("modular", "complete"):
+        raise InstallError("baseline mode must be modular or complete")
 
     where = plan(scope, repo, home, config)
     target: Path = where["target"]
@@ -341,7 +361,46 @@ def install(
             f"({bc.aiscb_update_command(home)}) — nothing was written"
         )
 
-    found = find_existing_carrier(repo, home, config, scope) if reuse and not force else None
+    old_text = bc._read(target) if target.is_file() else ""
+    old_modular = bm.MARKER in old_text
+    if mode is None and old_text and not migrate:
+        selected_mode = "modular" if old_modular else "complete"
+    if selected_mode == "modular" or old_modular:
+        try:
+            bm.safe(target)
+            bm.safe(target.with_suffix(target.suffix + ".bak"))
+            if where["instructions"]:
+                bm.safe(where["instructions"])
+            if old_modular:
+                bm.inspect(target, old_text)
+            if old_text and (old_modular != (selected_mode == "modular")) and not migrate:
+                raise bm.ModularError("changing an installed baseline's mode requires --migrate")
+            if old_text and not old_modular and selected_mode == "modular":
+                # Only pristine copies published by this build or its predecessor
+                # qualify; an id marker alone never authorizes replacement.
+                trusted = {"a6fc88833aaae7f9e5e1ff9ebe4ba152e56660e743c75094b56b8b25968bfeb2"}
+                bundled = bc.fallback_path(config)
+                if bundled:
+                    trusted.add(bm.digest(bm.read(bundled)))
+                if bm.digest(old_text.encode()) not in trusted:
+                    raise bm.ModularError("migration refuses modified or unrecorded complete policy")
+            state = bc.check(repo=repo, home=home, config=config)
+            other = [
+                item
+                for key in ("matches", "newer", "older", "other", "invalid", "switched_off")
+                for item in state.get(key, [])
+                if bc._resolved_str(item["file"]) != bc._resolved_str(target)
+            ]
+            if other:
+                raise bm.ModularError("another baseline is already wired; migrate or remove that integration first")
+        except (bm.ModularError, OSError) as exc:
+            raise InstallError(str(exc)) from exc
+
+    found = (
+        find_existing_carrier(repo, home, config, scope)
+        if reuse and not force and selected_mode == "complete"
+        else None
+    )
     if found is not None:
         # Nothing is fetched or written: the text is already here, it just was
         # not reachable from an instruction file Claude Code reads. Replacing it
@@ -358,7 +417,21 @@ def install(
             if where["instructions"] is not None:
                 where["import"] = _relative_to_repo(carrier, repo) or str(carrier)
     else:
-        text, origin, note = resolve_source(config, offline=offline)
+        if selected_mode == "modular":
+            try:
+                bundle, origin, note = bm.resolve(config, offline)
+                published = bm.from_bundle(bundle)[0]["release"]
+                if any(bc.is_newer(found, published) for found in bc.find_ids(old_text)):
+                    raise bm.ModularError("refusing to replace newer installed policy with an older release")
+                text = bm.write_snapshot(target, scope, bundle, dry_run=dry_run)
+            except OSError as exc:
+                raise InstallError(f"cannot write modular snapshot: {exc}") from exc
+            except bm.ModularError as exc:
+                raise InstallError(str(exc)) from exc
+        else:
+            text, origin, note = resolve_source(config, offline=offline)
+            if old_modular and any(bc.is_newer(found, bc.find_ids(text)[0]) for found in bc.find_ids(old_text)):
+                raise InstallError("refusing to replace newer installed policy with an older release")
         if note == "--offline":
             steps.append("bundled copy by request (--offline) — the configured URL was not contacted")
         elif note:
@@ -372,6 +445,7 @@ def install(
             steps.append("! installing the bundled copy instead, which may be older than the published text;")
             steps.append("! re-run with --refresh once the URL is reachable")
         steps.append(f"source: {origin}")
+        steps.append(f"installation mode: {selected_mode}")
 
         unchanged = target.is_file() and bc._read(target) == text
         try:
@@ -415,6 +489,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=None, help="repository root (default: current working directory)")
     parser.add_argument("--dry-run", action="store_true", help="report what would change, write nothing")
     parser.add_argument("--offline", action="store_true", help="skip the fetch and use the bundled copy")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--modular",
+        dest="mode",
+        action="store_const",
+        const="modular",
+        help="install core and verified on-demand modules",
+    )
+    modes.add_argument(
+        "--complete",
+        dest="mode",
+        action="store_const",
+        const="complete",
+        help="install the complete compatibility baseline",
+    )
+    parser.add_argument(
+        "--migrate", action="store_true", help="explicitly change the mode of a verified existing installation"
+    )
     parser.add_argument(
         "--refresh",
         action="store_true",
@@ -440,6 +532,8 @@ def main(argv: list[str] | None = None) -> int:
             offline=args.offline,
             dry_run=args.dry_run,
             force=args.refresh,
+            mode=args.mode,
+            migrate=args.migrate,
             reuse=not args.no_reuse,
         )
     except InstallError as exc:

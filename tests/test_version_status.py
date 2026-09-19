@@ -378,3 +378,24 @@ def test_a_switched_off_baseline_is_named_as_such() -> None:
     loaded = {"status": "switched_off", "scopes": ["user"], "switched_off": [{"id": "test-1.2", "scope": "user"}]}
     block = vs._baseline_block({"enabled": True, "id": "test-1.2"}, loaded, check_updates=False)
     assert vs._loaded_text(block) == "test-1.2 (this machine), switched off by AISCB_DISABLE=1"
+
+
+def test_modular_status_distinguishes_available_from_loaded_bodies():
+    loaded = {
+        "status": "installed",
+        "scopes": ["project"],
+        "matches": [
+            {
+                "id": "aiscb-0.1.17",
+                "mode": "modular",
+                "available_modules": ["aiscb:data-handling"],
+                "loaded_modules": None,
+            }
+        ],
+    }
+    block = vs._baseline_block({"enabled": True, "id": "aiscb-0.1.17"}, loaded, check_updates=False)
+    assert block["loaded_modules"] is None
+    assert block["available_modules"] == ["aiscb:data-handling"]
+    assert "loaded bodies unknown" in vs._loaded_text(block)
+    block["loaded_status"] = "invalid"
+    assert "invalid modular installation" in vs._loaded_text(block)

@@ -1,7 +1,7 @@
 ---
 name: verify-baseline
 description: >-
-  Read-only check of whether the secure-coding baseline is actually loaded into
+  Read-only check of whether the secure-coding baseline is wired into
   Claude Code's instructions — which id, from which scope, through which file.
   Walks the project CLAUDE.md, .claude/CLAUDE.md, CLAUDE.local.md, .claude/rules/
   and ~/.claude/CLAUDE.md plus their @ imports. Reports rather than fails;
@@ -31,15 +31,14 @@ USAGE
 FLAGS
   --repo <path>   Repository to check (default: current working dir)
   --json          Emit the result as machine-readable JSON
-  --enforce       Exit non-zero when no configured baseline is loaded
+  --enforce       Fail for missing, outdated, foreign, disabled or invalid policy
 
 EXIT CODES
   0  The state was reported. This is the default: which rules a machine
      loads is your configuration, not something this command fails on.
   1  Only with --enforce, or in a build whose organization profile requires
      a baseline: none is loaded, or only a foreign one. A version newer than
-     the one this build names never fails — that is the same rules, further
-     along, and installing would replace it with the older text.
+     the one this build names passes only if its installation is valid.
 
 WHAT IS CHECKED
   Claude Code's instruction files — project CLAUDE.md, .claude/CLAUDE.md,
@@ -57,8 +56,10 @@ WHAT IS CHECKED
   the repository that nothing imports. Those are not loaded, but they are the
   difference between installing the baseline and wiring up what is there.
 
-  This confirms the rules are in context. Whether they were followed is a
-  different question and this command does not answer it.
+  Modular installations also require a valid adapter, catalog, loader and all
+  pinned artifacts. Available modules are not evidence of loaded bodies.
+  This checks installed files and wiring, not live context or compliance.
+  AISCB_DISABLE does not disable a modular core.
 
 Related: /appsec-advisor:install-baseline — installs it.
          /appsec-advisor:update-baseline — refreshes an installed copy.
@@ -85,7 +86,7 @@ Error: unknown argument '<TOKEN>'
 /appsec-advisor:verify-baseline accepts only:
   --repo <path>   Repository to check (default: current working dir)
   --json          Emit the result as machine-readable JSON
-  --enforce       Exit non-zero when no configured baseline is loaded
+  --enforce       Fail for missing, outdated, foreign, disabled or invalid policy
   --help, -h      Show full help and exit
 
 Run `/appsec-advisor:verify-baseline --help` for details.
@@ -104,6 +105,8 @@ status. Add no commentary in `--json` mode.
 
 In text mode only, and only when it tells the user something the output does not:
 
+- **`invalid`** — report the missing or altered modular artifacts; do not suggest a downgrade or silently install another copy.
+- **Modular** — name the mode and available modules, but report loaded module bodies as unknown; `aiscb?` in a fresh session reports context without reading files.
 - **Not loaded** — the helper already names the install command. Add nothing.
 - **Loaded, `user` scope only** — worth saying that it applies on this machine
   and that a colleague cloning this repository gets no baseline.

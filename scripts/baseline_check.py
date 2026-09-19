@@ -194,6 +194,8 @@ def load_config(plugin_root: Path | None = None) -> dict:
         "release": release if isinstance(release, dict) else None,
         "fallback_file": _clean(block.get("fallback_file")),
         "install_filename": _clean(block.get("install_filename")) or "secure-coding-baseline.md",
+        "mode": _clean(block.get("mode")) or "complete",
+        "bundle_dir": _clean(block.get("bundle_dir")),
         # Off unless an organization turned it on. Which rules a machine loads is
         # the reader's own configuration, so the default is to report the state,
         # not to fail on it.
@@ -521,6 +523,12 @@ def aiscb_managed(path: Path | str, home: Path) -> bool:
         return False
     return (
         directory == user_data
+        or (home / ".aiscb") in directory.parents
+        or any(
+            parent.name == ".aiscb" and (parent / "installation.json").is_file()
+            for parent in (directory, *directory.parents)
+        )
+        or "<!-- aiscb managed policy -->" in _read(Path(path))
         or (directory / AISCB_HELPER).is_file()
         or (directory / AISCB_PROJECT_DIR / AISCB_HELPER).is_file()
     )
@@ -529,6 +537,9 @@ def aiscb_managed(path: Path | str, home: Path) -> bool:
 def aiscb_update_command(home: Path) -> str:
     """How an aiscb installation is updated, naming its installer where there is one."""
     installer = home / AISCB_USER_DATA / AISCB_INSTALLER
+    modern = home / ".aiscb" / AISCB_INSTALLER
+    if modern.is_file():
+        installer = modern
     return f"python3 {installer} --update" if installer.is_file() else "the aiscb installer's --update"
 
 
@@ -652,6 +663,7 @@ def check(
         "present_unloaded": [],
         "scopes": [],
         "announced_by_hook": False,
+        "invalid": [],
     }
     if not cfg["enabled"]:
         return result
@@ -659,7 +671,19 @@ def check(
     home_dir = home or Path.home()
 
     def record(found: str, scope: str, entry: Path, path: Path) -> None:
+        import baseline_modular as bm
+
         item = {"id": found, "scope": scope, "entry": str(entry), "file": str(path)}
+        try:
+            modular = bm.inspect(path, _read(path))
+        except (bm.ModularError, OSError, ValueError, TypeError, RecursionError) as exc:
+            item["reason"] = str(exc)
+            if item not in result["invalid"]:
+                result["invalid"].append(item)
+            return
+        if modular:
+            item.update({key: value for key, value in modular.items() if key != "scope"})
+            item["installation_scope"] = modular.get("scope", scope)
         if aiscb_managed(path, home_dir):
             item["managed_by"] = "aiscb"
         if is_match(found, cfg["id"]):
@@ -677,7 +701,10 @@ def check(
         if not entry.is_file():
             continue
         for path, text in _walk(entry, home_dir):
-            for found in find_ids(text):
+            ids = find_ids(text)
+            if not ids and ("appsec-advisor modular baseline:" in text or "Installation mode: modular." in text):
+                result["invalid"].append({"file": str(path), "reason": "modular adapter declares no baseline id"})
+            for found in ids:
                 record(found, scope, entry, path)
 
     for found, path in _policy_settings_ids(policy_settings):
@@ -725,7 +752,9 @@ def check(
             if item not in result["present_unloaded"]:
                 result["present_unloaded"].append(item)
 
-    if result["matches"]:
+    if result["invalid"]:
+        result["status"] = "invalid"
+    elif result["matches"]:
         result["status"] = "installed"
         result["scopes"] = sorted({m["scope"] for m in result["matches"]}, key=lambda s: _SCOPE_ORDER.get(s, 9))
     elif result["newer"]:
@@ -821,7 +850,7 @@ def is_failing(result: dict) -> bool:
     that state is reported, not whether it passes. A switched-off baseline is
     installed but not in context, which is the same failure.
     """
-    return result.get("status") in ("missing", "other", "outdated", "switched_off")
+    return result.get("status") in ("missing", "other", "outdated", "switched_off", "invalid")
 
 
 def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
@@ -831,10 +860,16 @@ def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
         return "No secure-coding baseline is configured for this build — nothing to verify."
 
     lines: list[str] = []
+    modular = any(item.get("mode") == "modular" for key in ("matches", "newer") for item in result.get(key, []))
     if status == "installed":
-        lines.append(f"✓ {result['name']} is loaded.")
+        lines.append(
+            f"✓ {result['name']} modular installation is valid and wired."
+            if modular
+            else f"✓ {result['name']} is loaded."
+        )
     elif status == "newer":
-        lines.append(f"✓ {result['name']} is loaded, ahead of the {result['expected_id']} this build names.")
+        state = "modular installation is valid" if modular else "is loaded"
+        lines.append(f"✓ {result['name']} {state}, ahead of the {result['expected_id']} this build names.")
         lines.append("  Nothing to install — that would replace it with the older text.")
     elif status == "outdated":
         loaded = ", ".join(sorted({m["id"] for m in result["older"]}))
@@ -849,6 +884,10 @@ def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
     elif status == "switched_off":
         lines.append(f"✗ {result['name']} is switched off for this session (AISCB_DISABLE=1).")
         lines.append("  A session started without AISCB_DISABLE=1 loads it again.")
+    elif status == "invalid":
+        lines.append(f"✗ {result['name']} has an incomplete or modified modular installation.")
+        for item in result.get("invalid", []):
+            lines.append(f"  {item['file']}: {item['reason']}")
     else:
         lines.append(f"✗ {result['name']} ({result['expected_id']}) is NOT loaded.")
 
@@ -863,6 +902,8 @@ def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
         owner = "  managed by aiscb" if record.get("managed_by") == "aiscb" else ""
         via = "" if record["file"] == record["entry"] else f"\n      via {record['file']}"
         lines.append(f"  {mark} {record['id']}  [{scope}]{owner}\n      {record['entry']}{via}")
+        if record.get("mode") == "modular":
+            lines.append(f"      modular; {len(record['available_modules'])} modules available; loaded bodies unknown")
 
     carriers = result.get("present_unloaded") or []
     if carriers:
@@ -892,7 +933,7 @@ def _render(result: dict, config: dict, *, enforcing: bool = False) -> str:
     lines.append("           CLAUDE.local.md, .claude/rules/*.md, ~/.claude/CLAUDE.md,")
     lines.append("           ~/.claude/rules/*.md, and the managed-policy CLAUDE.md.")
     lines.append("  Also checked: the aiscb installer's SessionStart hooks in settings.json.")
-    lines.append("  This confirms the rules are in context, not that they were followed.")
+    lines.append("  This checks instruction wiring and installed artifacts, not live context or rule compliance.")
     if config.get("url"):
         lines.append(f"  Baseline source: {config['url']}")
     elif config.get("release"):

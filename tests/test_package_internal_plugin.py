@@ -1511,3 +1511,18 @@ def test_main_bad_name_exits(tmp_path):
                 str(tmp_path / "dist"),
             ]
         )
+
+
+def test_custom_baseline_drops_modular_bundle_and_keeps_complete_mode(tmp_path):
+    build = tmp_path / "build"
+    write_profile(build, "organization:\n  id: acme\nbaseline:\n  id: acme-sec-1.0\n  file: baselines/acme.md\n")
+    upstream = {**UPSTREAM_BASELINE["baseline"], "mode": "modular", "bundle_dir": "data/baselines/aiscb"}
+    (build / "config.json").write_text(json.dumps({"baseline": upstream}))
+    directory = build / "data/baselines/aiscb"
+    directory.mkdir(parents=True)
+    (directory / "install.py").write_text("# unused upstream installer\n")
+    pkg.patch_config(build)
+    config = json.loads((build / "config.json").read_text())["baseline"]
+    assert config["mode"] == "complete"
+    assert config["bundle_dir"] is None and config["release"] is None
+    assert not directory.exists()

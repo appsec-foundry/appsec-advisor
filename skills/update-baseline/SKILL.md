@@ -22,6 +22,8 @@ is whether the text on disk still matches the source that publishes it.
 owns every write, so the update stays confined to the file the rules are
 actually loaded from.
 
+Updates preserve the installation mode. Modular updates verify the release and every snapshot artifact before activating a new adapter; older snapshots remain for existing sessions. `--offline` uses the authenticated bundled release. Failed online verification never falls back during an update. Incomplete or modified modular installations stop the update. Upstream-managed installations remain owned by aiscb; modern user installs use `python3 ~/.aiscb/install.py --update`. Changing a plugin-owned complete installation to modular requires `install-baseline --migrate`.
+
 ## `--help` — inline help (early exit)
 
 If the user's arguments contain `--help` or `-h`, print this block verbatim and exit.

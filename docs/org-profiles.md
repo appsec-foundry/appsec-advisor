@@ -300,6 +300,8 @@ the code with it.
 
 A secure-coding baseline is an instruction file the coding assistant loads before it writes code, so an organization's rules apply on every prompt rather than only on the ones that mention security. The plugin ships one, the [AI Secure Coding Baseline](https://github.com/appsec-foundry/aiscb). `/appsec-advisor:install-baseline` installs its latest signed release once the release signature and checksum verify against the key the plugin carries, and the session banner flags the baseline when it is missing or mismatched.
 
+New official aiscb installations use modular loading. A custom `baseline:` block continues to install a complete instruction file; packaging clears the upstream modular bundle and mode with the upstream source. Existing upstream modular organization overlays are detected and verified but remain managed by their own aiscb installer. The plugin does not convert a custom single-file baseline into a modular overlay.
+
 Use the `baseline:` block to ship your own instead:
 
 ```yaml

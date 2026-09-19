@@ -255,6 +255,22 @@ def _baseline_block(config: dict, loaded: dict, *, check_updates: bool) -> dict:
         "loaded_status": _text(loaded.get("status")),
         "loaded_id": "",
         "loaded_scopes": bc.scope_text(loaded.get("scopes")),
+        "installation_modes": sorted(
+            {
+                item.get("mode", "complete")
+                for key in ("matches", "newer", "older", "other")
+                for item in loaded.get(key, [])
+            }
+        ),
+        "available_modules": sorted(
+            {
+                module
+                for key in ("matches", "newer", "older", "other")
+                for item in loaded.get(key, [])
+                for module in item.get("available_modules", [])
+            }
+        ),
+        "loaded_modules": None,
         "published_id": "",
         "state": "not-checked",
         "note": "",
@@ -391,10 +407,14 @@ def _loaded_text(baseline: dict) -> str:
     status = baseline["loaded_status"]
     if status == "missing":
         return "not loaded in Claude Code's instructions"
+    if status == "invalid":
+        return "invalid modular installation; run verify-baseline for diagnostics"
     if not status:
         return "unknown"
     where = baseline["loaded_scopes"] or status
     line = f"{baseline['loaded_id'] or status} ({where})"
+    if "modular" in baseline.get("installation_modes", []):
+        line += f", modular ({len(baseline['available_modules'])} modules available; loaded bodies unknown)"
     if status == "newer":
         return f"{line}, ahead of the configured id"
     if status == "other":

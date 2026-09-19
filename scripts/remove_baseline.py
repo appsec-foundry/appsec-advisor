@@ -193,6 +193,17 @@ def remove(
 
     where = ib.plan(scope, repo, home, config)
     target: Path = where["target"]
+    import baseline_modular as bm
+
+    if bm.MARKER in bc._read(target):
+        try:
+            bm.inspect(target, bc._read(target))
+            bm.safe(target.with_suffix(target.suffix + ".bak"))
+            if where["instructions"]:
+                bm.safe(where["instructions"])
+                bm.safe(where["instructions"].with_suffix(where["instructions"].suffix + ".bak"))
+        except (bm.ModularError, OSError) as exc:
+            raise RemoveError(f"modular installation is invalid: {exc}") from exc
     instructions: Path | None = where["instructions"]
     steps: list[str] = []
     if bc.aiscb_managed(target, home):

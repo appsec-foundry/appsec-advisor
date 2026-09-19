@@ -5,7 +5,7 @@ description: >-
   coding rules are in context on every prompt instead of only the ones that mention
   security. Menu-driven: this machine (~/.claude/CLAUDE.md), this repository
   (project CLAUDE.md), or this repository without touching CLAUDE.md
-  (.claude/rules/). Fetches the published baseline, installs a signed release only
+  (.claude/rules/). Uses modular loading for new official aiscb installations, with explicit complete compatibility mode. Fetches the published baseline, installs a signed release only
   once its signature verifies, and falls back to the copy bundled in the plugin
   when the source cannot be used. Use when the session banner
   reports the baseline is not installed, or on a request to install, add, set up,
@@ -15,11 +15,11 @@ description: >-
 
 You are installing a secure-coding baseline into Claude Code's instruction files.
 
-A secure-coding baseline is an instruction file the assistant loads **before** it
-writes code, so the rules apply on every prompt — not only the ones that mention
-security. Installing it means putting it where Claude Code already looks and
-importing it, which is what `scripts/install_baseline.py` does. Your job is the
-menu and the explanation; the script owns every write.
+The default official aiscb installation loads the core and catalog first and verifies selected module bodies through a local Python loader. `--complete` installs all rules as one compatibility file. Custom organization baselines remain complete. `scripts/install_baseline.py` owns installation and verification; your job is to explain its result.
+
+Modular project installations use repository-relative loader paths. Commit the baseline carrier, its import, and `.appsec-baseline/releases/`; run the loader from the repository root. The `project-rules` scope stores snapshots outside `.claude/rules/` so unselected modules are not automatically loaded. User installations keep snapshots under `~/.claude/.appsec-baseline/`. The loader needs permitted Python execution; if unavailable, choose complete mode explicitly.
+
+Existing complete installations stay complete during updates. Switching modes requires `--migrate`; modified or unrecorded complete text is refused. Other active baseline integrations must be migrated or removed first. Upstream aiscb installations remain owned by their installer. Close affected sessions before migration or activation and restart afterward.
 
 **Do not write any file yourself.** No Write, no Edit. The script is the only
 thing that touches `CLAUDE.md` or the baseline file, so the install stays
@@ -35,6 +35,7 @@ If the user's arguments contain `--help` or `-h`, print this block verbatim and 
 USAGE
   /appsec-advisor:install-baseline [--scope <scope>] [--repo <path>]
                                    [--dry-run] [--refresh] [--offline]
+                                   [--modular | --complete] [--migrate]
 
 SCOPES  (omit --scope to pick from a menu)
   user            ~/.claude/CLAUDE.md imports it — applies to every repository
@@ -50,6 +51,9 @@ FLAGS
   --refresh       Re-fetch and overwrite an already-installed copy
   --offline       Skip the fetch, install the copy bundled in the plugin
   --no-reuse      Write a fresh copy instead of importing one the repo has
+  --modular       Core and verified modules on demand (official default)
+  --complete      All rules in one compatibility file
+  --migrate       Explicitly switch a verified existing installation mode
 
 ALREADY HAVE IT?
   Nothing is installed twice. A baseline deployed organization-wide through
@@ -75,7 +79,7 @@ After printing, exit.
 Recognized flags:
 
   `--scope <user|project|project-rules>`  `--repo <path>`  `--dry-run`
-  `--refresh`  `--offline`  `--no-reuse`  `--help` | `-h`
+  `--refresh`  `--offline`  `--no-reuse`  `--modular` | `--complete`  `--migrate`  `--help` | `-h`
 
 Default `REPO_ROOT` to the current working directory.
 
@@ -95,12 +99,14 @@ Error: unknown argument '<TOKEN>'
   --refresh                              Re-fetch an installed copy
   --offline                              Use the plugin's bundled copy
   --no-reuse                             Write a copy instead of importing one
+  --modular | --complete                 Select the installation mode
+  --migrate                              Explicitly switch an existing mode
   --help, -h                             Show full help and exit
 
 Run `/appsec-advisor:install-baseline --help` for details.
 ```
 
-An unknown value for `--scope` is rejected the same way.
+An unknown value for `--scope` is rejected the same way. Reject simultaneous `--modular` and `--complete`. Set `MODE_FLAG` to the selected mode flag or empty, `MIGRATE_FLAG` to `--migrate` only when supplied, and `REUSE_FLAG` to `--no-reuse` only when supplied. Forward these flags unchanged to both preview and installation.
 
 ## Step 2 — Report what is loaded now
 
@@ -110,13 +116,14 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/baseline_check.py" --repo "$REPO_ROOT" --js
 
 Nothing is installed twice, so read the result before offering anything.
 
-Read `status` from the JSON:
+Read `status` from the JSON. A requested `--migrate` proceeds to the script preview for a plugin-owned installation; never rewrite a foreign or upstream-owned integration yourself:
 
+- **`invalid`** — a modular adapter or its pinned artifacts failed verification. Report the diagnostics and stop; do not replace or bypass the damaged installation.
 - **`disabled`** — this build has no baseline configured. Print
   `No secure-coding baseline is configured for this build — nothing to install.`
   and exit `0`. Do not offer to install one.
 - **`installed`** — say so in one line, naming the id and the scopes in
-  `scopes`. Then stop, unless the user passed `--refresh` or `--scope`: there is
+  `scopes`. Then stop, unless the user passed `--refresh`, `--scope`, or `--migrate`: there is
   nothing to fix, and a second copy in another scope is a choice, not a default.
   Offer both as a next step in one sentence (`--refresh` to update the text,
   `--scope` to add another scope) and exit `0`.
@@ -132,13 +139,13 @@ Read `status` from the JSON:
     colleague cloning this repository gets no baseline, in case `project` was
     what they meant.
 
-  When the records in `matches` carry `managed_by: aiscb`, the AI Secure Coding Baseline's own installer set the baseline up and updates it, and this plugin writes none of its files: name that installer's `install.py --update` instead of offering `--refresh`.
+  When records in `matches`, `newer`, or `older` carry `managed_by: aiscb`, the AI Secure Coding Baseline's own installer set the baseline up and updates it, and this plugin writes none of its files: name that installer's update command instead of offering `--refresh` or plugin migration; modern user installs use `python3 ~/.aiscb/install.py --update`.
 
 - **`outdated`** — the configured baseline is loaded, at an older version. This
   is not an install: the scope is already chosen and only the text is behind.
   Name both ids, point at `/appsec-advisor:update-baseline`, and exit `0` unless
   the user explicitly asked for another scope.
-- **`newer`** — a later version of the configured baseline is loaded, usually a signed release newer than the id this build names. Treat it like `installed`: say so in one line, naming the loaded id and that it is ahead of the configured one, and stop unless the user passed `--refresh` or `--scope`.
+- **`newer`** — a later version of the configured baseline is loaded, usually a signed release newer than the id this build names. Treat it like `installed`: say so in one line, naming the loaded id and that it is ahead of the configured one, and stop unless the user passed `--refresh`, `--scope`, or `--migrate`.
 - **`switched_off`** — the configured baseline comes from the AI Secure Coding Baseline's own installer (aiscb) and is switched off for this session with `AISCB_DISABLE=1`. Say so and exit `0`: a session started without the variable loads it again, and a copy installed here would load even while it is switched off.
 - **`other`** — a baseline is loaded, but not the configured one. Name both ids
   before the menu: the user is about to add a second set of rules, and needs to
@@ -151,11 +158,7 @@ Each entry is a file that carries the baseline where Claude Code does not read
 it: `AGENTS.md` for Codex and Cursor, `.github/copilot-instructions.md` for
 Copilot, or a copy committed to the repository that nothing imports.
 
-When the list is non-empty, say so before the menu and name the file. The
-install will **import that file** rather than write a second copy, so there
-stays one file to keep current — which is the whole point, since two files with
-the same rules diverge the day one of them is edited. Nothing is fetched in that
-case either.
+When the list is non-empty, name the file before the menu. Complete mode can reuse a complete carrier. Modular mode requires its own verified adapter and must not import a core or another client’s adapter as if it were complete.
 
 This applies to the `project` scope, the one that wires an import. `user` cannot
 use it — an import of a repository path from `~/.claude/CLAUDE.md` resolves to
@@ -185,7 +188,7 @@ the rules, not a file path.
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/install_baseline.py" \
-  --scope "$SCOPE" --repo "$REPO_ROOT" --dry-run $OFFLINE_FLAG
+  --scope "$SCOPE" --repo "$REPO_ROOT" --dry-run $REFRESH_FLAG $OFFLINE_FLAG $MODE_FLAG $MIGRATE_FLAG $REUSE_FLAG
 ```
 
 Print the script's output as-is. It names the source it will install from and
@@ -197,12 +200,12 @@ If the user passed `--dry-run`, stop here and exit with the script's status.
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/install_baseline.py" \
-  --scope "$SCOPE" --repo "$REPO_ROOT" $REFRESH_FLAG $OFFLINE_FLAG
+  --scope "$SCOPE" --repo "$REPO_ROOT" $REFRESH_FLAG $OFFLINE_FLAG $MODE_FLAG $MIGRATE_FLAG $REUSE_FLAG
 ```
 
 Print the output as-is and propagate the exit status.
 
-If the output reports that the bundled copy was used because the configured source could not be used, say plainly that the installed text may be older than the published baseline and that `--refresh` updates it once the source can be read again. When the reason is a failed signature or manifest check, say that the published release was refused, not merely unreachable. Do not present either case as a failed install: the rules are installed and in context.
+If the output reports that the bundled copy was used because the configured source could not be used, say plainly that the installed text may be older than the published baseline and that `--refresh` updates it once the source can be read again. When the reason is a failed signature or manifest check, say that the published release was refused, not merely unreachable. A modular fallback must be a verified modular bundle, never the complete file alone. Successful installation applies to new sessions; do not claim the module bodies are already in context.
 
 ## Step 6 — Say what happens next
 

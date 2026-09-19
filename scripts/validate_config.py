@@ -66,16 +66,32 @@ def _validate_main_config(data: Any, path: str) -> list[str]:
         if not isinstance(baseline, dict):
             errors.append(f"{path}: 'baseline' must be an object")
         else:
-            known = {"enabled", "id", "name", "url", "git", "release", "fallback_file", "install_filename", "enforce"}
+            known = {
+                "enabled",
+                "id",
+                "name",
+                "url",
+                "git",
+                "release",
+                "fallback_file",
+                "install_filename",
+                "enforce",
+                "mode",
+                "bundle_dir",
+            }
             unknown_baseline = set(baseline.keys()) - known
             if unknown_baseline:
                 errors.append(f"{path}: unknown keys in 'baseline': {sorted(unknown_baseline)}")
             for flag in ("enabled", "enforce"):
                 if baseline.get(flag) is not None and not isinstance(baseline[flag], bool):
                     errors.append(f"{path}: 'baseline.{flag}' must be a boolean")
-            for key in ("id", "name", "url", "fallback_file", "install_filename"):
+            for key in ("id", "name", "url", "fallback_file", "install_filename", "bundle_dir"):
                 if baseline.get(key) is not None and not isinstance(baseline[key], str):
                     errors.append(f"{path}: 'baseline.{key}' must be a string or null")
+            if baseline.get("mode", "complete") not in ("complete", "modular"):
+                errors.append(f"{path}: 'baseline.mode' must be complete or modular")
+            if baseline.get("mode") == "modular" and not baseline.get("release"):
+                errors.append(f"{path}: modular baseline requires a signed release source")
             if baseline.get("git") is not None and not isinstance(baseline["git"], dict):
                 errors.append(f"{path}: 'baseline.git' must be an object or null")
             release = baseline.get("release")

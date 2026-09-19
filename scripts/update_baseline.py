@@ -47,6 +47,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import baseline_check as bc  # noqa: E402
+import baseline_modular as bm  # noqa: E402
 import baseline_release as br  # noqa: E402
 import sync_baseline as sb  # noqa: E402
 
@@ -174,6 +175,10 @@ def update(
     forward = follows_releases(config, offline=offline)
     result = bc.check(repo=repo, home=home, config=config)
     status = result["status"]
+    if status == "invalid":
+        raise UpdateError(
+            "the modular installation is incomplete or modified; restore its verified artifacts before updating"
+        )
     if status == "missing":
         return [
             f"{config['name']} ({config['id']}) is not loaded, so there is nothing to update",
@@ -201,6 +206,39 @@ def update(
     if not targets:
         steps.append("nothing left to update")
         return steps, 0
+
+    modular = [(path, carried) for path, carried in targets if bm.MARKER in bc._read(path)]
+    if modular:
+        if len(modular) != len(targets):
+            raise UpdateError("mixed complete and modular installations require separate migration before updating")
+        try:
+            bundle, origin, _ = bm.resolve(config, offline, fallback=False)
+            package, _, _ = bm.from_bundle(bundle)
+            steps.append(f"source: {origin}")
+            planned = []
+            for path, carried in modular:
+                if bc.is_newer(carried, package["release"]):
+                    steps.append(f"left alone: {path} carries {carried}, ahead of {package['release']}")
+                    continue
+                old = bm.read(path).decode()
+                bm.inspect(path, old)
+                info = bm.metadata(old)
+                bm.safe(path.with_suffix(path.suffix + ".bak"))
+                text = bm.write_snapshot(path, info["scope"], bundle, dry_run=True)
+                planned.append((path, info["scope"], text))
+            for path, scope, text in planned:
+                if bc._read(path) == text:
+                    steps.append(f"already current: {path}")
+                elif dry_run:
+                    steps.append(f"would update {path}")
+                else:
+                    bm.write_snapshot(path, scope, bundle, dry_run=False)
+                    shutil.copyfile(path, path.with_suffix(path.suffix + ".bak"))
+                    path.write_text(text, encoding="utf-8")
+                    steps.append(f"updated {path}; previous snapshots retained")
+            return steps, 0
+        except (bm.ModularError, OSError) as exc:
+            raise UpdateError(str(exc)) from exc
 
     text, origin = source_text(config, offline=offline)
     state, found = verdict(text, config)

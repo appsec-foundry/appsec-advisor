@@ -415,3 +415,12 @@ def test_weakness_refresh_and_observations_use_existing_permissions():
     for name in (".impl-strategy.json", ".impl-design-signals.json", ".finding-design-signals.json"):
         assert name in reasons
         assert any(cp._rule_covers(rule, "Write(${OUTPUT_DIR}/" + name + ")") for rule in rules)
+
+
+def test_modular_baseline_loader_uses_existing_shell_permission():
+    entries = cp.load_required(cp.DATA_FILE)
+    shell = next(item for item in entries if item["entry"] == "Bash(*)")
+    assert "policy_loader.py" in shell["reason"]
+    assert "--migrate" in shell["reason"]
+    assert "no new execution grant" in shell["reason"]
+    assert not any("Write(" in item["entry"] and ".appsec-baseline" in item["entry"] for item in entries)

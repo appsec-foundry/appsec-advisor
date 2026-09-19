@@ -303,8 +303,9 @@ def _org_profile_baseline(build: Path) -> dict:
         # it would head the banner and both skills with the upstream product
         # name over the organization's own rules. Cleared, the generic default
         # applies until the profile sets one.
-        for key in ("url", "git", "release", "fallback_file", "name"):
+        for key in ("url", "git", "release", "fallback_file", "name", "bundle_dir"):
             resolved.setdefault(key, None)
+        resolved["mode"] = "complete"
     return resolved
 
 

@@ -48,6 +48,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import baseline_check as bc  # noqa: E402
+import baseline_modular as bm  # noqa: E402
 import baseline_release as br  # noqa: E402
 import install_baseline as ib  # noqa: E402
 import validate_org_profile as vop  # noqa: E402
@@ -276,7 +277,42 @@ def sync_target(
 ) -> list[str]:
     """Refresh one vendored copy and return the report lines."""
     expected = str(target.config["id"]).strip()
-    text, origin = fetch_published(target.config)
+    bundle = None
+    bundle_root = None
+    bundle_changes = []
+    if target.config.get("bundle_dir"):
+        try:
+            bundle_root = bm.safe(target.root / target.config["bundle_dir"]).resolve()
+        except bm.ModularError as exc:
+            raise SyncError(str(exc)) from exc
+        if not bundle_root.is_relative_to(target.root.resolve()):
+            raise SyncError("bundle_dir must stay inside the plugin")
+        try:
+            release = br.fetch_latest(target.config["release"], None, include_bundle=True)
+            bundle = release.bundle
+            bm.from_bundle(bundle)
+            bm.safe(bundle_root)
+            for name in bundle:
+                bm.relative(bundle_root, name)
+            bundle_changes = [
+                name
+                for name, raw in bundle.items()
+                if not (bundle_root / name).is_file() or bm.read(bundle_root / name) != raw
+            ]
+            text, origin = release.text, release.origin
+        except (br.ReleaseError, bm.ModularError, TypeError, KeyError) as exc:
+            raise SyncError(f"could not verify modular release: {exc}") from exc
+    else:
+        text, origin = fetch_published(target.config)
+
+    def write_bundle() -> list[str]:
+        if bundle is None:
+            return []
+        if not dry_run:
+            bundle_root.mkdir(parents=True, exist_ok=True)
+            for name in bundle_changes:
+                (bundle_root / name).write_bytes(bundle[name])
+        return [f"{'would write' if dry_run else 'wrote'} modular bundle: {name}" for name in bundle_changes]
 
     found = bc.find_ids(text)
     if not found:
@@ -288,8 +324,9 @@ def sync_target(
         steps.append(f"id:        {expected} (unchanged)")
         if target.path.is_file() and target.path.read_text(encoding="utf-8") == text:
             steps.append("unchanged: the bundled copy already matches the published text")
-            return steps
+            return steps + write_bundle()
         steps.append(_write(target.path, text, dry_run=dry_run))
+        steps.extend(write_bundle())
         steps.append("installed copies are untouched — they refresh with `install-baseline --refresh`")
         return steps
 
@@ -309,6 +346,7 @@ def sync_target(
     steps.append(_write(target.path, text, dry_run=dry_run))
     for path, edited in edits:
         steps.append(_write(path, edited, dry_run=dry_run))
+    steps.extend(write_bundle())
     steps.extend(notes)
     steps.append(target.gate_hint)
     return steps

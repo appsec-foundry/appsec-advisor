@@ -384,6 +384,8 @@ def _baseline_line(repo: Path | None) -> str:
         return ""
 
     label = _text(result, "name") or baseline_check.DEFAULT_NAME
+    if status == "invalid":
+        return _join(label, "modular installation invalid", "/appsec-advisor:verify-baseline")
 
     if status == "installed":
         ids = ", ".join(sorted({m["id"] for m in result.get("matches") or []}))
