@@ -1572,6 +1572,7 @@ def _resolve_contract_run_flags(output_dir: Path) -> dict:
         "skip_attack_walkthroughs": skip_walkthroughs,
         "check_requirements": bool(cfg.get("check_requirements") or cfg.get("CHECK_REQUIREMENTS")),
         "verbose_report": bool(cfg.get("verbose") or cfg.get("VERBOSE_REPORT")),
+        "enrich_arch_fragments": bool(cfg.get("enrich_arch_fragments") or cfg.get("ENRICH_ARCH_FRAGMENTS")),
     }
 
 
@@ -2010,6 +2011,7 @@ BLOCKING_ACTION_TYPES = frozenset(
         "auth_method_decomposition",
         "validation_approach_first",
         "control_subsection_coverage",
+        "section7_narrative_placeholders",
         "walkthrough_coverage",
         "chain_tid_consistency",
         "missing_required_subsection",
@@ -2217,6 +2219,13 @@ def build_repair_plan(
     # Re-Render Loop instead of shipping silently. Both are deterministic and
     # re-render-fixable (recompose / fragment re-author).
     placeholder_report = check_placeholders(md_path)
+    # §6 prose is owed only when the run enriches architecture fragments; without
+    # it the deterministic scaffold, placeholders included, is the product.
+    narrative_issues = (
+        list(check_section7_narrative_placeholders(md_path).issues)
+        if _resolve_contract_run_flags(output_dir)["enrich_arch_fragments"]
+        else []
+    )
     yaml_md_report = check_yaml_md_consistency(md_path, output_dir / "threat-model.yaml")
     mermaid_issues = list(mermaid_report.issues)
     xref_issues = list(xref_report.issues)
@@ -2267,6 +2276,7 @@ def build_repair_plan(
     report.warnings.extend(falls_short_report.warnings)
     report.issues.extend(falls_short_issues)
     report.issues.extend(placeholder_issues)
+    report.issues.extend(narrative_issues)
     report.warnings.extend(yaml_md_report.warnings)
     report.issues.extend(yaml_md_issues)
 
@@ -2683,6 +2693,7 @@ def build_repair_plan(
             or raw in walkthrough_coverage_issues
             or raw in walkthrough_depth_issues
             or raw in recon_iam_issues
+            or raw in narrative_issues
         ):
             continue
         action: dict = {"raw_issue": raw}
@@ -2860,6 +2871,24 @@ def build_repair_plan(
                     "(e.g. `_pending_`, `[TBD]`, `{{TOKEN}}`). Locate the line in "
                     "the offending fragment, author the missing prose, and re-run "
                     "compose_threat_model.py. The raw_issue carries the MD line(s)."
+                ),
+            }
+        )
+
+    # Unfilled §6 narrative with enrichment on: the security-architecture renderer
+    # did not run or stopped early. The fragment is the one writable target.
+    if narrative_issues:
+        actions.append(
+            {
+                "raw_issue": "; ".join(narrative_issues),
+                "type": "section7_narrative_placeholders",
+                "section_id": "security_architecture",
+                "fragments_to_rewrite": [".fragments/security-architecture.md"],
+                "remediation": (
+                    "Fill every NARRATIVE_PLACEHOLDER in `.fragments/security-architecture.md` "
+                    "from threat-model.yaml, .threats-merged.json and .triage-flags.json, keeping "
+                    "every scaffolded heading, table, anchor and deterministic block, then re-run "
+                    "compose_threat_model.py."
                 ),
             }
         )

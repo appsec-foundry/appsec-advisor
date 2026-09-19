@@ -1463,7 +1463,8 @@ def test_prepare_stage2_retry_uses_single_renderer(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     cfg["enrich_arch_fragments"] = True
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
-    (output / ".inline-shortcut-retry-count").write_text("1\n", encoding="utf-8")
+    # A renderer already ran in this run: the next dispatch is a retry.
+    (output / controller._STAGE2_DISPATCH_MARKER).write_text("parallel\n", encoding="utf-8")
     monkeypatch.delenv("APPSEC_PARALLEL_RENDER", raising=False)
     monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
 
@@ -1495,7 +1496,7 @@ def test_prepare_stage2_quick_retry_stays_ms_only(tmp_path, monkeypatch):
     cfg = _cfg(tmp_path)
     cfg.update(assessment_depth="quick", enrich_arch_fragments=False)
     (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
-    (output / ".inline-shortcut-retry-count").write_text("1\n", encoding="utf-8")
+    (output / controller._STAGE2_DISPATCH_MARKER).write_text("ms-only\n", encoding="utf-8")
     monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
 
     action = controller.prepare_stage2(output)
@@ -7218,3 +7219,52 @@ def test_post_triage_refreshes_weaknesses_before_synthesis(tmp_path, monkeypatch
     ]
     assert calls[1][1] == ["refresh-weaknesses", "--output-dir", str(tmp_path)]
     assert calls[0][1][0] == calls[2][1][0] == "threats_merged"
+
+
+def test_first_stage2_entry_renders_in_parallel_and_only_a_second_one_is_a_retry(tmp_path, monkeypatch):
+    """`next` opens the attempt ledger on the first, normal Stage-2 entry. Reading
+    the ledger as "retry" sent the 2026-09-19 juice-shop run to the single
+    renderer, so no security-architecture renderer ran and §6 kept 94
+    placeholders although enrich_arch_fragments was on."""
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["enrich_arch_fragments"] = True
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    (output / "threat-model.yaml").write_text("meta: {}\n")
+    monkeypatch.delenv("APPSEC_PARALLEL_RENDER", raising=False)
+    monkeypatch.setattr(controller, "_compose_if_ready", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+
+    _stage2_blocked(output, "required-fragments")
+    assert controller.next_action(output)["stage"] == "stage2"
+    assert (output / ".inline-shortcut-retry-count").is_file()
+    first = controller.prepare_stage2(output)
+    assert first["renderer_profile"] == "parallel"
+    assert first["renderer_inputs"]["ENRICH_ARCH_FRAGMENTS"] == "true"
+    controller._validate_action(first)
+
+    controller.next_action(output)
+    assert controller.prepare_stage2(output)["renderer_profile"] == "full"
+
+
+@pytest.mark.parametrize("enrich", [True, False])
+def test_prepare_stage2_hands_every_renderer_the_enrichment_flag(tmp_path, monkeypatch, enrich):
+    output = tmp_path / "out"
+    output.mkdir()
+    cfg = _cfg(tmp_path)
+    cfg["enrich_arch_fragments"] = enrich
+    (output / ".skill-config.json").write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    action = controller.prepare_stage2(output)
+    inputs = action["renderer_inputs"]
+    assert inputs["ENRICH_ARCH_FRAGMENTS"] == ("true" if enrich else "false")
+    assert inputs["OUTPUT_DIR"] == str(output)
+    controller._validate_action(action)
+    runtime = controller.THIN_STAGE2_RUNTIME.read_text(encoding="utf-8")
+    assert "renderer_inputs" in runtime and "verbatim" in runtime
+
+
+def test_a_new_run_starts_without_stage2_attempt_bookkeeping():
+    for names in (controller._FULL_INTERMEDIATE_NAMES, controller._REBUILD_NAMES):
+        assert {".inline-shortcut-retry-count", controller._STAGE2_DISPATCH_MARKER} <= names

@@ -1071,7 +1071,9 @@ sections:
     # rendered §6 body. The relevant checks (added 2026-05) are:
     #
     #   * `section7_narrative_placeholders` (M2) — fails when any
-    #     `<!-- NARRATIVE_PLACEHOLDER ... -->` token survives in §6.
+    #     `<!-- NARRATIVE_PLACEHOLDER ... -->` token survives in §6. The
+    #     Stage-3 `gate` enforces it only when enrich_arch_fragments is on;
+    #     without enrichment the scaffold is the delivered §6.
     #   * `section7_h4_positive_intro` (M7) — fails when an H4 control
     #     block lacks a ≥25-word positive intro paragraph before
     #     `**Security assessment**`, opens with `No `/`Missing`/…, or

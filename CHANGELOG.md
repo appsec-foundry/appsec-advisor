@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With architecture enrichment on, the first report pass writes the Security Architecture prose, and unfilled §6 placeholders trigger a repair instead of passing QA; quick scans keep the scaffold.
 - Figure 2 draws every attacker the actor legend names, with one example per attack route and actor, so a build or supply-chain attacker on a shared route gets its own row.
 - Figure 2 and the weakness register link NoSQL query injection, database-side JavaScript evaluation and OAuth sign-in requests without state to their weaknesses, prefer an example finding with a linked weakness, and runs warn about findings that carry only a class-level CWE.
 - Figure 1 always shows the most security-critical functions of a component (admin functions, LLM tools, file upload, code evaluation, URL fetch) before less critical ones, and marks a label with a linked finding by its severity-coloured border.

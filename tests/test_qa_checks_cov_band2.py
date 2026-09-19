@@ -1451,3 +1451,29 @@ def test_mermaid_html_in_message_detected_then_autofixed(tmp_path):
     r = qa.check_mermaid_syntax(p)
     assert r.fixes
     assert "<token>" not in p.read_text()
+
+
+# ---------------------------------------------------------------------------
+# §6 narrative placeholders in the Stage-3 gate
+# ---------------------------------------------------------------------------
+
+
+def _narrative_actions(tmp_path, enrich):
+    import json
+
+    body = "### 6.1 Overview\n\n<!-- NARRATIVE_PLACEHOLDER: §6.1 assessment -->\n"
+    p = _md(tmp_path, _wrap_sec7(body))
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"enrich_arch_fragments": enrich}), encoding="utf-8")
+    plan, _ = qa.build_repair_plan(p, tmp_path)
+    return [a for a in plan["actions"] if "NARRATIVE_PLACEHOLDER" in a["raw_issue"]]
+
+
+def test_gate_repairs_unfilled_section6_narrative_when_the_run_enriches(tmp_path):
+    actions = _narrative_actions(tmp_path, True)
+    assert [(a["type"], a["severity"], a["fragments_to_rewrite"]) for a in actions] == [
+        ("section7_narrative_placeholders", "blocking", [".fragments/security-architecture.md"])
+    ]
+
+
+def test_gate_keeps_the_section6_scaffold_when_the_run_does_not_enrich(tmp_path):
+    assert _narrative_actions(tmp_path, False) == []

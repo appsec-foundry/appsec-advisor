@@ -10,7 +10,7 @@ pregeneration and the filesystem-authoritative compose handoff.
      prepare-stage2 --output-dir "$OUTPUT_DIR"
    ```
 
-   Require `stage=stage2`, `renderer_profile`, and a matching
+   Require `stage=stage2`, `renderer_profile`, `renderer_inputs`, and a matching
    `dispatch_agent` or `dispatch_parallel` action. A returned `stage=stage1d`
    means Stage 1d never ran: load `SKILL-thin-stage1d.md` in full, follow it,
    then repeat this call.
@@ -22,9 +22,9 @@ pregeneration and the filesystem-authoritative compose handoff.
      ⟶ Authoring required LLM fragments and invoking the deterministic compose tail
    ```
 3. Set the Agent model to `dispatch_values.renderer_model_alias` verbatim;
-   `RENDERER_MODEL` is an operator id the Agent tool rejects. Pass all non-null
-   aliases from `SKILL-full-runtime.md`. Request only concise status, artifact
-   paths, and blockers; never reproduce report bodies.
+   `RENDERER_MODEL` is an operator id the Agent tool rejects. Prefix each
+   prompt with all `renderer_inputs` verbatim as `KEY=value`. Request only
+   concise status, artifact paths, and blockers; never reproduce report bodies.
 
    - `ms-only`: call only `appsec-advisor:appsec-ms-renderer`, description
      `Render: Management Summary`. This is default

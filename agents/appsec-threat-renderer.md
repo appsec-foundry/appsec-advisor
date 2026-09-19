@@ -46,7 +46,7 @@ When copying evidence from `.recon-summary.md` or any sidecar into Stage-2 prose
 
 ## Inputs
 
-The skill passes the same run variables as Stage 1, including:
+The skill passes the controller's `renderer_inputs` as `KEY=value` lines:
 
 - `REPO_ROOT`
 - `OUTPUT_DIR`
@@ -56,7 +56,7 @@ The skill passes the same run variables as Stage 1, including:
 - `REASONING_MODEL`
 - `SKIP_ATTACK_PATHS_AUTHORING`
 - `SKIP_ATTACK_WALKTHROUGHS`
-- `ENRICH_ARCH_FRAGMENTS`
+- `ENRICH_ARCH_FRAGMENTS` — required; if the prompt lacks it, report that as your blocker and write nothing, never assume `false`
 
 Required on-disk inputs:
 

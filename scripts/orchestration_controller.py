@@ -300,6 +300,12 @@ _FULL_INTERMEDIATE_NAMES = {
     # shadow `docs/business-context.md` and rate this run against a document
     # nobody passed to it.
     ".business-context-input.md",
+    # Stage-2 attempt bookkeeping of an aborted run: a leftover ledger spends the
+    # new run's budget and a leftover dispatch marker turns its first render
+    # into a retry.
+    ".inline-shortcut-retry-count",
+    ".inline-shortcut-repair-plan.json",
+    ".stage2-dispatched",
 }
 _FULL_INTERMEDIATE_GLOBS = (".stride-*.json", ".merge-*.json")
 
@@ -357,6 +363,9 @@ _REBUILD_NAMES = {
     ".trust-boundary-coverage.json",
     ".trust-boundary-diagnostics.json",
     ".trust-boundaries.json",
+    ".inline-shortcut-retry-count",
+    ".inline-shortcut-repair-plan.json",
+    ".stage2-dispatched",
 }
 _REBUILD_GLOBS = (
     "threat-model.figure*.svg",
@@ -6498,7 +6507,11 @@ def prepare_stage2(output_dir: Path) -> dict[str, Any]:
         except OSError:
             pass
 
-    retry_pending = (output_dir / ".inline-shortcut-retry-count").is_file()
+    # A retry is a Stage-2 dispatch after a renderer already ran in this run. The
+    # attempt ledger alone does not say that: `next` opens it on the first,
+    # normal entry, before any renderer was dispatched.
+    dispatch_marker = output_dir / _STAGE2_DISPATCH_MARKER
+    retry_pending = dispatch_marker.is_file()
     enrich_arch = bool(cfg.get("enrich_arch_fragments"))
     quick_ms_only = str(cfg.get("assessment_depth") or "standard") == "quick" and not enrich_arch
     parallel = enrich_arch and os.environ.get("APPSEC_PARALLEL_RENDER") != "0" and not retry_pending
@@ -6518,17 +6531,50 @@ def prepare_stage2(output_dir: Path) -> dict[str, Any]:
             receipts,
         )
     _append_event(output_dir, "STAGE2_READY", f"renderer_profile={renderer_profile}")
+    try:
+        dispatch_marker.write_text(renderer_profile + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise ControllerError(f"cannot persist the Stage-2 dispatch marker: {exc}") from exc
     return {
         "schema_version": 1,
         "action": action,
         "mode": cfg["mode"],
         "stage": "stage2",
         "renderer_profile": renderer_profile,
+        "renderer_inputs": _renderer_inputs(cfg, output_dir),
         "instruction_file": str(THIN_STAGE2_RUNTIME),
         "config_path": str(config_path),
         "dispatch_values": _dispatch_values_stage(cfg),
         "receipts": [f"Stage-2 structural fragments prepared; renderer_profile={renderer_profile}", *receipts],
     }
+
+
+def _renderer_inputs(cfg: dict[str, Any], output_dir: Path) -> dict[str, str]:
+    """Run values every Stage-2 renderer reads, passed verbatim as KEY=value.
+
+    `ENRICH_ARCH_FRAGMENTS` decides whether §6 prose is authored at all; a
+    renderer that never receives it must not guess `false`.
+    """
+
+    def flag(key: str) -> str:
+        return "true" if cfg.get(key) else "false"
+
+    return {
+        "REPO_ROOT": str(cfg.get("repo_root") or ""),
+        "OUTPUT_DIR": str(output_dir),
+        "CLAUDE_PLUGIN_ROOT": str(PLUGIN_ROOT),
+        "MODE": str(cfg.get("mode") or ""),
+        "ASSESSMENT_DEPTH": str(cfg.get("assessment_depth") or "standard"),
+        "REASONING_MODEL": str(cfg.get("reasoning_model") or ""),
+        "SKIP_ATTACK_PATHS_AUTHORING": flag("skip_attack_paths_authoring"),
+        "SKIP_ATTACK_WALKTHROUGHS": flag("skip_attack_walkthroughs"),
+        "ENRICH_ARCH_FRAGMENTS": flag("enrich_arch_fragments"),
+    }
+
+
+# Written by prepare-stage2 once a renderer is about to be dispatched; its
+# presence is what makes a later Stage-2 entry a retry.
+_STAGE2_DISPATCH_MARKER = ".stage2-dispatched"
 
 
 # LLM-authored render fragments a Stage-2 renderer must produce before the
@@ -7034,7 +7080,12 @@ def next_action(output_dir: Path) -> dict[str, Any]:
                 "instruction_file": str(THIN_STAGE2_RUNTIME),
                 "receipts": [receipt],
             }
-    for name in (".inline-shortcut-retry-count", ".inline-shortcut-repair-plan.json", ".compose-blocked.json"):
+    for name in (
+        ".inline-shortcut-retry-count",
+        ".inline-shortcut-repair-plan.json",
+        ".compose-blocked.json",
+        _STAGE2_DISPATCH_MARKER,
+    ):
         try:
             (output_dir / name).unlink()
         except FileNotFoundError:

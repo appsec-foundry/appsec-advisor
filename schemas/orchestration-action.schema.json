@@ -233,6 +233,14 @@
     "renderer_profile": {
       "enum": ["ms-only", "parallel", "full"]
     },
+    "renderer_inputs": {
+      "$comment": "Run values every Stage-2 renderer prompt carries verbatim as KEY=value lines.",
+      "type": "object",
+      "required": ["ENRICH_ARCH_FRAGMENTS"],
+      "propertyNames": {"pattern": "^[A-Z][A-Z0-9_]{0,63}$"},
+      "additionalProperties": {"type": "string", "maxLength": 4096},
+      "maxProperties": 16
+    },
     "semantic_role": {
       "$ref": "#/$defs/semantic_role"
     },
