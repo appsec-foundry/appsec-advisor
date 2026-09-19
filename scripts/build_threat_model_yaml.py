@@ -2925,6 +2925,14 @@ def main() -> int:
             resolution = actor_resolution["open_registration_resolution"]
             meta["open_user_registration"] = resolution["open"]
             meta["open_registration_resolution"] = resolution
+        not_enabled = [
+            {"id": actor["id"], "scope_note": actor.get("scope_note") or actor["label"]}
+            for actor in actor_resolution.get("resolved_actors") or []
+            if (actor.get("activation_conditions") or {}).get("opt_in")
+            and not (actor.get("_provenance") or {}).get("active")
+        ]
+        if not_enabled:
+            meta["opt_in_actors_not_enabled"] = not_enabled
 
     threats, threat_warnings = build_threats(merged, register_floor=skill_cfg.get("register_severity_floor", "medium"))
     for w in threat_warnings:

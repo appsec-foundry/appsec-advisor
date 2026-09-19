@@ -5,7 +5,8 @@ access group that needs a specific foothold (a build pipeline, repository,
 data-store or production access) stays only when the finding shows that
 foothold; a finding in a request handler of an internet-exposed component
 keeps an internet actor; a finding left without any actor gains the first valid
-one. The rules live in ``data/actor-attribution-rules.yaml`` and read only
+one. An inactive actor (disabled, or an opt-in class nobody enabled) never keeps
+an attribution. The rules live in ``data/actor-attribution-rules.yaml`` and read only
 component zones and tiers, CWEs, evidence paths, the deterministic route
 inventory and the actors' declared access; never names or prose. The check
 runs once after the merge so every report surface projects the same
@@ -192,7 +193,11 @@ def reconcile_attribution(
     corrections = []
     for threat in threats:
         ids = [aid for aid in threat.get("actor_ids") or [] if isinstance(aid, str)]
-        removed = [aid for aid in ids if aid in by_id and not _valid(threat, by_id[aid], inventory)]
+        removed = [
+            aid
+            for aid in ids
+            if aid in by_id and (not _active(by_id[aid]) or not _valid(threat, by_id[aid], inventory))
+        ]
         kept = [aid for aid in ids if aid not in removed]
         added = []
         if not any(actor_group(by_id[aid]) in internet for aid in kept if aid in by_id):

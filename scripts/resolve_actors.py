@@ -76,9 +76,18 @@ def _deep_merge_actor(base: dict, override: dict) -> dict:
     return result
 
 
-def _activation_check(actor: dict, signals: dict) -> tuple[bool, str]:
-    """Return (activate, reason) based on actor.activation_conditions and signals."""
+def _activation_check(actor: dict, signals: dict, enabled_by: str | None = None) -> tuple[bool, str]:
+    """Return (activate, reason) based on actor.activation_conditions and signals.
+
+    An opt-in actor describes a position no repository signal can evidence, so
+    only an explicit `enable:` entry activates it, and that entry replaces the
+    signal check.
+    """
     conditions = actor.get("activation_conditions", {})
+    if conditions.get("opt_in"):
+        if enabled_by:
+            return True, f"opt-in actor enabled by the {enabled_by} layer"
+        return False, "opt-in actor not enabled (enable: in .appsec/actors.yaml or the org profile)"
     required = conditions.get("required_signals", [])
     logic = conditions.get("signal_logic", "all")
 
@@ -375,6 +384,12 @@ def load_repo_actors(
     return actors, disables, discovery_config, inherit_org
 
 
+def load_repo_enables(repo_root: str) -> list[str]:
+    """Opt-in actor IDs enabled in .appsec/actors.yaml (validated by load_repo_actors)."""
+    path = os.path.join(repo_root, ".appsec", "actors.yaml")
+    return list((_load_yaml(path).get("enable") or []) if os.path.exists(path) else [])
+
+
 # ── reach-equivalence ────────────────────────────────────────────────────────
 
 
@@ -552,12 +567,31 @@ def resolve(
                     }
                 )
 
+    # --- Opt-in enables (enterprise, then repo); a disable still wins ---
+    enabled_by: dict[str, str] = {}
+    ent_enable = (org_profile.get("actors") or {}).get("enable") or []
+    for layer, ids in (("enterprise", ent_enable), ("repo", load_repo_enables(repo_root))):
+        for eid in ids:
+            if eid in resolved_map:
+                enabled_by.setdefault(eid, layer)
+            else:
+                run_issues.append(
+                    {
+                        "class": "enabled_actor_unknown",
+                        "actor_id": eid,
+                        "severity": "advisory",
+                        "message": f"{layer} layer enables unknown actor {eid}; nothing was activated.",
+                    }
+                )
+
     # --- Apply activation conditions ---
     for aid, actor in resolved_map.items():
         if actor["_provenance"].get("disabled_by"):
             actor["_provenance"]["active"] = False
             continue
-        active, reason = _activation_check(actor, signals)
+        if aid in enabled_by and actor.get("activation_conditions", {}).get("opt_in"):
+            actor["_provenance"]["enabled_by"] = enabled_by[aid]
+        active, reason = _activation_check(actor, signals, enabled_by.get(aid))
         actor["_provenance"]["active"] = active
         actor["_provenance"]["activation_reason"] = reason
         if not active:
@@ -688,12 +722,25 @@ def resolve(
                         }
                     )
                 else:
-                    accepted_confirmed_relevant = copy.deepcopy(disc.get("confirmed_relevant", []))
+                    active_ids = {aid for aid, a in resolved_map.items() if a["_provenance"].get("active")}
+                    # Discovery confirms active actors only; it cannot revive an inactive class.
+                    accepted_confirmed_relevant = [
+                        copy.deepcopy(row)
+                        for row in disc.get("confirmed_relevant", [])
+                        if isinstance(row, dict) and row.get("id") in active_ids
+                    ]
                     accepted_inputs_questioned = copy.deepcopy(disc.get("inputs_questioned", []))
                     max_proposed = min(int(discovery_config.get("max_proposed", 5)), 5)
                     static_catalog = list(resolved_map.values())
                     aliases = _access_alias_map(plugin_root)
                     trust_aliases = _trust_position_alias_map(plugin_root)
+                    # A display group served only by opt-in actors that are not enabled
+                    # stays out of scope; discovery must not re-add it under a new ID.
+                    dormant_groups = {
+                        a.get("heatmap_slug")
+                        for a in static_catalog
+                        if a.get("activation_conditions", {}).get("opt_in") and not a["_provenance"].get("active")
+                    } - {a.get("heatmap_slug") for a in static_catalog if a["_provenance"].get("active")}
                     for proposed in disc.get("proposed_additional", [])[:max_proposed]:
                         aid = proposed["id"]
                         if aid in resolved_map:
@@ -707,6 +754,11 @@ def resolve(
                             aliases,
                             trust_aliases,
                         )
+                        if (
+                            not reason
+                            and (proposed.get("heatmap_slug") or _default_heatmap_slug(proposed)) in dormant_groups
+                        ):
+                            reason = "actor class is opt-in and not enabled for this repository"
                         if reason:
                             rejected = {"id": aid, "reason": reason}
                             if covered_by:

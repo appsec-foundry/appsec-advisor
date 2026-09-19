@@ -251,22 +251,18 @@ class TestRenderIdentifiedActorsExtra:
 
 
 class TestIdentifiedActorsConsolidation:
-    def test_fold_map_open_self_registration_and_always_insider(self):
-        # low-priv folds into anon only when open_user_registration; insider-ops
-        # folds into insider-dev unconditionally (always rule).
+    def test_fold_map_open_self_registration_keeps_enabled_insiders_split(self):
+        # low-priv folds into anon only when open_user_registration; enabled
+        # opt-in insiders are an explicit operator choice and never fold.
         active = {"ACT-D-01", "ACT-D-02", "ACT-D-04", "ACT-D-05"}
         folded, reason = compose._actor_fold_map(active, {"open_user_registration": True})
-        assert folded["ACT-D-02"] == "ACT-D-01"
-        assert folded["ACT-D-05"] == "ACT-D-04"
-        assert "ACT-D-01" not in folded and "ACT-D-04" not in folded
+        assert folded == {"ACT-D-02": "ACT-D-01"}
         assert reason["ACT-D-02"] == "open-self-registration"
-        assert reason["ACT-D-05"] == "no-distinct-production-environment"
 
-    def test_fold_map_no_open_reg_keeps_lowpriv_but_still_folds_insider(self):
+    def test_fold_map_no_open_reg_folds_nothing(self):
         active = {"ACT-D-01", "ACT-D-02", "ACT-D-04", "ACT-D-05"}
         folded, _ = compose._actor_fold_map(active, {})
-        assert "ACT-D-02" not in folded  # open-reg gate not met
-        assert folded["ACT-D-05"] == "ACT-D-04"  # always rule fires regardless
+        assert folded == {}
 
     def test_fold_skipped_when_primary_inactive(self):
         # ACT-D-01 disabled → not active → its class members are NOT folded away.

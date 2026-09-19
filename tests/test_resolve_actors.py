@@ -1159,3 +1159,103 @@ def test_cli_invalid_repo_actor_config_fails_without_traceback(run_plugin_script
     assert result.returncode == 2
     assert "invalid .appsec/actors.yaml" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Opt-in actor classes in the shipped library
+# ---------------------------------------------------------------------------
+SHIPPED_PLUGIN = Path(__file__).resolve().parents[1]
+EVERY_SIGNAL = set(SIGNAL_KEYS) - {"has_open_self_registration"}
+
+
+def _shipped_opt_in_ids() -> set[str]:
+    library = yaml.safe_load((SHIPPED_PLUGIN / "data" / "actors" / "default-library.yaml").read_text())
+    return {a["id"] for a in library["actors"] if (a.get("activation_conditions") or {}).get("opt_in")}
+
+
+def _resolve_shipped(tmp_path: Path, repo_config: dict | None = None, org: dict | None = None, discovery=None):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    if repo_config is not None:
+        _write_yaml(repo / ".appsec" / "actors.yaml", repo_config)
+    signals = tmp_path / "signals.json"
+    _write_recon_signals(signals, repo, EVERY_SIGNAL)
+    org_path = None
+    if org is not None:
+        org_path = tmp_path / "profile" / ".org-profile-effective.json"
+        org_path.parent.mkdir()
+        org_path.write_text(json.dumps(org))
+    discovery_path = None
+    if discovery is not None:
+        discovery_path = tmp_path / "actors-discovered.json"
+        discovery_path.write_text(json.dumps(discovery))
+    out = tmp_path / "out"
+    resolve_actors.resolve(
+        plugin_root=str(SHIPPED_PLUGIN),
+        repo_root=str(repo),
+        output_dir=str(out),
+        org_profile_effective_path=str(org_path) if org_path else None,
+        discovery_output_path=str(discovery_path) if discovery_path else None,
+        signals_path=str(signals),
+        quick_mode=discovery is None,
+    )
+    resolved = _read(out, ".actors-resolved.json")
+    active = {a["id"] for a in resolved["resolved_actors"] if a["_provenance"].get("active")}
+    return resolved, active
+
+
+def test_insiders_and_device_holder_are_opt_in_and_inactive_even_with_every_signal(tmp_path: Path):
+    opt_in = _shipped_opt_in_ids()
+    assert {"ACT-D-04", "ACT-D-05", "ACT-D-08"} <= opt_in
+    resolved, active = _resolve_shipped(tmp_path)
+    assert active == {a["id"] for a in resolved["resolved_actors"]} - opt_in
+    skipped = {i["actor_id"] for i in resolved["run_issues"] if i["class"] == "default_actor_skipped"}
+    assert opt_in <= skipped
+
+
+@pytest.mark.parametrize("layer", ["repo", "enterprise"])
+def test_enable_activates_only_the_named_opt_in_actor(tmp_path: Path, layer: str):
+    config = {"enable": ["ACT-D-04"]}
+    resolved, active = _resolve_shipped(
+        tmp_path,
+        repo_config=config if layer == "repo" else None,
+        org={"actors": config} if layer == "enterprise" else None,
+    )
+    assert "ACT-D-04" in active
+    assert not active & (_shipped_opt_in_ids() - {"ACT-D-04"})
+    insider = next(a for a in resolved["resolved_actors"] if a["id"] == "ACT-D-04")
+    assert insider["_provenance"]["enabled_by"] == layer
+
+
+def test_enterprise_disable_beats_repo_enable_and_unknown_enables_are_reported(tmp_path: Path):
+    resolved, active = _resolve_shipped(
+        tmp_path,
+        repo_config={"enable": ["ACT-D-04", "ACT-D-99"]},
+        org={"actors": {"disable": ["ACT-D-04"]}},
+    )
+    assert "ACT-D-04" not in active
+    assert any(i["class"] == "enabled_actor_unknown" and i["actor_id"] == "ACT-D-99" for i in resolved["run_issues"])
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_discovery_cannot_revive_an_opt_in_class(tmp_path: Path, enabled: bool):
+    discovery = _discovery_doc(
+        _proposal(
+            id="ACT-X-1",
+            label="database-operator",
+            access=["prod-env"],
+            trust_positions=["production-database-authority"],
+            distinct_trust_positions=["production-database-authority"],
+        )
+    )
+    discovery["confirmed_relevant"] = [
+        {"id": "ACT-D-04", "label": "malicious-insider-dev", "relevance_evidence": "recon 7.12", "confidence": "high"}
+    ]
+    resolved, active = _resolve_shipped(
+        tmp_path, repo_config={"enable": ["ACT-D-05"]} if enabled else None, discovery=discovery
+    )
+    assert resolved["confirmed_relevant"] == []
+    assert ("ACT-X-1" in active) is enabled
+    if not enabled:
+        rejected = {r["id"]: r["reason"] for r in resolved["rejected_discovery_actors"]}
+        assert "opt-in" in rejected["ACT-X-1"]

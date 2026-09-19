@@ -63,6 +63,16 @@ properties:
         enum: [full, incremental]
       open_user_registration:
         type: boolean
+      opt_in_actors_not_enabled:
+        type: array
+        description: Opt-in actor classes this run did not assess; rendered in §11 Out of Scope.
+        items:
+          type: object
+          additionalProperties: false
+          required: [id, scope_note]
+          properties:
+            id: {type: string, pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"}
+            scope_note: {type: string, minLength: 1}
       open_registration_resolution:
         type: object
         additionalProperties: false

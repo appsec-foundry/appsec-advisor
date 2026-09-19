@@ -118,6 +118,28 @@ def test_at_rest_finding_on_a_data_store_stays_insider_only(tmp_path):
     assert threats[0]["actor_ids"] == ["ACT-D-05"]
 
 
+@pytest.mark.parametrize(
+    ("component", "cwe", "file"),
+    [
+        ("ledger-db", "CWE-89", "models/search.ts"),  # data tier alone is no insider evidence
+        ("ledger-db", "CWE-400", "routes/search.ts"),
+        ("orders-api", "CWE-639", "routes/updateReview.ts"),
+    ],
+)
+def test_insider_needs_at_rest_repository_or_build_evidence_not_a_data_store(component, cwe, file):
+    threats = [finding("T-008", component, cwe, file, ["ACT-D-05", "ACT-D-01"])]
+    reconcile_attribution(threats, components(), ACTORS)
+    assert threats[0]["actor_ids"] == ["ACT-D-01"]
+
+
+def test_an_inactive_opt_in_actor_never_keeps_an_attribution():
+    actors = [{**a, "_provenance": {"active": a["heatmap_slug"] != "insider"}} for a in ACTORS]
+    threats = [finding("T-009", "ledger-db", "CWE-311", "models/index.ts", ["ACT-D-04", "ACT-D-01"])]
+    corrections = reconcile_attribution(threats, components(), actors)
+    assert threats[0]["actor_ids"] == ["ACT-D-01"]
+    assert corrections[0]["removed"] == ["ACT-D-04"]
+
+
 def test_unattributed_pipeline_finding_gains_the_build_time_actor_not_an_internet_one():
     threats = [finding("T-005", "release-ci", "CWE-1357", "Dockerfile", [])]
     corrections = reconcile_attribution(threats, components(), ACTORS)

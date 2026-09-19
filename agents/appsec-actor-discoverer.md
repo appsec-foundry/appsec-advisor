@@ -126,6 +126,10 @@ Print: `[actor-discoverer]   ↳ Loaded: <n> static actors, <m> recon-signals, <
 
 **Print:** `[actor-discoverer] Step 3/3 — Running actor discovery…`
 
+Insiders (repository, pipeline or production access) and holders of a user's
+device are opt-in classes the operator enables. Confirm them only when they are
+in `resolved_actors[]`, and never propose them; the resolver rejects both.
+
 ### Section A — Signal-conditioned heuristic checklist
 
 For each of the following conditions that is `true` in the signals map, evaluate the corresponding actor question:
@@ -184,8 +188,8 @@ Write to `$OUTPUT_DIR/.actors-discovered.json`:
   "generated_at": "<ISO 8601 UTC>",
   "confirmed_relevant": [
     {
-      "id": "ACT-D-04",
-      "label": "malicious-insider-dev",
+      "id": "ACT-D-06",
+      "label": "supply-chain-attacker",
       "relevance_evidence": "<recon-summary section or file:line>",
       "confidence": "high | medium | low"
     }

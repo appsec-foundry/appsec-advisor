@@ -3578,7 +3578,8 @@ def gen_attack_surface(yaml_data: dict) -> str:
 
 def gen_out_of_scope(yaml_data: dict) -> str:
     """## 11. Out of Scope — pulls from meta.scope.out_of_scope or default,
-    plus team-provided accepted risks from meta.accepted_risks (sourced from
+    plus opt-in actor classes the run did not assess (meta.opt_in_actors_not_enabled)
+    and team-provided accepted risks from meta.accepted_risks (sourced from
     docs/known-threats.yaml entries with status: accepted)."""
     meta = yaml_data.get("meta") or {}
     out_of_scope = (meta.get("scope") if isinstance(meta.get("scope"), dict) else {}).get("out_of_scope") or [
@@ -3621,6 +3622,13 @@ def gen_out_of_scope(yaml_data: dict) -> str:
     lines.append("")
     for item in out_of_scope:
         lines.append(f"- {item}")
+    not_enabled = [row["scope_note"] for row in meta.get("opt_in_actors_not_enabled") or []]
+    if not_enabled:
+        notes = [note[:1].lower() + note[1:] for note in dict.fromkeys(not_enabled)]
+        lines.append(
+            f"- Opt-in threat actors, not assessed: {'; '.join(notes)}. "
+            "Enable them with `enable:` in `.appsec/actors.yaml`."
+        )
     lines.append("")
 
     # Components enumerated in the architecture inventory but NOT given a

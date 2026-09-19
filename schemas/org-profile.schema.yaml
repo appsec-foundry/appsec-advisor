@@ -501,6 +501,14 @@ properties:
         description: >
           Actor IDs to deactivate. Each deactivated default actor is logged in
           run-issues.json. Enterprise-disable is terminal — repo layer cannot re-enable.
+      enable:
+        type: array
+        items:
+          type: string
+          pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
+        description: >
+          Opt-in actor IDs (activation_conditions.opt_in) to assess, such as
+          the insiders ACT-D-04/ACT-D-05 or the device holder ACT-D-08.
       add:
         type: string
         default: "actors/*.yaml"

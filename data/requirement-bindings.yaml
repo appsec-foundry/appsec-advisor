@@ -467,6 +467,7 @@ requirements:
       - RA-15
       - RA-17
       - RA-18
+      - RA-21
     documents:
       - docs/internal/contracts/schema-invariants.md
       - agents/shared/prose-style.md
@@ -476,6 +477,12 @@ requirements:
       - tests/test_actor_attribution.py::test_supply_chain_attribution_leaves_a_committed_secret_on_an_application_component
       - tests/test_actor_attribution.py::test_insider_only_route_handler_finding_regains_an_internet_actor
       - tests/test_actor_attribution.py::test_at_rest_finding_on_a_data_store_stays_insider_only
+      - tests/test_actor_attribution.py::test_insider_needs_at_rest_repository_or_build_evidence_not_a_data_store
+      - tests/test_actor_attribution.py::test_an_inactive_opt_in_actor_never_keeps_an_attribution
+      - tests/test_resolve_actors.py::test_insiders_and_device_holder_are_opt_in_and_inactive_even_with_every_signal
+      - tests/test_resolve_actors.py::test_enable_activates_only_the_named_opt_in_actor
+      - tests/test_resolve_actors.py::test_enterprise_disable_beats_repo_enable_and_unknown_enables_are_reported
+      - tests/test_resolve_actors.py::test_discovery_cannot_revive_an_opt_in_class
       - tests/test_actor_attribution.py::test_insider_reading_committed_content_projects_to_repository_read_but_keeps_its_own_group_otherwise
       - tests/test_reconcile_privileged_roles.py::test_confirmed_privileged_actor_gains_its_own_role_and_client_interaction
       - tests/test_figure1_dfd.py::test_classified_roles_carry_the_project_name_and_privileged_roles_stay_distinct

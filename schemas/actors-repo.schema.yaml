@@ -36,6 +36,12 @@ properties:
             reason:
               type: [string, "null"]
               maxLength: 400
+  enable:
+    type: array
+    description: "Opt-in actor IDs (activation_conditions.opt_in) to assess for this repository."
+    items:
+      type: string
+      pattern: "^ACT-(D|E|R|X)-[0-9]{1,4}$"
   discovery:
     type: object
     additionalProperties: false

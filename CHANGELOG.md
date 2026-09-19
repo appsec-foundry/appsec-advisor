@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Malicious insiders and attackers holding a user's device are no longer assessed by default; enable them with `enable:` in `.appsec/actors.yaml` or the org profile, and §11 lists them as not assessed otherwise.
+
 - Figure 2 connects numbered attack routes to example findings, explicit weakness references, and group impact in a compact overview matching Figure 1: one statement per card, one card per actor, details in tooltips.
 
 - Figure 1 shows each component's framework and implementation language or database engine, evidenced authentication methods, up to three capability and service-role labels per element ranked by their most severe linked finding with further ones listed in the legend, flows, assets and grouped custom actors, draws trust-boundary lines only where a modelled boundary crosses, and keeps boundary details, in-process calls and individual role details in the report and navigable detail views.

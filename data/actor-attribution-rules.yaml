@@ -72,9 +72,9 @@ restricted_groups:
     cwes: [CWE-494, CWE-506, CWE-829, CWE-830, CWE-1104, CWE-1357, CWE-1395]
     evidence_paths: [build]
   insider:
-    # A data store, or a zone the insider's own access reaches.
-    component_tiers: [data]
-    component_zones_from_actor_access: true
+    # Opt-in only. A data store or reachable zone is no evidence: every
+    # application finding sits on one, which would hand the insider findings
+    # that any internet user can exploit.
     # Data at rest and stored secrets.
     cwes: [CWE-256, CWE-311, CWE-312, CWE-522]
     # Committed secrets and other repository content need only source access.

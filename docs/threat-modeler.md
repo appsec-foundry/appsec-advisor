@@ -321,9 +321,13 @@ Changing persistent context does not re-rate an existing model automatically. Ru
 
 ### Actor layer — `.appsec/actors.yaml`
 
-Use this file to add, change, or disable actors for the repository. It is checked against a schema before the scan starts. Organization actors are inherited by default; set `inherit_org: false` to leave them out. A repository cannot re-enable an actor disabled by the organization.
+Use this file to add, change, enable, or disable actors for the repository. It is checked against a schema before the scan starts. Organization actors are inherited by default; set `inherit_org: false` to leave them out. A repository cannot re-enable an actor disabled by the organization.
+
+Malicious insiders (`ACT-D-04` repository or pipeline access, `ACT-D-05` production access) and attackers holding a user's device (`ACT-D-08`) are opt-in: the code cannot show that such a threat applies, so they are not assessed until `enable:` names them here or under `actors.enable` in the org profile. §11 of the report lists the ones a run did not assess.
 
 ```yaml
+enable:
+  - ACT-D-04
 disable:
   - id: ACT-D-1
     reason: This repository has no direct customer accounts.

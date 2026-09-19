@@ -2301,6 +2301,19 @@ class TestOutOfScope:
         assert md.startswith("## 11. Out of Scope\n")
         assert "Third-party hosted dependencies" in md  # default
 
+    @pytest.mark.parametrize("scope", [None, {"out_of_scope": ["DNS infra"]}])
+    def test_opt_in_actors_not_enabled_are_listed_once_as_not_assessed(self, scope):
+        rows = [
+            {"id": "ACT-D-04", "scope_note": "Malicious insiders with repository or pipeline access"},
+            {"id": "ACT-D-08", "scope_note": "Attackers holding a user's device"},
+        ]
+        md = pf.gen_out_of_scope({"meta": {"scope": scope, "opt_in_actors_not_enabled": rows}})
+        excluded = md.split("### Excluded from This Assessment", 1)[1]
+        bullets = [line for line in excluded.splitlines() if "Opt-in threat actors" in line]
+        assert len(bullets) == 1
+        assert all(row["scope_note"].lower() in bullets[0].lower() for row in rows)
+        assert "Opt-in threat actors" not in pf.gen_out_of_scope({"meta": {"scope": scope}})
+
     def test_method_boundary_precedes_the_system_exclusions(self, minimal_yaml_data):
         """§11 carries two boundaries. The method boundary holds for every target
         repository and every depth, so it is stated first and unconditionally."""

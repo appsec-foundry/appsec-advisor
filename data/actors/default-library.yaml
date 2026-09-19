@@ -9,6 +9,11 @@
 #
 # Fallback: when a signal is missing (recon did not emit it), actor activates with
 #   _provenance.signal_status: activate-with-warning  (reported in run-issues.json)
+#
+# Opt-in classes (activation_conditions.opt_in) describe a threat position the
+# repository cannot evidence — insiders and device holders. They stay inactive
+# until an `enable:` entry in <repo>/.appsec/actors.yaml or the org profile
+# names them; §11 lists them as not assessed (scope_note).
 
 schema_version: 1
 library_version: "1.2.0"
@@ -187,8 +192,8 @@ actors:
       and typically CI/CD access. Can exfiltrate secrets, inject malicious code,
       or pivot from staging to production.
     activation_conditions:
-      required_signals:
-        - has_secrets_in_repo
+      opt_in: true
+    scope_note: "Malicious insiders with repository or pipeline access"
     severity_modulation:
       TH-01: 1.0
       TH-02: 1.4   # Tampering — can inject code
@@ -225,8 +230,8 @@ actors:
       Operator or SRE with production access. Can exfiltrate prod data, tamper
       with running configuration, bypass audit trails, or abuse deployment rights.
     activation_conditions:
-      required_signals:
-        - has_secrets_in_repo   # proxy: deploy/infra code presence
+      opt_in: true
+    scope_note: "Malicious insiders with production access"
     severity_modulation:
       TH-01: 0.8
       TH-02: 1.3
@@ -333,8 +338,8 @@ actors:
       locally cached credentials, tokens in localStorage/IndexedDB, or sensitive
       data from offline storage.
     activation_conditions:
-      required_signals:
-        - has_client_storage
+      opt_in: true
+    scope_note: "Attackers holding a user's device"
     severity_modulation:
       TH-01: 1.0
       TH-02: 0.8
@@ -408,18 +413,9 @@ reach_equivalence_rules:
       When self-registration is open, any internet visitor becomes a
       low-priv authenticated user in seconds — auth wall is not a real
       reach barrier. Severity modulation uses max() over the equivalence class.
-  - actor_ids:
-      - ACT-D-04
-      - ACT-D-05
-    collapse_reason: no-distinct-production-environment
-    primary_actor: ACT-D-04   # concrete repository-access insider
-    always: true
-    note: >
-      malicious-insider-ops activates on the same has_secrets_in_repo proxy as
-      malicious-insider-dev and carries no independent production-environment
-      signal, so the two insiders are not distinguishable from recon alone. Fold
-      ops into the concrete repository-access insider; a real prod estate would
-      re-split them once a distinct deploy/prod signal exists.
+# The two insiders (ACT-D-04 dev, ACT-D-05 ops) need no rule: both are opt-in,
+# and enabling ops is the operator's statement that a distinct production
+# estate exists, so an enabled pair stays split.
 
 # COMPONENT_ALWAYS_RELEVANT lookup table (additive per layer)
 component_always_relevant:
