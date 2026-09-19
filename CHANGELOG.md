@@ -11,63 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Users can verify suspected plugin errors and review anonymised GitHub issue drafts before explicitly approving publication.
-
-- Security Score accepts HTTPS GitHub and GitLab URLs, emits YAML or JSON with comparison metadata, and withholds incomplete scores while preserving findings.
-- Standalone repository scans now select deterministic checks, narrow severity-filtered defaults to findings, enumerate endpoints and technology, and export YAML or JSON.
+- `scripts/repo_scan.py` runs selected deterministic checks without a threat model, with severity filtering, endpoint and technology inventories, and YAML or JSON exports for local repositories or HTTPS GitHub and GitLab URLs.
+- Security Score accepts HTTPS GitHub and GitLab URLs and exports YAML or JSON with metadata for comparing results.
+- `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic-bundle workflow.
 
 ### Changed
 
-- Malicious insiders and attackers holding a user's device are no longer assessed by default; enable them with `enable:` in `.appsec/actors.yaml` or the org profile, and §11 lists them as not assessed otherwise.
-
-- Figure 2 connects numbered attack routes to example findings, explicit weakness references, and group impact in a compact overview matching Figure 1: one statement per card, one card per actor, details in tooltips.
-
-- Figure 1 shows each component's framework and implementation language or database engine, evidenced authentication methods, up to three capability and service-role labels per element ranked by their most severe linked finding with further ones listed in the legend, flows, assets and grouped custom actors, draws trust-boundary lines only where a modelled boundary crosses, and keeps boundary details, in-process calls and individual role details in the report and navigable detail views.
+- Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
+- Figure 1 adds technology labels, evidenced authentication markers, prioritized capabilities, and navigable detail views for large architectures; existing models need a new analysis to populate missing authentication evidence.
+- Figure 2 connects numbered attack routes to example findings, account prerequisites, weaknesses, and impact in a compact overview covering each relevant attacker.
 
 ### Fixed
 
-- Figure 1 names the attacker behind each scenario badge and attack arrowhead when several attackers are drawn, so a scenario shared by two attackers no longer shows as one badge; a capability label with a linked finding shows its severity as a dot instead of a coloured border.
-- With architecture enrichment on, the first report pass writes the Security Architecture prose, and unfilled §6 placeholders trigger a repair instead of passing QA; quick scans keep the scaffold.
-- Figure 2 draws every attacker the actor legend names, with one example per attack route and actor, so a build or supply-chain attacker on a shared route gets its own row.
-- Figure 2 and the weakness register link NoSQL query injection, database-side JavaScript evaluation and OAuth sign-in requests without state to their weaknesses, prefer an example finding with a linked weakness, and runs warn about findings that carry only a class-level CWE.
-- Figure 1 always shows the most security-critical functions of a component (admin functions, LLM tools, file upload, code evaluation, URL fetch) before less critical ones, and marks a label with a linked finding by its severity-coloured border.
-- Findings a regular or anonymous user can exploit no longer add the privileged user as a separate attacker, and scanner findings keep their internet attacker once their component is resolved.
-- Figure 1 shows the administrator role again when actor discovery cites its access check by file name only, and warns in Run Issues when no cited location resolves.
-- Figure 2 states whether an account is needed for anonymous and regular-account attack routes instead of pointing to the finding.
-- Figure 1 labels an OAuth token request authenticated with a client secret as "Client ID + secret" and also draws that request when an OAuth library performs it for a client configured with ID and secret.
-- Figure 1 draws an identity provider's sign-in, redirect back and profile API as one provider with consistent authentication instead of "no authentication" on the redirect and a separate third party for the profile request.
-- The build pipeline zone in Figure 1 reads "CI/CD and release tooling" instead of internal zone identifiers.
-- Abuse-case IDs such as AC-T-002 are no longer linked as findings.
-- Figure 1 shows how identity-provider sign-in, profile and token requests authenticate (OAuth 2.0, OpenID Connect, SAML, bearer token, client secret or key) instead of "no authentication" or "unknown", and labels sign-in providers as IdP.
-- The architecture analyst corrects data flows and asset locations that do not fit its component inventory before it finishes, instead of the run aborting after architecture modelling.
-- Actor discovery appends to the run log instead of replacing it, so earlier events stay in the log and a monitored run is no longer reported as unmonitored.
-- Report prose formats ambiguous protocol names such as Authorization, Cookie, and Origin as code only when local context identifies the concrete header or attribute.
-- Open questions in the Management Summary are plain questions about a named component with compact finding references, introduced as points the analysis could not resolve, instead of topic-prefixed prompts behind a decorated reference list.
-- Plugin update checks compare against released versions instead of advertising unreleased development builds.
-
-- Finding ratings enforce policy ceilings across reports and exports, require verified attack chains for elevation, and prioritize likelihood and CVSS consistently.
-
-- Deterministic scanners retain live source coverage, reject external symlinks, and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading nearby signals.
-
-- Finding deduplication preserves the highest risk, distinguishes case-sensitive source paths, and keeps scenario references aligned with merged findings.
-- Agents no longer cut analysis short because another agent reaches its turn budget.
-- Weakness derivation covers verified attribute binding, code evaluation, browser credentials, and CSRF, preserves source evidence, and avoids unrelated grouping and safe-code false positives.
-- Depth hints in the run plan and quick reports no longer recommend the nonexistent `--standard` flag.
-- Figure 1 counts findings like the Management Summary, shows each scenario number once per component, lists each attacker once in its legend and no longer draws a second user card next to the one modelled user role.
-- The component inventory no longer adds a second embedded document store next to one the architecture analysis already modelled.
-- Authentication, CI/CD, real-time, web3 and embedded-store components are modelled before data flows are written, so they keep their connections; a run reports any component that still has none.
-- Figure 1 shows login sequences, public and authenticated API alternatives, and access to embedded databases with their authentication method instead of leaving them unknown.
-- The route inventory credits an authentication guard only to the route it belongs to and reads authentication from the resolved handler code, so unprotected routes next to protected ones are flagged for review, session checks inside handlers count, decoded-only tokens do not, and Figure 1 flows show the resolved scheme instead of unknown.
-- Identity-provider discovery no longer adds a second service and flow for an OAuth step the architecture already models, also when the model cites the call of a wrapper function.
-- Capability, service-role and authentication claims must cite implementing code, and deterministic scanner findings add the capability labels they prove, also after merging into a model finding.
-- Config and IaC findings reach the report again, and a rejected configuration scan is reported as a run error instead of as a repository without IaC files.
-- The completion summary reports the measured run cost again and names the reason when it cannot.
-- Runs no longer stall until the join deadline when a sub-agent hands back on its last allowed turn, and self-checks report every violation at once instead of one per turn.
-- Figure 1 names users and administrators after the project, shows confirmed administrators, and keeps supply-chain and insider attackers on the components they can reach.
-- Figure 1 labels a user's access to a client as user input, calls undeterminable authentication unknown, and opens with facts about the system instead of repeating the legend.
-- The Management Summary states in one block how the threat model was produced, how deep each component was analysed and what it cannot establish, and §1 no longer claims full STRIDE analysis for screened components.
-- Each finding shows one severity everywhere in the report, the one it is filed under in the Findings Register, and a higher attack-chain or policy rating is stated on the finding's card.
-- Finding titles keep digit-led names such as 2FA intact.
+- Finding ratings enforce policy ceilings and verified-chain requirements for elevation, with consistent severity and ranking across reports and exports.
+- Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.
+- Scanners retain application source coverage and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading signals without following external symlinks.
+- Route authentication checks use the resolved handler, preventing protected neighboring routes or decoded-only tokens from masking missing authentication.
+- Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
+- Finding deduplication preserves the highest risk, case-sensitive source paths, source evidence, and scenario references.
+- Weakness derivation and report links cover more NoSQL injection, code evaluation, attribute binding, browser credential, and CSRF cases while avoiding unrelated grouping and safe-code false positives.
+- Agents reaching their turn budget no longer stall runs or cut other agents' analysis short.
+- Architecture self-checks catch inconsistent data flows and asset locations before they cause later validation failures.
+- Run logs retain earlier events, and completion summaries report measured costs or explain why they are unavailable.
+- Actor discovery and diagrams retain confirmed administrators and relevant attackers without adding roles that an exploit does not require.
+- Architecture diagrams preserve component connections, avoid duplicate databases and identity providers, and correctly label login, OAuth, API, and embedded-database authentication.
+- Figure 1 aligns finding counts with the report and identifies the attacker behind each scenario badge and attack arrow.
+- Capability and service-role labels require source evidence and show linked finding severity.
+- Reports with architecture enrichment populate Security Architecture prose and send remaining placeholders for repair.
+- Management summaries state the analysis method, component depth, and limitations accurately and present unresolved questions with concise finding references.
+- Plugin update checks compare against released versions instead of advertising development builds.
 
 ## 0.6.0-beta.3 (2026-09-14)
 
