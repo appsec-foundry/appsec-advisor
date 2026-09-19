@@ -109,6 +109,9 @@ T_ID_RE = re.compile(r"\bT-(\d{3,4})\b")
 M_ID_RE = re.compile(r"\bM-(\d{3,4})\b")
 F_ID_RE = re.compile(r"\bF-(\d{3,4})\b")
 TH_ID_RE = re.compile(r"\bTH-(\d{2,3})\b")
+_LINKABLE_T_ID_RE = re.compile(r"(?<![\w-])T-(\d{3,4})\b")
+_LINKABLE_M_ID_RE = re.compile(r"(?<![\w-])M-(\d{3,4})\b")
+_LINKABLE_F_ID_RE = re.compile(r"(?<![\w-])F-(\d{3,4})\b")
 TABLE_ID_RE = re.compile(r"^\|\s*(?:<a id=\"[tm]-\d+\"></a>)?\s*([TM]-\d+)\s*\|", re.MULTILINE)
 H3_MITIGATION_RE = re.compile(r"^###\s.*?\bM-(\d{3,4})\b", re.MULTILINE)
 # Risk Distribution / STRIDE Coverage regexes are deliberately lenient:
@@ -838,9 +841,10 @@ def linkify_anchors(md_path: Path) -> tuple[Report, str]:
                 return f"[{full}](#{anchor})"
             return _labelled(full, anchor)
 
-        new_line = T_ID_RE.sub(sub_t, new_line)
-        new_line = M_ID_RE.sub(sub_m, new_line)
-        new_line = F_ID_RE.sub(sub_f, new_line)
+        # A hyphen-joined prefix makes a different ID (the abuse case AC-T-002).
+        new_line = _LINKABLE_T_ID_RE.sub(sub_t, new_line)
+        new_line = _LINKABLE_M_ID_RE.sub(sub_m, new_line)
+        new_line = _LINKABLE_F_ID_RE.sub(sub_f, new_line)
         new_line = TH_ID_RE.sub(sub_th, new_line)
 
         # Idempotent label-suffix pass: refs that were already linkified by

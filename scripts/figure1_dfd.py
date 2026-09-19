@@ -80,6 +80,11 @@ ZONE_STYLE = {  # zone key -> (title, stroke, fill)
     "attackers": ("Attackers", "#a04d4a", "#fbf6f6"),
     "users": ("Users", "#6d927c", "#f5f8f6"),
 }
+ZONE_SUBTITLE = {
+    "internet": "actors and their browsers",
+    "third-party": "external integrations",
+    "build": "CI/CD and release tooling",
+}
 SEV_COL = {"Critical": RED, "High": ORANGE, "Medium": YELLOW}
 SEV_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 _FALLBACK_ACTOR = {
@@ -2521,12 +2526,6 @@ def _render(
     )
 
     # zones
-    zone_sub = collections.defaultdict(set)
-    for comp in d.get("components") or []:
-        if not isinstance(comp, dict):
-            continue
-        for z in comp.get("deployment_zones") or []:
-            zone_sub[_zone_key(comp)].add(str(z))
     for zb in [z for z in zone_boxes if not z.get("bar")]:
         title, stroke, fill = ZONE_STYLE[zb["zone"]]
         c.rect(
@@ -2542,9 +2541,8 @@ def _render(
         )
         c.text(zb["x"] + 10, zb["y"] + 16, title, size=10.5, anchor="start", weight="bold", fill=stroke)
         zk = zb["zone"]
-        sub = {"internet": "actors and their browsers", "third-party": "external integrations"}.get(zk) or ", ".join(
-            sorted(zone_sub[zk])
-        )
+        # Fixed reader wording only: deployment-zone IDs are analysis vocabulary.
+        sub = ZONE_SUBTITLE.get(zk, "")
         if d.get("_overview"):
             privileged = any(
                 n.get("access") == "internet-priv-user" for n in nodes.values() if n.get("zone") == "users"

@@ -3317,3 +3317,14 @@ def test_components_show_framework_language_or_engine_apart_from_labels():
         notation = " ".join(root.find("{*}g[@data-legend-section='notation']").itertext())
         assert "framework · language; data store: engine" in notation
     assert model == before
+
+
+@pytest.mark.parametrize("detail", [False, True])
+@pytest.mark.parametrize("zones", [["ci-cd-runtime"], ["build-pipeline", "ci-cd-runtime"], ["release-runner"]])
+def test_build_zone_subtitle_is_reader_wording_not_deployment_zone_ids(detail, zones):
+    model, paths, taxonomy = _model()
+    model["components"][-1]["deployment_zones"] = zones + ["pipeline"]
+    svg, _problems = F.check_diagram(model, paths, taxonomy, detail=detail)
+    text = [t.text or "" for t in ET.fromstring(svg).iter("{http://www.w3.org/2000/svg}text")]
+    assert "CI/CD and release tooling" in text
+    assert not any(zone in line for zone in zones for line in text)

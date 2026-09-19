@@ -12,6 +12,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "qa_checks.py"
 
@@ -1380,3 +1382,14 @@ def test_evidence_integrity_yaml_fallback(tmp_path: Path):
     )
     report = qa.check_evidence_integrity(tmp_path, tmp_path)
     assert report.ok == 1
+
+
+@pytest.mark.parametrize("compound", ["AC-T-002", "AC-F-002", "RUN-M-002"])
+def test_linkify_anchors_leaves_hyphen_joined_ids_alone(tmp_path: Path, compound):
+    md = _md(tmp_path, f"## 11. Notes\nKeystone in {compound} (Bulk data); see T-002, F-003 and M-001.\n")
+    (tmp_path / "threat-model.yaml").write_text(
+        "threats:\n  - t_id: T-002\n    title: Audit logging missing\n", encoding="utf-8"
+    )
+    _, new_text = qa.linkify_anchors(md)
+    assert f"in {compound} (Bulk data)" in new_text
+    assert "[T-002](#" in new_text and "[F-003](#" in new_text and "[M-001](#" in new_text
