@@ -152,6 +152,26 @@ def test_practice_links_are_retained_and_verified_examples_take_precedence():
     assert row["unproven"] is False
 
 
+@pytest.mark.parametrize(("linked", "expected"), [("T-017", "F-017"), ("T-003", "F-003"), (None, "F-003")])
+def test_equally_ranked_examples_prefer_one_linked_to_a_weakness(linked, expected):
+    data = model()
+    data["threats"].append({**data["threats"][0], "id": "T-003"})
+    data["weaknesses"][0]["instances"] = [{"id": linked}] if linked else []
+    ap = paths()
+    ap["attack_paths"][0]["findings"].append("F-003")
+    row = diagram(data, ap)["routes"][0]
+    assert row["finding_id"] == expected
+    assert row["weakness_ids"] == (["W-008"] if linked else [])
+
+
+def test_a_more_severe_example_still_wins_over_a_linked_one():
+    data = model()
+    data["threats"].append({**data["threats"][0], "id": "T-003", "risk": "Critical"})
+    ap = paths()
+    ap["attack_paths"][0]["findings"].append("F-003")
+    assert diagram(data, ap)["routes"][0]["finding_id"] == "F-003"
+
+
 def test_unknown_impact_is_rejected_instead_of_inventing_harm():
     ap = paths()
     ap["attack_paths"][0]["impact"] = ["imaginary"]

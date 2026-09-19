@@ -178,7 +178,7 @@ finish the categories within six reasoning turns, and reserve two for writes.
 or mandatory evidence-backed finding.
 
 Apply every selected lens during the relevant category. LLM and agentic tags
-must be written as `owasp_llm_ids` and `owasp_asi_ids`. Do not duplicate one
+go in `owasp_llm_ids` and `owasp_asi_ids`. Do not duplicate one
 mechanism merely because two lenses name it. Use one CWE, RFC, or OWASP
 `remediation.reference`.
 
@@ -206,10 +206,11 @@ Use local IDs `<COMPONENT_ID>-001`, `-002`, and so on. Set
 `threat_category_id` by CWE reverse lookup in `THREAT_TAXONOMY_PATH`, then
 semantic taxonomy match. The
 last-resort STRIDE defaults are S→TH-02, T→TH-01, R→TH-16, I→TH-17, D→TH-12,
-and E→TH-06. Never emit `TH-UNCLASSIFIED`; the output schema rejects it. Titles follow
+and E→TH-06. Never emit `TH-UNCLASSIFIED`. Titles follow
 `<weakness class> (<relative path[:line]>)`, maximum 80 characters.
 
-Every finding needs a specific attacker action and consequence, primary CWE,
+Every finding needs a specific attacker action and consequence, a base or
+variant primary CWE (never a pillar such as CWE-284),
 likelihood, impact, derived risk, existing controls, an action-style
 `mitigation_title`, and non-empty remediation steps. Critical and High fixes
 also need an executable verification. Add a short project-language code example

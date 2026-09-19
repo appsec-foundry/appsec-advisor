@@ -49,6 +49,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import yaml
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import stride_outputs  # noqa: E402
 import verify_run_costs  # noqa: E402
@@ -1655,6 +1657,43 @@ def _extract_unconnected_injected_components(output_dir: Path) -> list[dict]:
     ]
 
 
+def _extract_pillar_cwe_findings(output_dir: Path) -> list[dict]:
+    """Report findings whose primary CWE is a class-level pillar.
+
+    A pillar (`data/cwe-taxonomy.yaml` → `pillars`, e.g. CWE-284) names no
+    concrete weakness, so the finding joins no weakness mechanism, ranks by no
+    specific class and links to no register entry in the figures. No base CWE
+    can be derived from it without guessing, so the run reports it instead.
+    """
+    try:
+        merged = json.loads((output_dir / ".threats-merged.json").read_text(encoding="utf-8"))
+        taxonomy = yaml.safe_load((Path(__file__).resolve().parent.parent / "data" / "cwe-taxonomy.yaml").read_text())
+    except (OSError, ValueError, yaml.YAMLError):
+        return []
+    pillars = set((taxonomy or {}).get("pillars") or {})
+    hits = [
+        f"{t.get('t_id') or t.get('id')}: {str(t.get('cwe')).strip().upper()}"
+        for t in (merged.get("threats") if isinstance(merged, dict) else None) or []
+        if isinstance(t, dict) and str(t.get("cwe") or "").strip().upper() in pillars
+    ]
+    if not hits:
+        return []
+    return [
+        {
+            "category": "pillar_cwe_finding",
+            "severity": "warning",
+            "title": f"{len(hits)} finding(s) carry a class-level CWE and join no weakness",
+            "findings": [hit.split(":", 1)[0] for hit in hits],
+            "evidence": {
+                "log_file": ".threats-merged.json",
+                "log_line": 1,
+                "raw_event": "; ".join(hits[:10]),
+                "outcome": "pillar_cwe",
+            },
+        }
+    ]
+
+
 def _extract_actor_model_corrections(output_dir: Path, agent_log: list[tuple[int, str]]) -> list[dict]:
     """Report where deterministic rules corrected the analysts' actor model.
 
@@ -2379,6 +2418,7 @@ def aggregate(output_dir: Path, depth: str, repo_root: Path | None = None) -> di
     issues.extend(_extract_business_context_reach(output_dir))
     issues.extend(_extract_unconnected_injected_components(output_dir))
     issues.extend(_extract_actor_model_corrections(output_dir, agent_log))
+    issues.extend(_extract_pillar_cwe_findings(output_dir))
     issues.extend(_extract_render_integrity(output_dir))
     issues.extend(_extract_abuse_case_outcomes(output_dir))
     issues.extend(_extract_watchdog_absence(output_dir, agent_log))

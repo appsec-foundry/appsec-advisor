@@ -54,7 +54,7 @@ diagram_annotations:
         CWE-90: LDAPi
         CWE-643: XPathi
         CWE-943: NoSQLi
-      mechanisms: [database-query-concatenation]
+      mechanisms: [database-query-concatenation, document-query-construction]
       priority_group: interpreter
     Insecure Output Handling:
       tie_break_order: 170
@@ -164,7 +164,7 @@ diagram_annotations:
       mechanisms: [browser-clients-without-bff, script-readable-sensitive-cookies]
     Insecure Secret Management:
       tie_break_order: 220
-      cwes: [CWE-259, CWE-260, CWE-321, CWE-522, CWE-547, CWE-798]
+      cwes: [CWE-256, CWE-259, CWE-260, CWE-321, CWE-522, CWE-547, CWE-798]
       mechanisms: [secrets-committed-to-source]
     Insecure Cryptography:
       tie_break_order: 70
@@ -176,8 +176,8 @@ diagram_annotations:
       mechanisms: [unsigned-token-acceptance]
     Improper Origin Validation:
       tie_break_order: 360
-      cwes: [CWE-346, CWE-352, CWE-942]
-      mechanisms: [unprotected-cookie-mutations]
+      cwes: [CWE-346, CWE-352, CWE-942, CWE-1385]
+      mechanisms: [unprotected-cookie-mutations, unbound-authorization-requests]
       cwe_qualifiers:
         CWE-352: CSRF
     Insecure Framing Policy:
@@ -232,7 +232,7 @@ diagram_annotations:
       cwes: [CWE-400, CWE-409, CWE-674, CWE-770, CWE-776, CWE-834, CWE-1333]
     Insecure Dependency Management:
       tie_break_order: 90
-      cwes: [CWE-829, CWE-937, CWE-1104, CWE-1357, CWE-1395]
+      cwes: [CWE-494, CWE-829, CWE-830, CWE-937, CWE-1104, CWE-1357, CWE-1395]
       mechanisms: [build-pipeline-mutable-refs, vulnerability-management-gap]
     Improper Configuration Control:
       tie_break_order: 60
@@ -563,6 +563,10 @@ mechanism_guidance:
     finding_signal:
       any_pattern:
         - '\b(eval|exec|Function|evaluate)\s*\(\s*[A-Za-z_$][\w.$\[\]]*'
+        # Database engines that evaluate JavaScript predicates or functions.
+        - '[{,(]\s*[''"]?\$(?:where|function|accumulator)[''"]?\s*:'
+        - '\.\$where\s*\('
+        - '\bmapReduce\s*\('
   browser-readable-session-credentials:
     weakness_name: "Browser scripts retain reusable session credentials"
     cwes: [CWE-922]
@@ -592,6 +596,22 @@ mechanism_guidance:
       # merely seeing a cookie API without that finding never emits a signal.
       any_pattern:
         - '(?i)\b(?:cookies?|session|csrf|request|req)\b'
+  unbound-authorization-requests:
+    weakness_name: "OAuth sign-in requests are not bound to the user's browser session"
+    cwes: [CWE-352]
+    description: >-
+      The client starts OAuth or OpenID Connect sign-in without a per-request
+      state value that its callback verifies. A forged authorization response
+      can then complete sign-in in the victim's browser with the attacker's
+      grant.
+    structural_fix: >-
+      start every sign-in through a maintained OAuth/OIDC client that
+      generates and verifies state (and PKCE) for each authorization request
+    finding_signal:
+      # The cited line builds an authorization request (client_id and
+      # response_type) that carries no state parameter.
+      any_pattern:
+        - '(?i)^(?=[^\n]*\bresponse_type\b)(?=[^\n]*\bclient_id\b)(?![^\n]*\bstate\b)'
   script-readable-sensitive-cookies:
     weakness_name: "Sensitive cookies remain accessible to browser scripts"
     cwes: [CWE-1004]
@@ -621,6 +641,27 @@ mechanism_guidance:
     structural_fix: >-
       provide one parameterised repository or query-builder path and prohibit
       application-value interpolation in database queries
+  document-query-construction:
+    weakness_name: "Document-database queries take their structure from application values"
+    cwes: [CWE-943]
+    description: >-
+      Document-store queries take operators or JavaScript predicates from
+      application values instead of fixed query structures with typed values.
+      Callers can change what a query selects, for example through injected
+      operators or evaluated expressions.
+    structural_fix: >-
+      build document queries from fixed operator structures, coerce request
+      values to the expected scalar types, and disable server-side JavaScript
+      evaluation in the database
+    finding_signal:
+      # An admitted CWE-943 finding proves the injection; the cited site must
+      # show a document query taking evaluated code, an operator value or a
+      # request object.
+      any_pattern:
+        - '[{,(]\s*[''"]?\$(?:where|function|accumulator)[''"]?\s*:'
+        - '\.\$where\s*\('
+        - '[{,]\s*[''"]?\$(?:regex|ne|gt|gte|lt|lte|in|nin|expr)[''"]?\s*:\s*[^''"`\s/\d\[{]'
+        - '\.(?:find|findOne|findOneAndUpdate|findOneAndDelete|updateOne|updateMany|deleteOne|deleteMany|countDocuments|aggregate|distinct)\s*\([^\n)]*\b(?:req|request)\s*\.\s*(?:body|query|params)\b'
   blacklist-only-input-validation:
     # Reached both when the analyst describes blacklist/denylist validation AND
     # when the ARCH-INPUT-001 "missing centralized input validation" signal fires,

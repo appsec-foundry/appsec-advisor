@@ -934,6 +934,29 @@ def _recommend_actor_attribution_corrected(issue: dict, output_dir: Path) -> dic
     }
 
 
+def _recommend_pillar_cwe_finding(issue: dict, output_dir: Path) -> dict:
+    """Findings carry a class-level CWE, so no weakness mechanism can take them."""
+    return {
+        "category": "investigate",
+        "auto_applicable": False,
+        "confidence": "high",
+        "risk_level": "low",
+        "summary": "Findings with a pillar CWE stay outside the weakness register and the figures' weakness links.",
+        "rationale": (
+            "A pillar CWE such as CWE-284 names a category, not a weakness. No base CWE can be derived "
+            "from it deterministically, so the STRIDE analyst has to name the concrete one."
+        ),
+        "actions": [
+            {
+                "type": "manual_review",
+                "target": ".threats-merged.json",
+                "details": "Check the listed findings' evidence and note the base or variant CWE it shows.",
+            },
+        ],
+        "verification": [],
+    }
+
+
 def _recommend_privileged_role_added(issue: dict, output_dir: Path) -> dict:
     """The architecture analyst folded a confirmed privileged actor into a regular role."""
     return {
@@ -988,6 +1011,7 @@ RECOMMENDERS: dict[str, Callable[[dict, Path], dict]] = {
     "injected_component_without_flows": _recommend_injected_component_without_flows,
     "actor_attribution_corrected": _recommend_actor_attribution_corrected,
     "privileged_role_added": _recommend_privileged_role_added,
+    "pillar_cwe_finding": _recommend_pillar_cwe_finding,
     "component_evidence_coverage": _recommend_component_evidence_coverage,
     "routing_effectiveness": _recommend_routing_effectiveness,
     "dispatch_count_inconsistent": _recommend_dispatch_count_inconsistent,

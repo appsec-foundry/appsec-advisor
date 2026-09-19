@@ -20,6 +20,27 @@ from weakness_signals import finding_signals, validate_document
         ("CWE-922", "sessionStorage.getItem('access_token')", "browser-readable-session-credentials"),
         ("CWE-352", "const actor = sessions.get(request.cookies.sid)", "unprotected-cookie-mutations"),
         ("CWE-352", "account = request.session['account']", "unprotected-cookie-mutations"),
+        # Database engines evaluating application values as JavaScript.
+        ("CWE-94", "db.reviews.find({ $where: 'this.product == ' + id })", "application-data-as-code"),
+        ("CWE-95", 'rows = collection.find({"$where": f"this.owner == {owner}"})', "application-data-as-code"),
+        ("CWE-94", "Order.find().$where(filterSource)", "application-data-as-code"),
+        ("CWE-94", "const out = await coll.mapReduce(mapper, reducer)", "application-data-as-code"),
+        # Document queries taking their structure from application values.
+        ("CWE-943", "orders.find({ $where: `this.id === '${id}'` })", "document-query-construction"),
+        ("CWE-943", "users.findOne({ name: { $regex: pattern } })", "document-query-construction"),
+        ("CWE-943", "const user = await User.findOne(req.body)", "document-query-construction"),
+        ("CWE-943", "docs = db.items.find(request.query.filter)", "document-query-construction"),
+        # Authorization requests without a state binding.
+        (
+            "CWE-352",
+            "window.location.assign(`${provider}?client_id=${id}&response_type=code&redirect_uri=${cb}`)",
+            "unbound-authorization-requests",
+        ),
+        (
+            "CWE-352",
+            'return redirect(f"{AUTH_URL}?response_type=code&client_id={CLIENT_ID}")',
+            "unbound-authorization-requests",
+        ),
     ],
 )
 def test_verified_mechanism_reaches_register(tmp_path, cwe, body, mechanism):
@@ -60,6 +81,11 @@ def test_verified_mechanism_reaches_register(tmp_path, cwe, body, mechanism):
         ("CWE-922", "localStorage.setItem('theme', preference)"),
         ("CWE-94", "// eval(request.body.code)"),
         ("CWE-94", 'const documentation = "eval(request.body.code)"'),
+        ("CWE-943", "users.findOne({ name: { $regex: '^fixed' } })"),
+        ("CWE-943", 'const doc = "db.find({ $where: input })"'),
+        ("CWE-943", "const rows = await sql.query(statement, [id])"),
+        ("CWE-352", "location.assign(`${p}?client_id=${id}&response_type=code&state=${state}`)"),
+        ("CWE-352", "const url = `${p}?client_id=${id}`"),
     ],
 )
 def test_safe_source_does_not_establish_claimed_mechanism(tmp_path, cwe, body):

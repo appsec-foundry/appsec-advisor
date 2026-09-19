@@ -1971,3 +1971,19 @@ def test_measured_or_host_unlogged_usage_is_not_a_cost_issue(tmp_path):
     assert agg._extract_cost_accounting(unlogged) == []
     assert agg._extract_cost_accounting(unstarted) == []
     assert agg._extract_cost_accounting(tmp_path / "absent") == []
+
+
+def test_pillar_cwe_findings_are_reported_and_base_cwes_are_not(tmp_path):
+    threats = [
+        {"t_id": "T-001", "cwe": "CWE-284"},
+        {"t_id": "T-002", "cwe": "cwe-693 "},
+        {"t_id": "T-003", "cwe": "CWE-321"},
+        {"t_id": "T-004"},
+    ]
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": threats}))
+    issues = agg._extract_pillar_cwe_findings(tmp_path)
+    assert [(i["category"], i["severity"], i["findings"]) for i in issues] == [
+        ("pillar_cwe_finding", "warning", ["T-001", "T-002"])
+    ]
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": threats[2:]}))
+    assert agg._extract_pillar_cwe_findings(tmp_path) == []

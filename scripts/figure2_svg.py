@@ -112,10 +112,10 @@ def build_figure2_data(
     A scenario is one path number and one displayed actor group, exactly as
     Figure 1 and the actor legend project them, so a path that two actor groups
     drive has one row per group. Rows of one actor stay together under a single
-    card. Selection prefers verified findings, then severity and numeric ID,
-    among the scenario's own findings. Group impacts remain explicitly labelled
-    as group impacts, since class-level impact membership does not prove that
-    every finding reaches every consequence.
+    card. Selection among the scenario's own findings prefers verified findings,
+    then severity, then a finding linked to a weakness, then numeric ID. Group
+    impacts remain explicitly labelled as group impacts, since class-level
+    impact membership does not prove that every finding reaches every consequence.
     """
     from actor_presentation import attributed_actors, projected_paths
     from detect_open_registration import overview_actor_slug
@@ -147,11 +147,14 @@ def build_figure2_data(
         ids = sorted({by_number.get(fid, f"F-{fid}") for fid in scenario["fids"]}, key=lambda s: int(s[2:]))
         if not ids or any(fid not in threats for fid in ids):
             raise ValueError(f"Figure 2 scenario {scenario['n']} has a missing or unresolved finding")
+        # Equally proven and severe candidates prefer one linked to the register,
+        # so the weakness column names a cause whenever the route has one.
         selected = min(
             ids,
             key=lambda fid: (
                 _unproven(threats[fid]),
                 SEVERITY_ORDER.get(register_severity(threats[fid]), 99),
+                not _weaknesses(model, fid),
                 int(fid[2:]),
             ),
         )

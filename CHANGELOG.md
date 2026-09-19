@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Figure 2 draws every attacker the actor legend names, with one example per attack route and actor, so a build or supply-chain attacker on a shared route gets its own row.
+- Figure 2 and the weakness register link NoSQL query injection, database-side JavaScript evaluation and OAuth sign-in requests without state to their weaknesses, prefer an example finding with a linked weakness, and runs warn about findings that carry only a class-level CWE.
 - Figure 1 always shows the most security-critical functions of a component (admin functions, LLM tools, file upload, code evaluation, URL fetch) before less critical ones, and marks a label with a linked finding by its severity-coloured border.
 - Findings a regular or anonymous user can exploit no longer add the privileged user as a separate attacker, and scanner findings keep their internet attacker once their component is resolved.
 - Figure 1 shows the administrator role again when actor discovery cites its access check by file name only, and warns in Run Issues when no cited location resolves.
