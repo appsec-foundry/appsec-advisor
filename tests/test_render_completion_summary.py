@@ -32,6 +32,7 @@ def _load_module():
 
 
 rcs = _load_module()
+tq = sys.modules["team_questions"]
 
 
 # ---------------------------------------------------------------------------
@@ -662,6 +663,11 @@ class TestManualReviewStep:
             self.report(findings, weaknesses) if report is None else report,
         )
 
+    @staticmethod
+    def bullets(text):
+        """The question bullets alone — each one's `→ …` consequence line is a continuation."""
+        return [line for line in text.splitlines() if line.startswith("- ")]
+
     def test_selects_three_distinct_decisions_with_real_finding_links(self):
         findings = [
             self.finding(41),
@@ -677,17 +683,24 @@ class TestManualReviewStep:
         ]
         text = self.render(findings, weaknesses)
         lines = text.splitlines()
+        questions = self.bullets(text)
         assert lines[0] == rcs.TEAM_QUESTIONS_HEADER
-        # Same severity everywhere: the register's decisions come before the
-        # unclassified takeover signal (F-041), and the cap holds at three.
-        assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:]] == [["W-002"], ["W-003"], ["W-004"]]
+        # Same severity everywhere: W-002 settles two findings and outranks the
+        # single-instance registers; the unclassified takeover signal (F-041)
+        # comes last and the cap holds at three.
+        assert [re.findall(r"\b(W-\d+)\b", line) for line in questions] == [["W-002"], ["W-003"], ["W-004"]]
         assert re.findall(r"\b(F-\d+)\b", text) == ["F-001", "F-002", "F-020", "F-030"]
-        assert "Which cross-user or cross-tenant accesses through these routes are intended" in lines[1]
-        assert "still accept these secrets from the git history" in lines[2]
-        assert "meant to be reachable without login" in lines[3]
-        assert len(lines) == 4
+        assert "Which cross-user or cross-tenant accesses through these routes are intended" in questions[0]
+        assert "still accept these secrets from the git history" in questions[1]
+        assert "meant to be reachable without login" in questions[2]
+        assert len(questions) == 3
+        # Every question states what its answer decides, on its own line.
+        assert [line for line in lines[1:] if not line.startswith("- ")] == [
+            line for line in lines[1:] if line.startswith("  → ")
+        ]
+        assert len(lines) == 7
         # RA-13: plain IDs after each question, no link target and no report path.
-        assert all(line.startswith("- ") and line.endswith(")") for line in lines[1:])
+        assert all(line.endswith(")") for line in questions)
         assert "](" not in text and "/tmp/assessment" not in text
         assert "T-" not in text
         assert self.render(list(reversed(findings)), list(reversed(weaknesses))) == text
@@ -715,9 +728,8 @@ class TestManualReviewStep:
         text = self.render([self.finding(1, evidence_check=state)])
         assert "F-001 (unproven)" in text
         assert "which other services, secrets or credentials can that process reach?" in text
-        assert text.splitlines()[-1] == (
-            "- Do these findings hold in the deployed system? The code alone could not confirm them. (F-001)"
-        )
+        # Source evidence: settled by reachability, not by reading the environment.
+        assert self.bullets(text)[-1] == f"- {tq.UNVERIFIED_CODE_QUESTION} (F-001)"
 
     def test_practice_evidence_does_not_become_confirmed_exploitation(self):
         text = self.render([self.finding(1, evidence_tier="insecure-practice")])
@@ -735,21 +747,16 @@ class TestManualReviewStep:
             self.weakness(3, "missing-endpoint-authentication", 3),
             self.weakness(4, "build-pipeline-mutable-refs", 4),
         ]
-        lines = self.render(findings, weaknesses).splitlines()
-        assert len(lines) == 5
-        assert [re.findall(r"\b(W-\d+)\b", line) for line in lines[1:4]] == [["W-001"], ["W-002"], ["W-003"]]
+        questions = self.bullets(self.render(findings, weaknesses))
+        assert len(questions) == 4
+        assert [re.findall(r"\b(W-\d+)\b", line) for line in questions[:3]] == [["W-001"], ["W-002"], ["W-003"]]
         # The verified practice-tier F-010 is not listed; only the ambiguous F-009.
-        assert lines[4] == (
-            "- Do these findings hold in the deployed system? The code alone could not confirm them. (F-009)"
-        )
+        assert questions[3] == f"- {tq.UNVERIFIED_CODE_QUESTION} (F-009)"
         # A verified-only model raises no closing line; six unverified findings list five.
-        assert "The code alone could not confirm" not in self.render(findings[:4], weaknesses[:1])
+        assert tq.UNVERIFIED_CODE_QUESTION not in self.render(findings[:4], weaknesses[:1])
         many = [self.finding(n, "CWE-89", "SQL injection", evidence_check="ambiguous") for n in range(1, 7)]
-        assert self.render(many).splitlines() == [
-            rcs.TEAM_QUESTIONS_HEADER,
-            "- Do these findings hold in the deployed system? The code alone could not confirm them. ("
-            + ", ".join(f"F-{n:03}" for n in range(1, 6))
-            + " +1 more)",
+        assert self.bullets(self.render(many)) == [
+            f"- {tq.UNVERIFIED_CODE_QUESTION} (" + ", ".join(f"F-{n:03}" for n in range(1, 6)) + " +1 more)"
         ]
 
     @pytest.mark.parametrize(
@@ -779,20 +786,24 @@ class TestManualReviewStep:
         assert "that process reach" not in text
 
     def test_weakness_questions_come_from_mechanism_guidance_not_cwe_membership(self):
-        # AC-7: the same CWE-639 finding asks nothing on its own, asks the
-        # register's question under the mechanism that carries one, and stays
-        # silent under a mechanism whose fix is mechanical.
+        # AC-7: the same CWE-639 finding asks nothing on its own and asks the
+        # register's question under whichever mechanism carries one. An
+        # unregistered mechanism stays silent — membership in a CWE never
+        # invents a question.
         owner = self.finding(1, "CWE-639", "Object owner not checked")
         assert self.render([owner]) == ""
         text = self.render([owner], [self.weakness(2, "route-by-route-authorization", 1)])
-        assert text.splitlines()[1].endswith(" (W-002: F-001)")
+        assert self.bullets(text)[0].endswith(" (W-002: F-001)")
         assert "Which cross-user or cross-tenant accesses through these routes are intended" in text
-        assert self.render([owner], [self.weakness(2, "database-query-concatenation", 1)]) == ""
         assert self.render([owner], [self.weakness(2, "no-such-mechanism", 1)]) == ""
         questions = rcs.mechanism_team_questions()
         assert set(questions) >= {"route-by-route-authorization", "secrets-committed-to-source"}
-        assert "database-query-concatenation" not in questions
         assert all(q.endswith("?") and "\n" not in q for q in questions.values())
+        # A mechanism whose fix is mechanical still asks — about the impact the
+        # code cannot show (what the reachable schema holds), never about the fix.
+        mechanical = self.render([owner], [self.weakness(2, "database-query-concatenation", 1)])
+        assert "personal or regulated" in mechanical
+        assert "parameteris" not in mechanical and "prepared statement" not in mechanical
 
     def test_weakness_line_links_three_worst_instances_and_counts_the_rest(self):
         findings = [self.finding(n, "CWE-862", "Missing ownership check", risk="High") for n in range(1, 5)]
@@ -903,7 +914,7 @@ class TestManualReviewStep:
         finding = self.finding(1, title="Command injection\n[click](https://example.invalid)\x1b[2J")
         text = rcs.build_manual_review_step({"threats": [finding]}, self.report([finding]))
         assert "example.invalid" not in text and "\x1b" not in text and "](" not in text
-        assert len(text.splitlines()) == 2
+        assert len(self.bullets(text)) == 1
 
     def test_next_steps_places_linked_questions_before_ask_without_mutating_artifacts(self, tmp_path):
         import yaml

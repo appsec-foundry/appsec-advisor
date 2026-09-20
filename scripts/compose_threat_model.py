@@ -9888,6 +9888,10 @@ def _render_ms_open_questions(ctx: RenderContext) -> str:
     # into §7/§8. `_team_questions.is_report_question_line` keys on that trailing
     # parenthetical to keep the enrichment passes off these bullets.
     out = [_team_questions.REPORT_HEADING, "", _team_questions.REPORT_INTRO, ""]
+    # The impact rides on its own indented continuation line, never appended to
+    # the bullet: `is_report_question_line` anchors on the reference tail ending
+    # the bullet, and a trailing clause would silently re-enable title enrichment
+    # on these ids. The impact carries no ids of its own for the same reason.
     for topic in selection["questions"]:
         refs = ", ".join(link(item["id"], unproven=item["unproven"]) for item in topic["refs"])
         if topic["hidden"] > 0:
@@ -9895,11 +9899,14 @@ def _render_ms_open_questions(ctx: RenderContext) -> str:
         if topic["weakness_id"]:
             refs = f"{link(topic['weakness_id'])}: {refs}" if refs else link(topic["weakness_id"])
         out.append(f"- {topic['question']}" + (f" ({refs})" if refs else ""))
-    if selection["unverified"]:
-        refs = ", ".join(link(item["id"]) for item in selection["unverified"][:5])
-        if len(selection["unverified"]) > 5:
-            refs += f" +{len(selection['unverified']) - 5} more"
-        out.append(f"- {_team_questions.UNVERIFIED_QUESTION} ({refs})")
+        if topic.get("impact"):
+            out.append(f"  _{topic['impact']}_")
+    for group in selection.get("unverified_groups") or []:
+        refs = ", ".join(link(item["id"]) for item in group["refs"][:5])
+        if len(group["refs"]) > 5:
+            refs += f" +{len(group['refs']) - 5} more"
+        out.append(f"- {group['question']} ({refs})")
+        out.append(f"  _{group['impact']}_")
     out.append("")
     return "\n".join(out)
 

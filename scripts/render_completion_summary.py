@@ -953,11 +953,14 @@ def build_manual_review_step(
         if topic["weakness_id"]:
             refs = f"{topic['weakness_id']}: {refs}" if refs else topic["weakness_id"]
         lines.append(f"- {topic['question']}" + (f" ({refs})" if refs else ""))
-    if selection["unverified"]:
-        refs = ", ".join(item["id"] for item in selection["unverified"][:5])
-        if len(selection["unverified"]) > 5:
-            refs += f" +{len(selection['unverified']) - 5} more"
-        lines.append(f"- {_team_questions.UNVERIFIED_QUESTION} ({refs})")
+        if topic.get("impact"):
+            lines.append(f"  → {topic['impact']}")
+    for group in selection.get("unverified_groups") or []:
+        refs = ", ".join(item["id"] for item in group["refs"][:5])
+        if len(group["refs"]) > 5:
+            refs += f" +{len(group['refs']) - 5} more"
+        lines.append(f"- {group['question']} ({refs})")
+        lines.append(f"  → {group['impact']}")
     return "\n".join(lines)
 
 

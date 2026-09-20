@@ -21,9 +21,46 @@ CONSOLE_HEADER = "Open questions for the team:"
 REPORT_HEADING = "### Open Questions for the Team"
 REPORT_INTRO = (
     "The analysis could not fully resolve these points from the code. Discuss them with the people who know the "
-    "deployment and the business requirements; the answers can change the severity or the fix of the linked findings."
+    "deployment and the business requirements; the answers can change the severity or the fix of the linked findings. "
+    "Each question states under it what the answer decides, so it can be settled without reopening the analysis."
 )
-UNVERIFIED_QUESTION = "Do these findings hold in the deployed system? The code alone could not confirm them."
+# Unverified findings split by what actually settles them: a configuration value
+# is checked against the running environment, a code path against reachability.
+# One generic "does this hold?" line asks a question nobody can act on, so the
+# split is by evidence location — the only signal the model carries for this.
+UNVERIFIED_CONFIG_QUESTION = "Which of these settings are active in the environment you actually run?"
+UNVERIFIED_CONFIG_IMPACT = (
+    "A setting confirmed active keeps its finding at the current rating; one that differs in the real "
+    "environment turns it into an environment-specific note."
+)
+UNVERIFIED_CODE_QUESTION = "Which of these code paths are reachable in a running instance?"
+UNVERIFIED_CODE_IMPACT = (
+    "A reachable path confirms the finding as rated; an unreachable one makes it dead code to remove rather "
+    "than a fix to ship."
+)
+_DEPLOYMENT_FILE_RE = re.compile(
+    r"(?:^|/)(?:docker-compose[^/]*\.ya?ml|Dockerfile(?:\.[^/]+)?|Jenkinsfile|nginx[^/]*\.conf|[^/]*\.properties"
+    r"|[^/]*\.env|\.env[^/]*)$|^\.github/workflows/|^\.gitlab-ci\.ya?ml$",
+    re.I,
+)
+# An authenticated actor earns its own row only while something separates it from
+# the anonymous one. A confirmed authentication bypass removes that separation, so
+# the actor-gated findings silently inherit the anonymous actor's likelihood.
+ACTOR_SEPARATION_QUESTION = "What separates an anonymous attacker from an authenticated user in this system today?"
+ACTOR_SEPARATION_IMPACT = (
+    "If the confirmed authentication bypass removes that separation, the account-gated findings carry the "
+    "anonymous attacker's likelihood instead of their own, and the separate actor stops being meaningful."
+)
+_AUTHENTICATED_ACCESS = {"authenticated-user-session", "authenticated-session"}
+_AUTHENTICATED_POSITIONS = {"authenticated-user-authority", "authenticated-user"}
+_BYPASS_CWES = {"CWE-287", "CWE-288", "CWE-290", "CWE-294", "CWE-303", "CWE-304", "CWE-305", "CWE-306", "CWE-1390"}
+_BYPASS_VIA_INJECTION_CWES = {"CWE-89", "CWE-564", "CWE-943"}
+_AUTH_CONTEXT_RE = re.compile(r"\b(login|log-in|sign-?in|authentication|authenticate|credential)\b", re.I)
+REGISTRATION_QUESTION = "Can anyone create an account, or does onboarding require approval?"
+REGISTRATION_IMPACT = (
+    "Open registration puts every account-gated finding within reach of an anonymous attacker; gated "
+    "onboarding keeps them behind an approval step."
+)
 
 # The reference tail a rendered report bullet ends with: the optional weakness
 # link, the finding links, their optional `(unproven)` marker and an optional
@@ -48,8 +85,7 @@ def is_report_question_line(line: str) -> bool:
     return line.startswith("- ") and bool(_REPORT_REF_TAIL_RE.search(line.rstrip()))
 
 
-def mechanism_team_questions(plugin_root: Optional[Path] = None) -> dict[str, str]:
-    """Return the explicit team question for each registered mechanism."""
+def _mechanism_field(field: str, plugin_root: Optional[Path]) -> dict[str, str]:
     root = plugin_root or Path(__file__).resolve().parent.parent
     try:
         data = yaml.safe_load((root / "data" / "weakness-classes.yaml").read_text(encoding="utf-8")) or {}
@@ -57,10 +93,25 @@ def mechanism_team_questions(plugin_root: Optional[Path] = None) -> dict[str, st
         return {}
     guidance = data.get("mechanism_guidance") or {}
     return {
-        str(key): str(entry["team_question"]).strip()
+        str(key): str(entry[field]).strip()
         for key, entry in guidance.items()
-        if isinstance(entry, dict) and str(entry.get("team_question") or "").strip()
+        if isinstance(entry, dict) and str(entry.get(field) or "").strip()
     }
+
+
+def mechanism_team_questions(plugin_root: Optional[Path] = None) -> dict[str, str]:
+    """Return the explicit team question for each registered mechanism."""
+    return _mechanism_field("team_question", plugin_root)
+
+
+def mechanism_decision_impacts(plugin_root: Optional[Path] = None) -> dict[str, str]:
+    """Return what each mechanism's answer decides, keyed like the questions.
+
+    A question without its consequence reads as conversation. Pairing both keeps
+    the selector presentation-neutral: callers render the impact in their own
+    style or drop it, but neither renderer has to infer it from the question.
+    """
+    return _mechanism_field("decision_impact", plugin_root)
 
 
 def visible_anchor_ids(report_text: str) -> set[str]:
@@ -91,16 +142,21 @@ def select_open_questions(
     available_anchors: set[str],
     *,
     team_questions: Optional[dict[str, str]] = None,
+    decision_impacts: Optional[dict[str, str]] = None,
 ) -> dict[str, list[dict]]:
-    """Select up to three team questions and the optional verification line.
+    """Select up to three team questions and the verification questions.
 
     The sources are unresolved verified abuse-case investigations, registered
-    weakness mechanisms with an explicit question, and the few mechanism
-    signals intentionally handled outside the weakness register. Only
-    Medium-or-higher findings with evidence and a delivered anchor participate.
+    weakness mechanisms with an explicit question, the actor-separation check,
+    and the few mechanism signals intentionally handled outside the weakness
+    register. Only Medium-or-higher findings with evidence and a delivered
+    anchor participate. Every selected topic carries the `impact` its answer
+    decides, so a renderer never has to infer the consequence from the wording.
     """
     if team_questions is None:
         team_questions = mechanism_team_questions()
+    if decision_impacts is None:
+        decision_impacts = mechanism_decision_impacts()
     anchors = {str(anchor).lower() for anchor in available_anchors}
     candidates: list[dict] = []
     for threat in _severity_rollup.register_threats(yaml_data):
@@ -133,6 +189,11 @@ def select_open_questions(
             )
             for location in locations
         )
+        deployment = any(
+            isinstance(location, dict) and _DEPLOYMENT_FILE_RE.search(str(location.get("file") or ""))
+            for location in locations
+        )
+        actor_ids = threat.get("actor_ids")
         candidates.append(
             {
                 "id": finding_id,
@@ -141,6 +202,8 @@ def select_open_questions(
                 "title": title,
                 "context": context,
                 "build_time": build_time,
+                "deployment": deployment,
+                "actor_ids": {str(value) for value in actor_ids} if isinstance(actor_ids, list) else set(),
                 "component": str(threat.get("component") or threat.get("component_id") or ""),
                 "unproven": threat.get("evidence_tier") != "confirmed-exploitable"
                 or threat.get("evidence_check") not in {"verified", "verified-prior"},
@@ -171,15 +234,52 @@ def select_open_questions(
         ]
 
     topics: list[dict] = []
+    authenticated_actors = {
+        str(actor.get("id"))
+        for actor in yaml_data.get("actors") or []
+        if isinstance(actor, dict)
+        and actor.get("id")
+        and (
+            set(actor.get("access") or []) & _AUTHENTICATED_ACCESS
+            or set(actor.get("trust_positions") or []) & _AUTHENTICATED_POSITIONS
+        )
+    }
+    # Actor separation. An authenticated actor is a modelling claim that reaching
+    # its findings costs an account. A confirmed authentication bypass voids that
+    # claim, and the register keeps rating those findings as if it held.
+    gated = [item for item in candidates if item["actor_ids"] and item["actor_ids"] <= authenticated_actors]
+    bypass = [
+        item
+        for item in candidates
+        if not item["actor_ids"] & authenticated_actors
+        and (
+            item["cwes"] & _BYPASS_CWES
+            or (item["cwes"] & _BYPASS_VIA_INJECTION_CWES and _AUTH_CONTEXT_RE.search(item["context"]))
+        )
+    ]
+    separation_broken = bool(gated and bypass)
+
     registration = (yaml_data.get("meta") or {}).get("open_registration_resolution") or {}
-    if registration.get("disputed") is True and registration.get("evidence"):
+    # `not-established` means no signal was found, not that onboarding is closed.
+    # While an authenticated actor carries findings of its own, how someone gets
+    # an account decides whether that actor is reachable at all, so an unsettled
+    # resolution is asked rather than assumed (VulnerableApp, 2026-09-20).
+    # A confirmed bypass settles it the other way: the attacker needs no account,
+    # so asking how accounts are issued would only restate the separation question.
+    registration_open = not separation_broken and (
+        (registration.get("disputed") is True and registration.get("evidence"))
+        or (str(registration.get("reason") or "") == "not-established" and authenticated_actors)
+    )
+    if registration_open:
         topics.append(
             {
                 "rank": -1,
                 "order": -1,
-                "question": "Can anyone create an account, or does onboarding require approval?",
+                "question": REGISTRATION_QUESTION,
+                "impact": REGISTRATION_IMPACT,
                 "refs": [],
                 "hidden": 0,
+                "reach": 0,
                 "weakness_id": "",
             }
         )
@@ -187,6 +287,7 @@ def select_open_questions(
     def add(
         question: str,
         *groups: list[dict],
+        impact: str = "",
         priority: int | None = None,
         limit: int = 2,
         weakness_id: str = "",
@@ -206,8 +307,13 @@ def select_open_questions(
                 "rank": min(item["rank"] for item in refs),
                 "order": len(topics) if priority is None else priority,
                 "question": question,
+                "impact": impact,
                 "refs": refs[:limit],
                 "hidden": distinct_count - min(len(refs), limit),
+                # How many findings the answer settles. Two questions at the same
+                # severity are not equally worth asking: the one that resolves six
+                # findings outranks the one that resolves one.
+                "reach": distinct_count,
                 "weakness_id": weakness_id if weakness_id.lower() in anchors else "",
             }
         )
@@ -232,6 +338,10 @@ def select_open_questions(
                 "Can an attacker combine these findings into one attack in the deployed system?",
                 unresolved,
                 related,
+                impact=(
+                    "A confirmed chain rates above its individual findings and changes what gets fixed first; "
+                    "a broken link lets each finding stay rated on its own."
+                ),
                 priority=-1,
             )
 
@@ -249,9 +359,13 @@ def select_open_questions(
         add(
             question,
             [item for item in candidates if item["id"] in instance_ids],
+            impact=decision_impacts.get(str(weakness.get("mechanism_id") or ""), ""),
             limit=3,
             weakness_id=weakness_id,
         )
+
+    if separation_broken:
+        add(ACTOR_SEPARATION_QUESTION, bypass, gated, impact=ACTOR_SEPARATION_IMPACT, priority=-1)
 
     execution = [item for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-95"}) if not item["build_time"]]
     if execution:
@@ -260,12 +374,20 @@ def select_open_questions(
             f"If an attacker runs {runs} in {subject(execution)}, "
             "which other services, secrets or credentials can that process reach?",
             execution,
+            impact=(
+                "Every reachable service or credential extends this from one component to a wider compromise "
+                "and raises the priority of isolating that process; an isolated process contains it."
+            ),
         )
     else:
         requests = matching({"CWE-918"})
         add(
             f"Which internal services or infrastructure credentials can server-side requests from {subject(requests)} reach?",
             requests,
+            impact=(
+                "Reachable metadata endpoints or internal admin APIs turn this into credential theft; a "
+                "restricted egress path keeps it to outbound noise."
+            ),
         )
     model_tools = [
         item
@@ -275,12 +397,22 @@ def select_open_questions(
     add(
         f"Which actions can the model trigger in {subject(model_tools)} without a separate authorization decision?",
         model_tools,
+        impact=(
+            "Each action reachable without its own authorization check becomes an attacker primitive through "
+            "prompt injection; an action set behind separate checks keeps injection to text."
+        ),
     )
 
     selected: list[dict] = []
     used: set[str] = set()
     questions: set[str] = set()
-    for topic in sorted(topics, key=lambda item: (item["rank"], item["order"], tuple(r["id"] for r in item["refs"]))):
+    # Severity first, then how many findings the answer settles: at equal severity
+    # the question that resolves more of the register is the one worth the cap.
+    ordering = sorted(
+        topics,
+        key=lambda item: (item["rank"], -item["reach"], item["order"], tuple(r["id"] for r in item["refs"])),
+    )
+    for topic in ordering:
         if topic["question"] in questions or (topic["refs"] and all(item["id"] in used for item in topic["refs"])):
             continue
         selected.append(topic)
@@ -289,7 +421,20 @@ def select_open_questions(
         if len(selected) == 3:
             break
 
+    unverified = [item for item in candidates if item["unverified"]]
+    config_side = [item for item in unverified if item["deployment"]]
+    code_side = [item for item in unverified if not item["deployment"]]
+    groups: list[dict] = []
+    if config_side and code_side:
+        groups.append({"question": UNVERIFIED_CONFIG_QUESTION, "impact": UNVERIFIED_CONFIG_IMPACT, "refs": config_side})
+        groups.append({"question": UNVERIFIED_CODE_QUESTION, "impact": UNVERIFIED_CODE_IMPACT, "refs": code_side})
+    elif config_side:
+        groups.append({"question": UNVERIFIED_CONFIG_QUESTION, "impact": UNVERIFIED_CONFIG_IMPACT, "refs": config_side})
+    elif code_side:
+        groups.append({"question": UNVERIFIED_CODE_QUESTION, "impact": UNVERIFIED_CODE_IMPACT, "refs": code_side})
+
     return {
         "questions": selected,
-        "unverified": [item for item in candidates if item["unverified"]],
+        "unverified": unverified,
+        "unverified_groups": groups,
     }

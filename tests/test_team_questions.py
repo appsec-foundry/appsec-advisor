@@ -84,7 +84,11 @@ def test_refuted_step_settles_the_whole_chain() -> None:
         },
     }
 
-    assert tq.select_open_questions(model, anchors("F-001", "F-002")) == {"questions": [], "unverified": []}
+    assert tq.select_open_questions(model, anchors("F-001", "F-002")) == {
+        "questions": [],
+        "unverified": [],
+        "unverified_groups": [],
+    }
 
 
 def test_visible_anchor_scan_ignores_opaque_markdown() -> None:
@@ -200,10 +204,115 @@ def test_every_team_question_is_one_plain_question_with_a_subject(component):
         assert question.endswith("?") and question.count("?") == 1, question
         assert not re.match(r"^[A-Z][\w -]{0,40}:\s", question), question  # no "Topic:" label
         assert not re.search(r"\bshould\b|\bplanned\b", question, re.I), question  # no proposed fix
-    unverified = tq.UNVERIFIED_QUESTION
-    assert unverified.count("?") == 1 and not re.match(r"^[A-Z][\w -]{0,40}:\s", unverified)
+    for unverified in (tq.UNVERIFIED_CONFIG_QUESTION, tq.UNVERIFIED_CODE_QUESTION):
+        assert unverified.count("?") == 1 and not re.match(r"^[A-Z][\w -]{0,40}:\s", unverified)
 
 
 def test_questions_without_a_resolvable_component_do_not_invent_one():
     question = _selected({"threats": [finding(1, cwe="CWE-918", component="unknown-id")]}, "F-001")[0]
     assert "from this application" in question
+
+
+def test_every_registered_mechanism_pairs_a_question_with_its_impact() -> None:
+    questions = tq.mechanism_team_questions()
+    impacts = tq.mechanism_decision_impacts()
+
+    assert set(questions) == set(impacts)
+    for key, impact in impacts.items():
+        assert "?" not in impact, key  # the consequence states, the question asks
+        # An id in the impact line would be rendered bare: the enrichment guard
+        # only spares the bullet itself, not its continuation line.
+        assert not re.search(r"\b[FWT]-\d{3,}\b", impact), key
+
+
+def _actor_model(**overrides) -> dict:
+    """An anonymous-reachable authentication bypass next to an account-gated finding."""
+    return {
+        "actors": [
+            {"id": "ACT-D-01", "access": ["internet"], "trust_positions": ["public-endpoint-reach"]},
+            {
+                "id": "ACT-D-02",
+                "access": ["internet", "authenticated-user-session"],
+                "trust_positions": ["authenticated-user-authority"],
+            },
+        ],
+        "threats": [
+            finding(1, cwe="CWE-89", title="SQL injection in login", actor_ids=["ACT-D-01"]),
+            finding(2, actor_ids=["ACT-D-02"]),
+        ],
+        **overrides,
+    }
+
+
+def test_authentication_bypass_voids_the_authenticated_actor_separation() -> None:
+    selected = tq.select_open_questions(_actor_model(), anchors("F-001", "F-002"))["questions"]
+
+    assert selected[0]["question"] == tq.ACTOR_SEPARATION_QUESTION
+    assert {ref["id"] for ref in selected[0]["refs"]} == {"F-001", "F-002"}
+
+
+def test_bypass_without_an_account_gated_finding_asks_nothing_about_actors() -> None:
+    model = _actor_model()
+    model["threats"][1]["actor_ids"] = ["ACT-D-01"]
+
+    questions = [item["question"] for item in tq.select_open_questions(model, anchors("F-001", "F-002"))["questions"]]
+
+    assert tq.ACTOR_SEPARATION_QUESTION not in questions
+
+
+def test_confirmed_bypass_replaces_rather_than_repeats_the_registration_question() -> None:
+    model = _actor_model(
+        meta={"open_registration_resolution": {"disputed": True, "evidence": [{"file": "signup.ts", "line": 1}]}}
+    )
+
+    questions = [item["question"] for item in tq.select_open_questions(model, anchors("F-001", "F-002"))["questions"]]
+
+    assert tq.ACTOR_SEPARATION_QUESTION in questions
+    assert tq.REGISTRATION_QUESTION not in questions
+
+
+def test_unsettled_registration_is_asked_only_while_an_authenticated_actor_exists() -> None:
+    model = {
+        "actors": [{"id": "ACT-D-02", "trust_positions": ["authenticated-user-authority"]}],
+        "meta": {"open_registration_resolution": {"open": False, "disputed": False, "reason": "not-established"}},
+        "threats": [finding(2, actor_ids=["ACT-D-02"])],
+    }
+
+    assert tq.REGISTRATION_QUESTION in [q["question"] for q in tq.select_open_questions(model, anchors("F-002"))["questions"]]
+
+    model["actors"] = []
+    assert tq.select_open_questions(model, anchors("F-002"))["questions"] == []
+
+
+def test_unverified_findings_split_by_what_settles_them() -> None:
+    model = {
+        "threats": [
+            finding(1, evidence_check="ambiguous", evidence=[{"file": "docker-compose.yml", "line": 3}]),
+            finding(2, evidence_check="ambiguous", evidence=[{"file": "src/App.java", "line": 9}]),
+        ]
+    }
+
+    groups = tq.select_open_questions(model, anchors("F-001", "F-002"))["unverified_groups"]
+
+    assert [group["question"] for group in groups] == [tq.UNVERIFIED_CONFIG_QUESTION, tq.UNVERIFIED_CODE_QUESTION]
+    assert [ref["id"] for ref in groups[0]["refs"]] == ["F-001"]
+    assert [ref["id"] for ref in groups[1]["refs"]] == ["F-002"]
+    assert all(group["impact"] for group in groups)
+
+
+def test_question_that_settles_more_findings_outranks_a_narrower_one() -> None:
+    model = {
+        "threats": [finding(n) for n in range(1, 5)],
+        # W-001 sorts first and would win on insertion order alone.
+        "weaknesses": [weakness(1, "m-narrow", 1), weakness(2, "m-wide", 2, 3, 4)],
+    }
+
+    result = tq.select_open_questions(
+        model,
+        anchors("F-001", "F-002", "F-003", "F-004", "W-001", "W-002"),
+        team_questions={"m-narrow": "Narrow?", "m-wide": "Wide?"},
+        decision_impacts={"m-narrow": "Narrow impact.", "m-wide": "Wide impact."},
+    )
+
+    assert [item["question"] for item in result["questions"]] == ["Wide?", "Narrow?"]
+    assert [item["impact"] for item in result["questions"]] == ["Wide impact.", "Narrow impact."]
