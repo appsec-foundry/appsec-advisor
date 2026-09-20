@@ -1060,6 +1060,10 @@ def _fold_legitimate_roles(yaml_data):
             "name": label[prefix + "_label"],
             "description": label[prefix + "_subtitle"],
             "access": slug,
+            # The card is renamed after the project, so the authored names it
+            # stands for are otherwise lost: the caption note says that roles
+            # were folded, never which ones. Name them on the card itself.
+            "_covers": sorted(row.get("name") or row["id"] for row in rows),
         }
         aliases.update({row["id"]: key for row in rows})
     entities = []
@@ -1113,7 +1117,67 @@ def overview_facts(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=N
     }
 
 
+def _role_edge_signature(flow):
+    """What a role's edge looks like once drawn: its target and its rendered label."""
+    label = INTERACTION_LABEL if flow.get("interaction") else (flow.get("diagram_label") or flow.get("label") or "")
+    return flow.get("to"), label
+
+
+def _merge_indistinct_roles(d):
+    """Fold a legitimate role into one whose edges already cover it.
+
+    Two roles are worth drawing apart only where the diagram can show a
+    difference. A role whose every edge — same target, same rendered label —
+    already belongs to another role adds a second identical line and a box the
+    reader cannot tell from its neighbour. It is folded into that role and named
+    on the box that absorbed it, so the role stays visible without a duplicate
+    edge. A role with an edge of its own (a scanner posting to its own endpoint)
+    keeps its box.
+
+    Rank by edge count, then document order, and fold only into a higher-ranked
+    role: the direction is then total, so no pair can absorb each other and the
+    pass is idempotent across the figure and its detail variant.
+    """
+    entities = [e for e in d.get("external_entities") or [] if isinstance(e, dict) and e.get("id")]
+    roles = [e for e in entities if e.get("kind") == "legitimate-role"]
+    if len(roles) < 2:
+        return
+    flows = [f for f in d.get("data_flows") or [] if isinstance(f, dict)]
+    signature = collections.defaultdict(set)
+    for flow in flows:
+        if flow.get("from") == "external" and flow.get("from_entity"):
+            signature[flow["from_entity"]].add(_role_edge_signature(flow))
+    order = {role["id"]: index for index, role in enumerate(roles)}
+    ranked = sorted(roles, key=lambda e: (-len(signature.get(e["id"]) or ()), order[e["id"]]))
+    absorbed = {}
+    for index, role in enumerate(ranked):
+        own = signature.get(role["id"]) or set()
+        if not own:  # a role without edges says nothing about which box it belongs to
+            continue
+        for host in ranked[:index]:
+            if host["id"] not in absorbed and own <= (signature.get(host["id"]) or set()):
+                absorbed[role["id"]] = host["id"]
+                break
+    if not absorbed:
+        return
+    names = {role["id"]: role.get("name") or role["id"] for role in roles}
+    covered = collections.defaultdict(list)
+    for role_id, host_id in absorbed.items():
+        covered[host_id].append(names[role_id])
+    for flow in flows:
+        for end in ("from_entity", "to_entity"):
+            if flow.get(end) in absorbed:
+                flow[end] = absorbed[flow[end]]
+    d["external_entities"] = [e for e in d.get("external_entities") or [] if e.get("id") not in absorbed]
+    for entity in d["external_entities"]:
+        if entity.get("id") in covered:
+            # An access-equivalence fold may already have named roles here; this
+            # pass adds to that list rather than replacing it.
+            entity["_covers"] = sorted(set(entity.get("_covers") or []) | set(covered[entity["id"]]))
+
+
 def _build_model(d, scenarios, actors, victim_target=USER_ID):
+    _merge_indistinct_roles(d)
     comps = [c for c in (d.get("components") or []) if isinstance(c, dict) and c.get("id")]
     cnum = d.get("_component_numbers") or {c["id"]: f"C-{i:02d}" for i, c in enumerate(comps, 1)}
     by_cnum = {v: k for k, v in cnum.items()}
@@ -1316,6 +1380,8 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "order": len(nodes),
             "badges": [],
         }
+        if entity.get("_covers"):
+            nodes[key]["merged_label"] = "also covers " + ", ".join(entity["_covers"])
     if victim_of and victim_target != USER_ID:
         nodes[victim_target]["col_rank"] = 0
         nodes[victim_target]["victim_label"] = "victim of " + " ".join("①②③④⑤⑥⑦⑧⑨"[int(n) - 1] for n in victim_of[:4])
@@ -2261,6 +2327,14 @@ def _prepare_external_text(nodes):
                 words.append(word)
             lines = _legend_wrap(" ".join(words) + "…", width, 7.5) if words else ["See full description on hover"]
         node["sub_lines"] = lines
+        # The folded-role names run wider than the card, so they wrap here where
+        # the width is known. Two lines cap it; beyond that the remainder is
+        # counted, and the hover title carries every name.
+        if node.get("merged_label"):
+            wrapped = _legend_wrap(node["merged_label"], width, 7.5)
+            node["merged_lines"] = wrapped[:2]
+            if len(wrapped) > 2:
+                node["merged_lines"][1] = node["merged_lines"][1].rsplit(" ", 1)[0] + " …"
         title_lines = min(2, len(_wrap(node["name"], width, 10)))
         node["h"] = max(
             node["h"],
@@ -2269,7 +2343,8 @@ def _prepare_external_text(nodes):
             + _pill_height(node.get("capabilities") or [], width)
             + 8
             + len(lines) * 10
-            + (12 if node.get("victim_label") else 0),
+            + (12 if node.get("victim_label") else 0)
+            + 12 * len(node.get("merged_lines") or []),
         )
 
 
@@ -2757,7 +2832,9 @@ def _render(
         x, y, w, h = n["x"], n["y"], n["w"], n["h"]
         if n["kind"] == "ext":
             if not n.get("attacker"):
-                c.add(f'<g data-external-id="{_esc(n["id"])}"><title>{_esc(n.get("sub", ""))}</title>')
+                # The card may abbreviate the folded-role names; the hover keeps them whole.
+                hover = "\n".join(part for part in (n.get("sub", ""), n.get("merged_label")) if part)
+                c.add(f'<g data-external-id="{_esc(n["id"])}"><title>{_esc(hover)}</title>')
             col = n["color"]
             if n.get("group_lines"):
                 c.label_owners[f"actor grouping {n['actor_code']}"] = n["id"]
@@ -2774,7 +2851,10 @@ def _render(
                 c.text(tx, y + 19 + i * 12, line, size=10, anchor="start", weight="bold", fill=col)
             if n.get("capabilities"):
                 _capability_pills(c, tx, y + 12 + len(label_lines) * 12, n, w - (tx - x) - 8)
-            sub_y = y + h - n.get("reference_height", 0) - (20 if n.get("victim_label") else 8)
+            # Each bottom label claims its own 12px band, so the description above
+            # them never renders over one of them.
+            bottom_labels = [*(n.get("merged_lines") or []), *([n["victim_label"]] if n.get("victim_label") else [])]
+            sub_y = y + h - n.get("reference_height", 0) - (8 + 12 * len(bottom_labels))
             if n.get("group_lines"):
                 for i, line in enumerate(n["group_lines"]):
                     c.text(
@@ -2793,8 +2873,8 @@ def _render(
                     c.text(
                         tx, sub_y - 10 * (len(lines) - 1 - i), line, size=7.5, anchor="start", fill=MUTED, italic=True
                     )
-            if n.get("victim_label"):
-                c.text(tx, y + h - 8, n["victim_label"], size=7.5, anchor="start", fill=MUTED, italic=True)
+            for offset, text in enumerate(reversed(bottom_labels)):
+                c.text(tx, y + h - 8 - offset * 12, text, size=7.5, anchor="start", fill=MUTED, italic=True)
             if not n.get("attacker"):
                 c.add("</g>")
             continue

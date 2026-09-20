@@ -2018,6 +2018,9 @@ def test_shared_external_boundary_does_not_select_an_arbitrary_role_flow():
                 "from": "external",
                 "from_entity": f"ext-role-{number}",
                 "to": "app0",
+                # Distinct payloads keep the two roles apart. Identical ones fold
+                # into one card, leaving no second role flow to arbitrate.
+                "label": f"Role {number} request",
                 "protocol": "HTTPS",
             }
         )
@@ -2025,6 +2028,73 @@ def test_shared_external_boundary_does_not_select_an_arbitrary_role_flow():
     assert "tb-1" in state["nodes"]["app0"]["tags"]
     assert not any("tb-1" in edge["tb"] for edge in state["edges"])
     assert F.check_diagram(model, paths, taxonomy)[1] == []
+
+
+def _roles_model(*entities_and_flows):
+    """A model whose legitimate roles and their flows are given as (entity, flows) pairs."""
+    model, _, _ = _model()
+    model["external_entities"] = [entity for entity, _ in entities_and_flows]
+    model["data_flows"] = [
+        {"id": f"df-2{index:02d}", "from": "external", "from_entity": entity["id"], "protocol": "HTTPS", **flow}
+        for index, (entity, flows) in enumerate(entities_and_flows)
+        for flow in flows
+    ]
+    return model
+
+
+def test_a_role_whose_edges_another_role_already_draws_folds_into_it():
+    """Nothing in the diagram tells the two apart, so one card carries both."""
+    model = _roles_model(
+        (
+            {"id": "ext-user", "name": "End User", "kind": "legitimate-role"},
+            [{"to": "spa", "interaction": True}, {"to": "app0", "label": "Places an order"}],
+        ),
+        ({"id": "ext-admin", "name": "Admin", "kind": "legitimate-role"}, [{"to": "spa", "interaction": True}]),
+    )
+
+    F._merge_indistinct_roles(model)
+
+    assert [e["id"] for e in model["external_entities"]] == ["ext-user"]
+    assert model["external_entities"][0]["_covers"] == ["Admin"]
+    # The absorbed role's flow survives, redirected, so no edge is lost.
+    assert {f["from_entity"] for f in model["data_flows"]} == {"ext-user"}
+
+
+def test_a_role_with_an_edge_of_its_own_keeps_its_card():
+    """A scanner posting to its own endpoint is a difference the diagram can show."""
+    model = _roles_model(
+        ({"id": "ext-user", "name": "End User", "kind": "legitimate-role"}, [{"to": "app0", "label": "Places an order"}]),
+        ({"id": "ext-scanner", "name": "Scanner", "kind": "legitimate-role"}, [{"to": "app0", "label": "Posts findings"}]),
+    )
+
+    F._merge_indistinct_roles(model)
+
+    assert [e["id"] for e in model["external_entities"]] == ["ext-user", "ext-scanner"]
+    assert not any(e.get("_covers") for e in model["external_entities"])
+
+
+def test_a_role_without_edges_is_never_folded_into_an_arbitrary_card():
+    model = _roles_model(
+        ({"id": "ext-user", "name": "End User", "kind": "legitimate-role"}, [{"to": "app0", "label": "Places an order"}]),
+        ({"id": "ext-ops", "name": "Operator", "kind": "legitimate-role"}, []),
+    )
+
+    F._merge_indistinct_roles(model)
+
+    assert [e["id"] for e in model["external_entities"]] == ["ext-user", "ext-ops"]
+
+
+def test_folding_roles_is_idempotent_across_the_figure_and_its_detail_variant():
+    model = _roles_model(
+        ({"id": "ext-user", "name": "End User", "kind": "legitimate-role"}, [{"to": "spa", "interaction": True}]),
+        ({"id": "ext-admin", "name": "Admin", "kind": "legitimate-role"}, [{"to": "spa", "interaction": True}]),
+    )
+
+    F._merge_indistinct_roles(model)
+    once = copy.deepcopy(model)
+    F._merge_indistinct_roles(model)
+
+    assert model == once
 
 
 def test_evidenced_application_asset_is_not_reported_as_an_unknown_location():

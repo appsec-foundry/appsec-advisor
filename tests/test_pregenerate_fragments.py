@@ -1019,6 +1019,31 @@ class TestArchitectureDataFlows:
         # Legacy fallback edge MUST NOT appear when explicit flows render.
         assert "HTTPS REST" not in md  # legacy hard-coded label
 
+    def test_flows_collapsing_onto_one_label_draw_a_single_edge(self):
+        """Two flows between the same pair share protocol and class — one line says it."""
+        flow = {
+            "from": "spa",
+            "to": "api",
+            "protocol": "HTTPS",
+            "data_classification": "Confidential",
+        }
+        data = {
+            "meta": {"project": {"name": "TestApp"}},
+            "components": [
+                {"id": "spa", "name": "SPA", "paths": ["frontend/**"]},
+                {"id": "api", "name": "API", "paths": ["server.ts"]},
+            ],
+            "data_flows": [
+                {**flow, "id": "df-1", "diagram_label": "Login credentials"},
+                {**flow, "id": "df-2", "diagram_label": "Password reset request"},
+            ],
+            "trust_boundaries": [],
+        }
+
+        edges = pf._data_flow_edges(data, data["components"])
+
+        assert edges == ["spa -->|HTTPS · Confidential| api"]
+
     def test_falls_back_to_tier_heuristic_when_data_flows_empty(self):
         data = {
             "meta": {"project": {"name": "TestApp"}},

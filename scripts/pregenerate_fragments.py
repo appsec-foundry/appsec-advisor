@@ -2934,7 +2934,12 @@ def _data_flow_edges(yaml_data: dict, components: list[dict]) -> list[str]:
 
         arrow = "-.->|" if _is_async_protocol(protocol) else "-->|"
         edges.append(f"{_safe_node_id(src)} {arrow}{annotated}| {_safe_node_id(dst)}")
-    return edges
+    # Several flows between the same pair collapse onto one label here, because
+    # the label carries protocol and classification but not each flow's
+    # `diagram_label`. Emitting the duplicate draws a second identical line that
+    # adds no information (VulnerableApp: login and password-reset both render
+    # `client-ui -->|HTTP · Confidential| auth`). One line says the same thing.
+    return list(dict.fromkeys(edges))
 
 
 # ---------------------------------------------------------------------------
