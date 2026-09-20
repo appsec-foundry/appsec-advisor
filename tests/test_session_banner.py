@@ -731,6 +731,28 @@ def test_an_outdated_aiscb_copy_names_no_command_that_would_refuse(tmp_path):
     assert line == f"{BASELINE_NAME} · {OLDER_ID} · this machine · behind {BASELINE_ID}"
 
 
+def test_an_outdated_aiscb_copy_announced_by_its_hook_is_not_repeated(tmp_path):
+    """The aiscb hook owns both the version warning and its update guidance."""
+    write_model(tmp_path)
+    data = aiscb_user_data(tmp_path, text=f"baseline-id: `{OLDER_ID}`\n")
+    register_session_start(tmp_path, aiscb_session_hooks(data))
+    message = run_hook(str(tmp_path))
+    assert baseline_line(message) is None
+    assert tm_line(message)
+
+
+def test_an_outdated_static_aiscb_copy_announced_by_its_hook_is_not_repeated(tmp_path):
+    write_model(tmp_path)
+    data = aiscb_user_data(tmp_path, text=f"baseline-id: `{OLDER_ID}`\n")
+    claude = tmp_path / "_home" / ".claude"
+    (claude / "secure-coding-baseline.md").symlink_to(data / "secure-coding-baseline.md")
+    (claude / "CLAUDE.md").write_text("@~/.claude/secure-coding-baseline.md\n", encoding="utf-8")
+    register_session_start(tmp_path, aiscb_status_hook(data))
+    message = run_hook(str(tmp_path))
+    assert baseline_line(message) is None
+    assert tm_line(message)
+
+
 # ---------------------------------------------------------------------------
 # Help and examples
 # ---------------------------------------------------------------------------

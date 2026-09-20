@@ -357,9 +357,9 @@ def _baseline_line(repo: Path | None) -> str:
     label.
 
     Where the aiscb installer's own startup hook prints the baseline status, the
-    calm states are left out, so the reader sees one line about the rules rather
-    than two. Only that hook hides anything: without it the line is as before,
-    and a state that asks for a decision or a command is reported either way.
+    same aiscb-managed state is left out, so the reader sees one line about the
+    rules rather than two. Only that hook hides anything: without it the line is
+    as before, and plugin-managed or conflicting baselines remain visible.
 
     Failure is silence. ``baseline_check`` is a plain stdlib module, but this is
     a startup hook and a banner that cannot report the baseline must still
@@ -418,9 +418,14 @@ def _baseline_line(repo: Path | None) -> str:
         # carrier. It is still better than naming no command at all in a build
         # whose allowlist does not carry update-baseline.
         command = _skill_command(UPDATE_BASELINE) or _skill_command(INSTALL_BASELINE)
-        # A copy in an aiscb installation is that installer's to update, and
-        # neither command writes it, so none is named.
-        if all(item.get("managed_by") == "aiscb" for item in result.get("older") or []):
+        upstream = all(item.get("managed_by") == "aiscb" for item in result.get("older") or [])
+        # The aiscb hook already names this version and its update. Keep a line
+        # for plugin-owned or mixed installations because that hook does not
+        # describe their state.
+        if announced and upstream:
+            return ""
+        # A copy in an aiscb installation is that installer's to update.
+        if upstream:
             command = ""
         return _join(label, ids, scopes, behind, command)
 
