@@ -31,7 +31,7 @@
           "owasp_asi_id": {
             "type": "string",
             "enum": ["ASI01", "ASI02", "ASI03", "ASI04", "ASI05", "ASI06", "ASI07", "ASI08", "ASI09", "ASI10"],
-            "description": "Optional OWASP Top-10 for Agentic Applications (2026) category id, for risks on an agentic surface (tools, persistent memory, multi-agent, autonomy). Rendered as a leading badge linking to the OWASP ASI resource. Often the agentic crosswalk of an owasp_llm_id (LLM01→ASI01, LLM06→ASI02, LLM03→ASI04, LLM05→ASI05, LLM04/LLM08→ASI06, LLM09→ASI09, LLM10→ASI08); ASI03/ASI07/ASI10 have no LLM analog."
+            "description": "Optional OWASP Top-10 for Agentic Applications (2026) category id supported by these findings' own model-directed action or delegation paths. Preserve explicit finding tags. RAG, memory, MCP or another agent elsewhere do not establish agency; a category crosswalk is not evidence."
           },
           "name": {
             "type": "string",

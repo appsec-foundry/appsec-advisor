@@ -3031,7 +3031,8 @@ def test_component_security_context_reconstruction_applies_shared_budget(tmp_pat
     assert sum(row["limits"]["estimated_tokens"] for row in validated) <= evidence_bundles.MAX_ESTIMATED_TOKENS
 
 
-def test_component_repository_projection_contains_only_admitted_related_roots(tmp_path):
+@pytest.mark.parametrize("lens_ids", [[], ["agentic", "llm", "mcp", "rag"]])
+def test_component_repository_projection_contains_only_admitted_related_roots(tmp_path, lens_ids):
     output = tmp_path / "out"
     context = output / ".dispatch-context" / "api"
     context.mkdir(parents=True)
@@ -3118,7 +3119,7 @@ def test_component_repository_projection_contains_only_admitted_related_roots(tm
             "estimated_threat_count": "low",
             "stride_profile": {"stride_profile_label": "full"},
         },
-        lens_ids=[],
+        lens_ids=lens_ids,
         bundle_path=".dispatch-context/api/evidence-bundle.json",
         bundle_sha256=hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
         taxonomy_path=".taxonomy-slices/api/threat-category-taxonomy.yaml",
@@ -3133,7 +3134,7 @@ def test_component_repository_projection_contains_only_admitted_related_roots(tm
             "sampling_required": False,
             "file_count": 1,
             "estimated_threat_count": "low",
-            "lens_ids": [],
+            "lens_ids": lens_ids,
             "evidence_bundle_sha256": hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
             "taxonomy_slice_path": ".taxonomy-slices/api/threat-category-taxonomy.yaml",
             "taxonomy_slice_sha256": hashlib.sha256(taxonomy_path.read_bytes()).hexdigest(),

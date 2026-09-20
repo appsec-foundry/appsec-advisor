@@ -4295,3 +4295,103 @@ def test_method_and_limits_states_depth_coverage_and_context_plainly(depth, shap
     for text in (block, overview, out_of_scope):
         for jargon in ("(s)", "reduced-budget", "verification greps", "business-critical surface", "code-derived"):
             assert jargon not in text
+
+
+@pytest.mark.parametrize("agent_name", ["Worker", "Renamed coordinator"])
+def test_ai_exposure_does_not_spread_agentic_classification(agent_name):
+    data = {
+        "components": [{"id": "plain", "name": "LLM API"}, {"id": "agent", "name": agent_name}],
+        "threats": [
+            {
+                "id": "T-801",
+                "component": "plain",
+                "title": "Prompt injection in answer",
+                "risk": "High",
+                "owasp_llm_ids": ["LLM01"],
+            },
+            {
+                "id": "T-802",
+                "component": "agent",
+                "title": "Tool-calling prompt injection",
+                "risk": "High",
+                "owasp_llm_ids": ["LLM01"],
+                "owasp_asi_ids": ["ASI01"],
+            },
+            {
+                "id": "T-803",
+                "component": "agent",
+                "title": "Model API consumption",
+                "risk": "Medium",
+                "owasp_llm_ids": ["LLM10"],
+            },
+        ],
+    }
+    output = json.loads(pf.gen_ai_exposure(data))["ai_risks"]
+    for ref in ("T-801", "T-803"):
+        assert all(not row.get("owasp_asi_id") for row in output if any(f["ref"] == ref for f in row["findings"]))
+    assert any(row.get("owasp_asi_id") == "ASI01" and row["findings"][0]["ref"] == "T-802" for row in output)
+
+
+def test_ai_exposure_retains_asi_only_findings_after_same_category_was_paired():
+    threats = [
+        {
+            "id": "T-811",
+            "title": "Authorized title independent classification",
+            "risk": "High",
+            "owasp_llm_ids": ["LLM06"],
+            "owasp_asi_ids": ["ASI02", "ASI03"],
+        },
+        {"id": "T-812", "title": "Independent operation bypass", "risk": "High", "owasp_asi_ids": ["ASI02"]},
+    ]
+    output = json.loads(pf.gen_ai_exposure({"threats": threats}))["ai_risks"]
+    pairs = {(f["ref"], row.get("owasp_asi_id")) for row in output for f in row["findings"]}
+    assert {("T-811", "ASI02"), ("T-811", "ASI03"), ("T-812", "ASI02")} <= pairs
+
+
+def test_ordinary_agent_consumption_does_not_imply_a_cascade():
+    threat = {"id": "T-821", "title": "Agentic model token consumption", "risk": "Medium", "owasp_llm_ids": ["LLM10"]}
+    output = json.loads(pf.gen_ai_exposure({"threats": [threat]}))["ai_risks"]
+    assert "owasp_asi_id" not in output[0]
+    threat["evidence_summary"] = "A recursive agent loop amplifies tool retries across agents."
+    output = json.loads(pf.gen_ai_exposure({"threats": [threat]}))["ai_risks"]
+    assert output[0]["owasp_asi_id"] == "ASI08"
+
+
+def test_component_table_uses_evidenced_ai_function_labels(minimal_yaml_data):
+    before = pf.gen_architecture_diagrams(minimal_yaml_data)
+    component = minimal_yaml_data["components"][0]
+    component["capabilities"] = [{"capability": "rag-retrieval", "evidence": []}]
+    assert pf.gen_architecture_diagrams(minimal_yaml_data) == before
+    component["capabilities"] = [
+        {"capability": value, "evidence": [{"file": "src/run.py", "line": 3}]}
+        for value in ("rag-retrieval", "mcp-client", "agent-delegation")
+    ]
+    after = pf.gen_architecture_diagrams(minimal_yaml_data)
+    assert "RAG retrieval" in after and "MCP client" in after and "Agent delegation" in after
+    assert "Adequate" not in after
+
+
+def test_ai_summary_discloses_bounded_risk_group_selection():
+    threats = [
+        {
+            "id": f"T-{830 + i}",
+            "title": "Explicitly classified finding",
+            "risk": "High",
+            "owasp_llm_ids": ["LLM01"],
+            "owasp_asi_ids": [f"ASI{i:02d}"],
+        }
+        for i in range(1, 11)
+    ]
+    threats.append(
+        {
+            "id": "T-850",
+            "title": "Another classified finding",
+            "risk": "High",
+            "owasp_llm_ids": ["LLM02"],
+            "owasp_asi_ids": ["ASI01"],
+        }
+    )
+    result = json.loads(pf.gen_ai_exposure({"threats": threats}))
+    assert len(result["ai_risks"]) == 10
+    assert "10 of 11" in result["summary"]
+    assert "Findings Register" in result["summary"]

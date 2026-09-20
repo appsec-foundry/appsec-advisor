@@ -34,13 +34,13 @@ A `—` row gets no OWASP ID anywhere: record a STRIDE threat and leave `owasp_l
 
 | LLM Threat | Typical fix areas |
 |-----------|------------------|
-| LLM01 Prompt Injection | Input sanitization layer before prompt assembly; separate system/user message channels; use structured tool-call APIs instead of free-text instruction; content filtering |
+| LLM01 Prompt Injection | Separate instructions from untrusted content; authorize model-selected actions outside the model; filtering cannot authorize actions |
 | LLM02 Sensitive Info Disclosure | Output filtering/PII redaction before returning to user; conversation history TTL and access controls |
 | LLM03 Supply Chain | Pin model versions and SDK versions; verify model checksums; use official model registries only |
 | LLM04 Data Poisoning | Validate and sanitize RAG ingestion; restrict who can update the knowledge base; audit trail for embedding updates |
 | LLM05 Improper Output | Never use LLM output in `eval()`, `exec()`, raw SQL, or `innerHTML`; treat LLM output as untrusted user input |
 | LLM06 Excessive Agency | Implement tool permission model; require human approval for destructive actions; limit tool scope to read-only where possible |
 | LLM07 System Prompt Leakage | Keep system prompts server-side only; don't log them; don't echo them in error messages |
-| LLM08 Vector/Embedding | Auth on vector DB queries; rate-limit similarity search; validate embedding dimensions and content |
+| LLM08 Vector/Embedding | Enforce current caller and source-document ACLs before context insertion; preserve permissions through chunks, caches and revocation; bound retrieval work |
 | LLM09 Misinformation | Add "AI-generated" disclaimers; ground outputs against authoritative sources; log for audit |
 | LLM10 Unbounded Consumption | Set `max_tokens` caps; per-user rate limits on LLM calls; cost alerting and circuit breakers |

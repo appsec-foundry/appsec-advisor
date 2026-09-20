@@ -37,9 +37,9 @@
     },
     "lens_ids": {
       "type": "array",
-      "maxItems": 5,
+      "maxItems": 7,
       "uniqueItems": true,
-      "items": {"enum": ["agentic", "llm", "mobile", "spa", "supply-chain"]}
+      "items": {"enum": ["agentic", "llm", "mcp", "mobile", "rag", "spa", "supply-chain"]}
     },
     "inputs": {
       "type": "array",

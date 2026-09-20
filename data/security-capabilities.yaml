@@ -52,6 +52,30 @@ component_capabilities:
     note: model calls with executable application tools
     implies: [llm-calls]
     tier: 1
+  rag-retrieval:
+    label: RAG retrieval
+    note: retrieves documents for model context; no autonomy implied
+    tier: 2
+  rag-ingestion:
+    label: RAG ingestion
+    note: writes source documents or derived chunks to a retrieval corpus
+    tier: 2
+  agent-memory:
+    label: Persistent AI memory
+    note: reads or writes model context across runs
+    tier: 2
+  agent-delegation:
+    label: Agent delegation
+    note: delegates model-directed work to another agent
+    tier: 2
+  mcp-client:
+    label: MCP client
+    note: invokes MCP operations; transport and authority belong to flows
+    tier: 2
+  mcp-server:
+    label: MCP server
+    note: exposes MCP operations; no model autonomy implied
+    tier: 2
   token-issuer:
     label: Token issuer
     tier: 2
@@ -118,6 +142,12 @@ service_roles:
   llm-inference:
     label: LLM inference
     tier: 1
+  mcp-service:
+    label: MCP service
+    tier: 2
+  retrieval-store:
+    label: Retrieval store
+    tier: 2
   blockchain-rpc:
     label: Blockchain RPC
     tier: 3

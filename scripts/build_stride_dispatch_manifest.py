@@ -35,43 +35,73 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _path_guard import run_path_arg  # noqa: E402
 
+_AI_SOURCE_SUFFIXES = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+    ".java",
+    ".kt",
+    ".scala",
+    ".go",
+    ".rb",
+    ".php",
+    ".cs",
+    ".rs",
+}
+_AI_SIGNAL_KINDS = {
+    "llm-sdk",
+    "llm-invoke",
+    "vector-db",
+    "agent-framework",
+    "agent-memory",
+    "prompt-framework",
+    "tokenizer",
+    "model-name",
+    "prompt-construction",
+    "model-config",
+    "vector-semantic",
+    "tool-use",
+}
+_AI_CONFIG_DIRS = {".claude", ".cursor", ".continue", ".codeium", ".aider", ".windsurf", ".kiro", ".vscode"}
 
-def _cat13_supplement(output_dir: Path) -> str:
-    """Return a deterministic `known_llm_patterns` supplement from Cat-13 recon findings.
 
-    Reads `.recon-patterns.json` if present (written by Phase 2 Step 0 before
-    STRIDE dispatch). Returns a "; "-joined string of "subcategory: file:line"
-    entries, capped at 10, or "" when the file is absent or Cat-13 is empty.
-    Used to enrich a sparse analyst-authored `known_llm_patterns` field so the
-    STRIDE analyzer has concrete file:line anchors for every LLM code pattern.
-    """
-    rp = output_dir / ".recon-patterns.json"
-    if not rp.is_file():
+def _owned_ai_signals(output_dir: Path, paths: list) -> list[dict]:
+    """Retain source leads owned by this component; configuration is not autonomy."""
+    data = _read_json(output_dir / ".recon-patterns.json", {})
+    findings = (data.get("categories", {}).get("13", {}) or {}).get("findings", [])
+    return [
+        f
+        for f in findings
+        if isinstance(f, dict)
+        and f.get("subcategory") in _AI_SIGNAL_KINDS
+        and isinstance(f.get("file"), str)
+        and Path(f["file"]).suffix.lower() in _AI_SOURCE_SUFFIXES
+        and not set(Path(f["file"]).parts) & _AI_CONFIG_DIRS
+        and _path_owns(paths, f["file"])
+    ]
+
+
+def _cat13_supplement(output_dir: Path, paths: list | None = None) -> str:
+    """Preserve owned signal kinds independently of the ten-location excerpt cap."""
+    findings = _owned_ai_signals(output_dir, paths or [])
+    kinds = sorted({f["subcategory"] for f in findings})
+    if not kinds:
         return ""
-    try:
-        data = json.loads(rp.read_text(encoding="utf-8"))
-        findings = data.get("categories", {}).get("13", {}).get("findings", [])
-    except Exception:
-        return ""
-    # Prioritise the anchors the STRIDE analyzer actually needs: STRONG signals
-    # (real SDK / framework / agent / model-id — the integration code) before
-    # WEAK ones, and one anchor per file so a repo with many static prompt-data
-    # lines (e.g. juice-shop's challenges.yml) cannot crowd out the genuine
-    # routes/chat.ts integration point under the 10-entry cap.
-    findings = sorted(findings, key=lambda f: 0 if f.get("strength") == "strong" else 1)
-    parts, seen_files = [], set()
-    for f in findings:
-        fpath = f.get("file", "")
-        if not fpath or fpath in seen_files:
+    parts, seen = [], set()
+    for f in sorted(findings, key=lambda f: (f["subcategory"], f["file"], str(f.get("line", "")))):
+        key = (f["subcategory"], f["file"])
+        if key in seen:
             continue
-        seen_files.add(fpath)
-        subcat = f.get("subcategory", "llm-sdk")
-        line = f.get("line", "")
-        loc = f"{fpath}:{line}" if line else fpath
-        parts.append(f"{subcat}: {loc}")
-        if len(parts) >= 10:
-            break
-    return "; ".join(parts)
+        seen.add(key)
+        if len(parts) < 10:
+            parts.append(f"{f['subcategory']}: {f['file']}:{f.get('line', '')}")
+    omitted = len(seen) - len(parts)
+    suffix = f"; {omitted} owned signal locations omitted" if omitted else ""
+    return "Signal kinds: " + ", ".join(kinds) + "; " + "; ".join(parts) + suffix
 
 
 # max_turns per (depth, complexity) — single source of truth is
@@ -344,6 +374,13 @@ def _is_llm(c: dict) -> bool:
     # Without this branch the mandatory floor, the OWASP-LLM-Top-10 dispatch
     # reason, and the Cat-13 supplement (all gated on _is_llm) silently skip the
     # folded component, dropping LLM07/LLM10 and the AI/LLM Exposure section.
+    if any(
+        isinstance(row, dict)
+        and row.get("evidence")
+        and row.get("capability") in {"llm-calls", "llm-tools", "agent-delegation"}
+        for row in c.get("capabilities") or []
+    ):
+        return True
     klp = c.get("known_llm_patterns")
     if klp and (klp if isinstance(klp, str) else " ".join(str(x) for x in klp)).strip():
         return True
@@ -356,10 +393,28 @@ def _stride_lens_ids(component: dict, context: dict) -> list[str]:
     lenses: set[str] = set()
     text = _component_text(component)
     known_llm = str(context.get("known_llm_patterns") or "").lower()
-    if _is_llm(component) or known_llm:
+    # Supplemental source paths are evidence locators, never capability names.
+    # Only the allow-listed kind summary participates in lens selection.
+    authored, separator, supplement = known_llm.partition("signal kinds: ")
+    if separator:
+        known_llm = authored + " " + supplement.split(";", 1)[0]
+    capabilities = {
+        row.get("capability")
+        for row in component.get("capabilities") or []
+        if isinstance(row, dict) and row.get("evidence")
+    }
+    if _is_llm(component) or known_llm or capabilities & {"llm-calls", "llm-tools", "agent-delegation"}:
         lenses.add("llm")
-    if any(marker in known_llm for marker in ("agent-framework", "agent-memory", "tool-use", "crewai", "autogen")):
+    if capabilities & {"llm-tools", "agent-delegation"} or any(
+        marker in known_llm for marker in ("agent-framework", "tool-use", "crewai", "autogen")
+    ):
         lenses.add("agentic")
+    if capabilities & {"rag-retrieval", "rag-ingestion", "agent-memory"} or any(
+        marker in known_llm for marker in ("vector-db", "vector-semantic", "agent-memory")
+    ):
+        lenses.add("rag")
+    if capabilities & {"mcp-client", "mcp-server"}:
+        lenses.add("mcp")
     if _is_frontend(component):
         lenses.add("spa")
     if any(marker in text for marker in ("mobile", "android", "ios", "react-native", "flutter")):
@@ -1292,15 +1347,22 @@ def _covers_embedded_store(component: dict, candidate: dict) -> bool:
 
 
 def _path_owns(paths: list, fpath: str) -> bool:
-    """True when a component `paths` entry contains (or globs over) `fpath`.
-    Glob tails are stripped to a directory prefix (``routes/**`` → ``routes``)."""
-    fp = str(fpath).replace("\\", "/")
-    for p in paths or []:
-        pp = str(p).replace("\\", "/").rstrip("/")
-        base = pp.split("*")[0].rstrip("/")
-        if not base:
+    """Match canonical repository paths using the inventory's segment-aware globs."""
+    from reclassify_components import _glob_to_regex
+
+    if not isinstance(fpath, str) or not fpath or "\\" in fpath or fpath.startswith("/"):
+        return False
+    if any(part in {"", ".", ".."} for part in fpath.split("/")) or ":" in fpath:
+        return False
+    for path in paths or []:
+        if not isinstance(path, str) or "\\" in path or path.startswith("/") or ":" in path:
             continue
-        if fp == base or fp.startswith(base + "/"):
+        pattern = path.rstrip("/")
+        if not pattern or any(part in {"", ".", ".."} for part in pattern.split("/")):
+            continue
+        if _glob_to_regex(pattern).fullmatch(fpath):
+            return True
+        if not any(token in pattern for token in "*?") and fpath.startswith(pattern + "/"):
             return True
     return False
 
@@ -1346,25 +1408,12 @@ def _seed_llm_role(components: list, output_dir: Path, analyst_context: dict) ->
                 klp = analyst_context.get(c["id"], {}).get("known_llm_patterns")
                 if klp and not c.get("known_llm_patterns"):
                     c["known_llm_patterns"] = klp
-    if any(isinstance(c, dict) and c.get("known_llm_patterns") for c in components):
-        return components  # already flagged (analyst or prior seeding)
-    data = _read_json(output_dir / ".recon-patterns.json", {})
-    strong = [
-        f
-        for f in (data.get("categories", {}) or {}).get("13", {}).get("findings", [])
-        if isinstance(f, dict) and f.get("strength") == "strong" and f.get("file")
-    ]
-    if not strong:
-        return components
     for c in components:
-        if not isinstance(c, dict):
+        if not isinstance(c, dict) or c.get("known_llm_patterns"):
             continue
-        owned = [f for f in strong if _path_owns(c.get("paths") or [], f["file"])]
-        if owned:
-            c["known_llm_patterns"] = "; ".join(
-                f"{f.get('subcategory', 'llm-sdk')}: {f['file']}:{f.get('line', '')}" for f in owned[:6]
-            )
-            break
+        owned = _owned_ai_signals(output_dir, c.get("paths") or [])
+        if any(f.get("strength") == "strong" for f in owned):
+            c["known_llm_patterns"] = _cat13_supplement(output_dir, c.get("paths") or [])
     return components
 
 
@@ -1706,17 +1755,12 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
                         except (TypeError, ValueError):
                             v = 3
                 comp[k] = v
-        # P3 — Cat-13 deterministic supplement: when this is an LLM component
-        # and the analyst-supplied `known_llm_patterns` is absent or a single
-        # short sentence (< 120 chars), append file:line anchors from the
-        # deterministic Cat-13 recon scan so the STRIDE analyzer has concrete
-        # code locations beyond what the analyst summarized.
-        if _is_llm(c):
-            existing = comp.get("known_llm_patterns", "") or ""
-            if isinstance(existing, str) and len(existing) < 120:
-                supplement = _cat13_supplement(output_dir)
-                if supplement:
-                    comp["known_llm_patterns"] = (existing + "; " + supplement).lstrip("; ") if existing else supplement
+        # Route only this component's evidence. Keep every signal kind even when
+        # the analyst already supplied a long description or excerpts are capped.
+        existing = comp.get("known_llm_patterns") or c.get("known_llm_patterns") or ""
+        supplement = _cat13_supplement(output_dir, c.get("paths") or [])
+        if existing or supplement:
+            comp["known_llm_patterns"] = "; ".join(dict.fromkeys(str(x) for x in (existing, supplement) if x))
         comp["model"] = stride_model
         if cheap_this:
             # Drive the analyzer's thin-component pace (all six STRIDE letters in
@@ -1731,7 +1775,7 @@ def build(output_dir: Path, depth: str, analyst_context: dict, plugin_root: Path
         # keeps the analyzer's documented `moderate` default.
         if "estimated_threat_count" in comp:
             comp["estimated_threat_count_label"] = _etc_label(comp["estimated_threat_count"])
-        comp["lens_ids"] = _stride_lens_ids(c, ctx)
+        comp["lens_ids"] = _stride_lens_ids(c, comp)
         out_components.append(comp)
 
     return {

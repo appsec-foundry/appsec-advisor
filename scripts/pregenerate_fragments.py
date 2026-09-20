@@ -1087,6 +1087,27 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     for c in components:
         cid = c.get("id", "?")
         cname = c.get("name", cid)
+        # AI function labels share Figure 1's vocabulary, never its risk or
+        # topology inference. Existing models retain their component table.
+        ai_capabilities = {
+            "rag-retrieval",
+            "rag-ingestion",
+            "agent-memory",
+            "agent-delegation",
+            "mcp-client",
+            "mcp-server",
+        }
+        evidenced = {
+            item.get("capability")
+            for item in c.get("capabilities") or []
+            if isinstance(item, dict) and item.get("evidence")
+        }
+        if evidenced & ai_capabilities:
+            vocabulary = yaml.safe_load(
+                (Path(__file__).resolve().parents[1] / "data/security-capabilities.yaml").read_text()
+            )["component_capabilities"]
+            labels = [entry["label"] for value, entry in vocabulary.items() if value in evidenced & ai_capabilities]
+            cname = str(cname) + " — " + ", ".join(labels)
         tier = _classify_tier(c).capitalize()
         paths = ", ".join(f"`{p}`" for p in (c.get("paths") or []))
         n_threats = len(c.get("threat_ids") or [])
@@ -6051,6 +6072,13 @@ def _llm_severity_glyph(sev_rank: int) -> str:
 
 
 def _is_llm_component(comp: dict) -> bool:
+    if any(
+        isinstance(row, dict)
+        and row.get("evidence")
+        and row.get("capability") in {"llm-calls", "llm-tools", "agent-delegation"}
+        for row in comp.get("capabilities") or []
+    ):
+        return True
     blob = (str(comp.get("id", "")) + " " + str(comp.get("name", ""))).lower()
     return any(h in blob for h in _LLM_COMPONENT_HINTS)
 
@@ -6177,116 +6205,61 @@ def gen_ai_exposure(yaml_data: dict):
             file=sys.stderr,
         )
 
-    # Agentic surface? Only then does the LLM→ASI crosswalk apply, so a plain
-    # LLM call-and-return is never mislabelled with an Agentic-Top-10 badge.
-    agentic_blob = " ".join(
-        str(x or "").lower()
-        for th in threats
-        for x in (th.get("title"), th.get("evidence_summary"), th.get("impact_description"))
-    )
-    agentic_blob += " " + " ".join(
-        str(c.get("name") or "").lower() + " " + str(c.get("description") or "").lower() for c in components
-    )
-    agentic_surface = any(kw in agentic_blob for kw in _AGENTIC_KEYWORDS)
+    # Classify each finding before grouping. An unrelated agent (or a second
+    # route on the same backend) cannot establish this finding's execution path.
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    paired: set[tuple[str, str]] = set()
+    for llm_id, bucket in buckets.items():
+        for threat in bucket["threats"]:
+            asi_ids = [value for value in threat.get("owasp_asi_ids") or [] if value in _ASI_RISK_DETAILS]
+            if not asi_ids:
+                blob = " ".join(
+                    str(threat.get(key) or "").lower() for key in ("title", "evidence_summary", "impact_description")
+                )
+                # Compatibility only: MCP, retrieval and memory alone are not
+                # agency; ordinary resource consumption is not a cascade.
+                agentic = any(kw in blob for kw in _AGENTIC_KEYWORDS if kw != "mcp server")
+                cascade = any(kw in blob for kw in ("cascad", "recursive", "recursion", "agent loop", "retry loop"))
+                inferred = _LLM_TO_ASI_CROSSWALK.get(llm_id) if agentic and (llm_id != "LLM10" or cascade) else None
+                asi_ids = [inferred] if inferred else []
+            for asi_id in asi_ids or [""]:
+                grouped.setdefault((llm_id, asi_id), []).append(threat)
+                if asi_id:
+                    paired.add((str(threat.get("id")), asi_id))
+    for threat in threats:
+        for asi_id in threat.get("owasp_asi_ids") or []:
+            if asi_id in _ASI_RISK_DETAILS and (str(threat.get("id")), asi_id) not in paired:
+                grouped.setdefault(("", asi_id), []).append(threat)
 
     ai_risks = []
-    for llm_id, b in buckets.items():
-        group = b["threats"]
-        # Order findings by severity then id; cap at the schema max (6).
+    for (llm_id, asi_id), group in grouped.items():
         group_sorted = sorted(
-            group,
-            key=lambda t: (
-                -_SEVERITY_RANK.get(register_severity(t).lower(), 1),
-                str(t.get("id", "")),
-            ),
+            group, key=lambda t: (-_SEVERITY_RANK.get(register_severity(t).lower(), 1), str(t.get("id", "")))
         )
-        findings = []
-        seen_refs = set()
-        for t in group_sorted:
-            ref = t.get("id")
-            if not ref or ref in seen_refs:
-                continue
-            seen_refs.add(ref)
-            findings.append({"ref": ref, "label": _clean_finding_label(t.get("title", ""))})
-            if len(findings) >= 6:
-                break
-        if not findings:
+        by_id = {t["id"]: t for t in group_sorted if t.get("id")}
+        if not by_id:
             continue
-        affected = []
-        for t in group_sorted:
-            cnn = cmap.get(t.get("component"))
-            if cnn and cnn not in affected:
-                affected.append(cnn)
+        if llm_id:
+            _, name, _, description, _ = llm_rules_by_id[llm_id]
+        else:
+            name, description = _ASI_RISK_DETAILS[asi_id]
+        severity = max(_SEVERITY_RANK.get(register_severity(t).lower(), 1) for t in group)
         risk = {
-            "owasp_llm_id": llm_id,
-            "name": b["name"],
-            "severity": _llm_severity_glyph(b["sev_rank"]),
-            "description": b["description"],
-            "findings": findings,
+            "name": name,
+            "description": description,
+            "severity": _llm_severity_glyph(severity),
+            "findings": [
+                {"ref": ref, "label": _clean_finding_label(t.get("title", ""))} for ref, t in list(by_id.items())[:6]
+            ],
         }
-        explicit_asi_ids = [
-            asi_id
-            for threat in group_sorted
-            for asi_id in (threat.get("owasp_asi_ids") or [])
-            if isinstance(asi_id, str) and asi_id in _ASI_RISK_DETAILS
-        ]
-        asi_id = (
-            explicit_asi_ids[0]
-            if explicit_asi_ids
-            else (_LLM_TO_ASI_CROSSWALK.get(llm_id) if agentic_surface else None)
-        )
+        if llm_id:
+            risk["owasp_llm_id"] = llm_id
         if asi_id:
             risk["owasp_asi_id"] = asi_id
+        affected = list(dict.fromkeys(cmap[t["component"]] for t in group_sorted if t.get("component") in cmap))
         if affected:
             risk["affected_components"] = affected[:8]
-        ai_risks.append((b["sev_rank"], llm_id, risk))
-
-    emitted_asi_ids = {risk.get("owasp_asi_id") for _, _, risk in ai_risks}
-    asi_buckets: dict[str, list[dict]] = {}
-    for threat in threats:
-        raw_ids = threat.get("owasp_asi_ids")
-        if not isinstance(raw_ids, list):
-            continue
-        for asi_id in raw_ids:
-            if isinstance(asi_id, str) and asi_id in _ASI_RISK_DETAILS and asi_id not in emitted_asi_ids:
-                asi_buckets.setdefault(asi_id, []).append(threat)
-    for asi_id, group in asi_buckets.items():
-        details = _ASI_RISK_DETAILS[asi_id]
-        group_sorted = sorted(
-            group,
-            key=lambda t: (
-                -_SEVERITY_RANK.get(register_severity(t).lower(), 1),
-                str(t.get("id", "")),
-            ),
-        )
-        findings = [
-            {"ref": t["id"], "label": _clean_finding_label(t.get("title", ""))} for t in group_sorted if t.get("id")
-        ][:6]
-        if not findings:
-            continue
-        affected = []
-        for threat in group_sorted:
-            cnn = cmap.get(threat.get("component"))
-            if cnn and cnn not in affected:
-                affected.append(cnn)
-        risk = {
-            "owasp_asi_id": asi_id,
-            "name": details[0],
-            "severity": _llm_severity_glyph(
-                max(_SEVERITY_RANK.get(register_severity(t).lower(), 1) for t in group_sorted)
-            ),
-            "description": details[1],
-            "findings": findings,
-        }
-        if affected:
-            risk["affected_components"] = affected[:8]
-        ai_risks.append(
-            (
-                max(_SEVERITY_RANK.get(register_severity(t).lower(), 1) for t in group_sorted),
-                asi_id,
-                risk,
-            )
-        )
+        ai_risks.append((severity, llm_id + ":" + asi_id, risk))
 
     if not ai_risks:
         return None
@@ -6301,6 +6274,8 @@ def gen_ai_exposure(yaml_data: dict):
         "architectural — they follow from how untrusted input reaches the model's "
         "prompt, tools, and outputs."
     )
+    if len(ai_risks) > 10:
+        summary = f"Showing 10 of {len(ai_risks)} AI risk groups by severity; the Findings Register retains the complete findings."
     if 20 <= len(summary) <= 300:
         payload = {"summary": summary, **payload}
 

@@ -760,7 +760,7 @@ def test_internal_only_is_false_for_exposure_unknown():
 
 def test_cat13_supplement_returns_empty_when_no_recon_patterns(tmp_path):
     """No .recon-patterns.json → supplement is empty string (graceful fallback)."""
-    assert bm._cat13_supplement(tmp_path) == ""
+    assert bm._cat13_supplement(tmp_path, ["src/**"]) == ""
 
 
 def test_cat13_supplement_returns_file_line_entries(tmp_path):
@@ -781,8 +781,8 @@ def test_cat13_supplement_returns_file_line_entries(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = bm._cat13_supplement(tmp_path)
-    assert "llm-sdk: package.json:94" in result
+    result = bm._cat13_supplement(tmp_path, ["routes/**"])
+    assert "package.json" not in result
     assert "llm-invoke: routes/chat.ts:191" in result
 
 
@@ -832,7 +832,7 @@ def test_builder_supplements_sparse_llm_patterns_from_cat13(tmp_path):
     comp = manifest["components"][0]
     klp = comp.get("known_llm_patterns", "")
     assert "chatbot POST /rest/chat" in klp, "analyst value should be retained"
-    assert "llm-sdk: package.json:94" in klp, "Cat-13 supplement should be appended"
+    assert "package.json" not in klp, "foreign dependency evidence must not enter this component"
     assert "routes/chat.ts:191" in klp, "Cat-13 file:line should appear in supplement"
 
 
@@ -2172,3 +2172,84 @@ def test_seed_business_context_copies_analyst_context_before_selection():
     seeded = bm._seed_business_context(comps, {"ledger-worker": {"business_context": {"sensitive_assets": ["funds"]}}})
     assert seeded[0]["business_context"] == {"sensitive_assets": ["funds"]}
     assert bm._is_crown_jewel(seeded[0]) is True
+
+
+def test_ai_dispatch_preserves_owned_kinds_without_cross_component_contamination(tmp_path):
+    """SDK and tool evidence in one file must select the lens for each owner only."""
+    for source in ("src/worker.py", "renamed/nested/runner.ts"):
+        findings = [
+            {"subcategory": "llm-sdk", "strength": "strong", "file": source, "line": 1},
+            {"subcategory": "tool-use", "strength": "weak", "file": source, "line": 8},
+            {"subcategory": "llm-sdk", "strength": "strong", "file": "plain/inference.py", "line": 3},
+            {"subcategory": "agent-framework", "strength": "strong", "file": "package.json", "line": 4},
+            {"subcategory": "agent-framework", "strength": "strong", "file": ".claude/agent.py", "line": 2},
+        ]
+        (tmp_path / ".recon-patterns.json").write_text(json.dumps({"categories": {"13": {"findings": findings}}}))
+        components = [
+            {"id": "first", "name": "First", "paths": ["plain/inference.py"], "deployment_zones": ["internal-network"]},
+            {"id": "worker", "name": "Worker", "paths": [source], "deployment_zones": ["internal-network"]},
+            {"id": "shared", "name": "Shared", "paths": [source], "deployment_zones": ["internal-network"]},
+            {
+                "id": "unrelated",
+                "name": "Other",
+                "paths": ["other/**", "package.json", ".claude/**"],
+                "deployment_zones": ["internet"],
+            },
+        ]
+        (tmp_path / ".components.json").write_text(json.dumps({"schema_version": 1, "components": components}))
+        manifest = bm.build(tmp_path, "standard", {"first": {"known_llm_patterns": "plain model call"}}, PLUGIN_ROOT)
+        by_id = {row["component_id"]: row for row in manifest["components"]}
+        assert by_id["worker"]["lens_ids"] == ["agentic", "llm"]
+        assert by_id["shared"]["lens_ids"] == ["agentic", "llm"]
+        assert by_id["first"]["lens_ids"] == ["llm"]
+        assert by_id["unrelated"]["lens_ids"] == []
+        assert "tool-use" in by_id["worker"]["known_llm_patterns"]
+        assert "plain/inference.py" not in by_id["worker"]["known_llm_patterns"]
+
+
+def test_ai_signal_kinds_survive_location_cap_and_long_analyst_context(tmp_path):
+    findings = [{"subcategory": "llm-sdk", "strength": "strong", "file": f"src/a{i}.py", "line": 1} for i in range(15)]
+    findings.append({"subcategory": "tool-use", "strength": "weak", "file": "src/z.py", "line": 5})
+    (tmp_path / ".recon-patterns.json").write_text(json.dumps({"categories": {"13": {"findings": findings}}}))
+    (tmp_path / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "llm-worker", "paths": ["src/**"]}]})
+    )
+    manifest = bm.build(
+        tmp_path, "standard", {"llm-worker": {"known_llm_patterns": "Model invocation evidence. " * 10}}, PLUGIN_ROOT
+    )
+    row = manifest["components"][0]
+    assert "agentic" in row["lens_ids"]
+    assert "6 owned signal locations omitted" in row["known_llm_patterns"]
+
+
+def test_ai_path_ownership_rejects_foreign_nested_and_unsafe_paths():
+    for path in ("src/nested/worker.py", "src/../foreign.py", "/src/worker.py", "src\\worker.py"):
+        assert not bm._path_owns(["src/*.py"], path)
+    assert bm._path_owns(["src/**/*.py"], "src/nested/worker.py")
+    assert bm._path_owns(["src/**/*.py"], "src/worker.py")
+
+
+def test_rag_mcp_and_agency_are_independent_evidenced_capabilities():
+    def lenses(*values):
+        c = {
+            "id": "worker",
+            "capabilities": [{"capability": v, "evidence": [{"file": "src/run.py", "line": 1}]} for v in values],
+        }
+        return bm._stride_lens_ids(c, {})
+
+    assert lenses("mcp-server") == ["mcp"]
+    assert lenses("rag-retrieval", "agent-memory") == ["rag"]
+    assert lenses("llm-tools", "mcp-client", "rag-retrieval") == ["agentic", "llm", "mcp", "rag"]
+    assert lenses("agent-delegation") == ["agentic", "llm"]
+    assert bm._stride_lens_ids({"capabilities": [{"capability": "llm-tools", "evidence": []}]}, {}) == []
+
+
+def test_signal_location_name_cannot_activate_an_agentic_lens(tmp_path):
+    source = "src/tool-use/agent-framework.py"
+    findings = [{"subcategory": "llm-sdk", "strength": "strong", "file": source, "line": 1}]
+    (tmp_path / ".recon-patterns.json").write_text(json.dumps({"categories": {"13": {"findings": findings}}}))
+    (tmp_path / ".components.json").write_text(
+        json.dumps({"schema_version": 1, "components": [{"id": "plain", "paths": [source]}]})
+    )
+    manifest = bm.build(tmp_path, "standard", {}, PLUGIN_ROOT)
+    assert manifest["components"][0]["lens_ids"] == ["llm"]

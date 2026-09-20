@@ -55,6 +55,8 @@ inapplicable families. Requirements violations remain the authoritative
 deterministic sidecar; reference them as evidence rather than re-deciding the
 gate.
 
+For evidenced RAG, MCP and agentic capabilities, inspect document ACLs before context insertion, cache/revocation behavior, memory writes, transport-specific MCP identity checks, per-action authorization, approval parameter binding, delegation and uncertain retries. Record the inspected scope and source locations in existing `assessment` and `implementation` fields. Rate only inspected controls; put unknown external enforcement and checks not completed in the component's `architecture_context.architecture_assumptions` rather than assigning an effectiveness rating. A capability or a scanner priority does not prove a weakness. Keep model-directed actions distinct from fixed retrieval and MCP operations.
+
 For each component, write only the concise semantic values that cannot be
 reconstructed by the evidence-bundle producer: interfaces, relevant controls,
 known secret or vulnerability signals, LLM patterns, supply-chain context,

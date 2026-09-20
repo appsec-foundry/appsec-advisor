@@ -174,11 +174,11 @@ properties:
         lens_ids:
           description: Fixed plugin-owned optional analysis lenses selected from validated component features.
           type: array
-          maxItems: 5
+          maxItems: 7
           uniqueItems: true
           items:
             type: string
-            enum: [agentic, llm, mobile, spa, supply-chain]
+            enum: [agentic, llm, mcp, mobile, rag, spa, supply-chain]
         evidence_bundle_path:
           type: string
           minLength: 1

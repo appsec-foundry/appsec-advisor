@@ -123,6 +123,12 @@ surfaces:
   stride_lens_agentic:
     path: agents/shared/owasp-asi-top10.md
     max_bytes: 8000
+  stride_lens_rag:
+    path: agents/stride-lenses/rag.md
+    max_bytes: 2600
+  stride_lens_mcp:
+    path: agents/stride-lenses/mcp.md
+    max_bytes: 3300
   stride_lens_spa:
     path: agents/shared/spa-threats.md
     max_bytes: 3500

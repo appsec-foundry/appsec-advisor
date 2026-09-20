@@ -377,3 +377,33 @@ def test_every_schema_declares_title_and_id(schema_files):
         if "$id" not in schema:
             missing.append(f"{path.name}: missing '$id'")
     assert not missing, "\n".join(missing)
+
+
+def test_stride_lens_contracts_share_bounded_plugin_owned_names():
+    import yaml
+
+    expected = {"agentic", "llm", "mcp", "mobile", "rag", "spa", "supply-chain"}
+    manifest = yaml.safe_load((REPO_ROOT / "schemas/stride-dispatch-manifest.schema.yaml").read_text())
+    plans = json.loads((REPO_ROOT / "schemas/stride-component-context-plan.schema.json").read_text())
+    action = json.loads((REPO_ROOT / "schemas/orchestration-action.schema.json").read_text())
+
+    def walk(value):
+        if isinstance(value, dict):
+            if "lens_ids" in value:
+                yield value["lens_ids"]
+            for child in value.values():
+                yield from walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from walk(child)
+
+    for schema in (manifest, plans, action):
+        fields = list(walk(schema))
+        assert fields
+        for field in fields:
+            assert set(field["items"]["enum"]) == expected
+            assert field["maxItems"] == len(expected)
+    prompt = (REPO_ROOT / "agents/appsec-stride-analyzer-v2.md").read_text()
+    for lens in ("rag", "mcp"):
+        assert f"agents/stride-lenses/{lens}.md" in prompt
+        assert (REPO_ROOT / f"agents/stride-lenses/{lens}.md").is_file()

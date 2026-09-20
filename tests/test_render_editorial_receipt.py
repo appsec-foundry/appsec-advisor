@@ -285,7 +285,7 @@ def test_partial_packets_keep_applied_count_and_show_incompleteness(output_dir):
 
 
 def test_a_dropped_packet_is_named_with_its_reason(output_dir):
-    """"Completed 12 of 13" alone never said which packet fell, or why."""
+    """ "Completed 12 of 13" alone never said which packet fell, or why."""
     _write(output_dir, "blocks.json", {"selection": {"blocks_total": 40}})
     _write(
         output_dir,

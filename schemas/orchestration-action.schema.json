@@ -490,10 +490,10 @@
         },
         "lens_ids": {
           "type": "array",
-          "maxItems": 5,
+          "maxItems": 7,
           "uniqueItems": true,
           "items": {
-            "enum": ["agentic", "llm", "mobile", "spa", "supply-chain"]
+            "enum": ["agentic", "llm", "mcp", "mobile", "rag", "spa", "supply-chain"]
           }
         },
         "evidence_bundle_sha256": {

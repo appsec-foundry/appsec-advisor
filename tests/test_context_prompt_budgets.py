@@ -51,6 +51,8 @@ SURFACE_MAX_BYTES_RATCHET = {
     "stride_analyzer_role": 14500,
     "stride_lens_llm": 7000,
     "stride_lens_agentic": 8000,
+    "stride_lens_rag": 2600,
+    "stride_lens_mcp": 3300,
     "stride_lens_spa": 3500,
     "stride_lens_mobile": 2500,
     "stride_lens_supply_chain": 14000,

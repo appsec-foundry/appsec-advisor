@@ -152,7 +152,7 @@ $defs:
                   pattern: "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
             lens:
               type: [string, "null"]
-              enum: [agentic, llm, mobile, spa, supply-chain, null]
+              enum: [agentic, llm, mcp, mobile, rag, spa, supply-chain, null]
 
       threats:
         type: array

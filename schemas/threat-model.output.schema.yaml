@@ -425,7 +425,7 @@ properties:
             properties:
               capability:
                 type: string
-                enum: [file-upload, code-evaluation, url-fetch, xml-parsing, template-rendering, llm-calls, llm-tools,
+                enum: [file-upload, code-evaluation, url-fetch, xml-parsing, template-rendering, llm-calls, llm-tools, rag-retrieval, rag-ingestion, agent-memory, agent-delegation, mcp-client, mcp-server,
                        token-issuer, jwt-issuer, mfa-verifier, oauth-client, oidc-client, saml-service-provider,
                        websocket-endpoint, graphql-endpoint, payment-processing, email-sending,
                        admin-functions, blockchain-client, background-jobs]
@@ -502,7 +502,7 @@ properties:
               role:
                 type: string
                 enum: [oauth-authorization-server, oauth-resource-server, oidc-provider,
-                       saml-identity-provider, llm-inference, blockchain-rpc, payment-provider,
+                       saml-identity-provider, llm-inference, mcp-service, retrieval-store, blockchain-rpc, payment-provider,
                        email-delivery, object-storage, message-broker, telemetry-service,
                        package-registry]
               evidence:
