@@ -285,6 +285,7 @@ def fetch_latest(
     verify: Callable[[bytes, bytes, list[str]], None] = verify_signature,
     fetch_asset: Callable[[str, int], bytes] = _get_asset,
     include_bundle: bool = False,
+    include_updater: bool = False,
 ) -> Release:
     """Return the latest release of ``release['repository']``, verified end to end.
 
@@ -349,7 +350,7 @@ def fetch_latest(
     if baseline_id not in bc.find_ids(text):
         raise ReleaseError(f"release {tag} serves a baseline that does not declare {baseline_id}")
     bundle = None
-    if include_bundle:
+    if include_bundle or include_updater:
         document = json.loads(manifest)
         entry = document["files"].get("scripts/install.py")
         if (
@@ -365,4 +366,20 @@ def fetch_latest(
         if len(installer) != entry["size"] or hashlib.sha256(installer).hexdigest() != entry["sha256"]:
             raise ReleaseError("the modular installer does not match its signed manifest")
         bundle = {MANIFEST_NAME: manifest, SIGNATURE_NAME: signature, "install.py": installer, BASELINE_FILE: content}
+        if include_updater:
+            name = "scripts/show_baseline_version.py"
+            entry = document["files"].get(name)
+            if (
+                not isinstance(entry, dict)
+                or set(entry) != {"size", "sha256"}
+                or type(entry["size"]) is not int
+                or not 0 < entry["size"] <= MAX_BASELINE_BYTES
+                or not isinstance(entry["sha256"], str)
+                or not _DIGEST_RE.fullmatch(entry["sha256"])
+            ):
+                raise ReleaseError("the manifest pins no valid update helper")
+            helper = read_file(name, entry["size"])
+            if len(helper) != entry["size"] or hashlib.sha256(helper).hexdigest() != entry["sha256"]:
+                raise ReleaseError("the update helper does not match its signed manifest")
+            bundle["show_baseline_version.py"] = helper
     return Release(text, str(baseline_id), f"{repository} release {tag}, signature verified", bundle)

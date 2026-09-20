@@ -302,6 +302,8 @@ A secure-coding baseline is an instruction file the coding assistant loads befor
 
 New official aiscb installations use modular loading. A custom `baseline:` block continues to install a complete instruction file; packaging clears the upstream modular bundle and mode with the upstream source. Existing upstream modular organization overlays are detected and verified but remain managed by their own aiscb installer. The plugin does not convert a custom single-file baseline into a modular overlay.
 
+For official installations made by AISCB itself, `/appsec-advisor:update-baseline` delegates to a verified release installer that preserves the installed tools and loading mode. This requires an AISCB release supporting skill delegation; older installers retain their terminal update path. Modified or unrecorded installations and organization overlays require their own maintenance workflow.
+
 Use the `baseline:` block to ship your own instead:
 
 ```yaml

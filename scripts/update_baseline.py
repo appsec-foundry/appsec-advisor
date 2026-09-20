@@ -21,7 +21,8 @@ What it refuses to do
   rewritten.
 * **Write into an aiscb installation.** A copy the AI Secure Coding Baseline's
   own installer set up is loaded through that installer's hooks or links, and it
-  updates the copy itself; the report names its command instead.
+  updates the copy itself. Recorded official installations are delegated to a
+  verified release installer; unsupported installations retain the terminal path.
 * **Fall back to the bundled copy.** An update that quietly writes the plugin's
   vendored text after a failed fetch would replace a current copy with an older
   one and still report success. ``--offline`` asks for that copy explicitly.
@@ -40,8 +41,13 @@ What it refuses to do
 from __future__ import annotations
 
 import argparse
+import ast
+import os
+import re
 import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -55,10 +61,118 @@ import sync_baseline as sb  # noqa: E402
 # state is legitimate and the fix is a release, so it is separated from the
 # failures a user can act on now.
 ACTION_NEEDED = 3
+UPSTREAM_UPDATE_PROTOCOL = "aiscb-refresh-installed-v1"
+UPSTREAM_UPDATE_TIMEOUT = 60
 
 
 class UpdateError(Exception):
     """A condition the user has to resolve; reported without a traceback."""
+
+
+def upstream_targets(result: dict, repo: Path, home: Path) -> list[tuple[Path, bool]]:
+    """Resolve only current project/user records, never a repository-selected executable."""
+    targets = []
+    for key in ("matches", "older", "newer"):
+        for item in result.get(key, []):
+            if item.get("managed_by") != "aiscb" or item["scope"] == "policy":
+                continue
+            if not re.fullmatch(r"aiscb-\d+(?:\.\d+)+", item["id"]):
+                continue
+            carrier = Path(item["file"]).absolute()
+            matched = False
+            for base, user in ((home.absolute(), True), (repo.absolute(), False)):
+                record_path = base / ".aiscb/installation.json"
+                if not record_path.exists():
+                    continue
+                record = bm.document(bm.read(record_path))
+                if not isinstance(record, dict) or not isinstance(record.get("entries"), dict):
+                    raise UpdateError("invalid upstream installation record")
+                try:
+                    relative = carrier.relative_to(base).as_posix()
+                except ValueError:
+                    continue
+                if str(carrier) in record["entries"] or relative in record["entries"]:
+                    target = (base, user)
+                    if target not in targets:
+                        targets.append(target)
+                    matched = True
+            if not matched and item["scope"] in {"user", "project"}:
+                user = item["scope"] == "user"
+                base = home.absolute() if user else repo.absolute()
+                expected = home / bc.AISCB_USER_DATA / br.BASELINE_FILE if user else repo / br.BASELINE_FILE
+                if carrier.resolve() == expected.resolve():
+                    target = (base, user)
+                    if target not in targets:
+                        targets.append(target)
+    return targets
+
+
+def update_upstream(targets: list[tuple[Path, bool]], config: dict, *, dry_run: bool, offline: bool) -> list[str]:
+    """Delegate to authenticated release code; installed executables are untrusted."""
+    if offline:
+        raise UpdateError("upstream AISCB delegation requires an online signed release; --offline changes nothing")
+    if not follows_releases(config, offline=False):
+        raise UpdateError("upstream AISCB delegation requires the configured signed release source")
+    try:
+        release = br.fetch_latest(config["release"], config["id"], include_updater=True)
+        bundle = release.bundle
+        if bundle is None:
+            raise UpdateError("the signed release has no updater bundle")
+        module = ast.parse(bundle["install.py"])
+        supported = any(
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "UPDATE_PROTOCOL" for target in node.targets)
+            and isinstance(node.value, ast.Constant)
+            and node.value.value == UPSTREAM_UPDATE_PROTOCOL
+            for node in module.body
+        )
+        if not supported:
+            raise UpdateError(
+                "the published AISCB installer does not support skill delegation yet; use its terminal --update"
+            )
+        with tempfile.TemporaryDirectory(prefix="appsec-aiscb-update-") as temporary:
+            stage = Path(temporary)
+            (stage / "scripts").mkdir()
+            (stage / br.BASELINE_FILE).write_bytes(bundle[br.BASELINE_FILE])
+            for name in ("install.py", "show_baseline_version.py"):
+                (stage / "scripts" / name).write_bytes(bundle[name])
+            steps = [f"source: {release.origin}; delegated to the verified AISCB installer"]
+            # Verify every selected scope before the first activation.
+            for preview in [True] if dry_run else [True, False]:
+                for base, user in targets:
+                    argv = [sys.executable, "-I", str(stage / "scripts/install.py"), "--refresh-installed"]
+                    argv += ["--user"] if user else ["--into", str(base)]
+                    if preview:
+                        argv.append("--dry-run")
+                    environment = os.environ.copy()
+                    environment.pop("PYTHONPATH", None)
+                    done = subprocess.run(
+                        argv,
+                        cwd=stage,
+                        env=environment,
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        text=True,
+                        timeout=UPSTREAM_UPDATE_TIMEOUT,
+                        check=False,
+                    )
+                    if done.returncode:
+                        raise UpdateError(
+                            "AISCB refused the delegated update; verify the installation with its installer before retrying"
+                        )
+                    if dry_run or not preview:
+                        steps.extend(done.stdout.strip().splitlines())
+            return steps
+    except (
+        br.ReleaseError,
+        OSError,
+        ValueError,
+        KeyError,
+        SyntaxError,
+        RecursionError,
+        subprocess.TimeoutExpired,
+    ) as exc:
+        raise UpdateError("the verified AISCB update could not complete; no unverified installer was run") from exc
 
 
 def follows_releases(config: dict, *, offline: bool) -> bool:
@@ -195,6 +309,15 @@ def update(
             f"{config['name']} is switched off for this session (AISCB_DISABLE=1) — nothing to update here",
             f"its aiscb installation is updated with {bc.aiscb_update_command(home)}",
         ], 0
+    try:
+        delegated = upstream_targets(result, repo, home)
+    except (bm.ModularError, OSError, ValueError) as exc:
+        raise UpdateError("cannot verify the upstream installation record") from exc
+    if delegated:
+        other_targets, _ = _partition(result, config, include_newer=forward, home=home)
+        if other_targets:
+            raise UpdateError("mixed plugin and upstream installations require separate updates")
+        return update_upstream(delegated, config, dry_run=dry_run, offline=offline), 0
     if status == "newer" and not forward:
         loaded = ", ".join(sorted({item["id"] for item in result["newer"]}))
         return [

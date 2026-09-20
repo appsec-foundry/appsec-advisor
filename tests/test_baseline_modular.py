@@ -255,8 +255,8 @@ def test_upstream_modular_owner_and_new_update_path(owner_scope, locations, conf
     updater.write_text("# inert\n")
     assert str(updater) in bc.aiscb_update_command(home)
     original = carrier.read_bytes()
-    steps, code = ub.update(repo, home, config, offline=True)
-    assert code == 0 and any("aiscb installation" in step for step in steps)
+    with pytest.raises(ub.UpdateError, match="requires an online signed release"):
+        ub.update(repo, home, config, offline=True)
     assert carrier.read_bytes() == original
     (snapshot / "policy_loader.py").unlink()
     assert check(repo, home, config)["status"] == "invalid"

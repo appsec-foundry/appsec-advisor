@@ -236,6 +236,63 @@ def test_a_redirect_away_from_the_api_host_is_refused():
         br._SameHostRedirect().redirect_request(request, None, 302, "Found", {}, "https://example.invalid/elsewhere")
 
 
+@pytest.mark.parametrize("name", ["service with spaces", "neutral-worker"])
+def test_signed_updater_delegation_previews_then_activates_without_running_local_code(key, tmp_path, monkeypatch, name):
+    import update_baseline as ub
+
+    repo = tmp_path / name
+    repo.mkdir()
+    local_installer = repo / ".aiscb/install.py"
+    local_installer.parent.mkdir()
+    local_installer.write_text("raise AssertionError('repository code executed')")
+    installer = b"""UPDATE_PROTOCOL = "aiscb-refresh-installed-v1"
+import argparse
+from pathlib import Path
+p = argparse.ArgumentParser()
+p.add_argument('--refresh-installed', action='store_true', required=True)
+p.add_argument('--into', required=True)
+p.add_argument('--dry-run', action='store_true')
+a = p.parse_args()
+if not a.dry_run:
+    (Path(a.into) / 'updated').write_text('verified release')
+print('preview' if a.dry_run else 'activated')
+"""
+    helper = b"# authenticated helper\n"
+    document = json.loads(manifest_for(TEXT))
+    for path, raw in (("scripts/install.py", installer), ("scripts/show_baseline_version.py", helper)):
+        document["files"][path] = {"size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+    manifest = json.dumps(document).encode()
+    files = {
+        "bundle.json": manifest,
+        "bundle.json.sig": sign(key[0], manifest),
+        br.BASELINE_FILE: TEXT.encode(),
+        "install.py": installer,
+        "show_baseline_version.py": helper,
+    }
+    fetch = br.fetch_latest
+
+    def published_updater(release, minimum, **kwargs):
+        return fetch(
+            release,
+            minimum,
+            **kwargs,
+            fetch_json=lambda url: {"tag_name": TAG, "assets": [{"name": n} for n in files]},
+            fetch_asset=lambda url, limit: files[url.rsplit("/", 1)[-1]],
+        )
+
+    monkeypatch.setattr(br, "fetch_latest", published_updater)
+    config = {"id": "aiscb-0.1.17", "release": trusting(key)}
+    steps = ub.update_upstream([(repo, False)], config, dry_run=True, offline=False)
+    assert "preview" in steps and not (repo / "updated").exists()
+    steps = ub.update_upstream([(repo, False)], config, dry_run=False, offline=False)
+    assert "activated" in steps and (repo / "updated").read_text() == "verified release"
+    before = (repo / "updated").stat().st_mtime_ns
+    files["show_baseline_version.py"] = b"# modified helper"
+    with pytest.raises(ub.UpdateError, match="no unverified installer"):
+        ub.update_upstream([(repo, False)], config, dry_run=False, offline=False)
+    assert (repo / "updated").stat().st_mtime_ns == before
+
+
 # ---------- what this build ships ------------------------------------------
 
 

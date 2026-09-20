@@ -65,6 +65,14 @@ def test_yaml_entries_are_unique():
     assert len(raw_entries) == len(set(raw_entries)), "duplicate entries in required-permissions.yaml"
 
 
+def test_upstream_update_uses_existing_shell_permission_without_local_code_authority():
+    entries = cp.load_required(cp.DATA_FILE)
+    shell = next(e for e in entries if e["entry"] == "Bash(*)")
+    assert "signature-verified AISCB installer" in shell["reason"]
+    assert "--refresh-installed" in shell["reason"]
+    assert "never repository-owned executables" in shell["reason"]
+
+
 def test_issue_reporting_reuses_permissions_without_granting_publication_consent():
     entries = cp.load_required(cp.DATA_FILE)
     shell = next(e for e in entries if e["entry"] == "Bash(*)")
