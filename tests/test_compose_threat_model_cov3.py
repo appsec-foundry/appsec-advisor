@@ -242,7 +242,7 @@ class TestRenderIdentifiedActorsExtra:
         )
         out = compose._render_identified_actors(ctx, None, {})
         rows = [ln for ln in out.splitlines() if ln.startswith("| ") and "Role" not in ln and "---" not in ln]
-        assert "Shop User" in rows[0] and "victim" in rows[0]  # order puts victim first
+        assert "End User" in rows[0] and "victim" in rows[0]  # order puts victim first
 
 
 # ---------------------------------------------------------------------------

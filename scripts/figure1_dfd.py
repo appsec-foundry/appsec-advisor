@@ -79,11 +79,13 @@ ZONE_STYLE = {  # zone key -> (title, stroke, fill)
     "third-party": ("Third-party", "#3f857c", "#f3f9f8"),
     "attackers": ("Attackers", "#a04d4a", "#fbf6f6"),
     "users": ("Users", "#6d927c", "#f5f8f6"),
+    "build-threat": ("Build-time attacker", "#a04d4a", "#fbf6f6"),
 }
 ZONE_SUBTITLE = {
     "internet": "actors and their browsers",
     "third-party": "external integrations",
     "build": "CI/CD and release tooling",
+    "build-threat": "acts on the pipeline, not on traffic",
 }
 SEV_COL = {"Critical": RED, "High": ORANGE, "Medium": YELLOW}
 SEV_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
@@ -134,8 +136,8 @@ CAPABILITY_CAP = 3  # Selected labels only; the legend says that absence is not 
 CAPABILITY_CRITICAL_MAX = 5
 PILL_H, PILL_ROW, PILL_GAP, PILL_SIZE = 13, 17, 5, 7.5
 TECH_H, TECH_CHARS = 16, 28  # technology line under a component title, before the labels
-COLUMN = {"client": 0, "application": 1, "build": 1, "data": 2, "third-party": 0}
-ZONE_ORDER = {"client": 0, "application": 0, "build": 1, "data": 0, "third-party": 1}
+COLUMN = {"client": 0, "application": 1, "build": 1, "build-threat": 1, "data": 2, "third-party": 0}
+ZONE_ORDER = {"client": 0, "application": 0, "build": 1, "build-threat": 2, "data": 0, "third-party": 1}
 
 
 def _esc(s):
@@ -1533,9 +1535,21 @@ def _select_drawn(nodes, edges, d):
     for n in nodes.values():
         linked[n["id"]] += len(n.get("tags", []))
     dropped = collections.defaultdict(list)
+    # A third-party entity that no flow and no boundary touches says that something
+    # exists outside the system without saying how it is reached -- usually an
+    # internal capability mis-filed as an external service, whose real path is
+    # already drawn between two components. Drop it the way a zone-capped node is
+    # dropped, so the caption still accounts for it. Legitimate roles are exempt:
+    # a role box states who exists, which is informative with or without a flow,
+    # and the Users subtitle is built from the privileged roles present.
+    for n in nodes.values():
+        if n.get("kind") == "ext" and n.get("zone") == "third-party" and not linked[n["id"]]:
+            n["dropped"] = True
+            dropped[(n["col"], n["zone"])].append(n)
     by_zone = collections.defaultdict(list)
     for n in nodes.values():
-        by_zone[(n["col"], n["zone"])].append(n)
+        if not n.get("dropped"):
+            by_zone[(n["col"], n["zone"])].append(n)
     for (col, zk), members in by_zone.items():
         cap = len(members) if zk == "internet" or (zk == "third-party" and not d.get("_overview")) else ZONE_CAP
         members.sort(
@@ -2230,10 +2244,19 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
 # ---- rendering ----------------------------------------------------------------------------------
 def _overview_groups(nodes, edges):
     """Keep semantic sidebar groups contiguous; backend-only egress sits by data."""
+    has_build_zone = any(n["zone"] == "build" for n in nodes.values())
     for node in nodes.values():
         node["stable_order"] = True
         if node.get("attacker"):
-            node.update(zone="attackers", col_rank=0, color=RED)
+            # A build-time actor never touches running traffic: it compromises
+            # the pipeline, and the artifact carries the result into production.
+            # Drawn in the runtime actor sidebar its one edge spans the whole
+            # figure (2055px on VulnerableApp). Beside the build zone the edge is
+            # short by construction, and it sits on the plane it actually acts on.
+            if node.get("actor_slug") == "build-time" and has_build_zone:
+                node.update(zone="build-threat", col=COLUMN["build-threat"], col_rank=1, color=RED)
+            else:
+                node.update(zone="attackers", col_rank=0, color=RED)
         elif node["zone"] == "internet":
             node.update(zone="users", col_rank=1)
         elif node["zone"] == "client":

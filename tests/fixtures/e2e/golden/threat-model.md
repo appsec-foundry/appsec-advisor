@@ -174,7 +174,7 @@ The fixture project is a small Express/Angular monolith used in the `compose_thr
 <a id="identified-actors"></a>
 ### Identified Actors
 
-The consolidated threat actors that drive this model - the same set named in the Management Summary. Each row aggregates the findings reachable from that actor's position; the **Shop User** appears as the *victim* of client-side attacks, not an attacker.
+The consolidated threat actors that drive this model - the same set named in the Management Summary. Each row aggregates the findings reachable from that actor's position; the **End User** appears as the *victim* of client-side attacks, not an attacker.
 
 | Actor | Role | Reach | Findings | Components |
 |---------------|--------|--------|----------------|------------|
@@ -237,7 +237,7 @@ Who reaches each component, and through which trust zone. Browser code runs on t
 flowchart TD
     subgraph EXT["Untrusted Zone - Internet"]
         INTERNET_ANON["fa:fa-user-secret Anonymous Internet Attacker"]:::threat
-        VICTIM_REQUIRED["fa:fa-user Shop User"]:::legit
+        VICTIM_REQUIRED["fa:fa-user End User"]:::legit
         REPO_READ["fa:fa-code-branch Internal Developer"]:::threat
     end
     subgraph APP["Application Tier"]

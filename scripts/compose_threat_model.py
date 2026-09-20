@@ -2937,6 +2937,17 @@ def _load_posture_actor_labels() -> dict:
     return _load_taxonomy("posture-actor-labels.yaml")
 
 
+def _victim_label() -> str:
+    """Display name of the generic client-side-attack victim.
+
+    Read from the taxonomy rather than inlined: this node is drawn for every
+    scanned repository, so a literal here becomes a domain claim about repos
+    that never made it.
+    """
+    actors = (_load_posture_actor_labels() or {}).get("actors") or {}
+    return (actors.get("victim-required") or {}).get("label") or "End User"
+
+
 # ---------------------------------------------------------------------------
 # Attack-class assignment — used both by the LLM-fragment fallback path
 # and (optionally) by QA cross-checks of LLM-supplied class labels.
@@ -6454,9 +6465,9 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             _victim_glyphs.append(_g)
     _victim_glyphs.sort(key=lambda g: _glyph_pos.get(g, 99))
     if victim_present:
-        user_label = "fa:fa-user Shop User<br/><i>legitimate customer · attack victim</i>"
+        user_label = f"fa:fa-user {_victim_label()}<br/><i>legitimate user · attack victim</i>"
     else:
-        user_label = "fa:fa-user Legitimate User"
+        user_label = f"fa:fa-user {_victim_label()}"
     # Only finding-bearing (drawn) components participate in the backbone; edges
     # to collapsed components are skipped (their node is never declared).
     _client_drawn = [cid for cid in client_comps if cid in _drawn]
@@ -6760,7 +6771,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
             _dst = _vmerge.setdefault(_vsrc, [])
             if _g not in _dst:
                 _dst.append(_g)
-        lines.append("    %% consequence onto the victim (Shop User)")
+        lines.append("    %% consequence onto the victim")
         for _vsrc, _gl in _vmerge.items():
             lines.append(f'    {_vsrc} -.->|"{_edge_label(_gl)}"| {user_node}')
             prop_idx.append(edge_idx)
@@ -6864,7 +6875,7 @@ def _build_security_posture_actor_legend(
     intro = "**Threat actors.** The actors below drive the numbered attack paths in the figures above."
     if has_victim:
         intro += (
-            " The **Shop User** is the *victim* of client-side attacks (XSS / CSRF), "
+            f" The **{_victim_label()}** is the *victim* of client-side attacks (XSS / CSRF), "
             "not an attacker. Figure 2 marks victim interaction on the applicable attack routes."
         )
     out = [intro, ""]
@@ -7236,7 +7247,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         "client": "Client Tier",
         "application": "Application Tier",
         "data": "Data Tier",
-        "victim": "Shop User",
+        "victim": _victim_label(),
     }
 
     attack_paths_rendered: list[dict] = []
@@ -7253,7 +7264,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         target = ap.get("target") or "application"
         if target == "victim":
             actor_for_bullet = "Client Tier"
-            target_for_bullet = "Shop User"
+            target_for_bullet = _victim_label()
         else:
             meta = actors_dict.get(actor_slug) or {}
             actor_for_bullet = actor_card_by_slug.get(actor_slug, {}).get("label") or meta.get("label") or actor_slug
@@ -15564,7 +15575,7 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
     lines.append(
         "The consolidated threat actors that drive this model — the same set named "
         "in the Management Summary. Each row aggregates the findings reachable from "
-        "that actor's position; the **Shop User** appears as the *victim* of "
+        f"that actor's position; the **{_victim_label()}** appears as the *victim* of "
         "client-side attacks, not an attacker."
     )
     lines.append("")

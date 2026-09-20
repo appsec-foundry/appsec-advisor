@@ -458,9 +458,12 @@ def test_data_arrow_only_when_data_component_exposed_and_hit():
 
 
 # ---- victim -----------------------------------------------------------------
-def test_xss_marks_shop_user_as_victim():
+def test_xss_marks_end_user_as_victim():
     svg = _build(app=1, xss=True)
-    assert "Shop User" in svg
+    # Domain-neutral: this figure is drawn for every scanned repository, so the
+    # victim card must not name a business the repo may not be in.
+    assert "End User" in svg
+    assert "Shop User" not in svg
     assert "victim" in svg
 
 

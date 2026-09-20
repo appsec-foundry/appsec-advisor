@@ -974,7 +974,8 @@ def build_figure1_svg(
     gcol = _TIER_COLOR["application"][1]
     # legitimate user first (left), attackers after (right) — so the red direct-
     # attack arrow on the right originates next to an attacker card (user request).
-    cards = [("good", None, "Shop User")] + [("bad", s, actor_name(s)) for s in actor_order]
+    victim_label = ((actor_labels or {}).get("victim-required") or {}).get("label") or "End User"
+    cards = [("good", None, victim_label)] + [("bad", s, actor_name(s)) for s in actor_order]
     ncards = len(cards)
     cgap = _ACTOR_CGAP
     # ALWAYS one row — cards sized off the (floored) content width so they never
@@ -1028,9 +1029,9 @@ def build_figure1_svg(
             c.circle(bx + 16, iy - 3, 6, stroke=gcol, sw=1.4)
             c.rect(bx + 9, iy + 5, 14, 9, stroke=gcol, sw=1.4, rx=2)
             tx = bx + 30
-            c.text(tx, ny, "Shop User", size=10.5, fill=gcol, weight="bold", anchor="start")
+            c.text(tx, ny, label, size=10.5, fill=gcol, weight="bold", anchor="start")
             if show_sub:
-                c.text(tx, ny + 15, "legitimate customer", size=9, fill=_MUTED, italic=True, anchor="start")
+                c.text(tx, ny + 15, "legitimate user", size=9, fill=_MUTED, italic=True, anchor="start")
             sub_y = ny + (31 if show_sub else 14)
             if victim_ids:
                 c.text(tx, sub_y, "victim:", size=8.5, fill=_ATTACK, italic=True, anchor="start")

@@ -2128,13 +2128,13 @@ class TestRenderIdentifiedActors:
         assert "### Identified Actors" in out
         assert "Anonymous Internet Attacker" in out
         assert "Authenticated Internet Attacker" in out
-        assert "Shop User" in out
+        assert "End User" in out
         # repo-read folded into internet-anon → 2 findings on the anon row.
         anon_row = next(ln for ln in out.splitlines() if "Anonymous Internet Attacker" in ln)
         assert "| 2 |" in anon_row
         assert "auth" in anon_row and "api" in anon_row
-        # Shop User carries the victim role.
-        victim_row = next(ln for ln in out.splitlines() if "Shop User" in ln and ln.startswith("|"))
+        # The End User carries the victim role.
+        victim_row = next(ln for ln in out.splitlines() if "End User" in ln and ln.startswith("|"))
         assert "victim" in victim_row
         # No ACT-* library codes or process sub-subsections leak in.
         assert "ACT-" not in out

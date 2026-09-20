@@ -27,6 +27,14 @@
 
 schema_version: 1
 
+# `diagram_position` below is NOT consumed by any renderer, and wiring it as
+# written would make figures worse. Measured over eight repositories, placing
+# every attacker at the bottom changed the summed attacker edge length by -12.6%
+# (juice-shop2) to +28.7% (juice-shop): `build-time` targets CI/CD low in the
+# figure and does improve, while `internet-anon`/`internet-user` target the
+# frontend at the top and get longer. The build-time case is handled instead by
+# the `build-threat` zone in figure1_dfd.py, which seats that actor beside the
+# build zone. Derive placement from an actor's targets before trusting this field.
 actors:
   internet-anon:
     legitimate_role_label: "Anonymous user"
@@ -105,21 +113,21 @@ actors:
     fa_icon: "fa:fa-user-secret"
 
   victim-required:
-    label: "Shop User"
+    label: "End User"
     # Subtitle stays generic; the renderer rewrites it at composition
     # time from the actual victim-targeting attack classes present in
     # the heatmap so a report without CSRF findings doesn't claim
     # CSRF coverage in the actor card.
-    default_subtitle: "legitimate customer; target of client-side attacks"
+    default_subtitle: "legitimate end user; target of client-side attacks"
     role: victim
     diagram_position: top       # placed above the attacker so the
                                 # reverse arrows from the Client Tier
                                 # are short and route over the top edge
     severity_class: actorShopUser
-    # Generic fa:fa-user per audit actor convention — the customer-vs-attacker contrast
+    # Generic fa:fa-user per audit actor convention — the victim-vs-attacker contrast
     # is carried by the icon-pair (user vs user-secret), not by domain-
-    # specific glyphs like fa:fa-shopping-cart. The label "Shop User"
-    # already encodes the customer role.
+    # specific glyphs like fa:fa-shopping-cart. The label stays domain-neutral
+    # because this taxonomy is rendered for every scanned repository.
     fa_icon: "fa:fa-user"
 
 # Default order in the ACTORS subgraph (top → bottom). The renderer

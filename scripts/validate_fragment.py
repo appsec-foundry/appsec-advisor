@@ -391,6 +391,20 @@ def interaction_evidence_errors(flows: Any, components: Any) -> list[str]:
     return errors
 
 
+def _nameable_role_access() -> frozenset[str]:
+    """Access slugs the role-naming canon can actually turn into a name.
+
+    Only a slug carrying `legitimate_role_noun` renames its role. Any other value
+    leaves the authored name in place and reports nothing, so the canon looks like
+    it ran while changing nothing -- which is why an unknown value is an error.
+    """
+    import yaml
+
+    path = Path(__file__).resolve().parent.parent / "data" / "posture-actor-labels.yaml"
+    actors = (yaml.safe_load(path.read_text()) or {}).get("actors") or {}
+    return frozenset(slug for slug, entry in actors.items() if (entry or {}).get("legitimate_role_noun"))
+
+
 def architecture_reference_errors(data: dict) -> list[str]:
     """Validate optional identities; schema-invalid shapes remain validation errors."""
     from figure1_security import access_groups
@@ -404,6 +418,15 @@ def architecture_reference_errors(data: dict) -> list[str]:
     entity_kinds = {e["id"]: e.get("kind") for e in entities if isinstance(e.get("id"), str)}
     if len(entity_ids) != len(set(entity_ids)):
         errors.append("external_entities contains duplicate IDs")
+    nameable = _nameable_role_access()
+    for entity in entities:
+        access = entity.get("access")
+        if entity.get("kind") == "legitimate-role" and access is not None and access not in nameable:
+            errors.append(
+                f"{entity.get('id')}: access '{access}' is not a nameable legitimate role "
+                f"(expected one of {', '.join(sorted(nameable))}); the role would silently keep "
+                "its authored name instead of the project-qualified one"
+            )
     for flow in rows(data.get("data_flows")):
         if flow.get("interaction") and (
             flow.get("from") != "external"
