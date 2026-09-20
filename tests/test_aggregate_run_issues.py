@@ -1845,6 +1845,31 @@ def test_latest_editorial_receipt_controls_the_outcome():
     assert agg._extract_editorial_outcome(log)[0]["evidence"]["outcome"] == "partial"
 
 
+def test_lost_reviewer_actions_raise_the_editorial_issue_to_error():
+    """A discarded packet is an agent output that never reached the deliverable,
+    which is exactly what `user_visible_issues` lets through — so filing it as a
+    warning suppressed the diagnosis offer for a real loss."""
+    log = [(4, _line("2026-09-19T21:15:00Z", "EDITORIAL_PASS", "outcome=partial dropped=12 unaccounted=0"))]
+    issue = agg._extract_editorial_outcome(log)[0]
+    assert issue["severity"] == "error"
+    assert issue["evidence"]["actions_lost"] == 12
+    assert "12 reviewer action(s) lost" in issue["title"]
+
+
+def test_an_unaccounted_gap_reports_even_when_the_outcome_reads_applied():
+    """The balance decides, not the outcome label — a loss path with no detector
+    of its own still raises."""
+    log = [(4, _line("2026-09-19T21:15:00Z", "EDITORIAL_PASS", "outcome=applied dropped=0 unaccounted=3"))]
+    issue = agg._extract_editorial_outcome(log)[0]
+    assert issue["severity"] == "error"
+    assert issue["evidence"]["actions_lost"] == 3
+
+
+def test_a_balanced_pass_stays_silent():
+    log = [(4, _line("2026-09-19T21:15:00Z", "EDITORIAL_PASS", "outcome=applied dropped=0 unaccounted=0"))]
+    assert agg._extract_editorial_outcome(log) == []
+
+
 # ---------------------------------------------------------------------------
 # A component added by inventory finalization that no data flow reaches
 # ---------------------------------------------------------------------------

@@ -450,6 +450,62 @@ def test_completed_packet_survives_missing_sibling(output_dir, capsys):
     assert report["blocks_reviewed"] <= builder.MAX_BATCH_BLOCKS
 
 
+def test_advisory_violation_does_not_discard_the_packet(output_dir, capsys):
+    """A constraint on a field no consumer reads may not cost a packet its edits.
+
+    A juice-shop run lost all twelve edits of one packet because a single
+    `rationale` ran 257 characters against a 240 cap — a comment field that
+    never reaches the report.
+    """
+    work = _packets(output_dir)
+    block = next(b for b in work["blocks"] if b["path"] == "threats[0].scenario")
+    for batch in work["batches"]:
+        actions = (
+            [
+                {
+                    "id": block["id"],
+                    "replace": "The handler concatenates the id into the statement.",
+                    "rationale": "y" * 500,
+                }
+            ]
+            if block["id"] in batch["block_ids"]
+            else []
+        )
+        _packet_plan(output_dir, work, batch, actions)
+    capsys.readouterr()
+    assert applier.main([str(output_dir)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["applied_count"] == 1
+    assert report["dropped_actions"] == 0
+    assert report["invalid_batches"] == []
+
+
+def test_a_discarded_packet_reports_its_size_and_its_reason(output_dir, capsys):
+    """`invalid_batches` used to carry a bare id nothing read, so a dropped
+    packet left no trace of how much work it held or why it failed."""
+    work = _packets(output_dir)
+    target = work["batches"][0]
+    for batch in work["batches"]:
+        actions = (
+            [
+                {"id": batch["block_ids"][0], "replace": "Replacement one."},
+                {"id": "b999999", "replace": "Replacement two."},
+            ]
+            if batch["id"] == target["id"]
+            else []
+        )
+        _packet_plan(output_dir, work, batch, actions)
+    capsys.readouterr()
+    assert applier.main([str(output_dir)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["dropped_actions"] == 2
+    assert len(report["invalid_batches"]) == 1
+    entry = report["invalid_batches"][0]
+    assert entry["batch"] == target["id"]
+    assert entry["actions"] == 2
+    assert "unassigned" in entry["reason"]
+
+
 def test_local_invariant_violation_does_not_discard_good_neighbor(output_dir, capsys):
     _plan(
         output_dir,

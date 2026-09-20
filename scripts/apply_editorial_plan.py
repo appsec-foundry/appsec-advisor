@@ -89,6 +89,45 @@ def _write_path(data: Any, path: tuple, value: str) -> None:
     node[path[-1]] = value
 
 
+def _validate_plan(plan: dict, schema: dict, limit: int = 20) -> list[str]:
+    """Validate a packet, letting only integrity constraints discard it.
+
+    A constraint on a field no consumer reads — marked ``x-advisory`` in the
+    schema — may not cost a packet its edits. Such a field is removed and
+    validation retried; every other violation raises, naming where it failed so
+    the reason survives the caller's ``except``.
+    """
+    import jsonschema
+
+    normalized: list[str] = []
+    for _ in range(limit):
+        try:
+            jsonschema.validate(plan, schema)
+            return normalized
+        except jsonschema.ValidationError as err:
+            path = list(err.absolute_path)
+            where = ".".join(str(p) for p in path) or "<root>"
+            advisory = isinstance(err.schema, dict) and err.schema.get("x-advisory")
+            if not advisory or not path:
+                raise PlanError(f"plan fails {SCHEMA_PATH.name}: {err.validator} at {where}") from err
+            node = plan
+            for key in path[:-1]:
+                node = node[key]
+            del node[path[-1]]
+            normalized.append(where)
+    raise PlanError(f"plan fails {SCHEMA_PATH.name}: more than {limit} advisory violations")
+
+
+def _packet_action_count(path: Path) -> int:
+    """How much work a rejected packet carried — the balance needs this even
+    when the packet itself never validated."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return len(data.get("actions") or [])
+    except (OSError, ValueError, AttributeError):
+        return 0
+
+
 def load_plan(plan_path: Path) -> dict:
     try:
         if plan_path.stat().st_size > 256_000:
@@ -100,13 +139,9 @@ def load_plan(plan_path: Path) -> dict:
         raise PlanError(f"{plan_path} is not valid JSON: {exc}") from exc
 
     try:
-        import jsonschema
-
-        jsonschema.validate(plan, json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
+        _validate_plan(plan, json.loads(SCHEMA_PATH.read_text(encoding="utf-8")))
     except ImportError as exc:  # pragma: no cover — declared dependency
         raise PlanError("jsonschema is required to validate editorial plans") from exc
-    except Exception as exc:  # noqa: BLE001 — jsonschema raises its own error types
-        raise PlanError(f"plan fails {SCHEMA_PATH.name}") from exc
 
     actions = plan.get("actions") or []
     if plan.get("status") == "no_change" and actions:
@@ -148,6 +183,7 @@ def load_packets(output_dir: Path) -> tuple[dict, dict]:
     completed = 0
     reviewed = 0
     errors = []
+    dropped_actions = 0
     for batch in work["batches"]:
         path = context / f"plan-{batch['id']}.json"
         try:
@@ -158,8 +194,10 @@ def load_packets(output_dir: Path) -> tuple[dict, dict]:
                 raise PlanError("packet belongs to a different run or batch")
             if any(a["id"] not in batch["block_ids"] for a in plan["actions"]):
                 raise PlanError("packet references an unassigned block")
-        except PlanError:
-            errors.append(batch["id"])
+        except PlanError as exc:
+            count = _packet_action_count(path)
+            errors.append({"batch": batch["id"], "reason": str(exc), "actions": count})
+            dropped_actions += count
             continue
         completed += 1
         reviewed += len(batch["block_ids"])
@@ -175,6 +213,7 @@ def load_packets(output_dir: Path) -> tuple[dict, dict]:
         "blocks_reviewed": reviewed,
         "blocks_skipped": work["selection"]["blocks_skipped"],
         "invalid_batches": errors,
+        "dropped_actions": dropped_actions,
         "proposed_count": len(actions),
         "complete": completed == len(work["batches"]) and not work["selection"]["blocks_skipped"],
     }

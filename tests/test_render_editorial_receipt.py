@@ -284,6 +284,60 @@ def test_partial_packets_keep_applied_count_and_show_incompleteness(output_dir):
     assert "Completed 1 of 2 packets" in receipt.render(status)
 
 
+def test_a_dropped_packet_is_named_with_its_reason(output_dir):
+    """"Completed 12 of 13" alone never said which packet fell, or why."""
+    _write(output_dir, "blocks.json", {"selection": {"blocks_total": 40}})
+    _write(
+        output_dir,
+        "apply-report.json",
+        {
+            "complete": False,
+            "proposed_count": 10,
+            "applied_count": 10,
+            "files_touched": ["threat-model.yaml"],
+            "batches_expected": 2,
+            "batches_completed": 1,
+            "blocks_reviewed": 20,
+            "dropped_actions": 12,
+            "invalid_batches": [
+                {
+                    "batch": "0008",
+                    "reason": "plan fails editorial-plan.schema.json: maxLength at actions.2.rationale",
+                    "actions": 12,
+                }
+            ],
+        },
+    )
+    status = receipt.build_status(output_dir)
+    rendered = receipt.render(status)
+    assert "Dropped: 12 action(s) in 1 packet(s)" in rendered
+    assert "0008 — plan fails" in rendered
+    assert "dropped=12" in receipt.log_detail(status)
+
+
+def test_an_unexplained_gap_is_reported_without_a_named_loss_path(output_dir):
+    """The balance closes over every path, so a loss type nobody anticipated
+    still gets a line instead of silently vanishing."""
+    _write(output_dir, "blocks.json", {"selection": {"blocks_total": 40}})
+    _write(
+        output_dir,
+        "apply-report.json",
+        {
+            "complete": True,
+            "proposed_count": 10,
+            "applied_count": 6,
+            "rejected_count": 1,
+            "files_touched": ["threat-model.yaml"],
+            "batches_expected": 1,
+            "batches_completed": 1,
+        },
+    )
+    status = receipt.build_status(output_dir)
+    assert receipt.unaccounted(status) == 3
+    assert "Unaccounted: 3 action(s)" in receipt.render(status)
+    assert "unaccounted=3" in receipt.log_detail(status)
+
+
 def test_qa_restore_is_visible_even_after_invariant_guard_was_clean(output_dir):
     _clean_pass(output_dir)
     _write(output_dir, "guard-report.json", {"status": "restored", "restored": ["threat-model.yaml"]})

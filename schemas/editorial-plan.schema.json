@@ -89,7 +89,9 @@
               },
               "rationale": {
                 "type": "string",
-                "maxLength": 240
+                "maxLength": 240,
+                "x-advisory": true,
+                "description": "Advisory only — no consumer reads it. A constraint violation here drops the field, never the packet."
               }
             }
           }

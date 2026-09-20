@@ -144,7 +144,22 @@ def build_status(output_dir: Path) -> dict:
         "batches_completed": int(apply_report.get("batches_completed") or 0),
         "blocks_reviewed": int(apply_report.get("blocks_reviewed") or 0),
         "blocks_skipped": int((projection.get("selection") or {}).get("blocks_skipped") or 0),
+        "dropped_actions": int(apply_report.get("dropped_actions") or 0),
+        "invalid_batches": [b for b in (apply_report.get("invalid_batches") or []) if isinstance(b, dict)],
     }
+
+
+def unaccounted(status: dict) -> int:
+    """Actions that left the reviewers but reached no recorded outcome.
+
+    The receipt cannot carry a line per loss type — a type nobody anticipated
+    then has no line at all. This balance closes over every path: whatever the
+    reviewers proposed is applied, rejected, or dropped. A non-zero remainder
+    is a loss the code does not yet have a name for, and it is reported as one.
+    """
+    offered = status["edits_proposed"] + status["dropped_actions"]
+    accounted = status["edits_applied"] + status["edits_rejected"] + status["dropped_actions"]
+    return offered - accounted
 
 
 def render(status: dict) -> str:
@@ -181,6 +196,17 @@ def render(status: dict) -> str:
         lines.append(f"  Unreviewed: {status['blocks_skipped']} block(s) exceed the packet byte budget")
     if status["edits_rejected"]:
         lines.append(f"  Rejected: {status['edits_rejected']} action(s) — stale or off-list, reported by the applier")
+    if status["dropped_actions"] or status["invalid_batches"]:
+        packets = len(status["invalid_batches"]) or 1
+        lines.append(
+            f"  Dropped: {status['dropped_actions']} action(s) in {packets} packet(s) never reached the applier"
+        )
+        for entry in status["invalid_batches"][:5]:
+            lines.append(f"    · {entry.get('batch', '?')} — {entry.get('reason', 'no reason recorded')}")
+        if len(status["invalid_batches"]) > 5:
+            lines.append(f"    · … {len(status['invalid_batches']) - 5} more")
+    if unaccounted(status):
+        lines.append(f"  Unaccounted: {unaccounted(status)} action(s) — the balance does not close")
 
     advisories = status["advisory_findings"]
     if advisories:
@@ -206,6 +232,7 @@ def log_detail(status: dict) -> str:
         f" outcome={status['outcome']} complete={str(status['complete']).lower()}"
         f" batches_expected={status['batches_expected']} batches_completed={status['batches_completed']}"
         f" reviewed={status['blocks_reviewed']} skipped={status['blocks_skipped']}"
+        f" dropped={status['dropped_actions']} unaccounted={unaccounted(status)}"
     )
 
 

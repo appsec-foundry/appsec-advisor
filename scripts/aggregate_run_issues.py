@@ -2017,6 +2017,14 @@ def _qa_status_supersedes(output_dir: Path, plan_path: Path) -> bool:
         return False
 
 
+def _int_field(fields: dict, name: str) -> int:
+    """A counter missing from an older log line reads as zero, not as a crash."""
+    try:
+        return int(fields.get(name) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _extract_editorial_outcome(agent_log: list[tuple[int, str]]) -> list[dict]:
     """Read the final receipt from the durable log, including legacy failures."""
     for line_number, raw in reversed(agent_log):
@@ -2033,18 +2041,29 @@ def _extract_editorial_outcome(agent_log: list[tuple[int, str]]) -> list[dict]:
                 if fields.get("reverted") == "true"
                 else "applied"
             )
-        if outcome in {"applied", "no_change", "unchanged"}:
+        # Lost work decides the severity, not whether the stage ran to the end.
+        # A packet that was written and then discarded is an agent output that
+        # never reached the deliverable, which is what `user_visible_issues`
+        # lets through — so it must not be filed as a warning. Reading it off
+        # the balance means a loss path nobody has written a detector for still
+        # raises the issue.
+        lost = _int_field(fields, "dropped") + _int_field(fields, "unaccounted")
+        if outcome in {"applied", "no_change", "unchanged"} and not lost:
             return []
+        title = f"Editorial pass ended with outcome {outcome}"
+        if lost:
+            title += f" — {lost} reviewer action(s) lost before the applier"
         return [
             {
                 "category": "editorial_pass_incomplete",
-                "severity": "warning",
-                "title": f"Editorial pass ended with outcome {outcome}",
+                "severity": "error" if lost else "warning",
+                "title": title,
                 "evidence": {
                     "log_file": ".agent-run.log",
                     "log_line": line_number,
                     "raw_event": _clip(raw, 500),
                     "outcome": outcome,
+                    "actions_lost": lost,
                 },
             }
         ]
