@@ -838,7 +838,7 @@ df-015: OAuth profile request (HTTPS); The provider checks the OAuth access toke
 <text x="162.0" y="308.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="normal">Medium</text>
 <text x="14.0" y="323.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">counts on a node = threats per severity · ①–⑨ = attack scenario</text>
 <text x="14.0" y="336.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">A1 ①② = scenarios of attacker A1 · A1 at an arrowhead = its attack</text>
-<text x="14.0" y="349.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">asset badges require linked findings and evidenced storage</text>
+<text x="14.0" y="349.0" font-family="Helvetica, Arial, sans-serif" font-size="8.5" fill="#6b7280" text-anchor="start" font-weight="normal">badges also count scenarios that hit an asset stored there</text>
 <text x="14.0" y="368.0" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#1f2937" text-anchor="start" font-weight="bold">Security-relevant capabilities / service roles</text>
 <rect x="14.0" y="374.0" width="105.2" height="13.0" rx="3" fill="#eef3f8" stroke="#b6c6d8" stroke-width="0.7"/>
 <text x="66.6" y="383.5" font-family="Helvetica, Arial, sans-serif" font-size="7.5" fill="#334d6e" text-anchor="middle" font-weight="normal">Dynamic code evaluation</text>

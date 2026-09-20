@@ -894,17 +894,26 @@ def test_scenarios_and_actors_come_from_attack_paths():
     assert "Anon → User (victim)" not in svg  # fallback labels are not used when actor_labels are absent
 
 
-def test_scenario_badges_only_on_processes_and_linked_assets():
-    model, paths, taxonomy = _model()
+@pytest.mark.parametrize(
+    ("relation", "linked", "badges"),
+    [("stored", ["T-009"], [("1", "Anon")]), ("processed", ["T-009"], []), ("stored", [], [])],
+)
+def test_a_scenario_that_hits_stored_data_badges_the_storing_component(relation, linked, badges):
+    model, _, _ = _model()
     model["assets"][0]["component_refs"] = [
-        {"component_id": "db0", "relation": "stored", "evidence": [{"file": "src/store.ts", "line": 1}]}
+        {"component_id": "db0", "relation": relation, "evidence": [{"file": "src/store.ts", "line": 1}]}
     ]
-    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
-    _, state = F._build(model, scenarios, actors)
-    assert [n for n, _ in state["nodes"]["db0"]["assets"][0]["_hits"]] == ["1"]
-    model["assets"][0]["linked_threats"] = []
-    _, state = F._build(model, scenarios, actors)
-    assert state["nodes"]["db0"]["assets"][0]["_hits"] == []
+    model["assets"][0]["linked_threats"] = linked
+    # The finding sits in app0; only the linked stored asset connects the scenario to db0.
+    scenarios = [
+        dict(n="1", title="Injection", actor="Anon", actor_slug="internet-anon", victim=False, cids=["app0"], fids=[9])
+    ]
+    actors = [{"name": "Anon", "slug": "internet-anon", "sub": "", "attacker": True}]
+    svg, state = F._build(model, scenarios, actors)
+    assert state["nodes"]["db0"]["badges"] == badges
+    assert state["nodes"]["app0"]["badges"] == [("1", "Anon")]
+    asset = ET.fromstring(svg).find("{*}g[@data-asset-id='A-001']")
+    assert not [t.text for t in asset.iter(f"{_SVG}text") if (t.text or "").isdigit()]
 
 
 def test_bidirectional_flow_gets_two_heads():
@@ -2432,7 +2441,7 @@ def test_asset_annotations_require_evidence_and_keep_handling_explicit(relation)
     assert bool(state["nodes"]["records-0"]["assets"]) == (relation == "stored")
 
 
-def test_asset_scenario_badges_have_space_below_classification():
+def test_many_asset_scenarios_badge_the_storing_component_border_not_the_asset():
     model = _routing_model(["data"], [], "archive")
     model["assets"] = [
         {
@@ -2446,12 +2455,10 @@ def test_asset_scenario_badges_have_space_below_classification():
         }
     ]
     scenarios = [{"n": str(n), "fids": [1], "cids": [], "title": "Read records"} for n in range(1, 8)]
-    svg, _ = F._build(model, scenarios, [], detail=False)
+    svg, state = F._build(model, scenarios, [], detail=False)
     asset = ET.fromstring(svg).find("{*}g[@data-asset-id='A-001']")
-    classification = next(t for t in asset.findall("{*}text") if t.text == "Confidential")
-    badges = asset.findall("{*}circle")
-    assert len(badges) == 7
-    assert min(float(b.get("cy")) - float(b.get("r")) for b in badges) >= float(classification.get("y")) + 7
+    assert not asset.findall("{*}circle")
+    assert [n for n, _ in state["nodes"]["archive-0"]["badges"]] == [str(n) for n in range(1, 8)]
     assert F.check_diagram(model, {}, {}, scenarios=scenarios, actors=[], detail=False)[1] == []
 
 
@@ -2499,7 +2506,8 @@ def test_dense_asset_symbols_have_an_exact_legend_and_preserve_small_stores(pref
         text = " ".join(entry.itertext())
         assert f"A-{i:03d} Record collection {i}" in text
         assert "Confidential · stored in C-02" in text
-        assert "Attack scenarios: 1" in text
+        assert "Attack scenarios" not in text
+    assert dense["badges"] == [("1", None)]
     assert "Record collection 21" in " ".join(root.find("{*}g[@data-asset-id='A-021']").itertext())
     assert model == original
     assert F.check_diagram(model, {}, {}, scenarios=scenarios, actors=[], detail=detail)[1] == []
@@ -2676,7 +2684,7 @@ def test_attack_paths_use_slightly_heavier_lines_and_descriptive_labels():
     _, state = F._build(model, *F.scenarios_from_attack_paths(model, paths, taxonomy), detail=False)
     nodes, attackers = state["nodes"], F._attackers(state["nodes"])
     arrowheads = [track for *_, track in state["canvas"].labels if track.startswith("attack target ")]
-    rows = [n["badges"] for n in nodes.values()] + [a["_hits"] for n in nodes.values() for a in n.get("assets", [])]
+    rows = [n["badges"] for n in nodes.values()]
     tags = sum(kind == "tag" for row in rows for kind, *_ in F._badge_tokens(row, attackers, 0, 8))
     assert arrowheads and tags
     assert sum(t in {a["actor_code"] for a in attackers.values()} for t in text) == len(arrowheads) + tags
@@ -2841,6 +2849,10 @@ def test_in_process_calls_between_processes_stay_in_detail_views(pair, axes, hid
     assert model == before
 
 
+def _groups(badges, attackers):
+    return [(code, numbers) for code, _, numbers in F._badge_groups(badges, attackers)]
+
+
 def _shared_number_scenarios():
     def scenario(n, actor, slug, victim, cids, fids):
         title = "Injection" if not victim else "Script injection"
@@ -2861,7 +2873,7 @@ def _shared_number_scenarios():
 
 
 @pytest.mark.parametrize("detail", [False, True])
-def test_shared_scenario_numbers_render_once_per_attacker_on_node_and_asset_and_once_per_victim(detail):
+def test_shared_scenario_numbers_render_once_per_attacker_on_node_and_stored_asset_and_once_per_victim(detail):
     model, _, _ = _model()
     model["assets"][0]["component_refs"] = [
         {"component_id": "db0", "relation": "stored", "evidence": [{"file": "src/store.ts", "line": 1}]}
@@ -2873,7 +2885,7 @@ def test_shared_scenario_numbers_render_once_per_attacker_on_node_and_asset_and_
     assert nodes["app0"]["badges"] == [("1", web), ("1", build), ("3", web)]
     assert nodes["db0"]["badges"] == [("1", web), ("1", build)]
     assert nodes["spa"]["badges"] == [("2", web), ("2", build)]
-    assert nodes["db0"]["assets"][0]["_hits"] == [("1", web), ("1", build)]
+    assert "_hits" not in nodes["db0"]["assets"][0]  # the stored asset's scenario 1 is already on db0
     assert nodes[F.USER_ID]["sub"].count("②") == 1
     args = (state["nodes"], state["edges"], state["canvas"], state["chips"])
     assert F._check_geometry(*args, boundaries=state["boundaries"]) == []
@@ -2909,8 +2921,8 @@ def test_several_attackers_mark_badges_arrowheads_and_legend_with_their_code():
     svg, state = F._build(model, scenarios, actors, detail=False)
     nodes, attackers = state["nodes"], F._attackers(state["nodes"])
     assert {a["actor_code"] for a in attackers.values()} == {"A1", "A2"}
-    assert F._scenario_list(nodes["app0"]["badges"], attackers) == "A1 1, 3 · A2 1"
-    assert F._scenario_list(nodes["db0"]["assets"][0]["_hits"], attackers) == "A1 1 · A2 1"
+    assert _groups(nodes["app0"]["badges"], attackers) == [("A1", ["1", "3"]), ("A2", ["1"])]
+    assert _groups(nodes["db0"]["badges"], attackers) == [("A1", ["1"]), ("A2", ["1"])]
     targets = {track.split()[2] for *_, track in state["canvas"].labels if track.startswith("attack target ")}
     assert targets == {"A1", "A2"}
     root = ET.fromstring(svg)
@@ -2926,7 +2938,7 @@ def test_a_single_attacker_needs_no_code_on_badges_or_arrowheads():
     scenarios, actors = _shared_number_scenarios()
     scenarios = [s for s in scenarios if s["actor"] == "Internet Attacker"]
     svg, state = F._build(model, scenarios, actors[:1], detail=False)
-    assert F._scenario_list(state["nodes"]["app0"]["badges"], F._attackers(state["nodes"])) == "1, 3"
+    assert _groups(state["nodes"]["app0"]["badges"], F._attackers(state["nodes"])) == [(None, ["1", "3"])]
     assert not [track for *_, track in state["canvas"].labels if track.startswith("attack target ")]
     root = ET.fromstring(svg)
     headings = [next(g.iter(f"{_SVG}text")).text for g in root.findall(".//{*}g[@data-scenario-actor]")]

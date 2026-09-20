@@ -543,7 +543,7 @@ requirements:
       - tests/test_figure1_dfd.py::test_boundary_line_audit_rejects_unbacked_or_missing_lines
       - tests/test_figure1_dfd.py::test_overview_defers_boundary_inventory_to_the_catalogue
       - tests/test_figure1_dfd.py::test_in_process_calls_between_processes_stay_in_detail_views
-      - tests/test_figure1_dfd.py::test_shared_scenario_numbers_render_once_per_attacker_on_node_and_asset_and_once_per_victim
+      - tests/test_figure1_dfd.py::test_shared_scenario_numbers_render_once_per_attacker_on_node_and_stored_asset_and_once_per_victim
       - tests/test_figure1_dfd.py::test_scenario_legend_lists_each_actor_once
       - tests/test_figure1_dfd.py::test_several_attackers_mark_badges_arrowheads_and_legend_with_their_code
       - tests/test_figure1_dfd.py::test_a_single_attacker_needs_no_code_on_badges_or_arrowheads
@@ -568,7 +568,8 @@ requirements:
       - tests/test_figure1_dfd.py::test_payload_layout_selection_respects_geometry_rejection
       - tests/test_figure1_dfd.py::test_assets_appear_at_evidenced_components_without_a_remainder_legend
       - tests/test_figure1_dfd.py::test_asset_annotations_require_evidence_and_keep_handling_explicit
-      - tests/test_figure1_dfd.py::test_asset_scenario_badges_have_space_below_classification
+      - tests/test_figure1_dfd.py::test_many_asset_scenarios_badge_the_storing_component_border_not_the_asset
+      - tests/test_figure1_dfd.py::test_a_scenario_that_hits_stored_data_badges_the_storing_component
       - tests/test_figure1_dfd.py::test_dense_asset_symbols_have_an_exact_legend_and_preserve_small_stores
       - tests/test_figure1_dfd.py::test_layer_titles_omit_internal_framework_and_deployment_notes
       - tests/test_figure1_dfd.py::test_straight_routes_move_both_ports_only_through_a_free_corridor

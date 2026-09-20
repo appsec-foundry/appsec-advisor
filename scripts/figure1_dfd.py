@@ -597,13 +597,6 @@ def _badge_tokens(badges, attackers, step, tag_size):
     return tokens
 
 
-def _scenario_list(badges, attackers):
-    """Text form of a badge row: `1, 5` or, with several attackers, `A1 1, 5 · A2 5`."""
-    return " · ".join(
-        " ".join(filter(None, [code, ", ".join(numbers)])) for code, _, numbers in _badge_groups(badges, attackers)
-    )
-
-
 def _badge_row_rects(right, cy, badges, attackers, r=8, step=19, tag_size=9):
     tokens = _badge_tokens(badges, attackers, step, tag_size)
     x = right - sum(t[3] for t in tokens)
@@ -790,7 +783,7 @@ def _asset_lines(asset):
 
 
 def _asset_inline_height(assets):
-    return sum(11 * len(_asset_lines(a)) + 17 + (18 if a.get("_hits") else 0) for a in assets)
+    return sum(11 * len(_asset_lines(a)) + 17 for a in assets)
 
 
 def _weak_line(c, x, y, items, maxw):
@@ -1216,15 +1209,15 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
                             CLS_RANK.get(str(asset.get("classification")).title(), 9),
                             asset["id"],
                         ),
-                        _hits=list(
-                            dict.fromkeys(
-                                (s["n"], s.get("actor")) for s in scenarios if linked & set(s.get("fids") or [])
-                            )
-                        )
-                        if relation == "stored"
-                        else [],
                     )
                 )
+                # A scenario that hits stored data reaches the component that
+                # stores it, even when its finding sits in another component.
+                if relation == "stored":
+                    for s in scenarios:
+                        badge = (s["n"], s.get("actor"))
+                        if linked & set(s.get("fids") or []) and badge not in nodes[owner]["badges"]:
+                            nodes[owner]["badges"].append(badge)
             break
     for node in nodes.values():
         asset_height = _asset_inline_height(node["assets"])
@@ -2907,10 +2900,8 @@ def _render(
                 for index, line in enumerate(lines):
                     c.text(x + ox + 10, yy + 6 + index * 11, line, size=8.5, anchor="start")
                 yy += len(lines) * 11
-                hits = a.get("_hits", [])
-                _badge_row(c, x + w - 22.5, yy + 20, hits, attackers, r=6.5, step=15, tag_size=8)
                 c.text(x + ox + 10, yy + 6, str(a.get("classification")), size=7.5, anchor="start", fill=col)
-                yy += 17 + (18 if hits else 0)
+                yy += 17
                 c.add("</g>")
         elif n["kind"] == "store":
             for i, line in enumerate(_wrap("Asset mapping not established", w - ox - 12, 8.5)):
@@ -3111,7 +3102,7 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
     c.text(
         lx + 10,
         y + 16,
-        "asset badges require linked findings and evidenced storage",
+        "badges also count scenarios that hit an asset stored there",
         size=8.5,
         anchor="start",
         fill=MUTED,
@@ -3350,11 +3341,6 @@ def _legend_blocks(d, nodes, edges, tbs, tb_threats, scenarios, actor_colors, dr
             for line in _legend_wrap(info, lw - 32, 8):
                 c.text(lx + 22, y + 1, line, size=8, anchor="start", fill=MUTED)
                 y += 11
-            hits = list(dict.fromkeys(hit for _, placed_asset in occurrences for hit in placed_asset.get("_hits", [])))
-            if hits:
-                for line in _legend_wrap("Attack scenarios: " + _scenario_list(hits, _attackers(nodes)), lw - 32, 8):
-                    c.text(lx + 22, y + 1, line, size=8, anchor="start", fill=RED)
-                    y += 11
             y += 12
             c.add("</g>")
     if overflow:
