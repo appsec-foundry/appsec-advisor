@@ -194,3 +194,49 @@ def test_a_modelled_privileged_role_needs_no_report(tmp_path):
     result, _ = reconcile(root, components, flows, resolved("RoleGuard at admin.guard.ts:3"))
     assert unevidenced_privileged_actors(result, resolved("RoleGuard at admin.guard.ts:3"), root) == []
     assert unevidenced_privileged_actors(flows, resolved("none", slug="internet-user"), root) == []
+
+
+@pytest.mark.parametrize(
+    ("header", "source"),
+    [
+        ("package org.example.admin;", "srv/AdminScenario.java"),
+        ("import admin_rules", "srv/admin_scenario.py"),
+        ("// Admin scenario", "srv/admin_scenario.ts"),
+    ],
+)
+def test_a_file_header_citation_is_no_evidence_of_an_access_check(tmp_path, header, source):
+    from reconcile_privileged_roles import unevidenced_privileged_actors
+
+    root = repo(tmp_path, "web/guards/admin.guard.ts")
+    (root / source).parent.mkdir(parents=True, exist_ok=True)
+    (root / source).write_text(f"{header}\n\nif (role === 'admin') {{ allow() }}\n")
+    components, flows = model()
+    actors = resolved(f"Section 7.2: admin scenarios in {source}:1")
+    result, receipt = reconcile(root, components, flows, actors)
+    assert receipt is None and result == flows
+    assert unevidenced_privileged_actors(result, actors, root) == ["ACT-D-03"]
+    _, receipt = reconcile(root, components, flows, resolved(f"admin check at {source}:3"))
+    assert receipt and receipt["actor_id"] == "ACT-D-03"
+
+
+def test_no_privileged_role_is_added_to_a_system_nobody_logs_into(tmp_path):
+    root = repo(tmp_path, "web/guards/admin.guard.ts")
+    components, flows = model()
+    flows["data_flows"].append(
+        {
+            "id": "df-002",
+            "from": "external",
+            "from_entity": "ext-shopper",
+            "to": "backend",
+            "label": "Calls the API",
+            "authentication": {"scheme": "none"},
+        }
+    )
+    actors = resolved("RoleGuard at web/guards/admin.guard.ts:3")
+    result, receipt = reconcile(root, components, flows, actors)
+    assert receipt is None and result == flows
+    flows["data_flows"].append(
+        {"id": "df-003", "from": "storefront", "to": "backend", "authentication": {"scheme": "bearer"}}
+    )
+    _, receipt = reconcile(root, components, flows, actors)
+    assert receipt and receipt["actor_id"] == "ACT-D-03"

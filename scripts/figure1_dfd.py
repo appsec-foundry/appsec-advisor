@@ -1014,7 +1014,8 @@ def _project_legitimate_roles(yaml_data):
     A name that two unmerged roles would share keeps the authored names apart.
     """
     d, victim, notes = _fold_legitimate_roles(yaml_data)
-    roles = [e for e in d.get("external_entities") or [] if e.get("kind") == "legitimate-role"]
+    # The owner named a declared role; the access-class name would replace a decision with a guess.
+    roles = [e for e in d.get("external_entities") or [] if e.get("kind") == "legitimate-role" and not e.get("declared")]
     names = {e["id"]: _role_name(d, e.get("access")) for e in roles}
     counts = collections.Counter(names.values())
     for entity in roles:
@@ -1035,7 +1036,11 @@ def _fold_legitimate_roles(yaml_data):
     meta = d.get("meta") or {}
     groups = collections.defaultdict(list)
     for entity in d.get("external_entities") or []:
-        if entity.get("kind") == "legitimate-role" and entity.get("access") in ("internet-anon", "internet-user"):
+        if (
+            entity.get("kind") == "legitimate-role"
+            and entity.get("access") in ("internet-anon", "internet-user")
+            and not entity.get("declared")
+        ):
             groups[overview_actor_slug(entity["access"], meta)].append(entity)
     groups = {slug: rows for slug, rows in groups.items() if len(rows) > 1}
     if not groups:

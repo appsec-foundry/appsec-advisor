@@ -447,6 +447,7 @@ requirements:
       - scripts/actor_attribution.py
       - data/actor-attribution-rules.yaml
       - scripts/reconcile_privileged_roles.py
+      - scripts/reconcile_role_access.py
       - scripts/figure1_detail.py
       - scripts/figure1_security.py
       - scripts/figure1_svg.py
@@ -488,6 +489,8 @@ requirements:
       - tests/test_resolve_actors.py::test_discovery_cannot_revive_an_opt_in_class
       - tests/test_actor_attribution.py::test_insider_reading_committed_content_projects_to_repository_read_but_keeps_its_own_group_otherwise
       - tests/test_reconcile_privileged_roles.py::test_confirmed_privileged_actor_gains_its_own_role_and_client_interaction
+      - tests/test_reconcile_role_access.py::test_role_reaching_an_unauthenticated_system_is_anonymous
+      - tests/test_reconcile_privileged_roles.py::test_no_privileged_role_is_added_to_a_system_nobody_logs_into
       - tests/test_figure1_dfd.py::test_classified_roles_carry_the_project_name_and_privileged_roles_stay_distinct
       - tests/test_figure1_dfd.py::test_attack_edge_targets_the_finding_component_and_names_other_affected_ones_in_its_tooltip
       - tests/test_actor_presentation.py::test_distinct_access_groups_do_not_gain_each_others_findings

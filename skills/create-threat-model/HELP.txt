@@ -213,6 +213,8 @@ ACTOR LAYER
   Actor-tagged findings are produced at all depths.
 
   Custom actors: place <repo>/.appsec/actors.yaml in the target repository.
+  Roles whose login lives outside the repository: declare them under
+  legitimate_roles in the same file.
   Org-wide actors: use org-profile actors/ directory (see docs/org-profiles.md).
 
 ADVANCED

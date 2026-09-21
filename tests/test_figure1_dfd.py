@@ -1412,6 +1412,21 @@ def test_classified_roles_carry_the_project_name_and_privileged_roles_stay_disti
     assert "Browser" not in " ".join(n["name"] for n in state["nodes"].values())
 
 
+def test_declared_roles_keep_their_declared_names_and_are_never_folded():
+    model, paths, taxonomy, ids = _role_access_model(registration=True)
+    declared = {"source": ".appsec/actors.yaml", "authentication": "SSO at the ingress"}
+    # A sole privileged role would otherwise be renamed "Admin".
+    model["external_entities"] = [e for e in model["external_entities"] if e["id"] != "ext-auditor"]
+    for entity in model["external_entities"]:
+        if entity["id"] in (ids[1], "ext-operator"):
+            entity["declared"] = declared
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _svg, state = F._build(model, scenarios, actors, detail=False)
+    assert ids[0] in state["nodes"] and ids[1] in state["nodes"]
+    assert state["nodes"][ids[1]]["name"] == "Contributor"
+    assert state["nodes"]["ext-operator"]["name"] == "User"
+
+
 @pytest.mark.parametrize("second", ["app1", "app2"])
 def test_attack_edge_targets_the_finding_component_and_names_other_affected_ones_in_its_tooltip(second):
     model, paths, taxonomy = _model(exposed=("app0", second))

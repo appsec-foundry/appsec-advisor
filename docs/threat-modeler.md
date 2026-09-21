@@ -338,6 +338,17 @@ inherit_org: true
 
 Actor choices made in conversation apply only to that run. Commit `.appsec/actors.yaml` when a choice must persist.
 
+A legitimate role counts as signed in (`internet-user`, `internet-priv-user`) only when its request path shows authentication. A role that reaches the system without authentication and passes no authenticating hop on its way is shown as anonymous, and an admin role is added only when the cited access check is code rather than a file header. Access control outside the repository — ingress SSO, a VPN, an authenticating proxy — is invisible to that check. Declare such roles under `legitimate_roles`; a declared role replaces the modelled role with the same `id` (the run log names withdrawn roles in `ROLE_ACCESS_WITHDRAWN`) or is added, keeps its name in Figure 1, and is never downgraded. Signed-in classes must state where the login happens:
+
+```yaml
+legitimate_roles:
+  - id: ext-employee
+    name: Employee
+    access: internet-user
+    description: Staff using the portal.
+    authentication: SSO via oauth2-proxy at the ingress
+```
+
 Figures group actors linked to displayed findings by access category. Adding twenty roles does not create twenty diagram nodes. Identified Actors lists configured roles with their access, authority, finding links, and scenario group. A configured role without a linked scenario is listed without a diagram assignment. Default and automatically discovered roles appear only when assigned to a finding. Grouping does not imply that the roles share every permission.
 
 ### Known threats — `docs/known-threats.yaml`

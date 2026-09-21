@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scripts/repo_scan.py` runs selected deterministic checks without a threat model, with severity filtering, endpoint and technology inventories, and YAML or JSON exports for local repositories or HTTPS GitHub and GitLab URLs.
 - Security Score accepts HTTPS GitHub and GitLab URLs and exports YAML or JSON with metadata for comparing results.
+- `.appsec/actors.yaml` accepts `legitimate_roles` for roles whose login lives outside the repository; declared roles replace or add modelled roles, keep their names in Figure 1, and are never downgraded.
 - `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic-bundle workflow.
 
 ### Changed
@@ -26,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Figure 1 no longer shows signed-in users or an admin for applications nobody logs into: a role whose request path authenticates nowhere is shown as anonymous, and an admin role needs an access check cited in code rather than a file header.
 - AI analysis preserves component-owned RAG and agentic signals, adds transport-specific MCP checks, and keeps unrelated LLM findings out of agentic risk categories.
 - Finding ratings enforce policy ceilings and verified-chain requirements for elevation, with consistent severity and ranking across reports and exports.
 - Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.

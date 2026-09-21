@@ -334,6 +334,7 @@ GROUPS = {
         merge_threats
         promote_verified_abuse_cases
         reconcile_privileged_roles
+        reconcile_role_access
         sanitize_perimeter_claims
         security_relevance_filter
         security_score
@@ -599,6 +600,12 @@ SOURCE_TESTS = {
     "scripts/reconcile_privileged_roles.py": _tests("""
         orchestration_controller
         reconcile_privileged_roles
+    """),
+    "scripts/reconcile_role_access.py": _tests("""
+        figure1_dfd
+        orchestration_controller
+        reconcile_privileged_roles
+        reconcile_role_access
     """),
     "scripts/actor_presentation.py": _tests("""
         actor_attribution

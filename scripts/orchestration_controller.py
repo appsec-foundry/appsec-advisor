@@ -5847,29 +5847,6 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
         flows = record_embedded_access(repo_root, components.get("components") or [], flows)
     except OSError as exc:
         raise ControllerError(f"embedded store access reconciliation failed: {exc}") from exc
-    from reconcile_privileged_roles import reconcile as reconcile_privileged_roles
-    from reconcile_privileged_roles import unevidenced_privileged_actors
-
-    try:
-        resolved = json.loads((output_dir / ".actors-resolved.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        resolved = {}
-    flows, added = reconcile_privileged_roles(repo_root, components.get("components") or [], flows, resolved)
-    unevidenced = unevidenced_privileged_actors(flows, resolved, repo_root)
-    if unevidenced:
-        _append_event(
-            output_dir,
-            "PRIVILEGED_ROLE_UNEVIDENCED",
-            f"actors={','.join(unevidenced)} reason=no cited file:line resolves in the repository",
-            level="WARN",
-        )
-    if added:
-        _append_event(
-            output_dir,
-            "PRIVILEGED_ROLE_ADDED",
-            f"actor={added['actor_id']} entity={added['entity_id']} flow={added['flow_id'] or '-'}",
-            level="WARN",
-        )
     from flow_route_auth import reconcile as reconcile_flow_authentication
 
     try:
@@ -5881,6 +5858,57 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
         _append_event(output_dir, "FLOW_AUTH_RECONCILED", "flows=" + ",".join(filled))
     if mixed:
         _append_event(output_dir, "FLOW_AUTH_MIXED", "flows=" + ",".join(mixed), level="WARN")
+    # Role access and the privileged role read flow authentication, so both follow its route fill.
+    from reconcile_role_access import apply_declared, declared_roles, system_proven_anonymous
+    from reconcile_role_access import reconcile as reconcile_role_access
+
+    try:
+        flows, applied = apply_declared(flows, declared_roles(repo_root))
+    except (ValueError, OSError) as exc:
+        raise ControllerError(f"declared legitimate roles cannot be applied: {exc}") from exc
+    for receipt in applied:
+        _append_event(
+            output_dir,
+            "ROLE_DECLARED",
+            f"entity={receipt['entity_id']} action={receipt['action']} access={receipt['access']} "
+            "source=.appsec/actors.yaml",
+        )
+    flows, withdrawn = reconcile_role_access(flows, components.get("components") or [])
+    for change in withdrawn:
+        _append_event(
+            output_dir,
+            "ROLE_ACCESS_WITHDRAWN",
+            f"entity={change['entity_id']} access={change['from']}->{change['to']} "
+            "reason=own flows unauthenticated and no request hop authenticates",
+            level="WARN",
+        )
+    from reconcile_privileged_roles import reconcile as reconcile_privileged_roles
+    from reconcile_privileged_roles import unevidenced_privileged_actors
+
+    try:
+        resolved = json.loads((output_dir / ".actors-resolved.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        resolved = {}
+    flows, added = reconcile_privileged_roles(repo_root, components.get("components") or [], flows, resolved)
+    unevidenced = (
+        []
+        if system_proven_anonymous(flows, components.get("components") or [])
+        else unevidenced_privileged_actors(flows, resolved, repo_root)
+    )
+    if unevidenced:
+        _append_event(
+            output_dir,
+            "PRIVILEGED_ROLE_UNEVIDENCED",
+            f"actors={','.join(unevidenced)} reason=no cited file:line cites code in the repository",
+            level="WARN",
+        )
+    if added:
+        _append_event(
+            output_dir,
+            "PRIVILEGED_ROLE_ADDED",
+            f"actor={added['actor_id']} entity={added['entity_id']} flow={added['flow_id'] or '-'}",
+            level="WARN",
+        )
     # Validate the complete enriched artifact before replacing the accepted input.
     _validate_receipt_state(
         flows, PLUGIN_ROOT / "schemas" / "fragments" / "data-flows.schema.json", "identity integration data flows"
