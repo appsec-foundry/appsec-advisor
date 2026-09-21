@@ -207,7 +207,7 @@ def test_explicit_access_groups_preserve_methods_and_individual_detail(name, mod
     assert edge is not None and edge.get("data-access-mode") == mode
     ports = root.findall("{*}g[@data-auth-flows='df-001 df-002']/{*}g[@data-authentication]")
     assert len(ports) == 2
-    assert [p.get("data-authentication") for p in ports] == (["2", "1"] if mode == "sequence" else ["1", "2"])
+    assert [p.get("data-authentication") for p in ports] == ["1", "2"]
     assert name in svg
     assert "Client Layer" in svg
     detail, errors = F.check_diagram(model, paths, taxonomy, detail=True)

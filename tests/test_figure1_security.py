@@ -40,6 +40,42 @@ def test_catalog_reuses_method_not_component_name_or_evidence():
     assert next(iter(profile_catalog([{"authentication": auth("none")}]).values()))["number"] == "0"
 
 
+def test_catalog_numbers_follow_semantic_order_with_other_before_unknown():
+    flows = [
+        {"authentication": auth("unknown")},
+        {"authentication": auth("other", scope="Custom challenge")},
+        {"authentication": auth("oidc", flow="authorization-code-pkce")},
+        {"authentication": auth("password")},
+        {"authentication": auth("oauth2", flow="implicit")},
+        {"authentication": auth("bearer")},
+        {"authentication": auth("none")},
+        {"authentication": auth("oauth2", flow="authorization-code-pkce")},
+        {"authentication": auth("cookie")},
+    ]
+
+    catalog = profile_catalog(flows)
+    displayed = sorted(
+        catalog.values(),
+        key=lambda profile: (
+            profile["number"] == "?",
+            int(profile["number"]) if profile["number"].isdigit() else 999,
+        ),
+    )
+
+    assert [profile["scheme"] for profile in displayed] == [
+        "none",
+        "password",
+        "bearer",
+        "cookie",
+        "oauth2",
+        "oauth2",
+        "oidc",
+        "other",
+        "unknown",
+    ]
+    assert [profile["number"] for profile in displayed] == ["0", "1", "2", "3", "4", "5", "6", "7", "?"]
+
+
 def test_legend_rows_differ_in_what_they_show():
     from figure1_security import SCHEMES
 

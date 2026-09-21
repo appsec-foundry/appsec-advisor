@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New aiscb installations load verified modules on demand, and `update-baseline` delegates existing upstream installations to compatible signed AISCB installers while preserving their scope and mode.
 - Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
 - Configured actors retain their roles and finding links in the actor inventory while diagrams group relevant actors by access category.
-- Figure 1 adds technology labels, evidenced authentication markers, prioritized capabilities including RAG, MCP, and agentic functions, and navigable detail views for large architectures; existing models need a new analysis to populate missing authentication evidence.
+- Figure 1 adds technology labels, evidenced authentication markers in a stable semantic order, prioritized capabilities including RAG, MCP, and agentic functions, and navigable detail views for large architectures; existing models need a new analysis to populate missing authentication evidence.
 - Figure 2 connects numbered attack routes to example findings, account prerequisites, weaknesses, and impact in a compact overview covering each relevant attacker.
 - Local development checks select affected tests through `make test-changed`, with an inspectable test plan and full-suite fallback for shared or unmapped changes.
 

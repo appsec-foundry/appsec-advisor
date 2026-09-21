@@ -26,6 +26,33 @@ SCHEMES = {
     "other": ("Other authentication", "See the access-specific evidence and scope."),
 }
 
+# Presentation order groups related mechanisms instead of exposing the internal
+# scheme strings' alphabetical order. Unknown remains visually last, after the
+# final numbered fallback method.
+AUTHENTICATION_SCHEME_ORDER = (
+    "none",
+    "password",
+    "basic",
+    "bearer",
+    "cookie",
+    "api-key",
+    "oauth2",
+    "oidc",
+    "saml",
+    "mtls",
+    "private-key",
+    "client-secret",
+    "mfa",
+    "other",
+    "unknown",
+)
+_AUTHENTICATION_SCHEME_RANK = {scheme: rank for rank, scheme in enumerate(AUTHENTICATION_SCHEME_ORDER)}
+
+
+def authentication_sort_key(key):
+    """Keep every Figure 1 authentication reference in presentation order."""
+    return (_AUTHENTICATION_SCHEME_RANK[key[0]], key[1:])
+
 
 def authentication_profile(flow):
     """Return a display profile; absence or incomplete evidence stays unknown."""
@@ -74,7 +101,7 @@ def profile_catalog(flows):
     """Reuse numbers for equal methods; 0 and ? never depend on encounter order."""
     profiles = {p["key"]: p for f in flows if not f.get("interaction") for p in [authentication_profile(f)]}
     number = 0
-    for key in sorted(profiles):
+    for key in sorted(profiles, key=authentication_sort_key):
         profile = profiles[key]
         if profile["scheme"] in {"none", "unknown"}:
             profile["number"] = "0" if profile["scheme"] == "none" else "?"
@@ -169,7 +196,7 @@ def bundle_access_groups(model, edges):
         group = members[0]["access_group"]
         keys = [authentication_profile(f)["key"] for f in members]
         if group["mode"] == "alternatives":
-            keys = sorted(set(keys), key=lambda k: (k[0] != "none", k))
+            keys = sorted(set(keys), key=authentication_sort_key)
         if len(keys) > 2 or {fid for e in selected for fid in e["ids"]} != set(ids):
             continue
         if len({(e["src"], e["dst"]) for e in selected}) != 1:
@@ -233,7 +260,10 @@ def select_references(model, nodes, edges, boundary_findings):
                         "id": ref["id"],
                         "peer": peer,
                         "direction": "↔" if incoming and outgoing else "←" if incoming else "→",
-                        "profiles": sorted({e["authentication"]["key"] for e in pair if e["dst"] == node_id}),
+                        "profiles": sorted(
+                            {e["authentication"]["key"] for e in pair if e["dst"] == node_id},
+                            key=authentication_sort_key,
+                        ),
                         "ids": sorted(fid for e in pair for fid in e["ids"]),
                     }
                 )
