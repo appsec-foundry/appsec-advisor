@@ -36,6 +36,7 @@ reviewed implementation work.
 - `main` carries releases only. It changes through two paths: a `dev` → `main` merge at a release, and a hotfix. Both end in a `v*` tag.
 - A hotfix branches from `main` and targets `main`, and is merged back into `dev` right after the tag so the next release keeps the fix.
 - Never commit to `main` directly, and never merge any other branch into it.
+- Before a release, follow `docs/releasing.md`, including the signed baseline sync and commit before tagging; `release-check` runs offline on the tagged commit.
 
 ### Fix the source, not the symptom
 

@@ -15,10 +15,11 @@ at the bottom.
 
 ```
 [ ] 1. Align pyproject.toml + plugin.json, promote Unreleased to a dated CHANGELOG.md heading
-[ ] 2. make release-all          # deterministic gate, then live e2e (stops if gate fails)
-[ ] 3. Merge dev → main, tag, push
-[ ] 4. Verify GitHub release was created by the tag workflow
-[ ] 5. Reopen dev for development (next .dev version marker)
+[ ] 2. Sync the signed baseline fallback and commit any updates
+[ ] 3. make release-all          # deterministic gate, then live e2e (stops if gate fails)
+[ ] 4. Merge dev → main, tag, push
+[ ] 5. Verify GitHub release was created by the tag workflow
+[ ] 6. Reopen dev for development (next .dev version marker)
 ```
 
 ## Steps
@@ -36,10 +37,16 @@ together:
 git commit -am "release: 0.6.0b1"
 ```
 
-> Until this commit exists, step 2 will fail at `check_release_meta.py` — that is
+> Until this commit exists, step 3 will fail at `check_release_meta.py` — that is
 > the intended signal that the tree is not a release yet.
 
-### 2. Run the tests
+### 2. Sync the bundled baseline
+
+Run `make baseline-sync` before the release checks. It fetches and verifies the published baseline, then updates the bundled fallback when the id is unchanged. If it stops because the published id changed, review the release and rerun with `make baseline-sync ACCEPT_ID=<published-id>` to update the fallback, modular bundle, configured id, and README together. Review and commit those changes on `dev` before continuing; do not tag a commit with an older fallback by skipping this step.
+
+The sync uses the network and changes tracked files, so it runs during release preparation rather than inside the offline `release-check` that CI reruns on the immutable tag. If the source cannot be verified, resolve that before releasing.
+
+### 3. Run the tests
 
 One command runs the cheap deterministic gate first and only proceeds to the
 expensive LLM run if it passes:
@@ -68,7 +75,7 @@ Optional, depending on what you changed:
 | `make e2e-full-eval`     | You changed threat-generation prompts or severity/coverage logic and want the adversarial semantic-quality gate. |
 | `make e2e-fixture-suite` | You changed language/framework detection or recall logic and have the external fixture checkout available. |
 
-### 3. Merge into `main` and tag
+### 4. Merge into `main` and tag
 
 ```bash
 git checkout main
@@ -77,7 +84,7 @@ git tag -a v0.6.0-beta.1 -m "0.6.0 beta 1"
 git push origin main --follow-tags
 ```
 
-### 4. Verify the release
+### 5. Verify the release
 
 Pushing the tag triggers `.github/workflows/release.yml`: it re-runs
 `make release-check` on the tagged commit, then creates the GitHub release (with
@@ -94,7 +101,7 @@ id=$(gh api repos/<owner>/<repo>/releases/tags/v0.5.0-beta --jq .id)
 gh api -X PATCH repos/<owner>/<repo>/releases/$id -f prerelease=false -f make_latest=true
 ```
 
-### 5. Reopen `dev` for development
+### 6. Reopen `dev` for development
 
 Set `version` to the next dev marker:
 

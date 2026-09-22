@@ -557,16 +557,12 @@ def test_an_outdated_baseline_falls_back_to_install_when_update_is_not_packaged(
     assert line.endswith("/appsec-advisor:install-baseline")
 
 
-def test_a_newer_baseline_is_reported_as_ahead_without_a_command(tmp_path):
-    """The reader updated the rules before the plugin caught up — not a fault.
-
-    The only command that applies here would write the older text over the
-    newer rules, so the line names the state and stops.
-    """
+def test_a_newer_baseline_shows_only_the_loaded_version_and_scope(tmp_path):
+    """A newer loaded baseline needs no action in the session banner."""
     write_model(tmp_path)
     (tmp_path / "CLAUDE.md").write_text(f"baseline-id: `{NEWER_ID}`\n", encoding="utf-8")
     line = baseline_line(run_hook(str(tmp_path)))
-    assert line == f"{BASELINE_NAME} · {NEWER_ID} · this repo · ahead of {BASELINE_ID}"
+    assert line == f"{BASELINE_NAME} · {NEWER_ID} · this repo"
     assert "install-baseline" not in line
 
 
