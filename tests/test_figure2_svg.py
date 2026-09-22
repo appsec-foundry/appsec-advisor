@@ -99,6 +99,35 @@ def test_numbers_survive_actor_grouping_and_rows_do_not_merge():
     assert "account" in result["routes"][0]["prerequisite"].lower()
 
 
+@pytest.mark.parametrize("component,finding", [("worker", "T-017"), ("queue-processor", "T-203")])
+def test_public_repository_actor_fold_names_source_access_in_route(component, finding):
+    data = model(component, finding)
+    data["meta"] = {"public_source_repo": True}
+    data["threats"][0]["cvss_v4"] = {"vector": "CVSS:4.0/PR:N/VC:H"}
+    result = diagram(data, paths(finding.replace("T-", "F-"), actor="repo-read"))
+    row = result["routes"][0]
+    assert row["actor_slug"] == "internet-anon"
+    assert row["prerequisite"] == "No account required; Public source available"
+    assert "public source" in figure2.build_figure2_svg(result)
+
+
+def test_private_repository_actor_and_unrelated_anonymous_route_keep_their_prerequisites():
+    private = diagram(model(), paths(actor="repo-read"))["routes"][0]
+    anonymous = diagram(model(), paths(actor="internet-anon"))["routes"][0]
+    assert private["actor_slug"] == "repo-read"
+    assert private["prerequisite"] == "Source-repository access required"
+    assert anonymous["prerequisite"] == "No account required"
+
+
+@pytest.mark.parametrize("component,finding", [("worker", "T-017"), ("queue-processor", "T-203")])
+def test_anonymous_attribution_does_not_hide_a_finding_source_prerequisite(component, finding):
+    data = model(component, finding)
+    data["threats"][0]["vektor"] = "repo-read"
+    row = diagram(data, paths(finding.replace("T-", "F-"), actor="internet-anon"))["routes"][0]
+    assert row["actor_slug"] == "internet-anon"
+    assert row["prerequisite"] == "No account required; Source-repository access required"
+
+
 def test_unproven_status_and_risk_do_not_come_from_impact_defaults():
     data = model()
     data["threats"][0].update(evidence_tier="insecure-practice", risk="Medium", effective_severity="Critical")

@@ -210,14 +210,8 @@ li { margin: 0.15em 0; }
  * export_pdf.py wraps the leading title/subtitle/metadata block into
  * <div class="cover-page">. It fills the first page (no page number) and a
  * page break sends the Table of Contents onto its own page. */
-/* export_pdf.py wraps a wide Figure 1 (heading, caption, intro, image) into
- * <div class="figure-landscape">. The named page turns the sheet sideways so
- * the data-flow diagram keeps a readable scale. The body carries its own page
- * name because WeasyPrint resolves `page: auto` to the page it is already on:
- * without `main`, the content after the figure would stay landscape. The
- * tightened spacing and the height cap keep heading, caption, intro and image
- * on ONE landscape page (12/16 mm margins leave 182 mm; the text block above
- * the image takes ~35 mm). */
+/* Large Figure 1 diagrams use an A3 sheet at their natural orientation. The
+ * body names the A4 page so subsequent report sections return to A4. */
 body {
   page: main;
 }
@@ -225,17 +219,32 @@ body {
   size: A4;
 }
 @page landscape {
-  size: A4 landscape;
+  size: A3 landscape;
   margin: 12mm 12mm 16mm 12mm;
+}
+@page figure-portrait {
+  size: A3 portrait;
+  margin: 12mm 12mm 16mm 12mm;
+}
+.figure-landscape, .figure-portrait {
+  break-inside: avoid;
 }
 .figure-landscape {
   page: landscape;
 }
-.figure-landscape h3 { margin-top: 0; }
-.figure-landscape p { margin: 0.4em 0; }
-.figure-landscape img {
+.figure-portrait {
+  page: figure-portrait;
+}
+.figure-landscape h3, .figure-portrait h3 { margin-top: 0; }
+.figure-landscape p, .figure-portrait p { margin: 0.4em 0; }
+.figure-landscape img, .figure-portrait img {
   max-width: 100%;
-  max-height: 140mm;
+}
+.figure-landscape img {
+  max-height: 230mm;
+}
+.figure-portrait img {
+  max-height: 345mm;
 }
 
 @page cover {

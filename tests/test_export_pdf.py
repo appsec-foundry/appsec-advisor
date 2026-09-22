@@ -914,6 +914,15 @@ def test_wrap_wide_figure1_keeps_a_tall_figure_in_portrait(tmp_path: Path) -> No
     assert ep._wrap_wide_figure1(html, tmp_path) == html
 
 
+def test_large_tall_figure1_keeps_heading_and_image_on_a3_portrait(tmp_path: Path) -> None:
+    out = ep._wrap_wide_figure1(_FIG1_HTML.format(src=_svg_data_uri(1198, 1331)), tmp_path)
+    m = re.search(r'<div class="figure-portrait">\n(.*?)\n</div>', out, re.DOTALL)
+    assert m, out
+    assert m.group(1).startswith('<h3 id="security-posture--top-threats">')
+    assert 'alt="Figure 1' in m.group(1)
+    assert "Figure 2" not in m.group(1)
+
+
 def test_wrap_wide_figure1_keeps_a_figure_that_fits_the_portrait_column(tmp_path: Path) -> None:
     # The tier-stack fallback is 760 px wide: portrait shows it at ~1:1, so a
     # landscape page would cost a page turn for nothing.
@@ -946,8 +955,10 @@ def test_wrap_wide_figure1_is_a_noop_without_dimensions_or_figure(tmp_path: Path
 
 def test_print_css_declares_the_landscape_figure_page() -> None:
     css = PRINT_CSS.read_text(encoding="utf-8")
-    assert re.search(r"@page landscape\s*\{[^}]*size:\s*A4 landscape", css)
+    assert re.search(r"@page landscape\s*\{[^}]*size:\s*A3 landscape", css)
     assert re.search(r"\.figure-landscape\s*\{[^}]*page:\s*landscape", css)
+    assert re.search(r"@page figure-portrait\s*\{[^}]*size:\s*A3 portrait", css)
+    assert re.search(r"\.figure-portrait\s*\{[^}]*page:\s*figure-portrait", css)
     # WeasyPrint keeps `page: auto` content on the page it is already on, so
     # the body needs its own named page for portrait to resume after the figure.
     assert re.search(r"\bbody\s*\{[^}]*page:\s*main", css) and re.search(r"@page main\s*\{[^}]*size:\s*A4\s*;", css)
