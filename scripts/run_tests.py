@@ -55,6 +55,8 @@ GROUPS = {
         annotate_sequences
         architect_structural_checks
         compose_depth_scoped_crossrefs
+        compose_services
+        deployment_inventory
         compose_threat_model
         compose_threat_model_cov
         compose_threat_model_cov2
@@ -72,6 +74,8 @@ GROUPS = {
         figure1_security
         figure1_svg
         figure2_svg
+        figure_deployment
+        figure_details
         final_render_guards
         fragment_authoring_fidelity
         fragment_invariant_parity
@@ -844,6 +848,47 @@ SOURCE_TESTS = {
         security_score
         stride_outputs
         validate_intermediate
+    """),
+    "scripts/deployment_inventory.py": _tests("""
+        deployment_inventory
+        figure_deployment
+        figure_details
+        check_permissions
+        runtime_cleanup
+        e2e_pipeline
+        threat_fixture
+    """),
+    "scripts/figure_deployment.py": _tests("""
+        figure_deployment
+        figure_details
+        e2e_pipeline
+        threat_fixture
+    """),
+    "scripts/figure_details.py": _tests("""
+        figure_details
+        figure_deployment
+        e2e_pipeline
+        threat_fixture
+    """),
+    "scripts/compose_services.py": _tests("""
+        compose_services
+        deployment_inventory
+        figure_details
+        e2e_pipeline
+        threat_fixture
+    """),
+    "data/deployment-technology.yaml": _tests("""
+        deployment_inventory
+        figure_deployment
+        e2e_pipeline
+        threat_fixture
+    """),
+    "schemas/deployment-inventory.schema.json": _tests("""
+        deployment_inventory
+        figure_deployment
+        figure_details
+        e2e_pipeline
+        threat_fixture
     """),
     "scripts/mass_assignment_scanner.py": _tests("""
         check_target_specificity

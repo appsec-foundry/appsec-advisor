@@ -1,0 +1,89 @@
+# Vocabulary for the §2 Deployment and Technology figure (scripts/deployment_inventory.py).
+#
+# frameworks: the model's component `framework` value (lower-case) -> package names whose declared version the
+#   figure shows next to that framework. The first package found in the component's nearest manifest wins.
+# roles: libraries that do security-relevant work. A framework box names at most four of them, so a reader sees
+#   which building blocks authenticate, query, parse, render, guard the HTTP edge or call a model. Patterns match
+#   the full package name, case-insensitive. Everything else belongs in an SBOM, not in the figure.
+# runtimes: base-image name pattern -> runtime label; the first match wins, the image tag supplies the version.
+#
+# Changing a list changes what the figure names, never a finding or a severity.
+schema_version: 1
+
+frameworks:
+  express: [express]
+  fastify: [fastify]
+  koa: [koa]
+  nestjs: ["@nestjs/core"]
+  next.js: [next]
+  nextjs: [next]
+  angular: ["@angular/core"]
+  react: [react]
+  vue: [vue]
+  socket.io: [socket.io]
+  ethers: [ethers]
+  sqlite: [sqlite3, better-sqlite3]
+  marsdb: [marsdb]
+  mongodb: [mongodb, mongoose]
+  postgresql: [pg]
+  spring: ["org.springframework.boot:spring-boot-starter-web", "org.springframework.boot:spring-boot-starter"]
+  spring boot: ["org.springframework.boot:spring-boot-starter-web", "org.springframework.boot:spring-boot-starter"]
+  h2: ["com.h2database:h2"]
+  django: [django, Django]
+  flask: [flask, Flask]
+  fastapi: [fastapi]
+  rails: [rails]
+  laravel: [laravel/framework]
+  gin: [github.com/gin-gonic/gin]
+
+roles:
+  identity:
+    label: identity
+    patterns:
+      - "express-jwt|jsonwebtoken|jwt-decode|jose|passport(-.*)?|bcrypt(js)?|argon2|otplib|speakeasy|express-session|cookie-session"
+      - "com\\.nimbusds:nimbus-jose-jwt|io\\.jsonwebtoken:jjwt.*|org\\.springframework\\.boot:spring-boot-starter-security|org\\.springframework\\.security:.*"
+      - "pyjwt|python-jose|authlib|django-allauth|flask-login|passlib"
+  data:
+    label: queries
+    patterns:
+      - "sequelize|mongoose|typeorm|prisma|@prisma/client|knex|mysql2?|sqlite3|better-sqlite3|marsdb|redis|ioredis"
+      - "org\\.springframework\\.boot:spring-boot-starter-data-jpa|org\\.hibernate.*:.*|com\\.h2database:h2|org\\.mybatis.*:.*"
+      - "sqlalchemy|psycopg2(-binary)?|pymongo|django"
+  parse:
+    label: parsing
+    patterns:
+      - "body-parser|multer|libxmljs2?|libxml2-wasm|xml2js|fast-xml-parser|js-yaml|yaml|unzipper|adm-zip|express-validator|joi|zod|ajv"
+      - "com\\.fasterxml\\.jackson\\.core:jackson-databind|org\\.yaml:snakeyaml|commons-fileupload:commons-fileupload|com\\.thoughtworks\\.xstream:xstream|org\\.json:json"
+      - "pyyaml|lxml|defusedxml|python-multipart|pydantic"
+  render:
+    label: rendering
+    patterns:
+      - "sanitize-html|dompurify|isomorphic-dompurify|hbs|handlebars|pug|ejs|marked"
+      - "org\\.springframework\\.boot:spring-boot-starter-thymeleaf|org\\.freemarker:freemarker"
+      - "jinja2|mako|bleach"
+  edge:
+    label: HTTP edge
+    patterns:
+      - "helmet|cors|csurf|express-rate-limit|express-ipfilter"
+      - "flask-cors|django-cors-headers|flask-limiter|slowapi"
+  llm:
+    label: LLM calls
+    patterns:
+      - "ai|@ai-sdk/.*|openai|@anthropic-ai/.*|anthropic|langchain|@langchain/.*|langchain-.*|ollama|llama-index|llama_index"
+      - "dev\\.langchain4j:.*|org\\.springframework\\.ai:.*"
+
+runtimes:
+  - pattern: "node(js)?[-:]?(\\d+)"
+    label: Node.js
+  - pattern: "(eclipse-)?temurin[-:]?(\\d+)|openjdk[-:]?(\\d+)|jre[-:]?(\\d+)|jdk[-:]?(\\d+)|java[-:]?(\\d+)"
+    label: Java
+  - pattern: "python[-:]?(\\d+(\\.\\d+)?)"
+    label: Python
+  - pattern: "golang[-:]?(\\d+(\\.\\d+)?)"
+    label: Go
+  - pattern: "(dotnet/)?aspnet[-:]?(\\d+(\\.\\d+)?)|dotnet[-:]?(\\d+(\\.\\d+)?)"
+    label: .NET
+  - pattern: "ruby[-:]?(\\d+(\\.\\d+)?)"
+    label: Ruby
+  - pattern: "php[-:]?(\\d+(\\.\\d+)?)"
+    label: PHP

@@ -6902,6 +6902,9 @@ def _row_is_auth_method(name: str, whitelist: list) -> bool:
     return False
 
 
+_DETAIL_FIGURE_RE = re.compile(r"!\[Figure \d+ - [^\]]+\]\(([^)\s]+)\)")
+
+
 def check_diagram_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
     """Enforce `diagram_compactness` rules on §2 architecture diagrams.
 
@@ -6959,7 +6962,13 @@ def check_diagram_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTR
         # follows is treated as the "supplementary detail" location.
         mb = _extract_first_mermaid_block(body)
         if mb is None:
-            report.issues.append(f"§{heading}: no mermaid block found — diagram is required")
+            # A §2 detail figure (hand-built SVG) replaces the Mermaid block; the
+            # compactness rules are Mermaid layout rules and do not apply to it.
+            fig = _DETAIL_FIGURE_RE.search(body)
+            if fig is None:
+                report.issues.append(f"§{heading}: no mermaid block found — diagram is required")
+            elif not fig.group(1).startswith("data:") and not (md_path.parent / fig.group(1)).is_file():
+                report.issues.append(f"§{heading}: detail figure `{fig.group(1)}` is referenced but missing")
             continue
 
         _check_compactness_rules(report, heading, rules, mb, body)

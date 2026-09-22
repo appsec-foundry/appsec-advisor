@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "deployment-inventory.schema.json",
+  "title": "Deployment inventory",
+  "description": "Written by scripts/deployment_inventory.py during the scan and read by the composer for the §2 Deployment and Technology figure. Facts are short statements about repository files; no environment value, secret or file content is ever recorded.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "runtime", "environments", "compose", "ci", "dependencies", "packages"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "runtime": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dockerfile", "base", "build_stages", "user", "expose", "command", "copies_repository", "runtime_label"],
+          "properties": {
+            "dockerfile": {"$ref": "#/$defs/path"},
+            "base": {"$ref": "#/$defs/image"},
+            "build_stages": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/image"}},
+            "user": {
+              "oneOf": [
+                {"type": "null"},
+                {"type": "object", "additionalProperties": false, "required": ["value", "line"],
+                 "properties": {"value": {"type": "string", "maxLength": 64}, "line": {"$ref": "#/$defs/line"}}}
+              ]
+            },
+            "expose": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 32}},
+            "command": {"type": "string", "maxLength": 120},
+            "copies_repository": {
+              "oneOf": [
+                {"type": "null"},
+                {"type": "object", "additionalProperties": false, "required": ["line", "sensitive"],
+                 "properties": {"line": {"$ref": "#/$defs/line"},
+                                "sensitive": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 120}}}}
+              ]
+            },
+            "runtime_label": {"type": "string", "maxLength": 40}
+          }
+        }
+      ]
+    },
+    "environments": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["platform", "label", "source", "tree"],
+        "properties": {
+          "platform": {"enum": ["aws", "kubernetes", "openshift", "helm", "compose"]},
+          "label": {"type": "string", "maxLength": 120},
+          "source": {"$ref": "#/$defs/path"},
+          "tree": {"$ref": "#/$defs/node"}
+        }
+      }
+    },
+    "compose": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "variants", "services"],
+          "properties": {
+            "file": {"$ref": "#/$defs/path"},
+            "variants": {"type": "array", "maxItems": 16, "items": {"$ref": "#/$defs/path"}},
+            "services": {
+              "type": "array",
+              "maxItems": 64,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "line", "end_line", "image", "builds", "ports"],
+                "properties": {
+                  "name": {"type": "string", "maxLength": 120},
+                  "line": {"type": "integer", "minimum": 0},
+                  "end_line": {"type": "integer", "minimum": 0},
+                  "image": {"type": "string", "maxLength": 240},
+                  "builds": {"type": "boolean"},
+                  "ports": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["host", "container", "host_ip"],
+                      "properties": {
+                        "host": {"type": "string", "maxLength": 32},
+                        "container": {"type": "string", "maxLength": 32},
+                        "host_ip": {"type": "string", "maxLength": 64}
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ci": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["system", "source", "facts", "publishes"],
+        "properties": {
+          "system": {"type": "string", "maxLength": 60},
+          "source": {"$ref": "#/$defs/path"},
+          "facts": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/fact"}},
+          "publishes": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 80}}
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifests", "declared", "ranges", "lockfile"],
+      "properties": {
+        "manifests": {"type": "integer", "minimum": 0},
+        "declared": {"type": "integer", "minimum": 0},
+        "ranges": {"type": "integer", "minimum": 0},
+        "lockfile": {"type": "boolean"}
+      }
+    },
+    "packages": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["manifest", "entries"],
+        "properties": {
+          "manifest": {"$ref": "#/$defs/path"},
+          "entries": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "version", "role"],
+              "properties": {
+                "name": {"type": "string", "maxLength": 200},
+                "version": {"type": "string", "maxLength": 80},
+                "role": {"enum": ["framework", "identity", "data", "parse", "render", "edge", "llm"]}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "path": {"type": "string", "minLength": 1, "maxLength": 300, "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$"},
+    "line": {"type": "integer", "minimum": 1},
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "pin", "line"],
+      "properties": {
+        "image": {"type": "string", "maxLength": 240},
+        "pin": {"enum": ["digest", "version", "tag", "floating"]},
+        "line": {"$ref": "#/$defs/line"}
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "tone"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1, "maxLength": 200},
+        "tone": {"enum": ["weak", "decision", "neutral", "note"]},
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "line"],
+          "properties": {"file": {"$ref": "#/$defs/path"}, "line": {"$ref": "#/$defs/line"}}
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "title", "facts", "children"],
+      "properties": {
+        "kind": {"enum": ["cloud", "cluster", "network", "service", "managed", "workload"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 120},
+        "note": {"type": "string", "maxLength": 80},
+        "role": {"enum": ["entry", "egress"]},
+        "image": {"type": "string", "maxLength": 240},
+        "layout": {"enum": ["stack", "row"]},
+        "facts": {"type": "array", "maxItems": 3, "items": {"$ref": "#/$defs/fact"}},
+        "children": {"type": "array", "maxItems": 24, "items": {"$ref": "#/$defs/node"}}
+      }
+    }
+  }
+}

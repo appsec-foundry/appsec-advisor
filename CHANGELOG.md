@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security Score accepts HTTPS GitHub and GitLab URLs and exports YAML or JSON with metadata for comparing results.
 - `.appsec/actors.yaml` accepts `legitimate_roles` for roles whose login lives outside the repository; declared roles replace or add modelled roles, keep their names in Figure 1, and are never downgraded.
 - `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic-bundle workflow.
+- §2.2 draws where each component runs and what it is built on from the repository's Dockerfile, compose, Kubernetes, OpenShift, Helm, GitLab Auto Deploy and AWS Terraform files, and §2.3 draws control coverage per component; each keeps its Mermaid diagram when its inputs are missing.
 
 ### Changed
 
@@ -34,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scanners retain application source coverage and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading signals without following external symlinks.
 - Route authentication checks use the resolved handler, preventing protected neighboring routes or decoded-only tokens from masking missing authentication.
 - Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
+- Dependency checks recognize Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
 - Finding deduplication preserves the highest risk, case-sensitive source paths, source evidence, and scenario references.
 - Weakness derivation and report links cover more NoSQL injection, code evaluation, attribute binding, browser credential, and CSRF cases while avoiding unrelated grouping and safe-code false positives.
 - Agents reaching their turn budget no longer stall runs or cut other agents' analysis short.

@@ -284,8 +284,17 @@ def _parse_pom_xml(path: Path, rel: str) -> list[Dep]:
     return out
 
 
+_GRADLE_CONFIGURATIONS = r"(?:implementation|api|compile|testImplementation|runtimeOnly)"
 _GRADLE_DEP_RE = re.compile(
-    r"""(?:implementation|api|compile|testImplementation|runtimeOnly)\s*[(]?\s*['"]([^'"]+)['"]""",
+    _GRADLE_CONFIGURATIONS + r"""\s*[(]?\s*['"]([^'"]+)['"]""",
+    re.IGNORECASE,
+)
+# Map notation: Groovy `group: 'g', name: 'n', version: 'v'` and Kotlin
+# `group = "g", name = "n", version = "v"`; the version is optional (BOM/platform).
+_GRADLE_MAP_DEP_RE = re.compile(
+    _GRADLE_CONFIGURATIONS
+    + r"""\s*[(]?\s*group\s*[:=]\s*['"]([^'"]+)['"]\s*,\s*name\s*[:=]\s*['"]([^'"]+)['"]"""
+    + r"""(?:\s*,\s*version\s*[:=]\s*['"]([^'"]+)['"])?""",
     re.IGNORECASE,
 )
 
@@ -301,6 +310,10 @@ def _parse_build_gradle(path: Path, rel: str) -> list[Dep]:
             ver = parts[2] if len(parts) >= 3 else None
             line = text[: m.start()].count("\n") + 1
             out.append(Dep("maven", pkg, ver, rel, line))
+    for m in _GRADLE_MAP_DEP_RE.finditer(text):
+        line = text[: m.start()].count("\n") + 1
+        out.append(Dep("maven", f"{m.group(1)}:{m.group(2)}", m.group(3) or None, rel, line))
+    out.sort(key=lambda d: d.line)
     return out
 
 

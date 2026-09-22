@@ -728,7 +728,10 @@ sections:
       - "^2\\.\\d+ Data Flow Matrix"
       - "^2\\.\\d+ Trust Boundaries"
     required_patterns:
-      - '```mermaid'                                # at least one Mermaid block
+      # At least one diagram: a Mermaid block, or a §2 detail figure (Figures 3–4:
+      # deployment in §2.2, controls in §2.3) that replaces that subsection's
+      # Mermaid diagram when its inputs exist.
+      - '```mermaid|!\[Figure \d+ - [^\]]+\]\((?:[^)\s]+\.figure\d+\.svg|figure\d+\.svg|data:image/svg\+xml;base64,[A-Za-z0-9+/=]+)\)'
 
     # ---------------------------------------------------------------------
     # Diagram compactness — Single-Source-of-Truth (post-2026-05).

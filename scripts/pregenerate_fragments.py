@@ -801,10 +801,39 @@ def _edge_endpoints_kept(edge: str, kept: set[str]) -> bool:
     return m.group(1) in kept and m.group(2) in kept
 
 
-def gen_architecture_diagrams(yaml_data: dict) -> str:
-    """## 2. Architecture Diagrams — 4 required sub-sections with at least
-    one ```mermaid block each.
+_DETAIL_FIGURE_INTROS = {
+    "2.2": (
+        "Where {name} runs and what it is built on: the deployment environment the repository declares, the container, "
+        "runtime and frameworks each component runs in, and the pipelines that build and publish it. Findings per "
+        "component are in Figure 1."
+    ),
+    "2.3": (
+        "How each component is reached, what it handles, how many threats hit it, and how effective the controls "
+        "evidenced on it are. The component table directly below holds source paths and linked threats per `C-NN`; "
+        "per-finding evidence is in [§8 Findings Register](#8-findings-register)."
+    ),
+}
+
+
+def _detail_figure_block(key: str, name: str, figure: dict) -> list[str]:
+    """Intro, image and takeaway of a §2 detail figure rendered by the composer."""
+    return [
+        _DETAIL_FIGURE_INTROS[key].format(name=name),
+        "",
+        figure["image"],
+        "",
+        f"**Key takeaway:** {figure['takeaway']}",
+        "",
+    ]
+
+
+def gen_architecture_diagrams(yaml_data: dict, figures: dict | None = None) -> str:
+    """## 2. Architecture Diagrams — 4 required sub-sections, each with a
+    diagram: a detail SVG figure when ``figures`` carries one for §2.2 or §2.3
+    (``{"2.2": {"image": "![Figure 3 - …](….svg)", "takeaway": …}}``),
+    otherwise a ```mermaid block.
     """
+    figures = figures or {}
     meta = yaml_data.get("meta") or {}
     project_raw = meta.get("project")
     if isinstance(project_raw, dict):
@@ -860,6 +889,7 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     # ----- 2.2 Container Architecture ----------------------------------------
     lines.append("### 2.2 Container Architecture")
     lines.append("")
+    mark_22 = len(lines)
     lines.append(
         "How the system decomposes into deployable units. Each box is a separate "
         "runtime process or service container; arrows show synchronous request "
@@ -1022,6 +1052,9 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
         lines.append("")
     lines.append(f"**Key takeaway:** {takeaways['2.2']}")
     lines.append("")
+    if "2.2" in figures:  # the detail figure replaces the Mermaid diagram and its captions
+        del lines[mark_22:]
+        lines.extend(_detail_figure_block("2.2", name, figures["2.2"]))
 
     # ----- 2.3 Components ----------------------------------------------------
     # Compact 4-tier layout (post-2026-05) per
@@ -1035,6 +1068,7 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
     # traceability check).
     lines.append("### 2.3 Components")
     lines.append("")
+    mark_23 = len(lines)
     lines.append(
         "Who reaches each component, and through which trust zone. Browser "
         "code runs on the user's device, so the client column is part of the "
@@ -1081,6 +1115,9 @@ def gen_architecture_diagrams(yaml_data: dict) -> str:
             lines.append("")
     lines.append(f"**Key takeaway:** {takeaways['2.3']}")
     lines.append("")
+    if "2.3" in figures:  # the component table below stays either way
+        del lines[mark_23:]
+        lines.extend(_detail_figure_block("2.3", name, figures["2.3"]))
 
     lines.append("| Component ID | Name | Tier | Source paths | Threats |")
     lines.append("|---|---|---|---|---|")

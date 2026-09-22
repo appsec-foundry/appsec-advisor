@@ -6022,6 +6022,79 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     return f"{intro}\n\n![Figure 1 - Architecture and Threat Overview]({src}){caption}"
 
 
+_DETAIL_FIGURE_NUMBERS = range(3, 7)  # §2 detail figures follow Figure 1 and Figure 2; 5–6 are only cleaned up
+_DEPLOYMENT_INVENTORY = ".deployment-inventory.json"
+
+
+def _figure_basename_n(ctx: RenderContext, number: int) -> str:
+    """`<stem>.figure1.svg` → `<stem>.figure<N>.svg`; the stamping and rebuild globs match this name."""
+    base = ctx.figure_basename or "figure1.svg"
+    return base.replace(".figure1.", f".figure{number}.") if ".figure1." in base else f"figure{number}.svg"
+
+
+def _load_deployment_inventory(ctx: RenderContext) -> dict | None:
+    """The scan's deployment inventory, or None when it is absent or does not match its schema."""
+    path = ctx.output_dir / _DEPLOYMENT_INVENTORY
+    if not path.is_file():
+        return None
+    try:
+        from deployment_inventory import validation_errors
+
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        errors = validation_errors(doc) if isinstance(doc, dict) else ["not an object"]
+    except (OSError, ValueError) as exc:
+        errors = [type(exc).__name__]
+    if errors:
+        ctx.warnings.append(f"detail figures: {_DEPLOYMENT_INVENTORY} ignored ({errors[0]})")
+        return None
+    return doc
+
+
+def _render_detail_figures(ctx: RenderContext) -> dict:
+    """Build the §2 detail SVGs, write them beside the report and return
+    ``{"2.x": {"image": md, "takeaway": text}}`` for the §2 generator.
+
+    Both figures read the model and the deployment inventory the scan wrote, never
+    the repository, so a re-render shows the state of the scan. A subsection whose
+    inputs are missing is absent from the result and keeps its Mermaid diagram. A
+    builder failure keeps every Mermaid diagram and leaves a RENDER_WARN, so a
+    silent downgrade cannot hide behind a complete §2.
+    """
+    written: set[str] = set()
+    result: dict = {}
+    try:
+        from figure_details import build_detail_figures
+
+        figures = build_detail_figures(
+            ctx.yaml_data, _load_deployment_inventory(ctx), first_number=_DETAIL_FIGURE_NUMBERS[0]
+        )
+        embed = bool(getattr(ctx, "embed_figures", False)) or bool(
+            _read_skill_config(ctx.output_dir).get("embed_figures")
+        )
+        for key, fig in figures.items():
+            basename = _figure_basename_n(ctx, fig.number)
+            (ctx.output_dir / basename).write_text(fig.svg, encoding="utf-8")
+            written.add(basename)
+            src = (
+                "data:image/svg+xml;base64," + base64.b64encode(fig.svg.encode("utf-8")).decode("ascii")
+                if embed
+                else basename
+            )
+            result[key] = {"image": f"![Figure {fig.number} - {fig.title}]({src})", "takeaway": fig.takeaway}
+    except Exception as exc:  # noqa: BLE001 — §2 falls back to its Mermaid diagrams
+        ctx.warnings.append(
+            f"detail figures: builder failed ({type(exc).__name__}: {exc}) — §2 keeps its Mermaid diagrams"
+        )
+        result = {}
+    # Never leave a prior run's detail figure next to a report that no longer references it.
+    for number in _DETAIL_FIGURE_NUMBERS:
+        basename = _figure_basename_n(ctx, number)
+        stale = ctx.output_dir / basename
+        if basename not in written and stale.exists():
+            stale.unlink()
+    return result
+
+
 def _figure2_basename(ctx: RenderContext) -> str:
     """Figure 2 SVG basename, derived from the Figure 1 basename so both figures
     share the md stem (`<stem>.figure1.svg` → `<stem>.figure2.svg`)."""
@@ -10270,7 +10343,7 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         # §2 is structural data, not LLM prose. Keeping this at the final
         # composition chokepoint prevents a renderer from reintroducing extra
         # Mermaid nodes after the pre-generator has enforced compactness.
-        md = gen_architecture_diagrams(ctx.yaml_data)
+        md = gen_architecture_diagrams(ctx.yaml_data, figures=_render_detail_figures(ctx))
     else:
         md = _load_fragment(ctx, section_id, fragment_name)
     if not isinstance(md, str):

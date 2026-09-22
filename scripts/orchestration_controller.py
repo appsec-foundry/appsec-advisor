@@ -4436,6 +4436,21 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
     if config_failure is not None:
         _withhold_config_scan(output_dir, config_findings, config_failure, receipts)
 
+    # Phase 2.5c — deployment inventory for the §2 Deployment and Technology figure.
+    # Presentation data, not analysis input: the scanner validates its own output
+    # and writes nothing on failure, so §2.2 keeps its Mermaid diagram and the
+    # tolerated failure surfaces as a Run Issue. Clear prior bytes first so a
+    # failed scan cannot leave a previous repository's inventory behind.
+    deployment_inventory = output_dir / ".deployment-inventory.json"
+    deployment_inventory.unlink(missing_ok=True)
+    if _best_effort_script(
+        output_dir,
+        "deployment_inventory.py",
+        ["--repo-root", repo_root, "--output", str(deployment_inventory)],
+        receipts,
+    ):
+        receipts.append("deployment inventory produced deterministically")
+
     # Phase 2.5 Step 1c — cross-repository register.
     register_args = [
         "--repo-root",
