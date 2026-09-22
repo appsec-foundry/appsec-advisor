@@ -977,17 +977,16 @@ def build_next_steps(
     section — the runtime is compact and the summary is deterministic, so the
     conditions live here with the code that applies them.
 
-    Returns up to five actions: read, triage, settle the open questions with
-    the team, inspect an actionable architect review, or ask about the model.
+    Returns up to four actions: read, triage, inspect an actionable architect
+    review, or ask about the model.
     Informational notices belong in `build_run_notes`.
 
     Technical follow-ups such as SARIF upload and a deeper re-run belong in
-    `build_follow_ups`. The team questions stay here: they are the decisions a
-    code-derived model cannot make, linked to the findings that raise them.
+    `build_follow_ups`.
 
     Entry 0 is the report step and stays first (it is the one most readers
     want), and the ask step stays last — it is the open-ended fallback, and it
-    follows the team questions. Each entry is a self-contained
+    follows the other focused steps. Each entry is a self-contained
     imperative and starts capitalised; the list carries no conjunctions, so
     nothing has to read on from the entry above it.
 
@@ -1008,12 +1007,6 @@ def build_next_steps(
     # independently of this pipeline, so it fits any follow-up session.
     if sum(sev.values()):
         lines.append("Triage the findings — /appsec-advisor:review-threat-model")
-
-    manual_review = build_manual_review_step(
-        _load_yaml(output_dir / "threat-model.yaml"), _load_text(output_dir / "threat-model.md")
-    )
-    if manual_review:
-        lines.append(manual_review)
 
     # Asking is the non-mutating default exploration path and must stay visible
     # rather than sink into an easy-to-miss footer. Show the question, NOT

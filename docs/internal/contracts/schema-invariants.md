@@ -6,7 +6,7 @@ authoritative source for the §4a–§4h details.
 
 ## §4a. Cross-reference labelling invariant
 
-Reader-facing references normally render as `[ID](#anchor) — <short-title>`. This applies to `T-NNN`, `F-NNN`, `M-NNN`, `W-NNN`, `TH-NN`, and the `C-NN` / deprecated `AF-NNN` classes covered by the composer. Use a shorter form only where the layout or sentence already provides the meaning: declaration sites, ID columns, headings, narrow tables, inline citations, the Verdict citation form, Top Weaknesses proof lists, Open Questions for the Team bullets shared with the console, and the Critical Attack Tree findings pointer. These exceptions are deliberate and must stay narrow; ordinary table and list references need a title.
+Reader-facing references normally render as `[ID](#anchor) — <short-title>`. This applies to `T-NNN`, `F-NNN`, `M-NNN`, `W-NNN`, `TH-NN`, and the `C-NN` / deprecated `AF-NNN` classes covered by the composer. Use a shorter form only where the layout or sentence already provides the meaning: declaration sites, ID columns, headings, narrow tables, inline citations, the Verdict citation form, Top Weaknesses proof lists, Open Questions for the Team bullets, and the Critical Attack Tree findings pointer. These exceptions are deliberate and must stay narrow; ordinary table and list references need a title.
 
 Three things must stay aligned for the invariant to hold:
 

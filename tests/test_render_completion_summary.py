@@ -916,7 +916,7 @@ class TestManualReviewStep:
         assert "example.invalid" not in text and "\x1b" not in text and "](" not in text
         assert len(self.bullets(text)) == 1
 
-    def test_next_steps_places_linked_questions_before_ask_without_mutating_artifacts(self, tmp_path):
+    def test_next_steps_omits_report_questions_without_mutating_artifacts(self, tmp_path):
         import yaml
 
         findings = [self.finding(1)]
@@ -926,14 +926,15 @@ class TestManualReviewStep:
         report.write_text(self.report(findings))
         before = {path: path.read_bytes() for path in (model, report)}
         steps = rcs.build_next_steps(tmp_path, tmp_path, {"threats_by_sev": {"Critical": 1}}, {})
-        assert steps[2].startswith(rcs.TEAM_QUESTIONS_HEADER)
+        assert len(steps) == 3
         assert steps[-1].startswith("Or just ask me:")
         rendered = "\n".join(rcs.render_next_steps(steps))
-        assert re.search(r"^      - .+ \(F-001\)$", rendered, re.M)
+        assert "Open questions for the team" not in rendered
+        assert "Top mitigations:" not in rendered
         assert "Also" not in rendered
         assert {path: path.read_bytes() for path in (model, report)} == before
 
-    def test_manual_review_and_architect_review_fit_the_next_steps_cap(self, tmp_path):
+    def test_architect_review_fits_the_next_steps_cap(self, tmp_path):
         import yaml
 
         findings = [self.finding(1)]
@@ -943,8 +944,8 @@ class TestManualReviewStep:
         steps = rcs.build_next_steps(
             tmp_path, tmp_path, {"threats_by_sev": {"Critical": 1}}, {"architect_review": True}
         )
-        assert len(steps) == 5
-        assert any(step.startswith(rcs.TEAM_QUESTIONS_HEADER) for step in steps)
+        assert len(steps) == 4
+        assert not any(step.startswith(rcs.TEAM_QUESTIONS_HEADER) for step in steps)
         assert any(step.startswith("Read the architect review") for step in steps)
         assert steps[-1].startswith("Or just ask me:")
 

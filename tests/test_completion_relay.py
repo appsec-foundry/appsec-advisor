@@ -1,7 +1,7 @@
 """Guards for completion_relay: the run's closing message carries the printed summary.
 
 Runs rewrote the completion summary in their closing message and dropped Next
-Steps with its team questions. These tests drive the rule the way the host
+Steps. These tests drive the rule the way the host
 does — the summary script records what it printed, the outermost Stop hook
 reviews the closing message — on neutral repositories.
 """
@@ -26,7 +26,7 @@ RUN_IDENTITY_VARS = ("APPSEC_RUN_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_
 RUN_ID = "run-1788592678-3277507"
 
 
-def _summary(root: str, finding: str = "F-003", weakness: str = "W-001") -> str:
+def _summary(root: str) -> str:
     report = f"{root}/docs/security/threat-model.md"
     rule = "═" * 62
     return (
@@ -34,9 +34,6 @@ def _summary(root: str, finding: str = "F-003", weakness: str = "W-001") -> str:
         "Next Steps\n"
         f'  - Open the report — {report} → start at "Management Summary"\n'
         "  - Triage the findings — /appsec-advisor:review-threat-model\n"
-        "  - Open questions for the team:\n"
-        f"      - [{weakness}](<{report}#{weakness.lower()}>): [{finding}](<{report}#{finding.lower()}>)"
-        " — Which services accept these tokens?\n"
         "  - Or just ask me:\n"
         '      "What should I fix first?"\n\n'
         "Logs\n"
@@ -84,10 +81,10 @@ class TestMissingLines:
         text = _summary("/srv/app")
         assert relay.missing_lines(text, relay_of(text)) == []
 
-    def test_a_rewrite_misses_next_steps_and_the_team_questions(self):
+    def test_a_rewrite_misses_next_steps(self):
         missing = relay.missing_lines(_summary("/srv/app"), _rewrite("/srv/app"))
         assert "Next Steps" in missing
-        assert "- Open questions for the team:" in missing
+        assert "- Triage the findings — /appsec-advisor:review-threat-model" in missing
 
     def test_a_dropped_block_is_named(self):
         text = _summary("/srv/app")
@@ -233,7 +230,7 @@ class TestTheOutermostStop:
         return result.stdout
 
     @staticmethod
-    def _completed_run(tmp_path, monkeypatch, name: str, **names) -> tuple[Path, Path, str]:
+    def _completed_run(tmp_path, monkeypatch, name: str) -> tuple[Path, Path, str]:
         """Record a printed summary under the run's lock, then release the lock."""
         repo = tmp_path / name
         output = repo / "docs" / "security"
@@ -241,18 +238,18 @@ class TestTheOutermostStop:
         _clear_run_identity(monkeypatch)
         monkeypatch.setenv("APPSEC_RUN_ID", RUN_ID)
         acquire_lock._write_lock(output / ".appsec-lock", 4242, 1788592678, RUN_ID)
-        summary = _summary(str(repo), **names)
+        summary = _summary(str(repo))
         relay.persist(output, summary)
         (output / ".appsec-lock").unlink()
         return repo, output, summary
 
     @pytest.mark.parametrize(
-        ("name", "names"),
-        [("service-a", {}), ("billing/api gateway", {"finding": "F-114", "weakness": "W-007"})],
+        "name",
+        ["service-a", "billing/api gateway"],
         ids=["neutral", "other-names-and-paths"],
     )
-    def test_a_rewritten_summary_is_returned_once(self, tmp_path, monkeypatch, name, names):
-        repo, output, _ = self._completed_run(tmp_path, monkeypatch, name, **names)
+    def test_a_rewritten_summary_is_returned_once(self, tmp_path, monkeypatch, name):
+        repo, output, _ = self._completed_run(tmp_path, monkeypatch, name)
         decision = json.loads(self._stop(repo, _rewrite(str(repo))))
         assert decision == {"decision": "block", "reason": relay.RETRY_INSTRUCTION}
         assert "SUMMARY_NOT_RELAYED" in (output / ".hook-events.log").read_text(encoding="utf-8")

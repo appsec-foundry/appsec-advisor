@@ -518,7 +518,8 @@ requirements:
       - tests/test_detect_public_repo.py::test_host_and_license_cannot_distinguish_repository_visibility
       - tests/test_emit_auth_coverage.py::TestDetectionAndRating::test_registration_evidence_requires_post_not_user_listing
       - tests/test_build_threat_model_yaml.py::test_builder_preserves_named_entities_and_resolved_registration_equivalence
-      - tests/test_compose_threat_model.py::test_ms_open_questions_match_console_selection_and_follow_top_weaknesses
+      - tests/test_compose_threat_model.py::test_ms_open_questions_follow_top_weaknesses
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_next_steps_omits_report_questions_without_mutating_artifacts
       - tests/test_compose_threat_model.py::test_ms_open_questions_are_omitted_when_the_selector_returns_none
       - tests/test_compose_threat_model.py::test_toc_keeps_management_summary_subsections_out_of_the_short_form
       - tests/test_qa_checks_cov_band1.py::test_ms_structure_requires_selected_team_questions_in_the_canonical_slot
