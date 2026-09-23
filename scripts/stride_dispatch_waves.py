@@ -448,7 +448,17 @@ def completion_error(
         _log_pruned_branches(output_dir, component_id, pruned)
     if repaired:
         _atomic_write_json(path, data)
-    ok, errors = validate_stride(data)
+    config_path = output_dir / ".skill-config.json"
+    repo_root = None
+    if config_path.is_file():
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            configured_root = config.get("repo_root") if isinstance(config, dict) else None
+            if isinstance(configured_root, str) and configured_root:
+                repo_root = Path(configured_root)
+        except (OSError, ValueError):
+            pass  # The controller's configuration gate owns malformed run config.
+    ok, errors = validate_stride(data, repo_root=repo_root)
     if not ok:
         return "schema validation failed: " + "; ".join(errors[:3])
     if promote:

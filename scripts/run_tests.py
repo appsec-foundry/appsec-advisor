@@ -512,6 +512,100 @@ MANUAL_TESTS = {
 # build_threat_model_yaml and compose_threat_model, so modules they import
 # route to it.
 SOURCE_TESTS = {
+    "agents/appsec-evidence-verifier.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        requirements_verification
+        run_diagnostics_recovery_2026_07_20
+        stride_outputs
+    """),
+    "agents/appsec-stride-analyzer-v2.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        prompt_token_bounds
+        requirements_verification
+        stride_outputs
+    """),
+    "schemas/evidence-verifier-context.schema.json": _tests("""
+        build_post_stride_contexts
+        new_schemas
+        requirements_verification
+        schema_integrity
+        schemas
+    """),
+    "schemas/stride.schema.yaml": _tests("""
+        agent_definitions
+        intermediate_json
+        new_schemas
+        requirements_verification
+        schema_drift
+        schema_integrity
+        schemas
+        stride_dispatch_waves
+        validate_intermediate
+    """),
+    "schemas/threat-model.output.schema.yaml": _tests("""
+        build_threat_model_yaml
+        new_schemas
+        requirements_verification
+        schema_drift
+        schema_integrity
+        schemas
+    """),
+    "schemas/threats-merged.schema.yaml": _tests("""
+        build_post_stride_contexts
+        merge_threats
+        new_schemas
+        requirements_verification
+        schema_drift
+        schema_integrity
+        schemas
+        threats_merged_schema
+    """),
+    "scripts/build_post_stride_contexts.py": _tests("""
+        build_post_stride_contexts
+        orchestration_controller
+        requirements_verification
+        stride_outputs
+    """),
+    "scripts/stride_dispatch_waves.py": _tests("""
+        orchestration_controller
+        requirements_verification
+        stride_dispatch_waves
+        stride_outputs
+        wait_stride_progress
+    """),
+    "scripts/validate_intermediate.py": _tests("""
+        actor_attribution
+        actor_presentation
+        agent_definitions
+        arch_coverage_bridge
+        authz_confirm
+        build_post_stride_contexts
+        credential_lifecycle_checks
+        database_privilege_separation
+        e2e_pipeline
+        figure1_dfd
+        fragment_invariant_parity
+        intermediate_json
+        new_schemas
+        orchestration_controller
+        pentest_tasks
+        recon_signals_schema
+        requirements_verification
+        review_threat_model
+        run_diagnostics_recovery_2026_07_20
+        schema_integrity
+        severity_policy
+        stage1_coverage_recovery_2026_07_20
+        stage1_coverage_recovery_2026_08_02
+        stride_dispatch_waves
+        stride_outputs
+        threat_fixture
+        threats_merged_schema
+        validate_intermediate
+        wait_stride_progress
+    """),
     "AGENTS.md": _tests("""
         context_prompt_budgets
         decision_register

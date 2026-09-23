@@ -303,6 +303,55 @@ def _check_scenario_stripped_length(data: dict) -> list[str]:
     return errors
 
 
+_INPUT_TO_SINK_CWES = frozenset({"CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-95", "CWE-918", "CWE-1336"})
+
+
+def _check_stride_mechanism_traces(data: dict, repo_root: Path | None = None) -> list[str]:
+    """Require an independently inspectable entry and sink for proven flows."""
+    errors: list[str] = []
+    threats = data.get("threats")
+    if not isinstance(threats, list):
+        return errors
+    for index, threat in enumerate(threats):
+        if not isinstance(threat, dict) or threat.get("cwe") not in _INPUT_TO_SINK_CWES:
+            continue
+        if threat.get("evidence_tier") == "insecure-practice":
+            continue
+        trace = threat.get("mechanism_trace")
+        if not isinstance(trace, dict):
+            errors.append(f"threats[{index}].mechanism_trace is required for a confirmed input-to-sink finding")
+            continue
+        sink = trace.get("sink")
+        anchor = threat.get("evidence")
+        if (
+            isinstance(sink, dict)
+            and isinstance(anchor, dict)
+            and (sink.get("file") != anchor.get("file") or sink.get("line") != anchor.get("line"))
+        ):
+            errors.append(f"threats[{index}].mechanism_trace.sink must equal the finding evidence location")
+        elif not isinstance(anchor, dict):
+            errors.append(f"threats[{index}].evidence must cite the mechanism_trace.sink")
+        control = trace.get("control")
+        if isinstance(control, dict) and control.get("status") == "absent-at-sink" and control.get("location") != sink:
+            errors.append(f"threats[{index}].mechanism_trace.control.location must equal the sink for absent-at-sink")
+        if repo_root is not None:
+            locations = {"input": trace.get("input"), "sink": sink}
+            if isinstance(control, dict):
+                locations["control"] = control.get("location")
+            for role, location in locations.items():
+                if isinstance(location, dict):
+                    errors.extend(
+                        repository_evidence_errors(
+                            [location],
+                            repo_root,
+                            label=f"threats[{index}].mechanism_trace.{role}",
+                            require_line=True,
+                            require_code=True,
+                        )
+                    )
+    return errors
+
+
 _TH_ID_RE = re.compile(r"^TH-[0-9]{2}$")
 
 
@@ -590,7 +639,7 @@ def _check_final_boundary_links(data: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def validate_stride(data: Any) -> tuple[bool, list[str]]:
+def validate_stride(data: Any, repo_root: Path | None = None) -> tuple[bool, list[str]]:
     """Validate a parsed .stride-*.json object."""
     if not isinstance(data, dict):
         return False, ["root must be a JSON object"]
@@ -598,6 +647,7 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
     if "parse_error" not in data:
         errors.extend(_check_scenario_stripped_length(data))
         errors.extend(_check_stride_remediation_nonempty(data))
+        errors.extend(_check_stride_mechanism_traces(data, repo_root))
         # RC.G.1 / RC.I — STRIDE-analyzer prompt mandates threat_category_id.
         # Inject `source: stride` on each row before the check (per-component
         # STRIDE files do not carry the field; the merge step adds it).
@@ -1865,7 +1915,7 @@ def main() -> None:
         sys.exit(2)
 
     if sys.argv[1] not in _VALIDATORS or (
-        repo_root is not None and sys.argv[1] not in {"recon_signals", "stride_analyst_context"}
+        repo_root is not None and sys.argv[1] not in {"recon_signals", "stride_analyst_context", "stride"}
     ):
         print(
             f"Usage: {sys.argv[0]} <{'|'.join(_VALIDATORS)}> <path-to-json-file> [--repo-root <path>]",
@@ -1905,6 +1955,8 @@ def main() -> None:
         is_valid, errors = validate_recon_signals(data, repo_root=repo_root)
     elif schema_type == "stride_analyst_context":
         is_valid, errors = validate_stride_analyst_context(data, output_dir=path.parent, repo_root=repo_root)
+    elif schema_type == "stride":
+        is_valid, errors = validate_stride(data, repo_root=repo_root)
     else:
         try:
             is_valid, errors = _VALIDATORS[schema_type](data, path.parent)

@@ -142,7 +142,50 @@ def _stride_component_with(cwe: str, tcid: str) -> dict:
     data["skipped_categories"] = []
     data["threats"][0]["cwe"] = cwe
     data["threats"][0]["threat_category_id"] = tcid
+    if cwe in {"CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-95", "CWE-918", "CWE-1336"}:
+        data["threats"][0]["mechanism_trace"] = {
+            "input": {"file": "src/routes/input.js", "line": 9},
+            "sink": dict(data["threats"][0]["evidence"]),
+            "connection": "The request value reaches this security-sensitive use without a boundary control.",
+            "control": {
+                "status": "ineffective",
+                "location": dict(data["threats"][0]["evidence"]),
+                "explanation": "The sink uses the input without an effective boundary control.",
+            },
+        }
     return data
+
+
+def test_completion_rejects_confirmed_input_to_sink_finding_without_trace(tmp_path: Path) -> None:
+    data = _stride_component_with("CWE-89", "TH-09")
+    del data["threats"][0]["mechanism_trace"]
+    _write_component(tmp_path, data)
+    assert "mechanism_trace is required" in (waves.completion_error(tmp_path, "service-01") or "")
+
+
+def test_completion_keeps_unproven_input_to_sink_practice_without_trace(tmp_path: Path) -> None:
+    data = _stride_component_with("CWE-89", "TH-09")
+    del data["threats"][0]["mechanism_trace"]
+    data["threats"][0]["evidence_tier"] = "insecure-practice"
+    _write_component(tmp_path, data)
+    assert waves.completion_error(tmp_path, "service-01") is None
+
+
+def test_completion_checks_mechanism_locations_against_the_target_repository(tmp_path: Path) -> None:
+    data = _stride_component_with("CWE-89", "TH-09")
+    repo = tmp_path / "target"
+    entry = repo / "src/routes/input.js"
+    sink = repo / data["threats"][0]["evidence"]["file"]
+    entry.parent.mkdir(parents=True)
+    sink.parent.mkdir(parents=True)
+    entry.write_text("\n".join(["const value = request.query;"] * 30) + "\n")
+    sink.write_text("\n".join(["execute(query);"] * 30) + "\n")
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo)}))
+    _write_component(tmp_path, data)
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    entry.write_text("\n".join(["// not an input"] * 30) + "\n")
+    assert "mechanism_trace.input" in (waves.completion_error(tmp_path, "service-01") or "")
 
 
 def test_completion_accepts_th_unclassified_when_cwe_is_mappable(tmp_path: Path) -> None:

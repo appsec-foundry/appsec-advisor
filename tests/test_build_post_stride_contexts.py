@@ -75,6 +75,16 @@ def test_evidence_context_selects_and_embeds_exact_source_windows(tmp_path: Path
     contexts.validate_evidence_context_sources(value, (output / ".threats-merged.json").read_bytes(), repo)
 
 
+def test_evidence_context_does_not_invent_a_line_for_file_only_evidence(tmp_path: Path) -> None:
+    threat = _threat("T-001", "Critical", "app.py", 10)
+    threat["evidence"]["line"] = None
+    output, repo = _write_inputs(tmp_path, [threat])
+    value = contexts.build_evidence_context(
+        (output / ".threats-merged.json").read_bytes(), repo, depth="quick", noncritical_cap=20
+    )
+    assert value["samples"] == []
+
+
 def test_max_evidence_sample_is_schema_and_routing_compatible(tmp_path: Path) -> None:
     threats = [_threat(f"T-{index:03d}", "Critical", "app.py", 10) for index in range(1, 257)]
     output, repo = _write_inputs(tmp_path, threats)
@@ -101,6 +111,86 @@ def test_evidence_context_rejects_stale_source_window(tmp_path: Path) -> None:
 
     with pytest.raises(contexts.PostStrideContextError, match="stale for app.py"):
         contexts.validate_evidence_context_sources(value, (output / ".threats-merged.json").read_bytes(), repo)
+
+
+def test_evidence_context_carries_both_ends_of_a_mechanism(tmp_path: Path) -> None:
+    threat = _threat("T-001", "High", "app.py", 10)
+    threat["mechanism_trace"] = {
+        "input": {"file": "route.py", "line": 4},
+        "sink": {"file": "app.py", "line": 10},
+        "connection": "The request value is forwarded to the query builder without binding.",
+        "control": {
+            "status": "ineffective",
+            "location": {"file": "app.py", "line": 10},
+            "explanation": "The query is assembled without parameter binding.",
+        },
+    }
+    output, repo = _write_inputs(tmp_path, [threat])
+    (repo / "route.py").write_text("\n".join(f"entry {number}" for number in range(1, 11)) + "\n")
+
+    value = contexts.build_evidence_context(
+        (output / ".threats-merged.json").read_bytes(), repo, depth="standard", noncritical_cap=30
+    )
+    sample = value["samples"][0]
+    assert sample["mechanism_trace"] == threat["mechanism_trace"]
+    assert sample["input_window"][1]["text"] == "entry 3"
+    assert sample["control_window"][1]["line"] == 10
+    assert not _schema_errors(
+        "evidence-verifier-context.schema.json", {**value, "limits": {**value["limits"], "serialized_bytes": 1}}
+    )
+    contexts.validate_evidence_context_sources(value, (output / ".threats-merged.json").read_bytes(), repo)
+
+    (repo / "route.py").write_text("\n".join(f"changed {number}" for number in range(1, 11)) + "\n")
+    with pytest.raises(contexts.PostStrideContextError, match="stale for route.py"):
+        contexts.validate_evidence_context_sources(value, (output / ".threats-merged.json").read_bytes(), repo)
+
+
+def test_evidence_context_rejects_an_input_symlink_outside_the_repository(tmp_path: Path) -> None:
+    threat = _threat("T-001", "High", "app.py", 10)
+    threat["mechanism_trace"] = {
+        "input": {"file": "route.py", "line": 1},
+        "sink": {"file": "app.py", "line": 10},
+        "connection": "The request value is forwarded to the query builder without binding.",
+        "control": {
+            "status": "ineffective",
+            "location": {"file": "app.py", "line": 10},
+            "explanation": "The query is assembled without parameter binding.",
+        },
+    }
+    output, repo = _write_inputs(tmp_path, [threat])
+    outside = tmp_path / "outside.py"
+    outside.write_text("value = request.query\n")
+    (repo / "route.py").symlink_to(outside)
+
+    with pytest.raises(contexts.PostStrideContextError, match="unsafe evidence file"):
+        contexts.build_evidence_context(
+            (output / ".threats-merged.json").read_bytes(), repo, depth="standard", noncritical_cap=30
+        )
+
+
+def test_evidence_context_rechecks_a_distinct_control_file(tmp_path: Path) -> None:
+    threat = _threat("T-001", "High", "app.py", 10)
+    threat["mechanism_trace"] = {
+        "input": {"file": "route.py", "line": 1},
+        "sink": {"file": "app.py", "line": 10},
+        "connection": "The request value is forwarded to the query builder without binding.",
+        "control": {
+            "status": "bypassed",
+            "location": {"file": "guard.py", "line": 1},
+            "explanation": "The guard runs only on a different request path.",
+        },
+    }
+    output, repo = _write_inputs(tmp_path, [threat])
+    (repo / "route.py").write_text("value = request.query\n")
+    (repo / "guard.py").write_text("check_role(user)\n")
+    merged_payload = (output / ".threats-merged.json").read_bytes()
+    value = contexts.build_evidence_context(merged_payload, repo, depth="standard", noncritical_cap=30)
+    assert value["samples"][0]["control_window"][0]["text"] == "check_role(user)"
+    contexts.validate_evidence_context_sources(value, merged_payload, repo)
+
+    (repo / "guard.py").write_text("check_permission(user)\n")
+    with pytest.raises(contexts.PostStrideContextError, match="stale for guard.py"):
+        contexts.validate_evidence_context_sources(value, merged_payload, repo)
 
 
 def test_evidence_application_accepts_only_selected_unique_flags(tmp_path: Path) -> None:

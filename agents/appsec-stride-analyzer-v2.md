@@ -162,6 +162,8 @@ Process all categories in this order, even when one yields no finding:
 
 Trace persisted attacker input through its write path to the eventual query, code, template, or browser sink. Include both the application producer and consuming context in evidence; storage alone does not establish XSS. Separate SQL, executable NoSQL predicates, code execution, template compilation, and browser execution. Preserve configuration conditions and authentication prerequisites, including safe alternatives, instead of scoring a sink name alone.
 
+For confirmed `CWE-78`, `CWE-79`, `CWE-89`, `CWE-94`, `CWE-95`, `CWE-918`, or `CWE-1336`, write `mechanism_trace` with `input` and `sink` repository-relative `file:line` locations and a short `connection` naming the value and how it reaches the sink. `evidence` must repeat the sink location. Record the failed control as `control.status` (`absent-at-sink`, `ineffective`, or `bypassed`), cite `control.location`, and explain why it fails. `absent-at-sink` cites the sink itself; it does not prove that no upstream control exists. If the input, connection, or control outcome cannot be established, use `evidence_tier: insecure-practice` and state the gap; do not invent a trace or score confirmed exploitation.
+
 For identity spoofing, cite the executable consumer that trusts the attacker-controlled identity in a security decision. A client setting a header, decoding a token, or connecting without credentials alone establishes no server authentication bypass; unused helpers and hypothetical consumers do not complete the path. Place the control failure on the component accepting the identity. Classify credentials predictably derived from public identifiers as weak credentials (`CWE-1391`); use `CWE-522` for inadequate protection of credentials and `CWE-798` for embedded reusable credentials. Cite both credential creation and its authentication use when claiming account access.
 
 All six are mandatory. `analysis.estimated_threat_count: low` or
@@ -267,6 +269,7 @@ these exact threat fields:
 
 `evidence.line` names the vulnerable statement, route registration, unsafe API,
 or configuration value, never a header, blank, comment, or closing brace.
+For a confirmed input-to-sink CWE listed above, add `"mechanism_trace": {"input": {"file": "<entry path>", "line": 1}, "sink": {"file": "<same as evidence.file>", "line": 1}, "connection": "<how this input reaches this sink>", "control": {"status": "<absent-at-sink|ineffective|bypassed>", "location": {"file": "<control path>", "line": 1}, "explanation": "<why this control fails>"}}`. Omit it for other findings.
 
 After each category, check your dispatch IDs:
 
