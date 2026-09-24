@@ -2186,20 +2186,33 @@ def _missing_permissions_action(cfg: dict[str, Any], repo_root: Path, output_dir
         {**item, "entry": check_permissions.expand_entry(item["entry"], repo_root, output_dir, PLUGIN_ROOT)}
         for item in required_raw
     ]
-    by_scope = check_permissions.effective_allow(repo_root)
-    all_granted = [rule for scope_rules in by_scope.values() for rule in scope_rules]
+    report = check_permissions.scope_report(repo_root)
+    all_granted = [rule for scope in report.values() for rule in scope["allow"]]
     missing_perms = check_permissions.diff_required(required, all_granted)
     if not missing_perms:
         return None
     entries = "\n".join(f"  {item['entry']}" for item in missing_perms)
+    checked = "\n".join(
+        f"  {name:<8} {scope['path']} "
+        f"({check_permissions.scope_label(scope['status'], len(scope['allow']), scope['detail'])})"
+        for name, scope in report.items()
+    )
+    unverifiable = [name for name, scope in report.items() if scope["status"] == "unreadable"]
+    headline = (
+        f"Cannot verify Claude Code permissions: {', '.join(unverifiable)} settings unreadable "
+        f"(a sandboxed shell masks these files). Verify or fix outside the sandbox."
+        if unverifiable
+        else "Missing required Claude Code permissions for this repo."
+    )
     return {
         "schema_version": 1,
         "action": "abort",
         "mode": cfg.get("mode", "full"),
         "reason": (
-            f"Missing required Claude Code permissions for this repo.\n"
-            f"Run:  make setup-target REPO={repo_root}\n"
+            f"{headline}\n"
+            f"Run:  make -C {PLUGIN_ROOT} setup-target REPO={repo_root}\n"
             f"then restart Claude Code and re-run the skill.\n\n"
+            f"Settings files checked:\n{checked}\n\n"
             f"Missing entries:\n{entries}"
         ),
         "exit_code": 2,

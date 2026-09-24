@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The missing-permissions abort lists each settings file with its status, reports settings a sandbox makes unreadable as unverifiable instead of missing, and gives a `setup-target` command that runs from any directory.
 - Completion summaries omit open team questions and use the existing report, triage, and ask paths for follow-up.
 - New aiscb installations load verified modules on demand, and `update-baseline` delegates existing upstream installations to compatible signed AISCB installers while preserving their scope and mode.
 - Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.

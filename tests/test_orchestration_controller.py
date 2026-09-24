@@ -119,6 +119,9 @@ def _write_abuse_projections(output: Path, candidates: list[str]) -> None:
         abuse_contexts.write_candidate(output, candidate)
 
 
+_REAL_DIFF_REQUIRED = controller.check_permissions.diff_required
+
+
 @pytest.fixture(autouse=True)
 def _grant_required_permissions(monkeypatch):
     """Controller unit tests should not depend on host Claude settings."""
@@ -7385,3 +7388,51 @@ def test_prepare_stage2_hands_every_renderer_the_enrichment_flag(tmp_path, monke
 def test_a_new_run_starts_without_stage2_attempt_bookkeeping():
     for names in (controller._FULL_INTERMEDIATE_NAMES, controller._REBUILD_NAMES):
         assert {".inline-shortcut-retry-count", controller._STAGE2_DISPATCH_MARKER} <= names
+
+
+def _permission_report(project_status: str, allow: list[str]) -> dict:
+    def entry(name: str, status: str, rules: list[str]) -> dict:
+        detail = "not a regular file" if status == "unreadable" else ""
+        return {"path": Path(f"/x/{name}.json"), "status": status, "detail": detail, "allow": rules}
+
+    return {
+        "local": entry("local", "absent", []),
+        "project": entry("project", project_status, allow),
+        "user": entry("user", "ok", ["Read(*)"]),
+    }
+
+
+@pytest.mark.parametrize(
+    ("project_status", "headline"),
+    [
+        ("absent", "Missing required Claude Code permissions"),
+        ("invalid", "Missing required Claude Code permissions"),
+        ("unreadable", "Cannot verify Claude Code permissions: project settings unreadable"),
+    ],
+)
+def test_permission_abort_names_each_scope_status(monkeypatch, tmp_path, project_status, headline):
+    monkeypatch.setattr(controller.check_permissions, "diff_required", _REAL_DIFF_REQUIRED)
+    monkeypatch.setattr(controller.check_permissions, "load_required", lambda: [{"entry": "Bash(*)"}])
+    monkeypatch.setattr(
+        controller.check_permissions, "scope_report", lambda root: _permission_report(project_status, [])
+    )
+
+    action = controller._missing_permissions_action({"mode": "full"}, tmp_path, tmp_path / "out")
+
+    reason = action["reason"]
+    assert action["action"] == "abort"
+    assert reason.startswith(headline)
+    assert f"make -C {controller.PLUGIN_ROOT} setup-target REPO={tmp_path}" in reason
+    for name in ("local", "project", "user"):
+        assert f"/x/{name}.json" in reason
+    assert "  Bash(*)" in reason
+
+
+def test_permission_abort_skipped_when_any_scope_grants(monkeypatch, tmp_path):
+    monkeypatch.setattr(controller.check_permissions, "diff_required", _REAL_DIFF_REQUIRED)
+    monkeypatch.setattr(controller.check_permissions, "load_required", lambda: [{"entry": "Bash(*)"}])
+    monkeypatch.setattr(
+        controller.check_permissions, "scope_report", lambda root: _permission_report("unreadable", ["Bash(*)"])
+    )
+
+    assert controller._missing_permissions_action({"mode": "full"}, tmp_path, tmp_path / "out") is None
