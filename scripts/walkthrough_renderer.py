@@ -134,9 +134,10 @@ ATTACKER_PROFILES: dict[str, str] = {
 }
 
 # Suffix appended to the `internet-user` profile when self-registration is
-# open — collapses the practical prerequisite to network reachability.
+# open — collapses the practical prerequisite to network reachability. The model
+# records that registration is open, not through which route, so none is named.
 OPEN_REG_SUFFIX = (
-    " Self-registration via `POST /api/Users` is open, so the attacker creates "
+    " Self-registration is open, so the attacker creates "
     "a fresh account in seconds; the practical prerequisite collapses to "
     "'reach the application'."
 )

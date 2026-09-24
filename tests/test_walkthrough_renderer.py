@@ -15,6 +15,7 @@ regressions that previously shipped to production:
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -604,6 +605,12 @@ class TestAttackerProfile:
     def test_open_registration_suffix(self):
         out = renderer.render_attacker_profile({"vektor": "internet-user"}, {"open_user_registration": True}, {})
         assert renderer.OPEN_REG_SUFFIX.strip() in out
+
+    @pytest.mark.parametrize("meta", [{"open_user_registration": True}, {"open_user_registration": True, "x": 1}])
+    def test_open_registration_names_no_route_the_model_does_not_record(self, meta):
+        out = renderer.render_attacker_profile({"vektor": "internet-user"}, meta, {})
+        assert "Self-registration is open" in out
+        assert not re.search(r"\b(?:GET|POST|PUT|PATCH|DELETE)\s+/", out)
 
     def test_template_override(self):
         tmpl = {"attacker_profile_overrides": {"internet-anon": "OVERRIDDEN"}}

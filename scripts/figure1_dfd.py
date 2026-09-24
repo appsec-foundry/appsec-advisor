@@ -1053,10 +1053,6 @@ def _fold_legitimate_roles(yaml_data):
             "name": label[prefix + "_label"],
             "description": label[prefix + "_subtitle"],
             "access": slug,
-            # The card is renamed after the project, so the authored names it
-            # stands for are otherwise lost: the caption note says that roles
-            # were folded, never which ones. Name them on the card itself.
-            "_covers": sorted(row.get("name") or row["id"] for row in rows),
         }
         aliases.update({row["id"]: key for row in rows})
     entities = []
@@ -1122,10 +1118,10 @@ def _merge_indistinct_roles(d):
     Two roles are worth drawing apart only where the diagram can show a
     difference. A role whose every edge — same target, same rendered label —
     already belongs to another role adds a second identical line and a box the
-    reader cannot tell from its neighbour. It is folded into that role and named
-    on the box that absorbed it, so the role stays visible without a duplicate
-    edge. A role with an edge of its own (a scanner posting to its own endpoint)
-    keeps its box.
+    reader cannot tell from its neighbour. It is folded into that role; the box
+    keeps its canonical name, because an authored name of the folded role would
+    add a person the other report sections do not show. A role with an edge of
+    its own (a scanner posting to its own endpoint) keeps its box.
 
     Rank by edge count, then document order, and fold only into a higher-ranked
     role: the direction is then total, so no pair can absorb each other and the
@@ -1133,7 +1129,8 @@ def _merge_indistinct_roles(d):
 
     A privileged role neither absorbs nor is absorbed (RA-11): every human
     interaction draws the same "User input" edge, so edge equality says nothing
-    about what the privileged role can do.
+    about what the privileged role can do. A role the owner declared is never
+    absorbed either: its name is the owner's decision, not a label to fold away.
     """
     entities = [e for e in d.get("external_entities") or [] if isinstance(e, dict) and e.get("id")]
     roles = [e for e in entities if e.get("kind") == "legitimate-role" and e.get("access") != PRIVILEGED_ROLE_ACCESS]
@@ -1149,7 +1146,7 @@ def _merge_indistinct_roles(d):
     absorbed = {}
     for index, role in enumerate(ranked):
         own = signature.get(role["id"]) or set()
-        if not own:  # a role without edges says nothing about which box it belongs to
+        if not own or role.get("declared"):  # no edges say nothing about its box; a declared name stays
             continue
         for host in ranked[:index]:
             if host["id"] not in absorbed and own <= (signature.get(host["id"]) or set()):
@@ -1157,20 +1154,11 @@ def _merge_indistinct_roles(d):
                 break
     if not absorbed:
         return
-    names = {role["id"]: role.get("name") or role["id"] for role in roles}
-    covered = collections.defaultdict(list)
-    for role_id, host_id in absorbed.items():
-        covered[host_id].append(names[role_id])
     for flow in flows:
         for end in ("from_entity", "to_entity"):
             if flow.get(end) in absorbed:
                 flow[end] = absorbed[flow[end]]
     d["external_entities"] = [e for e in d.get("external_entities") or [] if e.get("id") not in absorbed]
-    for entity in d["external_entities"]:
-        if entity.get("id") in covered:
-            # An access-equivalence fold may already have named roles here; this
-            # pass adds to that list rather than replacing it.
-            entity["_covers"] = sorted(set(entity.get("_covers") or []) | set(covered[entity["id"]]))
 
 
 def _build_model(d, scenarios, actors, victim_target=USER_ID):
@@ -1377,8 +1365,6 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
             "order": len(nodes),
             "badges": [],
         }
-        if entity.get("_covers"):
-            nodes[key]["merged_label"] = "also covers " + ", ".join(entity["_covers"])
     if victim_of and victim_target != USER_ID:
         nodes[victim_target]["col_rank"] = 0
         nodes[victim_target]["victim_label"] = "victim of " + " ".join("①②③④⑤⑥⑦⑧⑨"[int(n) - 1] for n in victim_of[:4])
@@ -2345,14 +2331,6 @@ def _prepare_external_text(nodes):
                 words.append(word)
             lines = _legend_wrap(" ".join(words) + "…", width, 7.5) if words else ["See full description on hover"]
         node["sub_lines"] = lines
-        # The folded-role names run wider than the card, so they wrap here where
-        # the width is known. Two lines cap it; beyond that the remainder is
-        # counted, and the hover title carries every name.
-        if node.get("merged_label"):
-            wrapped = _legend_wrap(node["merged_label"], width, 7.5)
-            node["merged_lines"] = wrapped[:2]
-            if len(wrapped) > 2:
-                node["merged_lines"][1] = node["merged_lines"][1].rsplit(" ", 1)[0] + " …"
         title_lines = min(2, len(_wrap(node["name"], width, 10)))
         node["h"] = max(
             node["h"],
@@ -2361,8 +2339,7 @@ def _prepare_external_text(nodes):
             + _pill_height(node.get("capabilities") or [], width)
             + 8
             + len(lines) * 10
-            + (12 if node.get("victim_label") else 0)
-            + 12 * len(node.get("merged_lines") or []),
+            + (12 if node.get("victim_label") else 0),
         )
 
 
@@ -2850,9 +2827,7 @@ def _render(
         x, y, w, h = n["x"], n["y"], n["w"], n["h"]
         if n["kind"] == "ext":
             if not n.get("attacker"):
-                # The card may abbreviate the folded-role names; the hover keeps them whole.
-                hover = "\n".join(part for part in (n.get("sub", ""), n.get("merged_label")) if part)
-                c.add(f'<g data-external-id="{_esc(n["id"])}"><title>{_esc(hover)}</title>')
+                c.add(f'<g data-external-id="{_esc(n["id"])}"><title>{_esc(n.get("sub", ""))}</title>')
             col = n["color"]
             if n.get("group_lines"):
                 c.label_owners[f"actor grouping {n['actor_code']}"] = n["id"]
@@ -2871,7 +2846,7 @@ def _render(
                 _capability_pills(c, tx, y + 12 + len(label_lines) * 12, n, w - (tx - x) - 8)
             # Each bottom label claims its own 12px band, so the description above
             # them never renders over one of them.
-            bottom_labels = [*(n.get("merged_lines") or []), *([n["victim_label"]] if n.get("victim_label") else [])]
+            bottom_labels = [n["victim_label"]] if n.get("victim_label") else []
             sub_y = y + h - n.get("reference_height", 0) - (8 + 12 * len(bottom_labels))
             if n.get("group_lines"):
                 for i, line in enumerate(n["group_lines"]):
@@ -3852,7 +3827,7 @@ def overview_people(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=
 
     Report sections that name actors read this list, so none can show a person
     the overview does not. Each entry: name, kind (attacker/role), slug (attack
-    group or role access), subtitle, code (A1…), scenarios, covers, privileged,
+    group or role access), subtitle, code (A1…), scenarios, privileged,
     and for roles the IDs of the data flows drawn from their card.
     """
     if not (yaml_data.get("components") or []):
@@ -3886,7 +3861,6 @@ def overview_people(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=
                     "subtitle": attacker_display(slug, yaml_data.get("meta") or {}, actor_labels or {})[1],
                     "code": node.get("actor_code"),
                     "scenarios": list(dict.fromkeys(numbers)),
-                    "covers": [],
                     "privileged": slug == PRIVILEGED_ROLE_ACCESS,
                 }
             )
@@ -3901,7 +3875,6 @@ def overview_people(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=
                 "subtitle": entity.get("description") or ("legitimate client" if node["id"] == USER_ID else ""),
                 "code": None,
                 "scenarios": list(dict.fromkeys(s["n"] for s in scenarios if s["victim"])) if victim else [],
-                "covers": list(entity.get("_covers") or []),
                 "privileged": entity.get("access") == PRIVILEGED_ROLE_ACCESS,
                 "flow_ids": [
                     fid for edge in state["edges"] if edge.get("src") == node["id"] for fid in edge.get("ids") or []
@@ -3927,7 +3900,6 @@ def legitimate_role_people(yaml_data):
             "subtitle": entity.get("description") or "",
             "code": None,
             "scenarios": [],
-            "covers": list(entity.get("_covers") or []),
             "privileged": entity.get("access") == PRIVILEGED_ROLE_ACCESS,
             "flow_ids": [
                 f.get("id")

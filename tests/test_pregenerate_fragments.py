@@ -1201,7 +1201,6 @@ class TestSystemContextDiagram:
             "subtitle": "",
             "code": None,
             "scenarios": [],
-            "covers": [],
             "privileged": privileged,
             "flow_ids": list(flow_ids),
         }
