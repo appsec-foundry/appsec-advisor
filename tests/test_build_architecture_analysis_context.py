@@ -200,6 +200,17 @@ def test_route_projection_keeps_exactly_its_contracted_fields(extra: dict) -> No
     assert projected["routes"] == [{key: value for key, value in source.items() if key in contracted}]
 
 
+def test_the_analyst_receives_the_module_that_implements_a_route() -> None:
+    """Routes registered in one server file map to components only through their handler module."""
+    route = {**_route(1), "handler_file": "server.ts", "handler_module": "routes/basket.ts"}
+    payload = json.dumps({"version": 1, "routes": [route], "coverage": {}}).encode()
+
+    projected = context.project_routes(payload)
+
+    jsonschema.validate(projected, _schema("architecture-route-context.schema.json"))
+    assert projected["routes"][0]["handler_module"] == "routes/basket.ts"
+
+
 def test_build_writes_both_projection_artifacts(tmp_path: Path) -> None:
     (tmp_path / ".recon-summary.md").write_text("# Recon\nsummary\n", encoding="utf-8")
     (tmp_path / ".route-inventory.json").write_text(

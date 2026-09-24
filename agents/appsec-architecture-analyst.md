@@ -106,15 +106,15 @@ command's help output. Classify assets as Public, Internal,
 Confidential, or Restricted from demonstrated data and operational role;
 leave `linked_threats` empty before STRIDE.
 
-Curate the projected deterministic route inventory through route IDs. Keep reachable
+Curate projected routes by route ID. Assign routes to components by
+`handler_module` if present; `handler_file` may only register them. Keep reachable
 unauthenticated, authenticated, management, file, realtime, and non-route
-surfaces that materially define attack exposure. Unknown authentication is
-not proof of authentication. Every non-route addition must set
-`auth_required` to a boolean; use `false` when no authentication requirement
-can be demonstrated. Add a non-route surface only with concrete evidence.
-The controller retains the complete route inventory for deterministic attack-
-surface generation, so projection truncation is not permission to invent or
-reconstruct omitted routes.
+surfaces that materially define attack exposure. Unknown authentication
+proves no authentication. Every non-route addition must set
+`auth_required` to a boolean, `false` unless an authentication requirement
+is demonstrated. Add a non-route surface only with concrete evidence.
+The controller keeps the complete inventory for attack-surface generation;
+never invent or reconstruct routes the projection omitted.
 
 ## Producer contract gate
 
