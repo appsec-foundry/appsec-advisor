@@ -47,7 +47,6 @@ from enrichment_pass import EnrichmentContinuation
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _atomic_io import atomic_write_json  # noqa: E402
-from _boundary_adjacency import is_adjacent  # noqa: E402
 
 
 def orm_source_files(components: list, repo_root: Path) -> dict[str, str]:
@@ -377,39 +376,27 @@ def reclassify(data: dict) -> tuple[dict, list[dict]]:
         if t.get("component_name"):
             t["component_name"] = next(c.get("name") or new_cid for c in components if c.get("id") == new_cid)
         if isinstance(t.get("boundary_refs"), list):
-            owned_evidence = {
-                ((entry.get("file") or "").strip(), entry.get("line"))
-                for entry in (t.get("evidence") if isinstance(t.get("evidence"), list) else [t.get("evidence")])
-                if isinstance(entry, dict) and entry.get("file")
-            }
-            reconciled_refs: list[dict] = []
-            for ref in t["boundary_refs"]:
-                if not isinstance(ref, dict):
-                    continue
-                boundary = boundaries.get(ref.get("boundary_id"))
-                locations = ref.get("evidence_locations") or []
-                evidence_survives = bool(locations) and all(
-                    isinstance(location, dict)
-                    and ((location.get("file") or "").strip(), location.get("line")) in owned_evidence
-                    for location in locations
+            # A merged survivor can cite one boundary from two origins. Moving it
+            # rewrites both origins to the new owner, so the pair collapses onto
+            # one (boundary_id, origin) key; only the shared rule dedupes that.
+            from prepare_trust_boundary_context import validate_finding_boundary_refs  # noqa: PLC0415 (import cycle)
+
+            t["boundary_refs"] = [
+                {**ref, "origin_component_id": new_cid} for ref in t["boundary_refs"] if isinstance(ref, dict)
+            ]
+            reconciled_refs, diagnostics = validate_finding_boundary_refs(
+                t,
+                boundaries=boundaries.values(),
+                origin_component_id=new_cid,
+                candidate_ids=None,
+                require_candidate=False,
+                known_component_ids=known_ids,
+            )
+            for diagnostic in diagnostics:
+                print(
+                    f"reclassify_components: {t.get('t_id') or t.get('id') or '<anon>'}: {diagnostic}",
+                    file=sys.stderr,
                 )
-                if (
-                    isinstance(boundary, dict)
-                    and boundary.get("resolution_status") == "resolved"
-                    and boundary.get("confidence") == "confirmed"
-                    and is_adjacent(new_cid, boundary)
-                    and evidence_survives
-                ):
-                    updated = dict(ref)
-                    updated["origin_component_id"] = new_cid
-                    reconciled_refs.append(updated)
-                else:
-                    print(
-                        f"reclassify_components: removed optional boundary reference "
-                        f"{ref.get('boundary_id')} from {t.get('t_id') or t.get('id') or '<anon>'}; "
-                        "new component is not a confirmed adjacent origin or evidence did not survive",
-                        file=sys.stderr,
-                    )
             if reconciled_refs:
                 t["boundary_refs"] = reconciled_refs
             else:

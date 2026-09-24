@@ -3160,6 +3160,24 @@ def cmd_finalize(args: argparse.Namespace) -> int:
     # legacy consumers and golden diffs are unaffected until a signal exists.
     weaknesses = refresh_weaknesses(out_dir, threats)
 
+    # Merging rebuilds survivors' instances and unions members' references, so
+    # the shared finding rule has the last word on what this artifact carries.
+    from prepare_trust_boundary_context import revalidate_boundary_refs
+
+    boundary_doc = _read_json_file(out_dir / ".trust-boundaries.json", default={})
+    component_doc = _read_json_file(out_dir / ".components.json", default={})
+    registered = {
+        row["id"]
+        for row in (component_doc.get("components") or [] if isinstance(component_doc, dict) else [])
+        if isinstance(row, dict) and isinstance(row.get("id"), str)
+    }
+    for warning in revalidate_boundary_refs(
+        threats,
+        boundaries=boundary_doc.get("trust_boundaries") or [] if isinstance(boundary_doc, dict) else [],
+        known_component_ids=registered or None,
+    ):
+        print(f"TRUST_BOUNDARY_REF_WARN: {warning}", file=sys.stderr)
+
     payload = {
         "version": 1,
         "generated_at": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

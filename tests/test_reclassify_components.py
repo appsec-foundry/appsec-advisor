@@ -374,6 +374,68 @@ def test_reclassification_reconciles_boundary_origin_and_drops_nonadjacent_ref()
     assert changes[0]["boundary_refs"] == threat["boundary_refs"]
 
 
+_MOVE_EVIDENCE = {"file": "routes/reviews.ts", "line": 36}
+_MOVE_INSTANCE = {"file": "routes/orders.ts", "line": 18}
+_MOVE_BOUNDARIES = {
+    "tb-db": {"id": "tb-db", "from": "api", "to": "store"},
+    "tb-ext": {"id": "tb-ext", "from": "external", "to": "api"},
+    "tb-web": {"id": "tb-web", "from": "external", "to": "web"},
+}
+
+
+def _ref(boundary_id: str, origin: str, location: dict = _MOVE_EVIDENCE) -> dict:
+    return {
+        "boundary_id": boundary_id,
+        "origin_component_id": origin,
+        "rationale": f"The injected predicate breaks the {boundary_id} crossing assumption.",
+        "evidence_locations": [dict(location)],
+    }
+
+
+@pytest.mark.parametrize(
+    ("refs", "kept"),
+    [
+        pytest.param([_ref("tb-db", "store"), _ref("tb-db", "api")], ["tb-db"], id="one-boundary-two-origins"),
+        pytest.param([_ref("tb-db", "store"), _ref("tb-ext", "api")], ["tb-db", "tb-ext"], id="distinct-boundaries"),
+        pytest.param([_ref("tb-ext", "store", _MOVE_INSTANCE)], ["tb-ext"], id="instance-owned-evidence"),
+        pytest.param([_ref("tb-web", "store"), _ref("tb-db", "store")], ["tb-db"], id="non-adjacent-dropped"),
+    ],
+)
+def test_moving_a_finding_keeps_its_boundary_refs_valid(refs, kept):
+    import validate_intermediate as vi
+    from _boundary_adjacency import is_adjacent
+
+    data = {
+        "components": [
+            {"id": "store", "tier": "data", "paths": ["data/**"]},
+            {"id": "api", "tier": "application", "paths": ["routes/**"]},
+            {"id": "web", "tier": "application", "paths": ["frontend/**"]},
+        ],
+        "trust_boundaries": [
+            {**row, "confidence": "confirmed", "resolution_status": "resolved"} for row in _MOVE_BOUNDARIES.values()
+        ],
+        "threats": [
+            {
+                "id": "T-002",
+                "component_id": "store",
+                "cwe": "CWE-943",
+                "evidence": dict(_MOVE_EVIDENCE),
+                "instances": [{**_MOVE_EVIDENCE, "component_id": "store"}, {**_MOVE_INSTANCE, "component_id": "store"}],
+                "boundary_refs": refs,
+            }
+        ],
+    }
+    out, changes = rc.reclassify(data)
+    threat = out["threats"][0]
+    assert threat["component_id"] == "api"
+    assert vi._check_boundary_refs(out) == []
+    assert [ref["boundary_id"] for ref in threat["boundary_refs"]] == kept
+    assert all(
+        is_adjacent(ref["origin_component_id"], _MOVE_BOUNDARIES[ref["boundary_id"]]) for ref in threat["boundary_refs"]
+    )
+    assert changes[0]["boundary_refs"] == threat["boundary_refs"]
+
+
 def test_reclassify_syncs_threat_ids_lists():
     # A PHANTOM (non-registered) current component with a single glob match
     # gets reassigned, and the per-component threat_ids lists are kept in sync.

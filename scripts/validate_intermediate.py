@@ -1999,8 +1999,10 @@ def main() -> None:
             # artifact. Without this, a reader assumes the analysis agents wrote
             # the offending value and edits the file — which re-runs identically.
             print(
-                "PRODUCER: this artifact is written by scripts/merge_threats.py (finalize). "
-                "Fix the producer and start a new run; editing the artifact does not fix the defect."
+                "PRODUCER: this artifact is written by scripts/merge_threats.py (finalize) and rewritten "
+                "in place by later deterministic passes such as scripts/reclassify_components.py; the "
+                "pass that ran right before this check wrote the offending value. Fix that producer and "
+                "start a new run; editing the artifact does not fix the defect."
             )
         sys.exit(1)
 
