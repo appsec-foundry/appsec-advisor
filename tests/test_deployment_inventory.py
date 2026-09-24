@@ -376,3 +376,71 @@ def test_cli_writes_nothing_when_the_output_breaks_the_schema(tmp_path: Path, mo
     assert DI.main(["--repo-root", str(tmp_path), "--output", str(out)]) == 1
     assert not out.exists()
     assert DI.main(["--repo-root", str(tmp_path / "missing"), "--output", str(out)]) == 2
+
+
+# ---------------------------------------------------------------- regressions: copied secrets, Helm tags, malformed manifests
+@pytest.mark.parametrize(
+    "ignore,reported",
+    [
+        ("*.key\n", ["db-credentials.json", "encryptionkeys/"]),
+        ("**/*.key\n!ci.key\n/db-credentials.json\n", ["ci.key", "encryptionkeys/"]),
+    ],
+    ids=["glob", "negation"],
+)
+def test_copied_secrets_follow_dockerignore_patterns_and_whole_words(tmp_path: Path, ignore: str, reported: list):
+    _write(tmp_path, "Dockerfile", "FROM node:24-slim\nCOPY . /app\n")
+    for name in ("server.key", "ci.key", "db-credentials.json", "encryptionkeys/a", "keycloak/realm.json"):
+        _write(tmp_path, name, "x")
+    for name in ("monkeypatch.py", "tokenizer.py", "credits.md"):
+        _write(tmp_path, name, "x")
+    _write(tmp_path, ".dockerignore", ignore)
+    assert DI.scan_runtime(tmp_path)["copies_repository"]["sensitive"] == reported
+
+
+def test_a_copied_env_file_is_reported_unless_ignored(tmp_path: Path):
+    _write(tmp_path, "Dockerfile", "FROM node:24-slim\nCOPY . /app\n")
+    _write(tmp_path, ".env", "X=1")
+    _write(tmp_path, ".env.example", "X=")
+    assert DI.scan_runtime(tmp_path)["copies_repository"]["sensitive"] == [".env"]
+    _write(tmp_path, ".dockerignore", ".env*\n")
+    assert DI.scan_runtime(tmp_path)["copies_repository"]["sensitive"] == []
+
+
+@pytest.mark.parametrize("tag_line", ["", '  tag: ""\n'], ids=["missing", "empty"])
+def test_helm_image_without_tag_uses_the_chart_app_version(tmp_path: Path, tag_line: str):
+    _write(tmp_path, "chart/Chart.yaml", 'name: web\nappVersion: "2.4.1"\n')
+    _write(tmp_path, "chart/values.yaml", f"image:\n  repository: example/web\n{tag_line}service:\n  port: 80\n")
+    [env] = DI.scan_helm(tmp_path)
+    pod = env["tree"]["children"][-1]
+    assert pod["image"] == "example/web:2.4.1" and not [f for f in pod["facts"] if "floats" in f["text"]]
+    # Negative: without an appVersion the tag is unknown, which is not the same as floating.
+    _write(tmp_path, "chart/Chart.yaml", "name: web\n")
+    pod = DI.scan_helm(tmp_path)[0]["tree"]["children"][-1]
+    assert "image" not in pod and not [f for f in pod["facts"] if "floats" in f["text"]]
+    assert "example/web" in pod["note"]
+    assert DI.validation_errors(DI.build_inventory(tmp_path)) == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: odd}\nspec:\n  template:\n    metadata:\n      labels: [x]\n",
+        "apiVersion: v1\nkind: [Service]\nmetadata: {name: odd}\n",
+        "apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata: {name: odd}\nspec:\n  rules: [plain]\n",
+    ],
+    ids=["labels-list", "kind-list", "rule-string"],
+)
+def test_one_malformed_manifest_does_not_drop_the_others(tmp_path: Path, bad: str):
+    _write(tmp_path, "k8s/app.yaml", MANIFESTS.format(ns="shop", svc="web-svc", app="web", host="web.example.test"))
+    _write(tmp_path, "k8s/odd.yaml", bad)
+    [env] = DI.scan_manifests(tmp_path)
+    assert "Deployment web" in json.dumps(env)
+    assert DI.validation_errors(DI.build_inventory(tmp_path)) == []
+
+
+def test_manifest_alias_expansion_is_bounded(tmp_path: Path):
+    lines = ['x0: &a0 ["v1"]'] + [f"x{i}: &a{i} [{', '.join([f'*a{i - 1}'] * 9)}]" for i in range(1, 7)]
+    _write(tmp_path, "k8s/bomb.yaml", "\n".join(lines) + "\napiVersion: *a6\nkind: Deployment\nmetadata: {name: b}\n")
+    _write(tmp_path, "k8s/app.yaml", MANIFESTS.format(ns="shop", svc="web-svc", app="web", host="web.example.test"))
+    [env] = DI.scan_manifests(tmp_path)
+    assert "Deployment b" not in json.dumps(env) and "Deployment web" in json.dumps(env)

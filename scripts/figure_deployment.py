@@ -86,7 +86,13 @@ DISPLAY = {
 
 
 def display(name: str) -> str:
-    return DISPLAY.get(name.lower(), name[:1].upper() + name[1:])
+    """Known technologies in their own spelling; any other name exactly as the model or manifest writes it."""
+    return DISPLAY.get(name.lower(), name)
+
+
+def _embedded(framework) -> list[str]:
+    """Embedded stores named in a framework string, also in combined notation (`sequelize+sqlite`, `knex/duckdb`)."""
+    return [t for t in re.split(r"[^a-z0-9.]+", str(framework or "").lower()) if t in EMBEDDED_STORES]
 
 
 # ================================================================ text measurement (a margin wider than tw: nothing touches a border)
@@ -329,13 +335,13 @@ def _container(model_comps: list[dict], server: list[dict], stores: list[dict], 
     }
     store_nodes = []
     for c in stores:
-        fw = str(c.get("framework") or "")
+        parts = [t for t in re.split(r"[^a-z0-9.]+", str(c.get("framework") or "").lower()) if t]
         pkg = _manifest_for(c, packages)
         store_nodes.append(
             {
                 "kind": "store",
-                "title": display(fw) if fw else c.get("name", "store"),
-                "version": _framework_version(fw, pkg),
+                "title": " + ".join(display(t) for t in parts) or c.get("name", "store"),
+                "version": _framework_version(_embedded(c.get("framework"))[0], pkg),
                 "comps": [c["id"]],
                 "children": [],
                 "facts": [{"text": "embedded in the process", "tone": "note"}],
@@ -431,7 +437,7 @@ def build(yaml_data: dict, inv: dict | None, number: int) -> DetailFigure | None
     build_comps = [c for c in comps if "build-pipeline" in zones[c["id"]]]
     clients = [c for c in comps if c.get("tier") == "client" and c not in build_comps]
     data = [c for c in comps if c.get("tier") == "data" and c not in build_comps]
-    stores = [c for c in data if str(c.get("framework") or "").lower() in EMBEDDED_STORES]
+    stores = [c for c in data if _embedded(c.get("framework"))]
     ext_stores = [c for c in data if c not in stores]
     server = [c for c in comps if c not in build_comps + clients + data]
 
@@ -440,21 +446,19 @@ def build(yaml_data: dict, inv: dict | None, number: int) -> DetailFigure | None
     if env:
         tree = _to_render(env["tree"])
         unplaced = _place(tree, comps, server, stores, ext_stores, inv)
-        if unplaced:
-            tree["children"].append(
-                {
-                    "kind": "bare",
-                    "layout": "row",
-                    "children": [
-                        {
-                            "kind": "network",
-                            "title": "components without a declared place",
-                            "comps": unplaced,
-                            "children": [],
-                        }
-                    ],
-                }
-            )
+        if unplaced:  # below the environment: drawn inside it, the box would contradict its own title
+            tree = {
+                "kind": "bare",
+                "children": [
+                    tree,
+                    {
+                        "kind": "network",
+                        "title": "components without a declared place",
+                        "comps": unplaced,
+                        "children": [],
+                    },
+                ],
+            }
     else:  # only a Dockerfile: the container is the whole deployment
         tree = _container(comps, server, stores, inv, "")
         if ext_stores:
@@ -505,14 +509,17 @@ def build(yaml_data: dict, inv: dict | None, number: int) -> DetailFigure | None
     take = _takeaway(env, tree, server, stores, inv)
     y0 = s.frame(number, TITLE, "deployment", "where each component runs and what it is built on", take)
     mark = len(s.parts)  # zones sized after their content are inserted here, below every box
-    has_gutter = any(t["_from_client"] for t in thirds) and clients
-    gut = 36 if has_gutter else 0
+    # One gutter lane and one corridor track per third party the browser calls: lanes never share a height,
+    # and a lane enters its box from the side, so it never runs through the boxes stacked above it.
+    lanes = sum(1 for t in thirds if t["_from_client"]) if clients else 0
+    gut = 16 * lanes + 14 if lanes else 0
     top = y0 + gut
     DX, DW = 20, 232
     TW = 196 if thirds else 0
     TX = W - 20 - TW
     HX = DX + DW + 36
-    HW = (TX - 36 - HX) if thirds else (W - 20 - HX)
+    HW = (TX - max(36, 28 + 8 * lanes) - HX) if thirds else (W - 20 - HX)
+    box = tree["children"][0] if tree["kind"] == "bare" else tree  # a bare wrapper has no position of its own
 
     # ---- deployment column
     tree_h = render(tree, HX + 14, top + 34, HW - 28, Canvas(cnum, names), 0, False)
@@ -548,7 +555,7 @@ def build(yaml_data: dict, inv: dict | None, number: int) -> DetailFigure | None
     # ---- third-party column
     anchors = []
     if thirds:
-        egress = _find(tree, lambda n: n.get("role") == "egress") or _find(tree, lambda n: n.get("_process")) or tree
+        egress = _find(tree, lambda n: n.get("role") == "egress") or _find(tree, lambda n: n.get("_process")) or box
         ey = egress["_pos"][1] if "_pos" in egress else top + 34
         ty = top + 34
         for t in thirds:
@@ -561,7 +568,7 @@ def build(yaml_data: dict, inv: dict | None, number: int) -> DetailFigure | None
         _zone(s, "third", TX, top, TW, ty - top - 2, insert_at=mark)
 
     # ---- connections
-    entry = _find(tree, lambda n: n.get("role") == "entry") or _find(tree, lambda n: n.get("_container")) or tree
+    entry = _find(tree, lambda n: n.get("role") == "entry") or _find(tree, lambda n: n.get("_container")) or box
     if "_pos" in entry:
         nx, ny, nw, nh = entry["_pos"]
         src = dev_nodes[0]["_pos"] if dev_nodes else browser
@@ -579,32 +586,34 @@ def build(yaml_data: dict, inv: dict | None, number: int) -> DetailFigure | None
         weak = any(f["tone"] == "weak" for f in t["facts"])
         col, mk = (RED, "red") if weak else (GREY, "grey")
         if t["_from_client"] and clients:
-            gy = top - gut / 2 - lane * 8
-            gx = browser[0] + browser[2] - 30 - lane * 12
-            ox = tx0 + tw0 / 2 - lane * 12
-            s.path(f"M{gx} {browser[1]} L{gx} {gy} L{ox} {gy} L{ox} {ty0}", stroke=col, sw=1.5, marker=mk)
-            label = f"{', '.join(cnum[i] for i in dict.fromkeys(t['_src']) if i in cnum)} → {t['title']}"
+            # lane 0 runs highest, starts leftmost and turns down rightmost: no two lanes cross
+            gy = y0 + 10 + lane * 16
+            gx = browser[0] + browser[2] - 30 - (lanes - 1 - lane) * 12
+            cx = TX - 8 - lane * 8
+            oy = ty0 + 18
+            s.path(f"M{gx} {browser[1]} L{gx} {gy} L{cx} {gy} L{cx} {oy} L{tx0} {oy}", stroke=col, sw=1.5, marker=mk)
+            label = fit(
+                f"{', '.join(cnum[i] for i in dict.fromkeys(t['_src']) if i in cnum)} → {t['title']}", 9, HW - 40
+            )
             lx = HX + HW / 2
             s.rect(lx - text_w(label, 9) / 2 - 6, gy - 8, text_w(label, 9) + 12, 15, fill="#fff", stroke="#fff", rx=2)
             s.text(lx, gy + 3, label, size=9, fill=col, anchor="middle")
             lane += 1
         else:
-            egress = (
-                _find(tree, lambda n: n.get("role") == "egress") or _find(tree, lambda n: n.get("_process")) or tree
-            )
+            egress = _find(tree, lambda n: n.get("role") == "egress") or _find(tree, lambda n: n.get("_process")) or box
             ex, ey, ew, eh = egress["_pos"]
             oy = ty0 + 18
             if ey + 8 <= oy <= ey + eh - 8:
                 s.path(f"M{ex + ew} {oy} L{tx0} {oy}", stroke=col, sw=1.5, marker=mk)
             else:
-                cx = TX - 18
+                cx = HX + HW + 10  # left of the browser lanes' tracks
                 s.path(f"M{ex + ew} {ey + 18} L{cx} {ey + 18} L{cx} {oy} L{tx0} {oy}", stroke=col, sw=1.5, marker=mk)
 
     # ---- build and release
     col_bottom = max(
         top + deploy_h, top + dev_h, (anchors[-1]["_pos"][1] + anchors[-1]["_pos"][3] + 16) if anchors else 0
     )
-    y = _build_lane(s, inv, env, col_bottom + 34)
+    y = _build_lane(cv, inv, env, col_bottom + 34, [c["id"] for c in build_comps], {c["id"]: c for c in comps})
     s.h = y
     s.legend(
         y + 26,
@@ -662,27 +671,38 @@ def _chain_arrows(s: Svg, tree: dict, entry: dict):
         prev = nxt
 
 
-def _build_lane(s: Svg, inv: dict, env: dict | None, by0: float) -> float:
+def _top_segment(path: str) -> str:
+    return str(path).split("/")[0]
+
+
+def _build_lane(cv: Canvas, inv: dict, env: dict | None, by0: float, pipeline: list[str], comps: dict) -> float:
+    """CI systems, the container build and the publish targets; the model's pipeline components sit in their CI box."""
+    s = cv.s
     ci = inv.get("ci") or []
     rt = inv.get("runtime")
     deps = inv.get("dependencies") or {}
-    if not ci and not rt:
+    if not ci and not rt and not pipeline:
         return by0 - 34
-    rows = max(len(ci), 1)
-    row_h = 62
+    systems = ci or [{"system": "no CI configuration", "source": "", "facts": [], "publishes": []}]
+    x1, w1 = 36, 360
+    held: list[list[str]] = [[] for _ in systems]
+    for cid in pipeline:  # the CI system whose configuration the component's paths point at, else the first
+        tops = {_top_segment(p) for p in comps[cid].get("paths") or []}
+        i = next((k for k, c in enumerate(systems) if c["source"] and _top_segment(c["source"]) in tops), 0)
+        held[i].append(cid)
+    row_hs = [max(62, 46 + sum(cv.chip_h(w1 - 24, cid) + 6 for cid in ids) + 6) for ids in held]
+    rows_h = sum(row_hs) + 10 * (len(row_hs) - 1)
     note = _deploy_note(ci, env)
-    bh = 32 + rows * (row_h + 10) + (18 if note else 0)
+    bh = 32 + rows_h + 10 + (18 if note else 0)
     title, stroke, fill = ZONES["build"]
     s.rect(20, by0, W - 40, bh, fill=fill, stroke=stroke, sw=1.2, rx=10, dash="6 4")
     s.text(34, by0 + 20, title, size=10, fill=stroke, weight="bold")
-    x1, w1 = 36, 360
     x2, w2 = x1 + w1 + 50, 330
     x3 = x2 + w2 + 50
     w3 = W - 36 - x3
     top = by0 + 30
     if rt:
-        bh_box = rows * (row_h + 10) - 10
-        s.rect(x2, top, w2, bh_box, fill="#fff", stroke=stroke, sw=1.2, rx=8)
+        s.rect(x2, top, w2, rows_h, fill="#fff", stroke=stroke, sw=1.2, rx=8)
         s.text(x2 + 12, top + 18, f"container build ({rt['dockerfile']})", size=11, weight="bold", fill=NAVY)
         chain = " → ".join(
             [st["image"].split("/")[-1] for st in rt.get("build_stages") or []] + [rt["base"]["image"].split("/")[-1]]
@@ -696,25 +716,30 @@ def _build_lane(s: Svg, inv: dict, env: dict | None, by0: float) -> float:
                 size=9.5,
                 fill=AMBER,
             )
-    for i, c in enumerate(ci or [{"system": "no CI configuration", "facts": [], "publishes": []}]):
-        yy = top + i * (row_h + 10)
+    yy = top
+    for c, ids, row_h in zip(systems, held, row_hs):
         s.rect(x1, yy, w1, row_h, fill="#fff", stroke=stroke, sw=1.2, rx=8)
-        s.text(x1 + 12, yy + 18, c["system"], size=11, weight="bold", fill=NAVY)
+        s.text(x1 + 12, yy + 18, fit(c["system"], 11, w1 - 24, True), size=11, weight="bold", fill=NAVY)
         f = (c.get("facts") or [None])[0]
         if f:
             s.text(x1 + 12, yy + 35, fit(f["text"], 9.5, w1 - 24), size=9.5, fill=TONE[f["tone"]])
+        cy = yy + 46
+        for cid in ids:
+            cv.chip(x1 + 12, cy, w1 - 24, cid)
+            cy += cv.chip_h(w1 - 24, cid) + 6
         if rt:
-            s.path(f"M{x1 + w1} {yy + row_h / 2} L{x2} {yy + row_h / 2}", stroke=stroke, sw=1.5, marker="navy")
+            s.path(f"M{x1 + w1} {yy + 31} L{x2} {yy + 31}", stroke=stroke, sw=1.5, marker="navy")
         if c.get("publishes"):
-            s.rect(x3, yy, w3, row_h, fill="#fff", stroke=stroke, sw=1.2, rx=8)
+            s.rect(x3, yy, w3, 62, fill="#fff", stroke=stroke, sw=1.2, rx=8)
             s.text(
                 x3 + 12, yy + 18, fit(", ".join(c["publishes"]), 11, w3 - 24, True), size=11, weight="bold", fill=NAVY
             )
             s.text(x3 + 12, yy + 35, "published by " + c["system"], size=9.5, fill=MUTED)
             src_x = x2 + w2 if rt else x1 + w1
-            s.path(f"M{src_x} {yy + row_h / 2} L{x3} {yy + row_h / 2}", stroke=stroke, sw=1.5, marker="navy")
+            s.path(f"M{src_x} {yy + 31} L{x3} {yy + 31}", stroke=stroke, sw=1.5, marker="navy")
+        yy += row_h + 10
     if note:
-        s.text(x1, top + rows * (row_h + 10) + 6, note, size=9.5, fill=AMBER)
+        s.text(x1, top + rows_h + 16, note, size=9.5, fill=AMBER)
     return by0 + bh
 
 
@@ -760,7 +785,8 @@ def _takeaway(env: dict | None, tree: dict, server: list[dict], stores: list[dic
             what += f" and {len(stores)} embedded data store{'s' if len(stores) != 1 else ''}"
         runtime = rt.get("runtime_label") or "application"
         place = where.get(env["platform"], "one container") if env else "one container"
-        parts.append(f"{what[0].upper() + what[1:]} run in one {runtime} process in {place}.")
+        verb = "runs" if len(server) == 1 and not stores else "run"
+        parts.append(f"{what[0].upper() + what[1:]} {verb} in one {runtime} process in {place}.")
     facts = [f for n in _walk(tree) for f in n.get("facts") or []]
     weak = list(dict.fromkeys(f["text"] for f in facts if f["tone"] == "weak"))
     decision = list(dict.fromkeys(f["text"] for f in facts if f["tone"] == "decision"))

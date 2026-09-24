@@ -375,3 +375,33 @@ def test_contract_and_qa_accept_a_detail_figure_only_when_its_file_exists(tmp_pa
     (ctx.output_dir / "threat-model.figure3.svg").unlink()
     issues = qa_checks.check_diagram_compactness(report_md, CONTRACT).issues
     assert issues == ["§2.2 Container Architecture: detail figure `threat-model.figure3.svg` is referenced but missing"]
+
+
+@pytest.mark.parametrize("variant", [False, True], ids=["neutral", "renamed"])
+def test_takeaway_does_not_call_components_unprotected_when_controls_apply_system_wide(variant: bool):
+    name = "Catalog" if variant else "Orders"
+    model = {
+        "components": [{"id": "C-01", "name": f"{name} API", "tier": "application", "paths": ["src/**"]}],
+        "data_flows": [{"id": "df-1", "from": "user", "to": "C-01", "authentication": {"scheme": "none"}}],
+        "security_controls": [{"control": "Password hashing", "effectiveness": "Weak", "implementation": ""}],
+        "threats": [],
+    }
+    fig = FD.figure_controls(FD.Model(model, None), 4)
+    assert "no control evidenced at all" not in fig.takeaway
+    assert "no component-specific control" in fig.takeaway and "1 control applies system-wide" in fig.takeaway
+    # Negative: without a system-wide control the component really has none.
+    model["security_controls"][0]["implementation"] = "other/x.py"
+    model["components"].append({"id": "C-02", "name": "Other", "tier": "application", "paths": ["other/**"]})
+    fig = FD.figure_controls(FD.Model(model, None), 4)
+    assert "no control evidenced at all (C-01)" in fig.takeaway
+
+
+def test_missing_data_classification_is_not_drawn_as_none():
+    model = {
+        "components": [{"id": "C-01", "name": "API", "tier": "application", "paths": ["src/**"]}],
+        "data_flows": [{"id": "df-1", "from": "user", "to": "C-01"}],
+        "security_controls": [{"control": "Password hashing", "effectiveness": "Weak", "implementation": "src/a.py"}],
+        "threats": [],
+    }
+    texts = ["".join(t.itertext()) for t in ET.fromstring(FD.figure_controls(FD.Model(model, None), 4).svg).iter()]
+    assert "None" not in texts

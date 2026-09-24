@@ -479,10 +479,14 @@ def figure_controls(m: Model, number: int) -> DetailFigure | None:
         inbound[f.get("to")].append(f)
     if bare:
         open_ = all(_auth_counts(inbound.get(c["id"], [])).get("none") for c in bare)
+        # System-wide evidence may stand in front of these components; the takeaway must not call them bare.
+        wide = len({id(k) for ks in cmap.get(SYSTEM_WIDE, {}).values() for k in ks})
         take += (
-            f"; {len(bare)} component{'s have' if len(bare) != 1 else ' has'} no control evidenced at all "
-            f"({', '.join(m.cnum[c['id']] for c in bare)})"
+            f"; {len(bare)} component{'s have' if len(bare) != 1 else ' has'} "
+            + ("no component-specific control" if wide else "no control evidenced at all")
+            + f" ({', '.join(m.cnum[c['id']] for c in bare)})"
             + (", although each accepts unauthenticated traffic" if open_ else "")
+            + (f"; {wide} control{'s apply' if wide != 1 else ' applies'} system-wide" if wide else "")
         )
     take += "."
     s = Svg()
@@ -608,7 +612,11 @@ def figure_controls(m: Model, number: int) -> DetailFigure | None:
             anchor="middle",
         )
         x += cols[2][1]
-        classes = [str(f.get("data_classification")) for f in m.flows if cid in (f.get("from"), f.get("to"))]
+        classes = [
+            str(f["data_classification"])
+            for f in m.flows
+            if cid in (f.get("from"), f.get("to")) and f.get("data_classification")
+        ]
         top_cls = max(classes, key=lambda k: rank.index(k) if k in rank else -1) if classes else None
         sens = sorted(
             {str(d.get("category")) for d in c.get("sensitive_data") or [] if isinstance(d, dict) and d.get("category")}

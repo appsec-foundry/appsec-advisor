@@ -96,3 +96,47 @@ def test_unreadable_oversized_and_escaping_files_yield_no_services(tmp_path: Pat
     (tmp_path / "docker-compose.yml").unlink()
     (tmp_path / "sub").symlink_to(outside, target_is_directory=True)
     assert C.load_services(tmp_path) == []
+
+
+def _laughs(levels: int, merge: bool = False) -> str:
+    """Nested aliases (or merge keys) that expand to 9**levels nodes from a few hundred bytes."""
+    if merge:
+        lines = ["x-m0: &m0 {" + ", ".join(f"k{j}: 1" for j in range(9)) + "}"]
+        lines += [f"x-m{i}: &m{i} {{<<: [{', '.join([f'*m{i - 1}'] * 9)}]}}" for i in range(1, levels + 1)]
+        return "\n".join(lines) + f"\nservices:\n  web:\n    image: nginx:1.27.0\n    labels: *m{levels}\n"
+    lines = ['x-a0: &a0 ["lol"]']
+    lines += [f"x-a{i}: &a{i} [{', '.join([f'*a{i - 1}'] * 9)}]" for i in range(1, levels + 1)]
+    return "\n".join(lines) + f"\nservices:\n  web:\n    image: *a{levels}\n"
+
+
+def test_root_compose_file_wins_over_many_nested_ones(tmp_path: Path):
+    for name, nested in (("docker-compose.yml", "apps"), ("compose.yaml", "a-services")):
+        root = tmp_path / name
+        for i in range(10):
+            (root / nested / f"svc{i}").mkdir(parents=True)
+            (root / nested / f"svc{i}" / "docker-compose.yml").write_text("services:\n  x:\n    image: a:1\n")
+        (root / name).write_text(COMPOSE)
+        primary, _ = C.primary_compose_file(root)
+        assert primary == root / name
+    # Negative: without a root file the first nested one is still found.
+    primary, _ = C.primary_compose_file(tmp_path / "compose.yaml" / "a-services")
+    assert primary is not None and primary.name == "docker-compose.yml"
+
+
+def test_alias_expansion_is_bounded(tmp_path: Path):
+    for merge in (False, True):
+        p = tmp_path / f"docker-compose-{merge}.yml"
+        p.write_text(_laughs(6 if not merge else 7, merge), encoding="utf-8")
+        assert len(p.read_bytes()) < 2048
+        assert C.parse_compose_file(p, tmp_path) == []  # treated as unreadable, not expanded
+    # Negative: ordinary anchors and merge keys still load.
+    p = tmp_path / "docker-compose.yml"
+    p.write_text(
+        "x-common: &common\n  restart: always\n  image: nginx:1.27.0\n"
+        "services:\n  web:\n    <<: *common\n  api:\n    <<: *common\n    image: example/api:2.0.0\n",
+        encoding="utf-8",
+    )
+    assert [(s.name, s.image) for s in C.parse_compose_file(p, tmp_path)] == [
+        ("web", "nginx:1.27.0"),
+        ("api", "example/api:2.0.0"),
+    ]

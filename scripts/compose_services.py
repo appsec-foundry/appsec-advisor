@@ -7,8 +7,9 @@ of a key whose value is a boolean-like switch, so a secret in an ``environment:`
 block cannot reach a rendered figure.
 
 Repository content is untrusted: discovery is bounded in depth and file size,
-parsing uses ``yaml.safe_load``, and files that resolve outside the repository
-root are ignored. Every failure degrades to "no services".
+parsing uses ``load_yaml_bounded`` (``safe_load`` with a bound on alias and
+merge-key expansion), and files that resolve outside the repository root are
+ignored. Every failure degrades to "no services".
 """
 
 from __future__ import annotations
@@ -26,6 +27,59 @@ _MAX_FILES = 8
 _SKIP_DIRS = {".git", "node_modules", "vendor", ".venv", "venv", "target", "build", "dist", "docs"}
 _SWITCH_VALUE_RE = re.compile(r"^(?:0|1|true|false|yes|no|on|off)$", re.IGNORECASE)
 _LOOPBACK = {"127.0.0.1", "::1", "localhost"}
+_MAX_EXPANDED_NODES = 200_000  # a 512 KiB file without aliases stays far below; nested aliases exceed it
+
+
+class YAMLExpansionError(yaml.YAMLError):
+    """A document whose aliases or merge keys expand beyond ``_MAX_EXPANDED_NODES``, or refer to themselves."""
+
+
+def _expanded(node: yaml.Node, memo: dict[int, int], active: set[int]) -> int:
+    """Node count of ``node`` with every alias expanded; shared nodes are counted once per reference."""
+    key = id(node)
+    if key in memo:
+        return memo[key]
+    if key in active:
+        raise YAMLExpansionError("recursive alias")
+    if isinstance(node, yaml.ScalarNode):
+        return 1
+    active.add(key)
+    children = [n for pair in node.value for n in pair] if isinstance(node, yaml.MappingNode) else node.value
+    total = 1
+    for child in children:
+        total += _expanded(child, memo, active)
+        if total > _MAX_EXPANDED_NODES:
+            raise YAMLExpansionError("aliases expand beyond the reader's bound")
+    active.discard(key)
+    memo[key] = total
+    return total
+
+
+def load_yaml_bounded(text: str, all_documents: bool = False):
+    """``yaml.safe_load`` (or a list as ``safe_load_all``) that checks the node graph before building objects.
+
+    Aliases stay shared after loading and expand in any later ``str()`` or walk, and merge keys expand while
+    loading, so a file of a few hundred bytes could otherwise stall the scan. Raises ``yaml.YAMLError``.
+    """
+    loader = yaml.SafeLoader(text)
+    try:
+        docs, memo, budget = [], {}, 0
+        while loader.check_node():
+            node = loader.get_node()
+            try:
+                budget += _expanded(node, memo, set())
+            except RecursionError as exc:
+                raise YAMLExpansionError("nesting too deep") from exc
+            if budget > _MAX_EXPANDED_NODES:
+                raise YAMLExpansionError("aliases expand beyond the reader's bound")
+            docs.append(loader.construct_document(node))
+    finally:
+        loader.dispose()
+    if all_documents:
+        return docs
+    if len(docs) > 1:
+        raise yaml.YAMLError("expected a single document")
+    return docs[0] if docs else None
 
 
 @dataclass(frozen=True)
@@ -183,7 +237,7 @@ def parse_compose_file(path: Path, repo_root: Path) -> list[Service]:
         if path.stat().st_size > _MAX_BYTES:
             return []
         text = path.read_text(encoding="utf-8", errors="replace")
-        data = yaml.safe_load(text)
+        data = load_yaml_bounded(text)
     except (OSError, yaml.YAMLError):
         return []
     services = data.get("services") if isinstance(data, dict) else None
@@ -237,9 +291,22 @@ def primary_compose_file(repo_root: Path | None) -> tuple[Path | None, list[Path
         return None, []
     files = discover_compose_files(repo_root)
     root = repo_root.resolve()
-    primary = next((f for name in _DEFAULT_NAMES for f in files if f.name == name and f.parent.resolve() == root), None)
+    # The root is checked directly: the bounded walk may stop in nested folders before it reaches a root file.
+    primary = next((root / name for name in _DEFAULT_NAMES if _usable(root / name, root)), None)
     primary = primary or (files[0] if files else None)
     return primary, [f for f in files if f != primary]
+
+
+def _usable(path: Path, root: Path) -> bool:
+    try:
+        return (
+            path.is_file()
+            and not path.is_symlink()
+            and path.resolve().is_relative_to(root)
+            and path.stat().st_size <= _MAX_BYTES
+        )
+    except OSError:
+        return False
 
 
 def load_services(repo_root: Path | None) -> list[Service]:
@@ -264,7 +331,7 @@ def compose_networks(repo_root: Path | None) -> dict[str, str]:
     if primary is None:
         return {}
     try:
-        data = yaml.safe_load(primary.read_text(encoding="utf-8", errors="replace"))
+        data = load_yaml_bounded(primary.read_text(encoding="utf-8", errors="replace"))
     except (OSError, yaml.YAMLError):
         return {}
     nets = data.get("networks") if isinstance(data, dict) else None

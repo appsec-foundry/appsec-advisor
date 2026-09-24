@@ -346,3 +346,83 @@ def test_hygiene_check_catches_a_line_through_a_box():
     )
     with pytest.raises(AssertionError, match="runs through box"):
         assert_drawn_cleanly(bad)
+
+
+# ---------------------------------------------------------------- placement and routing regressions
+def _texts(svg: str) -> list[tuple[str, float, float]]:
+    return [("".join(t.itertext()), _num(t.get("x")), _num(t.get("y"))) for t in ET.fromstring(svg).iter(f"{NS}text")]
+
+
+def _rect_of(svg: str, stroke: str, dash: str) -> list[tuple[float, float, float, float]]:
+    return [
+        (_num(r.get("x")), _num(r.get("y")), _num(r.get("width")), _num(r.get("height")))
+        for r in ET.fromstring(svg).iter(f"{NS}rect")
+        if r.get("stroke") == stroke and r.get("stroke-dasharray") == dash
+    ]
+
+
+@pytest.mark.parametrize("variant", [False, True], ids=["neutral", "renamed"])
+def test_build_pipeline_components_are_drawn_in_the_build_lane(tmp_path: Path, variant: bool):
+    n = _names(variant)
+    model = _model(n)
+    if variant:
+        model["components"][-1].update(id="release-flow", name="Release Workflow")
+    inv = DI.build_inventory(_repo(tmp_path, n, "k8s"))
+    fig = FDEP.build(model, inv, 3)
+    label = "Release Workflow" if variant else "Build Pipeline"
+    chip = next((t for t in _texts(fig.svg) if t[0].endswith(label)), None)
+    assert chip is not None, "the pipeline component has no chip"
+    lane = next(t for t in _texts(fig.svg) if t[0] == "BUILD AND RELEASE")
+    assert chip[2] > lane[2]  # drawn inside the build lane, not in the deployment
+    assert_drawn_cleanly(fig.svg)
+
+
+@pytest.mark.parametrize("count", [2, 4])
+def test_several_third_parties_called_from_the_browser_keep_lines_and_labels_apart(tmp_path: Path, count: int):
+    n = _names(count == 4)
+    model = _model(n)
+    ui = model["components"][0]["id"]
+    for i in range(count):
+        model["external_entities"].append({"id": f"cdn-{i}", "name": f"Asset Host {i}"})
+        model["data_flows"].append(
+            {"id": f"df-c{i}", "from": ui, "to": "external", "to_entity": f"cdn-{i}", "protocol": "HTTPS"}
+        )
+    fig = FDEP.build(model, DI.build_inventory(_repo(tmp_path, n, "k8s")), 3)
+    assert_drawn_cleanly(fig.svg)
+    labels = sorted(t[2] for t in _texts(fig.svg) if " → " in t[0] and t[0].startswith("C-"))
+    assert len(labels) == count + 1  # the identity provider plus the asset hosts
+    assert all(b - a >= 15 for a, b in zip(labels, labels[1:])), labels
+    takeaway_bottom = max(t[2] for t in _texts(fig.svg) if t[1] == 150)  # the takeaway lines
+    assert labels[0] - 9 > takeaway_bottom + 4
+
+
+@pytest.mark.parametrize("framework", ["sequelize+sqlite", "knex/duckdb"])
+def test_embedded_store_is_recognized_in_a_combined_framework(tmp_path: Path, framework: str):
+    n = _names(False)
+    model = _model(n)
+    model["components"][4]["framework"] = framework
+    fig = FDEP.build(model, DI.build_inventory(_repo(tmp_path, n, "k8s")), 3)
+    assert "1 embedded data store" in fig.takeaway
+    # Negative: a server database in the same notation stays outside the process.
+    model["components"][4]["framework"] = "sequelize+postgresql"
+    assert "embedded data store" not in FDEP.build(model, DI.build_inventory(_repo(tmp_path, n, "k8s")), 3).takeaway
+
+
+def test_components_without_a_place_are_drawn_outside_the_environment(tmp_path: Path):
+    n = _names(False)
+    fig = FDEP.build(_model(n), DI.build_inventory(_repo(tmp_path, n, "k8s")), 3)
+    cluster = [r for r in _rect_of(fig.svg, "#4f6d9c", "6 4") if r[1] > 150]
+    env = min(cluster, key=lambda r: r[2] * r[3])  # the environment box; the larger one is the zone
+    label = next(t for t in _texts(fig.svg) if t[0] == "components without a declared place")
+    assert label[2] > env[1] + env[3], "drawn inside the environment it has no place in"
+    assert_drawn_cleanly(fig.svg)
+
+
+def test_names_keep_their_spelling_and_one_component_runs(tmp_path: Path):
+    n = _names(False)
+    model = _model(n)
+    model["components"] = [model["components"][0], {**model["components"][1], "framework": "ai-sdk"}]
+    fig = FDEP.build(model, DI.build_inventory(_repo(tmp_path, n, "k8s")), 3)
+    texts = [t[0] for t in _texts(fig.svg)]
+    assert "ai-sdk" in texts and "Ai-sdk" not in texts
+    assert fig.takeaway.startswith("1 server component runs in one")

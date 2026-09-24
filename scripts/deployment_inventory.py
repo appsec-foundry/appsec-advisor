@@ -28,6 +28,7 @@ Exit codes: 0 written, 1 invalid output (nothing written), 2 usage error.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -39,7 +40,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _lib_manifest import discover_manifests, parse_manifest  # noqa: E402
-from compose_services import parse_compose_file, primary_compose_file  # noqa: E402
+from compose_services import load_yaml_bounded, parse_compose_file, primary_compose_file  # noqa: E402
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = PLUGIN_ROOT / "schemas" / "deployment-inventory.schema.json"
@@ -68,7 +69,29 @@ SKIP_DIRS = {
     "examples",
     "docs",
 }
-SENSITIVE_RE = re.compile(r"key|secret|cred|passw|token|\.pem$|\.p12$|\.pfx$|\.jks$|\.env$", re.I)
+# A name is sensitive when one of its words is (`db-credentials.json`, `encryptionkeys/`), never by substring
+# (`keycloak/`, `monkeypatch.py`, `tokenizer.py`), or by its extension.
+SENSITIVE_WORDS = {
+    "key",
+    "keys",
+    "secret",
+    "secrets",
+    "cred",
+    "creds",
+    "credential",
+    "credentials",
+    "password",
+    "passwords",
+    "passwd",
+    "htpasswd",
+    "token",
+    "tokens",
+    "keystore",
+    "truststore",
+}
+SENSITIVE_WORD_ENDINGS = ("keys", "secrets", "credentials", "passwords", "tokens")
+SENSITIVE_SUFFIXES = (".pem", ".p12", ".pfx", ".jks", ".key")
+TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist")
 LOCKFILES = {
     "package-lock.json",
     "yarn.lock",
@@ -258,18 +281,11 @@ def scan_runtime(root: Path) -> dict | None:
     copy_line = _line_of(text, r"^\s*(COPY|ADD)\s+(--\S+\s+)*\.\s")
     copies = None
     if copy_line and df.parent.resolve() == root:
-        ignore = {
-            ln.strip().strip("/").lstrip("/")
-            for ln in _read(root / ".dockerignore", root).splitlines()
-            if ln.strip() and not ln.lstrip().startswith("#")
-        }
+        rules = _dockerignore_rules(_read(root / ".dockerignore", root))
         sensitive = sorted(
             p.name + ("/" if p.is_dir() else "")
             for p in root.iterdir()
-            if SENSITIVE_RE.search(p.name)
-            and not p.name.startswith(".")
-            and p.name not in ignore
-            and not p.is_symlink()
+            if _sensitive(p.name) and not _ignored(p.name, rules) and not p.is_symlink()
         )[:16]
         copies = {"line": copy_line, "sensitive": [_clip(s, 120) for s in sensitive]}
     return {
@@ -282,6 +298,40 @@ def scan_runtime(root: Path) -> dict | None:
         "copies_repository": copies,
         "runtime_label": runtime_label([s["image"] for s in stages[::-1]]),
     }
+
+
+def _sensitive(name: str) -> bool:
+    low = name.lower()
+    if low.endswith(TEMPLATE_SUFFIXES):
+        return False
+    if low.endswith(SENSITIVE_SUFFIXES) or low == ".env" or low.startswith(".env."):
+        return True
+    return any(w in SENSITIVE_WORDS or w.endswith(SENSITIVE_WORD_ENDINGS) for w in re.split(r"[^a-z0-9]+", low))
+
+
+def _dockerignore_rules(text: str) -> list[tuple[bool, str]]:
+    """(negated, pattern) per line, in order; patterns are relative to the build context."""
+    rules = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        neg = ln.startswith("!")
+        pat = ln[1:].strip() if neg else ln
+        pat = re.sub(r"^(\./|/)+", "", pat).rstrip("/")
+        if pat:
+            rules.append((neg, pat))
+    return rules
+
+
+def _ignored(name: str, rules: list[tuple[bool, str]]) -> bool:
+    """Whether a top-level entry is excluded from the build context; the last matching rule wins."""
+    ignored = False
+    for neg, pat in rules:
+        cands = {pat, pat.removesuffix("/**")} | ({pat[3:]} if pat.startswith("**/") else set())
+        if any(fnmatch.fnmatchcase(name, c) for c in cands):
+            ignored = not neg
+    return ignored
 
 
 def _root_user(user: dict | None) -> bool:
@@ -374,19 +424,62 @@ def _k8s_docs(root: Path) -> list[tuple[str, dict, int]]:
         if "apiVersion" not in text or "kind" not in text:
             continue
         try:
-            docs = list(yaml.safe_load_all(text))
+            docs = load_yaml_bounded(text, all_documents=True)
         except yaml.YAMLError:
             continue
         rel = _rel(p, root)
         starts = [i + 1 for i, ln in enumerate(text.splitlines()) if re.match(r"^kind:\s*", ln)]
         k = 0
         for d in docs[:64]:
-            if isinstance(d, dict) and d.get("kind") in K8S_KINDS and isinstance(d.get("metadata"), dict):
+            if isinstance(d, dict) and _k8s_shape_ok(d) and d["kind"] in K8S_KINDS:
                 line = starts[k] if k < len(starts) else 1
                 out.append((rel, d, line))
             if isinstance(d, dict) and d.get("kind"):
                 k += 1
     return out
+
+
+_K8S_DICTS = (
+    ("metadata",),
+    ("metadata", "labels"),
+    ("spec",),
+    ("spec", "template"),
+    ("spec", "template", "metadata"),
+    ("spec", "template", "metadata", "labels"),
+    ("spec", "template", "spec"),
+    ("spec", "selector"),
+    ("spec", "to"),
+)
+_K8S_LISTS = (("spec", "ports"), ("spec", "rules"), ("spec", "template", "spec", "containers"))
+
+
+def _at(d, path: tuple[str, ...]):
+    for key in path:
+        if not isinstance(d, dict):
+            return None
+        d = d.get(key)
+    return d
+
+
+def _k8s_shape_ok(d: dict) -> bool:
+    """The fields the readers below walk have the type they expect; a document that does not is skipped alone."""
+    if not isinstance(d.get("kind"), str) or not isinstance(d.get("metadata"), dict):
+        return False
+    if any(_at(d, p) is not None and not isinstance(_at(d, p), dict) for p in _K8S_DICTS):
+        return False
+    if any(_at(d, p) is not None and not isinstance(_at(d, p), list) for p in _K8S_LISTS):
+        return False
+    for rule in _at(d, ("spec", "rules")) or []:
+        http = rule.get("http") if isinstance(rule, dict) else None
+        if rule is not None and not isinstance(rule, dict) or http is not None and not isinstance(http, dict):
+            return False
+        for path in (http or {}).get("paths") or []:
+            backend = path.get("backend") if isinstance(path, dict) else None
+            if path is not None and not isinstance(path, dict) or backend is not None and not isinstance(backend, dict):
+                return False
+            if backend and backend.get("service") is not None and not isinstance(backend["service"], dict):
+                return False
+    return True
 
 
 def _pod_facts(spec: dict, rel: str, line: int) -> list[dict]:
@@ -554,7 +647,7 @@ def _route_node(rel: str, route: dict, line: int) -> dict:
 
 
 # ================================================================ Helm values and GitLab Auto Deploy
-def _values_env(values: dict, rel: str, text: str, label: str, platform: str, note: str) -> dict:
+def _values_env(values: dict, rel: str, text: str, label: str, platform: str, note: str, app_version: str = "") -> dict:
     svc = values.get("service") if isinstance(values.get("service"), dict) else {}
     ing = values.get("ingress") if isinstance(values.get("ingress"), dict) else {}
     img = values.get("image") if isinstance(values.get("image"), dict) else {}
@@ -585,14 +678,20 @@ def _values_env(values: dict, rel: str, text: str, label: str, platform: str, no
             note=None if ing else "ingress and TLS from chart defaults",
         )
     )
-    image = f"{img.get('repository')}:{img.get('tag', 'latest')}" if img.get("repository") else ""
+    # Helm's chart scaffold falls back to the chart's appVersion when the tag is unset or empty; without one the
+    # tag is chosen at deploy time, which is unknown here, not floating.
+    tag = str(img.get("tag") or "").strip() or app_version
+    repo = str(img.get("repository") or "").strip() if img.get("repository") else ""
+    image = f"{repo}:{tag}" if repo and tag else ""
     facts = []
     sc = values.get("securityContext") if isinstance(values.get("securityContext"), dict) else None
     if sc is not None and sc.get("privileged") is True:
         facts.append(_fact("privileged container", "weak", rel, _line_of(text, r"securityContext:")))
     if image and image_pin(image) == "floating":
         facts.append(_fact(f"{image.split('/')[-1]} floats", "decision", rel, _line_of(text, r"^image:")))
-    children.append(_node("workload", "Pod", facts, image=image))
+    children.append(
+        _node("workload", "Pod", facts, image=image, note=f"{repo}, tag set at deploy" if repo and not tag else None)
+    )
     children[0]["role"] = "entry"
     return {
         "platform": platform,
@@ -608,8 +707,8 @@ def scan_helm(root: Path) -> list[dict]:
         values_path = chart.parent / "values.yaml"
         text = _read(values_path, root)
         try:
-            meta = yaml.safe_load(_read(chart, root)) or {}
-            values = yaml.safe_load(text) or {}
+            meta = load_yaml_bounded(_read(chart, root)) or {}
+            values = load_yaml_bounded(text) or {}
         except yaml.YAMLError:
             continue
         if not isinstance(values, dict) or not isinstance(meta, dict):
@@ -617,7 +716,13 @@ def scan_helm(root: Path) -> list[dict]:
         rel = _rel(values_path, root)
         envs.append(
             _values_env(
-                values, rel, text, f"Kubernetes · Helm chart {meta.get('name', chart.parent.name)}", "helm", rel
+                values,
+                rel,
+                text,
+                f"Kubernetes · Helm chart {meta.get('name', chart.parent.name)}",
+                "helm",
+                rel,
+                str(meta.get("appVersion") or "").strip(),
             )
         )
     return envs
@@ -630,7 +735,7 @@ def scan_gitlab_auto_deploy(root: Path) -> list[dict]:
     path = root / ".gitlab" / "auto-deploy-values.yaml"
     text = _read(path, root)
     try:
-        values = yaml.safe_load(text) or {} if text else {}
+        values = load_yaml_bounded(text) or {} if text else {}
     except yaml.YAMLError:
         values = {}
     if not isinstance(values, dict):
