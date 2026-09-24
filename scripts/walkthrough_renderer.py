@@ -119,6 +119,18 @@ ATTACKER_PROFILES: dict[str, str] = {
         "access is required for the extraction step; the extracted artefact is "
         "then used in a follow-up request against the live application."
     ),
+    "internet-priv-user": (
+        "An attacker who holds a privileged account (an administrator or another "
+        "elevated role) reaches the vulnerable path through that account's "
+        "session. Obtaining or compromising the privileged account is the main "
+        "prerequisite."
+    ),
+    "build-time": (
+        "An attacker who can influence the build and release chain — a "
+        "dependency, a CI action, a base image, or the pipeline's credentials — "
+        "plants the payload before deployment. No access to the running "
+        "application is required; the payload ships with the next build."
+    ),
 }
 
 # Suffix appended to the `internet-user` profile when self-registration is
@@ -147,6 +159,14 @@ PREREQS: dict[str, list[str]] = {
     "repo-read": [
         "Read access to the public source repository (clone, blob view, or git history)",
         "Network reachability of the application to use the extracted artefact",
+    ],
+    "internet-priv-user": [
+        "Session of a privileged account (administrator or other elevated role)",
+        "HTTP/HTTPS access to the endpoint exposed by `{file}`",
+    ],
+    "build-time": [
+        "Write access to a build input (dependency, CI action, base image) or to the pipeline's credentials",
+        "A build and deployment that consumes the tampered input",
     ],
 }
 
@@ -829,7 +849,8 @@ def select_walkthrough_picks(yaml_data: dict, cap: int | None = None) -> list[di
     if cap is None:
         cap = DEFAULT_MAX_WALKTHROUGHS
     cap = max(1, min(int(cap), MAX_WALKTHROUGHS_CEILING))
-    threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict)]
+    # A finding without an attacker (vektor `n-a`, e.g. a detection gap) has no attack to walk through.
+    threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict) and t.get("vektor") != "n-a"]
     # A triage-elevated finding stays eligible, but never ahead of one whose own
     # `risk` is Critical. §8 and the headline count base `risk`, so an elevated
     # High taking a slot both titles itself Critical in §3 and crowds out a real

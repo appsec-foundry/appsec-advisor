@@ -1,4 +1,4 @@
-"""Tests for scripts/figure_details.py and its §2 composition (Figure 3 deployment, Figure 4 controls).
+"""Tests for scripts/figure_details.py and its §2 composition (Figure 3 deployment, the §2.3 controls table).
 
 A neutral model and repository: an edge gateway, an orders service with an
 in-process billing module, an admin console that publishes its own port, a
@@ -215,16 +215,19 @@ def _svg_ok(svg: str) -> None:
 
 
 @pytest.mark.parametrize("variant", [False, True], ids=["neutral", "renamed"])
-def test_both_figures_render_and_number_consecutively(tmp_path: Path, variant: bool):
+def test_deployment_figure_and_controls_table_render(tmp_path: Path, variant: bool):
     n = _names(variant)
     root = _repo(tmp_path, n)
     figs = FD.build_detail_figures(_model(root, n), _inventory(root))
-    assert [(k, f.number) for k, f in figs.items()] == [("2.2", 3), ("2.3", 4)]
-    for f in figs.values():
-        _svg_ok(f.svg)
-        assert f"Figure {f.number} — " in f.svg and "DETAIL OF FIGURE 1" in f.svg
-        assert "s3cr3t-value" not in f.svg  # environment values never reach a figure
-    assert "Deployment and Technology" in figs["2.2"].svg and n["gw"] in figs["2.2"].svg
+    assert sorted(figs) == ["2.2", "2.3"]
+    fig, table = figs["2.2"], figs["2.3"]
+    _svg_ok(fig.svg)
+    assert fig.number == 3 and not fig.markdown  # four compose services: several deployment units
+    assert "Figure 3 — " in fig.svg and "DETAIL OF FIGURE 1" in fig.svg
+    assert "Deployment and Technology" in fig.svg and n["gw"] in fig.svg
+    assert table.markdown.startswith(FD.DETAIL_TABLE_MARKER + "\n| Component |") and not table.svg
+    for view in (fig.svg, table.markdown):
+        assert "s3cr3t-value" not in view  # environment values never reach a view
 
 
 @pytest.mark.parametrize("variant", [False, True], ids=["neutral", "renamed"])
@@ -238,8 +241,10 @@ def test_controls_are_placed_by_implementation_evidence(tmp_path: Path, variant:
     assert placed["Route Authentication Gate"] == {f"{n['adm']}-console"}  # compose line → service → component
     assert placed["Lockfile hygiene"] == {"pipeline"}  # no evidence, supply-chain domain → CI component
     assert placed["Transport Encryption"] == {FD.SYSTEM_WIDE}  # file without a line
-    fig = FD.figure_controls(m, 4)
-    assert "System-wide" in fig.svg
+    fig = FD.controls_table(m, 4)
+    assert "| System-wide: evidence not tied to one component |" in fig.markdown
+    row = next(ln for ln in fig.markdown.splitlines() if ln.startswith(f"| [C-02](#c-02) · {n['app_name']} |"))
+    assert "🔴 Unsafe: Input / query" in row  # worst effectiveness per domain, named by the domain
     assert fig.takeaway.startswith("Every component that handles credentials (C-02)")
 
 
@@ -256,10 +261,11 @@ def test_threat_tally_uses_the_figure1_attribution():
     assert m.threat_total == 4
 
 
-def test_missing_inputs_drop_only_their_figure():
-    """Negative: without an inventory only the controls figure renders, renumbered to 3."""
+def test_missing_inputs_drop_only_their_view():
+    """Negative: without an inventory only the controls table renders."""
     n = _names(False)
-    assert [(k, f.number) for k, f in FD.build_detail_figures(_model(None, n), None).items()] == [("2.3", 3)]
+    views = FD.build_detail_figures(_model(None, n), None)
+    assert sorted(views) == ["2.3"] and views["2.3"].markdown and not views["2.3"].svg
     assert FD.build_detail_figures(_model(None, n, controls=False), None) == {}
     assert FD.build_detail_figures({"components": []}, {"runtime": None, "environments": []}) == {}
 
@@ -270,7 +276,10 @@ def test_hostile_names_are_escaped(tmp_path: Path):
     model = _model(root, n)
     model["components"][0]["name"] = '<script>alert("x")</script> & co'
     model["external_entities"][0]["name"] = "</text><svg onload=1>"
-    for fig in FD.build_detail_figures(model, _inventory(root)).values():
+    views = FD.build_detail_figures(model, _inventory(root))
+    # The table keeps markup inert: escaped, never a tag or a link target.
+    assert "<script>" not in views["2.3"].markdown and "&lt;script&gt;" in views["2.3"].markdown
+    for fig in [v for v in views.values() if v.svg]:
         _svg_ok(fig.svg)
         tree = ET.fromstring(fig.svg)
         tags = {el.tag.rsplit("}", 1)[-1] for el in tree.iter()}
@@ -306,15 +315,13 @@ def test_composer_writes_figures_and_section_2_replaces_only_their_mermaid(tmp_p
     root = _repo(tmp_path, n)
     ctx = _ctx(tmp_path, _model(root, n), _inventory(root))
     figures = compose._render_detail_figures(ctx)
-    assert sorted(p.name for p in ctx.output_dir.glob("*.svg")) == [
-        "threat-model.figure3.svg",
-        "threat-model.figure4.svg",
-    ]
+    assert sorted(p.name for p in ctx.output_dir.glob("*.svg")) == ["threat-model.figure3.svg"]
     md = gen_architecture_diagrams(ctx.yaml_data, figures=figures)
-    assert md.count("```mermaid") == 2  # §2.1 and §2.4 keep their Mermaid diagrams
+    assert md.count("```mermaid") == 1  # §2.1 keeps its Mermaid diagram
     assert "![Figure 3 - Deployment and Technology](threat-model.figure3.svg)" in md
-    assert "![Figure 4 - Component Exposure and Control Coverage](threat-model.figure4.svg)" in md
+    assert FD.DETAIL_TABLE_MARKER + "\n| Component |" in md
     assert "| Component ID | Name | Tier | Source paths | Threats |" in md  # the §2.3 table stays
+    assert "### 2.4" not in md
     for fig in figures.values():
         assert f"**Key takeaway:** {fig['takeaway']}" in md
 
@@ -325,6 +332,7 @@ def test_composer_never_reads_the_repository(tmp_path: Path):
     root = _repo(tmp_path, n)
     ctx = _ctx(tmp_path, _model(root, n), None, repo=root)
     assert sorted(compose._render_detail_figures(ctx)) == ["2.3"]
+    assert not list(ctx.output_dir.glob("*.svg"))
 
 
 def test_composer_ignores_an_inventory_that_breaks_the_schema(tmp_path: Path):
@@ -338,18 +346,19 @@ def test_composer_ignores_an_inventory_that_breaks_the_schema(tmp_path: Path):
 
 
 def test_composer_removes_stale_figures_and_falls_back_to_mermaid(tmp_path: Path, monkeypatch):
-    """Negative: fewer inputs renumber and delete old files; a builder crash keeps every Mermaid diagram."""
+    """Negative: fewer inputs delete old files; a builder crash keeps every Mermaid diagram."""
     n = _names(False)
     root = _repo(tmp_path, n)
     ctx = _ctx(tmp_path, _model(root, n), _inventory(root))
     compose._render_detail_figures(ctx)
-    (ctx.output_dir / "threat-model.figure6.svg").write_text("<svg/>", encoding="utf-8")  # left by an older run
+    for stale in ("threat-model.figure4.svg", "threat-model.figure6.svg"):  # left by older runs
+        (ctx.output_dir / stale).write_text("<svg/>", encoding="utf-8")
     ctx_no_inv = _ctx(tmp_path, _model(root, n), None)
     figures = compose._render_detail_figures(ctx_no_inv)
     assert sorted(figures) == ["2.3"]
-    assert sorted(p.name for p in ctx.output_dir.glob("*.svg")) == ["threat-model.figure3.svg"]
+    assert list(ctx.output_dir.glob("*.svg")) == []
     md = gen_architecture_diagrams(ctx_no_inv.yaml_data, figures=figures)
-    assert md.count("```mermaid") == 3  # §2.1, §2.2 and §2.4 keep their Mermaid diagrams
+    assert md.count("```mermaid") == 2  # §2.1 and §2.2 keep their Mermaid diagrams
 
     def boom(*_a, **_k):
         raise RuntimeError("layout exploded")
@@ -358,7 +367,7 @@ def test_composer_removes_stale_figures_and_falls_back_to_mermaid(tmp_path: Path
     assert compose._render_detail_figures(ctx_no_inv) == {}
     assert any("detail figures: builder failed" in w for w in ctx_no_inv.warnings)
     assert list(ctx.output_dir.glob("*.svg")) == []
-    assert gen_architecture_diagrams(ctx_no_inv.yaml_data, figures={}).count("```mermaid") == 4
+    assert gen_architecture_diagrams(ctx_no_inv.yaml_data, figures={}).count("```mermaid") == 3
 
 
 def test_contract_and_qa_accept_a_detail_figure_only_when_its_file_exists(tmp_path: Path):
@@ -377,6 +386,19 @@ def test_contract_and_qa_accept_a_detail_figure_only_when_its_file_exists(tmp_pa
     assert issues == ["§2.2 Container Architecture: detail figure `threat-model.figure3.svg` is referenced but missing"]
 
 
+def test_qa_accepts_a_detail_table_only_under_its_marker(tmp_path: Path):
+    n = _names(False)
+    ctx = _ctx(tmp_path, _model(None, n), None)
+    md = gen_architecture_diagrams(ctx.yaml_data, figures=compose._render_detail_figures(ctx))
+    report_md = ctx.output_dir / "threat-model.md"
+    report_md.write_text(md, encoding="utf-8")
+    assert qa_checks.check_diagram_compactness(report_md, CONTRACT).issues == []
+    # Negative: a table without the generator's marker is no replacement for the diagram.
+    report_md.write_text(md.replace(FD.DETAIL_TABLE_MARKER + "\n", ""), encoding="utf-8")
+    issues = qa_checks.check_diagram_compactness(report_md, CONTRACT).issues
+    assert issues == ["§2.3 Components: no mermaid block found — diagram is required"]
+
+
 @pytest.mark.parametrize("variant", [False, True], ids=["neutral", "renamed"])
 def test_takeaway_does_not_call_components_unprotected_when_controls_apply_system_wide(variant: bool):
     name = "Catalog" if variant else "Orders"
@@ -386,13 +408,13 @@ def test_takeaway_does_not_call_components_unprotected_when_controls_apply_syste
         "security_controls": [{"control": "Password hashing", "effectiveness": "Weak", "implementation": ""}],
         "threats": [],
     }
-    fig = FD.figure_controls(FD.Model(model, None), 4)
+    fig = FD.controls_table(FD.Model(model, None), 4)
     assert "no control evidenced at all" not in fig.takeaway
     assert "no component-specific control" in fig.takeaway and "1 control applies system-wide" in fig.takeaway
     # Negative: without a system-wide control the component really has none.
     model["security_controls"][0]["implementation"] = "other/x.py"
     model["components"].append({"id": "C-02", "name": "Other", "tier": "application", "paths": ["other/**"]})
-    fig = FD.figure_controls(FD.Model(model, None), 4)
+    fig = FD.controls_table(FD.Model(model, None), 4)
     assert "no control evidenced at all (C-01)" in fig.takeaway
 
 
@@ -403,5 +425,5 @@ def test_missing_data_classification_is_not_drawn_as_none():
         "security_controls": [{"control": "Password hashing", "effectiveness": "Weak", "implementation": "src/a.py"}],
         "threats": [],
     }
-    texts = ["".join(t.itertext()) for t in ET.fromstring(FD.figure_controls(FD.Model(model, None), 4).svg).iter()]
-    assert "None" not in texts
+    row = FD.controls_table(FD.Model(model, None), 4).markdown.splitlines()[3]
+    assert row.startswith("| [C-01](#c-01) · API |") and "None" not in row and "| – |" in row

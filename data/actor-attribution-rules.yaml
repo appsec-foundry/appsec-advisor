@@ -1,18 +1,25 @@
 # Finding attribution rules for the access groups of data/posture-actor-labels.yaml.
 #
 # A STRIDE finding names the actors that can exploit it (`actor_ids`). After the
-# merge, scripts/actor_attribution.py applies three rules in order:
+# merge, scripts/actor_attribution.py applies these rules in order:
 #
+# 0. A finding whose CWE is in `no_attacker_cwes` has no attacker: every
+#    attribution is removed and rules 2 and 3 add none.
 # 1. An attribution to a group under `restricted_groups` stays only when the
 #    finding meets one of that group's conditions. Other groups are unchanged.
 # 2. A finding whose evidence file handles a registered route on a component in
 #    an `exposed_zones` zone keeps or gains an internet actor: anonymous unless
-#    every linked route registers authentication middleware.
+#    every linked route is authenticated, by a registration guard or by a
+#    verified credential check in its resolved handler chain.
 # 3. A finding left without an actor gains the first active actor in
 #    `fallback_order` (then by ID) whose attribution is valid; a group outside
 #    `restricted_groups` qualifies when its access reaches a component zone.
 
 schema_version: 1
+
+# Missing detection, audit or monitoring: the weakness hides an attack but is
+# no entry point, so no actor exploits it.
+no_attacker_cwes: [CWE-223, CWE-778, CWE-779]
 
 evidence_paths:
   # Pipeline definitions, container builds and dependency manifests.

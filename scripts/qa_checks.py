@@ -2198,6 +2198,7 @@ def build_repair_plan(
     reference_format_report = check_reference_format(md_path)
     heading_report = check_heading_hygiene(md_path)
     nested_html_link_report = check_html_nested_finding_link(md_path)
+    actor_names_report = check_actor_names(md_path)
     toc_contract_report = check_toc_contract(md_path, contract_path)
     toc_nested_report = check_toc_nested_links(md_path)
     toc_closure_report = check_toc_closure(md_path)
@@ -2232,6 +2233,7 @@ def build_repair_plan(
     reference_format_issues = list(reference_format_report.issues)
     heading_issues = list(heading_report.issues)
     nested_html_link_issues = list(nested_html_link_report.issues)
+    actor_names_issues = list(actor_names_report.issues)
     toc_contract_issues = list(toc_contract_report.issues)
     toc_nested_issues = list(toc_nested_report.issues)
     toc_closure_issues = list(toc_closure_report.issues)
@@ -2253,6 +2255,7 @@ def build_repair_plan(
     report.issues.extend(reference_format_issues)
     report.issues.extend(heading_issues)
     report.issues.extend(nested_html_link_issues)
+    report.issues.extend(actor_names_issues)
     report.issues.extend(toc_contract_issues)
     report.issues.extend(toc_nested_issues)
     report.issues.extend(toc_closure_issues)
@@ -2301,6 +2304,12 @@ def build_repair_plan(
             "html_nested_finding_link",
             nested_html_link_issues,
             "Fix the linkification producer that nested a Markdown finding link inside an HTML anchor, then recompose.",
+        ),
+        (
+            "actor_names",
+            actor_names_issues,
+            "Fix the producer that named an actor outside the Figure 1 set; actor names come from "
+            "`actor_presentation.attacker_display` and `figure1_dfd.overview_people`. Then recompose.",
         ),
     ):
         if issue_list:
@@ -2654,7 +2663,7 @@ def build_repair_plan(
                 "section_id": "architecture_diagrams",
                 "fragments_to_rewrite": [".fragments/architecture-diagrams.md"],
                 "remediation": (
-                    "§2.3 / §2.4 must follow the compactness rules pinned in "
+                    "§2 Mermaid diagrams must follow the compactness rules pinned in "
                     "`data/sections-contract.yaml → diagram_compactness`. "
                     "RECOMMENDED FIX: regenerate the fragment from the "
                     "deterministic Pre-Generator instead of editing by hand:\n"
@@ -2662,10 +2671,9 @@ def build_repair_plan(
                     "$OUTPUT_DIR --force --only architecture-diagrams.md\n"
                     "Then re-run compose_threat_model.py. The Pre-Generator "
                     "produces a 4-tier `flowchart TD` that obeys the limits by "
-                    "construction. Manual edits to §2.3/§2.4 are forbidden by "
+                    "construction. Manual edits to §2.2/§2.3 are forbidden by "
                     "`skip_phase11_enrichment: true` — surface details belong "
-                    "in the §2.3 component table or §2.4.1–§2.4.4 layer tables, "
-                    "not in node labels."
+                    "in the §2.3 component table, not in node labels."
                 ),
             }
         )
@@ -4861,7 +4869,7 @@ def cmd_all(md_path: Path, repo_root: Path) -> int:
     # Security Posture at a Glance — strict structural gate (D/C/F/G/T/L
     # invariants in `data/sections-contract.yaml`).
     posture_report = check_security_posture_structure(md)
-    # Diagram-compactness — §2.3 / §2.4 layout, node count, label width,
+    # Diagram-compactness — §2.2 / §2.3 layout, node count, label width,
     # and threat-traceability (post-2026-05). Drives Re-Render-Loop when
     # the LLM has bloated either diagram beyond the contract limits.
     compactness_report = check_diagram_compactness(md)
@@ -5122,6 +5130,68 @@ def check_heading_hygiene(md_path: Path) -> Report:
 
 from _slug import github_render_slug as _github_render_slug  # noqa: E402  (R8 — single source of truth)
 from _slug import github_slug as _github_slug  # noqa: E402
+
+
+def _between(text: str, start: str, stop: str) -> str:
+    """Text after the first line equal to ``start`` up to the next line matching ``stop``."""
+    lines = text.splitlines()
+    try:
+        first = lines.index(start) + 1
+    except ValueError:
+        return ""
+    body = []
+    for line in lines[first:]:
+        if re.match(stop, line):
+            break
+        body.append(line)
+    return "\n".join(body)
+
+
+def _plain_name(cell: str) -> str:
+    text = re.sub(r"<br\s*/?>", " ", cell)
+    text = re.sub(r"\\(.)", r"\1", text).replace("**", "")
+    text = re.sub(r"^A\d+ · ", "", " ".join(text.split()))
+    return text.strip()
+
+
+def check_actor_names(md_path: Path) -> Report:
+    """Deterministic sections name only the actors of the Identified Actors table.
+
+    Signal: first column of the Identified Actors table (the Figure 1 set); the
+    actor and role nodes of the §2.1 System Context diagram (``class <id>
+    attacker|user|admin``) and of a §2.3 Mermaid fallback (``:::threat|legit``);
+    the bullets of the **Threat actors.** legend.
+    Trigger: a §2.1, §2.3 or legend name the table does not list. A report without the
+    table (legacy vector models) is not checked. Abuse-case actor lines are
+    excluded: a case may require access no Figure 1 actor holds.
+    """
+    report = Report(check="actor_names")
+    text = md_path.read_text(encoding="utf-8")
+    table = _between(text, "### Identified Actors", r"^(#{2,3} |---)")
+    canonical = set()
+    for row in table.splitlines():
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if row.startswith("|") and cells and cells[0] not in ("Actor", "") and not set(cells[0]) <= set("-: "):
+            canonical.add(_plain_name(cells[0]))
+    if not canonical:
+        return report
+    named: list[tuple[str, str]] = []
+    context = _between(text, "### 2.1 System Context", r"^#{2,3} ")
+    labels = dict(re.findall(r'^\s*(\w+)\["([^"]*)"\]', context, re.M))
+    for node in re.findall(r"^\s*class (\w+) (?:attacker|user|admin)\s*$", context, re.M):
+        named.append(("§2.1 System Context", _plain_name(labels.get(node, node))))
+    components = _between(text, "### 2.3 Components", r"^#{2,3} ")
+    for label in re.findall(r'^\s*\w+\["(?:fa:fa-[\w-]+ )?([^"]*)"\]:::(?:threat|legit)\s*$', components, re.M):
+        named.append(("§2.3 Components", _plain_name(label)))
+    legend = text.split("**Threat actors.**", 1)[1].split("\n\n", 2)[1] if "**Threat actors.**" in text else ""
+    for name in re.findall(r"^- \*\*(.+?)\*\*", legend, re.M):
+        named.append(("Threat actors legend", _plain_name(name)))
+    for where, name in named:
+        if name in canonical:
+            report.ok += 1
+        else:
+            report.issues.append(f"{where} names actor '{name}', which Figure 1 and Identified Actors do not show")
+    return report
 
 
 def check_toc_closure(md_path: Path) -> Report:
@@ -6903,6 +6973,8 @@ def _row_is_auth_method(name: str, whitelist: list) -> bool:
 
 
 _DETAIL_FIGURE_RE = re.compile(r"!\[Figure \d+ - [^\]]+\]\(([^)\s]+)\)")
+# figure_details.DETAIL_TABLE_MARKER directly above a Markdown table (header and separator row).
+_DETAIL_TABLE_RE = re.compile(r"^<!-- detail-table -->\n\|[^\n]*\|\n\|[ \t:\-|]+\|$", re.MULTILINE)
 
 
 def check_diagram_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTRACT_PATH) -> Report:
@@ -6924,7 +6996,11 @@ def check_diagram_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTR
       * When ``require_threat_traceability`` is true, every T-NNN cited
         in a node label or edge label resolves to an entry in §8 Threat
         Register; AND every Critical/High threat from §8 appears EITHER
-        in the diagram OR in a §2.4.x layer table.
+        in the diagram OR elsewhere in §2.
+
+    A subsection whose diagram a detail view replaces — an SVG figure whose
+    file exists, or a table directly under the ``<!-- detail-table -->``
+    marker — is exempt from the Mermaid rules.
 
     No-op when the contract has no `diagram_compactness` block (older
     contracts keep working byte-identically).
@@ -6962,11 +7038,13 @@ def check_diagram_compactness(md_path: Path, contract_path: Path = DEFAULT_CONTR
         # follows is treated as the "supplementary detail" location.
         mb = _extract_first_mermaid_block(body)
         if mb is None:
-            # A §2 detail figure (hand-built SVG) replaces the Mermaid block; the
-            # compactness rules are Mermaid layout rules and do not apply to it.
+            # A §2 detail view — a hand-built SVG figure or a generator-owned
+            # table — replaces the Mermaid block; the compactness rules are
+            # Mermaid layout rules and do not apply to it.
             fig = _DETAIL_FIGURE_RE.search(body)
             if fig is None:
-                report.issues.append(f"§{heading}: no mermaid block found — diagram is required")
+                if not _DETAIL_TABLE_RE.search(body):
+                    report.issues.append(f"§{heading}: no mermaid block found — diagram is required")
             elif not fig.group(1).startswith("data:") and not (md_path.parent / fig.group(1)).is_file():
                 report.issues.append(f"§{heading}: detail figure `{fig.group(1)}` is referenced but missing")
             continue
@@ -7163,8 +7241,7 @@ def _check_compactness_rules(report: Report, heading: str, rules: dict, mb: dict
         report.issues.append(
             f"§{heading}: {len(nodes_found)} nodes found, max {max_nodes} "
             f"allowed. Move per-route / per-file detail into the "
-            f"following table or §2.4.x layer tables; the diagram is the "
-            f"high-level overview."
+            f"following table; the diagram is the high-level overview."
         )
 
     # Label-line / label-char limits. Extract every quoted label and
@@ -7266,7 +7343,7 @@ def _check_threat_traceability(
     """For each T-NNN cited in the diagram or in the body table that
     follows it, verify the ID exists in §8. AND for each Critical/High
     in §8, verify it appears EITHER in the diagram (any node/edge
-    label) OR in the §2.4.x layer tables.
+    label) OR elsewhere in §2, such as the §2.3 component table.
     """
     raw = mb["raw"]
     # T-IDs cited in the diagram itself.
@@ -7285,8 +7362,7 @@ def _check_threat_traceability(
             report.issues.append(f"§{heading}: cites {tid} but no matching entry in §8 Findings Register")
 
     # Reverse direction: every Critical/High in §8 must surface SOMEWHERE
-    # in §2 (either the diagram, the body table, or a §2.4.x table).
-    # We aggregate §2.4.x by scanning §2's full body for the T-IDs.
+    # in §2 (the diagram or any §2 table), found by scanning §2's full body.
     # Note: `_extract_section_body` stops at the next `### ` boundary,
     # which is wrong for whole-section traceability — we need to slice
     # from `## 2.` to `## 3.` (the next H2). Locate that span manually.
@@ -7303,8 +7379,8 @@ def _check_threat_traceability(
         if heading.startswith("2.3"):
             report.issues.append(
                 f"§2 architecture: Critical/High threats {sorted(missing)} "
-                f"are not referenced anywhere in §2 (neither §2.3 diagram, "
-                f"§2.3 component table, nor §2.4.x layer tables). "
+                f"are not referenced anywhere in §2 (neither the §2.3 diagram "
+                f"nor the §2.3 component table). "
                 f"Threat-traceability requires every Critical/High to "
                 f"surface in the architecture view."
             )

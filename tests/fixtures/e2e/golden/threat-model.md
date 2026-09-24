@@ -36,7 +36,6 @@ _Append-only history of assessment runs. Most recent first._
    - [2.1 System Context](#21-system-context)
    - [2.2 Container Architecture](#22-container-architecture)
    - [2.3 Components](#23-components)
-   - [2.4 Technology Architecture](#24-technology-architecture)
 3. [Attack Walkthroughs](#3-attack-walkthroughs)
    - [3.1 Attack Chain Overview](#31-attack-chain-overview)
    - [3.2 SQL Injection Authentication Bypass](#32-sql-injection-authentication-bypass)
@@ -188,24 +187,16 @@ The consolidated threat actors that drive this model - the same set named in the
 
 ### 2.1 System Context
 
-Who interacts with System from the outside, and through which channels. Solid arrows show normal usage; dashed red arrows mark unauthenticated probing or exploit paths (C4 Level 1).
+Who uses and attacks Juice Shop (fixture), and which external systems it exchanges data with. Solid arrows name the data a flow carries; dashed red arrows are attack routes. Actors carry the names Figure 1 uses (C4 Level 1).
 
 ```mermaid
 flowchart LR
-    USER["End User<br/>(browser)"]
-    ATTACKER["Anonymous<br/>Internet Attacker"]
-    SYSTEM["System"]
-    USER -->|HTTPS · normal usage| SYSTEM
-    ATTACKER -.->|HTTPS · probing / exploit| SYSTEM
-    classDef user     fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
-    classDef attacker fill:#f3dada,stroke:#b71c1c,color:#7f0000,stroke-width:2px
+    SYSTEM["Juice Shop (fixture)"]
     classDef sys      fill:#f2f2f2,stroke:#424242,color:#111,stroke-width:1.5px
-    class USER user
-    class ATTACKER attacker
     class SYSTEM sys
 ```
 
-**Key takeaway:** Every actor in the context interacts with System through its external interface, so authentication and input validation at that edge govern the entire attack surface.
+**Key takeaway:** Juice Shop (fixture) has no modelled user role and depends on no modelled external system.
 
 ### 2.2 Container Architecture
 
@@ -259,40 +250,6 @@ flowchart TD
 |----|------------|--------|-----------------|------------------------------------------------|
 | <a id="c-01"></a><span style="white-space:nowrap">C-01</span> | REST API | service | `routes/` | 🔴 [F-001](#f-001) — SQL injection in product search<br/>🔴 [F-002](#f-002) — SQL injection in login<br/>🟠 [F-010](#f-010) — Persistent XSS via bypassSecurityTrustHtml |
 | <a id="c-02"></a><span style="white-space:nowrap">C-02</span> | Auth Service | library | `lib/insecurity.ts` | 🔴 [F-003](#f-003) — Hardcoded RSA private key |
-
-### 2.4 Technology Architecture
-
-The technology stack the system is built on. Each box names the framework or runtime that fills that role; per-component findings live in the [§2.3](#23-components) component table above, and the full per-finding catalogue is in [§8 Findings Register](#8-findings-register).
-
-```mermaid
-flowchart TD
-    subgraph CLIENT["Client Tier"]
-        FE_ANGULAR["fa:fa-window-restore Angular SPA<br/><i>browser runtime</i>"]:::risk
-    end
-    subgraph APP["Application Tier"]
-        ROUTES["fa:fa-server Application Code<br/><i>request handlers</i>"]:::risk
-    end
-    subgraph DATA["Data Tier"]
-        ORM["fa:fa-database Sequelize ORM<br/><i>object-relational mapper</i>"]:::risk
-        LOCAL_FS["fa:fa-folder-open Local FS<br/><i>uploads · logs · keys</i>"]:::risk
-    end
-    subgraph INFRA["Cross-Cutting"]
-        INFRA_RUN["fa:fa-cube Docker (distroless)<br/><i>container runtime</i>"]:::ok
-        INFRA_SCM["fa:fa-code-branch GitHub (public)<br/><i>source supply chain</i>"]:::risk
-    end
-    FE_ANGULAR -->|"HTTPS · JWT"| ROUTES
-    ROUTES -->|"DB driver"| ORM
-    ROUTES -->|"file I/O"| LOCAL_FS
-    INFRA_SCM -.->|"build"| INFRA_RUN
-    INFRA_RUN -.->|"runs"| ROUTES
-
-    classDef risk fill:#fef2f2,stroke:#991b1b,color:#111,stroke-width:2.5px
-    classDef ok fill:#e8f1ea,stroke:#2e7d32,color:#1b5e20,stroke-width:1.5px
-    linkStyle 0,1,2 stroke:#424242,stroke-width:1.5px
-    linkStyle 3,4 stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:3 3
-```
-
-**Key takeaway:** The technology stack is consolidated in the application tier; per-finding detail is in [§8 Findings Register](#8-findings-register).
 
 ---
 

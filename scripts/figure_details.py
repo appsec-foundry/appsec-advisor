@@ -1,20 +1,21 @@
-"""§2 detail figures: deterministic SVG views that each detail one aspect of Figure 1.
+"""§2 detail views: deterministic views that each detail one aspect of Figure 1.
 
 Figure 1 stays the overview. These views add what it leaves out, each for one
-question, in Figure 1's visual language (palette, ``C-NN``, severity colours,
-the authentication hexagon):
+question:
 
 * deployment and technology (§2.2) — where each component runs and what it is
-  built on, drawn by ``figure_deployment`` from ``.deployment-inventory.json``;
+  built on, from ``.deployment-inventory.json`` by ``figure_deployment``: an SVG
+  figure in Figure 1's visual language when several deployment units run, a
+  Markdown table when one unit runs everything;
 * controls (§2.3) — per component: exposure, threat tally and the effectiveness
-  of the security controls evidenced on it.
+  of the security controls evidenced on it, as a Markdown table.
 
 Both read the threat model and the deployment inventory the scan wrote; neither
 reads the repository, so a re-render shows the state of the scan. Each builder
 returns ``None`` when its inputs are missing; the §2 generator then keeps that
-subsection's Mermaid diagram. Every string drawn comes from the model or the
-inventory and is XML-escaped; no figure contains scripts, links or environment
-values.
+subsection's Mermaid diagram. Every string comes from the model or the
+inventory and is XML- or Markdown-escaped; no view contains scripts or
+environment values.
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ from pregenerate_fragments import component_coverage
 # ---------------------------------------------------------------- style (Figure 1 family)
 FONT = "Helvetica, Arial, sans-serif"
 W = 1286
-FAINT, RULE = "#94a3b8", "#d6dbe1"
 NAVY_BG = "#eef2f7"
 RED_BG = "#fff0ee"
 AMBER, AMBER_BG = "#a8671f", "#fdf0e0"
@@ -49,6 +49,8 @@ EFF = {  # schemas/fragments/security-controls.schema.json effectiveness enum
     "Partial": (YEL_BG, YEL, 2),
     "Adequate": (GREEN_BG, GREEN, 1),
 }
+EFF_DOT = {"Unsafe": "🔴", "Missing": "🔴", "Weak": "🟠", "Partial": "🟡", "Adequate": "🟢"}
+SEV_DOT = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢"}
 EFF_TEXT = {  # same definitions as the schema
     "Unsafe": "relied upon but defeated or trivially bypassable — fix it",
     "Missing": "never built — add it",
@@ -72,13 +74,25 @@ DOMAINS = [  # classified by control name and domain text; model domain strings 
 SYSTEM_WIDE = "__system__"
 
 
+DETAIL_TABLE_MARKER = "<!-- detail-table -->"  # QA and the §2.3 table injector keep the table that follows
+
+
 @dataclass
 class DetailFigure:
-    key: str  # §2 subsection: "2.1".."2.4"
-    number: int
+    """A §2 detail view: an SVG figure, or a Markdown table where a figure would add no layout."""
+
+    key: str  # §2 subsection: "2.2" or "2.3"
+    number: int  # figure number; unused by a table
     title: str
     takeaway: str
-    svg: str
+    svg: str = ""
+    markdown: str = ""
+
+
+def md_cell(s) -> str:
+    """Model or inventory text as inert Markdown table-cell text."""
+    s = html.escape(" ".join(str(s or "").split()), quote=False)
+    return re.sub(r"([\\`*_|\[\]])", r"\\\1", s)
 
 
 # ================================================================ drawing primitives
@@ -106,15 +120,6 @@ def wrap(s, size, width, bold=False) -> list[str]:
     if cur:
         lines.append(cur)
     return lines
-
-
-def clip(s, size, width, bold=False) -> str:
-    s = str(s)
-    if tw(s, size, bold) <= width:
-        return s
-    while s and tw(s + "…", size, bold) > width:
-        s = s[:-1]
-    return s + "…"
 
 
 class Svg:
@@ -444,7 +449,9 @@ def _control_targets(m: Model, control: dict) -> set[str]:
     return targets
 
 
-def figure_controls(m: Model, number: int) -> DetailFigure | None:
+def controls_table(m: Model, number: int) -> DetailFigure | None:
+    """Per component: how it is reached, what it handles, the threats on it and the worst effectiveness
+    of the controls evidenced on it, per control domain — a Markdown table beside the §2.3 component table."""
     if not m.comps or not m.controls:
         return None
     cmap: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
@@ -489,219 +496,82 @@ def figure_controls(m: Model, number: int) -> DetailFigure | None:
             + (f"; {wide} control{'s apply' if wide != 1 else ' applies'} system-wide" if wide else "")
         )
     take += "."
-    s = Svg()
-    title = "Component Exposure and Control Coverage"
-    top = s.frame(
-        number,
-        title,
-        "control coverage",
-        "per component: how it is reached, what it handles, how effective its controls are",
-        take,
-    )
 
     pub = {m.svc_comp.get(svc.name) for svc in m.services if any(not p.loopback_only for p in svc.ports)}
     rank = ["Public", "Internal", "Confidential", "Restricted"]
-    X0 = 20
-    cols = [("Component", 262), ("Inbound flows", 100), ("Host\nport", 46), ("Data handled", 104), ("Threats", 122)]
-    ctrl_w = (W - 40 - sum(w for _, w in cols)) / len(DOMAINS)
-    ex_w = sum(w for _, w in cols[1:4])
-    cx0 = X0 + sum(w for _, w in cols)
-    y = top
-    s.rect(X0 + cols[0][1], y, ex_w - 4, 18, fill=NAVY, stroke=NAVY, rx=3)
-    s.text(X0 + cols[0][1] + ex_w / 2, y + 13, "EXPOSURE", size=10, fill="#fff", weight="bold", anchor="middle")
-    s.rect(cx0 - cols[4][1], y, cols[4][1] - 4, 18, fill=NAVY, stroke=NAVY, rx=3)
-    s.text(cx0 - cols[4][1] / 2, y + 13, "RISK", size=10, fill="#fff", weight="bold", anchor="middle")
-    s.rect(cx0, y, ctrl_w * len(DOMAINS), 18, fill=NAVY, stroke=NAVY, rx=3)
-    s.text(
-        cx0 + ctrl_w * len(DOMAINS) / 2,
-        y + 13,
-        "CONTROLS — worst effectiveness evidenced on the component",
-        size=10,
-        fill="#fff",
-        weight="bold",
-        anchor="middle",
-    )
-    y += 26
-    x = X0
-    for label, w in cols:
-        s.lines(
-            x + (6 if label == "Component" else w / 2),
-            y + 12,
-            label.split("\n"),
-            size=10,
-            lh=12,
-            weight="bold",
-            fill=NAVY,
-            anchor="start" if label == "Component" else "middle",
-        )
-        x += w
-    for label, _ in DOMAINS:
-        s.lines(x + ctrl_w / 2, y + 12, label.split("\n"), size=10, lh=12, weight="bold", fill=NAVY, anchor="middle")
-        x += ctrl_w
-    y += 34
-    s.path(f"M{X0} {y} L{W - 20} {y}", stroke=NAVY, sw=1.2)
-    y += 2
-    RH = 48
-    max_find = max((sum(m.affected[c["id"]].values()) for c in m.comps), default=0) or 1
 
-    def cells(x, y, cid):
-        for dom, _ in DOMAINS:
-            cs = cmap.get(cid, {}).get(dom, [])
-            if cs:
-                eff = worst[cid][dom]
-                fill, col, _r = EFF.get(eff, (GREY_BG, MUTED, 0))
-                tip = "\n".join(f"{k.get('control')}: {k.get('effectiveness')}" for k in cs)
-                s.rect(x + 3, y + 6, ctrl_w - 6, RH - 12, fill=fill, stroke=col, sw=1, rx=4, title=tip)
-                s.text(
-                    x + ctrl_w / 2,
-                    y + (22 if len(cs) > 1 else 28),
-                    eff or "?",
-                    size=10,
-                    weight="bold",
-                    fill=col,
-                    anchor="middle",
-                    title=tip,
-                )
-                if len(cs) > 1:
-                    s.text(x + ctrl_w / 2, y + 35, f"{len(cs)} controls", size=8, fill=MUTED, anchor="middle")
-            else:
-                s.text(x + ctrl_w / 2, y + 29, "–", size=11, fill="#c5cad1", anchor="middle")
-            x += ctrl_w
+    def inbound_cell(cid) -> str:
+        auth = _auth_counts(inbound.get(cid, []))
+        parts = [
+            f"{v} {'unauthenticated' if k == 'none' else 'authentication unknown' if k == 'unknown' else 'authenticated'}"
+            for k, v in sorted(auth.items(), key=lambda kv: (kv[0] != "none", kv[0] != "unknown", kv[0]))
+        ]
+        if cid in pub:
+            parts.append("host port published")
+        return "<br/>".join(parts) or "none modeled"
 
-    for i, c in enumerate(m.comps):
-        cid = c["id"]
-        oos = scope[cid] == "Out of scope"
-        if i % 2 == 0:
-            s.rect(X0, y, W - 40, RH, fill="#f8f9fb", stroke="none", rx=0)
-        x = X0
-        s.text(
-            x + 6,
-            y + 20,
-            clip(f"{m.cnum[cid]} · {m.name[cid]}", 12, cols[0][1] - 14, True),
-            size=12,
-            weight="bold",
-            fill=FAINT if oos else INK,
-            title=m.name[cid],
-        )
-        s.text(
-            x + 6,
-            y + 36,
-            " · ".join(v for v in (str(c.get("tier") or ""), scope[cid]) if v),
-            size=10,
-            fill=MUTED,
-            italic=oos,
-        )
-        x += cols[0][1]
-        fl = inbound.get(cid, [])
-        if fl:
-            auth = _auth_counts(fl)
-            widths = sum(24 + tw(f"×{v}", 10, True) + 8 for v in auth.values()) - 8
-            hx = x + (cols[1][1] - widths) / 2
-            for k, v in auth.most_common():
-                hx = s.hexagon(hx, y + 24, k, v, title=f"{v} inbound flow(s): authentication {k}")
-        else:
-            s.text(x + cols[1][1] / 2, y + 29, "none modeled", size=10, fill=FAINT, anchor="middle")
-        x += cols[1][1]
-        s.text(
-            x + cols[2][1] / 2,
-            y + 29,
-            "yes" if cid in pub else "–",
-            size=11,
-            weight="bold" if cid in pub else "normal",
-            fill=RED if cid in pub else "#c5cad1",
-            anchor="middle",
-        )
-        x += cols[2][1]
+    def data_cell(c) -> str:
         classes = [
             str(f["data_classification"])
             for f in m.flows
-            if cid in (f.get("from"), f.get("to")) and f.get("data_classification")
+            if c["id"] in (f.get("from"), f.get("to")) and f.get("data_classification")
         ]
-        top_cls = max(classes, key=lambda k: rank.index(k) if k in rank else -1) if classes else None
+        top_cls = max(classes, key=lambda k: rank.index(k) if k in rank else -1) if classes else ""
         sens = sorted(
             {str(d.get("category")) for d in c.get("sensitive_data") or [] if isinstance(d, dict) and d.get("category")}
         )
-        if top_cls:
-            s.text(
-                x + cols[3][1] / 2,
-                y + (21 if sens else 29),
-                top_cls,
-                size=10,
-                weight="bold",
-                fill={"Confidential": AMBER, "Restricted": RED}.get(top_cls, MUTED),
-                anchor="middle",
-            )
-        else:
-            s.text(x + cols[3][1] / 2, y + 29, "–", size=11, fill="#c5cad1", anchor="middle")
-        if sens:
-            s.text(
-                x + cols[3][1] / 2,
-                y + 36,
-                clip(", ".join(sens), 9, cols[3][1] - 8),
-                size=9,
-                fill=MUTED,
-                anchor="middle",
-            )
-        x += cols[3][1]
+        return md_cell(" · ".join(v for v in (top_cls, ", ".join(sens)) if v)) or "–"
+
+    def threats_cell(cid) -> str:
         aff = m.affected.get(cid, Counter())
         total = sum(aff.values())
-        bx, bar_w = x + 6, cols[4][1] - 40
-        if total:
-            for sev in SEV:
-                if aff.get(sev):
-                    w = bar_w * aff[sev] / max_find
-                    s.rect(bx, y + 12, w, 12, fill=SEV[sev], stroke="#fff", sw=0.5, rx=1, title=f"{aff[sev]} {sev}")
-                    bx += w
-            s.text(x + cols[4][1] - 8, y + 23, str(total), size=11, weight="bold", anchor="end")
-            owned = m.owned.get(cid, 0)
-            s.text(
-                x + 6,
-                y + 38,
-                f"{owned} owned · {total - owned} shared" if total != owned else f"{owned} owned",
-                size=9,
-                fill=MUTED,
-            )
-        else:
-            s.text(x + cols[4][1] / 2, y + 29, "none", size=10, fill=FAINT, anchor="middle")
-        cells(cx0, y, cid)
-        y += RH
-    if cmap.get(SYSTEM_WIDE):
-        s.path(f"M{X0} {y} L{W - 20} {y}", stroke=RULE, sw=1, dash="3 3")
-        s.text(X0 + 6, y + 20, "System-wide", size=12, weight="bold", fill=NAVY)
-        s.text(X0 + 6, y + 36, "evidence not tied to one component", size=10, fill=MUTED, italic=True)
-        cells(cx0, y, SYSTEM_WIDE)
-        y += RH
-    s.path(f"M{X0} {y} L{W - 20} {y}", stroke=NAVY, sw=1.2)
-    items = [("cell", EFF[e][1], EFF[e][0], e, EFF_TEXT[e]) for e in EFF]
-    items += [
-        ("cell", "#c5cad1", "#fff", "–", "no control of this domain evidenced on the component"),
-        ("box", RED, RED, "", "threat bar: Critical · High · Medium — the counts on the Figure 1 nodes"),
-        ("hex", RED, None, "none", "inbound flows without authentication — as in Figure 1"),
-        ("hex", GREY, None, "unknown", "inbound flows whose authentication is unknown"),
+        if not total:
+            return "none"
+        return f"{total} ({' · '.join(f'{SEV_DOT[s]} {aff[s]}' for s in SEV if aff.get(s))})"
+
+    def controls_cell(cid) -> str:
+        by_eff: dict[str, list[str]] = defaultdict(list)
+        for dom, _ in DOMAINS:
+            cs = cmap.get(cid, {}).get(dom, [])
+            if cs:
+                label = dom.replace("\n", " ")
+                by_eff[worst[cid][dom] or "Unrated"].append(f"{label} ({len(cs)})" if len(cs) > 1 else label)
+        order = sorted(by_eff, key=lambda e: -EFF.get(e, ("", "", 0))[2])
+        return "<br/>".join(f"{EFF_DOT.get(e, '⚪')} {md_cell(e)}: {', '.join(by_eff[e])}" for e in order) or "–"
+
+    rows = [
+        "| Component | Inbound flows | Data handled | Threats | Controls: worst effectiveness per domain |",
+        "|---|---|---|---|---|",
     ]
-    s.legend(
-        y + 28,
-        items,
-        note="Figure 1 shows which STRIDE categories hit each component; this view shows which controls "
-        "stand against them. Cells are placed by each control's implementation evidence (file → component paths; "
-        "compose lines → service); a file shared by several components counts for each. Hover a cell for the individual "
-        "controls; §6 holds the full assessment. Shared threats are merged from or instantiated on another component "
-        "and count on both.",
+    for c in m.comps:
+        cid = c["id"]
+        depth = f" ({m.scope[cid]})" if m.scope[cid] and m.scope[cid] != "Analyzed" else ""
+        name = f"[{m.cnum[cid]}](#{m.cnum[cid].lower()}) · {md_cell(m.name[cid])}{depth}"
+        rows.append(f"| {name} | {inbound_cell(cid)} | {data_cell(c)} | {threats_cell(cid)} | {controls_cell(cid)} |")
+    if cmap.get(SYSTEM_WIDE):
+        rows.append(f"| System-wide: evidence not tied to one component | – | – | – | {controls_cell(SYSTEM_WIDE)} |")
+    key = " · ".join(f"{EFF_DOT[e]} **{e}**: {EFF_TEXT[e]}" for e in EFF)
+    note = (
+        f"*{key}. A control counts for the component whose paths hold its implementation evidence; "
+        "a domain without an evidenced control is not listed; (n) counts the controls behind a rating. "
+        "Threat counts use the Figure 1 attribution; §6 holds the full assessment.*"
     )
-    return DetailFigure("2.3", number, title, take, s.render(number, title))
+    title = "Component Exposure and Control Coverage"
+    return DetailFigure("2.3", number, title, take, markdown="\n".join([DETAIL_TABLE_MARKER, *rows, "", note]))
 
 
 # ================================================================ entry point
 def build_detail_figures(yaml_data: dict, inventory: dict | None, first_number: int = 3) -> dict[str, DetailFigure]:
-    """§2 subsection → figure, numbered consecutively in section order; missing inputs leave a subsection out."""
+    """§2 subsection → detail view; SVG figures are numbered consecutively in section order, tables take no
+    number, and missing inputs leave a subsection out."""
     from figure_deployment import build as figure_deployment  # noqa: PLC0415 — figure_deployment imports this module
 
     m = Model(yaml_data, inventory)
     out: dict[str, DetailFigure] = {}
     number = first_number
-    for build in (lambda n: figure_deployment(yaml_data, inventory, n), lambda n: figure_controls(m, n)):
+    for build in (lambda n: figure_deployment(yaml_data, inventory, n), lambda n: controls_table(m, n)):
         fig = build(number)
         if fig is not None:
             out[fig.key] = fig
-            number += 1
+            number += 1 if fig.svg else 0
     return out

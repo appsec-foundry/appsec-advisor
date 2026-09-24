@@ -52,6 +52,7 @@ from pathlib import Path
 
 import yaml
 from _severity_rollup import register_severity, register_threats, risk_distribution_counts
+from actor_presentation import attacker_display
 from detect_open_registration import overview_actor_groups, overview_actor_slug
 from figure1_security import (
     authentication_profile,
@@ -91,20 +92,9 @@ SEV_COL = {"Critical": RED, "High": ORANGE, "Medium": YELLOW}
 SEV_RANK = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 _PILL_FINDING_DOT = {SEV_RANK[sev]: col for sev, col in SEV_COL.items()}
 PILL_DOT = 8  # room for the severity dot inside a pill with a linked finding
-_FALLBACK_ACTOR = {
-    "internet-anon": "Anonymous Internet Attacker",
-    "internet-user": "Authenticated Internet Attacker",
-    "internet-priv-user": "Privileged User",
-    "repo-read": "Source-Code Reader",
-    "supply-chain": "Supply-Chain Attacker",
-    "build-time": "Supply-Chain / Build Attacker",
-    "malicious-insider": "Malicious Insider",
-    "insider": "Malicious Insider",
-    "developer": "Developer",
-    "b2b-partner": "B2B Partner",
-}
 USER_ID = "actor:user"
 INTERACTION_LABEL = "User input"
+PRIVILEGED_ROLE_ACCESS = "internet-priv-user"
 ACTOR_COLORS = ("#b3453f", "#79439b", "#8c2545", "#b85283", "#552660", "#d05c61", "#9b4890", "#732e38")
 
 # ---- geometry -------------------------------------------------------------------
@@ -855,14 +845,10 @@ def scenarios_from_attack_paths(yaml_data, attack_paths_data, attack_taxonomy, a
     meta = yaml_data.get("meta") or {}
 
     def actor_name(slug):
-        if slug == "internet-anon" and meta.get("open_user_registration") is True:
-            return "Internet Attacker"
-        return (labels.get(slug) or {}).get("label") or _FALLBACK_ACTOR.get(slug) or slug
+        return attacker_display(slug, meta, labels)[0]
 
     def actor_sub(slug):
-        if slug == "internet-anon" and meta.get("open_user_registration") is True:
-            return "can self-register a regular account"
-        return (labels.get(slug) or {}).get("default_subtitle") or ""
+        return attacker_display(slug, meta, labels)[1]
 
     scenarios, order = [], []
     for number, ap in projected_paths(yaml_data, attack_paths_data, attack_taxonomy):
@@ -1144,9 +1130,13 @@ def _merge_indistinct_roles(d):
     Rank by edge count, then document order, and fold only into a higher-ranked
     role: the direction is then total, so no pair can absorb each other and the
     pass is idempotent across the figure and its detail variant.
+
+    A privileged role neither absorbs nor is absorbed (RA-11): every human
+    interaction draws the same "User input" edge, so edge equality says nothing
+    about what the privileged role can do.
     """
     entities = [e for e in d.get("external_entities") or [] if isinstance(e, dict) and e.get("id")]
-    roles = [e for e in entities if e.get("kind") == "legitimate-role"]
+    roles = [e for e in entities if e.get("kind") == "legitimate-role" and e.get("access") != PRIVILEGED_ROLE_ACCESS]
     if len(roles) < 2:
         return
     flows = [f for f in d.get("data_flows") or [] if isinstance(f, dict)]
@@ -3855,6 +3845,98 @@ def build_figure1_dfd_svg(yaml_data, attack_paths_data, attack_taxonomy, meta=No
         detail=detail,
     )
     return svg
+
+
+def overview_people(yaml_data, attack_paths_data, attack_taxonomy, actor_labels=None):
+    """Attackers and legitimate roles exactly as the Figure 1 overview draws them, in drawing order.
+
+    Report sections that name actors read this list, so none can show a person
+    the overview does not. Each entry: name, kind (attacker/role), slug (attack
+    group or role access), subtitle, code (A1…), scenarios, covers, privileged,
+    and for roles the IDs of the data flows drawn from their card.
+    """
+    if not (yaml_data.get("components") or []):
+        return []
+    scenarios, actors = scenarios_from_attack_paths(
+        yaml_data, attack_paths_data or {}, attack_taxonomy or {}, actor_labels
+    )
+    _svg, state = _build(
+        yaml_data,
+        scenarios,
+        actors,
+        overview_actor_groups(yaml_data, attack_paths_data, attack_taxonomy),
+        detail=False,
+        _optimize=False,
+    )
+    entities = {e["id"]: e for e in state["d"].get("external_entities") or [] if isinstance(e, dict) and e.get("id")}
+    people = []
+    for node in sorted(state["nodes"].values(), key=lambda n: (not n.get("attacker"), n.get("order", 0))):
+        role = (entities.get(node["id"]) or {}).get("kind") == "legitimate-role" or node["id"] == USER_ID
+        if node.get("kind") != "ext" or not (node.get("attacker") or role):
+            continue
+        if node.get("attacker"):
+            slug = node.get("actor_slug")
+            numbers = [s["n"] for s in scenarios if s["actor_slug"] == slug]
+            people.append(
+                {
+                    "name": node["name"],
+                    "kind": "attacker",
+                    "slug": slug,
+                    # The card subtitle may point to the actor table; the table needs the access itself.
+                    "subtitle": attacker_display(slug, yaml_data.get("meta") or {}, actor_labels or {})[1],
+                    "code": node.get("actor_code"),
+                    "scenarios": list(dict.fromkeys(numbers)),
+                    "covers": [],
+                    "privileged": slug == PRIVILEGED_ROLE_ACCESS,
+                }
+            )
+            continue
+        entity = entities.get(node["id"]) or {}
+        victim = bool(node.get("victim_label")) or " · victim of " in (node.get("sub") or "")
+        people.append(
+            {
+                "name": node["name"],
+                "kind": "role",
+                "slug": entity.get("access"),
+                "subtitle": entity.get("description") or ("legitimate client" if node["id"] == USER_ID else ""),
+                "code": None,
+                "scenarios": list(dict.fromkeys(s["n"] for s in scenarios if s["victim"])) if victim else [],
+                "covers": list(entity.get("_covers") or []),
+                "privileged": entity.get("access") == PRIVILEGED_ROLE_ACCESS,
+                "flow_ids": [
+                    fid for edge in state["edges"] if edge.get("src") == node["id"] for fid in edge.get("ids") or []
+                ],
+            }
+        )
+    return people
+
+
+def legitimate_role_people(yaml_data):
+    """The legitimate-role cards of the overview without attack paths or layout, in overview_people's shape."""
+    d, _victim, _notes = _project_legitimate_roles(yaml_data)
+    _merge_indistinct_roles(d)
+    flows = [f for f in d.get("data_flows") or [] if isinstance(f, dict)]
+    rows = [(e["id"], e) for e in d.get("external_entities") or [] if e.get("kind") == "legitimate-role"]
+    if any(f.get("from") == "external" and not f.get("from_entity") for f in flows):
+        rows.append((USER_ID, {"name": " ".join(p for p in (str(_project_name(d) or "").strip(), "User") if p)}))
+    return [
+        {
+            "name": entity["name"],
+            "kind": "role",
+            "slug": entity.get("access"),
+            "subtitle": entity.get("description") or "",
+            "code": None,
+            "scenarios": [],
+            "covers": list(entity.get("_covers") or []),
+            "privileged": entity.get("access") == PRIVILEGED_ROLE_ACCESS,
+            "flow_ids": [
+                f.get("id")
+                for f in flows
+                if f.get("from") == "external" and (f.get("from_entity") or USER_ID) == key and f.get("id")
+            ],
+        }
+        for key, entity in rows
+    ]
 
 
 def check_diagram(

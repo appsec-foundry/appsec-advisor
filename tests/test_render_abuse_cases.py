@@ -13,6 +13,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -599,3 +600,29 @@ def test_enrich_changelog_no_yaml_is_noop(tmp_path: Path):
     # Missing threat-model.yaml must not raise (non-fatal contract).
     rac.enrich_changelog_with_abuse_cases(tmp_path, [{"id": "AC-T-001", "title": "x"}])
     assert not (tmp_path / "threat-model.yaml").exists()
+
+
+@pytest.mark.parametrize(
+    ("access", "meta", "name"),
+    [
+        ("unauthenticated", {}, "Anonymous Internet Attacker"),
+        ("authenticated_low_priv", {"open_user_registration": True}, "Internet Attacker"),
+        ("authenticated_low_priv", {}, "Authenticated Internet Attacker"),
+        ("physical", {}, "device-holder"),
+    ],
+)
+def test_case_actor_carries_the_figure_name_of_its_access_group(access, meta, name):
+    """Library actor IDs such as external-attacker never reach the report."""
+    case = {
+        "id": "AC-T-900",
+        "title": "Chain",
+        "attacker": {
+            "actor_id": "external-attacker" if access != "physical" else "device-holder",
+            "initial_access": access,
+        },
+        "chain": [],
+    }
+    model = rac.render_case(case, {"chain_verdict": "inconclusive"}, findings_idx={}, mitigations=[], meta=meta)
+
+    assert model["actor_label"].split(" — ")[0] == name
+    assert "external-attacker" not in model["actor_label"]

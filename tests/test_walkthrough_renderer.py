@@ -18,6 +18,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "walkthrough_renderer.py"
 
@@ -237,6 +239,14 @@ class TestWalkthroughCap:
         # Intro must disclose the cap and point overflow to §8.
         assert "8 highest-priority of 12 Critical findings" in md
         assert "§8 Findings Register" in md
+
+    @pytest.mark.parametrize("gap", [0, 2])
+    def test_findings_without_attacker_get_no_walkthrough(self, gap):
+        data = self._crits(3)
+        data["threats"][gap]["vektor"] = "n-a"
+        picked = {t["id"] for t in renderer.select_walkthrough_picks(data)}
+        assert data["threats"][gap]["id"] not in picked
+        assert len(picked) == 2
 
     def test_no_cap_note_when_under_limit(self):
         md = renderer.render_attack_walkthroughs_md(self._crits(5))
@@ -599,6 +609,14 @@ class TestAttackerProfile:
         tmpl = {"attacker_profile_overrides": {"internet-anon": "OVERRIDDEN"}}
         out = renderer.render_attacker_profile({"vektor": "internet-anon"}, {}, tmpl)
         assert out == "OVERRIDDEN"
+
+    @pytest.mark.parametrize(("vektor", "phrase"), [("build-time", "build"), ("internet-priv-user", "privileged")])
+    def test_attributed_vektors_get_their_own_profile(self, vektor, phrase):
+        out = renderer.render_attacker_profile({"vektor": vektor}, {"open_user_registration": True}, {})
+        assert out != renderer.ATTACKER_PROFILES["internet-user"]
+        assert phrase in out
+        prereqs = renderer.render_prerequisites({"vektor": vektor}, {}, "src/handler.py")
+        assert prereqs != renderer.render_prerequisites({"vektor": "internet-user"}, {}, "src/handler.py")
 
 
 class TestPrerequisites:

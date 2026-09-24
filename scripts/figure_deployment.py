@@ -14,6 +14,10 @@ Each box carries its technology and version and at most three rule-chosen facts
 overlap, else bent once in the gap between two columns or in the gutter above
 them — so no line runs along a border or through text.
 
+When the environment deploys a single unit (one workload, or only a
+Dockerfile), nesting adds no information, so ``build`` returns the same content
+as a Markdown table instead of a figure.
+
 The figure reads no repository file: a re-render shows the state of the scan.
 ``build`` returns ``None`` when the inventory declares neither a runtime nor an
 environment; §2.2 then keeps its Mermaid diagram.
@@ -23,12 +27,14 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from functools import lru_cache
 
 import yaml
 from deployment_inventory import VOCAB_PATH, image_pin
 from figure1_dfd import INK, MUTED
 from figure_details import (
     AMBER,
+    DETAIL_TABLE_MARKER,
     GREY,
     NAVY,
     NAVY_BG,
@@ -37,6 +43,7 @@ from figure_details import (
     DetailFigure,
     Svg,
     W,
+    md_cell,
     tw,
 )
 
@@ -90,9 +97,26 @@ def display(name: str) -> str:
     return DISPLAY.get(name.lower(), name)
 
 
+def _store_of(token: str) -> str | None:
+    """The embedded store a framework token names: its canonical name, a package alias from the
+    technology vocabulary (`sqlite3`, `better-sqlite3`), or the name with a version digit or a
+    `database` suffix appended (`sqlite3`, `h2database`)."""
+    if token in EMBEDDED_STORES:
+        return token
+    for canon, names in (_vocab().get("frameworks") or {}).items():
+        if canon in EMBEDDED_STORES and token in {str(n).lower() for n in names}:
+            return canon
+    for cand in (re.sub(r"\d+$", "", token), re.sub(r"database$", "", token)):
+        if cand != token and cand in EMBEDDED_STORES:
+            return cand
+    return None
+
+
 def _embedded(framework) -> list[str]:
     """Embedded stores named in a framework string, also in combined notation (`sequelize+sqlite`, `knex/duckdb`)."""
-    return [t for t in re.split(r"[^a-z0-9.]+", str(framework or "").lower()) if t in EMBEDDED_STORES]
+    text = str(framework or "").lower().strip()
+    found = [_store_of(t) for t in [text, *re.split(r"[^a-z0-9.]+", text)] if t]
+    return list(dict.fromkeys(s for s in found if s))
 
 
 # ================================================================ text measurement (a margin wider than tw: nothing touches a border)
@@ -239,6 +263,7 @@ def _is_range(v: str) -> bool:
 
 
 # ================================================================ model → runtime subtree
+@lru_cache(maxsize=1)
 def _vocab() -> dict:
     return yaml.safe_load(VOCAB_PATH.read_text(encoding="utf-8")) or {}
 
@@ -335,12 +360,14 @@ def _container(model_comps: list[dict], server: list[dict], stores: list[dict], 
     }
     store_nodes = []
     for c in stores:
-        parts = [t for t in re.split(r"[^a-z0-9.]+", str(c.get("framework") or "").lower()) if t]
+        # Combined notation joins technologies with + / , or space; a package name keeps its own dashes and colons.
+        parts = [t for t in re.split(r"[\s+/,]+", str(c.get("framework") or "").lower()) if t]
         pkg = _manifest_for(c, packages)
         store_nodes.append(
             {
                 "kind": "store",
-                "title": " + ".join(display(t) for t in parts) or c.get("name", "store"),
+                "title": " + ".join(dict.fromkeys(display((_embedded(t) or [t])[0]) for t in parts))
+                or c.get("name", "store"),
                 "version": _framework_version(_embedded(c.get("framework"))[0], pkg),
                 "comps": [c["id"]],
                 "children": [],
@@ -424,6 +451,119 @@ def _to_render(node: dict) -> dict:
     return out
 
 
+def dev_clients(clients: list[dict], inv: dict) -> list[dict]:
+    """One framework node per client component, with the version its package manifest declares."""
+    out = []
+    for c in clients:
+        pkg = _manifest_for(c, inv.get("packages") or [])
+        fw = str(c.get("framework") or "client code")
+        out.append(
+            {
+                "kind": "framework",
+                "title": display(fw),
+                "version": _framework_version(fw, pkg),
+                "comps": [c["id"]],
+                "children": [],
+            }
+        )
+    return out
+
+
+def deployment_units(env: dict | None) -> int:
+    """Units the environment deploys: workloads, managed services and services that run their own image.
+    Without an environment the Dockerfile's container is the only unit."""
+    if not env:
+        return 1
+    return sum(
+        1
+        for n in _walk(env["tree"])
+        if n["kind"] in ("workload", "managed") or (n["kind"] == "service" and n.get("image"))
+    )
+
+
+# ================================================================ table (one deployment unit)
+TONE_DOT = {"weak": "🔴", "decision": "🟠"}
+
+
+def _facts_md(facts) -> str:
+    return "; ".join(f"{TONE_DOT.get(f['tone'], '')} {md_cell(f['text'])}".strip() for f in facts or [])
+
+
+def _node_md(n: dict, cnum: dict, where: str = "", nested: bool = False) -> str:
+    """Title, version, component ids, note and facts of one renderer node, as one Markdown cell fragment.
+    A nested fragment (one link of a chain) keeps its details in parentheses."""
+    head = " ".join(md_cell(x) for x in (n.get("title"), n.get("version")) if x)
+    ids = ", ".join(f"[{cnum[i]}](#{cnum[i].lower()})" for i in n.get("comps") or [] if i in cnum)
+    extra = "; ".join(
+        x for x in (ids, where, md_cell(n.get("note")) if n.get("note") else "", _facts_md(n.get("facts"))) if x
+    )
+    if not extra:
+        return head
+    return f"{head} ({extra})" if nested or ids or not head else f"{head}: {extra}"
+
+
+def _table_rows(env, envs, tree, clients, thirds, inv, build_comps, cnum, names) -> list[str]:
+    root = tree["children"][0] if tree["kind"] == "bare" else tree
+    rows = ["| Layer | What runs there |", "|---|---|"]
+    if env:
+        chain = [
+            _node_md(n, cnum, nested=True)
+            for n in _walk(root)
+            if n is not root and n["kind"] in ("cloud", "cluster", "network", "service", "workload", "managed")
+        ]
+        where = f"{md_cell(env['label'])} (`{md_cell(env['source'])}`)"
+        rows.append(f"| Deployment | {where}" + (": " + " → ".join(chain) if chain else "") + " |")
+    container = _find(tree, lambda n: n.get("_container"))
+    if container:
+        rows.append(f"| Container | {_node_md(container, cnum)} |")
+        process = _find(container, lambda n: n.get("_process"))
+        fws = [n for n in _walk(process) if n["kind"] == "framework"] if process else []
+        if fws:
+            libs = next((n["libs"] for n in fws if n.get("libs")), "")
+            text = f"{md_cell(process['title'])}, one process: " + " · ".join(_node_md(n, cnum) for n in fws)
+            rows.append(f"| Process | {text}" + (f"<br/>key libraries: {md_cell(libs)}" if libs else "") + " |")
+        stores = [n for n in _walk(container) if n["kind"] == "store"]
+        if stores:
+            text = " · ".join(_node_md({**n, "facts": []}, cnum) for n in stores)
+            rows.append(f"| Embedded stores | {text}, inside the same process |")
+    for n in [k for k in (tree.get("children") or []) if tree["kind"] == "bare" and k is not root]:
+        ids = ", ".join(f"[{cnum[i]}](#{cnum[i].lower()})" for i in n.get("comps") or [] if i in cnum)
+        rows.append(f"| {md_cell(n['title'][0].upper() + n['title'][1:])} | {ids} |")
+    if clients:
+        rows.append(f"| Client | {' · '.join(_node_md(n, cnum) for n in clients)}, in the browser |")
+    if thirds:
+        where = "called from the browser"
+        parts = [_node_md(t, cnum, where if t["_from_client"] else "", nested=True) for t in thirds]
+        rows.append(f"| Third parties | {' · '.join(parts)} |")
+    build = []
+    for c in inv.get("ci") or []:
+        text = md_cell(c["system"]) + (" → " + md_cell(", ".join(c["publishes"])) if c.get("publishes") else "")
+        facts = _facts_md(c.get("facts", [])[:1])
+        build.append(text + (f": {facts}" if facts else ""))
+    rt, deps = inv.get("runtime"), inv.get("dependencies") or {}
+    if rt:
+        chain = " → ".join(
+            [st["image"].split("/")[-1] for st in rt.get("build_stages") or []] + [rt["base"]["image"].split("/")[-1]]
+        )
+        text = f"container build (`{md_cell(rt['dockerfile'])}`): {md_cell(chain)}"
+        if deps.get("ranges") and not deps.get("lockfile"):
+            text += f"; 🟠 no lockfile: {deps['ranges']} version ranges resolved at build"
+        build.append(text)
+    if build_comps:
+        build.append(
+            "pipeline components " + ", ".join(f"[{cnum[c['id']]}](#{cnum[c['id']].lower()})" for c in build_comps)
+        )
+    note = _deploy_note(inv.get("ci") or [], env)
+    if note:
+        build.append(f"🟠 {md_cell(note)}")
+    if build:
+        rows.append(f"| Build and release | {'<br/>'.join(build)} |")
+    if len(envs) > 1:
+        others = "; ".join(f"{md_cell(e['label'])} (`{md_cell(e['source'])}`)" for e in envs[1:4])
+        rows.append(f"| Also declared, not described | {others} |")
+    return rows
+
+
 # ================================================================ figure
 def build(yaml_data: dict, inv: dict | None, number: int) -> DetailFigure | None:
     if not isinstance(inv, dict) or not (inv.get("runtime") or inv.get("environments")):
@@ -504,6 +644,11 @@ def build(yaml_data: dict, inv: dict | None, number: int) -> DetailFigure | None
         )
     thirds.sort(key=lambda n: (not n["_from_client"], n["title"]))
 
+    if deployment_units(env) <= 1:  # one unit runs everything: nested boxes would add no layout, only size
+        take = _takeaway(env, tree, server, stores, inv)
+        rows = _table_rows(env, envs, tree, dev_clients(clients, inv), thirds, inv, build_comps, cnum, names)
+        return DetailFigure("2.2", number, TITLE, take, markdown="\n".join([DETAIL_TABLE_MARKER, *rows]))
+
     cv = Canvas(cnum, names)
     s = cv.s
     take = _takeaway(env, tree, server, stores, inv)
@@ -529,19 +674,7 @@ def build(yaml_data: dict, inv: dict | None, number: int) -> DetailFigure | None
 
     # ---- device column: browser and the client components, or the model's human entry points
     bx, bw = DX + 14, DW - 28
-    dev_nodes = []
-    for c in clients:
-        pkg = _manifest_for(c, inv.get("packages") or [])
-        fw = str(c.get("framework") or "client code")
-        dev_nodes.append(
-            {
-                "kind": "framework",
-                "title": display(fw),
-                "version": _framework_version(fw, pkg),
-                "comps": [c["id"]],
-                "children": [],
-            }
-        )
+    dev_nodes = dev_clients(clients, inv)
     y = top + 34
     s.rect(bx, y, bw, 28, fill="#fff", stroke=INK, sw=1.2, rx=4)
     s.text(bx + 12, y + 18, "Web browser" if clients else "Users and clients", size=11, weight="bold")

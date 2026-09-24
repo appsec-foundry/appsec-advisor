@@ -224,7 +224,8 @@ def test_report_and_figure_explain_actual_actor_groupings(e2e_run, monkeypatch, 
         assert ("Public-source readers" in svg_text) == public_source
         assert ("Login / privileges: per finding" in svg_text) == (registration or public_source)
     assert "it is shown distinctly" not in markdown
-    assert "| Privileged User |" in markdown
+    # The privileged attacker keeps its own row, coded like its Figure 1 card.
+    assert re.search(r"^\| (A\d+ · )?Privileged User \| Attacker \|", markdown, re.M)
     assert yaml.safe_load(model_path.read_text()) == model
 
 

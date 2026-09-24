@@ -442,17 +442,6 @@ class TestHelperBranches:
         # non-str passthrough
         assert pf._to_canonical_finding_label(123) == 123  # type: ignore[arg-type]
 
-    def test_truncate_title_balanced(self):
-        assert pf._truncate_title_balanced("short") == "short"
-        long = "word `code spanning here but" + " x" * 40
-        out = pf._truncate_title_balanced(long, max_len=20)
-        assert out.endswith("…")
-        # balanced backticks (even count) after truncation
-        assert out.count("`") % 2 == 0
-
-    def test_truncate_title_balanced_non_str(self):
-        assert pf._truncate_title_balanced(None) == ""  # type: ignore[arg-type]
-
     def test_truncate_label_line(self):
         assert pf._truncate_label_line("hello", 10) == "hello"
         assert pf._truncate_label_line("hello world this is long", 8).endswith("…")
@@ -492,10 +481,6 @@ class TestHelperBranches:
     def test_components_by_tier(self):
         comps = [{"id": "a", "type": "client"}, {"id": "b", "type": "data"}]
         out = pf._components_by_tier(comps)
-        assert isinstance(out, dict)
-
-    def test_detect_tech_stack_rich(self, rich_yaml_data):
-        out = pf._detect_tech_stack(rich_yaml_data, rich_yaml_data["components"])
         assert isinstance(out, dict)
 
     def test_v2_canonical_section_for_control_empty(self):

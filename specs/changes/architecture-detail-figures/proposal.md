@@ -22,6 +22,16 @@ The operator chose, in this session:
 5. The figure reads the environment the repository declares: the Dockerfile, the compose file `docker compose` resolves without `-f`, Kubernetes and OpenShift manifests, Helm chart values, a GitLab Auto Deploy values file and AWS Terraform. It draws the first environment and names the others. Azure and GCP Terraform follow as rule extensions.
 6. A deterministic scanner writes `.deployment-inventory.json` during the scan; the composer renders both figures from it and the model and never reads the repository, so a re-render shows the state of the scan.
 
+## Revision 2026-09-24
+
+A juice-shop run showed that the two figures were hard to read in a Markdown viewer: the page scales a 1286-pixel canvas to the column width, so 8- to 10-point text becomes unreadable. Figure 4 was a table drawn as an image, and Figure 3 drew nine boxes nested in one box for an application that runs as a single container. §2.4 repeated Figure 3 from a keyword heuristic and contradicted it. The operator chose, in that session, and these decisions replace decisions 2 and 3 where they differ:
+
+7. §2.2 shows the deployment figure only when the environment deploys several units (workloads, managed services, services with their own image). With one unit, or only a Dockerfile, §2.2 shows the same content as a Markdown table, one row per layer.
+8. §2.3 shows the component × control-effectiveness view as a Markdown table above the component table, with the worst effectiveness per control domain, instead of Figure 4.
+9. §2.4 Technology Architecture is removed. §2.2 already names every runtime, framework and version the scan found.
+10. §2.1 System Context becomes a real C4 Level 1 view from the model: the report's actors and the external systems of `external_entities`. That change is delivered separately.
+11. The detail tables carry the `<!-- detail-table -->` marker. QA accepts a marked table in place of a subsection's diagram, and the §2.3 component-table injector keeps it.
+
 ## Non-goals
 
 - Azure and GCP Terraform, CloudFormation, Bicep and Kustomize overlays in this change.

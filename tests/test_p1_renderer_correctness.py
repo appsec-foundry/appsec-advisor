@@ -276,12 +276,6 @@ class TestNoBoldInDiagramNodes:
         src = (REPO_ROOT / "scripts" / "pregenerate_fragments.py").read_text()
         assert 'f"{icon} {head_text}"' in src
 
-    def test_pregenerator_tech_stack_label_is_plain(self):
-        """The technology-architecture node head is also plain."""
-        src = (REPO_ROOT / "scripts" / "pregenerate_fragments.py").read_text()
-        # Match the new plain emission inside _label().
-        assert 'f"{icon} {_truncate_label_line(headline, max_chars)}"' in src
-
 
 # ---------------------------------------------------------------------------
 # B2 — Heat-map tier consistency: bullets in a tier box only emerge from

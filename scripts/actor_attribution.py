@@ -1,6 +1,7 @@
 """Keep finding attribution within the access each actor group can use.
 
-STRIDE analysts attribute a finding to resolved actors. An attribution to an
+STRIDE analysts attribute a finding to resolved actors. A detection or audit
+gap (``no_attacker_cwes``) has no attacker and keeps none. An attribution to an
 access group that needs a specific foothold (a build pipeline, repository,
 data-store or production access) stays only when the finding shows that
 foothold; a finding in a request handler of an internet-exposed component
@@ -111,7 +112,7 @@ class _Inventory:
         return lines[line - 1] if 0 < line <= len(lines) else ""
 
     def handler_routes(self, threat: dict) -> list[dict]:
-        """Routes whose handler is an evidence file: declared there, or called by its file name where registered."""
+        """Routes whose handler is an evidence file: declared there, resolved to it through imports, or called by its file name where registered."""
         linked = []
         for file in _evidence_files(threat):
             stem = Path(file).stem
@@ -121,7 +122,11 @@ class _Inventory:
                 else None
             )
             for route in self.routes:
-                if route.get("handler_file") == file or (call and call.search(self.registration_line(route))):
+                if (
+                    route.get("handler_file") == file
+                    or route.get("handler_module") == file
+                    or (call and call.search(self.registration_line(route)))
+                ):
                     if route not in linked:
                         linked.append(route)
         return linked
@@ -193,20 +198,31 @@ def reconcile_attribution(
     inventory = _Inventory(components, routes)
     by_id = {a["id"]: a for a in actors if isinstance(a, dict) and a.get("id")}
     internet = set(load_rules()["internet_groups"])
+    no_attacker = set(load_rules().get("no_attacker_cwes") or [])
     corrections = []
     for threat in threats:
         ids = [aid for aid in threat.get("actor_ids") or [] if isinstance(aid, str)]
+        attackerless = bool(_finding_cwes(threat) & no_attacker)
         removed = [
             aid
             for aid in ids
-            if aid in by_id and (not _active(by_id[aid]) or not _valid(threat, by_id[aid], inventory))
+            if attackerless or (aid in by_id and (not _active(by_id[aid]) or not _valid(threat, by_id[aid], inventory)))
         ]
         kept = [aid for aid in ids if aid not in removed]
         added = []
-        if not any(actor_group(by_id[aid]) in internet for aid in kept if aid in by_id):
+        if not attackerless:
+            kept_internet = [aid for aid in kept if aid in by_id and actor_group(by_id[aid]) in internet]
             route_actor = _route_actor(threat, list(by_id.values()), inventory)
-            added += [route_actor] if route_actor else []
-        if not kept and not added:
+            if not kept_internet:
+                added += [route_actor] if route_actor else []
+            elif route_actor and actor_group(by_id[route_actor]) != "internet-anon":
+                # Every linked route authenticates, so no anonymous request reaches the handler.
+                anonymous = [aid for aid in kept_internet if actor_group(by_id[aid]) == "internet-anon"]
+                if anonymous:
+                    removed += anonymous
+                    kept = [aid for aid in kept if aid not in anonymous]
+                    added += [route_actor] if route_actor not in kept else []
+        if not attackerless and not kept and not added:
             fallback = _fallback(threat, list(by_id.values()), inventory)
             added += [fallback] if fallback else []
         superseded = _superseded(kept + added, by_id)

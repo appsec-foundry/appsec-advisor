@@ -15,14 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security Score accepts HTTPS GitHub and GitLab URLs and exports YAML or JSON with metadata for comparing results.
 - `.appsec/actors.yaml` accepts `legitimate_roles` for roles whose login lives outside the repository; declared roles replace or add modelled roles, keep their names in Figure 1, and are never downgraded.
 - `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic-bundle workflow.
-- §2.2 draws where each component runs and what it is built on from the repository's Dockerfile, compose, Kubernetes, OpenShift, Helm, GitLab Auto Deploy and AWS Terraform files, and §2.3 draws control coverage per component; each keeps its Mermaid diagram when its inputs are missing.
+- §2.1 shows a C4 context diagram of the Figure 1 actors and modelled external systems, §2.2 shows where each component runs and what it is built on from the repository's Dockerfile, compose, Kubernetes, OpenShift, Helm, GitLab Auto Deploy and AWS Terraform files (as a table for a single deployment unit), and §2.3 tabulates control coverage per component; §2.4 Technology Architecture is removed.
 
 ### Changed
 
 - Completion summaries omit open team questions and use the existing report, triage, and ask paths for follow-up.
 - New aiscb installations load verified modules on demand, and `update-baseline` delegates existing upstream installations to compatible signed AISCB installers while preserving their scope and mode.
 - Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
-- Configured actors retain their roles and finding links in the actor inventory while diagrams group relevant actors by access category.
+- Every report section names the same actors as Figure 1, and Identified Actors lists one row per Figure 1 actor with its access, scenarios and finding counts, including configured actors in their group.
 - Figure 1 adds technology labels, evidenced authentication markers, prioritized RAG, MCP, and agentic capabilities, and navigable detail views; dense PDF overviews use a larger A3 page, while existing models need a new analysis for missing authentication evidence.
 - Figure 2 connects numbered attack routes to example findings, access prerequisites including public source availability, weaknesses, and impact for each relevant attacker.
 - Local development checks select affected tests through `make test-changed`, with an inspectable test plan and full-suite fallback for shared or unmapped changes.
@@ -32,10 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Figure 1 no longer shows signed-in users or an admin for applications nobody logs into: a role whose request path authenticates nowhere is shown as anonymous, and an admin role needs an access check cited in code rather than a file header.
 - AI analysis preserves component-owned RAG and agentic signals, adds transport-specific MCP checks, and keeps unrelated LLM findings out of agentic risk categories.
 - Confirmed injection and SSRF findings cite their input, sink, and failed control for evidence review.
+- Detection gaps such as missing security logging no longer name an attacker, and each finding's attack vector follows its attributed attacker, so supply-chain findings read as build-time attacks.
 - Finding ratings enforce policy ceilings and verified-chain requirements for elevation, with consistent severity and ranking across reports and exports.
 - Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.
 - Scanners retain application source coverage and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading signals without following external symlinks.
-- Route authentication checks use the resolved handler, preventing protected neighboring routes or decoded-only tokens from masking missing authentication.
+- Route authentication checks use the handler resolved through imports, preventing protected neighboring routes or decoded-only tokens from masking missing authentication, and findings on authenticated routes are attributed to authenticated attackers.
 - Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
 - Dependency checks recognize Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
 - Finding deduplication preserves the highest risk, case-sensitive source paths, source evidence, and scenario references.
@@ -43,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agents reaching their turn budget no longer stall runs or cut other agents' analysis short.
 - Architecture self-checks catch inconsistent data flows and asset locations before they cause later validation failures.
 - Run logs retain earlier events, and completion summaries report measured costs or explain why they are unavailable.
-- Actor discovery and diagrams retain confirmed administrators and relevant attackers without adding roles that an exploit does not require.
+- Actor discovery and diagrams retain confirmed administrators as their own role, and relevant attackers without adding roles that an exploit does not require.
 - Architecture diagrams preserve component connections, avoid duplicate databases and identity providers, and correctly label login, OAuth, API, and embedded-database authentication.
 - Figure 1 aligns finding counts with the report and identifies the attacker behind each scenario badge and attack arrow.
 - Capability and service-role labels require source evidence and show linked finding severity.

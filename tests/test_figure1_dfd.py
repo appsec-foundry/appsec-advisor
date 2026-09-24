@@ -357,6 +357,8 @@ def test_overview_keeps_inventory_and_routes_humans_into_the_client(prefix):
     scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
     _, state = F._build(model, scenarios, actors, detail=False)
     assert {c["id"] for c in model["components"]} <= state["nodes"].keys()
+    # Both roles draw the same interaction edge; the privileged one still keeps its card (RA-11).
+    assert {"ext-person-1", "ext-person-2"} <= state["nodes"].keys()
     assert {a["id"] for n in state["nodes"].values() for a in n.get("assets", [])} == {a["id"] for a in model["assets"]}
     assert {fid for e in state["edges"] for fid in e["ids"]} == {f["id"] for f in model["data_flows"]}
     for edge in state["edges"]:
@@ -2073,6 +2075,47 @@ def test_a_role_whose_edges_another_role_already_draws_folds_into_it():
     assert model["external_entities"][0]["_covers"] == ["Admin"]
     # The absorbed role's flow survives, redirected, so no edge is lost.
     assert {f["from_entity"] for f in model["data_flows"]} == {"ext-user"}
+
+
+@pytest.mark.parametrize("privileged_first", [False, True])
+def test_a_privileged_role_never_folds_into_or_absorbs_a_regular_role(privileged_first):
+    """Equal interaction edges hide what a privileged role can do (RA-11)."""
+    regular = (
+        {"id": "ext-member", "name": "Member", "kind": "legitimate-role", "access": "internet-user"},
+        [{"to": "spa", "interaction": True}],
+    )
+    privileged = (
+        {"id": "ext-operator", "name": "Operator", "kind": "legitimate-role", "access": "internet-priv-user"},
+        [{"to": "spa", "interaction": True}],
+    )
+    model = _roles_model(*((privileged, regular) if privileged_first else (regular, privileged)))
+
+    F._merge_indistinct_roles(model)
+
+    assert {e["id"] for e in model["external_entities"]} == {"ext-member", "ext-operator"}
+    assert not any(e.get("_covers") for e in model["external_entities"])
+
+
+def test_regular_roles_with_equal_edges_still_fold_beside_a_privileged_role():
+    model = _roles_model(
+        (
+            {"id": "ext-buyer", "name": "Buyer", "kind": "legitimate-role", "access": "internet-user"},
+            [{"to": "spa", "interaction": True}],
+        ),
+        (
+            {"id": "ext-guest", "name": "Guest", "kind": "legitimate-role", "access": "internet-anon"},
+            [{"to": "spa", "interaction": True}],
+        ),
+        (
+            {"id": "ext-owner", "name": "Owner", "kind": "legitimate-role", "access": "internet-priv-user"},
+            [{"to": "spa", "interaction": True}],
+        ),
+    )
+
+    F._merge_indistinct_roles(model)
+
+    assert [e["id"] for e in model["external_entities"]] == ["ext-buyer", "ext-owner"]
+    assert model["external_entities"][0]["_covers"] == ["Guest"]
 
 
 def test_a_role_with_an_edge_of_its_own_keeps_its_card():

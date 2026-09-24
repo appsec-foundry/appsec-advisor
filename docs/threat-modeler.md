@@ -349,7 +349,7 @@ legitimate_roles:
     authentication: SSO via oauth2-proxy at the ingress
 ```
 
-Figures group actors linked to displayed findings by access category. Adding twenty roles does not create twenty diagram nodes. Identified Actors lists configured roles with their access, authority, finding links, and scenario group. A configured role without a linked scenario is listed without a diagram assignment. Default and automatically discovered roles appear only when assigned to a finding. Grouping does not imply that the roles share every permission.
+Figures group actors linked to displayed findings by access category. Adding twenty roles does not create twenty diagram nodes. Identified Actors has one row for each attacker and legitimate role that Figure 1 draws, under the same name, and names your configured roles inside the attacker group that draws them. §2.1, the threat-actor legend and the abuse cases use the same names. A role whose group Figure 1 does not draw does not appear in the report. Grouping does not imply that the roles share every permission.
 
 ### Known threats — `docs/known-threats.yaml`
 

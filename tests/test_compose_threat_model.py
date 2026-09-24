@@ -685,13 +685,38 @@ def test_components_table_is_separated_from_the_next_heading(tmp_path: Path) -> 
         triage={},
         fragments_dir=out_dir / ".fragments",
     )
-    out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n### 2.4 Technology Architecture\n")
-    lines = out.splitlines()
-    heading_idx = next(i for i, ln in enumerate(lines) if ln.startswith("### 2.4"))
-    assert lines[heading_idx - 1].strip() == "", (
-        "the component table is not separated from the next heading:\n"
-        + "\n".join(lines[max(0, heading_idx - 3) : heading_idx + 1])
+    for follower in ("### 2.9 Next Subsection", "## 3. Next Section", "> **Legend:** x"):
+        out = compose._inject_components_table(ctx, f"### 2.3 Components\n\nIntro.\n{follower}\n")
+        lines = out.splitlines()
+        heading_idx = lines.index(follower)
+        assert lines[heading_idx - 1].strip() == "", (
+            "the component table is not separated from what follows §2.3:\n"
+            + "\n".join(lines[max(0, heading_idx - 3) : heading_idx + 1])
+        )
+        assert lines[heading_idx - 2].startswith("| "), "the component table must stay inside §2.3"
+
+
+def test_components_table_keeps_the_generator_detail_table(tmp_path: Path) -> None:
+    """The §2.3 control-coverage table under the detail-table marker survives; any other table is replaced."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={
+            "components": [{"id": "api", "name": "API", "tier": "application", "paths": ["src/api"]}],
+            "threats": [],
+        },
+        triage={},
+        fragments_dir=out_dir / ".fragments",
     )
+    kept = "<!-- detail-table -->\n| Component | Controls |\n|---|---|\n| C-01 | 🔴 Unsafe: AuthN |\n"
+    stray = "| Summary | Value |\n|---|---|\n| stray | row |\n"
+    md = f"### 2.3 Components\n\nIntro.\n\n{kept}\n**Key takeaway:** x\n\n{stray}\n## 3. Next\n"
+    out = compose._inject_components_table(ctx, md)
+    assert kept in out and "stray" not in out
+    assert out.index(kept) < out.index("| ID | Name | Type |") < out.index("## 3. Next")
+    assert compose._inject_components_table(ctx, out) == out
 
 
 def test_components_table_injection_is_idempotent(tmp_path: Path) -> None:
@@ -714,7 +739,7 @@ def test_components_table_injection_is_idempotent(tmp_path: Path) -> None:
         triage={},
         fragments_dir=out_dir / ".fragments",
     )
-    md = "### 2.3 Components\n\nIntro.\n### 2.4 Technology Architecture\n"
+    md = "### 2.3 Components\n\nIntro.\n\n> **Legend:** x\n"
     first = compose._inject_components_table(ctx, md)
     second = compose._inject_components_table(ctx, first)
     third = compose._inject_components_table(ctx, second)

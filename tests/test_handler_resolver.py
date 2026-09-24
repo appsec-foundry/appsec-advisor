@@ -78,6 +78,49 @@ def test_imported_handler_with_a_session_check_authenticates_its_route(tmp_path,
     assert not row["missing_auth_suspect"]
 
 
+@pytest.mark.parametrize(
+    ("server", "files", "path", "module"),
+    [
+        (
+            "import express from 'express'\n"
+            "import { getNoteView } from './routes/noteView'\n"
+            "import { requireSession } from './lib/guard'\n"
+            "import * as helpers from './lib/helpers'\n"
+            "const app = express()\n"
+            "app.get('/notes', requireSession(), helpers.catchErrors(getNoteView()))\n",
+            {
+                "routes/noteView.ts": "export function getNoteView () {\n  return (req, res) => res.json({})\n}\n",
+                "lib/guard.ts": "export function requireSession () {\n  return (req, res, next) => next()\n}\n",
+                "lib/helpers.ts": "export function catchErrors (fn) {\n  return (req, res, next) => fn(req, res, next)\n}\n",
+            },
+            "/notes",
+            "routes/noteView.ts",
+        ),
+        (
+            "const express = require('express')\n"
+            "const { listLedger } = require('./api/ledger_rows')\n"
+            "const app = express()\n"
+            "app.post('/ledger', listLedger)\n",
+            {
+                "api/ledger_rows.js": "function listLedger (req, res) {\n  res.json([])\n}\nmodule.exports = { listLedger }\n"
+            },
+            "/ledger",
+            "api/ledger_rows.js",
+        ),
+    ],
+)
+def test_route_records_the_module_of_its_own_handler_but_not_its_guards(tmp_path, server, files, path, module):
+    write(tmp_path, {"server.js": server, **files})
+    inventory = ri.build_inventory(tmp_path)
+    jsonschema.validate(inventory, SCHEMA)
+    assert route(inventory, path).get("handler_module") == module
+
+
+def test_an_unresolved_handler_records_no_module(tmp_path):
+    write(tmp_path, {"server.js": "const app = express()\napp.get('/feed', loadFeedFromPlugin())\n"})
+    assert "handler_module" not in route(ri.build_inventory(tmp_path), "/feed")
+
+
 def test_fastapi_dependency_in_another_module_authenticates_its_route(tmp_path):
     write(
         tmp_path,

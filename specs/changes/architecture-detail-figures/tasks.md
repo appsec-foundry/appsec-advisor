@@ -12,6 +12,15 @@
 - [x] Gradle map notation in `_lib_manifest` (`scripts/_lib_manifest.py`).
 - [x] Tests: neutral and renamed variants per environment, negative cases, secrets and symlinks, schema failure, composer independence from the checkout, and a drawing check that no line crosses a foreign box and no text leaves its box (`tests/test_deployment_inventory.py`, `tests/test_figure_deployment.py`, `tests/test_figure_details.py`, `tests/test_compose_services.py`, `tests/test_lib_manifest.py`).
 
+## Revision 2026-09-24
+
+- [x] §2.2 renders a Markdown table when the environment deploys one unit or only a Dockerfile; the figure stays for several units (`scripts/figure_deployment.py`).
+- [x] Embedded stores are recognized by package or artifact name (`sqlite3`, `better-sqlite3`, `h2database`, `com.h2database:h2`) through the technology vocabulary, so they sit in the process that embeds them (`scripts/figure_deployment.py`).
+- [x] §2.3 control coverage becomes a Markdown table; the Figure 4 SVG is no longer written, and a stale one is removed (`scripts/figure_details.py`, `scripts/compose_threat_model.py`).
+- [x] §2.4 Technology Architecture and its generator, layer tables and filesystem-prefix data are removed; the contract forbids the heading; the §2 legend explains borders only while a diagram draws them (`scripts/pregenerate_fragments.py`, `data/sections-contract.yaml`).
+- [x] QA accepts a table under the `<!-- detail-table -->` marker in place of a diagram; the §2.3 table injector keeps that table and now also ends §2.3 at an H2 or the §2 legend (`scripts/qa_checks.py`, `scripts/compose_threat_model.py`).
+- [ ] §2.1 as a C4 Level 1 view from `external_entities` and the report's actor set (separate change).
+
 ## Open
 
 - [ ] Confirm the figures on fresh runs: a repository with only a Dockerfile, one with compose, one with Kubernetes manifests and one with AWS Terraform.

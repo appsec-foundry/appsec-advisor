@@ -106,6 +106,78 @@ def test_a_route_whose_handler_verifies_a_credential_counts_as_authenticated(tmp
     assert threats[0]["actor_ids"] == ["ACT-D-02"]
 
 
+@pytest.mark.parametrize(
+    ("handler", "registration", "authn", "expected"),
+    [
+        ("routes/orderNotes.ts", "app.get('/items', getOrderNotes())", "present", "ACT-D-02"),
+        ("api/ledger_export.js", "app.post('/items', handlers.exportLedger)", "middleware_present", "ACT-D-02"),
+    ],
+)
+def test_a_handler_module_resolved_through_imports_links_its_route(tmp_path, handler, registration, authn, expected):
+    inventory = routes(tmp_path, registration)
+    inventory["routes"][0].update(authn_signal=authn, handler_module=handler)
+    threats = [finding("T-006", "orders-api", "CWE-94", handler, [])]
+    corrections = reconcile_attribution(threats, components(), ACTORS, inventory)
+    assert threats[0]["actor_ids"] == [expected]
+    assert corrections[0]["added"] == [expected]
+
+
+@pytest.mark.parametrize(
+    ("handler", "registration", "authn"),
+    [
+        ("routes/orderNotes.ts", "app.get('/items', getOrderNotes())", "present"),
+        ("api/ledger_export.js", "app.post('/items', requireLogin(), handlers.exportLedger)", "middleware_present"),
+    ],
+)
+def test_an_anonymous_attribution_on_an_authenticated_route_becomes_the_authenticated_actor(
+    tmp_path, handler, registration, authn
+):
+    inventory = routes(tmp_path, registration)
+    inventory["routes"][0].update(authn_signal=authn, handler_module=handler)
+    threats = [finding("T-006", "orders-api", "CWE-94", handler, ["ACT-D-01"])]
+    corrections = reconcile_attribution(threats, components(), ACTORS, inventory)
+    assert threats[0]["actor_ids"] == ["ACT-D-02"] and threats[0]["primary_actor"] == "ACT-D-02"
+    assert corrections == [
+        {"finding": "T-006", "removed": ["ACT-D-01"], "added": ["ACT-D-02"], "actor_ids": ["ACT-D-02"]}
+    ]
+
+
+def test_an_anonymous_attribution_on_an_unauthenticated_route_stays(tmp_path):
+    inventory = routes(tmp_path, "app.get('/items', getOrderNotes())")
+    inventory["routes"][0].update(handler_module="routes/orderNotes.ts")
+    threats = [finding("T-006", "orders-api", "CWE-94", "routes/orderNotes.ts", ["ACT-D-01"])]
+    assert reconcile_attribution(threats, components(), ACTORS, inventory) == []
+    assert threats[0]["actor_ids"] == ["ACT-D-01"]
+
+
+def test_an_authenticated_route_of_another_handler_module_does_not_link(tmp_path):
+    inventory = routes(tmp_path, "app.get('/items', getOrderNotes())")
+    inventory["routes"][0].update(authn_signal="present", handler_module="routes/orderNotes.ts")
+    threats = [finding("T-006", "orders-api", "CWE-94", "routes/invoiceView.ts", [])]
+    reconcile_attribution(threats, components(), ACTORS, inventory)
+    assert threats[0]["actor_ids"] == ["ACT-D-01"]
+
+
+@pytest.mark.parametrize(
+    ("cwe", "handler", "registration", "named"),
+    [
+        ("CWE-778", "routes/login.ts", "app.post('/items', login())", []),
+        ("CWE-223", "services/audit_trail.py", "app.get('/items', audit_trail())", ["ACT-D-01", "ACT-D-06"]),
+    ],
+)
+def test_a_detection_gap_has_no_attacker(tmp_path, cwe, handler, registration, named):
+    threats = [finding("T-002", "orders-api", cwe, handler, named)]
+    corrections = reconcile_attribution(threats, components(), ACTORS, routes(tmp_path, registration))
+    assert threats[0]["actor_ids"] == [] and threats[0]["primary_actor"] is None
+    assert corrections == ([] if not named else [{"finding": "T-002", "removed": named, "added": [], "actor_ids": []}])
+
+
+def test_an_exploitable_weakness_on_the_same_route_keeps_its_internet_actor(tmp_path):
+    threats = [finding("T-005", "orders-api", "CWE-89", "routes/login.ts", [])]
+    reconcile_attribution(threats, components(), ACTORS, routes(tmp_path, "app.post('/items', login())"))
+    assert threats[0]["actor_ids"] == ["ACT-D-01"]
+
+
 def test_route_rule_adds_an_internet_actor_beside_a_valid_insider(tmp_path):
     threats = [finding("T-002", "orders-api", "CWE-312", "routes/exportCards.ts", ["ACT-D-05"])]
     reconcile_attribution(threats, components(), ACTORS, routes(tmp_path, "app.get('/items', exportCards())"))

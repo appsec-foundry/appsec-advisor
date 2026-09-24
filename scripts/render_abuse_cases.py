@@ -30,6 +30,7 @@ from pathlib import Path
 
 import yaml
 from _atomic_io import atomic_write_text
+from actor_presentation import attacker_display
 from enrichment_pass import EnrichmentContinuation
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -225,11 +226,22 @@ def _step_unverified(sv: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _actor_label(case: dict) -> str:
+# initial_access enum → the attack group whose name the report's figures use.
+_ACCESS_GROUP = {
+    "unauthenticated": "internet-anon",
+    "authenticated_low_priv": "internet-user",
+    "authenticated_high_priv": "internet-priv-user",
+}
+
+
+def _actor_label(case: dict, meta: dict | None = None) -> str:
+    """The attacker under the name Figure 1 gives its access group, then the case's own access prose."""
     attacker = case.get("attacker") or {}
-    aid = attacker.get("actor_id", "attacker")
-    prose = _ACCESS_PROSE.get(attacker.get("initial_access", ""), "")
-    return f"{aid} — {prose}" if prose else aid
+    access = attacker.get("initial_access", "")
+    group = _ACCESS_GROUP.get(access)
+    name = attacker_display(group, meta)[0] if group else attacker.get("actor_id", "attacker")
+    prose = _ACCESS_PROSE.get(access, "")
+    return f"{name} — {prose}" if prose else name
 
 
 def _blocking_mitigations(matched_ids: list[str], step_of_fid: dict[str, int], mitigations: list[dict]) -> list[dict]:
@@ -258,7 +270,12 @@ def _blocking_mitigations(matched_ids: list[str], step_of_fid: dict[str, int], m
 
 
 def render_case(
-    case: dict, verdict: dict, findings_idx: dict, mitigations: list[dict], match_steps: dict | None = None
+    case: dict,
+    verdict: dict,
+    findings_idx: dict,
+    mitigations: list[dict],
+    match_steps: dict | None = None,
+    meta: dict | None = None,
 ) -> dict:
     """Build the structured render model for one abuse case (used for both the
     markdown block and the JSON sidecar).
@@ -355,7 +372,7 @@ def render_case(
         "id": cid,
         "title": case.get("title", ""),
         "source": case.get("source", "discovered"),
-        "actor_label": _actor_label(case),
+        "actor_label": _actor_label(case, meta),
         "goal": case.get("goal", ""),
         "prerequisite": (case.get("attacker") or {}).get("prerequisite", ""),
         "combined_risk": combined,
@@ -747,7 +764,9 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
         cv = verdict.get("chain_verdict", "inconclusive")
         if cv == "not_applicable":
             continue
-        models.append(render_case(case, verdict, findings_idx, mitigations, matches_by_id.get(cid)))
+        models.append(
+            render_case(case, verdict, findings_idx, mitigations, matches_by_id.get(cid), tm.get("meta") or {})
+        )
     return models
 
 
