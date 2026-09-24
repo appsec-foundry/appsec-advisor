@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Figure 1 adds technology labels, evidenced authentication markers, prioritized RAG, MCP, and agentic capabilities, and navigable detail views; dense PDF overviews use a larger A3 page, while existing models need a new analysis for missing authentication evidence.
 - Figure 2 connects numbered attack routes to example findings, access prerequisites including public source availability, weaknesses, and impact for each relevant attacker.
 - Interactive runs ask for business context only when none is stored, as up to three skippable multiple-choice questions instead of a free-text prompt.
+- The session banner shows the threat-model line only when a model exists or a scan runs, and finds the model from subdirectories; `/appsec-advisor:help` prints a short quick start for the repository's state, with the full reference behind `--all`.
 - Local development checks select affected tests through `make test-changed`, with an inspectable test plan and full-suite fallback for shared or unmapped changes.
 
 ### Fixed

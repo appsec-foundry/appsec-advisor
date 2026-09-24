@@ -984,7 +984,7 @@ def test_no_information_line_in_the_banner(tmp_path):
     assert len(message.splitlines()) == 3  # identity, threat model, baseline
     assert not any(line.startswith("http") for line in message.splitlines())
     help_page = SCRIPT.parent.parent / "skills" / "help" / "SKILL.md"
-    assert "More information" in help_page.read_text(encoding="utf-8")
+    assert "Documentation: https://" in help_page.read_text(encoding="utf-8")
 
 
 def test_configured_url_is_readable_for_the_help_page(tmp_path, monkeypatch):
