@@ -484,3 +484,46 @@ def test_render_human_reports_unreadable_scope(tmp_path):
     out = cp.render_human([], [], {"local": 0}, None, scope_paths={"local": Path("/dev/null")})
     assert "cannot read" in out
     assert "not found" not in out
+
+
+# ---------- prompt-free defaultMode -------------------------------------
+
+
+def _mode_report(**modes):
+    return {scope: {"default_mode": modes.get(scope)} for scope in ("local", "project", "user")}
+
+
+@pytest.mark.parametrize(
+    ("modes", "expected"),
+    [
+        ({"user": "auto"}, "auto"),
+        ({"project": "bypassPermissions"}, "bypassPermissions"),
+        ({"user": "acceptEdits"}, None),
+        ({"user": "plan"}, None),
+        ({"user": "default"}, None),
+        ({}, None),
+        ({"local": "default", "user": "auto"}, None),
+        ({"project": "acceptEdits", "user": "auto"}, None),
+        ({"local": "auto", "user": "default"}, "auto"),
+    ],
+)
+def test_prompt_free_default_mode_follows_settings_precedence(modes, expected):
+    assert cp.prompt_free_default_mode(_mode_report(**modes)) == expected
+
+
+@pytest.mark.parametrize(
+    ("content", "mode"),
+    [
+        ('{"permissions": {"defaultMode": "auto"}}', "auto"),
+        ('{"permissions": {"allow": []}}', None),
+        ('{"permissions": {"defaultMode": 1}}', None),
+        ("{not json", None),
+    ],
+)
+def test_scope_report_reads_default_mode(tmp_path, monkeypatch, content, mode):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.local.json").write_text(content, encoding="utf-8")
+    report = cp.scope_report(tmp_path)
+    assert report["local"]["default_mode"] == mode
+    assert report["user"]["default_mode"] is None

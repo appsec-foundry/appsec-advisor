@@ -7436,3 +7436,16 @@ def test_permission_abort_skipped_when_any_scope_grants(monkeypatch, tmp_path):
     )
 
     assert controller._missing_permissions_action({"mode": "full"}, tmp_path, tmp_path / "out") is None
+
+
+@pytest.mark.parametrize(("mode", "aborts"), [("auto", False), ("bypassPermissions", False), ("acceptEdits", True)])
+def test_permission_abort_respects_prompt_free_default_mode(monkeypatch, tmp_path, mode, aborts):
+    report = _permission_report("absent", [])
+    report["user"]["default_mode"] = mode
+    monkeypatch.setattr(controller.check_permissions, "diff_required", _REAL_DIFF_REQUIRED)
+    monkeypatch.setattr(controller.check_permissions, "load_required", lambda: [{"entry": "Bash(*)"}])
+    monkeypatch.setattr(controller.check_permissions, "scope_report", lambda root: report)
+
+    action = controller._missing_permissions_action({"mode": "full"}, tmp_path, tmp_path / "out")
+
+    assert (action is not None) is aborts

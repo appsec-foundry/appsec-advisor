@@ -170,14 +170,44 @@ def load_allow(path: Path) -> list[str]:
     return allow
 
 
+def _default_mode(path: Path) -> str | None:
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    perms = doc.get("permissions") if isinstance(doc, dict) else None
+    mode = perms.get("defaultMode") if isinstance(perms, dict) else None
+    return mode if isinstance(mode, str) else None
+
+
 def scope_report(repo_root: Path) -> dict[str, dict]:
-    """Per scope: settings path, read status, detail, and granted allow rules."""
+    """Per scope: settings path, read status, detail, granted allow rules, defaultMode."""
     report = {}
     for scope in SCOPE_PATHS:
         path = _settings_path(scope, repo_root)
         status, allow, detail = read_scope(path)
-        report[scope] = {"path": path, "status": status, "detail": detail, "allow": allow}
+        mode = _default_mode(path) if status == "ok" else None
+        report[scope] = {"path": path, "status": status, "detail": detail, "allow": allow, "default_mode": mode}
     return report
+
+
+# Modes in which Claude Code never prompts on a tool call, subagents included:
+# auto lets its classifier decide, bypassPermissions skips checks. acceptEdits
+# still prompts for Bash, so it does not qualify.
+PROMPT_FREE_MODES = frozenset({"auto", "bypassPermissions"})
+
+
+def prompt_free_default_mode(report: dict[str, dict]) -> str | None:
+    """The configured defaultMode (local > project > user) when it never prompts.
+
+    Only the configured default is visible to a script; a mode switched in the
+    session is not, so a session switched back to default mode still prompts.
+    """
+    for scope in ("local", "project", "user"):
+        mode = report.get(scope, {}).get("default_mode")
+        if mode:
+            return mode if mode in PROMPT_FREE_MODES else None
+    return None
 
 
 def scope_label(status: str, count: int, detail: str = "") -> str:

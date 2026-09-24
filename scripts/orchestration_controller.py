@@ -2180,13 +2180,20 @@ def _dispatch_values(
 
 
 def _missing_permissions_action(cfg: dict[str, Any], repo_root: Path, output_dir: Path) -> dict[str, Any] | None:
-    """Return the fixed permission abort action, if target permissions are missing."""
+    """Return the fixed permission abort action, if target permissions are missing.
+
+    A prompt-free defaultMode (auto, bypassPermissions) makes the allow-list
+    unnecessary, so the run proceeds. check_permissions.py's own report still
+    lists missing entries: it answers whether the allow-list is complete.
+    """
     required_raw = check_permissions.load_required()
     required = [
         {**item, "entry": check_permissions.expand_entry(item["entry"], repo_root, output_dir, PLUGIN_ROOT)}
         for item in required_raw
     ]
     report = check_permissions.scope_report(repo_root)
+    if check_permissions.prompt_free_default_mode(report):
+        return None
     all_granted = [rule for scope in report.values() for rule in scope["allow"]]
     missing_perms = check_permissions.diff_required(required, all_granted)
     if not missing_perms:
