@@ -784,8 +784,11 @@ def prune_optional_schema_violations(data: dict) -> list[str]:
     * The recon producer (`orchestration_controller._recon_producer_retry`)
       already answers this failure class properly: it redispatches the producer
       WITH the validator errors, so the analyzer can correct the exact field.
-      That is strictly better than dropping the branch. STRIDE has no such path
-      — its retry only raises the turn budget, which a malformed field ignores.
+      That is strictly better than dropping the branch. STRIDE now has the same
+      path for what this net must leave fatal: a retry after a gate rejection
+      carries the errors and the rejected threats in its context plan
+      (`stride_dispatch_waves.rejection_brief`). Pruning still runs first,
+      because an optional branch is not worth a retry at all.
     * The other context-v2 boundary producers (`.stride-analyst-context.json`,
       the post-STRIDE synthesis artifacts) do carry optional LLM-written text
       under `maxLength` and would fail the same way, but each writes a single

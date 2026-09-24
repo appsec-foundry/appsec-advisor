@@ -3205,6 +3205,7 @@ def _write_stride_component_context_plan(
     repository_projection_path: str | None = None,
     repository_projection_sha256: str | None = None,
     security_context_projections: list[dict[str, str]] | None = None,
+    repair: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Write one bounded STRIDE admission plan derived from validated inputs."""
     from _atomic_io import atomic_write_json
@@ -3279,6 +3280,10 @@ def _write_stride_component_context_plan(
         "lens_ids": lens_ids,
         "inputs": inputs,
     }
+    if repair is not None:
+        # Inline, not another input: the plan is already receipted, and one more
+        # artifact per component would push a full wave past the receipt cap.
+        value["repair"] = repair
     atomic_write_json(path, value, sort_keys=True)
     receipt = _validated_json_receipt(
         output_dir,
@@ -3718,6 +3723,9 @@ def _validate_stride_component_context_plan(
     }
     if analysis != expected_analysis or value["lens_ids"] != job.get("lens_ids"):
         raise ControllerError("stride analyzer job metadata drifted from its component context plan")
+    repair = value.get("repair")
+    if repair is not None and repair.get("rejected_attempt") != job.get("attempt", 0) - 1:
+        raise ControllerError("stride analyzer repair brief does not name the attempt before this one")
     inputs = {row["context_id"]: row for row in value["inputs"]}
     expected_context_ids = {"controls.component_evidence", "threats.component_taxonomy"}
     if architecture_context is not None:
@@ -5154,6 +5162,7 @@ def _context_v2_stride_wave_action(
                 repository_projection_receipt["sha256"] if repository_projection_receipt is not None else None
             ),
             security_context_projections=security_context_projections,
+            repair=stride_dispatch_waves.rejection_brief(output_dir, component_id, attempt),
         )
         structured.append(context_plan_receipt)
         input_artifacts = [context_plan_path, bundle_path, taxonomy_path]

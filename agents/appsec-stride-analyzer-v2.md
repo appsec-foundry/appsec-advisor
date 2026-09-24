@@ -271,6 +271,8 @@ these exact threat fields:
 or configuration value, never a header, blank, comment, or closing brace.
 For a confirmed input-to-sink CWE listed above, add `"mechanism_trace": {"input": {"file": "<entry path>", "line": 1}, "sink": {"file": "<same as evidence.file>", "line": 1}, "connection": "<how this input reaches this sink>", "control": {"status": "<absent-at-sink|ineffective|bypassed>", "location": {"file": "<control path>", "line": 1}, "explanation": "<why this control fails>"}}`. Omit it for other findings.
 
+A plan `repair` holds your rejected previous `threats` and the `gate_errors` indexing them. Keep unnamed threats; fix each named one at its source by the rules above. Never drop a finding to pass; skip re-analysis of untouched categories.
+
 After each category, check your dispatch IDs:
 
 ```bash
@@ -281,8 +283,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-job-critical --o
 
 If it returns zero, finish the current category, flush its valid findings, mark
 the untouched categories skipped, log the semantic wrap-up, and return. Do not spend a model turn on
-validation: the post-agent gate validates and may dispatch a semantic repair
-only for an actual conflict.
+validation: the post-agent gate validates and retries a rejected attempt with its errors.
 
 On completion, write all six categories, set `partial:false`, clear
 `skipped_categories`, emit `AGENT_END`, and return only:

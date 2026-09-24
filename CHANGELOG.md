@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A STRIDE component whose findings fail a validation rule is retried with the exact errors to repair instead of being re-analyzed blind, and an aborted run names that rule rather than reporting "missing output".
 - Figure 1 no longer shows signed-in users or an admin for applications nobody logs into: a role whose request path authenticates nowhere is shown as anonymous, and an admin role needs an access check cited in code rather than a file header.
 - AI analysis preserves component-owned RAG and agentic signals, adds transport-specific MCP checks, and keeps unrelated LLM findings out of agentic risk categories.
 - Confirmed injection and SSRF findings cite their input, sink, and failed control for evidence review.

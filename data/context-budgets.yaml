@@ -116,7 +116,11 @@ surfaces:
     # quality-critical prompt in the pipeline. Raised instead. This is not a
     # licence to grow: the role ships once per STRIDE component, so a standard
     # run pays every byte here seven times.
-    max_bytes: 14500
+    # 14500 -> 17500 (2026-09-24): the mechanism_trace contract (ad8a5a35,
+    # +1128 bytes) landed with this guard red, and the retry repair brief adds
+    # 224. Both are rules the completion gate enforces; cutting their text to
+    # fit would raise gate rejections, the failure this contract exists to stop.
+    max_bytes: 17500
   stride_lens_llm:
     path: agents/shared/owasp-llm-top10.md
     max_bytes: 7000

@@ -10,6 +10,11 @@ earliest incomplete wave. A component whose output validates also has its
 ``.progress/<id>.json`` counter reconciled to its final step, so the live view
 never shows a finished component parked at an early substep.
 
+A claimed component's canonical file is absent until its attempt validates, so
+"missing output" is never why a claimed attempt failed: retry and abort text
+take the attempt's own gate reason, and a retry after a gate rejection gets that
+rejection as its repair brief (``rejection_brief``).
+
 Exit codes:
   0  command succeeded; ``verify`` found complete coverage
   1  ``verify`` found missing, partial, or invalid component output
@@ -19,6 +24,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -402,6 +408,75 @@ def completion_error(
         return "skipped_categories is not empty"
     if not isinstance(data.get("threats"), list):
         return "threats is not an array"
+    if _repair_in_place(output_dir, component_id, data, log_pruned=True):
+        repaired = True
+    if repaired:
+        _atomic_write_json(path, data)
+    errors = _gate_validation_errors(output_dir, data)
+    if errors:
+        return "schema validation failed: " + "; ".join(errors[:3])
+    if promote:
+        if attempt is None:
+            raise WavePlanError("only an attempt-qualified output can be promoted")
+        _promote_attempt_output(path, output_dir / f".stride-{component_id}.json")
+    return None
+
+
+#: Bounds for the rejection a retry receives; the error list is the gate's own
+#: wording and names threats by index, so the rejected threats travel with it.
+REPAIR_MAX_ERRORS = 20
+REPAIR_MAX_ERROR_CHARS = 600
+REPAIR_MAX_THREATS = 200
+
+
+def rejection_brief(output_dir: Path, component_id: str, attempt: int) -> dict[str, Any] | None:
+    """What the gate rejected in the attempt before ``attempt``, or ``None``.
+
+    A retry used to repeat the whole analysis blind: it only got a larger turn
+    budget, which a finished analysis with one rejected field ignores, so a
+    component that tripped a semantic rule (a trace sink off its evidence line,
+    a trace citing a comment) tripped the same class of rule again and aborted
+    the run. The brief carries the exact gate errors and the threats they index
+    so the retry repairs those threats instead of guessing.
+
+    Only a complete, gate-rejected attempt yields a brief. A missing, partial,
+    seed-only or unreadable attempt has nothing to repair: the retry is a full
+    analysis. Read-only — the prior attempt file is never rewritten here.
+    """
+    if attempt < 2:
+        return None
+    rejected = attempt - 1
+    path = output_dir / attempt_artifact(component_id, rejected)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(data, dict)
+        or data.get("component_id") != component_id
+        or data.get("partial") is not False
+        or data.get("skipped_categories", []) != []
+        or not isinstance(data.get("threats"), list)
+        or not 1 <= len(data["threats"]) <= REPAIR_MAX_THREATS
+        or not all(isinstance(threat, dict) for threat in data["threats"])
+    ):
+        return None
+    data = copy.deepcopy(data)
+    data["skipped_categories"] = []
+    _repair_in_place(output_dir, component_id, data, log_pruned=False)
+    errors = _gate_validation_errors(output_dir, data)
+    if not errors:
+        return None
+    return {
+        "rejected_attempt": rejected,
+        "gate_errors": [error[:REPAIR_MAX_ERROR_CHARS] for error in errors[:REPAIR_MAX_ERRORS]],
+        "threats": data["threats"],
+    }
+
+
+def _repair_in_place(output_dir: Path, component_id: str, data: dict[str, Any], *, log_pruned: bool) -> bool:
+    """Apply the deterministic pre-gate repairs; return True when data changed."""
+    repaired = False
     # Deterministically repair defects the merge step could fix anyway BEFORE
     # the schema gate — otherwise a repairable component is fatally rejected
     # here and burns its whole retry budget:
@@ -445,9 +520,13 @@ def completion_error(
     pruned = prune_optional_schema_violations(data)
     if pruned:
         repaired = True
-        _log_pruned_branches(output_dir, component_id, pruned)
-    if repaired:
-        _atomic_write_json(path, data)
+        if log_pruned:
+            _log_pruned_branches(output_dir, component_id, pruned)
+    return repaired
+
+
+def _gate_validation_errors(output_dir: Path, data: dict[str, Any]) -> list[str]:
+    """Every error the completion gate reports for an already repaired payload."""
     config_path = output_dir / ".skill-config.json"
     repo_root = None
     if config_path.is_file():
@@ -459,13 +538,7 @@ def completion_error(
         except (OSError, ValueError):
             pass  # The controller's configuration gate owns malformed run config.
     ok, errors = validate_stride(data, repo_root=repo_root)
-    if not ok:
-        return "schema validation failed: " + "; ".join(errors[:3])
-    if promote:
-        if attempt is None:
-            raise WavePlanError("only an attempt-qualified output can be promoted")
-        _promote_attempt_output(path, output_dir / f".stride-{component_id}.json")
-    return None
+    return [] if ok else errors
 
 
 def reconcile_progress(output_dir: Path, component_id: str) -> bool:
@@ -616,6 +689,14 @@ def _active_claim_wave(plan: dict[str, Any], manifest: dict[str, Any]) -> dict[s
     return {"components": components, "attempts": dict(attempts)}
 
 
+def _overlay_attempt_reasons(current: dict[str, Any], attempt_incomplete: list[dict[str, str]]) -> None:
+    """Replace canonical-file reasons with the joined attempt's own reasons."""
+    reasons = {row["component_id"]: row["reason"] for row in attempt_incomplete}
+    for row in current["incomplete"]:
+        if row["component_id"] in reasons:
+            row["reason"] = reasons[row["component_id"]]
+
+
 def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> tuple[dict[str, Any], bool]:
     """Reserve the next incomplete wave and persist per-component attempts.
 
@@ -638,8 +719,12 @@ def claim(plan: dict[str, Any], manifest: dict[str, Any], output_dir: Path) -> t
                 payload["wave"] = wave
             return payload, False
         plan["active_claim"] = {"component_ids": [], "attempts": {}}
-        if active_status["status"] == "complete":
-            current = status(plan, manifest, output_dir)
+        # The join may have just promoted attempts, so the pre-join snapshot is
+        # stale whatever the outcome. And for a claimed component the canonical
+        # file is missing by construction: only the attempt check knows why it
+        # failed, so its reason replaces "missing output" in retry and abort text.
+        current = status(plan, manifest, output_dir)
+        _overlay_attempt_reasons(current, active_status["incomplete"])
     next_wave = current["next_wave"]
     if next_wave is None:
         return current, bool(active_ids)

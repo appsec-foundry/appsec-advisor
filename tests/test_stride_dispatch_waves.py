@@ -920,3 +920,135 @@ def test_verify_cli_blocks_incomplete_coverage(tmp_path: Path, capsys) -> None:
     assert waves.main(["verify", str(tmp_path)]) == 1
     captured = capsys.readouterr()
     assert "do not continue to merge" in captured.err
+
+
+def _invalid_attempt(output_dir: Path, component_id: str, attempt: int) -> None:
+    """An attempt the analyzer finished but the gate rejects: the shape a real
+    retry sees, where the canonical file is absent by construction."""
+    data = _stride_component_with("CWE-89", "TH-09")
+    data["component_id"] = component_id
+    anchor = data["threats"][0]["evidence"]
+    data["threats"][0]["mechanism_trace"]["sink"] = {"file": anchor["file"], "line": anchor["line"] + 1}
+    path = output_dir / waves.attempt_artifact(component_id, attempt)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _expire_active_join(plan: dict, monkeypatch) -> None:
+    for component_id in plan["active_claim"]["component_ids"]:
+        plan["wait_started_at"][component_id] = 100
+    monkeypatch.setattr(waves.time, "time", lambda: 100 + waves.WAIT_DEADLINE_SECONDS)
+
+
+def test_retry_reason_names_the_rejected_attempt_not_a_missing_file(tmp_path: Path, monkeypatch) -> None:
+    manifest = _manifest(1)
+    plan = waves.build_plan(manifest, concurrency=1)
+    waves.claim(plan, manifest, tmp_path)
+    _invalid_attempt(tmp_path, "service-01", 1)
+    _expire_active_join(plan, monkeypatch)
+
+    retry, changed = waves.claim(plan, manifest, tmp_path)
+
+    assert changed is True
+    reason = retry["wave"]["retry_reasons"]["service-01"]
+    assert reason == waves.completion_error(tmp_path, "service-01", attempt=1)
+    assert "mechanism_trace.sink" in reason
+
+
+def test_exhausted_budget_reports_the_last_attempts_rejection(tmp_path: Path, monkeypatch, capsys) -> None:
+    manifest = _manifest(1)
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    plan = waves.build_plan(manifest, concurrency=1)
+    for attempt in range(1, waves.DEFAULT_MAX_ATTEMPTS + 1):
+        claimed, _ = waves.claim(plan, manifest, tmp_path)
+        assert claimed["wave"]["attempts"] == {"service-01": attempt}
+        _invalid_attempt(tmp_path, "service-01", attempt)
+        _expire_active_join(plan, monkeypatch)
+    (tmp_path / waves.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8")
+
+    assert waves.main(["claim", str(tmp_path)]) == 1
+    error = capsys.readouterr().err
+    assert "service-01: schema validation failed" in error
+    assert "mechanism_trace.sink" in error
+    assert "missing output" not in error
+
+
+def test_attempt_that_validates_at_the_expired_join_is_not_dispatched_again(tmp_path: Path, monkeypatch) -> None:
+    manifest = _manifest(2)
+    plan = waves.build_plan(manifest, concurrency=2)
+    waves.claim(plan, manifest, tmp_path)
+    _complete_attempt(tmp_path, "service-01", 1)
+    _invalid_attempt(tmp_path, "service-02", 1)
+    _expire_active_join(plan, monkeypatch)
+
+    retry, changed = waves.claim(plan, manifest, tmp_path)
+
+    assert changed is True
+    assert [c["component_id"] for c in retry["wave"]["components"]] == ["service-02"]
+    assert plan["attempts"] == {"service-01": 1, "service-02": 2}
+    assert (tmp_path / ".stride-service-01.json").is_file()
+
+
+def _write_attempt(output_dir: Path, component_id: str, attempt: int, data: dict) -> Path:
+    path = output_dir / waves.attempt_artifact(component_id, attempt)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _rejected_with_many_errors() -> dict:
+    data = _stride_component_with("CWE-89", "TH-09")
+    template = data["threats"][0]
+    data["threats"] = []
+    for index in range(5):
+        threat = json.loads(json.dumps(template))
+        threat["local_id"] = f"service-01-{index:03d}"
+        threat["mechanism_trace"]["sink"]["line"] = threat["evidence"]["line"] + 1
+        data["threats"].append(threat)
+    return data
+
+
+@pytest.mark.parametrize(
+    ("label", "attempt", "prior"),
+    [
+        ("first attempt", 1, "rejected"),
+        ("prior attempt validates", 2, "valid"),
+        ("prior attempt missing", 2, None),
+        ("prior attempt partial", 2, "partial"),
+        ("prior attempt seed only", 2, "seed_only"),
+        ("prior attempt unreadable", 2, "garbage"),
+        ("prior attempt too large for a brief", 2, "oversized"),
+    ],
+)
+def test_no_rejection_brief_without_a_finished_gate_rejected_attempt(tmp_path: Path, label, attempt, prior) -> None:
+    if prior == "valid":
+        _write_attempt(tmp_path, "service-01", 1, _stride_component_with("CWE-89", "TH-09"))
+    elif prior == "garbage":
+        path = tmp_path / waves.attempt_artifact("service-01", 1)
+        path.parent.mkdir(parents=True)
+        path.write_text("{not json", encoding="utf-8")
+    elif prior is not None:
+        data = _rejected_with_many_errors()
+        if prior in {"partial", "seed_only"}:
+            data["partial"] = True
+            data["seed_only"] = prior == "seed_only"
+        if prior == "oversized":
+            data["threats"] = data["threats"] * (waves.REPAIR_MAX_THREATS // 5 + 1)
+        _write_attempt(tmp_path, "service-01", 1, data)
+    assert waves.rejection_brief(tmp_path, "service-01", attempt) is None, label
+
+
+def test_rejection_brief_carries_every_gate_error_and_leaves_the_attempt_untouched(tmp_path: Path) -> None:
+    path = _write_attempt(tmp_path, "service-01", 1, _rejected_with_many_errors())
+    before = path.read_bytes()
+
+    brief = waves.rejection_brief(tmp_path, "service-01", 2)
+
+    assert brief is not None
+    assert brief["rejected_attempt"] == 1
+    assert len(brief["threats"]) == 5
+    # The gate's own message stops at three; a repair needs every one.
+    assert [e for e in brief["gate_errors"] if "mechanism_trace.sink" in e] == [
+        f"threats[{index}].mechanism_trace.sink must equal the finding evidence location" for index in range(5)
+    ]
+    assert path.read_bytes() == before

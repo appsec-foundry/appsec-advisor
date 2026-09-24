@@ -48,7 +48,9 @@ SURFACE_MAX_BYTES_RATCHET = {
     # 12000 -> 14500 (2026-08-30): requirements and blueprint provenance grew
     # the role to 12764 bytes, past the hard budget and inside the headroom
     # band. See the note in data/context-budgets.yaml.
-    "stride_analyzer_role": 14500,
+    # 14500 -> 17500 (2026-09-24): gate-enforced mechanism_trace contract and
+    # the retry repair brief. See the note in data/context-budgets.yaml.
+    "stride_analyzer_role": 17500,
     "stride_lens_llm": 7000,
     "stride_lens_agentic": 8000,
     "stride_lens_rag": 2600,

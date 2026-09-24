@@ -364,3 +364,68 @@ def test_main_ready_without_progress_file_fresh(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "fresh" in out
     assert "may be stale" not in out
+
+
+# --- claim-bound v2 progress across a retry -----------------------------------
+
+
+def _write_claim_bound_progress(output_dir: Path, cid: str, attempt: int, step: int) -> Path:
+    d = output_dir / ".progress"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{cid}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "component_id": cid,
+                "component_name": cid,
+                "action_id": "stage1c:0000000000000001",
+                "job_id": f"stride:{cid}:attempt-{attempt}",
+                "attempt": attempt,
+                "analysis_depth": "full",
+                "step": step,
+                "total": 9,
+                "label": "Complete" if step == 9 else "Tampering",
+                "updated_at": "2026-09-24T11:47:40Z",
+            }
+        )
+    )
+    return path
+
+
+def _write_active_claim(output_dir: Path, cid: str, attempt: int) -> None:
+    (output_dir / ".dispatch-waves.json").write_text(
+        json.dumps({"active_claim": {"component_ids": [cid], "attempts": {cid: attempt}}})
+    )
+
+
+def test_previous_attempt_record_reads_as_retry_starting_not_as_contradiction(tmp_path, capsys):
+    # Right after a retry claim the failed attempt's record is still on disk,
+    # often at its final step. It must neither end the join nor claim progress
+    # for the retry that has not written a step yet.
+    path = _write_claim_bound_progress(tmp_path, "db", attempt=1, step=9)
+    old = time.time() - 1000
+    os.utime(path, (old, old))
+    _write_active_claim(tmp_path, "db", attempt=2)
+    rc = sp.main(["stride_progress.py", str(tmp_path), "1", "--force"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "db [starting]" in out
+    assert "9/9" not in out
+    assert "[stale]" not in out
+
+
+def test_current_attempt_record_shows_its_step(tmp_path, capsys):
+    _write_claim_bound_progress(tmp_path, "db", attempt=2, step=4)
+    _write_active_claim(tmp_path, "db", attempt=2)
+    rc = sp.main(["stride_progress.py", str(tmp_path), "1", "--force"])
+    assert rc == 1
+    assert "db [4/9 Tampering]" in capsys.readouterr().out
+
+
+def test_record_from_an_attempt_not_yet_claimed_is_still_rejected(tmp_path, capsys):
+    _write_claim_bound_progress(tmp_path, "db", attempt=3, step=4)
+    _write_active_claim(tmp_path, "db", attempt=2)
+    rc = sp.main(["stride_progress.py", str(tmp_path), "1", "--force"])
+    assert rc == 2
+    assert "contradicts current dispatch claim" in capsys.readouterr().err
