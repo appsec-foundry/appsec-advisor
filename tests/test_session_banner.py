@@ -62,7 +62,7 @@ NEWER_ID = f"{BASELINE_ID.rsplit('-', 1)[0]}-99.0"
 def _tmp_path_is_a_repository(tmp_path, monkeypatch):
     """Make every tmp_path look like a working tree, with an empty user scope.
 
-    The banner only reports on a repository, and `_in_repository` walks up to
+    The banner resolves the repository root, and `_repository_root` walks up to
     the filesystem root — so on a machine that happens to have `/tmp/.git`, a
     bare tmp_path would pass for one and hide a regression. Creating the marker
     explicitly makes the precondition part of the test instead of the host.
@@ -183,11 +183,13 @@ def identity_line(message: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_reports_missing_model(tmp_path):
+def test_missing_model_leaves_the_threat_model_line_out(tmp_path):
+    """A missing model is not news at every session start; help names create."""
     message = run_hook(str(tmp_path))
     assert identity_line(message).startswith(f"appsec-advisor {MANIFEST['version']}")
     assert "/appsec-advisor:help" in identity_line(message)
-    assert tm_line(message) == ("threat model · none in docs/security/ · /appsec-advisor:create-threat-model")
+    assert "threat model" not in message
+    assert "create-threat-model" not in message
 
 
 def test_reports_existing_model(tmp_path):
@@ -209,6 +211,7 @@ def test_assessment_depth_is_left_out(tmp_path):
 
 def test_identity_is_on_the_first_line_with_help(tmp_path):
     """Identity pays the SessionStart prefix tax; domain lines keep full width."""
+    write_model(tmp_path)
     lines = run_hook(str(tmp_path)).splitlines()
     assert lines[0] == f"appsec-advisor {MANIFEST['version']} · /appsec-advisor:help"
     assert lines[1].startswith("threat model")
@@ -236,7 +239,7 @@ def test_banner_carries_no_status_glyphs(tmp_path):
 
 def test_outside_a_repository_only_the_plugin_and_help_are_announced(tmp_path, monkeypatch):
     """A directory nobody meant to scan gets no complaint about a missing model."""
-    monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
+    monkeypatch.setattr(session_banner, "_repository_root", lambda _path: None)
     # Silence baseline so this case is identity-only when baseline is healthy/disabled.
     monkeypatch.setattr(session_banner, "_baseline_line", lambda _repo: "")
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
@@ -250,7 +253,7 @@ def test_outside_a_repository_the_baseline_is_still_reported(tmp_path, monkeypat
     Unlike the threat model, it is not a claim about the current directory — so
     reporting it outside a repository is information, not a complaint.
     """
-    monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
+    monkeypatch.setattr(session_banner, "_repository_root", lambda _path: None)
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
     assert lines[0].startswith("appsec-advisor")
     assert lines[1].startswith(BASELINE_NAME)
@@ -263,7 +266,7 @@ def test_outside_a_repository_a_project_baseline_still_counts(tmp_path, monkeypa
     Reporting "not installed" over rules that are in context is the worst of the
     two errors: it sends the reader to install a second, older copy beside them.
     """
-    monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
+    monkeypatch.setattr(session_banner, "_repository_root", lambda _path: None)
     install_baseline_for(tmp_path)
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
     assert lines[1].startswith(BASELINE_NAME)
@@ -273,7 +276,7 @@ def test_outside_a_repository_a_project_baseline_still_counts(tmp_path, monkeypa
 
 def test_a_model_outside_a_repository_is_still_reported(tmp_path, monkeypatch):
     """An --output directory need not be a working tree; the model still counts."""
-    monkeypatch.setattr(session_banner, "_in_repository", lambda _path: False)
+    monkeypatch.setattr(session_banner, "_repository_root", lambda _path: None)
     write_model(tmp_path)
     lines = session_banner.build_banner(str(tmp_path)).splitlines()
     assert any(line.startswith("threat model") for line in lines)
@@ -282,18 +285,62 @@ def test_a_model_outside_a_repository_is_still_reported(tmp_path, monkeypatch):
 def test_repository_is_detected_from_a_parent(tmp_path):
     nested = tmp_path / "src" / "api"
     nested.mkdir(parents=True)
-    assert session_banner._in_repository(nested) is True
+    assert session_banner._repository_root(nested) == tmp_path
 
 
 def test_worktree_marker_file_counts_as_a_repository(tmp_path):
     worktree = tmp_path / "wt"
     worktree.mkdir()
     (worktree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n", encoding="utf-8")
-    assert session_banner._in_repository(worktree) is True
+    assert session_banner._repository_root(worktree) == worktree
 
 
 def test_filesystem_root_is_not_a_repository(tmp_path):
-    assert session_banner._in_repository(Path(tmp_path.anchor)) is False
+    assert session_banner._repository_root(Path(tmp_path.anchor)) is None
+
+
+def test_a_subdirectory_reports_the_model_at_the_repository_root(tmp_path):
+    write_model(tmp_path)
+    nested = tmp_path / "src" / "api"
+    nested.mkdir(parents=True)
+    line = tm_line(run_hook(str(nested)))
+    assert "2 total" in line
+
+
+def test_a_subdirectory_without_any_model_stays_quiet(tmp_path):
+    nested = tmp_path / "src" / "api"
+    nested.mkdir(parents=True)
+    assert "threat model" not in run_hook(str(nested))
+
+
+def test_the_nearest_model_wins_for_a_monorepo_package(tmp_path):
+    """A package scanned on its own keeps its model over the repository's."""
+    package = tmp_path / "packages" / "billing"
+    package.mkdir(parents=True)
+    write_severities(package, "effective_severity", ["Critical"])
+    write_model(tmp_path)
+    (package / "src").mkdir()
+    assert "1 CRITICAL" in tm_line(run_hook(str(package / "src")))
+    assert "CRITICAL" not in tm_line(run_hook(str(tmp_path)))
+
+
+def test_a_model_above_the_repository_root_is_not_reported(tmp_path):
+    """The walk stops at the working tree; a parent directory is another project."""
+    write_model(tmp_path)
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    assert "threat model" not in run_hook(str(repo))
+
+
+def test_commit_drift_is_counted_for_a_subdirectory_session(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_repo(repo)
+    write_model(repo, generated="2026-01-01T00:00:00Z")
+    commit(repo, "a.txt", "2026-02-01T12:00:00+00:00")
+    nested = repo / "src"
+    nested.mkdir()
+    assert "+1 commits" in tm_line(run_hook(str(nested)))
 
 
 # ---------------------------------------------------------------------------
@@ -777,10 +824,6 @@ def test_example_question_is_taken_from_the_ask_skill(tmp_path):
     assert '"what are the critical findings?"' in description
 
 
-def test_without_a_model_the_create_action_is_on_the_threat_model_line(tmp_path):
-    assert tm_line(run_hook(str(tmp_path))).endswith("/appsec-advisor:create-threat-model")
-
-
 # ---------------------------------------------------------------------------
 # Headline override and suppression
 # ---------------------------------------------------------------------------
@@ -828,8 +871,9 @@ def test_multiline_headline_is_flattened(tmp_path, monkeypatch):
     """A stray newline would fake extra banner lines."""
     repo = tmp_path / "repo"
     repo.mkdir()
+    write_model(repo)
     configured(tmp_path, {"headline": "ACME\nmore information https://evil.example"}, monkeypatch)
-    # No baseline configured in fake root → identity only when no model.
+    # No baseline configured in fake root → identity and threat model only.
     assert len(session_banner.build_banner(str(repo)).splitlines()) == 2
 
 
@@ -934,6 +978,7 @@ def test_namespace_literals_are_rewritable_by_packaging(tmp_path):
 
 def test_no_information_line_in_the_banner(tmp_path):
     """The URL belongs to the help page; repeating it every session is noise."""
+    write_model(tmp_path)
     message = run_hook(str(tmp_path))
     assert "more information" not in message
     assert len(message.splitlines()) == 3  # identity, threat model, baseline

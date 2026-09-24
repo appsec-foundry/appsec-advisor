@@ -5,14 +5,16 @@ Claude Code has no "plugin loaded" event, so the banner is emitted from the
 ``SessionStart`` hook and shown to the user through the ``systemMessage`` field.
 It reports the state a user would otherwise have to look up — whether this
 repository has a threat model, how bad it looks, how old it is — and offers the
-one command that state calls for. Outside a repository it shrinks to the plugin
-identity and the coding-baseline status: there is no project to report on, and a
-missing model is not news about a directory nobody meant to scan.
+one command that state calls for. Without a model or a running scan the
+threat-model line is left out: a missing model is not news at every session
+start, and the help skill already names the command that creates one.
 
 Layout (see docs/internal/analysis/plan-session-banner-redesign-2026-07-29.md):
 
 1. Who + help — plugin identity (or org ``banner.headline``) and ``help`` when packaged.
-2. Threat model — fixed label, severity-first facts, object-local command when needed.
+2. Threat model — fixed label, severity-first facts, object-local command when
+   needed. Read from the nearest ``docs/security/`` between the working
+   directory and the repository root.
 3. Secure coding baseline — id and scope when loaded, otherwise the problem and
    the install command on that same line. A calm state is left out where the
    aiscb installer's own startup hook already prints the baseline status.
@@ -150,8 +152,8 @@ def _text(config: dict, key: str) -> str:
     return " ".join(value.split())[:200]
 
 
-def _in_repository(path: Path) -> bool:
-    """True when ``path`` sits inside a git working tree.
+def _repository_root(path: Path) -> Path | None:
+    """Return the git working-tree root that contains ``path``, or None.
 
     Walked instead of shelled out to: `git rev-parse` would cost a process on
     every session start for a question a directory lookup answers. A worktree
@@ -160,8 +162,32 @@ def _in_repository(path: Path) -> bool:
     """
     for candidate in (path, *path.parents):
         if (candidate / ".git").exists():
-            return True
-    return False
+            return candidate
+    return None
+
+
+def _model_location(cwd: Path) -> tuple[Path, Path]:
+    """Return the project directory and its ``docs/security`` for ``cwd``.
+
+    The nearest directory from ``cwd`` up to the repository root that holds a
+    model or a scan lock wins, so a session started in a subdirectory reports
+    the repository's model and a monorepo package keeps its own. Without either,
+    the repository root (or ``cwd`` outside a repository) is returned, whose
+    missing model leaves the line out.
+    """
+    root = _repository_root(cwd)
+    candidates = [cwd]
+    if root is not None:
+        for parent in cwd.parents:
+            if not parent.is_relative_to(root):
+                break
+            candidates.append(parent)
+    for candidate in candidates:
+        security = candidate / "docs" / "security"
+        if (security / "threat-model.yaml").is_file() or (security / ".appsec-lock").is_file():
+            return candidate, security
+    fallback = root or cwd
+    return fallback, fallback / "docs" / "security"
 
 
 def _has_skill(name: str) -> bool:
@@ -471,7 +497,7 @@ def _threat_model_line(repo: Path, output_dir: Path) -> str:
     try:
         lines = (output_dir / "threat-model.yaml").read_text(encoding="utf-8").splitlines()
     except OSError:
-        return _join(LABEL_THREAT_MODEL, "none in docs/security/", CREATE)
+        return ""
 
     blocks = _blocks(lines)
     meta = _read_meta(blocks.get("meta", []))
@@ -528,26 +554,15 @@ def build_banner(cwd: str) -> str:
     if _suppressed(config):
         return ""
 
-    repo = Path(cwd)
-    output_dir = repo / "docs" / "security"
-    identity = _identity_line(config)
-
-    # Outside a project there is no threat-model state to report, and "no threat
-    # model" would be a complaint about a directory nobody meant to scan.
-    # Announce who we are, and coding-baseline status when it needs action.
-    # The baseline line still gets ``repo``: instruction discovery reads the
-    # working directory, not git, so a CLAUDE.md sitting in a checkout that was
-    # never initialised is loaded by Claude Code and has to count as loaded here
-    # — dropping it reports "not installed" over rules that are in context, and
+    cwd_path = Path(cwd)
+    repo, output_dir = _model_location(cwd_path)
+    # The baseline line gets the working directory: instruction discovery reads
+    # it, not git, so a CLAUDE.md sitting in a checkout that was never
+    # initialised is loaded by Claude Code and has to count as loaded here —
+    # dropping it reports "not installed" over rules that are in context, and
     # sends the reader to install a second copy beside them.
-    if not _in_repository(repo) and not (output_dir / "threat-model.yaml").is_file():
-        return "\n".join(filter(None, [identity, _baseline_line(repo)]))
-
-    banner = [identity, _threat_model_line(repo, output_dir)]
-    baseline = _baseline_line(repo)
-    if baseline:
-        banner.append(baseline)
-    return "\n".join(banner)
+    lines = [_identity_line(config), _threat_model_line(repo, output_dir), _baseline_line(cwd_path)]
+    return "\n".join(filter(None, lines))
 
 
 def main() -> None:

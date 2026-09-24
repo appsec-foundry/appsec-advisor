@@ -257,7 +257,7 @@ the default cover.
 Every session opens with a short status banner:
 
 1. **Identity** — plugin name and version (or your `headline`) plus `help` when packaged.
-2. **Threat model** — findings, age, drift, and the one skill that state calls for.
+2. **Threat model** — findings, age, drift, and the one skill that state calls for. The line appears only when a model exists or a scan is running.
 3. **Coding baseline** — the loaded id and scope, or what is missing or mismatched. Where the AI Secure Coding Baseline installer's own startup hook already prints the baseline status, the line appears only when something needs a decision.
 
 There are no status glyphs. Commands sit on the domain they act on. Two fields
