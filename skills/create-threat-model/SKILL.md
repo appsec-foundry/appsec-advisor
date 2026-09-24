@@ -105,8 +105,9 @@ Sonnet-5 or an Opus session on a normal-sized repo), and is skipped under
 `APPSEC_HEADLESS=1`. The early `💡 Session model` heads-up is NOT a substitute — it
 is a one-line hint, not a choice.
 
-**Sanctioned exception 2 — the business-context question.** An interactive
-full/rebuild run asks once whether to add business context, before the Pre-flight
-summary. Do not suppress it.
+**Sanctioned exception 2 — the business-context questions.** When
+`ACTION.business_context_prompt_needed` is `true`, an interactive full/rebuild run
+asks up to three short, skippable business-context questions once, before the
+Pre-flight summary. Do not suppress them.
 
 Do not narrate reading, executing, or rendering steps before the Pre-flight summary.

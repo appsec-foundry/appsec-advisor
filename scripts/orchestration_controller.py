@@ -2513,8 +2513,14 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     # waiting for an answer nobody could give, and died at the artifact gate
     # with no Stage 1 (2026-09-05 insecure-python-app). Every condition the
     # question depends on is resolved here, so the runtime has one field to read.
+    # A stored repository context already answers it, so asking again on every
+    # re-run would only repeat a question the operator settled before.
+    _stored_context = (Path(cfg["repo_root"]) / resolve_config._load_business_context_module().REPO_RELATIVE).is_file()
     _context_prompt_needed = bool(
-        not _headless and not cfg.get("skip_business_context") and not cfg.get("business_context_source")
+        not _headless
+        and not cfg.get("skip_business_context")
+        and not cfg.get("business_context_source")
+        and not _stored_context
     )
     # When the interactive prompt will handle the model choice, drop the passive
     # session cost callout + orchestrator recommendation line from the box (they

@@ -7182,16 +7182,22 @@ def test_prepare_abuse_distinguishes_an_empty_candidate_set(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize(
-    ("headless", "extra", "expected"),
+    ("headless", "extra", "stored", "expected"),
     [
-        (False, {}, True),
-        (True, {}, False),
-        (False, {"skip_business_context": True}, False),
-        (False, {"business_context_source": "docs/business-context.md"}, False),
-        (True, {"skip_business_context": True}, False),
+        (False, {}, False, True),
+        (True, {}, False, False),
+        (False, {"skip_business_context": True}, False, False),
+        (False, {"business_context_source": "docs/business-context.md"}, False, False),
+        (True, {"skip_business_context": True}, False, False),
+        # A stored context already answers the question; asking on every re-run
+        # would repeat what the operator settled before.
+        (False, {}, True, False),
+        (False, {"mode": "rebuild", "rebuild": True}, True, False),
     ],
 )
-def test_the_business_context_question_is_decided_by_the_controller(tmp_path, monkeypatch, headless, extra, expected):
+def test_the_business_context_question_is_decided_by_the_controller(
+    tmp_path, monkeypatch, headless, extra, stored, expected
+):
     """Every reason not to ask is resolved here and shipped as one field.
 
     The runtime cannot read `APPSEC_HEADLESS`, so an instruction to skip the
@@ -7205,13 +7211,16 @@ def test_the_business_context_question_is_decided_by_the_controller(tmp_path, mo
     cfg = _cfg(tmp_path) | extra
     Path(cfg["output_dir"]).mkdir(parents=True)
     Path(cfg["repo_root"]).mkdir()
+    if stored:
+        (Path(cfg["repo_root"]) / "docs").mkdir()
+        (Path(cfg["repo_root"]) / "docs" / "business-context.md").write_text("# Business context\n", encoding="utf-8")
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
     monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
     monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
     monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
     monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "plan\n")
 
-    action = controller.prepare(["--full"])
+    action = controller.prepare([f"--{cfg['mode']}"])
 
     assert controller._validate_action(action) == action
     assert action["business_context_prompt_needed"] is expected

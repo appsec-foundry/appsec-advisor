@@ -105,8 +105,8 @@ Never binding — the prompt exists so the user chooses.
 ### 2b. Business context
 
 Fires only when `ACTION.business_context_prompt_needed` is `true` (no source
-captured from `--context`, `--skip-context` not set, and an operator who can
-answer — never in a headless run). Then bind both (§3), read
+captured from `--context`, no stored `docs/business-context.md`, `--skip-context`
+not set, and an operator who can answer — never in a headless run). Then bind both (§3), read
 `<base-dir>/modes/business-context.md`, follow it, then emit the run plan.
 
 Otherwise nothing is left to do here: a `business_context_source` was already
