@@ -11,53 +11,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `scripts/repo_scan.py` runs selected deterministic checks without a threat model, with severity filtering, endpoint and technology inventories, and YAML or JSON exports for local repositories or HTTPS GitHub and GitLab URLs.
-- Security Score accepts HTTPS GitHub and GitLab URLs and exports YAML or JSON with metadata for comparing results.
-- `.appsec/actors.yaml` accepts `legitimate_roles` for roles whose login lives outside the repository; declared roles replace or add modelled roles, keep their names in Figure 1, and are never downgraded.
-- `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic-bundle workflow.
 - §2.1 shows a C4 context diagram of the Figure 1 actors and modelled external systems, §2.2 shows where each component runs and what it is built on from the repository's Dockerfile, compose, Kubernetes, OpenShift, Helm, GitLab Auto Deploy and AWS Terraform files (as a table for a single deployment unit), and §2.3 tabulates control coverage per component; §2.4 Technology Architecture is removed.
+- `scripts/repo_scan.py` runs selected deterministic checks without a threat model, with severity filtering and endpoint and technology inventories; both it and Security Score accept local repositories or HTTPS GitHub and GitLab URLs and export YAML or JSON.
+- `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic-bundle workflow.
+- `.appsec/actors.yaml` accepts `legitimate_roles` for roles whose login lives outside the repository; declared roles replace or add modelled roles, keep their names in Figure 1, and are never downgraded.
 
 ### Changed
 
-- Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item.
+- Figure 1 adds technology labels, authentication markers for login, OAuth, API, and embedded-database access, source-evidenced RAG, MCP, agentic, and service-role labels with linked finding severity, and navigable detail views; dense PDF overviews use a larger A3 page, while existing models need a new analysis for missing authentication evidence.
+- Figure 2 connects numbered attack routes to example findings, access prerequisites including public source availability, weaknesses, and impact for each relevant attacker.
+- Every report section names the same actors as Figure 1, and Identified Actors lists one row per Figure 1 actor with its access, scenarios and finding counts, including configured actors in their group.
+- Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
 - `--stride-cap` and the quick profile never drop a Critical or High finding; only Medium and Low findings are trimmed.
+- Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item.
+- New aiscb installations load verified modules on demand, and `update-baseline` delegates existing upstream installations to compatible signed AISCB installers while preserving their scope and mode.
+- Interactive runs ask for business context only when none is stored, as up to three skippable multiple-choice questions instead of a free-text prompt.
 - `create-threat-model` no longer requires the `Bash(*)` allow-list when the configured `permissions.defaultMode` is `auto` or `bypassPermissions`.
 - The missing-permissions abort lists each settings file with its status, reports settings a sandbox makes unreadable as unverifiable instead of missing, and gives a `setup-target` command that runs from any directory.
 - Completion summaries omit open team questions and use the existing report, triage, and ask paths for follow-up.
-- New aiscb installations load verified modules on demand, and `update-baseline` delegates existing upstream installations to compatible signed AISCB installers while preserving their scope and mode.
-- Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
-- Every report section names the same actors as Figure 1, and Identified Actors lists one row per Figure 1 actor with its access, scenarios and finding counts, including configured actors in their group.
-- Figure 1 adds technology labels, evidenced authentication markers, prioritized RAG, MCP, and agentic capabilities, and navigable detail views; dense PDF overviews use a larger A3 page, while existing models need a new analysis for missing authentication evidence.
-- Figure 2 connects numbered attack routes to example findings, access prerequisites including public source availability, weaknesses, and impact for each relevant attacker.
-- Interactive runs ask for business context only when none is stored, as up to three skippable multiple-choice questions instead of a free-text prompt.
 - The session banner shows the threat-model line only when a model exists or a scan runs, and finds the model from subdirectories; `/appsec-advisor:help` prints a quick start grouped by function, covering threat models, requirements checks, the baseline and the coach, with the full reference behind `--all`.
-- Local development checks select affected tests through `make test-changed`, with an inspectable test plan and full-suite fallback for shared or unmapped changes.
 
 ### Fixed
 
-- A run no longer aborts after evidence verification when a consolidated finding moves from a data store to the application component that owns its code; its trust-boundary references stay valid.
-- A STRIDE component whose findings fail a validation rule is retried with the exact errors to repair instead of being re-analyzed blind, and an aborted run names that rule rather than reporting "missing output".
-- Figure 1 no longer shows signed-in users or an admin for applications nobody logs into: a role whose request path authenticates nowhere is shown as anonymous, and an admin role needs an access check cited in code rather than a file header.
-- AI analysis preserves component-owned RAG and agentic signals, adds transport-specific MCP checks, and keeps unrelated LLM findings out of agentic risk categories.
-- Confirmed injection and SSRF findings cite their input, sink, and failed control for evidence review.
-- Detection gaps such as missing security logging no longer name an attacker, and each finding's attack vector follows its attributed attacker, so supply-chain findings read as build-time attacks.
 - Finding ratings enforce policy ceilings and verified-chain requirements for elevation, with consistent severity and ranking across reports and exports.
-- Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.
-- Scanners retain application source coverage and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading signals without following external symlinks.
 - Route authentication checks use the handler resolved through imports, preventing protected neighboring routes or decoded-only tokens from masking missing authentication, and findings on authenticated routes are attributed to authenticated attackers.
 - Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
-- Dependency checks recognize Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
 - Finding deduplication preserves the highest risk, case-sensitive source paths, source evidence, and scenario references.
+- Scanners retain application source coverage and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading signals without following external symlinks.
+- Figure 1 no longer shows signed-in users or an admin for applications nobody logs into: a role whose request path authenticates nowhere is shown as anonymous, and an admin role needs an access check cited in code rather than a file header.
+- Confirmed injection and SSRF findings cite their input, sink, and failed control for evidence review.
 - Weakness derivation and report links cover more NoSQL injection, code evaluation, attribute binding, browser credential, and CSRF cases while avoiding unrelated grouping and safe-code false positives.
+- AI analysis preserves component-owned RAG and agentic signals, adds transport-specific MCP checks, and keeps unrelated LLM findings out of agentic risk categories.
+- Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.
+- Dependency checks recognize Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
+- Detection gaps such as missing security logging no longer name an attacker, and each finding's attack vector follows its attributed attacker, so supply-chain findings read as build-time attacks.
+- Actor discovery and diagrams retain confirmed administrators as their own role, and relevant attackers without adding roles that an exploit does not require.
+- Architecture diagrams preserve component connections and avoid duplicate databases and identity providers.
+- Figure 1 aligns finding counts with the report and identifies the attacker behind each scenario badge and attack arrow.
+- Reports with architecture enrichment populate Security Architecture prose and send remaining placeholders for repair.
+- Management summaries state the analysis method, component depth, and limitations accurately and present unresolved questions with concise finding references.
+- A run no longer aborts after evidence verification when a consolidated finding moves from a data store to the application component that owns its code; its trust-boundary references stay valid.
+- A STRIDE component whose findings fail a validation rule is retried with the exact errors to repair instead of being re-analyzed blind, and an aborted run names that rule rather than reporting "missing output".
 - Agents reaching their turn budget no longer stall runs or cut other agents' analysis short.
 - Architecture self-checks catch inconsistent data flows and asset locations before they cause later validation failures.
 - Run logs retain earlier events, and completion summaries report measured costs or explain why they are unavailable.
-- Actor discovery and diagrams retain confirmed administrators as their own role, and relevant attackers without adding roles that an exploit does not require.
-- Architecture diagrams preserve component connections, avoid duplicate databases and identity providers, and correctly label login, OAuth, API, and embedded-database authentication.
-- Figure 1 aligns finding counts with the report and identifies the attacker behind each scenario badge and attack arrow.
-- Capability and service-role labels require source evidence and show linked finding severity.
-- Reports with architecture enrichment populate Security Architecture prose and send remaining placeholders for repair.
-- Management summaries state the analysis method, component depth, and limitations accurately and present unresolved questions with concise finding references.
 - Plugin update checks compare against released versions instead of advertising development builds.
 
 ## 0.6.0-beta.3 (2026-09-14)
