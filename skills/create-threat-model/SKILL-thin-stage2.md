@@ -15,7 +15,7 @@ pregeneration and the filesystem-authoritative compose handoff.
    means Stage 1d never ran: load `SKILL-thin-stage1d.md` in full, follow it,
    then repeat this call.
 2. Mark `Stage 2 - Report rendering` in progress, print the fixed banner, and
-   start the heartbeat:
+   start the heartbeat, in one message with step 3:
 
    ```text
    ▶ Stage 2 - Report rendering starting  (expect ~<EST_STAGE2> min, model: <RENDERER_MODEL>, renderer budget)
@@ -44,8 +44,8 @@ pregeneration and the filesystem-authoritative compose handoff.
    Specialists write only their owned fragments and never compose. The profile
    never skips fragment validation, strict compose, prose fixes, QA autofix, or
    the Stage-3 secret gate.
-4. Send the final heartbeat, stop the watchdog, mark Stage 2 completed, and
-   record stats exactly as written — `--stage` takes the integer `2`, NOT the
+4. In one message, send the final heartbeat and record stats in one Bash call,
+   stop the watchdog, and mark Stage 2 completed. The stats argv is exact — `--stage` takes the integer `2`, NOT the
    `stage2` label the controller's JSON uses everywhere else, and `--name` is
    required:
 

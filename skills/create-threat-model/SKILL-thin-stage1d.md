@@ -2,7 +2,8 @@
 
 Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instructions.
 
-1. Mark Stage 1d in progress, print the banner, and start the heartbeat:
+1. Mark Stage 1d in progress, print the banner, and start the heartbeat, in one
+   message with step 2:
 
    ```text
    ▶ Stage 1d - Abuse case verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
@@ -60,8 +61,8 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
    `dispatch_parallel` is its one retry for verifiers that decided nothing:
    dispatch that wave as in step 3, wait, then call `finalize-abuse` again.
    The retry budget is persisted, so this cannot loop.
-5. Send the final heartbeat, stop the watchdog, record aggregated stats, and
-   mark the task completed:
+5. In one message, send the final heartbeat and record aggregated stats in one
+   Bash call, stop the watchdog, and mark the task completed:
 
    ```bash
    python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \

@@ -1,7 +1,7 @@
 # Compact Thin Completion
 
 Completion is deterministic. Do not dispatch analysis or repair agents here.
-First run `orchestration_controller.py next --output-dir "$OUTPUT_DIR"` and
+Run each fenced block as one Bash call. First run `orchestration_controller.py next --output-dir "$OUTPUT_DIR"` and
 require `action=complete`, `stage=complete`, and this instruction file. Never
 announce completion while the report is absent or a QA/architect status is
 still `repair_required`.

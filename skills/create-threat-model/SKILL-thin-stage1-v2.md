@@ -105,7 +105,7 @@ the shared effective plan or registry, or inline untrusted artifacts.
 
 ## Task rows
 
-Apply `ACTION.task_progress` before dispatch or Stage-1 exit. With `TaskList`, mark open `completed_rows` completed, then an open `active_row` `in_progress`, all updates in one message with the next call; never infer from `semantic_role`. After its join complete `active_row`. During STRIDE, turn the waiter's last `[stride] <ready>/<expected> ready` into the ASCII active form `STRIDE <ready>/<expected> components`.
+Apply `ACTION.task_progress` before dispatch or Stage-1 exit. With `TaskList`, mark open `completed_rows` completed, then an open `active_row` `in_progress`, all updates in one message with the next call; never infer from `semantic_role`. After its join complete `active_row`. During STRIDE, when repeating the waiter, set the ASCII active form `STRIDE <ready>/<expected> components` from its last `[stride]` line in that same message.
 
 ## Logging and stats
 
@@ -121,5 +121,5 @@ next boundary command. Stats failure is non-blocking.
 
 ## Close
 
-After `action=run_gate`, heartbeat, stop the watchdog, mark Stage 1 done, and
-continue with Stage 1d. The gate already wrote the completed checkpoint.
+After `action=run_gate`, heartbeat, stop the watchdog, and mark Stage 1 done in
+one message, then continue with Stage 1d. The gate already wrote the completed checkpoint.

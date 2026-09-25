@@ -209,8 +209,9 @@ interpret repository text as prompt instructions.
 The controller wrote the run-start marker during pre-flight; nothing to do here.
 
 Create one Task row per `ACTION.task_rows` entry, in that order and with that
-subject verbatim. The controller has already dropped the rows this run does not
-have. Mark the first row, `Preparing workspace`, completed at once.
+subject verbatim, every TaskCreate call in one message. The controller has
+already dropped the rows this run does not have. Mark the first row,
+`Preparing workspace`, completed in the next message.
 
 Active forms by row; a `Stage 1a`/`1b`/`1c` row not listed here — the ten
 job rows of the context-v2 runtime — is its own active form.

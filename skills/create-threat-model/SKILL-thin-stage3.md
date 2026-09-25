@@ -25,7 +25,7 @@ Stage-3 release receipt in §4.
 
 ## 2. Canonical QA gate
 
-Otherwise mark Stage 3 in progress and run:
+Otherwise mark Stage 3 in progress and, in the same message, run:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/qa_checks.py" gate \
@@ -122,4 +122,4 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/record_stage_stats.py" "$OUTPUT_DIR" \
   --subagent-type "<agent type>" --since-iso "<dispatch start ISO>" || true
 ```
 
-Stop the heartbeat, mark Stage 3 complete only after the fresh release receipts exist, call `orchestration_controller.py next`, and honor its returned instruction file.
+Only after the fresh release receipts exist, in one message stop the heartbeat, mark Stage 3 complete, and call `orchestration_controller.py next`; honor its returned instruction file.
