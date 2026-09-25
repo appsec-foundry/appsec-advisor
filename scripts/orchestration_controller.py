@@ -61,6 +61,7 @@ import check_permissions  # noqa: E402
 import context_routing  # noqa: E402
 import cutoff_cause  # noqa: E402
 import detect_session_model  # noqa: E402
+import dispatch_window  # noqa: E402
 import ensure_output_gitignore  # noqa: E402
 import merge_threats as merge_decision_contract  # noqa: E402
 import resolve_config  # noqa: E402
@@ -1003,6 +1004,19 @@ def verify_receipt_hashes(
     )
 
 
+def verify_spawn_receipts(output_root: Path, action_id: str) -> bool:
+    """Verify the pending dispatch's receipts when an Agent call for it spawns.
+
+    Returns False when ``action_id`` is not the pending dispatch (the next
+    boundary still demands a verification); raises on a changed artifact.
+    """
+    pending = _pending_dispatch(output_root)
+    if pending is None or pending["action_id"] != action_id:
+        return False
+    verify_receipt_hashes(output_root, [], action_id=action_id)
+    return True
+
+
 def _validate_receipt_state(value: Any, schema_path: Path, label: str) -> dict[str, Any]:
     """Validate one controller-owned receipt state document."""
     if not isinstance(value, dict):
@@ -1216,6 +1230,13 @@ def _emit(action: dict[str, Any]) -> int:
             _open_receipt_verification(Path(action["dispatch_values"]["output_dir"]), action)
     except ControllerError as exc:
         action = _failure_action(exc)
+    if action["action"] in {"dispatch_agent", "dispatch_parallel"}:
+        output_dir = (action.get("dispatch_values") or {}).get("output_dir")
+        if output_dir:
+            try:
+                dispatch_window.record(output_dir, str(action.get("stage") or ""))
+            except OSError:
+                pass
     # One compact line: every action lands in the orchestrator's context and the
     # indentation alone was 17 % of it. No field may be dropped from it, though —
     # the effective-plan binding hashes the printed action (context_routing._action_basis).

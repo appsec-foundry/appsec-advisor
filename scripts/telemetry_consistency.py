@@ -220,7 +220,32 @@ def check_returned_calls(output_dir: str | Path) -> list[dict[str, str]]:
             findings.append(
                 _mismatch(call, "stage_stats_zero_usage", "stage stats report zero tokens for a charged call")
             )
+    spread = wave_split_seconds(candidates)
+    if spread is not None:
+        findings.append(
+            _mismatch(
+                {"job_id": action_id, "agent_call_id": "-", "agent_type": str(candidates[0].get("agent_type") or "?")},
+                "wave_split_across_messages",
+                f"{len(candidates)} jobs spawned over {spread}s; one assistant message per wave saves a turn per job",
+            )
+        )
     return findings
+
+
+#: Calls issued in one assistant message spawn within a second or two of each
+#: other; one call per message puts a whole model turn between them.
+SPLIT_GAP_SECONDS = 4
+
+
+def wave_split_seconds(calls: list[dict[str, Any]]) -> int | None:
+    """Spawn spread of a wave issued one call per message, or ``None``."""
+    spawned = sorted(int(call.get("spawned_at") or 0) for call in calls)
+    if len(spawned) < 2 or not spawned[0]:
+        return None
+    gaps = sorted(later - earlier for earlier, later in zip(spawned, spawned[1:]))
+    if gaps[len(gaps) // 2] <= SPLIT_GAP_SECONDS:
+        return None
+    return spawned[-1] - spawned[0]
 
 
 def format_detail(finding: dict[str, str]) -> str:

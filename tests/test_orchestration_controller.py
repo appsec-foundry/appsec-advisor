@@ -1006,6 +1006,8 @@ def test_context_v2_prepare_abuse_dispatches_receipted_candidate_projections(tmp
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["context_plan"]["receipt_sha256"]
     assert emitted["dispatch_jobs"][0]["context_delivery_ids"]
+    # The emitted dispatch opens the window the join and stats default to.
+    assert controller.dispatch_window.since(output)
 
     projection_path = output / ".dispatch-context/abuse-cases/AC-T-001.json"
     projection = json.loads(projection_path.read_text(encoding="utf-8"))
@@ -7040,6 +7042,38 @@ def test_the_boundary_gate_is_reachable_from_the_command_line(tmp_path, monkeypa
     monkeypatch.setattr(sys, "argv", ["c", "context-v2-post-recon", "--output-dir", str(output)])
     controller.main()
     assert "was not verified" not in capsys.readouterr().out
+
+
+def test_an_agent_spawn_verifies_its_dispatch_receipts(tmp_path, monkeypatch):
+    """The Agent hook re-hashes at spawn, so no orchestrator turn is spent on it."""
+    import agent_logger
+    import hook_payload
+
+    output, bound = _bound_stage1_dispatch(tmp_path)
+    action_id = bound["context_plan"]["action_id"]
+    monkeypatch.setattr(agent_logger, "_output_dir", lambda: str(output))
+
+    def spawn(action: str):
+        return hook_payload.parse(
+            {
+                "hook_event_name": "PreToolUse",
+                "session_id": "sess0001",
+                "tool_name": "Agent",
+                "tool_use_id": "toolu_spawn1",
+                "tool_input": {"subagent_type": "x", "prompt": f"ACTION_ID={action}\nJOB_ID=j"},
+            }
+        )
+
+    assert agent_logger._context_v2_receipt_reason(spawn("stage1c:ffffffffffffffff")) is None
+    assert not (output / controller.RECEIPT_VERIFICATION_NAME).exists()
+
+    assert agent_logger._context_v2_receipt_reason(spawn(action_id)) is None
+    controller._require_receipt_verification(output)
+
+    plan = output / controller.context_routing.PLAN_NAME
+    plan.write_bytes(plan.read_bytes() + b"\n")
+    reason = agent_logger._context_v2_receipt_reason(spawn(action_id))
+    assert reason is not None and "Receipt verification failed" in reason
 
 
 def _stage2_blocked(output: Path, step: str) -> None:

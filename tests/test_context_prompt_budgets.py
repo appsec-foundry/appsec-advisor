@@ -259,11 +259,12 @@ def test_context_v2_stage1_runtime_preserves_dispatch_and_boundary_contract():
     # Per-role measurement must be executable, not a prose suggestion. R9
     # recorded only abuse verification and rendering despite dispatching all
     # Stage-1 roles.
-    assert "WAVE_START_ISO" in text
+    assert "capture no timestamp" in flat
     assert "group the returned jobs by `semantic_role`, `agent_type`, and `model`" in flat
     assert "`total_tokens`, `tool_uses`, and `duration_ms`" in text
     assert '--variant "<semantic_role>"' in text
-    assert '--subagent-type "<agent_type>" --since-iso "$WAVE_START_ISO"' in flat
+    assert '--subagent-type "<agent_type>" || true` in the same Bash call' in flat
+    assert "WAVE_START_ISO" not in text
 
     # The skill must never select a producer itself.
     assert "semantic_role" in text

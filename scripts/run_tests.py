@@ -514,6 +514,11 @@ MANUAL_TESTS = {
 # build_threat_model_yaml and compose_threat_model, so modules they import
 # route to it.
 SOURCE_TESTS = {
+    "scripts/dispatch_window.py": _tests("""
+        orchestration_controller
+        record_stage_stats
+        wait_agent_calls
+    """),
     "agents/appsec-evidence-verifier.md": _tests("""
         agent_definitions
         agent_doc_shell_snippets

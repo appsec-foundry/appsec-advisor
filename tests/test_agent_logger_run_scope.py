@@ -249,3 +249,33 @@ def test_terminal_sweep_ignores_a_transcript_that_names_another_agent(tmp_path: 
     lines = [line for line in _sweep(tmp_path, session).splitlines() if "toolu_other1" in line]
     assert any("reason=outer_session_terminal" in line for line in lines)
     assert not any("AGENT_USAGE " in line for line in lines)
+
+
+def test_a_call_closed_before_its_subagent_stop_still_gets_its_usage(tmp_path: Path) -> None:
+    """A turn-limited child sends no SubagentStop; the job boundary closed its call.
+
+    juice-shop 2026-09-24 AC-T-003: the verdict was complete, the call closed,
+    and its usage stayed unattributed although the child transcript was on disk.
+    """
+    out = _out(tmp_path)
+    _bound_call(out, "toolu_capped1", "agentcapped1")
+    agent_lifecycle.append_events(out, agent_lifecycle.finish_call(out, "toolu_capped1"))
+    session = _write_jsonl(tmp_path / "sessions" / "sess0001.jsonl", [])
+    _write_jsonl(
+        tmp_path / "sessions" / "sess0001" / "subagents" / "agent-agentcapped1.jsonl",
+        [_assistant("claude-sonnet-4-6", 700, "agentcapped1"), _assistant("claude-sonnet-4-6", 300, "agentcapped1")],
+    )
+    event = {
+        "hook_event_name": "PostToolUse",
+        "session_id": "sess0001",
+        "transcript_path": str(session),
+        "tool_name": "Bash",
+        "tool_use_id": "toolu_wait1",
+        "tool_input": {"command": "python3 wait_abuse_progress.py"},
+        "tool_response": {"stdout": "done", "stderr": ""},
+    }
+    first = [line for line in _run(event, tmp_path).splitlines() if "toolu_capped1" in line and "AGENT_USAGE " in line]
+    assert len(first) == 1 and "out=1000" in first[0]
+
+    again = [line for line in _run(event, tmp_path).splitlines() if "toolu_capped1" in line and "AGENT_USAGE" in line]
+    assert len(again) == 1, "usage is attributed once"

@@ -941,6 +941,30 @@ def _settle_swept_calls(destination: str, session_transcript: str) -> list[agent
     return events
 
 
+def _backfill_closed_call_usage(destination: str, session_transcript: str) -> list[agent_lifecycle.LifecycleEvent]:
+    """Usage of calls a job boundary closed before their child sent SubagentStop.
+
+    A child that hits its turn limit after writing its output sends no
+    SubagentStop, so its usage was never attributed (TELEMETRY_MISMATCH
+    usage_unattributed) although its transcript is complete on disk.
+    """
+    events: list[agent_lifecycle.LifecycleEvent] = []
+    if not session_transcript:
+        return events
+    for call in agent_lifecycle.terminal_calls_without_usage(destination):
+        transcript = _child_transcript(session_transcript, str(call.get("runtime_agent_id") or ""))
+        usage = _usage_from_transcript(transcript) if transcript else {}
+        if usage:
+            events += agent_lifecycle.record_call_usage(
+                destination,
+                str(call["agent_call_id"]),
+                usage,
+                tool_uses=_tool_uses_from_transcript(transcript),
+                resolved_model=_resolved_model_from_transcript(transcript),
+            )
+    return events
+
+
 def clear_terminal_active_tool_calls(output_dir: str | Path | None = None, session_transcript: str = "") -> None:
     """Remove live-only call state after the outer session has terminated.
 
@@ -2342,6 +2366,31 @@ def _context_v2_agent_identity_reason(event: hook_payload.HookEvent) -> str | No
     return None
 
 
+def _context_v2_receipt_reason(event: hook_payload.HookEvent) -> str | None:
+    """Re-hash the dispatch's admitted inputs as the Agent call spawns (TOCTOU guard).
+
+    Deny only on a proven change. A hook that cannot run the check leaves the
+    verification record unwritten, and the next boundary refuses without it.
+    """
+    if not event.is_agent_call:
+        return None
+    action_id = _extract_param(str(event.tool_input.get("prompt") or ""), "ACTION_ID")
+    output_root = Path(_output_dir())
+    if not action_id or not (output_root / ".pending-dispatch.json").is_file():
+        return None
+    try:
+        import orchestration_controller as controller
+    except Exception:
+        return None
+    try:
+        controller.verify_spawn_receipts(output_root, action_id)
+    except (controller.ControllerError, controller.CallError) as exc:
+        return f"Receipt verification failed for {action_id}: {exc}"
+    except Exception:
+        return None
+    return None
+
+
 # Agents that cannot advance the pipeline: they only read a finished run and
 # write their own sidecar. The abort latch must let these through, or its own
 # advice — preserve the artifacts and diagnose — is impossible to follow, which
@@ -2500,7 +2549,7 @@ def handle_pre_tool_use(data: dict, sid: str) -> None:
     # is still enforced where the evidence exists: check_stride_dispatch.py
     # fails the run on an inline-shortcut bypass and reports a serial wave as
     # DEGRADED.
-    identity_reason = _context_v2_agent_identity_reason(event)
+    identity_reason = _context_v2_agent_identity_reason(event) or _context_v2_receipt_reason(event)
     if identity_reason is not None:
         _emit_pretool_denial(identity_reason)
         return
@@ -3556,6 +3605,12 @@ def handle_post_tool_use(data: dict, sid: str) -> None:
 
     # --- Bash tool — warn on errors + extract substep progress for verbose ---
     elif tool == "Bash":
+        try:
+            agent_lifecycle.append_events(
+                _output_dir(), _backfill_closed_call_usage(_output_dir(), event.session_transcript)
+            )
+        except Exception:
+            pass
         cmd_str = str(inp.get("command", ""))
         ERROR_KW = (
             "permission denied",

@@ -2,8 +2,7 @@
 
 Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instructions.
 
-1. Mark Stage 1d in progress, capture `STAGE_ABUSE_START_ISO`, print the banner,
-   and start the heartbeat:
+1. Mark Stage 1d in progress, print the banner, and start the heartbeat:
 
    ```text
    ▶ Stage 1d - Abuse case verification starting  (deterministic match + per-candidate sonnet verifier fan-out)
@@ -15,10 +14,8 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
      prepare-abuse --output-dir "$OUTPUT_DIR"
    ```
 
-3. Call `verify-receipts --action-id <context_plan.action_id>` as the final
-   filesystem action. Then launch every job as an
-   `appsec-advisor:appsec-abuse-case-verifier` call, launching the wave
-   in ONE message. Pass no `run_in_background`. Description:
+3. Launch every job as an `appsec-advisor:appsec-abuse-case-verifier` call,
+   launching the wave in ONE message (the Agent hook runs `verify-receipts`). Pass no `run_in_background`. Description:
    `Abuse case: <candidate_id> — <title>`; use the ID if its title is missing.
    Each prompt contains:
 
@@ -72,8 +69,7 @@ Run only when `SKIP_ABUSE_CASE_VERIFICATION=false`; use no other Stage-1d instru
        --agent appsec-advisor:appsec-abuse-case-verifier \
        --model "<job model alias from step 3>" \
        --duration-ms <ms> --tool-uses <n> --tokens <n> \
-       --subagent-type appsec-advisor:appsec-abuse-case-verifier \
-       --since-iso "$STAGE_ABUSE_START_ISO" 2>/dev/null || true
+       --subagent-type appsec-advisor:appsec-abuse-case-verifier 2>/dev/null || true
    ```
 
    With no candidates, record a zero-token deterministic row instead: same call

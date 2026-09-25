@@ -38,6 +38,7 @@ from datetime import datetime
 from pathlib import Path
 
 import agent_lifecycle
+import dispatch_window
 
 PENDING_EXIT_CODE = 75
 PLUGIN_AGENT_PREFIX = "appsec-advisor:"
@@ -48,7 +49,9 @@ DEFAULT_DEADLINE_MINUTES = 60
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Join the plugin agent calls a stage dispatched.")
     parser.add_argument("output_dir", type=Path)
-    parser.add_argument("--since", default="", help="ISO-8601 time taken just before the dispatch")
+    parser.add_argument(
+        "--since", default="", help="ISO-8601 dispatch start; defaults to the controller's dispatch window"
+    )
     parser.add_argument("--interval", type=int, default=20)
     parser.add_argument("--rounds", type=int, default=24)
     parser.add_argument("--deadline-minutes", type=int, default=DEFAULT_DEADLINE_MINUTES)
@@ -95,6 +98,8 @@ def still_waiting(calls: list[dict], now: float, deadline_seconds: float) -> lis
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not args.since:
+        args.since = dispatch_window.since(args.output_dir)
     try:
         since = parse_since(args.since)
     except ValueError:

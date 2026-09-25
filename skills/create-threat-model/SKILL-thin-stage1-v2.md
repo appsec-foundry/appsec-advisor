@@ -35,10 +35,10 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
   <command> --output-dir "$OUTPUT_DIR"
 ```
 
-Send foreground `dispatch_jobs[]` together. Immediately before dispatch call
-`verify-receipts` with `context_plan.action_id`; it re-hashes that action's
-artifacts and taxonomy slices. This is the last filesystem operation.
-`run_gate` completes; fix and repeat `reject`; else terminal.
+Send foreground `dispatch_jobs[]` together, every Agent call in the same
+message. The Agent hook runs `verify-receipts` for `context_plan.action_id` at
+each spawn; it re-hashes that action's artifacts and taxonomy slices. Run it
+yourself only when a boundary rejects with "was not verified", then repeat it.
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
@@ -53,7 +53,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_stride_progress.py" \
   --component <dispatch_jobs[0].component_id> [...]
 ```
 
-Exit `75`: repeat unchanged; `2`: abort; else call `context-v2-post-stride`. Any other dispatch: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_agent_calls.py" "$OUTPUT_DIR" --since "$WAVE_START_ISO"`, repeating `75`. On an in-flight `reject`, join again before repeating the boundary. Never re-dispatch, poll, or end here.
+Exit `75`: repeat unchanged; `2`: abort; else call `context-v2-post-stride`. Any other dispatch: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/wait_agent_calls.py" "$OUTPUT_DIR"`, repeating `75`. On an in-flight `reject`, join again before repeating the boundary. Never re-dispatch, poll, or end here.
 
 `context-v2-begin` opens the chain. After the join, invoke the
 action's `next_boundary` verbatim. Never derive it from run shape or re-invoke
@@ -105,17 +105,19 @@ the shared effective plan or registry, or inline untrusted artifacts.
 
 ## Task rows
 
-Apply `ACTION.task_progress` before dispatch or Stage-1 exit. With `TaskList`, mark open `completed_rows` completed, then an open `active_row` `in_progress`; never infer from `semantic_role`. After its join complete `active_row`. During STRIDE, turn the waiter's last `[stride] <ready>/<expected> ready` into the ASCII active form `STRIDE <ready>/<expected> components`.
+Apply `ACTION.task_progress` before dispatch or Stage-1 exit. With `TaskList`, mark open `completed_rows` completed, then an open `active_row` `in_progress`, all updates in one message with the next call; never infer from `semantic_role`. After its join complete `active_row`. During STRIDE, turn the waiter's last `[stride] <ready>/<expected> ready` into the ASCII active form `STRIDE <ready>/<expected> components`.
 
 ## Logging and stats
 
-Before dispatch capture `WAVE_START_ISO`. After return, group the returned jobs by
-`semantic_role`, `agent_type`, and `model`; sum `<usage>`: `total_tokens`, `tool_uses`, and `duration_ms`.
-For each group run `record_stage_stats.py "$OUTPUT_DIR" --stage 1 --variant "<semantic_role>"
+The controller stamps each dispatch window; capture no timestamp. After return,
+group the returned jobs by `semantic_role`, `agent_type`, and `model`; sum
+`<usage>`: `total_tokens`, `tool_uses`, and `duration_ms`. For each group run
+`record_stage_stats.py "$OUTPUT_DIR" --stage 1 --variant "<semantic_role>"
 --name "<semantic_role>" --agent "<agent_type>" --model
 "<model>" --duration-ms <sum> --tool-uses <sum> --tokens <sum> --accumulate
---accumulation-id "<semantic_role>:<agent_type>:<model>:<WAVE_START_ISO>"
---subagent-type "<agent_type>" --since-iso "$WAVE_START_ISO"`. Stats failure is non-blocking.
+--accumulation-id "<semantic_role>:<agent_type>:<model>:<context_plan.action_id>"
+--subagent-type "<agent_type>" || true` in the same Bash call as, and before, the
+next boundary command. Stats failure is non-blocking.
 
 ## Close
 

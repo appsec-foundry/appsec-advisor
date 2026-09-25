@@ -542,6 +542,20 @@ def running_calls(output_dir: str | Path, session_id: str | None = None) -> list
     return calls
 
 
+def terminal_calls_without_usage(output_dir: str | Path) -> list[dict[str, Any]]:
+    """Closed calls with a bound child but no recorded usage (their SubagentStop never came)."""
+    try:
+        with _locked(output_dir):
+            state = _read_state_unlocked(output_dir)
+    except (LifecycleError, OSError):
+        return []
+    return [
+        dict(call)
+        for call in state["calls"]
+        if call.get("state") in _TERMINAL and call.get("runtime_agent_id") and not call.get("usage_recorded_at")
+    ]
+
+
 def unique_running_call(output_dir: str | Path, session_id: str) -> dict[str, Any] | None:
     """The single call a tool use in this session can be charged to.
 
