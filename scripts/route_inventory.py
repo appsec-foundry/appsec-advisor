@@ -491,6 +491,7 @@ class RouteCandidate:
     authn_handler_signal: str | None = None
     authn_handler_scheme: str | None = None
     authn_handler_evidence: list[dict] = field(default_factory=list)
+    handler_module: str | None = None
 
 
 def _detect_management_surface(path: str) -> bool:
@@ -983,9 +984,14 @@ def build_inventory(repo_root: Path) -> dict:
             r.authz_signal = "middleware_present"
         # The handler chain itself: a verified credential check proves authentication;
         # `absent` needs a fully resolved chain that never checks a credential.
-        handler = resolver.route_signal(
-            {"framework": r.framework, "handler_file": r.handler_file, "handler_line": r.handler_line, "path": r.path}
-        )
+        route_ref = {
+            "framework": r.framework,
+            "handler_file": r.handler_file,
+            "handler_line": r.handler_line,
+            "path": r.path,
+        }
+        handler = resolver.route_signal(route_ref)
+        r.handler_module = resolver.handler_module(route_ref)
         if handler is not None:
             r.authn_handler_signal = handler.signal
             r.authn_handler_scheme = handler.scheme
@@ -1090,6 +1096,8 @@ def build_inventory(repo_root: Path) -> dict:
                 ordered["authn_handler_scheme"] = d["authn_handler_scheme"]
             if d["authn_handler_evidence"]:
                 ordered["authn_handler_evidence"] = d["authn_handler_evidence"]
+        if d["handler_module"]:
+            ordered["handler_module"] = d["handler_module"]
         routes_out.append(ordered)
 
     mgmt_count = sum(1 for r in routes_out if r["management_surface"])

@@ -187,6 +187,10 @@
             }
           },
           "description": "Code that decided authn_handler_signal: the check, the decode, or the inspected handler definitions."
+        },
+        "handler_module": {
+          "type": "string",
+          "description": "Repo-relative file that defines the route's own handler (last registration argument seen through repository wrappers, or the decorated function), resolved through imports; guards, wrappers, mounted middlewares and injected dependencies never count. Links a finding in that file to the routes it serves."
         }
       }
     },

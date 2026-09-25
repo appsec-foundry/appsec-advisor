@@ -3061,30 +3061,16 @@ def main() -> int:
     # retaining the security finding. This is the final deterministic backstop
     # after merge/carry-forward and before schema validation.
     try:
-        from prepare_trust_boundary_context import validate_finding_boundary_refs
+        from prepare_trust_boundary_context import revalidate_boundary_refs
 
-        for threat in threats:
-            if not threat.get("boundary_refs"):
-                # Drop the key when it is present but empty, so the delivered
-                # yaml never implies a link the finding does not have.
-                threat.pop("boundary_refs", None)
-                continue
-            refs, ref_warnings = validate_finding_boundary_refs(
-                threat,
-                boundaries=trust_boundaries,
-                origin_component_id=None,
-                candidate_ids=None,
-                require_candidate=False,
-                known_component_ids={
-                    row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)
-                },
-            )
-            if refs:
-                threat["boundary_refs"] = refs
-            else:
-                threat.pop("boundary_refs", None)
-            for warning in ref_warnings:
-                sys.stderr.write(f"  TRUST_BOUNDARY_REF_WARN: {threat.get('id')}: {warning}\n")
+        for warning in revalidate_boundary_refs(
+            threats,
+            boundaries=trust_boundaries,
+            known_component_ids={
+                row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)
+            },
+        ):
+            sys.stderr.write(f"  TRUST_BOUNDARY_REF_WARN: {warning}\n")
     except Exception as exc:
         for threat in threats:
             threat.pop("boundary_refs", None)

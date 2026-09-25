@@ -168,6 +168,49 @@ def test_route_projection_is_bounded_risk_first_and_diverse() -> None:
     )
 
 
+def _inventory_only_route_fields() -> set[str]:
+    inventory = _schema("route-inventory.schema.json")["$defs"]["route"]["properties"]
+    projection = _schema("architecture-route-context.schema.json")["$defs"]["route"]["properties"]
+    return set(inventory) - set(projection)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param({}, id="contracted-fields-only"),
+        pytest.param(
+            {name: "routes/handler.ts" for name in _inventory_only_route_fields()}, id="inventory-only-fields"
+        ),
+        pytest.param({"field_added_later": {"nested": [1]}}, id="unknown-future-field"),
+    ],
+)
+def test_route_projection_keeps_exactly_its_contracted_fields(extra: dict) -> None:
+    """An inventory field the projection schema does not declare must not abort the run.
+
+    `handler_module` joined the inventory and every run with a resolved handler
+    failed architecture-route-context validation, because routes were copied verbatim.
+    """
+    contracted = set(_schema("architecture-route-context.schema.json")["$defs"]["route"]["properties"])
+    source = {**_route(1, risky=True), **extra}
+    payload = json.dumps({"version": 1, "routes": [source], "coverage": {}}).encode()
+
+    projected = context.project_routes(payload)
+
+    jsonschema.validate(projected, _schema("architecture-route-context.schema.json"))
+    assert projected["routes"] == [{key: value for key, value in source.items() if key in contracted}]
+
+
+def test_the_analyst_receives_the_module_that_implements_a_route() -> None:
+    """Routes registered in one server file map to components only through their handler module."""
+    route = {**_route(1), "handler_file": "server.ts", "handler_module": "routes/basket.ts"}
+    payload = json.dumps({"version": 1, "routes": [route], "coverage": {}}).encode()
+
+    projected = context.project_routes(payload)
+
+    jsonschema.validate(projected, _schema("architecture-route-context.schema.json"))
+    assert projected["routes"][0]["handler_module"] == "routes/basket.ts"
+
+
 def test_build_writes_both_projection_artifacts(tmp_path: Path) -> None:
     (tmp_path / ".recon-summary.md").write_text("# Recon\nsummary\n", encoding="utf-8")
     (tmp_path / ".route-inventory.json").write_text(

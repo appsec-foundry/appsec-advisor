@@ -240,7 +240,7 @@ The standard run included one STRIDE retry. Cost follows the number and complexi
 | Option | Effect |
 |---|---|
 | `--cheap-stride` / `--no-cheap-stride` | Use or disable the light pass for proven-internal components. It is on by default for quick and standard and off for thorough. All six STRIDE categories still run. |
-| `--stride-cap N` | Limit non-Critical findings per STRIDE category and component. Off by default. |
+| `--stride-cap N` | Limit Medium and Low findings per STRIDE category and component; Critical and High are never dropped. Off by default. |
 | `--evidence-verifier-cap N` | Limit non-Critical findings sent through evidence verification. Critical findings are always selected first. |
 | `--register-severity-floor LEVEL` | Set the lowest severity included in the report and exports. Default: `medium`, which reports the Low tally as `n/a` rather than `0`. |
 
@@ -315,7 +315,7 @@ Partial answers are fine. Named sensitive assets keep their components in standa
 
 The report's run statistics name the file the context came from and how many findings it applied to, and each of those findings records which declared fields apply. A declared context that maps to no component is reported as a run issue.
 
-On a fresh interactive run, you can paste this context or provide a raw Markdown or plain-text URL. The URL is checked before it is fetched, and content containing a credential is refused. `--skip-context` runs without business context at all: no question, and a stored `docs/business-context.md` is left unread. A stored file carrying what looks like a credential is withheld from the analysis and reported instead, the same way a supplied source is refused. A headless run accepts `--context <url|path>` for that run only; it never writes `docs/business-context.md`. The run captures that source itself before the analysis starts, so a URL the policy rejects, an oversized file, or a source carrying a credential stops the run with the reason instead of scanning as if nothing had been passed.
+When no `docs/business-context.md` is stored, an interactive run asks up to three skippable questions about sensitive data, compromise impact, and obligations, and stores the answers in that file so later runs do not ask again. To supply a longer document, pass `--context <url|path>` or edit the file directly; a URL is checked before it is fetched, and content containing a credential is refused. `--skip-context` runs without business context at all: no question, and a stored `docs/business-context.md` is left unread. A stored file carrying what looks like a credential is withheld from the analysis and reported instead, the same way a supplied source is refused. A headless run accepts `--context <url|path>` for that run only; it never writes `docs/business-context.md`. The run captures that source itself before the analysis starts, so a URL the policy rejects, an oversized file, or a source carrying a credential stops the run with the reason instead of scanning as if nothing had been passed.
 
 Changing persistent context does not re-rate an existing model automatically. Run `--full` to apply it to every finding. Keep actor definitions, abuse cases, trust boundaries, threat ratings, and claimed controls out of this file; they have separate inputs or require repository evidence.
 
@@ -338,7 +338,18 @@ inherit_org: true
 
 Actor choices made in conversation apply only to that run. Commit `.appsec/actors.yaml` when a choice must persist.
 
-Figures group actors linked to displayed findings by access category. Adding twenty roles does not create twenty diagram nodes. Identified Actors lists configured roles with their access, authority, finding links, and scenario group. A configured role without a linked scenario is listed without a diagram assignment. Default and automatically discovered roles appear only when assigned to a finding. Grouping does not imply that the roles share every permission.
+A legitimate role counts as signed in (`internet-user`, `internet-priv-user`) only when its request path shows authentication. A role that reaches the system without authentication and passes no authenticating hop on its way is shown as anonymous, and an admin role is added only when the cited access check is code rather than a file header. Access control outside the repository — ingress SSO, a VPN, an authenticating proxy — is invisible to that check. Declare such roles under `legitimate_roles`; a declared role replaces the modelled role with the same `id` (the run log names withdrawn roles in `ROLE_ACCESS_WITHDRAWN`) or is added, keeps its name in Figure 1, and is never downgraded. Signed-in classes must state where the login happens:
+
+```yaml
+legitimate_roles:
+  - id: ext-employee
+    name: Employee
+    access: internet-user
+    description: Staff using the portal.
+    authentication: SSO via oauth2-proxy at the ingress
+```
+
+Figures group actors linked to displayed findings by access category. Adding twenty roles does not create twenty diagram nodes. Identified Actors has one row for each attacker and legitimate role that Figure 1 draws, under the same name, and names your configured roles inside the attacker group that draws them. §2.1, the threat-actor legend and the abuse cases use the same names. A role whose group Figure 1 does not draw does not appear in the report. Grouping does not imply that the roles share every permission.
 
 ### Known threats — `docs/known-threats.yaml`
 

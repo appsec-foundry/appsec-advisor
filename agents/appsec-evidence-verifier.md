@@ -41,6 +41,8 @@ Read the context once and process `samples` in its supplied order. For each
 sample, judge the finding from its title, scenario, cited location, evidence
 summary, and `source_window`:
 
+When `mechanism_trace` is present, compare its input, sink, and control locations with `input_window`, `source_window`, and `control_window`. `verified` requires both ends, a supported connection, and the stated control failure. A sink alone does not prove attacker control or reachability. Mark a missing or uncertain connection or control outcome `ambiguous`, and a contradicted entry, safe use, or effective control `refuted`. Do not infer intermediate steps that the supplied windows do not show.
+
 - `verified`: the window demonstrates the claimed mechanism or sink and the claimed security-relevant use.
 - `refuted`: the window clearly contradicts the claim or is non-executable
   example, test, documentation, or already-safe code.

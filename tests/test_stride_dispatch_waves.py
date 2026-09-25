@@ -142,7 +142,50 @@ def _stride_component_with(cwe: str, tcid: str) -> dict:
     data["skipped_categories"] = []
     data["threats"][0]["cwe"] = cwe
     data["threats"][0]["threat_category_id"] = tcid
+    if cwe in {"CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-95", "CWE-918", "CWE-1336"}:
+        data["threats"][0]["mechanism_trace"] = {
+            "input": {"file": "src/routes/input.js", "line": 9},
+            "sink": dict(data["threats"][0]["evidence"]),
+            "connection": "The request value reaches this security-sensitive use without a boundary control.",
+            "control": {
+                "status": "ineffective",
+                "location": dict(data["threats"][0]["evidence"]),
+                "explanation": "The sink uses the input without an effective boundary control.",
+            },
+        }
     return data
+
+
+def test_completion_rejects_confirmed_input_to_sink_finding_without_trace(tmp_path: Path) -> None:
+    data = _stride_component_with("CWE-89", "TH-09")
+    del data["threats"][0]["mechanism_trace"]
+    _write_component(tmp_path, data)
+    assert "mechanism_trace is required" in (waves.completion_error(tmp_path, "service-01") or "")
+
+
+def test_completion_keeps_unproven_input_to_sink_practice_without_trace(tmp_path: Path) -> None:
+    data = _stride_component_with("CWE-89", "TH-09")
+    del data["threats"][0]["mechanism_trace"]
+    data["threats"][0]["evidence_tier"] = "insecure-practice"
+    _write_component(tmp_path, data)
+    assert waves.completion_error(tmp_path, "service-01") is None
+
+
+def test_completion_checks_mechanism_locations_against_the_target_repository(tmp_path: Path) -> None:
+    data = _stride_component_with("CWE-89", "TH-09")
+    repo = tmp_path / "target"
+    entry = repo / "src/routes/input.js"
+    sink = repo / data["threats"][0]["evidence"]["file"]
+    entry.parent.mkdir(parents=True)
+    sink.parent.mkdir(parents=True)
+    entry.write_text("\n".join(["const value = request.query;"] * 30) + "\n")
+    sink.write_text("\n".join(["execute(query);"] * 30) + "\n")
+    (tmp_path / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo)}))
+    _write_component(tmp_path, data)
+
+    assert waves.completion_error(tmp_path, "service-01") is None
+    entry.write_text("\n".join(["// not an input"] * 30) + "\n")
+    assert "mechanism_trace.input" in (waves.completion_error(tmp_path, "service-01") or "")
 
 
 def test_completion_accepts_th_unclassified_when_cwe_is_mappable(tmp_path: Path) -> None:
@@ -257,6 +300,47 @@ def test_core_evidence_defect_stays_fatal(tmp_path: Path, label: str, mutate) ->
     _write_component(tmp_path, data)
 
     assert waves.completion_error(tmp_path, "service-01") is not None, label
+
+
+@pytest.mark.parametrize(
+    ("label", "mutate", "check"),
+    [
+        # juice-shop 2026-09-24 backend-api: a CWE-915 finding carried
+        # `"mechanism_trace": null` and cost a full component retry.
+        (
+            "null optional object",
+            lambda d: d["threats"][0].update(cwe="CWE-915", mechanism_trace=None),
+            lambda t: "mechanism_trace" not in t,
+        ),
+        (
+            "null optional nested string",
+            lambda d: d["threats"][0]["remediation"].update(reference=None),
+            lambda t: "reference" not in t["remediation"],
+        ),
+        ("risk case drift", lambda d: d["threats"][0].update(risk="high"), lambda t: t["risk"] == "High"),
+    ],
+)
+def test_lossless_form_slip_is_canonicalized_not_retried(tmp_path: Path, label: str, mutate, check) -> None:
+    """A null for an omitted optional field, or an enum token in the wrong case,
+    means exactly what the contract means; it must not cost a re-dispatch."""
+    data = _valid_stride_component()
+    mutate(data)
+    path = _write_component(tmp_path, data)
+
+    assert waves.completion_error(tmp_path, "service-01") is None, label
+
+    repaired = json.loads(path.read_text(encoding="utf-8"))
+    assert check(repaired["threats"][0]), label
+
+
+def test_null_trace_on_a_confirmed_sink_finding_stays_fatal(tmp_path: Path) -> None:
+    """Removing the null must not hide a missing trace the gate requires."""
+    data = _valid_stride_component()
+    data["threats"][0].update(cwe="CWE-89", mechanism_trace=None)
+    _write_component(tmp_path, data)
+
+    error = waves.completion_error(tmp_path, "service-01")
+    assert error is not None and "mechanism_trace is required" in error
 
 
 def test_pruning_an_optional_branch_does_not_mask_a_core_defect(tmp_path: Path) -> None:
@@ -877,3 +961,185 @@ def test_verify_cli_blocks_incomplete_coverage(tmp_path: Path, capsys) -> None:
     assert waves.main(["verify", str(tmp_path)]) == 1
     captured = capsys.readouterr()
     assert "do not continue to merge" in captured.err
+
+
+def _invalid_attempt(output_dir: Path, component_id: str, attempt: int) -> None:
+    """An attempt the analyzer finished but the gate rejects: the shape a real
+    retry sees, where the canonical file is absent by construction."""
+    data = _stride_component_with("CWE-89", "TH-09")
+    data["component_id"] = component_id
+    anchor = data["threats"][0]["evidence"]
+    data["threats"][0]["mechanism_trace"]["sink"] = {"file": anchor["file"], "line": anchor["line"] + 1}
+    path = output_dir / waves.attempt_artifact(component_id, attempt)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _expire_active_join(plan: dict, monkeypatch) -> None:
+    for component_id in plan["active_claim"]["component_ids"]:
+        plan["wait_started_at"][component_id] = 100
+    monkeypatch.setattr(waves.time, "time", lambda: 100 + waves.WAIT_DEADLINE_SECONDS)
+
+
+def test_retry_reason_names_the_rejected_attempt_not_a_missing_file(tmp_path: Path, monkeypatch) -> None:
+    manifest = _manifest(1)
+    plan = waves.build_plan(manifest, concurrency=1)
+    waves.claim(plan, manifest, tmp_path)
+    _invalid_attempt(tmp_path, "service-01", 1)
+    _expire_active_join(plan, monkeypatch)
+
+    retry, changed = waves.claim(plan, manifest, tmp_path)
+
+    assert changed is True
+    reason = retry["wave"]["retry_reasons"]["service-01"]
+    assert reason == waves.completion_error(tmp_path, "service-01", attempt=1)
+    assert "mechanism_trace.sink" in reason
+
+
+def test_exhausted_budget_reports_the_last_attempts_rejection(tmp_path: Path, monkeypatch, capsys) -> None:
+    manifest = _manifest(1)
+    (tmp_path / ".stride-dispatch-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    plan = waves.build_plan(manifest, concurrency=1)
+    for attempt in range(1, waves.DEFAULT_MAX_ATTEMPTS + 1):
+        claimed, _ = waves.claim(plan, manifest, tmp_path)
+        assert claimed["wave"]["attempts"] == {"service-01": attempt}
+        _invalid_attempt(tmp_path, "service-01", attempt)
+        _expire_active_join(plan, monkeypatch)
+    (tmp_path / waves.PLAN_NAME).write_text(json.dumps(plan), encoding="utf-8")
+
+    assert waves.main(["claim", str(tmp_path)]) == 1
+    error = capsys.readouterr().err
+    assert "service-01: schema validation failed" in error
+    assert "mechanism_trace.sink" in error
+    assert "missing output" not in error
+
+
+def test_attempt_that_validates_at_the_expired_join_is_not_dispatched_again(tmp_path: Path, monkeypatch) -> None:
+    manifest = _manifest(2)
+    plan = waves.build_plan(manifest, concurrency=2)
+    waves.claim(plan, manifest, tmp_path)
+    _complete_attempt(tmp_path, "service-01", 1)
+    _invalid_attempt(tmp_path, "service-02", 1)
+    _expire_active_join(plan, monkeypatch)
+
+    retry, changed = waves.claim(plan, manifest, tmp_path)
+
+    assert changed is True
+    assert [c["component_id"] for c in retry["wave"]["components"]] == ["service-02"]
+    assert plan["attempts"] == {"service-01": 1, "service-02": 2}
+    assert (tmp_path / ".stride-service-01.json").is_file()
+
+
+def _write_attempt(output_dir: Path, component_id: str, attempt: int, data: dict) -> Path:
+    path = output_dir / waves.attempt_artifact(component_id, attempt)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _rejected_with_many_errors() -> dict:
+    data = _stride_component_with("CWE-89", "TH-09")
+    template = data["threats"][0]
+    data["threats"] = []
+    for index in range(5):
+        threat = json.loads(json.dumps(template))
+        threat["local_id"] = f"service-01-{index:03d}"
+        threat["mechanism_trace"]["sink"]["line"] = threat["evidence"]["line"] + 1
+        data["threats"].append(threat)
+    return data
+
+
+@pytest.mark.parametrize(
+    ("label", "attempt", "prior"),
+    [
+        ("first attempt", 1, "rejected"),
+        ("prior attempt validates", 2, "valid"),
+        ("prior attempt missing", 2, None),
+        ("prior attempt partial", 2, "partial"),
+        ("prior attempt seed only", 2, "seed_only"),
+        ("prior attempt unreadable", 2, "garbage"),
+        ("prior attempt too large for a brief", 2, "oversized"),
+    ],
+)
+def test_no_rejection_brief_without_a_finished_gate_rejected_attempt(tmp_path: Path, label, attempt, prior) -> None:
+    if prior == "valid":
+        _write_attempt(tmp_path, "service-01", 1, _stride_component_with("CWE-89", "TH-09"))
+    elif prior == "garbage":
+        path = tmp_path / waves.attempt_artifact("service-01", 1)
+        path.parent.mkdir(parents=True)
+        path.write_text("{not json", encoding="utf-8")
+    elif prior is not None:
+        data = _rejected_with_many_errors()
+        if prior in {"partial", "seed_only"}:
+            data["partial"] = True
+            data["seed_only"] = prior == "seed_only"
+        if prior == "oversized":
+            data["threats"] = data["threats"] * (waves.REPAIR_MAX_THREATS // 5 + 1)
+        _write_attempt(tmp_path, "service-01", 1, data)
+    assert waves.rejection_brief(tmp_path, "service-01", attempt) is None, label
+
+
+def test_rejection_brief_carries_every_gate_error_and_leaves_the_attempt_untouched(tmp_path: Path) -> None:
+    path = _write_attempt(tmp_path, "service-01", 1, _rejected_with_many_errors())
+    before = path.read_bytes()
+
+    brief = waves.rejection_brief(tmp_path, "service-01", 2)
+
+    assert brief is not None
+    assert brief["rejected_attempt"] == 1
+    assert len(brief["threats"]) == 5
+    # The gate's own message stops at three; a repair needs every one.
+    assert [e for e in brief["gate_errors"] if "mechanism_trace.sink" in e] == [
+        f"threats[{index}].mechanism_trace.sink must equal the finding evidence location" for index in range(5)
+    ]
+    assert path.read_bytes() == before
+
+
+def _with_llm_lens(output_dir: Path, component_id: str = "service-01") -> None:
+    plan = output_dir / ".dispatch-context" / component_id / "context-plan.json"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text(json.dumps({"component_id": component_id, "lens_ids": ["llm"]}), encoding="utf-8")
+
+
+def _full_llm_coverage() -> list[dict]:
+    return [
+        {"item": f"LLM{n:02d}", "disposition": "no-evidence", "reason": "checked the chat route; nothing proven"}
+        for n in range(1, 11)
+    ]
+
+
+def test_missing_llm_coverage_buys_one_targeted_retry(tmp_path: Path) -> None:
+    _with_llm_lens(tmp_path)
+    _write_attempt(tmp_path, "service-01", 1, _valid_stride_component())
+
+    error = waves.completion_error(tmp_path, "service-01", attempt=1)
+    assert error is not None and error.startswith("lens coverage incomplete")
+
+    brief = waves.rejection_brief(tmp_path, "service-01", 2)
+    assert brief is not None
+    assert any("lens_coverage has no disposition for LLM01" in e for e in brief["gate_errors"])
+
+
+def test_missing_llm_coverage_never_aborts_the_final_attempt(tmp_path: Path) -> None:
+    _with_llm_lens(tmp_path)
+    final = waves.max_attempts()
+    _write_attempt(tmp_path, "service-01", final, _valid_stride_component())
+
+    assert waves.completion_error(tmp_path, "service-01", attempt=final, promote=True) is None
+    assert (tmp_path / ".stride-service-01.json").is_file()
+    assert "LENS_COVERAGE_INCOMPLETE" in (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
+
+
+def test_complete_llm_coverage_passes_on_the_first_attempt(tmp_path: Path) -> None:
+    _with_llm_lens(tmp_path)
+    data = _valid_stride_component()
+    data["lens_coverage"] = _full_llm_coverage()
+    _write_attempt(tmp_path, "service-01", 1, data)
+
+    assert waves.completion_error(tmp_path, "service-01", attempt=1) is None
+
+
+def test_components_without_a_checklist_lens_are_not_asked_for_coverage(tmp_path: Path) -> None:
+    _write_attempt(tmp_path, "service-01", 1, _valid_stride_component())
+
+    assert waves.completion_error(tmp_path, "service-01", attempt=1) is None

@@ -1063,6 +1063,71 @@ class TestBoundaryRepeatability:
         assert candidates["threat_count_raw"] == 2
 
 
+def _finalize_ref(boundary_id: str, origin: str, line: int = 9) -> dict:
+    return {
+        "boundary_id": boundary_id,
+        "origin_component_id": origin,
+        "rationale": f"The handler input crosses {boundary_id} without the assumed control.",
+        "evidence_locations": [{"file": "api.py", "line": line}],
+    }
+
+
+class TestFinalizeRevalidatesBoundaryRefs:
+    """Merging unions members' references and rebuilds survivors' instances with
+    its own helpers, so finalize reapplies the shared finding rule before it
+    writes: the merged register never carries a reference the gate rejects."""
+
+    @pytest.mark.parametrize(
+        ("refs", "kept"),
+        [
+            pytest.param([_finalize_ref("tb-1", "api"), _finalize_ref("tb-1", "api")], ["tb-1"], id="duplicate-key"),
+            pytest.param(
+                [_finalize_ref("tb-1", "api"), _finalize_ref("tb-2", "store")], ["tb-1", "tb-2"], id="two-origins"
+            ),
+            pytest.param([_finalize_ref("tb-1", "api", line=77)], [], id="evidence-not-owned"),
+            pytest.param([_finalize_ref("tb-9", "api")], [], id="unknown-boundary"),
+        ],
+    )
+    def test_finalize_writes_only_references_the_gate_accepts(self, mt, tmp_path, refs, kept):
+        import validate_intermediate as vi
+
+        (tmp_path / ".components.json").write_text(json.dumps({"components": [{"id": "api"}, {"id": "store"}]}))
+        (tmp_path / ".trust-boundaries.json").write_text(
+            json.dumps(
+                {
+                    "trust_boundaries": [
+                        {
+                            "id": "tb-1",
+                            "from": "external",
+                            "to": "api",
+                            "confidence": "confirmed",
+                            "resolution_status": "resolved",
+                        },
+                        {
+                            "id": "tb-2",
+                            "from": "api",
+                            "to": "store",
+                            "confidence": "confirmed",
+                            "resolution_status": "resolved",
+                        },
+                    ]
+                }
+            )
+        )
+        _write_stride(tmp_path, "api", [_threat(evidence={"file": "api.py", "line": 9})])
+        assert mt.main(["collect", "--output-dir", str(tmp_path)]) == 0
+        cand_path = tmp_path / ".merge-candidates.json"
+        candidates = json.loads(cand_path.read_text())
+        candidates["threats"][0]["boundary_refs"] = refs
+        cand_path.write_text(json.dumps(candidates))
+
+        assert mt.main(["finalize", "--output-dir", str(tmp_path)]) == 0
+
+        merged = json.loads((tmp_path / ".threats-merged.json").read_text())
+        assert vi._check_boundary_refs(merged) == []
+        assert [ref["boundary_id"] for ref in merged["threats"][0].get("boundary_refs", [])] == kept
+
+
 class TestEndToEnd:
     def test_collect_produces_candidates_file(self, mt, tmp_path):
         _write_stride(tmp_path, "auth", [_threat(scenario="Attacker reaches the first unsafe SQL sink.")])

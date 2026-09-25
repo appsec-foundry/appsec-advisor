@@ -213,8 +213,8 @@ QUICK_STRIDE_PROFILE = {
     "max_threats_per_category": 1,  # B (was 2 — quick is a triage pass.
     #     Keep only the top-severity threat
     #     per STRIDE category per component.
-    #     CRITICAL-SAFE: the analyzer never
-    #     drops a Critical to honour this cap
+    #     CRITICAL/HIGH-SAFE: the analyzer never
+    #     drops a Critical or High to honour this cap
     #     — see appsec-stride-analyzer-v2.md
     #     Quick-mode table exception.)
     "skip_code_examples": False,  # C (R9 — was True; flipped 2026-05.
@@ -1012,10 +1012,10 @@ def resolve_stride_profile(reasoning_mode: str, depth: str, stride_cap: int | No
     cost lever: when set (>=1) it injects ``max_threats_per_category = N``
     into the emitted profile **at any depth** without enabling the other
     A-F reductions — so standard/thorough keep full CVSS/evidence/grep
-    depth and only trim the High/Medium/Low tail per STRIDE category per
+    depth and only trim the Medium/Low tail per STRIDE category per
     component. The default (None) preserves the documented "standard =
-    full STRIDE, reduction opt-in only" invariant. CRITICAL-SAFE: the
-    analyzer never drops a Critical to honour the cap (see
+    full STRIDE, reduction opt-in only" invariant. CRITICAL/HIGH-SAFE: the
+    analyzer never drops a Critical or High to honour the cap (see
     ``agents/appsec-stride-analyzer-v2.md`` cap table). The cap is key-gated
     in the analyzer — it activates whenever ``max_threats_per_category``
     is present in the profile, independent of the label.
@@ -1769,8 +1769,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help="Opt-in: keep at most N threats per STRIDE category per "
-        "component (Critical-safe — Criticals are never dropped). "
-        "Trims the High/Medium/Low tail to cut tokens/cost; the "
+        "component (Critical and High findings are never dropped). "
+        "Trims the Medium/Low tail to cut tokens/cost; the "
         "rest of full depth (CVSS, evidence, verification greps) "
         "stays intact. Off by default.",
     )
@@ -3437,8 +3437,8 @@ def _format_stride_depth(cfg: dict) -> str:
     Both clauses print in both states: the user sees the full picture before any
     tokens are spent, and a "no cap" run can never read as "full depth" while
     its tail is screened. Run-invariant policy — which components qualify for
-    screening, that all six categories survive it, that Criticals outlive the
-    cap — stays in ``docs/threat-modeler.md`` and ``HELP.txt`` instead of in
+    screening, that all six categories survive it, that Criticals and Highs outlive
+    the cap — stays in ``docs/threat-modeler.md`` and ``HELP.txt`` instead of in
     every run's box.
     """
     cap = (cfg.get("stride_profile") or {}).get("max_threats_per_category")

@@ -119,6 +119,9 @@ def _write_abuse_projections(output: Path, candidates: list[str]) -> None:
         abuse_contexts.write_candidate(output, candidate)
 
 
+_REAL_DIFF_REQUIRED = controller.check_permissions.diff_required
+
+
 @pytest.fixture(autouse=True)
 def _grant_required_permissions(monkeypatch):
     """Controller unit tests should not depend on host Claude settings."""
@@ -1003,6 +1006,8 @@ def test_context_v2_prepare_abuse_dispatches_receipted_candidate_projections(tmp
     emitted = json.loads(capsys.readouterr().out)
     assert emitted["context_plan"]["receipt_sha256"]
     assert emitted["dispatch_jobs"][0]["context_delivery_ids"]
+    # The emitted dispatch opens the window the join and stats default to.
+    assert controller.dispatch_window.since(output)
 
     projection_path = output / ".dispatch-context/abuse-cases/AC-T-001.json"
     projection = json.loads(projection_path.read_text(encoding="utf-8"))
@@ -3282,6 +3287,122 @@ def test_context_v2_post_stride_claims_retry_before_verify_or_merge(tmp_path, mo
     assert action["dispatch_jobs"][0]["output_artifacts"] == [".stride-attempts/api.attempt-2.json"]
     assert [name for name, _ in calls[:2]] == ["validate_dispatch_manifest.py", "stride_dispatch_waves.py"]
     assert all(name not in {"merge_threats.py"} for name, _ in calls)
+
+
+def _gate_rejected_attempt(output: Path, component_id: str, attempt: int) -> dict:
+    """A finished attempt the completion gate rejects on a semantic rule."""
+    data = json.loads((Path(__file__).parent / "fixtures" / "valid_stride.json").read_text(encoding="utf-8"))
+    data.update({"component_id": component_id, "partial": False, "skipped_categories": []})
+    data["threats"][0].update({"cwe": "CWE-89", "threat_category_id": "TH-09"})
+    data["threats"][0].pop("mechanism_trace", None)
+    path = output / ".stride-attempts" / f"{component_id}.attempt-{attempt}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return data
+
+
+@pytest.mark.parametrize("prior", ["gate-rejected", "missing", "partial"])
+def test_stride_retry_plan_carries_the_gate_rejection_only_when_there_is_one(tmp_path, monkeypatch, prior):
+    output = _write_context_v2_config(tmp_path)
+    bundle_dir = output / ".dispatch-context" / "api"
+    bundle_dir.mkdir(parents=True)
+    (bundle_dir / "evidence-bundle.json").write_text(
+        json.dumps({"component": {"id": "api"}, "source_slices": []}), encoding="utf-8"
+    )
+    component = {"component_id": "api", "evidence_bundle_path": ".dispatch-context/api/evidence-bundle.json"}
+    (output / ".stride-dispatch-manifest.json").write_text(
+        json.dumps({"context_version": 2, "components": [component]}), encoding="utf-8"
+    )
+    if prior != "missing":
+        rejected = _gate_rejected_attempt(output, "api", 1)
+        if prior == "partial":
+            rejected["partial"] = True
+            (output / ".stride-attempts" / "api.attempt-1.json").write_text(json.dumps(rejected), encoding="utf-8")
+
+    def fake_script(name, args, **kwargs):
+        if name == "stride_dispatch_waves.py" and args[0] == "claim":
+            return _completed(
+                json.dumps({"status": "claimed", "wave": {"components": [component], "attempts": {"api": 2}}})
+            )
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", fake_script)
+    monkeypatch.setattr(controller, "_validated_json_receipt", _receipt_stub)
+    monkeypatch.setattr(controller, "_context_v2_taxonomy_slice", _taxonomy_stub)
+    controller.context_v2_post_stride(output)
+
+    plan = json.loads((bundle_dir / "context-plan.json").read_text(encoding="utf-8"))
+    schema = json.loads((controller.PLUGIN_ROOT / "schemas/stride-component-context-plan.schema.json").read_text())
+    assert not list(controller.Draft202012Validator(schema).iter_errors(plan))
+    if prior != "gate-rejected":
+        assert "repair" not in plan
+        return
+    assert plan["repair"]["rejected_attempt"] == 1
+    assert plan["repair"]["threats"][0]["cwe"] == "CWE-89"
+    assert any("mechanism_trace is required" in error for error in plan["repair"]["gate_errors"])
+
+
+def test_stride_plan_repair_must_name_the_attempt_before_the_dispatched_one(tmp_path):
+    output = tmp_path / "out"
+    context = output / ".dispatch-context" / "api"
+    context.mkdir(parents=True)
+    bundle_path = context / "evidence-bundle.json"
+    bundle_path.write_text(json.dumps({"component": {"id": "api"}, "source_slices": []}), encoding="utf-8")
+    taxonomy_path = output / ".taxonomy-slices" / "api" / "threat-category-taxonomy.yaml"
+    taxonomy_path.parent.mkdir(parents=True)
+    taxonomy_path.write_text("version: 1\n", encoding="utf-8")
+    manifest_path = output / ".stride-dispatch-manifest.json"
+    manifest_path.write_text('{"context_version":2}', encoding="utf-8")
+    analysis = {
+        "depth": "full",
+        "max_turns": 10,
+        "sampling_required": True,
+        "file_count": 1,
+        "estimated_threat_count": "low",
+        "stride_profile": {"stride_profile_label": "full"},
+    }
+
+    def plan_and_job(attempt: int, rejected_attempt: int):
+        plan_path, plan_receipt = controller._write_stride_component_context_plan(
+            output,
+            component_id="api",
+            manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            analysis=analysis,
+            lens_ids=[],
+            bundle_path=".dispatch-context/api/evidence-bundle.json",
+            bundle_sha256=hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
+            taxonomy_path=".taxonomy-slices/api/threat-category-taxonomy.yaml",
+            taxonomy_sha256=hashlib.sha256(taxonomy_path.read_bytes()).hexdigest(),
+            repair={"rejected_attempt": rejected_attempt, "gate_errors": ["threats[0]: x"], "threats": [{}]},
+        )
+        job = {
+            "component_id": "api",
+            "attempt": attempt,
+            "analysis_depth": "full",
+            "max_turns": 10,
+            "sampling_required": True,
+            "file_count": 1,
+            "estimated_threat_count": "low",
+            "lens_ids": [],
+            "evidence_bundle_sha256": hashlib.sha256(bundle_path.read_bytes()).hexdigest(),
+            "taxonomy_slice_path": ".taxonomy-slices/api/threat-category-taxonomy.yaml",
+            "taxonomy_slice_sha256": hashlib.sha256(taxonomy_path.read_bytes()).hexdigest(),
+            "context_plan_path": plan_path,
+            "context_plan_sha256": plan_receipt["sha256"],
+            "input_artifacts": [
+                plan_path,
+                ".dispatch-context/api/evidence-bundle.json",
+                ".taxonomy-slices/api/threat-category-taxonomy.yaml",
+            ],
+        }
+        return job, plan_receipt
+
+    job, receipt = plan_and_job(attempt=2, rejected_attempt=1)
+    controller._validate_stride_component_context_plan(output, job, [receipt], {"stride_profile_label": "full"})
+
+    job, receipt = plan_and_job(attempt=3, rejected_attempt=1)
+    with pytest.raises(controller.ControllerError, match="attempt before this one"):
+        controller._validate_stride_component_context_plan(output, job, [receipt], {"stride_profile_label": "full"})
 
 
 def test_context_v2_taxonomy_slice_is_bounded_and_fingerprinted(tmp_path):
@@ -6923,6 +7044,38 @@ def test_the_boundary_gate_is_reachable_from_the_command_line(tmp_path, monkeypa
     assert "was not verified" not in capsys.readouterr().out
 
 
+def test_an_agent_spawn_verifies_its_dispatch_receipts(tmp_path, monkeypatch):
+    """The Agent hook re-hashes at spawn, so no orchestrator turn is spent on it."""
+    import agent_logger
+    import hook_payload
+
+    output, bound = _bound_stage1_dispatch(tmp_path)
+    action_id = bound["context_plan"]["action_id"]
+    monkeypatch.setattr(agent_logger, "_output_dir", lambda: str(output))
+
+    def spawn(action: str):
+        return hook_payload.parse(
+            {
+                "hook_event_name": "PreToolUse",
+                "session_id": "sess0001",
+                "tool_name": "Agent",
+                "tool_use_id": "toolu_spawn1",
+                "tool_input": {"subagent_type": "x", "prompt": f"ACTION_ID={action}\nJOB_ID=j"},
+            }
+        )
+
+    assert agent_logger._context_v2_receipt_reason(spawn("stage1c:ffffffffffffffff")) is None
+    assert not (output / controller.RECEIPT_VERIFICATION_NAME).exists()
+
+    assert agent_logger._context_v2_receipt_reason(spawn(action_id)) is None
+    controller._require_receipt_verification(output)
+
+    plan = output / controller.context_routing.PLAN_NAME
+    plan.write_bytes(plan.read_bytes() + b"\n")
+    reason = agent_logger._context_v2_receipt_reason(spawn(action_id))
+    assert reason is not None and "Receipt verification failed" in reason
+
+
 def _stage2_blocked(output: Path, step: str) -> None:
     (output / ".compose-blocked.json").write_text(json.dumps({"step": step, "detail": f"{step} exit 1"}))
 
@@ -7063,16 +7216,22 @@ def test_prepare_abuse_distinguishes_an_empty_candidate_set(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize(
-    ("headless", "extra", "expected"),
+    ("headless", "extra", "stored", "expected"),
     [
-        (False, {}, True),
-        (True, {}, False),
-        (False, {"skip_business_context": True}, False),
-        (False, {"business_context_source": "docs/business-context.md"}, False),
-        (True, {"skip_business_context": True}, False),
+        (False, {}, False, True),
+        (True, {}, False, False),
+        (False, {"skip_business_context": True}, False, False),
+        (False, {"business_context_source": "docs/business-context.md"}, False, False),
+        (True, {"skip_business_context": True}, False, False),
+        # A stored context already answers the question; asking on every re-run
+        # would repeat what the operator settled before.
+        (False, {}, True, False),
+        (False, {"mode": "rebuild", "rebuild": True}, True, False),
     ],
 )
-def test_the_business_context_question_is_decided_by_the_controller(tmp_path, monkeypatch, headless, extra, expected):
+def test_the_business_context_question_is_decided_by_the_controller(
+    tmp_path, monkeypatch, headless, extra, stored, expected
+):
     """Every reason not to ask is resolved here and shipped as one field.
 
     The runtime cannot read `APPSEC_HEADLESS`, so an instruction to skip the
@@ -7086,13 +7245,16 @@ def test_the_business_context_question_is_decided_by_the_controller(tmp_path, mo
     cfg = _cfg(tmp_path) | extra
     Path(cfg["output_dir"]).mkdir(parents=True)
     Path(cfg["repo_root"]).mkdir()
+    if stored:
+        (Path(cfg["repo_root"]) / "docs").mkdir()
+        (Path(cfg["repo_root"]) / "docs" / "business-context.md").write_text("# Business context\n", encoding="utf-8")
     monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
     monkeypatch.setattr(controller, "_run_script", lambda name, args, **kwargs: _completed("LOCK_ACQUIRED\n"))
     monkeypatch.setattr(controller, "_prepasses", lambda cfg, receipts: None)
     monkeypatch.setattr(controller, "_fetch_requirements", lambda cfg: None)
     monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "plan\n")
 
-    action = controller.prepare(["--full"])
+    action = controller.prepare([f"--{cfg['mode']}"])
 
     assert controller._validate_action(action) == action
     assert action["business_context_prompt_needed"] is expected
@@ -7269,3 +7431,64 @@ def test_prepare_stage2_hands_every_renderer_the_enrichment_flag(tmp_path, monke
 def test_a_new_run_starts_without_stage2_attempt_bookkeeping():
     for names in (controller._FULL_INTERMEDIATE_NAMES, controller._REBUILD_NAMES):
         assert {".inline-shortcut-retry-count", controller._STAGE2_DISPATCH_MARKER} <= names
+
+
+def _permission_report(project_status: str, allow: list[str]) -> dict:
+    def entry(name: str, status: str, rules: list[str]) -> dict:
+        detail = "not a regular file" if status == "unreadable" else ""
+        return {"path": Path(f"/x/{name}.json"), "status": status, "detail": detail, "allow": rules}
+
+    return {
+        "local": entry("local", "absent", []),
+        "project": entry("project", project_status, allow),
+        "user": entry("user", "ok", ["Read(*)"]),
+    }
+
+
+@pytest.mark.parametrize(
+    ("project_status", "headline"),
+    [
+        ("absent", "Missing required Claude Code permissions"),
+        ("invalid", "Missing required Claude Code permissions"),
+        ("unreadable", "Cannot verify Claude Code permissions: project settings unreadable"),
+    ],
+)
+def test_permission_abort_names_each_scope_status(monkeypatch, tmp_path, project_status, headline):
+    monkeypatch.setattr(controller.check_permissions, "diff_required", _REAL_DIFF_REQUIRED)
+    monkeypatch.setattr(controller.check_permissions, "load_required", lambda: [{"entry": "Bash(*)"}])
+    monkeypatch.setattr(
+        controller.check_permissions, "scope_report", lambda root: _permission_report(project_status, [])
+    )
+
+    action = controller._missing_permissions_action({"mode": "full"}, tmp_path, tmp_path / "out")
+
+    reason = action["reason"]
+    assert action["action"] == "abort"
+    assert reason.startswith(headline)
+    assert f"make -C {controller.PLUGIN_ROOT} setup-target REPO={tmp_path}" in reason
+    for name in ("local", "project", "user"):
+        assert f"/x/{name}.json" in reason
+    assert "  Bash(*)" in reason
+
+
+def test_permission_abort_skipped_when_any_scope_grants(monkeypatch, tmp_path):
+    monkeypatch.setattr(controller.check_permissions, "diff_required", _REAL_DIFF_REQUIRED)
+    monkeypatch.setattr(controller.check_permissions, "load_required", lambda: [{"entry": "Bash(*)"}])
+    monkeypatch.setattr(
+        controller.check_permissions, "scope_report", lambda root: _permission_report("unreadable", ["Bash(*)"])
+    )
+
+    assert controller._missing_permissions_action({"mode": "full"}, tmp_path, tmp_path / "out") is None
+
+
+@pytest.mark.parametrize(("mode", "aborts"), [("auto", False), ("bypassPermissions", False), ("acceptEdits", True)])
+def test_permission_abort_respects_prompt_free_default_mode(monkeypatch, tmp_path, mode, aborts):
+    report = _permission_report("absent", [])
+    report["user"]["default_mode"] = mode
+    monkeypatch.setattr(controller.check_permissions, "diff_required", _REAL_DIFF_REQUIRED)
+    monkeypatch.setattr(controller.check_permissions, "load_required", lambda: [{"entry": "Bash(*)"}])
+    monkeypatch.setattr(controller.check_permissions, "scope_report", lambda root: report)
+
+    action = controller._missing_permissions_action({"mode": "full"}, tmp_path, tmp_path / "out")
+
+    assert (action is not None) is aborts

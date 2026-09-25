@@ -1,18 +1,15 @@
-"""Layout guard for the reference `skills/help/SKILL.md` prints.
+"""Layout guard for the help page `skills/help/SKILL.md` prints.
 
-The help page is a two-column reference: a command or path on the left, a short
-explanation on the right. A terminal wraps any line wider than the window, and a
-wrapped line inside a fenced block does not re-indent — the tail lands in column
-zero of the next line, under the *left* column, and the whole block reads as
-broken. That is a layout defect the reader sees on every invocation, so the width
-is a contract rather than a style preference.
+The page is a Markdown list, not a set of column-aligned code blocks: one section
+per function, one bullet per command, flag, or file, the name as inline code and a
+one-line explanation after ` — `. A Markdown list re-indents when a terminal wraps
+it, and it keeps its layout when `package_internal_plugin.rewrite_namespace`
+replaces `appsec-advisor:` with an organization's own namespace. A code block
+aligned in columns breaks under both, so the page contains none.
 
-`MAX_BLOCK_WIDTH` leaves headroom below the classic 80-column terminal for the
-padding a renderer adds around a code block. Two further rules keep the columns
-from drifting apart again: one description column per block, and no block that
-mixes namespace-prefixed command lines with other content, because
-`package_internal_plugin.rewrite_namespace` substitutes `appsec-advisor:` with an
-organization's own name and shifts every prefixed line by the length difference.
+Every command the page names must exist as a skill; a stale name sends the reader
+to a command the plugin rejects. The link to the full documentation sits directly
+under the introduction of both parts, so a reader finds it without scrolling.
 """
 
 from __future__ import annotations
@@ -25,78 +22,65 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 HELP_SKILL = ROOT / "skills" / "help" / "SKILL.md"
 
-MAX_BLOCK_WIDTH = 72
-NAMESPACE = "appsec-advisor:"
+MAX_EXPLANATION = 80
+CODE_BULLET = re.compile(r"^\s*- `[^`]+`")
+EXPLAINED_BULLET = re.compile(r"^\s*- `[^`]+` — (?P<explanation>\S.*)$")
+COMMAND = re.compile(r"/appsec-advisor:([a-z][a-z0-9-]*)")
 
 
-def reference_blocks() -> list[list[str]]:
-    """The fenced blocks of the printed reference, excluding the instructions."""
+def printed_page() -> str:
+    """Everything below `# appsec-advisor`, the part the skill prints."""
     text = HELP_SKILL.read_text(encoding="utf-8")
-    _, _, reference = text.partition("\n# appsec-advisor\n")
-    assert reference, "help page no longer starts its reference with '# appsec-advisor'"
+    _, _, page = text.partition("\n# appsec-advisor\n")
+    assert page, "help page no longer starts its printed part with '# appsec-advisor'"
+    return page
 
-    blocks: list[list[str]] = []
-    current: list[str] | None = None
-    for line in reference.split("\n"):
-        if line.startswith("```"):
-            if current is None:
-                current = []
-            else:
-                blocks.append(current)
-                current = None
+
+def printed_parts() -> dict[str, str]:
+    page = printed_page()
+    quick, sep, full = page.partition("\n## Full reference\n")
+    assert sep, "help page lost its '## Full reference' part"
+    assert "## Quick start" in quick, "help page lost its '## Quick start' part"
+    return {"quick start": quick, "full reference": full}
+
+
+def test_the_page_contains_no_code_block():
+    assert "```" not in printed_page(), "use one bullet per command instead of an aligned code block"
+
+
+def test_every_code_bullet_has_a_one_line_explanation():
+    offending = []
+    for line in printed_page().splitlines():
+        if not CODE_BULLET.match(line):
             continue
-        if current is not None:
-            current.append(line)
-    assert current is None, "unbalanced code fence in the help reference"
-    assert blocks, "help reference contains no fenced blocks"
-    return blocks
-
-
-def description_column(line: str) -> int | None:
-    """Column the right-hand explanation starts in, or None for a single-column line."""
-    match = re.search(r"\S(\s{2,})\S", line)
-    return match.end(1) if match else None
-
-
-def test_no_reference_line_wraps_in_a_terminal():
-    too_wide = [line for block in reference_blocks() for line in block if len(line) > MAX_BLOCK_WIDTH]
-    assert not too_wide, "lines wider than %d columns:\n  %s" % (
-        MAX_BLOCK_WIDTH,
-        "\n  ".join(f"{len(line)}  {line}" for line in too_wide),
+        match = EXPLAINED_BULLET.match(line)
+        if not match or len(match.group("explanation")) > MAX_EXPLANATION:
+            offending.append(line)
+    assert not offending, "bullets need `name` — explanation of at most %d characters:\n  %s" % (
+        MAX_EXPLANATION,
+        "\n  ".join(offending),
     )
 
 
-def test_each_block_keeps_one_description_column():
-    for index, block in enumerate(reference_blocks()):
-        columns = {description_column(line) for line in block if line.strip()} - {None}
-        assert len(columns) <= 1, f"block {index} aligns its explanations at several columns: {sorted(columns)}"
+def test_every_named_command_is_a_shipped_skill():
+    named = set(COMMAND.findall(printed_page()))
+    missing = sorted(name for name in named if not (ROOT / "skills" / name / "SKILL.md").is_file())
+    assert not missing, f"help names commands that do not exist: {missing}"
 
 
-def test_a_renamed_namespace_cannot_shift_a_description_column():
-    """A packaged plugin replaces `appsec-advisor:` with its own namespace. Only a
-    command line without an explanation may therefore share a block with lines that
-    carry no namespace."""
-    for index, block in enumerate(reference_blocks()):
-        prefixed = [line for line in block if NAMESPACE in line]
-        plain = [line for line in block if line.strip() and NAMESPACE not in line]
-        if not (prefixed and plain):
-            continue
-        aligned = [line for line in prefixed if description_column(line) is not None]
-        assert not aligned, (
-            f"block {index} aligns explanations on namespace-prefixed lines while also holding "
-            f"lines without the namespace, so a rename splits the column: {aligned}"
-        )
+@pytest.mark.parametrize("part", ["quick start", "full reference"])
+def test_each_part_links_the_documentation_under_its_introduction(part):
+    paragraphs = [block.strip() for block in printed_parts()[part].split("\n\n") if block.strip()]
+    body = [block for block in paragraphs if not block.startswith("## ")]
+    assert body[1].startswith("Documentation: https://"), (
+        f"{part}: the documentation link must follow the introduction, found {body[1]!r}"
+    )
 
 
 @pytest.mark.parametrize("namespace", ["x:", "acme-appsec:"])
-def test_a_shorter_namespace_keeps_the_reference_aligned(namespace):
-    """Simulate `rewrite_namespace` and re-check both rules on the packaged text."""
-    text = HELP_SKILL.read_text(encoding="utf-8").replace(NAMESPACE, namespace)
-    _, _, reference = text.partition("\n# appsec-advisor\n")
-    inside = False
-    for line in reference.split("\n"):
-        if line.startswith("```"):
-            inside = not inside
-            continue
-        if inside and line.strip():
-            assert len(line) <= MAX_BLOCK_WIDTH, f"{namespace} widens {line!r} to {len(line)} columns"
+def test_a_renamed_namespace_keeps_every_bullet_intact(namespace):
+    """Simulate `rewrite_namespace`: the bullet format must survive the substitution."""
+    page = printed_page().replace("appsec-advisor:", namespace)
+    for line in page.splitlines():
+        if CODE_BULLET.match(line):
+            assert EXPLAINED_BULLET.match(line), f"{namespace} breaks {line!r}"

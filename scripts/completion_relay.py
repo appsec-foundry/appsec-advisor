@@ -5,7 +5,7 @@ which the host collapses: the reader sees the orchestrator's closing message
 instead. The completion runtime tells the orchestrator to emit that stdout
 verbatim (``skills/create-threat-model/SKILL-thin-completion.md``), and runs
 rewrote it anyway into headings and tables of their own, dropping Next Steps,
-the team questions, run issues and log paths. Wording alone does not hold, so
+run issues and log paths. Wording alone does not hold, so
 two surfaces are bound here:
 
 * ``persist`` — the summary script records what it printed, bound to the run

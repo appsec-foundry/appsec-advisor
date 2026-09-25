@@ -162,18 +162,29 @@ Process all categories in this order, even when one yields no finding:
 
 Trace persisted attacker input through its write path to the eventual query, code, template, or browser sink. Include both the application producer and consuming context in evidence; storage alone does not establish XSS. Separate SQL, executable NoSQL predicates, code execution, template compilation, and browser execution. Preserve configuration conditions and authentication prerequisites, including safe alternatives, instead of scoring a sink name alone.
 
+For confirmed `CWE-78`, `CWE-79`, `CWE-89`, `CWE-94`, `CWE-95`, `CWE-918`, or `CWE-1336`, write `mechanism_trace` with `input` and `sink` repository-relative `file:line` locations and a short `connection` naming the value and how it reaches the sink. `evidence` must repeat the sink location. Record the failed control as `control.status` (`absent-at-sink`, `ineffective`, or `bypassed`), cite `control.location`, and explain why it fails. `absent-at-sink` cites the sink itself; it does not prove that no upstream control exists. If the input, connection, or control outcome cannot be established, use `evidence_tier: insecure-practice` and state the gap; do not invent a trace or score confirmed exploitation.
+
 For identity spoofing, cite the executable consumer that trusts the attacker-controlled identity in a security decision. A client setting a header, decoding a token, or connecting without credentials alone establishes no server authentication bypass; unused helpers and hypothetical consumers do not complete the path. Place the control failure on the component accepting the identity. Classify credentials predictably derived from public identifiers as weak credentials (`CWE-1391`); use `CWE-522` for inadequate protection of credentials and `CWE-798` for embedded reusable credentials. Cite both credential creation and its authentication use when claiming account access.
 
 All six are mandatory. `analysis.estimated_threat_count: low` or
 `analysis.depth: light` changes pacing only: skip optional verification,
 finish the categories within six reasoning turns, and reserve two for writes.
-`max_threats_per_category` trims only the lower-ranked tail, never a category
-or mandatory evidence-backed finding.
+`max_threats_per_category` trims only lower-ranked Medium and Low findings;
+it never removes a Critical or High finding, a category, or a mandatory
+evidence-backed finding.
 
 Apply every selected lens during the relevant category. LLM and agentic tags
 go in `owasp_llm_ids` and `owasp_asi_ids`. Do not duplicate one
 mechanism merely because two lenses name it. Use one CWE, RFC, or OWASP
 `remediation.reference`.
+
+With `llm` or `agentic` selected, write top-level `lens_coverage` with one
+entry per LLM01-LLM10 or ASI01-ASI10: `{"item", "disposition"}` plus
+`local_ids` for `finding` (threats tagged with that ID), `evidence` file:line
+and `reason` for `controlled`, and `reason` for `not-applicable` (capability
+absent) or `no-evidence` (checked, not proven). Check each item in code; a
+tagged finding meets the normal evidence bar and cites code. `no-evidence` is
+a valid answer, never a reason to invent a finding.
 
 With a `requirements.component_context` slice, list in
 `violated_requirements` only its `id`s your cited evidence proves broken;
@@ -267,6 +278,9 @@ these exact threat fields:
 
 `evidence.line` names the vulnerable statement, route registration, unsafe API,
 or configuration value, never a header, blank, comment, or closing brace.
+For a confirmed input-to-sink CWE listed above, add `"mechanism_trace": {"input": {"file": "<entry path>", "line": 1}, "sink": {"file": "<same as evidence.file>", "line": 1}, "connection": "<how this input reaches this sink>", "control": {"status": "<absent-at-sink|ineffective|bypassed>", "location": {"file": "<control path>", "line": 1}, "explanation": "<why this control fails>"}}`. Omit it for other findings.
+
+A plan `repair` holds your rejected previous `threats` and the `gate_errors` indexing them. Keep unnamed threats; fix each named one, and each named `lens_coverage` item, at its source by the rules above. Never drop a finding to pass; skip re-analysis of untouched categories.
 
 After each category, check your dispatch IDs:
 
@@ -278,8 +292,7 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/budget_watchdog.py" active-job-critical --o
 
 If it returns zero, finish the current category, flush its valid findings, mark
 the untouched categories skipped, log the semantic wrap-up, and return. Do not spend a model turn on
-validation: the post-agent gate validates and may dispatch a semantic repair
-only for an actual conflict.
+validation: the post-agent gate validates and retries a rejected attempt with its errors.
 
 On completion, write all six categories, set `partial:false`, clear
 `skipped_categories`, emit `AGENT_END`, and return only:

@@ -341,6 +341,116 @@ def test_stride_verification_non_string_rejected():
     assert not ok
 
 
+def _confirmed_input_to_sink_threat() -> dict:
+    data = _stride_threat_with_code_example(None)
+    threat = data["threats"][0]
+    threat.update(
+        cwe="CWE-89",
+        evidence_tier="confirmed-exploitable",
+        evidence={"file": "src/query.py", "line": 18},
+    )
+    return data
+
+
+def test_confirmed_input_to_sink_finding_requires_trace():
+    data = _confirmed_input_to_sink_threat()
+    ok, errors = vi.validate_stride(data)
+    assert not ok
+    assert any("mechanism_trace" in error for error in errors)
+
+
+def test_input_to_sink_trace_must_end_at_finding_anchor():
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["mechanism_trace"] = {
+        "input": {"file": "src/route.py", "line": 7},
+        "sink": {"file": "src/other.py", "line": 18},
+        "connection": "The route value reaches the query builder without binding.",
+        "control": {
+            "status": "ineffective",
+            "location": {"file": "src/other.py", "line": 18},
+            "explanation": "The query is assembled without parameter binding.",
+        },
+    }
+    ok, errors = vi.validate_stride(data)
+    assert not ok
+    assert any("mechanism_trace.sink" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    ("entry", "sink"),
+    [("src/route.py", "src/query.py"), ("api/receive.py", "storage/execute.py")],
+)
+def test_confirmed_input_to_sink_trace_accepts_distinct_entry_and_sink(entry, sink):
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["evidence"]["file"] = sink
+    data["threats"][0]["mechanism_trace"] = {
+        "input": {"file": entry, "line": 7},
+        "sink": {"file": sink, "line": 18},
+        "connection": "The route value reaches the query builder without binding.",
+        "control": {
+            "status": "ineffective",
+            "location": {"file": sink, "line": 18},
+            "explanation": "The query is assembled without parameter binding.",
+        },
+    }
+    ok, errors = vi.validate_stride(data)
+    assert ok, errors
+
+
+def test_unproven_input_to_sink_practice_does_not_require_trace():
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["evidence_tier"] = "insecure-practice"
+    ok, errors = vi.validate_stride(data)
+    assert ok, errors
+
+
+def test_absent_at_sink_control_cannot_cite_an_unrelated_location():
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["mechanism_trace"] = {
+        "input": {"file": "src/route.py", "line": 7},
+        "sink": {"file": "src/query.py", "line": 18},
+        "connection": "The route value reaches the query builder without binding.",
+        "control": {
+            "status": "absent-at-sink",
+            "location": {"file": "src/other.py", "line": 3},
+            "explanation": "No binding is applied at the query execution site.",
+        },
+    }
+    ok, errors = vi.validate_stride(data)
+    assert not ok
+    assert any("mechanism_trace.control.location" in error for error in errors)
+
+
+def test_input_to_sink_trace_rejects_noncode_or_missing_locations(tmp_path):
+    data = _confirmed_input_to_sink_threat()
+    data["threats"][0]["mechanism_trace"] = {
+        "input": {"file": "route.py", "line": 1},
+        "sink": {"file": "query.py", "line": 1},
+        "connection": "The route value reaches the query builder without binding.",
+        "control": {
+            "status": "ineffective",
+            "location": {"file": "query.py", "line": 1},
+            "explanation": "The query is assembled without parameter binding.",
+        },
+    }
+    data["threats"][0]["evidence"] = {"file": "query.py", "line": 1}
+    (tmp_path / "route.py").write_text("# request input\n")
+    (tmp_path / "query.py").write_text("execute(query)\n")
+
+    ok, errors = vi.validate_stride(data, repo_root=tmp_path)
+    assert not ok
+    assert any("mechanism_trace.input" in error and "comment" in error for error in errors)
+
+    (tmp_path / "route.py").write_text("value = request.query\n")
+    ok, errors = vi.validate_stride(data, repo_root=tmp_path)
+    assert ok, errors
+
+    (tmp_path / "query.py").unlink()
+    ok, errors = vi.validate_stride(data, repo_root=tmp_path)
+    assert not ok
+    assert any("mechanism_trace.sink" in error and "missing or unsafe" in error for error in errors)
+
+
 def test_stride_owasp_ai_ids_are_schema_validated():
     data = _stride_threat_with_code_example(None)
     data["threats"][0]["owasp_llm_ids"] = ["LLM06"]

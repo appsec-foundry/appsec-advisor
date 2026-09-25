@@ -725,7 +725,10 @@ class TestBodyContentConsistency:
                 assert token in body, f"{filename} does not producer-validate with {token}"
 
         _, stride = parse_frontmatter(AGENTS_DIR / "appsec-stride-analyzer-v2.md")
-        assert "post-agent gate validates and may dispatch a semantic repair" in " ".join(stride.split())
+        flat = " ".join(stride.split())
+        assert "post-agent gate validates and retries a rejected attempt with its errors" in flat
+        assert "A plan `repair` holds your rejected previous `threats` and the `gate_errors`" in flat
+        assert "Never drop a finding to pass" in flat
 
     def test_threat_merger_partial_decisions_are_disjoint(self):
         _, body = parse_frontmatter(AGENTS_DIR / "appsec-threat-merger.md")

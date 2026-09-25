@@ -37,6 +37,7 @@ _SHORT_PREREQUISITE = {
     "Regular account required": "regular account",
     "Elevated privileges required": "elevated privileges",
     "Source-repository access required": "repository access",
+    "Public source available": "public source",
     "Build or dependency access required": "build access",
     "Victim interaction required": "victim interaction",
 }
@@ -71,7 +72,7 @@ def _weaknesses(model: dict, finding_id: str) -> list[dict]:
     return sorted(result, key=lambda w: w["id"])
 
 
-def _prerequisite(finding: dict, raw_actor: str, victim: bool) -> str:
+def _prerequisite(finding: dict, raw_actor: str, victim: bool, public_source: bool = False) -> str:
     # CVSS PR describes the finding, while overview actor equivalence only
     # describes reach. In particular self-registration never removes PR:L.
     vector = _text((finding.get("cvss_v4") or {}).get("vector"))
@@ -86,12 +87,12 @@ def _prerequisite(finding: dict, raw_actor: str, victim: bool) -> str:
         parts.append(access["L"])
     elif raw_actor == "internet-priv-user":
         parts.append(access["H"])
-    elif raw_actor == "repo-read":
-        parts.append("Source-repository access required")
     elif raw_actor == "build-time":
         parts.append("Build or dependency access required")
     elif raw_actor == "insider":
         parts.append("Repository write, pipeline or production access required")
+    if raw_actor == "repo-read" or finding.get("vektor") == "repo-read":
+        parts.append("Public source available" if public_source else "Source-repository access required")
     if victim:
         parts.append("Victim interaction required")
     return "; ".join(parts) or "Access prerequisites: see the finding"
@@ -201,7 +202,9 @@ def build_figure2_data(
                 "finding_id": selected,
                 "finding_ids": ids,
                 "weakness_ids": [w["id"] for w in linked],
-                "prerequisite": _prerequisite(finding, prerequisite_actor, scenario["victim"]),
+                "prerequisite": _prerequisite(
+                    finding, prerequisite_actor, scenario["victim"], meta.get("public_source_repo") is True
+                ),
                 "weakness": cause,
                 "victim": bool(scenario["victim"]),
                 "consequence": _text(finding.get("impact_description") or finding.get("impact_summary"))

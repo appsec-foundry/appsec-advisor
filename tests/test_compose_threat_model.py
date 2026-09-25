@@ -41,7 +41,6 @@ def _load_module(name: str, path: Path):
 
 
 compose = _load_module("compose_threat_model", SCRIPT_PATH)
-completion = _load_module("render_completion_summary", REPO_ROOT / "scripts" / "render_completion_summary.py")
 # The §1 catalogue is delivered as fixed-layout HTML, so a few tests assert the
 # composer's cells survive qa's inline-markdown → HTML conversion unchanged.
 qa = _load_module("qa_checks", REPO_ROOT / "scripts" / "qa_checks.py")
@@ -686,13 +685,38 @@ def test_components_table_is_separated_from_the_next_heading(tmp_path: Path) -> 
         triage={},
         fragments_dir=out_dir / ".fragments",
     )
-    out = compose._inject_components_table(ctx, "### 2.3 Components\n\nIntro.\n### 2.4 Technology Architecture\n")
-    lines = out.splitlines()
-    heading_idx = next(i for i, ln in enumerate(lines) if ln.startswith("### 2.4"))
-    assert lines[heading_idx - 1].strip() == "", (
-        "the component table is not separated from the next heading:\n"
-        + "\n".join(lines[max(0, heading_idx - 3) : heading_idx + 1])
+    for follower in ("### 2.9 Next Subsection", "## 3. Next Section", "> **Legend:** x"):
+        out = compose._inject_components_table(ctx, f"### 2.3 Components\n\nIntro.\n{follower}\n")
+        lines = out.splitlines()
+        heading_idx = lines.index(follower)
+        assert lines[heading_idx - 1].strip() == "", (
+            "the component table is not separated from what follows §2.3:\n"
+            + "\n".join(lines[max(0, heading_idx - 3) : heading_idx + 1])
+        )
+        assert lines[heading_idx - 2].startswith("| "), "the component table must stay inside §2.3"
+
+
+def test_components_table_keeps_the_generator_detail_table(tmp_path: Path) -> None:
+    """The §2.3 control-coverage table under the detail-table marker survives; any other table is replaced."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ctx = compose.RenderContext(
+        output_dir=out_dir,
+        contract={},
+        yaml_data={
+            "components": [{"id": "api", "name": "API", "tier": "application", "paths": ["src/api"]}],
+            "threats": [],
+        },
+        triage={},
+        fragments_dir=out_dir / ".fragments",
     )
+    kept = "<!-- detail-table -->\n| Component | Controls |\n|---|---|\n| C-01 | 🔴 Unsafe: AuthN |\n"
+    stray = "| Summary | Value |\n|---|---|\n| stray | row |\n"
+    md = f"### 2.3 Components\n\nIntro.\n\n{kept}\n**Key takeaway:** x\n\n{stray}\n## 3. Next\n"
+    out = compose._inject_components_table(ctx, md)
+    assert kept in out and "stray" not in out
+    assert out.index(kept) < out.index("| ID | Name | Type |") < out.index("## 3. Next")
+    assert compose._inject_components_table(ctx, out) == out
 
 
 def test_components_table_injection_is_idempotent(tmp_path: Path) -> None:
@@ -715,7 +739,7 @@ def test_components_table_injection_is_idempotent(tmp_path: Path) -> None:
         triage={},
         fragments_dir=out_dir / ".fragments",
     )
-    md = "### 2.3 Components\n\nIntro.\n### 2.4 Technology Architecture\n"
+    md = "### 2.3 Components\n\nIntro.\n\n> **Legend:** x\n"
     first = compose._inject_components_table(ctx, md)
     second = compose._inject_components_table(ctx, first)
     third = compose._inject_components_table(ctx, second)
@@ -6557,7 +6581,7 @@ def test_ms_top_weaknesses_table_and_ordering():
     assert "Weak Cryptography**" in out
 
 
-def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(monkeypatch) -> None:
+def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
     finding = {
         "id": "T-001",
         "title": "Object owner not checked",
@@ -6608,29 +6632,13 @@ def test_ms_open_questions_match_console_selection_and_follow_top_weaknesses(mon
             return "🔴"
 
     report_questions = compose._render_ms_open_questions(_Ctx())
-    top_weaknesses = compose._render_ms_top_weaknesses(_Ctx())
-    report = top_weaknesses + report_questions + '\n<a id="f-001"></a>\n<a id="f-002"></a>\n<a id="w-001"></a>\n'
-    console_questions = completion.build_manual_review_step(_Ctx.yaml_data, report)
 
     assert report_questions.startswith("### Open Questions for the Team\n\n")
     assert "The analysis could not fully resolve these points from the code." in report_questions
     assert "Discuss them with the people who know the deployment" in report_questions
     for value in ("W-001", "F-001", "Which cross-user or cross-tenant accesses through these routes are intended"):
         assert value in report_questions
-        assert value in console_questions
-
-    # RA-13: same bullets, question first in both; the report only links its ids.
-    def references(line: str) -> list[str]:
-        return re.findall(r"\b[WF]-\d{3,}\b|\(unproven\)|\+\d+ more", line)
-
-    report_bullets = [line for line in report_questions.splitlines() if line.startswith("- ")]
-    console_bullets = [line for line in console_questions.splitlines() if line.startswith("- ")]
-    assert report_bullets and [references(line) for line in report_bullets] == [
-        references(line) for line in console_bullets
-    ]
-    for report_line, console_line in zip(report_bullets, console_bullets, strict=True):
-        question = report_line[2:].split(" ([", 1)[0]
-        assert console_line.startswith(f"- {question}")
+    for report_line in [line for line in report_questions.splitlines() if line.startswith("- ")]:
         # The rendered shape is what keeps the enrichment passes off the block.
         assert compose._is_bare_finding_ref_line(report_line)
 

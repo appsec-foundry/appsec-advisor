@@ -11,6 +11,7 @@ Files that runtime cleanup MUST preserve. Deleting them breaks post-run audit, S
 | `.recon-signals.json` | Contracted actor, exposure, and deployable-unit signals required for validated recon reuse |
 | `.config-scan-findings.json` | Complete deterministic Config/IaC catalog results consumed by merge and retained for finding audit |
 | `.dep-scan.json` | Dependency scan findings |
+| `.deployment-inventory.json` | Deterministic deployment inventory under `schemas/deployment-inventory.schema.json`; the only input of the §2.2 Deployment and Technology figure, so a re-render draws the state of the scan |
 | `.stride-<component-id>.json`, `.stride-dispatch-manifest.json`, `.stride-selection.json`, `.stride-analyst-context.json` | Per-component STRIDE fragments and the three durable pre-fan-out sidecars below; the analyst context contains bounded component business and architecture projections |
 | `.threats-merged.json` | Canonical merged threat set |
 | `.arch-design-signals.json`, `.impl-design-signals.json`, `.finding-design-signals.json` | Validated mechanism observations and source provenance under `schemas/weakness-signals.schema.json`; see [weakness derivation](weakness-derivation.md) |

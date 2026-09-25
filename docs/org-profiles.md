@@ -257,7 +257,7 @@ the default cover.
 Every session opens with a short status banner:
 
 1. **Identity** — plugin name and version (or your `headline`) plus `help` when packaged.
-2. **Threat model** — findings, age, drift, and the one skill that state calls for.
+2. **Threat model** — findings, age, drift, and the one skill that state calls for. The line appears only when a model exists or a scan is running.
 3. **Coding baseline** — the loaded id and scope, or what is missing or mismatched. Where the AI Secure Coding Baseline installer's own startup hook already prints the baseline status, the line appears only when something needs a decision.
 
 There are no status glyphs. Commands sit on the domain they act on. Two fields
@@ -278,8 +278,8 @@ The same headline titles `/appsec-advisor:status`. Without one, a packaged build
 uses its own package name there, so the status header names your build rather
 than the upstream product.
 
-`url` is not printed in the banner; the `help` skill prints it under "More
-information". Point it at an internal repository or runbook.
+`url` is not printed in the banner; the `help` skill prints it under
+"Documentation". Point it at an internal repository or runbook.
 
 Packaging resolves these fields into the packaged `config.json`, because the
 banner runs as a SessionStart hook and must not depend on PyYAML. `--info-url`

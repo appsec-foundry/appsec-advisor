@@ -15,6 +15,8 @@ from _atomic_io import atomic_write_json
 MAX_EVIDENCE_ITEMS = 256
 MAX_EVIDENCE_BYTES = 524_288
 EVIDENCE_WINDOW_RADIUS = 5
+INPUT_WINDOW_RADIUS = 2
+CONTROL_WINDOW_RADIUS = 1
 MAX_SYNTHESIS_ITEMS = 512
 MAX_SYNTHESIS_BYTES = 524_288
 
@@ -72,6 +74,9 @@ def _eligible(threat: dict[str, Any], repo_root: Path) -> bool:
     evidence = threat.get("evidence")
     if not isinstance(evidence, dict) or not isinstance(evidence.get("file"), str):
         return False
+    line = evidence.get("line")
+    if isinstance(line, bool) or not isinstance(line, int) or line < 1:
+        return False
     relative = Path(evidence["file"])
     if relative.is_absolute() or ".." in relative.parts:
         return False
@@ -118,16 +123,28 @@ def select_evidence_threats(
     return selected
 
 
-def _source_window(repo_root: Path, evidence: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+def _source_window(
+    repo_root: Path, evidence: dict[str, Any], *, radius: int = EVIDENCE_WINDOW_RADIUS, max_chars: int = 1000
+) -> tuple[str, list[dict[str, Any]]]:
     relative = Path(str(evidence["file"]))
-    resolved = (repo_root / relative).resolve(strict=True)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise PostStrideContextError(f"unsafe evidence path: {relative}")
+    try:
+        resolved = (repo_root / relative).resolve(strict=True)
+    except OSError as exc:
+        raise PostStrideContextError(f"missing evidence file: {relative}") from exc
+    if not resolved.is_file() or not resolved.is_relative_to(repo_root.resolve()):
+        raise PostStrideContextError(f"unsafe evidence file: {relative}")
     payload = resolved.read_bytes()
     text = payload.decode("utf-8", errors="replace").splitlines()
     cited = evidence.get("line")
-    line = cited if isinstance(cited, int) and not isinstance(cited, bool) else 1
-    start = max(1, line - EVIDENCE_WINDOW_RADIUS)
-    end = min(len(text), line + EVIDENCE_WINDOW_RADIUS)
-    return _sha256(payload), [{"line": number, "text": text[number - 1][:1000]} for number in range(start, end + 1)]
+    if isinstance(cited, bool) or not isinstance(cited, int) or cited < 1 or cited > len(text):
+        raise PostStrideContextError(f"invalid evidence line for {relative}: {cited!r}")
+    start = max(1, cited - radius)
+    end = min(len(text), cited + radius)
+    return _sha256(payload), [
+        {"line": number, "text": text[number - 1][:max_chars]} for number in range(start, end + 1)
+    ]
 
 
 def build_evidence_context(
@@ -146,19 +163,44 @@ def build_evidence_context(
     for threat in selected:
         evidence = threat["evidence"]
         file_sha256, window = _source_window(repo_root, evidence)
-        samples.append(
-            {
-                "t_id": threat.get("t_id"),
-                "title": threat.get("title"),
-                "scenario": threat.get("scenario"),
-                "risk": threat.get("risk"),
-                "source": threat.get("source"),
-                "evidence_summary": threat.get("evidence_summary"),
-                "evidence": {"file": evidence["file"], "line": evidence.get("line")},
-                "source_sha256": file_sha256,
-                "source_window": window,
-            }
-        )
+        sample = {
+            "t_id": threat.get("t_id"),
+            "title": threat.get("title"),
+            "scenario": threat.get("scenario"),
+            "risk": threat.get("risk"),
+            "source": threat.get("source"),
+            "evidence_summary": threat.get("evidence_summary"),
+            "evidence": {"file": evidence["file"], "line": evidence.get("line")},
+            "source_sha256": file_sha256,
+            "source_window": window,
+        }
+        trace = threat.get("mechanism_trace")
+        if isinstance(trace, dict):
+            if not isinstance(trace.get("sink"), dict) or any(
+                trace["sink"].get(key) != evidence.get(key) for key in ("file", "line")
+            ):
+                raise PostStrideContextError(
+                    f"mechanism trace sink differs from finding evidence: {threat.get('t_id')}"
+                )
+            entry = trace.get("input")
+            if not isinstance(entry, dict):
+                raise PostStrideContextError(f"mechanism trace has no input location: {threat.get('t_id')}")
+            control = trace.get("control")
+            control_location = control.get("location") if isinstance(control, dict) else None
+            if not isinstance(control_location, dict):
+                raise PostStrideContextError(f"mechanism trace has no control location: {threat.get('t_id')}")
+            input_sha256, input_window = _source_window(repo_root, entry, radius=INPUT_WINDOW_RADIUS, max_chars=300)
+            control_sha256, control_window = _source_window(
+                repo_root, control_location, radius=CONTROL_WINDOW_RADIUS, max_chars=300
+            )
+            sample.update(
+                mechanism_trace=trace,
+                input_sha256=input_sha256,
+                input_window=input_window,
+                control_sha256=control_sha256,
+                control_window=control_window,
+            )
+        samples.append(sample)
     return {
         "schema_version": 1,
         "source": {
@@ -171,6 +213,8 @@ def build_evidence_context(
             "noncritical_cap": noncritical_cap,
             "critical_uncapped": True,
             "window_radius": EVIDENCE_WINDOW_RADIUS,
+            "input_window_radius": INPUT_WINDOW_RADIUS,
+            "control_window_radius": CONTROL_WINDOW_RADIUS,
         },
         "limits": {
             "max_samples": MAX_EVIDENCE_ITEMS,
@@ -192,9 +236,37 @@ def validate_evidence_context_sources(value: dict[str, Any], merged_payload: byt
         evidence = sample.get("evidence") if isinstance(sample, dict) else None
         if not isinstance(evidence, dict) or not isinstance(evidence.get("file"), str):
             raise PostStrideContextError("evidence context has an invalid source path")
-        actual_sha256, actual_window = _source_window(repo_root, evidence)
+        try:
+            actual_sha256, actual_window = _source_window(repo_root, evidence)
+        except PostStrideContextError as exc:
+            raise PostStrideContextError(f"evidence context source window is stale for {evidence['file']}") from exc
         if sample.get("source_sha256") != actual_sha256 or sample.get("source_window") != actual_window:
             raise PostStrideContextError(f"evidence context source window is stale for {evidence['file']}")
+        trace = sample.get("mechanism_trace")
+        if isinstance(trace, dict):
+            entry = trace.get("input")
+            if not isinstance(entry, dict):
+                raise PostStrideContextError("evidence context has an invalid input location")
+            try:
+                input_sha256, input_window = _source_window(repo_root, entry, radius=INPUT_WINDOW_RADIUS, max_chars=300)
+            except PostStrideContextError as exc:
+                raise PostStrideContextError(f"evidence context source window is stale for {entry['file']}") from exc
+            if sample.get("input_sha256") != input_sha256 or sample.get("input_window") != input_window:
+                raise PostStrideContextError(f"evidence context source window is stale for {entry['file']}")
+            control = trace.get("control")
+            control_location = control.get("location") if isinstance(control, dict) else None
+            if not isinstance(control_location, dict):
+                raise PostStrideContextError("evidence context has an invalid control location")
+            try:
+                control_sha256, control_window = _source_window(
+                    repo_root, control_location, radius=CONTROL_WINDOW_RADIUS, max_chars=300
+                )
+            except PostStrideContextError as exc:
+                raise PostStrideContextError(
+                    f"evidence context source window is stale for {control_location['file']}"
+                ) from exc
+            if sample.get("control_sha256") != control_sha256 or sample.get("control_window") != control_window:
+                raise PostStrideContextError(f"evidence context source window is stale for {control_location['file']}")
 
 
 def apply_evidence_verification(

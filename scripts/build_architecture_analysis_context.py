@@ -21,6 +21,13 @@ MAX_UNSUPPORTED_ROUTE_FILES = 64
 MAX_ROLE_UNITS = 12
 MAX_ROLE_UNIT_PATHS = 25
 
+_ROUTE_CONTEXT_SCHEMA = Path(__file__).resolve().parent.parent / "schemas" / "architecture-route-context.schema.json"
+# The projection carries only the route fields its own schema declares; a field
+# the inventory gains stays out until that schema opts in, never aborts the run.
+_PROJECTED_ROUTE_FIELDS = frozenset(
+    json.loads(_ROUTE_CONTEXT_SCHEMA.read_text(encoding="utf-8"))["$defs"]["route"]["properties"]
+)
+
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _STATE_CHANGING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -221,7 +228,9 @@ def project_routes(payload: bytes) -> dict[str, Any]:
             )[:32],
             "unsupported_route_files": unsupported[:MAX_UNSUPPORTED_ROUTE_FILES],
         },
-        "routes": selected,
+        "routes": [
+            {key: value for key, value in route.items() if key in _PROJECTED_ROUTE_FIELDS} for route in selected
+        ],
     }
 
 

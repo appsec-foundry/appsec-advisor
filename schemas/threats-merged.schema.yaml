@@ -9,6 +9,19 @@ description: |
 
 type: object
 required: [version, generated_at, threats]
+$defs:
+  mechanism_location:
+    type: object
+    additionalProperties: false
+    required: [file, line]
+    properties:
+      file:
+        type: string
+        minLength: 1
+        maxLength: 512
+        not:
+          pattern: "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+      line: {type: integer, minimum: 1}
 properties:
   severity_policy_version:
     description: Present on policy-normalized merged output; legacy input is normalized by the YAML producer before publication.
@@ -117,6 +130,23 @@ properties:
           properties:
             file: { type: string }
             line: { type: [integer, "null"] }
+        mechanism_trace:
+          description: Source and sink evidence for a confirmed input-to-sink STRIDE finding; the sink repeats the primary evidence location.
+          type: object
+          additionalProperties: false
+          required: [input, sink, connection, control]
+          properties:
+            input: {$ref: "#/$defs/mechanism_location"}
+            sink: {$ref: "#/$defs/mechanism_location"}
+            connection: {type: string, minLength: 20, maxLength: 500}
+            control:
+              type: object
+              additionalProperties: false
+              required: [status, location, explanation]
+              properties:
+                status: {enum: [absent-at-sink, ineffective, bypassed]}
+                location: {$ref: "#/$defs/mechanism_location"}
+                explanation: {type: string, minLength: 20, maxLength: 500}
         boundary_refs:
           type: array
           maxItems: 2

@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
 """Deterministic vektor (breach-vector) assignment for threats[].
 
-Stage 1 today never populates `threats[].vektor`. The composer falls back
-to `"internet-user"` for every threat, which paints all 30 rows of §8 with
-the same label even when the actual reachability is `internet-anon`
-(public route + no auth) or `repo-read` (hardcoded secret in public repo).
-
 This emitter fills `vektor` deterministically post-Stage-1, before the
-renderer reads the YAML. Two signals:
+renderer reads the YAML. Signals, in order:
 
 1.  **CWE class** — strong, position-independent signal:
       - Hardcoded credentials / key material exposure (798, 321, 312, 540)
         → `repo-read`
       - XSS / CSRF / open redirect / click-jacking (79, 352, 601, 1021)
         → `victim-required`
-      - Else → fall through to signal 2.
 
-2.  **Route auth_required** — derived by matching the threat's
-    `evidence[].file` against `attack_surface[].entry_point`. When a
-    matching unauthenticated route exists → `internet-anon`. Authenticated
-    route → `internet-user`. No match → `internet-anon` (most honest
-    default; the prior `internet-user` default actively misled readers
-    when the bug was on a public endpoint).
+2.  **Actor attribution** — when the model carries an actor inventory,
+    the finding's attributed attacker decides: the access group of its
+    primary actor is the vektor (`internet-anon`, `internet-user`,
+    `internet-priv-user`, `build-time`, `victim-required`). A finding
+    whose CWE has no attacker (`no_attacker_cwes` in
+    data/actor-attribution-rules.yaml) is `n-a`. Deriving the vektor from
+    the same attribution every report surface shows keeps the two from
+    contradicting each other.
+
+3.  **Route auth_required** — only for models without an actor inventory
+    or an attribution the access groups cannot express: the threat's
+    `evidence[].file` matched against `attack_surface[].entry_point`.
+    Unauthenticated → `internet-anon`, authenticated → `internet-user`,
+    no match → `internet-anon`.
 
 The field is only written when missing (`vektor` not set on the threat).
 Hand-set values are preserved. Idempotent.
@@ -135,11 +137,34 @@ def _route_auth_required(
     return best[1]
 
 
-def _derive_vektor(threat: dict, attack_surface: list[dict]) -> str:
-    """Pick a vektor slug for a threat using the two-signal logic above."""
-    cwe = (threat.get("cwe") or "").strip().upper()
+# Access groups that are breach vectors of their own (data/breach-vector-taxonomy.yaml).
+_GROUP_VEKTORS = frozenset({"internet-anon", "internet-user", "internet-priv-user", "build-time", "victim-required"})
+
+
+def _attributed_vektor(threat: dict, actors: dict[str, dict]) -> str | None:
+    """The vektor the finding's attribution implies, or None when it implies none."""
+    from actor_attribution import _finding_cwes, load_rules
+    from actor_presentation import actor_group
+
+    if _finding_cwes(threat) & set(load_rules().get("no_attacker_cwes") or []):
+        return "n-a"
+    ids = [aid for aid in threat.get("actor_ids") or [] if aid in actors]
+    if not ids:
+        return None
+    primary = threat.get("primary_actor") if threat.get("primary_actor") in ids else ids[0]
+    group = actor_group(actors[primary])
+    return group if group in _GROUP_VEKTORS else None
+
+
+def _derive_vektor(threat: dict, attack_surface: list[dict], actors: dict[str, dict] | None = None) -> str:
+    """Pick a vektor slug for a threat using the signals above."""
+    cwe = str(threat.get("cwe") or "").strip().upper()
     if cwe in _CWE_VEKTOR:
         return _CWE_VEKTOR[cwe]
+    if actors:
+        attributed = _attributed_vektor(threat, actors)
+        if attributed:
+            return attributed
 
     # Evidence file → route auth_required → vektor
     evidence = threat.get("evidence") or []
@@ -186,6 +211,7 @@ def emit(output_dir: Path) -> tuple[int, int, int]:
 
     threats = data.get("threats") or []
     attack_surface = data.get("attack_surface") or []
+    actors = {a["id"]: a for a in data.get("actors") or [] if isinstance(a, dict) and a.get("id")}
     filled = 0
     preserved = 0
     for t in threats:
@@ -195,7 +221,7 @@ def emit(output_dir: Path) -> tuple[int, int, int]:
         if existing:
             preserved += 1
             continue
-        t["vektor"] = _derive_vektor(t, attack_surface)
+        t["vektor"] = _derive_vektor(t, attack_surface, actors)
         filled += 1
 
     if filled > 0:

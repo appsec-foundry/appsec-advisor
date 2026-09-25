@@ -303,6 +303,55 @@ def _check_scenario_stripped_length(data: dict) -> list[str]:
     return errors
 
 
+_INPUT_TO_SINK_CWES = frozenset({"CWE-78", "CWE-79", "CWE-89", "CWE-94", "CWE-95", "CWE-918", "CWE-1336"})
+
+
+def _check_stride_mechanism_traces(data: dict, repo_root: Path | None = None) -> list[str]:
+    """Require an independently inspectable entry and sink for proven flows."""
+    errors: list[str] = []
+    threats = data.get("threats")
+    if not isinstance(threats, list):
+        return errors
+    for index, threat in enumerate(threats):
+        if not isinstance(threat, dict) or threat.get("cwe") not in _INPUT_TO_SINK_CWES:
+            continue
+        if threat.get("evidence_tier") == "insecure-practice":
+            continue
+        trace = threat.get("mechanism_trace")
+        if not isinstance(trace, dict):
+            errors.append(f"threats[{index}].mechanism_trace is required for a confirmed input-to-sink finding")
+            continue
+        sink = trace.get("sink")
+        anchor = threat.get("evidence")
+        if (
+            isinstance(sink, dict)
+            and isinstance(anchor, dict)
+            and (sink.get("file") != anchor.get("file") or sink.get("line") != anchor.get("line"))
+        ):
+            errors.append(f"threats[{index}].mechanism_trace.sink must equal the finding evidence location")
+        elif not isinstance(anchor, dict):
+            errors.append(f"threats[{index}].evidence must cite the mechanism_trace.sink")
+        control = trace.get("control")
+        if isinstance(control, dict) and control.get("status") == "absent-at-sink" and control.get("location") != sink:
+            errors.append(f"threats[{index}].mechanism_trace.control.location must equal the sink for absent-at-sink")
+        if repo_root is not None:
+            locations = {"input": trace.get("input"), "sink": sink}
+            if isinstance(control, dict):
+                locations["control"] = control.get("location")
+            for role, location in locations.items():
+                if isinstance(location, dict):
+                    errors.extend(
+                        repository_evidence_errors(
+                            [location],
+                            repo_root,
+                            label=f"threats[{index}].mechanism_trace.{role}",
+                            require_line=True,
+                            require_code=True,
+                        )
+                    )
+    return errors
+
+
 _TH_ID_RE = re.compile(r"^TH-[0-9]{2}$")
 
 
@@ -590,7 +639,7 @@ def _check_final_boundary_links(data: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def validate_stride(data: Any) -> tuple[bool, list[str]]:
+def validate_stride(data: Any, repo_root: Path | None = None) -> tuple[bool, list[str]]:
     """Validate a parsed .stride-*.json object."""
     if not isinstance(data, dict):
         return False, ["root must be a JSON object"]
@@ -598,6 +647,7 @@ def validate_stride(data: Any) -> tuple[bool, list[str]]:
     if "parse_error" not in data:
         errors.extend(_check_scenario_stripped_length(data))
         errors.extend(_check_stride_remediation_nonempty(data))
+        errors.extend(_check_stride_mechanism_traces(data, repo_root))
         # RC.G.1 / RC.I — STRIDE-analyzer prompt mandates threat_category_id.
         # Inject `source: stride` on each row before the check (per-component
         # STRIDE files do not carry the field; the merge step adds it).
@@ -734,8 +784,11 @@ def prune_optional_schema_violations(data: dict) -> list[str]:
     * The recon producer (`orchestration_controller._recon_producer_retry`)
       already answers this failure class properly: it redispatches the producer
       WITH the validator errors, so the analyzer can correct the exact field.
-      That is strictly better than dropping the branch. STRIDE has no such path
-      — its retry only raises the turn budget, which a malformed field ignores.
+      That is strictly better than dropping the branch. STRIDE now has the same
+      path for what this net must leave fatal: a retry after a gate rejection
+      carries the errors and the rejected threats in its context plan
+      (`stride_dispatch_waves.rejection_brief`). Pruning still runs first,
+      because an optional branch is not worth a retry at all.
     * The other context-v2 boundary producers (`.stride-analyst-context.json`,
       the post-STRIDE synthesis artifacts) do carry optional LLM-written text
       under `maxLength` and would fail the same way, but each writes a single
@@ -771,6 +824,77 @@ def prune_optional_schema_violations(data: dict) -> list[str]:
         if not progressed:
             break
     return pruned
+
+
+def canonicalize_stride(data: dict) -> list[str]:
+    """Lossless null/enum-spelling repairs; runs before the lossy prune net."""
+    from schema_canonicalize import canonicalize_lossless
+
+    return [str(change) for change in canonicalize_lossless(data, _validator("stride"))]
+
+
+LENS_CHECKLISTS = {
+    "llm": tuple(f"LLM{n:02d}" for n in range(1, 11)),
+    "agentic": tuple(f"ASI{n:02d}" for n in range(1, 11)),
+}
+_LENS_ID_FIELD = {"LLM": "owasp_llm_ids", "ASI": "owasp_asi_ids"}
+
+
+def lens_coverage_errors(data: dict, lens_ids: list[str], repo_root: Path | None = None) -> list[str]:
+    """Every checklist item of a selected lens needs one consistent disposition."""
+    items = [item for lens in lens_ids for item in LENS_CHECKLISTS.get(lens, ())]
+    if not items or not isinstance(data, dict):
+        return []
+    threats = [t for t in data.get("threats") or [] if isinstance(t, dict)]
+    tagged: dict[str, set[str]] = {}
+    errors: list[str] = []
+    for index, threat in enumerate(threats):
+        ids = [*(threat.get("owasp_llm_ids") or []), *(threat.get("owasp_asi_ids") or [])]
+        for item in ids:
+            tagged.setdefault(item, set()).add(str(threat.get("local_id")))
+        evidence = threat.get("evidence")
+        if ids and not (isinstance(evidence, dict) and evidence.get("file")):
+            errors.append(f"threats[{index}] carries {', '.join(ids)} without a code evidence location")
+    entries: dict[str, dict] = {}
+    for entry in data.get("lens_coverage") or []:
+        if not isinstance(entry, dict) or entry.get("item") not in items:
+            continue
+        if entry["item"] in entries:
+            errors.append(f"lens_coverage lists {entry['item']} more than once")
+        entries[entry["item"]] = entry
+    missing = [item for item in items if item not in entries]
+    if missing:
+        errors.append(f"lens_coverage has no disposition for {', '.join(missing)}")
+    known = {str(t.get("local_id")) for t in threats}
+    for item, entry in entries.items():
+        disposition = entry.get("disposition")
+        local_ids = set(entry.get("local_ids") or [])
+        field = _LENS_ID_FIELD[item[:3]]
+        if disposition == "finding":
+            if not local_ids:
+                errors.append(f"lens_coverage {item} is a finding without local_ids")
+            for local_id in sorted(local_ids - known):
+                errors.append(f"lens_coverage {item} names unknown threat {local_id}")
+            for local_id in sorted((local_ids & known) - tagged.get(item, set())):
+                errors.append(f"lens_coverage {item} names {local_id}, which lacks {item} in {field}")
+        elif item in tagged:
+            errors.append(f"lens_coverage {item} is {disposition} but {', '.join(sorted(tagged[item]))} carries {item}")
+        if disposition == "controlled":
+            if not isinstance(entry.get("evidence"), dict):
+                errors.append(f"lens_coverage {item} is controlled without the control's evidence location")
+            elif repo_root is not None:
+                errors.extend(
+                    repository_evidence_errors(
+                        [entry["evidence"]],
+                        repo_root,
+                        label=f"lens_coverage {item}.evidence",
+                        require_line=True,
+                        require_code=True,
+                    )
+                )
+        if disposition in {"controlled", "not-applicable", "no-evidence"} and not entry.get("reason"):
+            errors.append(f"lens_coverage {item} is {disposition} without a reason")
+    return errors
 
 
 def _check_architecture_coverage_invariants(data: dict) -> list[str]:
@@ -1865,7 +1989,7 @@ def main() -> None:
         sys.exit(2)
 
     if sys.argv[1] not in _VALIDATORS or (
-        repo_root is not None and sys.argv[1] not in {"recon_signals", "stride_analyst_context"}
+        repo_root is not None and sys.argv[1] not in {"recon_signals", "stride_analyst_context", "stride"}
     ):
         print(
             f"Usage: {sys.argv[0]} <{'|'.join(_VALIDATORS)}> <path-to-json-file> [--repo-root <path>]",
@@ -1905,6 +2029,8 @@ def main() -> None:
         is_valid, errors = validate_recon_signals(data, repo_root=repo_root)
     elif schema_type == "stride_analyst_context":
         is_valid, errors = validate_stride_analyst_context(data, output_dir=path.parent, repo_root=repo_root)
+    elif schema_type == "stride":
+        is_valid, errors = validate_stride(data, repo_root=repo_root)
     else:
         try:
             is_valid, errors = _VALIDATORS[schema_type](data, path.parent)
@@ -1944,8 +2070,10 @@ def main() -> None:
             # artifact. Without this, a reader assumes the analysis agents wrote
             # the offending value and edits the file — which re-runs identically.
             print(
-                "PRODUCER: this artifact is written by scripts/merge_threats.py (finalize). "
-                "Fix the producer and start a new run; editing the artifact does not fix the defect."
+                "PRODUCER: this artifact is written by scripts/merge_threats.py (finalize) and rewritten "
+                "in place by later deterministic passes such as scripts/reclassify_components.py; the "
+                "pass that ran right before this check wrote the offending value. Fix that producer and "
+                "start a new run; editing the artifact does not fix the defect."
             )
         sys.exit(1)
 

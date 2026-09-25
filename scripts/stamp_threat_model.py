@@ -9,7 +9,9 @@ point at the stamped files. The originals are left untouched — this only
 produces an extra, collision-proof copy set.
 
 Re-runnable: a deliverable whose stamped copy is already up to date is left
-alone, so a later run picks up only what was exported since the last one.
+alone, so a later run picks up only what was exported since the last one. A
+stamped copy whose deliverable no longer exists (a figure the report dropped, an
+export that was switched off) is removed, so the set mirrors the current report.
 
 Usage:
     python3 stamp_threat_model.py --output-dir docs/security [--slug a3f9]
@@ -66,6 +68,22 @@ def _deliverable_basenames(src_dir: Path) -> list[str]:
     return [*_STATIC_BASENAMES[:2], *_figure_basenames(src_dir), *_STATIC_BASENAMES[2:]]
 
 
+def _orphaned_copies(src_dir: Path, dest_dir: Path, slug: str) -> list[Path]:
+    """Stamped copies of this slug whose unstamped deliverable is gone."""
+    orphans = [
+        dest_dir / _stamped_name(basename, slug)
+        for basename in _STATIC_BASENAMES
+        if basename != "threat-model.md"
+        and (dest_dir / _stamped_name(basename, slug)).is_file()
+        and not (src_dir / basename).is_file()
+    ]
+    stamped_prefix = f"threat-model-{slug}"
+    for copy in sorted(dest_dir.glob(f"{stamped_prefix}.figure*.svg")):
+        if copy.is_file() and not (src_dir / ("threat-model" + copy.name[len(stamped_prefix) :])).is_file():
+            orphans.append(copy)
+    return orphans
+
+
 def _is_current(dst: Path, src: Path) -> bool:
     """True when ``dst`` already carries what ``src`` holds, judged by mtime.
 
@@ -88,6 +106,8 @@ def stamped_set_is_current(src_dir: Path, slug: str, dest_dir: Path | None = Non
     only at the stamped Markdown reported "done" and left them unstamped.
     """
     dest = dest_dir or src_dir
+    if _orphaned_copies(src_dir, dest, slug):
+        return False
     for basename in _deliverable_basenames(src_dir):
         src = src_dir / basename
         if not src.is_file():
@@ -121,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     figure_basenames = _figure_basenames(src_dir)
+    removed = _orphaned_copies(src_dir, dest_dir, slug)
+    for orphan in removed:
+        orphan.unlink()
     stamped: list[tuple[Path, bool]] = []  # (stamped path, written by this run)
     for basename in _deliverable_basenames(src_dir):
         if basename == "threat-model.md":
@@ -139,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     # A deliverable stamped only now — PDF and HTML are exported after an
     # earlier stamp — can change which files the Markdown must point at, so a
     # copy that is merely newer than the report is not reason enough to keep it.
-    if any(written for _, written in stamped) or not _is_current(md_dst, md_src):
+    if removed or any(written for _, written in stamped) or not _is_current(md_dst, md_src):
         text = md_src.read_text(encoding="utf-8")
         # Only remap figure references when the SVG will actually be copied.
         # This avoids creating a broken image link when figure generation was
@@ -159,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Stamped model with slug '{slug}':")
     for path, written in stamped:
         print(f"  {path}" if written else f"  {path} (unchanged)")
+    for path in removed:
+        print(f"  {path} (removed: its deliverable no longer exists)")
     return 0
 
 

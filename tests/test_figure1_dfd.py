@@ -357,6 +357,8 @@ def test_overview_keeps_inventory_and_routes_humans_into_the_client(prefix):
     scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
     _, state = F._build(model, scenarios, actors, detail=False)
     assert {c["id"] for c in model["components"]} <= state["nodes"].keys()
+    # Both roles draw the same interaction edge; the privileged one still keeps its card (RA-11).
+    assert {"ext-person-1", "ext-person-2"} <= state["nodes"].keys()
     assert {a["id"] for n in state["nodes"].values() for a in n.get("assets", [])} == {a["id"] for a in model["assets"]}
     assert {fid for e in state["edges"] for fid in e["ids"]} == {f["id"] for f in model["data_flows"]}
     for edge in state["edges"]:
@@ -1412,6 +1414,21 @@ def test_classified_roles_carry_the_project_name_and_privileged_roles_stay_disti
     assert "Browser" not in " ".join(n["name"] for n in state["nodes"].values())
 
 
+def test_declared_roles_keep_their_declared_names_and_are_never_folded():
+    model, paths, taxonomy, ids = _role_access_model(registration=True)
+    declared = {"source": ".appsec/actors.yaml", "authentication": "SSO at the ingress"}
+    # A sole privileged role would otherwise be renamed "Admin".
+    model["external_entities"] = [e for e in model["external_entities"] if e["id"] != "ext-auditor"]
+    for entity in model["external_entities"]:
+        if entity["id"] in (ids[1], "ext-operator"):
+            entity["declared"] = declared
+    scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
+    _svg, state = F._build(model, scenarios, actors, detail=False)
+    assert ids[0] in state["nodes"] and ids[1] in state["nodes"]
+    assert state["nodes"][ids[1]]["name"] == "Contributor"
+    assert state["nodes"]["ext-operator"]["name"] == "User"
+
+
 @pytest.mark.parametrize("second", ["app1", "app2"])
 def test_attack_edge_targets_the_finding_component_and_names_other_affected_ones_in_its_tooltip(second):
     model, paths, taxonomy = _model(exposed=("app0", second))
@@ -2055,9 +2072,47 @@ def test_a_role_whose_edges_another_role_already_draws_folds_into_it():
     F._merge_indistinct_roles(model)
 
     assert [e["id"] for e in model["external_entities"]] == ["ext-user"]
-    assert model["external_entities"][0]["_covers"] == ["Admin"]
     # The absorbed role's flow survives, redirected, so no edge is lost.
     assert {f["from_entity"] for f in model["data_flows"]} == {"ext-user"}
+
+
+@pytest.mark.parametrize("privileged_first", [False, True])
+def test_a_privileged_role_never_folds_into_or_absorbs_a_regular_role(privileged_first):
+    """Equal interaction edges hide what a privileged role can do (RA-11)."""
+    regular = (
+        {"id": "ext-member", "name": "Member", "kind": "legitimate-role", "access": "internet-user"},
+        [{"to": "spa", "interaction": True}],
+    )
+    privileged = (
+        {"id": "ext-operator", "name": "Operator", "kind": "legitimate-role", "access": "internet-priv-user"},
+        [{"to": "spa", "interaction": True}],
+    )
+    model = _roles_model(*((privileged, regular) if privileged_first else (regular, privileged)))
+
+    F._merge_indistinct_roles(model)
+
+    assert {e["id"] for e in model["external_entities"]} == {"ext-member", "ext-operator"}
+
+
+def test_regular_roles_with_equal_edges_still_fold_beside_a_privileged_role():
+    model = _roles_model(
+        (
+            {"id": "ext-buyer", "name": "Buyer", "kind": "legitimate-role", "access": "internet-user"},
+            [{"to": "spa", "interaction": True}],
+        ),
+        (
+            {"id": "ext-guest", "name": "Guest", "kind": "legitimate-role", "access": "internet-anon"},
+            [{"to": "spa", "interaction": True}],
+        ),
+        (
+            {"id": "ext-owner", "name": "Owner", "kind": "legitimate-role", "access": "internet-priv-user"},
+            [{"to": "spa", "interaction": True}],
+        ),
+    )
+
+    F._merge_indistinct_roles(model)
+
+    assert [e["id"] for e in model["external_entities"]] == ["ext-buyer", "ext-owner"]
 
 
 def test_a_role_with_an_edge_of_its_own_keeps_its_card():
@@ -2070,7 +2125,46 @@ def test_a_role_with_an_edge_of_its_own_keeps_its_card():
     F._merge_indistinct_roles(model)
 
     assert [e["id"] for e in model["external_entities"]] == ["ext-user", "ext-scanner"]
-    assert not any(e.get("_covers") for e in model["external_entities"])
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (("internet-anon", "Anonymous Web Client"), ("internet-user", "Signed-in Web Client")),
+        (("internet-user", "Portal Visitor Session"), ("internet-user", "Portal Member Session")),
+    ],
+)
+def test_folded_role_names_never_reach_the_figure(first, second):
+    """A folded role's authored name would be a person no other report section shows."""
+    model, paths, taxonomy = _model()
+    model["external_entities"] = [
+        {"id": "ext-a", "name": first[1], "kind": "legitimate-role", "access": first[0]},
+        {"id": "ext-b", "name": second[1], "kind": "legitimate-role", "access": second[0]},
+    ]
+    model["data_flows"] += [
+        {"id": f"df-3{i}", "from": "external", "from_entity": eid, "to": "spa", "interaction": True}
+        for i, eid in enumerate(("ext-a", "ext-b"))
+    ]
+    svg, problems = F.check_diagram(model, paths, taxonomy)
+    assert problems == []
+    assert first[1] not in svg and second[1] not in svg
+    assert "also covers" not in svg
+    assert not {p["name"] for p in F.legitimate_role_people(model)} & {first[1], second[1]}
+
+
+@pytest.mark.parametrize("declared_first", [False, True])
+def test_a_declared_role_is_never_absorbed(declared_first):
+    """The owner named the role; equal edges do not make that name disposable."""
+    plain = ({"id": "ext-guest", "name": "Guest", "kind": "legitimate-role"}, [{"to": "spa", "interaction": True}])
+    declared = (
+        {"id": "ext-clerk", "name": "Branch Clerk", "kind": "legitimate-role", "declared": True},
+        [{"to": "spa", "interaction": True}],
+    )
+    model = _roles_model(*((declared, plain) if declared_first else (plain, declared)))
+
+    F._merge_indistinct_roles(model)
+
+    assert "ext-clerk" in {e["id"] for e in model["external_entities"]}
 
 
 def test_a_role_without_edges_is_never_folded_into_an_arbitrary_card():

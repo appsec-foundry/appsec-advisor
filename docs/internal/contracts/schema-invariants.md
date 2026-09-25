@@ -6,7 +6,7 @@ authoritative source for the §4a–§4h details.
 
 ## §4a. Cross-reference labelling invariant
 
-Reader-facing references normally render as `[ID](#anchor) — <short-title>`. This applies to `T-NNN`, `F-NNN`, `M-NNN`, `W-NNN`, `TH-NN`, and the `C-NN` / deprecated `AF-NNN` classes covered by the composer. Use a shorter form only where the layout or sentence already provides the meaning: declaration sites, ID columns, headings, narrow tables, inline citations, the Verdict citation form, Top Weaknesses proof lists, Open Questions for the Team bullets shared with the console, and the Critical Attack Tree findings pointer. These exceptions are deliberate and must stay narrow; ordinary table and list references need a title.
+Reader-facing references normally render as `[ID](#anchor) — <short-title>`. This applies to `T-NNN`, `F-NNN`, `M-NNN`, `W-NNN`, `TH-NN`, and the `C-NN` / deprecated `AF-NNN` classes covered by the composer. Use a shorter form only where the layout or sentence already provides the meaning: declaration sites, ID columns, headings, narrow tables, inline citations, the Verdict citation form, Top Weaknesses proof lists, Open Questions for the Team bullets, and the Critical Attack Tree findings pointer. These exceptions are deliberate and must stay narrow; ordinary table and list references need a title.
 
 Three things must stay aligned for the invariant to hold:
 
@@ -42,7 +42,7 @@ Generic-route corroboration is limited to the Node/Express JavaScript and TypeSc
 
 ## Finding actor attribution in overview diagrams
 
-Canonical `actors[]` retains configured roles and active automatic roles linked to findings after runtime cleanup. Unused default and discovery roles remain analysis input and do not enter this report inventory. Its optional presence preserves compatibility with earlier models. A role contributes to an overview group only through an explicit finding assignment and a declared display category. Disabled configured roles and configured roles without a mapping do not establish a diagram assignment. Their status and individual access positions remain visible in Identified Actors.
+Canonical `actors[]` retains configured roles and active automatic roles linked to findings after runtime cleanup. Unused default and discovery roles remain analysis input and do not enter this report inventory. Its optional presence preserves compatibility with earlier models. A role contributes to an overview group only through an explicit finding assignment and a declared display category. Disabled configured roles and configured roles without a mapping do not establish a diagram assignment. Identified Actors shows only the attackers and roles Figure 1 draws; an active configured role is named inside the drawn group it maps to.
 
 Figure 1 groups roles into the fixed access categories without equating their permissions. Each group's attack edges retain only its attributed findings and components. Multiple groups may share one scenario number. Figure 2 selects an actor group applicable to its example finding. The numbered table and actor legend use the same assignments. Canonical finding prerequisites and severity remain unchanged. Unattributed findings retain the legacy scenario category.
 
@@ -72,7 +72,7 @@ The last row is critical: `scripts/compose_threat_model.py` reads `t.get("mitiga
 
 ## §4c. `components[].threat_ids[]` directionality
 
-After Phase 11, `components[i].threat_ids[]` MUST be the reverse index of `threats[j].component`. If Phase 11 omits it, `scripts/pregenerate_fragments.py:_render_layer_tables` falls back to deriving `threats_by_component`; do NOT remove this fallback or the Linked Threats column can silently render `—`.
+After Phase 11, `components[i].threat_ids[]` MUST be the reverse index of `threats[j].component`. The Linked Threats column of the §2.3 component table reads it and renders `—` when it is missing.
 
 ## §4d. Flag-conditional QA/contract gates (`skip_attack_walkthroughs`)
 

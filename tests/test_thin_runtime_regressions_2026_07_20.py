@@ -169,7 +169,8 @@ def test_abuse_stats_bind_dispatch_window_to_verifier_role() -> None:
     text = (SKILL_DIR / "SKILL-thin-stage1d.md").read_text(encoding="utf-8")
 
     assert "--subagent-type appsec-advisor:appsec-abuse-case-verifier" in text
-    assert '--since-iso "$STAGE_ABUSE_START_ISO"' in text
+    # The controller's dispatch window bounds the derivation; no turn captures a timestamp.
+    assert "STAGE_ABUSE_START_ISO" not in text
 
 
 def test_log_event_invocation_is_reproducible_from_instructions() -> None:

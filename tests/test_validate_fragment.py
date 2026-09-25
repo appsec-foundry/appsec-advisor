@@ -1100,3 +1100,21 @@ def test_orm_ownership_cannot_be_evaded_by_clearing_the_framework_label(tmp_path
     data["components"].pop()
     path.write_text("// import { DataTypes } from 'sequelize'\n// Account.init({ email: DataTypes.STRING })\n")
     assert vf.repository_path_errors("components", data, tmp_path) == []
+
+
+def test_a_lossless_form_slip_is_repaired_and_persisted(tmp_path: Path, monkeypatch, capsys):
+    schema = {
+        "type": "object",
+        "required": ["flows"],
+        "properties": {"flows": {"type": "array"}, "note": {"type": "string"}, "tier": {"enum": ["High", "Low"]}},
+        "additionalProperties": False,
+    }
+    monkeypatch.setattr(vf, "_load_schema", lambda _type: schema)
+    monkeypatch.setattr(vf, "fragment_invariant_errors", lambda *_args, **_kwargs: [])
+    frag = tmp_path / ".data-flows.json"
+    frag.write_text(json.dumps({"flows": [], "note": None, "tier": "high"}), encoding="utf-8")
+
+    assert vf.validate("data-flows", frag) == 0
+
+    assert json.loads(frag.read_text(encoding="utf-8")) == {"flows": [], "tier": "High"}
+    assert "CANONICALIZED" in capsys.readouterr().out

@@ -17,6 +17,7 @@ from pathlib import Path
 
 from actor_presentation import actor_group
 from reclassify_components import _glob_to_regex
+from reconcile_role_access import system_proven_anonymous
 from validate_evidence_lines import _resolve_evidence_file
 from validate_fragment import repository_evidence_errors
 
@@ -67,7 +68,10 @@ def privileged_evidence(resolved: dict, repo_root: Path) -> tuple[str, list[dict
         locations: list[dict] = []
         for file, line in _LOCATION.findall(str(row.get("relevance_evidence") or "")):
             location = {"file": _repository_path(repo_root, file), "line": int(line)}
-            if location not in locations and not repository_evidence_errors([location], repo_root, require_line=True):
+            # A file header (package, import, comment) names a file, not the access check.
+            if location not in locations and not repository_evidence_errors(
+                [location], repo_root, require_line=True, require_code=True, allow_imports=False
+            ):
                 locations.append(location)
         if locations:
             return actor["id"], locations[:MAX_EVIDENCE]
@@ -102,6 +106,9 @@ def reconcile(repo_root: Path, components: list[dict], document: dict, resolved:
     result = copy.deepcopy(document)
     entities = result.setdefault("external_entities", [])
     if any(e.get("kind") == "legitimate-role" and e.get("access") == "internet-priv-user" for e in entities):
+        return result, None
+    # Elevated rights need an authenticated session; a system nobody logs into has no reachable admin role.
+    if system_proven_anonymous(result, components):
         return result, None
     found = privileged_evidence(resolved, repo_root)
     if not found:

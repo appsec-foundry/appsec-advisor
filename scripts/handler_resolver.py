@@ -452,10 +452,8 @@ class HandlerResolver:
                 out.append((rel, definition[0], definition[1]))
         return out
 
-    def _js_chain(
-        self, route: dict
-    ) -> tuple[list[tuple[bool, list[Body]]], list[tuple[bool, list[Body]]], bool] | None:
-        """(mounted middlewares, registration arguments, application object created here)."""
+    def _js_registration(self, route: dict) -> tuple[str, int, str, re.Match, list[str]] | None:
+        """(file, line, text, registration call, its arguments) of a call-registered route."""
         rel, line = route.get("handler_file") or "", route.get("handler_line")
         text = self._text(rel)
         if text is None or not isinstance(line, int):
@@ -466,8 +464,41 @@ class HandlerResolver:
         if not call or _line_of(text, call.start()) != line:
             return None
         args = _split_args(text[call.end() : _matching(text, call.end() - 1) - 1])
-        if len(args) < 2:
+        return (rel, line, text, call, args) if len(args) >= 2 else None
+
+    def _js_handler_module(self, rel: str, expr: str) -> str | None:
+        """Module defining the handler expression, looking through repository wrappers such as `wrap(handler())`."""
+        for _ in range(3):
+            outer = _JS_CALLEE_RE.match(expr)
+            callee = re.sub(r"\s+", "", outer.group(1)) if outer else (expr if _JS_PATH_RE.match(expr) else None)
+            if callee is None:
+                return None
+            resolved = self._resolve_js(rel, callee)
+            if not isinstance(resolved, list) or not resolved:
+                return None
+            open_paren = outer.end() - 1 if outer else -1
+            inner = (
+                [
+                    a
+                    for a in _split_args(expr[open_paren + 1 : _matching(expr, open_paren) - 1])
+                    if _JS_CALLEE_RE.match(a) or _JS_PATH_RE.match(a)
+                ]
+                if outer
+                else []
+            )
+            if not inner or not isinstance(self._resolve_js(rel, re.sub(r"\s+", "", inner[-1].split("(", 1)[0])), list):
+                return resolved[0][0]
+            expr = inner[-1]
+        return None
+
+    def _js_chain(
+        self, route: dict
+    ) -> tuple[list[tuple[bool, list[Body]]], list[tuple[bool, list[Body]]], bool] | None:
+        """(mounted middlewares, registration arguments, application object created here)."""
+        found = self._js_registration(route)
+        if found is None:
             return None
+        rel, line, text, call, args = found
         obj, path = call.group("obj"), (route.get("path") or "").rstrip("/") or "/"
         chain = []
         for use in re.finditer(rf"\b{re.escape(obj)}\s*\.\s*use\s*\(", text[: call.start()]):
@@ -624,3 +655,19 @@ class HandlerResolver:
         if not found or not found[1] or not all(ok for ok, _code in found[1]):
             return None
         return "\n".join(body for _ok, code in found[1] for _rel, _line, body in code) or None
+
+    def handler_module(self, route: dict) -> str | None:
+        """Repository file that defines the route's own handler, or None when unresolved.
+
+        That is the last registration argument, looked at through repository
+        wrappers, or the decorated function. Guards, wrappers, mounted
+        middlewares and injected dependencies do not count: a flaw in code many
+        routes share is no flaw of each route using it.
+        """
+        if route.get("framework") in _CALL_FRAMEWORKS:
+            found = self._js_registration(route)
+            return self._js_handler_module(found[0], found[4][-1].strip()) if found else None
+        found = self._chain(route)
+        if not found or not found[1] or not found[1][0][0] or not found[1][0][1]:
+            return None
+        return found[1][0][1][0][0]

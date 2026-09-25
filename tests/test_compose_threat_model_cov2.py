@@ -770,7 +770,7 @@ class TestRenderAppendixRunStatistics:
         ctx = _bare_ctx(tmp_path, {"meta": {"stride_per_category_cap": 2}})
         out = compose._render_appendix_run_statistics(ctx, None, {})
         assert "| STRIDE per-category cap | 2 threat(s) per category" in out
-        assert "Critical-safe" in out
+        assert "Critical/High-safe" in out
 
     def test_reasoning_models_row_rendered(self, tmp_path):
         ctx = _bare_ctx(

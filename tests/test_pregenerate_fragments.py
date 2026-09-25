@@ -149,18 +149,18 @@ class TestArchitectureDiagrams:
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
         assert md.startswith("## 2. Architecture Diagrams\n")
 
-    def test_has_all_four_required_subsections(self, minimal_yaml_data):
+    def test_has_all_three_required_subsections(self, minimal_yaml_data):
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
         assert "### 2.1 System Context" in md
         assert "### 2.2 Container Architecture" in md
         assert "### 2.3 Components" in md
-        assert "### 2.4 Technology Architecture" in md
+        assert "### 2.4" not in md
 
     def test_contains_at_least_one_mermaid_block(self, minimal_yaml_data):
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
         assert "```mermaid" in md
-        # At least 3 — one per C4 level + boundary diagram
-        assert md.count("```mermaid") >= 3
+        # One per subsection when no detail view replaces a diagram
+        assert md.count("```mermaid") == 3
 
     def test_no_forbidden_section_25(self, minimal_yaml_data):
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
@@ -175,9 +175,9 @@ class TestArchitectureDiagrams:
     def test_each_section_2_diagram_has_key_takeaway(self, minimal_yaml_data):
         """Bug #2 regression: QA Check 8.0 requires a `**Key takeaway:**` after
         every §2 Mermaid block. The generator must emit one for each of
-        §2.1–§2.4 so the check passes by construction (no placeholder)."""
+        §2.1–§2.3 so the check passes by construction (no placeholder)."""
         md = pf.gen_architecture_diagrams(minimal_yaml_data)
-        assert md.count("**Key takeaway:**") == 4
+        assert md.count("**Key takeaway:**") == 3
         # The placeholder the QA reviewer inserts when the takeaway is missing
         # must never appear in the generated baseline.
         assert "QA: missing" not in md
@@ -1091,13 +1091,6 @@ class TestArchitectureDataFlows:
         assert "broken" not in md
 
 
-# NOTE: TestEnforcementColumn was removed in 2026-05. The Enforcement
-# column on the §2.4 trust-boundary table is no longer rendered — §2.4 is
-# now a compact technology-stack mermaid diagram (Application Tier / Data
-# Tier subgraphs) without per-boundary enforcement strings. Trust boundary
-# detail moved to §1.x infobox metadata + §6.x control catalogue.
-
-
 class TestSecurityArchitectureCWEMapping:
     """§6 v2 must surface threats by contract CWE routing when no controls are cataloged."""
 
@@ -1197,74 +1190,132 @@ class TestSection612Surfaces:
 
 
 class TestSystemContextDiagram:
-    """§2.1 mermaid is now derived from yaml actors / surface / threats."""
+    """§2.1 draws the Figure 1 actor set, the system and its modelled external systems."""
 
-    def _data(self, **overrides):
-        base = {
-            "meta": {"project": {"name": "TestApp"}},
-            "components": [],
-            "trust_boundaries": [],
-            "attack_surface": {},
-            "threats": [],
-            "security_controls": [],
+    @staticmethod
+    def _person(name, kind="role", slug=None, privileged=False, flow_ids=()):
+        return {
+            "name": name,
+            "kind": kind,
+            "slug": slug,
+            "subtitle": "",
+            "code": None,
+            "scenarios": [],
+            "privileged": privileged,
+            "flow_ids": list(flow_ids),
         }
-        base.update(overrides)
-        return base
 
-    def test_falls_back_to_user_plus_attacker_when_no_actors(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        assert "USER[" in md
-        assert "ATTACKER[" in md
+    def _data(self, project="TestApp", member="Member"):
+        return {
+            "meta": {"project": {"name": project}},
+            "components": [{"id": "api", "name": "API", "paths": ["server.ts"]}],
+            "trust_boundaries": [],
+            "external_entities": [
+                {"id": "ext-member", "kind": "legitimate-role", "name": member, "access": "internet-user"},
+                {"id": "ext-pay", "kind": "external-service", "name": "Payment Gateway"},
+                {"id": "ext-idp", "kind": "identity-provider", "name": "Identity Provider"},
+                {"id": "ext-mail", "kind": "external-service", "name": "Mail Relay"},
+            ],
+            "data_flows": [
+                {
+                    "id": "df-1",
+                    "from": "external",
+                    "from_entity": "ext-member",
+                    "to": "api",
+                    "interaction": True,
+                    "protocol": "HTTPS",
+                },
+                {
+                    "id": "df-2",
+                    "from": "api",
+                    "to": "external",
+                    "to_entity": "ext-pay",
+                    "label": "Card charge",
+                    "protocol": "HTTPS",
+                },
+                {
+                    "id": "df-3",
+                    "from": "external",
+                    "from_entity": "ext-idp",
+                    "to": "api",
+                    "label": "ID token",
+                    "protocol": "OIDC",
+                },
+            ],
+            "threats": [{"id": "T-1", "title": "Admin panel SQL injection", "risk": "High"}],
+        }
 
-    def test_authenticated_user_appears_when_auth_surface_populated(self):
-        data = self._data(
-            attack_surface={
-                "authenticated": [
-                    {"endpoint": "GET /api/orders", "method": "GET"},
-                ]
-            }
-        )
-        md = pf.gen_architecture_diagrams(data)
-        assert "AUTHED[" in md
+    def _section(self, md):
+        return md.split("### 2.1 System Context")[1].split("### 2.2")[0]
 
-    def test_admin_actor_appears_when_threats_mention_admin(self):
-        data = self._data(
-            threats=[
-                {"id": "T-1", "title": "Admin panel SQL injection", "risk": "High"},
-            ]
-        )
-        md = pf.gen_architecture_diagrams(data)
-        assert "ADMIN[" in md
+    @pytest.mark.parametrize(
+        ("attacker", "member", "operator"),
+        [("Web Attacker", "Portal Member", "Portal Operator"), ("Internet Attacker", "Clinic Nurse", "Clinic Admin")],
+    )
+    def test_context_draws_exactly_the_actor_set_it_is_given(self, attacker, member, operator):
+        people = [
+            self._person(attacker, "attacker", "internet-anon"),
+            self._person("Pipeline Attacker", "attacker", "build-time"),
+            self._person(member, flow_ids=["df-1"]),
+            self._person(operator, privileged=True),
+        ]
+        section = self._section(pf.gen_architecture_diagrams(self._data(member=member), people=people))
 
-    def test_external_services_appear_for_ssrf_threats(self):
-        data = self._data(
-            threats=[
-                {"id": "T-1", "cwe": "CWE-918", "title": "SSRF via image fetcher", "risk": "High"},
-            ]
-        )
-        md = pf.gen_architecture_diagrams(data)
-        assert "EXTERNAL[" in md
-        # D1.5: when the SSRF heuristic fires, the auto-added external
-        # node carries protocol "HTTPS" so the edge reads "outbound · HTTPS".
-        assert "outbound" in md
+        labels = re.findall(r'^\s*[ARS]\w*\["([^"]*)"\]', section, re.M)
+        assert labels == [attacker, "Pipeline Attacker", member, operator, "TestApp"]
+        assert 'A0 -.->|"via public interface"| SYSTEM' in section
+        assert 'A1 -.->|"via build pipeline"| SYSTEM' in section
+        assert 'R2 -->|"Uses the application (HTTPS)"| SYSTEM' in section
+        assert "class R3 admin" in section and "class R2 user" in section
+        for invented in ("End User", "Anonymous", "Admin User", "Authenticated User"):
+            assert invented not in section
 
-    def test_attacker_uses_dotted_arrow(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        assert "ATTACKER -.->" in md  # dashed arrow distinguishes attacker
+    @pytest.mark.parametrize("attacker", ["Web Attacker", "Clinic Intruder"])
+    def test_the_shared_legend_never_explains_the_context_arrows(self, attacker):
+        """§2.1 dashes attack routes and names its own arrows; the §2 legend's async bullet must not claim them."""
+        people = [self._person(attacker, "attacker", "internet-anon"), self._person("Portal Member", flow_ids=["df-1"])]
+        tables = {
+            key: {"markdown": f"<!-- detail-table -->\n| A | B |\n|---|---|\n| {key} | x |", "takeaway": "t"}
+            for key in ("2.2", "2.3")
+        }
+        md = pf.gen_architecture_diagrams(self._data(), figures=tables, people=people)
+        assert "-.->" in self._section(md) and "-->" in self._section(md)
+        assert "**Legend:**" not in md
+        # Without the detail views the Mermaid fallbacks draw arrows, and the legend explains those.
+        assert "**Legend:**" in pf.gen_architecture_diagrams(self._data(), people=people)
 
-    def test_actors_yaml_takes_priority(self):
-        data = self._data(
-            meta={
-                "project": {"name": "x"},
-                "actors": [
-                    {"id": "qa", "name": "QA Engineer", "role": "user"},
-                    {"id": "auditor", "name": "Compliance Auditor", "role": "admin"},
-                ],
-            }
-        )
-        md = pf.gen_architecture_diagrams(data)
-        assert "QA Engineer" in md
-        assert "Compliance Auditor" in md
+    def test_external_systems_come_from_the_model_with_their_flow_direction(self):
+        section = self._section(pf.gen_architecture_diagrams(self._data(), people=[]))
+
+        assert 'SYSTEM -->|"Card charge (HTTPS)"| E0' in section
+        assert 'E1 -->|"ID token (OIDC)"| SYSTEM' in section
+        # A modelled system without a flow is still in the context, undirected.
+        assert "SYSTEM --- E2" in section
+        assert "Mail Relay" in section
+
+    def test_without_the_actor_set_only_modelled_roles_appear(self):
+        """The pre-generator has no attack paths yet: it names the Figure 1 role cards and invents no attacker."""
+        section = self._section(pf.gen_architecture_diagrams(self._data()))
+
+        assert '["TestApp User"]' in section
+        assert "-.->" not in section
+        assert "Admin User" not in section and "Anonymous" not in section
+
+    def test_takeaway_names_what_the_diagram_draws(self):
+        people = [self._person("Web Attacker", "attacker", "internet-anon"), self._person("Member", flow_ids=["df-1"])]
+        section = self._section(pf.gen_architecture_diagrams(self._data(), people=people))
+
+        takeaway = next(line for line in section.splitlines() if line.startswith("**Key takeaway:**"))
+        assert "TestApp serves Member" in takeaway
+        assert "Payment Gateway, Identity Provider and Mail Relay" in takeaway
+        assert "Web Attacker attacks it" in takeaway
+
+    def test_imported_names_cannot_break_the_mermaid_block(self):
+        people = [self._person('Evil "role" | [x]', flow_ids=["df-1"])]
+        section = self._section(pf.gen_architecture_diagrams(self._data(), people=people))
+
+        node = next(line for line in section.splitlines() if line.strip().startswith("R0["))
+        assert node.count('"') == 2 and "|" not in node and "[x]" not in node
 
 
 class TestSection2TrustBoundaries:
@@ -1308,9 +1359,9 @@ class TestSection2TrustBoundaries:
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api")]))
         block = self._block(md, "2.1 System Context")
 
-        assert 'subgraph TBEDGE["Trust boundary · external → api (tb-1)"]' in block
-        # Actors stay OUTSIDE, so every edge into the system crosses the box.
-        assert block.index("ATTACKER[") < block.index("subgraph TBEDGE")
+        assert 'subgraph TBEDGE["Trust boundary"]' in block
+        # The context names no boundary IDs; the §1 catalogue lists them.
+        assert "tb-1" not in md.split("### 2.1 System Context")[1].split("### 2.2")[0]
         assert block.count("subgraph") == block.count("\n    end")
 
     def test_container_diagram_groups_the_server_side_behind_the_ingress(self):
@@ -1325,31 +1376,6 @@ class TestSection2TrustBoundaries:
         assert block.index("subgraph TBSERVER") < block.index("subgraph Application")
         assert block.index("subgraph Client") < block.index("subgraph TBSERVER")
         assert block.count("subgraph ") == 4  # contract ceiling for §2.2
-
-    def test_system_context_resolves_the_title_overflow_count(self):
-        """The TBEDGE title names only the first crossings and declares the rest
-        as `+N more`. That count must resolve somewhere, or the reader is told
-        something is hidden with nowhere to look."""
-        md = pf.gen_architecture_diagrams(
-            self._data(
-                [
-                    self._tb("tb-1", "external", "api"),
-                    self._tb("tb-2", "external", "spa"),
-                    self._tb("tb-3", "external", "auth"),
-                    self._tb("tb-4", "api", "db"),
-                ]
-            )
-        )
-        section = md.split("### 2.1 System Context")[1].split("### ")[0]
-        caption = [ln for ln in section.splitlines() if ln.startswith("*Trust boundaries")]
-
-        assert "+1 more" in section.split("```")[1]  # title truncated one ingress crossing
-        assert caption, "title declared '+N more' but no caption resolves it"
-        # The unnamed ingress crossing AND the boundary this diagram cannot
-        # carry are both named, and §1 is one click away.
-        assert "external → auth (tb-3)" in caption[0]
-        assert "api → db (tb-4)" in caption[0]
-        assert "#trust-boundaries" in caption[0]
 
     def test_system_context_has_no_caption_when_the_title_named_everything(self):
         md = pf.gen_architecture_diagrams(self._data([self._tb("tb-1", "external", "api")]))
@@ -1704,88 +1730,6 @@ class TestActorIdBySlug:
         assert pf._actor_id_by_slug([], "internet-anon") is None
 
 
-class TestTechnologyArchitectureDiagram:
-    """§2.4 mermaid uses trust_level → tier mapping (M3.3 / D1)."""
-
-    def _data(self):
-        return {
-            "meta": {"project": {"name": "x"}},
-            "components": [
-                {"id": "spa", "name": "SPA", "tier": "client", "paths": ["frontend/**"]},
-                {"id": "api", "name": "API", "tier": "application", "paths": ["server.ts"]},
-                {"id": "service", "name": "Service", "tier": "application", "paths": ["lib/**"]},
-                {"id": "db", "name": "DB", "tier": "data", "paths": ["models/**"]},
-            ],
-            "trust_boundaries": [
-                {"id": "public", "name": "Public Internet", "trust_level": "untrusted"},
-                {"id": "app-process", "name": "Application Process", "trust_level": "trusted"},
-                {"id": "data-tier", "name": "Data Tier", "trust_level": "restricted"},
-            ],
-            "data_flows": [
-                {
-                    "from": "spa",
-                    "to": "api",
-                    "label": "REST",
-                    "protocol": "HTTPS",
-                    "data_classification": "JWT-bearing",
-                },
-                {
-                    "from": "api",
-                    "to": "db",
-                    "label": "ORM",
-                    "protocol": "Sequelize",
-                    "data_classification": "Confidential",
-                },
-            ],
-        }
-
-    def test_each_boundary_renders_a_subgraph(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        # Contract v2 uses the compact technology-stack mermaid diagram with
-        # Application Tier / Data Tier subgraphs. The per-boundary table
-        # (`| public | Public Internet | ... |`) was retired in 2026-05 —
-        # trust-boundary detail now lives in the §1.x infobox + §6.x catalogue.
-        assert 'subgraph APP["Application Tier"]' in sec_2_4
-        assert 'subgraph DATA["Data Tier"]' in sec_2_4
-
-    def test_application_components_placed_in_trusted_boundary(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        app_subgraph = sec_2_4.split('subgraph APP["Application Tier"]')[1].split("end")[0]
-        assert "Application Code" in app_subgraph
-
-    def test_client_component_routed_to_application_tier(self):
-        # Post-2026-05 — the boundary table that used to flag `| public |`
-        # rows is gone; the technology-stack diagram now places the client-
-        # facing entry under the Application Tier subgraph.
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        app_subgraph = sec_2_4.split('subgraph APP["Application Tier"]')[1].split("end")[0]
-        assert "ROUTES" in app_subgraph or "Application Code" in app_subgraph
-
-    def test_data_component_placed_in_restricted_boundary(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        data_sg = sec_2_4.split('subgraph DATA["Data Tier"]')[1].split("end")[0]
-        assert "LOCAL_FS" in data_sg
-        assert "Local FS" in data_sg
-
-    def test_cross_boundary_edges_rendered_thick(self):
-        md = pf.gen_architecture_diagrams(self._data())
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        assert 'ROUTES -->|"file I/O"| LOCAL_FS' in sec_2_4
-
-    def test_falls_back_to_stub_when_no_boundaries(self):
-        data = self._data()
-        data["trust_boundaries"] = []
-        md = pf.gen_architecture_diagrams(data)
-        sec_2_4 = md.split("### 2.4")[1].split("##")[0]
-        assert 'subgraph APP["Application Tier"]' in sec_2_4
-        assert 'subgraph DATA["Data Tier"]' in sec_2_4
-        assert "TB1" not in sec_2_4
-
-
 # ---------------------------------------------------------------------------
 # D1.5 — refined diagram enrichments (C/D/E/F/G/J/L/A/B)
 # ---------------------------------------------------------------------------
@@ -1914,53 +1858,18 @@ class TestD15CriticalHighlight:
         assert "class hot critical" in sec
         assert "class hot warning" not in sec  # critical wins over warning
 
-
-class TestD15FilesystemFill:
-    """F — Filesystem subgraph fills with path-stem ghost nodes."""
-
-    def test_fs_paths_render_as_ghost_nodes(self):
-        data = {
-            "meta": {"project": {"name": "x"}},
-            "components": [
-                {"id": "api", "name": "API", "paths": ["server.ts"]},
-            ],
-            "trust_boundaries": [
-                {"id": "app", "name": "App Process", "trust_level": "trusted"},
-                {"id": "filesystem", "name": "Server Filesystem", "trust_level": "restricted"},
-            ],
-            "data_flows": [],
-            "attack_surface": {
-                "unauthenticated": [
-                    {"endpoint": "GET /ftp/foo.bak", "method": "GET"},
-                    {"endpoint": "GET /encryptionkeys/key.pem", "method": "GET"},
-                ],
-            },
+    @pytest.mark.parametrize("risk,count", [("Critical", 3), ("High", 2)])
+    def test_legend_explains_borders_only_while_a_diagram_draws_them(self, risk, count):
+        """The borders exist only in the §2.2 container diagram; a detail view in its place draws none."""
+        threats = [{"id": f"T-{i}", "component_id": "hot", "risk": risk} for i in range(count)]
+        data = self._data_with_threats(threats)
+        assert "**red border**" in pf.gen_architecture_diagrams(data)
+        table = {
+            "markdown": "<!-- detail-table -->\n| Layer | What runs there |\n|---|---|\n| Container | x |",
+            "takeaway": "t",
         }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.4")[1]
-        # The compact §2.4 diagram shows the filesystem as a tier node; exact
-        # exposed route stems live in §5.1 instead of bloating the diagram.
-        assert "LOCAL_FS" in sec
-        assert "uploads · logs · keys" in sec
-        assert 'LOCAL_FS["fa:fa-folder-open Local FS' in sec
-
-    def test_no_fs_paths_when_no_fs_boundary(self):
-        data = {
-            "meta": {"project": {"name": "x"}},
-            "components": [
-                {"id": "api", "name": "API", "paths": ["server.ts"]},
-            ],
-            "trust_boundaries": [
-                {"id": "app", "name": "App Process", "trust_level": "trusted"},
-            ],
-            "data_flows": [],
-            "attack_surface": {
-                "unauthenticated": [{"endpoint": "GET /ftp/x", "method": "GET"}],
-            },
-        }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.4")[1]
-        assert "/ftp/* (see §5.1)" not in sec
+        md = pf.gen_architecture_diagrams(data, figures={"2.2": table})
+        assert "classDef critical" not in md and "**red border**" not in md
 
 
 class TestD15EngineAnnotation:
@@ -2059,12 +1968,50 @@ class TestD15Legend:
         md = pf.gen_architecture_diagrams(data)
         assert "asynchronous" in md.lower()
 
+    @pytest.mark.parametrize(
+        ("people", "expected"),
+        [
+            (
+                [
+                    {"kind": "attacker", "slug": "internet-anon", "name": "Web Attacker"},
+                    {"kind": "role", "name": "Shop Admin", "privileged": True},
+                    {"kind": "role", "name": "Shop Customer", "privileged": False},
+                ],
+                {"INTERNET_ANON": "Web Attacker", "VICTIM_REQUIRED": "Shop Customer"},
+            ),
+            (
+                [
+                    {"kind": "attacker", "slug": "internet-user", "name": "Portal Intruder"},
+                    {"kind": "attacker", "slug": "repo-read", "name": "Source Reader"},
+                ],
+                {"INTERNET_ANON": "Portal Intruder", "REPO_READ": "Source Reader"},
+            ),
+        ],
+    )
+    def test_components_fallback_names_only_the_figure1_actors(self, people, expected):
+        actors = pf._select_external_actors_for_diagram(pf._load_posture_actor_labels_for_pregen())
+        assert {a["id"] for a in actors} >= {"INTERNET_ANON", "VICTIM_REQUIRED", "REPO_READ"}
+        aligned = pf._align_actors_with_people(actors, people)
+        assert {a["id"]: a["label"].split(" ", 1)[1] for a in aligned} == expected
+        assert all(a["label"].startswith("fa:fa-") for a in aligned)
+
+    @pytest.mark.parametrize("protocol", ["WebSocket", "AMQP queue"])
+    def test_legend_explains_async_arrows_when_no_diagram_draws_a_sync_one(self, protocol):
+        data = {
+            "meta": {"project": {"name": "x"}},
+            "components": [{"id": "p", "name": "P", "paths": ["p"]}, {"id": "q", "name": "Q", "paths": ["q"]}],
+            "data_flows": [{"from": "p", "to": "q", "protocol": protocol}],
+            "trust_boundaries": [],
+        }
+        md = pf.gen_architecture_diagrams(data, people=[])
+        assert "-.->" in md and "-->|" not in md
+        legend = next(line for line in md.splitlines() if line.startswith("> **Legend:**"))
+        assert "asynchronous" in legend and "synchronous request/response" not in legend
+
     def test_legend_never_advertises_an_arrow_no_diagram_draws(self):
         """juice-shop 2026-07-30 — the `==>` bullet was gated on model shape
-        (`trust_boundaries` non-empty AND flows exist), not on emission. The only
-        `==>` emitter is the legacy §2.4 boundary-subgraph builder, which the
-        contract-driven compact path short-circuits past, so §2 advertised a
-        cross-boundary arrow style no rendered diagram drew.
+        (`trust_boundaries` non-empty AND flows exist), not on emission, so §2
+        advertised a cross-boundary arrow style no rendered diagram drew.
 
         §2.3 now marks INGRESS crossings with `==>`, so the fixture uses an
         EGRESS boundary (application → external) — one no §2 diagram can place
@@ -2114,83 +2061,6 @@ class TestD15Legend:
             "```mermaid\nflowchart TD\n  A --> B\n```\n"
         )
         assert pf._diagram_arrow_tokens(rendered) == {"-->"}
-
-
-class TestD15ExternalServicesCategorised:
-    """A — meta.external_services[] categorised by direction."""
-
-    def test_inbound_external_renders_with_inbound_edge(self):
-        data = {
-            "meta": {
-                "project": {"name": "x"},
-                "external_services": [
-                    {"id": "google-sso", "name": "Google SSO", "direction": "inbound", "protocol": "OIDC"},
-                ],
-            },
-            "components": [],
-            "trust_boundaries": [],
-            "data_flows": [],
-            "threats": [],
-            "attack_surface": {},
-            "security_controls": [],
-        }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.1")[1].split("### 2.2")[0]
-        assert "Google SSO" in sec
-        # inbound edge points TO system
-        assert "GOOGLE_SSO -->" in sec
-
-    def test_outbound_external_renders_with_outbound_edge(self):
-        data = {
-            "meta": {
-                "project": {"name": "x"},
-                "external_services": [
-                    {
-                        "id": "stripe",
-                        "name": "Stripe",
-                        "direction": "outbound",
-                        "protocol": "HTTPS",
-                        "category": "payment",
-                    },
-                ],
-            },
-            "components": [],
-            "trust_boundaries": [],
-            "data_flows": [],
-            "threats": [],
-            "attack_surface": {},
-            "security_controls": [],
-        }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.1")[1].split("### 2.2")[0]
-        assert "Stripe" in sec
-        assert "SYSTEM -->|outbound · HTTPS| STRIPE" in sec
-
-    def test_external_db_renders_with_extdb_classDef(self):
-        data = {
-            "meta": {
-                "project": {"name": "x"},
-                "external_services": [
-                    {
-                        "id": "rds",
-                        "name": "Order DB (RDS)",
-                        "direction": "bidirectional",
-                        "protocol": "PostgreSQL",
-                        "category": "database",
-                    },
-                ],
-            },
-            "components": [],
-            "trust_boundaries": [],
-            "data_flows": [],
-            "threats": [],
-            "attack_surface": {},
-            "security_controls": [],
-        }
-        md = pf.gen_architecture_diagrams(data)
-        sec = md.split("### 2.1")[1].split("### 2.2")[0]
-        assert "Order DB (RDS)" in sec
-        assert "class RDS extdb" in sec
 
 
 class TestD15RuntimeColumn:
@@ -2558,7 +2428,7 @@ class TestComponentsDiagramFolding:
         }
 
     def _section_2_3(self, md: str) -> str:
-        return md.split("### 2.3")[1].split("### 2.4")[0]
+        return md.split("### 2.3")[1].split("> **Legend:**")[0]
 
     def test_threat_count_sums_the_folded_group(self):
         block = self._section_2_3(pf.gen_architecture_diagrams(self._data(3)))
@@ -3484,202 +3354,10 @@ def test_system_overview_no_selection_falls_back_to_plain_scope():
 
 # ---------------------------------------------------------------------------
 # Coverage campaign additions (2026-06-14)
-# Target the large uncovered blocks: legacy boundary-driven §2.4 mermaid,
-# filesystem ghost-nodes, layer tables (per-layer split), the v2 control
-# emitters (grouped / subcontrol / legacy), heading verdicts, and the
-# §6.2 auth-mechanism inventory.
+# Target the large uncovered blocks: the v2 control emitters (grouped /
+# subcontrol / legacy), heading verdicts, and the §6.2 auth-mechanism
+# inventory.
 # ---------------------------------------------------------------------------
-
-
-class TestTechnologyArchitectureMermaidLegacy:
-    """`_technology_architecture_mermaid` boundary-driven path (only reached
-    when the contract has NO `diagram_compactness."2.4 ..."` opt-in). We
-    monkeypatch `_load_diagram_compactness` to {} so the legacy builder runs."""
-
-    @pytest.fixture(autouse=True)
-    def _no_compact(self, monkeypatch):
-        monkeypatch.setattr(pf, "_load_diagram_compactness", lambda: {})
-
-    def test_stub_when_no_boundaries(self):
-        out = pf._technology_architecture_mermaid({}, [], [])
-        # Falls back to the TB1/TB2/TB3 stub.
-        assert out == pf._technology_architecture_stub()
-        assert any("Public Internet" in l for l in out)
-
-    def test_boundary_subgraphs_and_cross_boundary_edge(self):
-        components = [
-            {"id": "spa", "name": "Angular SPA", "tier": "client"},
-            {"id": "api", "name": "Express API", "tier": "application"},
-            {"id": "db", "name": "SQLite", "tier": "data"},
-        ]
-        boundaries = [
-            {"id": "TB-INTERNET", "name": "Public Internet", "trust_level": "untrusted"},
-            {"id": "TB-APP", "name": "App Process", "trust_level": "trusted"},
-            {"id": "TB-DATA", "name": "Data Tier", "trust_level": "restricted"},
-        ]
-        yaml_data = {
-            "components": components,
-            "trust_boundaries": boundaries,
-            "data_flows": [
-                {"from": "spa", "to": "api", "protocol": "https", "auth_method": "JWT", "data_classification": "PII"},
-                {"from": "api", "to": "db", "protocol": "websocket"},
-            ],
-            "threats": [
-                {"id": "T-1", "component_id": "api", "risk": "critical"},
-                {"id": "T-2", "component_id": "api", "risk": "critical"},
-                {"id": "T-3", "component_id": "api", "risk": "critical"},
-                {"id": "T-4", "component_id": "db", "risk": "high"},
-                {"id": "T-5", "component_id": "db", "risk": "high"},
-            ],
-        }
-        out = pf._technology_architecture_mermaid(yaml_data, components, boundaries)
-        joined = "\n".join(out)
-        assert out[0] == "```mermaid"
-        assert "subgraph" in joined
-        # untrusted→trusted crossing uses the thick arrow
-        assert "==>|" in joined
-        # async (websocket) crossing between trusted/data uses the dashed arrow
-        assert "-.->|" in joined
-        # critical/warning classDefs emitted (api has 3 critical, db has 2 high)
-        assert "classDef critical" in joined
-        assert "class" in joined
-
-    def test_no_cross_boundary_flows_emits_comment(self):
-        components = [{"id": "api", "name": "API", "tier": "application"}]
-        boundaries = [{"id": "TB-APP", "name": "App", "trust_level": "trusted"}]
-        out = pf._technology_architecture_mermaid(
-            {"components": components, "trust_boundaries": boundaries}, components, boundaries
-        )
-        assert any("No cross-boundary data flows" in l for l in out)
-
-    def test_filesystem_ghost_nodes_rendered(self):
-        components = [{"id": "api", "name": "API", "tier": "application"}]
-        boundaries = [
-            {"id": "TB-APP", "name": "App", "trust_level": "trusted"},
-            {"id": "TB-FS", "name": "Filesystem Storage", "trust_level": "restricted"},
-        ]
-        # Use a real fs-prefix so a ghost node is derived.
-        prefixes = pf._load_fs_route_prefixes()
-        yaml_data = {"components": components, "trust_boundaries": boundaries}
-        if prefixes:
-            ep = prefixes[0] + "/secret.bak"
-            yaml_data["attack_surface"] = {"unauthenticated": [{"endpoint": "GET " + ep}]}
-        out = pf._technology_architecture_mermaid(yaml_data, components, boundaries)
-        joined = "\n".join(out)
-        # filesystem subgraph present
-        assert "Filesystem Storage" in joined
-        if prefixes:
-            assert "see §5.1" in joined
-
-    def test_component_engine_annotation_and_name_dedup(self):
-        components = [
-            {"id": "db", "name": "Data Store", "tier": "data", "engine": "PostgreSQL"},
-            {"id": "db2", "name": "Redis cache", "tier": "data", "engine": "Redis"},
-        ]
-        boundaries = [{"id": "TB-DATA", "name": "Data Tier", "trust_level": "restricted"}]
-        out = pf._technology_architecture_mermaid(
-            {"components": components, "trust_boundaries": boundaries}, components, boundaries
-        )
-        joined = "\n".join(out)
-        # engine not in name → appended on its own line
-        assert "PostgreSQL" in joined
-        # engine already in name (case-insensitive) → not duplicated
-        assert joined.count("Redis") == 1
-
-
-class TestFilesystemPathsPerBoundary:
-    def test_no_fs_boundary_returns_empty(self):
-        boundaries = [{"id": "TB-APP", "name": "App Process"}]
-        assert pf._filesystem_paths_per_boundary({}, boundaries) == {}
-
-    def test_no_matching_routes_returns_empty(self):
-        boundaries = [{"id": "TB-FS", "name": "Filesystem"}]
-        yaml_data = {"attack_surface": {"unauthenticated": [{"endpoint": "GET /api/users"}]}}
-        assert pf._filesystem_paths_per_boundary(yaml_data, boundaries) == {}
-
-    def test_matching_prefix_yields_stem(self):
-        prefixes = pf._load_fs_route_prefixes()
-        if not prefixes:
-            pytest.skip("no fs prefixes configured")
-        boundaries = [{"id": "TB-FS", "name": "Filesystem Storage"}]
-        ep = prefixes[0].rstrip("/") + "/dump.bak"
-        yaml_data = {"attack_surface": {"unauthenticated": [{"path": ep}]}}
-        result = pf._filesystem_paths_per_boundary(yaml_data, boundaries)
-        assert "TB-FS" in result
-        assert result["TB-FS"], "expected at least one stem"
-
-    def test_unauth_dict_with_entries_key(self):
-        prefixes = pf._load_fs_route_prefixes()
-        if not prefixes:
-            pytest.skip("no fs prefixes configured")
-        boundaries = [{"id": "TB-DISK", "name": "disk store"}]
-        ep = prefixes[0].rstrip("/") + "/x"
-        yaml_data = {"attack_surface": {"unauthenticated": {"entries": [{"route": ep}]}}}
-        result = pf._filesystem_paths_per_boundary(yaml_data, boundaries)
-        assert "TB-DISK" in result
-
-
-class TestLoadFsRoutePrefixes:
-    def test_returns_tuple_of_slash_prefixes(self):
-        prefixes = pf._load_fs_route_prefixes()
-        assert isinstance(prefixes, tuple)
-        for p in prefixes:
-            assert p.startswith("/")
-
-
-class TestRenderLayerTables:
-    """`_render_layer_tables` — consolidated (≤5 comps) and per-layer (>5)."""
-
-    def _comp(self, cid, tier, threat_ids=None):
-        return {"id": cid, "name": cid.upper(), "tier": tier, "threat_ids": threat_ids or []}
-
-    def test_consolidated_when_few_components(self):
-        comps = [self._comp("a", "client"), self._comp("b", "application")]
-        yaml_data = {"components": comps, "threats": []}
-        out = pf._render_layer_tables(yaml_data, comps)
-        joined = "\n".join(out)
-        # consolidated layout has the single 'Layer' header, not per-layer H4s
-        assert "| Component | Layer | Linked Threats | Risk |" in joined
-        assert "#### 2.4.1" not in joined
-
-    def test_per_layer_split_when_many_components(self):
-        comps = [
-            self._comp("c1", "client", ["T-1"]),
-            self._comp("c2", "client"),
-            self._comp("a1", "application", ["T-2"]),
-            self._comp("a2", "application"),
-            self._comp("d1", "data"),
-            self._comp("d2", "data"),
-        ]
-        threats = [
-            {"id": "T-1", "title": "Client XSS", "severity": "high", "cwe": "CWE-79"},
-            {"id": "T-2", "title": "Auth bypass", "severity": "critical", "cwe": "CWE-287"},
-        ]
-        yaml_data = {"components": comps, "threats": threats}
-        out = pf._render_layer_tables(yaml_data, comps)
-        joined = "\n".join(out)
-        assert "#### 2.4.1 Layer 1 Client" in joined
-        assert "#### 2.4.4 Layer 4 Data" in joined
-        # linked threats rendered with finding-label links + risk emoji
-        assert "🟠 High" in joined or "🔴 Critical" in joined
-
-    def test_forward_index_fallback_when_no_reverse_links(self):
-        # components carry no threat_ids; threats reference component via field.
-        comps = [self._comp("api", "application")]
-        threats = [{"id": "T-009", "title": "SQLi", "severity": "critical", "component": "api"}]
-        yaml_data = {"components": comps, "threats": threats}
-        out = pf._render_layer_tables(yaml_data, comps)
-        joined = "\n".join(out)
-        # T-009 normalises to the canonical visible F-009 label.
-        assert "F-009" in joined
-
-    def test_empty_layer_placeholder_in_split_view(self):
-        # 6 comps all in one tier → other layers render the placeholder row.
-        comps = [self._comp(f"a{i}", "application") for i in range(6)]
-        yaml_data = {"components": comps, "threats": []}
-        out = pf._render_layer_tables(yaml_data, comps)
-        joined = "\n".join(out)
-        assert "_no components in this layer_" in joined
 
 
 class TestControlVerdictForHeading:

@@ -99,7 +99,7 @@ from _manifest_readers import (
 from _manifest_readers import (
     read_readme_tags as _read_readme_tags,
 )
-from actor_presentation import inventory_actors
+from actor_presentation import attacker_display, inventory_actors
 
 # P1: single-source weakness-class map, shared with merge_threats.py.
 # `_MULTI_MATCH_WARNED` is re-exported so existing call sites/tests keep
@@ -5529,22 +5529,17 @@ def _build_actor_cards(
             node_id = "SHOPUSER"
         else:
             node_id = slug.upper().replace("-", "_")
-        subtitle = meta.get("default_subtitle") or ""
-        if slug == "victim-required" and victim_labels:
-            joined = " / ".join(victim_labels)
-            subtitle = f"legitimate customer; target of {joined}"
-        elif slug == "internet-anon" and open_user_registration:
-            # Make the collapse explicit so the reader doesn't wonder
-            # why there's no "Authenticated User" card despite many
-            # findings on auth-required routes.
-            subtitle = "can self-register a regular account"
+        if slug == "victim-required":
+            label, subtitle = meta.get("label") or slug, meta.get("default_subtitle") or ""
+            if victim_labels:
+                subtitle = f"legitimate customer; target of {' / '.join(victim_labels)}"
+        else:
+            label, subtitle = attacker_display(slug, {"open_user_registration": open_user_registration}, actors_dict)
         cards.append(
             {
                 "id": node_id,
                 "slug": slug,
-                "label": "Internet Attacker"
-                if slug == "internet-anon" and open_user_registration
-                else meta.get("label") or slug,
+                "label": label,
                 "subtitle": subtitle,
                 "severity_class": meta.get("severity_class") or "actorAnon",
                 "role": meta.get("role") or "attacker",
@@ -5833,12 +5828,6 @@ _FIG1_MAX_TIER_DRAW = 6
 # box no longer carries a glyph chip, so a compact height never clips.
 _FIG1_COMP_BOX_W = "182px"
 _FIG1_COMP_BOX_H = "76px"
-# Figure-1-specific actor label overrides. Kept as an extension point but
-# intentionally empty: the repo-read actor renders as the canonical
-# posture-actor-labels label ("Internal Developer"), the same name used by
-# the Figure-2 heatmap card and the actor legend, so a single actor never
-# appears under two different names across the section.
-_FIG1_ACTOR_LABEL: dict[str, str] = {}
 
 
 def _fig1_node_id(prefix: str, raw: str) -> str:
@@ -6020,6 +6009,83 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         )
         caption += f"\n\n[Detailed architecture diagram]({detail_src})"
     return f"{intro}\n\n![Figure 1 - Architecture and Threat Overview]({src}){caption}"
+
+
+_DETAIL_FIGURE_NUMBERS = range(3, 7)  # the §2 deployment figure follows Figures 1 and 2; 4–6 are only cleaned up
+_DEPLOYMENT_INVENTORY = ".deployment-inventory.json"
+
+
+def _figure_basename_n(ctx: RenderContext, number: int) -> str:
+    """`<stem>.figure1.svg` → `<stem>.figure<N>.svg`; the stamping and rebuild globs match this name."""
+    base = ctx.figure_basename or "figure1.svg"
+    return base.replace(".figure1.", f".figure{number}.") if ".figure1." in base else f"figure{number}.svg"
+
+
+def _load_deployment_inventory(ctx: RenderContext) -> dict | None:
+    """The scan's deployment inventory, or None when it is absent or does not match its schema."""
+    path = ctx.output_dir / _DEPLOYMENT_INVENTORY
+    if not path.is_file():
+        return None
+    try:
+        from deployment_inventory import validation_errors
+
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        errors = validation_errors(doc) if isinstance(doc, dict) else ["not an object"]
+    except (OSError, ValueError) as exc:
+        errors = [type(exc).__name__]
+    if errors:
+        ctx.warnings.append(f"detail figures: {_DEPLOYMENT_INVENTORY} ignored ({errors[0]})")
+        return None
+    return doc
+
+
+def _render_detail_figures(ctx: RenderContext) -> dict:
+    """Build the §2 detail views, write each SVG figure beside the report and return
+    ``{"2.x": {"image": md, "takeaway": text}}`` for a figure or
+    ``{"2.x": {"markdown": table, "takeaway": text}}`` for a table to the §2 generator.
+
+    Both views read the model and the deployment inventory the scan wrote, never
+    the repository, so a re-render shows the state of the scan. A subsection whose
+    inputs are missing is absent from the result and keeps its Mermaid diagram. A
+    builder failure keeps every Mermaid diagram and leaves a RENDER_WARN, so a
+    silent downgrade cannot hide behind a complete §2.
+    """
+    written: set[str] = set()
+    result: dict = {}
+    try:
+        from figure_details import build_detail_figures
+
+        figures = build_detail_figures(
+            ctx.yaml_data, _load_deployment_inventory(ctx), first_number=_DETAIL_FIGURE_NUMBERS[0]
+        )
+        embed = bool(getattr(ctx, "embed_figures", False)) or bool(
+            _read_skill_config(ctx.output_dir).get("embed_figures")
+        )
+        for key, fig in figures.items():
+            if fig.markdown:
+                result[key] = {"markdown": fig.markdown, "takeaway": fig.takeaway}
+                continue
+            basename = _figure_basename_n(ctx, fig.number)
+            (ctx.output_dir / basename).write_text(fig.svg, encoding="utf-8")
+            written.add(basename)
+            src = (
+                "data:image/svg+xml;base64," + base64.b64encode(fig.svg.encode("utf-8")).decode("ascii")
+                if embed
+                else basename
+            )
+            result[key] = {"image": f"![Figure {fig.number} - {fig.title}]({src})", "takeaway": fig.takeaway}
+    except Exception as exc:  # noqa: BLE001 — §2 falls back to its Mermaid diagrams
+        ctx.warnings.append(
+            f"detail figures: builder failed ({type(exc).__name__}: {exc}) — §2 keeps its Mermaid diagrams"
+        )
+        result = {}
+    # Never leave a prior run's detail figure next to a report that no longer references it.
+    for number in _DETAIL_FIGURE_NUMBERS:
+        basename = _figure_basename_n(ctx, number)
+        stale = ctx.output_dir / basename
+        if basename not in written and stale.exists():
+            stale.unlink()
+    return result
 
 
 def _figure2_basename(ctx: RenderContext) -> str:
@@ -6226,11 +6292,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
         if slug not in actor_node:
             meta = actor_labels.get(slug) or {}
             fa = meta.get("fa_icon") or "fa:fa-user-secret"
-            lbl = _FIG1_ACTOR_LABEL.get(slug) or meta.get("label") or slug
-            sub = meta.get("default_subtitle") or ""
-            if collapse_authed and slug == "internet-anon":
-                # The authenticated / privileged attacker folds into this node.
-                sub = "incl. self-registered users — open registration makes authenticated ≈ anonymous"
+            lbl, sub = attacker_display(slug, {"open_user_registration": collapse_authed}, actor_labels)
             actor_node[slug] = _fig1_node_id("ACT", slug)
             txt = f"{fa} {_fig1_label(lbl)}"
             if sub:
@@ -6702,7 +6764,7 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
     # the reader decode numbers (2026-06-14 user request — legend clearly
     # understandable, not overloaded; self-explanatory).
     def _actor_name(slug: str) -> str:
-        return _fig1_label(_FIG1_ACTOR_LABEL.get(slug) or (actor_labels.get(slug) or {}).get("label") or slug)
+        return _fig1_label(attacker_display(slug, {"open_user_registration": collapse_authed}, actor_labels)[0])
 
     _leg: list[str] = ["<b>Legend</b>"]
     # Line-style markers use em-dash (—) for a solid line and middle-dots (·) for
@@ -6828,7 +6890,11 @@ def _render_top_threats_architecture(ctx: RenderContext, attack_paths_data: dict
 
 
 def _build_security_posture_actor_legend(
-    attack_paths_data: dict, attack_taxonomy: dict, model_meta: dict | None = None, model: dict | None = None
+    attack_paths_data: dict,
+    attack_taxonomy: dict,
+    model_meta: dict | None = None,
+    model: dict | None = None,
+    victim_name: str | None = None,
 ) -> str:
     """Build the ``**Threat actors.**`` legend rendered below the two figures.
 
@@ -6872,21 +6938,21 @@ def _build_security_posture_actor_legend(
     # figure representation explicit so a reader does not look for a missing
     # actor box.
     has_victim = "victim-required" in drives
+    victim = victim_name or _victim_label()
     intro = "**Threat actors.** The actors below drive the numbered attack paths in the figures above."
     if has_victim:
         intro += (
-            f" The **{_victim_label()}** is the *victim* of client-side attacks (XSS / CSRF), "
+            f" The **{victim}** is the *victim* of client-side attacks (XSS / CSRF), "
             "not an attacker. Figure 2 marks victim interaction on the applicable attack routes."
         )
     out = [intro, ""]
     for a in present:
         meta = actor_meta.get(a) or {}
-        name = _FIG1_ACTOR_LABEL.get(a) or meta.get("label") or a
-        sub = meta.get("default_subtitle") or ""
-        if a == "internet-anon" and (model_meta or {}).get("open_user_registration") is True:
-            name = "Internet Attacker"
-            sub = "can self-register a regular account"
         is_victim = meta.get("role") == "victim" or a == "victim-required"
+        if is_victim:
+            name, sub = victim, meta.get("default_subtitle") or ""
+        else:
+            name, sub = attacker_display(a, model_meta, actor_meta)
         verb = "target of" if is_victim else "drives"
         paths = ", ".join(drives[a])
         sub_part = f"{sub}; " if sub else ""
@@ -7502,8 +7568,9 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
         figure2_block.rstrip(),
         "",
     ]
+    victim_name = next((p["name"] for p in _overview_people(ctx) if p["kind"] == "role" and p["scenarios"]), None)
     legend_md = _build_security_posture_actor_legend(
-        attack_paths_data, attack_taxonomy, ctx.yaml_data.get("meta"), ctx.yaml_data
+        attack_paths_data, attack_taxonomy, ctx.yaml_data.get("meta"), ctx.yaml_data, victim_name
     )
     if legend_md:
         parts += [legend_md.rstrip(), ""]
@@ -10270,7 +10337,9 @@ def _render_markdown_fragment(ctx: RenderContext, section_id: str, section: dict
         # §2 is structural data, not LLM prose. Keeping this at the final
         # composition chokepoint prevents a renderer from reintroducing extra
         # Mermaid nodes after the pre-generator has enforced compactness.
-        md = gen_architecture_diagrams(ctx.yaml_data)
+        md = gen_architecture_diagrams(
+            _figure1_display_data(ctx), figures=_render_detail_figures(ctx), people=_overview_people(ctx)
+        )
     else:
         md = _load_fragment(ctx, section_id, fragment_name)
     if not isinstance(md, str):
@@ -10581,9 +10650,10 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     m = re.search(r"^###\s+2\.3\s+Components\s*$", md, flags=re.MULTILINE)
     if not m:
         return md
-    # Find the start of the next `### ` heading after §2.3.
+    # §2.3 ends at the next heading of any level up to H3, or at the legend
+    # that closes §2 as a whole.
     tail = md[m.end() :]
-    nxt = re.search(r"^###\s+", tail, flags=re.MULTILINE)
+    nxt = re.search(r"^(?:#{1,3}\s|> \*\*Legend:\*\*)", tail, flags=re.MULTILINE)
     section_end = m.end() + (nxt.start() if nxt else len(tail))
     section_body = md[m.end() : section_end]
 
@@ -10592,15 +10662,17 @@ def _inject_components_table(ctx: RenderContext, md: str) -> str:
     # line with `|---|`. We only strip tables, NOT the mermaid block or
     # prose — mermaid lives inside ``` ``` fences and tables don't.
     def _strip_first_table(body: str) -> str:
-        # Match a full table: header row + separator row + 1..N data rows.
+        # Match a full table: header row + separator row + 1..N data rows,
+        # unless the generator marked it as its own detail table.
         table_re = re.compile(
+            r"(?<!<!-- detail-table -->\n)"
             r"(?:^\|[^\n]*\|\s*\n"  # header row
             r"\|[ \t:\-|]+\|\s*\n"  # separator row
             r"(?:\|[^\n]*\|\s*\n)+)",  # one or more data rows
             flags=re.MULTILINE,
         )
-        # Strip ALL tables in the section body (defensive — LLM might emit
-        # both a "quick summary" and a "detailed" table).
+        # Strip ALL other tables in the section body (defensive — LLM might
+        # emit both a "quick summary" and a "detailed" table).
         return table_re.sub("", body)
 
     cleaned_body = _strip_first_table(section_body).rstrip() + "\n"
@@ -13436,7 +13508,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     if stride_cap:
         lines.append(
             f"| STRIDE per-category cap | {stride_cap} threat(s) per category "
-            f"per component (Critical-safe; `--stride-cap`) |"
+            f"per component (Critical/High-safe; `--stride-cap`) |"
         )
     # Declared business context, disclosed the same way as the STRIDE cap: a
     # reader cannot otherwise tell whether a supplied document reached this
@@ -15485,67 +15557,100 @@ def _actor_fold_map(active_ids: set[str], meta: dict) -> tuple[dict[str, str], d
     return folded, reason
 
 
-def _render_actor_inventory(ctx: RenderContext) -> str:
-    """Keep individual access positions outside the bounded overview diagrams."""
-    from actor_presentation import actor_group, finding_id, path_groups
+def _overview_people(ctx: RenderContext) -> list[dict]:
+    """Attackers and roles exactly as Figure 1 draws them; sections that name actors read only this list."""
+    from figure1_dfd import overview_people
 
     taxonomy = _load_attack_class_taxonomy()
     paths = _load_attack_paths_fragment(ctx, taxonomy, ctx.yaml_data.get("threats") or [])
-    represented = {}
-    drawn_groups: dict[str, dict[str, None]] = {}
-    meta = ctx.yaml_data.get("meta") or {}
-    for number, path in enumerate(paths.get("attack_paths", []), 1):
-        for group in path_groups(ctx.yaml_data, path):
-            for aid in group["actor_ids"]:
-                represented.setdefault(aid, set()).add(str(number))
-                drawn_groups.setdefault(aid, {})[overview_actor_slug(group["actor"], meta)] = None
     labels = (_load_posture_actor_labels() or {}).get("actors") or {}
-    lines = [
-        '<a id="identified-actors"></a>',
-        "### Identified Actors",
-        "",
-        "Figures group attributed roles by access category. Grouping does not grant each role the other roles' "
-        "permissions or findings. Only roles linked to a displayed scenario contribute to its diagram group. "
-        "Configured roles remain listed; default and discovered roles require a finding assignment.",
-        "",
-        "| Actor | Access | Authority / position | Diagram group | Scenarios | Findings |",
-        "|---|---|---|---|---|---|",
-    ]
+    try:
+        return overview_people(_figure1_display_data(ctx), copy.deepcopy(paths), taxonomy, labels)
+    except Exception as exc:  # noqa: BLE001 — same guard as the Figure 1 builder itself
+        getattr(ctx, "warnings", []).append(f"actors: overview actor set unavailable ({type(exc).__name__}: {exc})")
+        return []
+
+
+def _attacker_groups_of(threat: dict, model: dict, meta: dict) -> set[str]:
+    """Display groups of the attackers a finding is attributed to (Figure 1 folds the victim path into its sender)."""
+    from actor_presentation import attributed_actors, finding_group
+
+    groups = {finding_group(actor, threat) for actor in attributed_actors(model, threat)} - {None}
+    if not model.get("actors"):
+        groups = {threat.get("vektor")} - {None, ""}
+    return {overview_actor_slug("internet-anon" if g == "victim-required" else g, meta) for g in groups}
+
+
+def _render_actor_inventory(ctx: RenderContext, people: list[dict]) -> str:
+    """One row per attacker and legitimate role of Figure 1, under the names Figure 1 uses."""
+    from actor_presentation import actor_group, actor_origin
+
+    model = ctx.yaml_data
+    meta = model.get("meta") or {}
+    glyphs = _load_attack_class_taxonomy().get("glyph_sequence") or list("①②③④⑤⑥⑦⑧⑨")
+    attackers = [p for p in people if p["kind"] == "attacker"]
+    roles = [p for p in people if p["kind"] == "role"]
+    counts: dict[str, dict[str, int]] = {}
+    for threat in _severity_rollup.register_threats(model):
+        severity = _severity_rollup.register_severity(threat)
+        for slug in _attacker_groups_of(threat, model, meta):
+            counts.setdefault(slug, {})[severity] = counts.get(slug, {}).get(severity, 0) + 1
+    # Operator-configured roles stay visible inside the group that draws them.
+    configured: dict[str, list[str]] = {}
+    for actor in model.get("actors") or []:
+        slug = actor_group(actor)
+        if actor.get("active", True) and slug and actor_origin(actor) in {"repo", "enterprise"}:
+            configured.setdefault(overview_actor_slug(slug, meta), []).append(
+                str(actor.get("label") or actor.get("id"))
+            )
 
     def safe(value):
         value = html.escape(" ".join(str(value or "").split()), quote=False)
         return re.sub(r"([\\`*_|\[\]])", r"\\\1", value) or "—"
 
-    for actor in inventory_actors(ctx.yaml_data):
-        aid = actor["id"]
-        linked = [t for t in ctx.yaml_data.get("threats", []) if aid in (t.get("actor_ids") or [])]
-        slug = actor_group(actor)
-        if not actor.get("active", True):
-            group = "Disabled; not drawn"
-        elif not slug:
-            group = "No display mapping; not drawn"
-        elif aid not in represented:
-            group = "No displayed scenario"
-        else:
-            group = " / ".join((labels.get(slug) or {}).get("label") or slug for slug in drawn_groups[aid])
-        ids = [finding_id(t.get("id") or t.get("t_id")) for t in linked]
-        refs = ", ".join(f"[{fid}](#{fid.lower()})" for fid in ids if fid) or "—"
-        cells = [
-            safe(f"{aid} · {actor['label']}"),
-            safe(", ".join(actor["access"])),
-            safe(", ".join(actor.get("trust_positions") or [])),
-            safe(group),
-            ", ".join(sorted(represented.get(aid, set()), key=int)) or "—",
-            refs,
-        ]
-        lines.append("| " + " | ".join(cells) + " |")
+    def names(rows):
+        bold = [f"**{safe(p['name'])}**" for p in rows]
+        return " and ".join([", ".join(bold[:-1]), bold[-1]] if len(bold) > 1 else bold)
+
+    from figure1_dfd import _project_name
+
+    project = _project_name(_figure1_display_data(ctx)) or "the system"
+    intro = f"Figure 1 draws {names(attackers) or 'no attacker'} as attacker" + ("s" if len(attackers) != 1 else "")
+    intro += f" and {names(roles)} as legitimate role" + ("s" if len(roles) != 1 else "") if roles else ""
+    intro += f" of {safe(project)}. Each row gives that actor's access and the findings attributed to it."
+    lines = ['<a id="identified-actors"></a>', "### Identified Actors", "", intro, ""]
+    lines += ["| Actor | Type | Access | Scenarios | Attributed findings |", "|---|---|---|---|---|"]
+    several = len(attackers) > 1
+    for person in people:
+        attacker = person["kind"] == "attacker"
+        name = f"{person['code']} · {person['name']}" if attacker and several and person.get("code") else person["name"]
+        access = person.get("subtitle") or ""
+        extra = configured.get(person["slug"], []) if attacker else []
+        if extra:
+            access += ("; " if access else "") + "includes " + ", ".join(extra)
+        kind = "Attacker" if attacker else "Privileged role" if person.get("privileged") else "Role"
+        if not attacker and person["scenarios"]:
+            kind += " (victim)"
+        scenario_text = " ".join(glyphs[int(n) - 1] if int(n) <= len(glyphs) else n for n in person["scenarios"])
+        tally = counts.get(person["slug"]) if attacker else None
+        findings = (
+            " · ".join(
+                f"{_TOP_THREATS_SEVERITY_EMOJI[sev.lower()]} {tally[sev]}"
+                for sev in ("Critical", "High", "Medium", "Low")
+                if tally.get(sev)
+            )
+            if tally
+            else "—"
+        )
+        lines.append(f"| {safe(name)} | {kind} | {safe(access)} | {scenario_text or '—'} | {findings} |")
     return "\n".join(lines) + "\n"
 
 
 def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, section: dict) -> str:
-    """Render resolved role details, retaining the legacy vector table when absent."""
-    if inventory_actors(ctx.yaml_data):
-        return _render_actor_inventory(ctx)
+    """Render the Figure 1 actor set, retaining the legacy vector table when nothing is drawn."""
+    people = _overview_people(ctx)
+    if people:
+        return _render_actor_inventory(ctx, people)
     threats = ctx.yaml_data.get("threats") or []
     meta = ctx.yaml_data.get("meta") or {}
 
@@ -15586,12 +15691,12 @@ def _render_identified_actors(ctx: RenderContext, env: jinja2.Environment, secti
     lines.append("|---|---|---|---|---|")
     for a in present:
         m = actor_meta.get(a) or {}
-        name = m.get("label") or _FIG1_ACTOR_LABEL.get(a) or a
         role = "victim" if (m.get("role") == "victim" or a == "victim-required") else "attacker"
-        reach = m.get("default_subtitle") or "—"
-        if a == "internet-anon" and meta.get("open_user_registration") is True:
-            name = "Internet Attacker"
-            reach = "can self-register a regular account"
+        if role == "victim":
+            name, reach = m.get("label") or a, m.get("default_subtitle") or ""
+        else:
+            name, reach = attacker_display(a, meta, actor_meta)
+        reach = reach or "—"
         comps = ", ".join(sorted(components.get(a, set()))) or "—"
         lines.append(f"| {name} | {role} | {reach} | {counts.get(a, 0)} | {comps} |")
     lines.append("")

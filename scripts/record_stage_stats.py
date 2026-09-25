@@ -72,6 +72,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import dispatch_window
 from event_log import parse_line
 
 JSONL_FILENAME = ".stage-stats.jsonl"
@@ -418,15 +419,16 @@ def main(argv: list[str]) -> int:
         help="Subagent identifier, or a comma-separated set of identifiers "
         "(e.g. appsec-advisor:appsec-threat-renderer) "
         "used to filter .hook-events.log when deriving dispatch_count + "
-        "wall_secs_observed. Requires --since-iso. Optional — when omitted "
-        "the derived fields are not added (back-compat).",
+        "wall_secs_observed. Optional — when omitted the derived fields are "
+        "not added (back-compat).",
     )
     parser.add_argument(
         "--since-iso",
         default=None,
         help="ISO8601 UTC timestamp (e.g. 2026-05-23T17:32:13Z) marking the "
         "stage start. Events earlier than this are ignored when deriving "
-        "dispatch_count + wall_secs_observed. Requires --subagent-type.",
+        "dispatch_count + wall_secs_observed. Requires --subagent-type; "
+        "defaults to the controller's dispatch window.",
     )
     args = parser.parse_args(argv[1:])
 
@@ -504,6 +506,8 @@ def main(argv: list[str]) -> int:
     # Optional dispatch-wall derivation. Both args must be present; either
     # alone is a user error worth surfacing because the pairing is the only
     # form that produces meaningful output.
+    if args.subagent_type and not args.since_iso:
+        args.since_iso = dispatch_window.since(output_dir)
     if bool(args.subagent_type) ^ bool(args.since_iso):
         sys.stderr.write(
             "warn: --subagent-type and --since-iso must be passed together; "

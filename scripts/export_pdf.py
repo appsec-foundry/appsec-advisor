@@ -705,11 +705,9 @@ _FIGURE1_REGION_RE = re.compile(
 _SVG_TAG_RE = re.compile(r"<svg\b[^>]*>", re.IGNORECASE)
 _SVG_WIDTH_RE = re.compile(r'\bwidth="(?P<v>[0-9.]+)(?:px)?"', re.IGNORECASE)
 _SVG_HEIGHT_RE = re.compile(r'\bheight="(?P<v>[0-9.]+)(?:px)?"', re.IGNORECASE)
-# A figure goes landscape only when portrait would shrink it: wider than the
-# ~680 px the portrait text column shows at 1:1 (180 mm at 96 dpi), and at
-# least this much wider than tall so the landscape page's extra width buys
-# more than its lower height costs (A4: 267 mm × 168 mm of content in
-# landscape against 180 mm × 253 mm in portrait).
+# A large Figure 1 gets its own A3 sheet. The data-flow overview is a vector
+# image, but its labels still become too small when reduced to an A4 column.
+# Select orientation from the image shape so tall overviews retain their height.
 _LANDSCAPE_MIN_WIDTH_PX = 900
 _LANDSCAPE_MIN_ASPECT = 1.25
 
@@ -740,22 +738,15 @@ def _svg_dimensions(src: str, base_dir: Path) -> Optional[tuple[float, float]]:
 
 
 def _wrap_wide_figure1(html: str, base_dir: Path) -> str:
-    """Put a wide Figure 1 (with its heading, caption and intro) on a landscape page.
-
-    The data-flow diagram is about twice as wide as the portrait text column;
-    scaled to fit it becomes unreadable. Wrapping the region in
-    ``<div class="figure-landscape">`` switches WeasyPrint to the ``landscape``
-    named page (print.css), which also keeps the caption on the same page as
-    the image instead of stranding it at the bottom of the previous one. A
-    tall figure (the tier-stack fallback grows in height) stays in portrait.
-    """
+    """Keep a large Figure 1 and its introduction together on an A3 page."""
     m = _FIGURE1_REGION_RE.search(html)
     if not m:
         return html
     dims = _svg_dimensions(m.group("src"), base_dir)
-    if not dims or dims[0] < _LANDSCAPE_MIN_WIDTH_PX or dims[0] < _LANDSCAPE_MIN_ASPECT * dims[1]:
+    if not dims or dims[0] < _LANDSCAPE_MIN_WIDTH_PX:
         return html
-    return html[: m.start()] + '<div class="figure-landscape">\n' + m.group(0) + "\n</div>" + html[m.end() :]
+    cls = "figure-landscape" if dims[0] >= _LANDSCAPE_MIN_ASPECT * dims[1] else "figure-portrait"
+    return html[: m.start()] + f'<div class="{cls}">\n' + m.group(0) + "\n</div>" + html[m.end() :]
 
 
 def _replace_unsupported_emoji(html: str) -> str:
@@ -860,7 +851,7 @@ def md_to_html(md_path: Path, html_path: Path, css_path: Path, title: str) -> No
     #  - inject content-aware <colgroup> widths (gfm drops pipe-table dash hints)
     #  - wrap the title block into a dedicated cover page
     #  - tag the TOC list so print CSS can add target-counter page numbers
-    #  - move a wide Figure 1 onto a landscape page
+    #  - keep a large Figure 1 and its introduction on an A3 page
     try:
         html_text = html_path.read_text(encoding="utf-8")
         html_text = _inject_table_colgroups(html_text)

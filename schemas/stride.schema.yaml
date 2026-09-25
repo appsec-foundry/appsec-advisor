@@ -39,6 +39,19 @@ $defs:
     type: string
     enum: [Critical, High, Medium, Low]
 
+  mechanism_location:
+    type: object
+    additionalProperties: false
+    required: [file, line]
+    properties:
+      file:
+        type: string
+        minLength: 1
+        maxLength: 512
+        not:
+          pattern: "^(?:/|[A-Za-z]:[\\\\/]|[A-Za-z][A-Za-z0-9+.-]*://)|(?:^|/)\\.\\.(?:/|$)|\\\\"
+      line: {type: integer, minimum: 1}
+
   cvss_v4:
     # Optional CVSS v4.0 score block. Only permitted when the threat's CWE
     # is on the eligibility list (data/cvss-eligible-cwes.yaml) AND
@@ -154,6 +167,30 @@ $defs:
               type: [string, "null"]
               enum: [agentic, llm, mcp, mobile, rag, spa, supply-chain, null]
 
+      lens_coverage:
+        # One disposition per OWASP LLM / Agentic Top-10 item when the `llm` or
+        # `agentic` lens is selected; completeness and consistency are checked
+        # by validate_intermediate.lens_coverage_errors.
+        type: array
+        maxItems: 20
+        items:
+          type: object
+          additionalProperties: false
+          required: [item, disposition]
+          properties:
+            item:
+              type: string
+              pattern: "^(LLM|ASI)(0[1-9]|10)$"
+            disposition:
+              type: string
+              enum: [finding, controlled, not-applicable, no-evidence]
+            local_ids:
+              type: array
+              uniqueItems: true
+              items: { type: string, minLength: 1 }
+            evidence: { $ref: "#/$defs/mechanism_location" }
+            reason: { type: string, minLength: 10, maxLength: 300 }
+
       threats:
         type: array
         items:
@@ -241,6 +278,25 @@ $defs:
               properties:
                 file: { type: string }
                 line: { type: [integer, "null"], minimum: 0 }
+            mechanism_trace:
+              # Required by validate_intermediate.py for confirmed input-to-sink
+              # CWEs. The primary evidence anchor is the sink, so a reader can
+              # check the dangerous use without following an unrelated citation.
+              type: object
+              additionalProperties: false
+              required: [input, sink, connection, control]
+              properties:
+                input: {$ref: "#/$defs/mechanism_location"}
+                sink: {$ref: "#/$defs/mechanism_location"}
+                connection: {type: string, minLength: 20, maxLength: 500}
+                control:
+                  type: object
+                  additionalProperties: false
+                  required: [status, location, explanation]
+                  properties:
+                    status: {enum: [absent-at-sink, ineffective, bypassed]}
+                    location: {$ref: "#/$defs/mechanism_location"}
+                    explanation: {type: string, minLength: 20, maxLength: 500}
             boundary_refs:
               type: array
               maxItems: 2

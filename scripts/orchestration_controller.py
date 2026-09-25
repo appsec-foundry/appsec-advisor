@@ -61,6 +61,7 @@ import check_permissions  # noqa: E402
 import context_routing  # noqa: E402
 import cutoff_cause  # noqa: E402
 import detect_session_model  # noqa: E402
+import dispatch_window  # noqa: E402
 import ensure_output_gitignore  # noqa: E402
 import merge_threats as merge_decision_contract  # noqa: E402
 import resolve_config  # noqa: E402
@@ -1003,6 +1004,19 @@ def verify_receipt_hashes(
     )
 
 
+def verify_spawn_receipts(output_root: Path, action_id: str) -> bool:
+    """Verify the pending dispatch's receipts when an Agent call for it spawns.
+
+    Returns False when ``action_id`` is not the pending dispatch (the next
+    boundary still demands a verification); raises on a changed artifact.
+    """
+    pending = _pending_dispatch(output_root)
+    if pending is None or pending["action_id"] != action_id:
+        return False
+    verify_receipt_hashes(output_root, [], action_id=action_id)
+    return True
+
+
 def _validate_receipt_state(value: Any, schema_path: Path, label: str) -> dict[str, Any]:
     """Validate one controller-owned receipt state document."""
     if not isinstance(value, dict):
@@ -1216,6 +1230,13 @@ def _emit(action: dict[str, Any]) -> int:
             _open_receipt_verification(Path(action["dispatch_values"]["output_dir"]), action)
     except ControllerError as exc:
         action = _failure_action(exc)
+    if action["action"] in {"dispatch_agent", "dispatch_parallel"}:
+        output_dir = (action.get("dispatch_values") or {}).get("output_dir")
+        if output_dir:
+            try:
+                dispatch_window.record(output_dir, str(action.get("stage") or ""))
+            except OSError:
+                pass
     # One compact line: every action lands in the orchestrator's context and the
     # indentation alone was 17 % of it. No field may be dropped from it, though —
     # the effective-plan binding hashes the printed action (context_routing._action_basis).
@@ -2180,26 +2201,46 @@ def _dispatch_values(
 
 
 def _missing_permissions_action(cfg: dict[str, Any], repo_root: Path, output_dir: Path) -> dict[str, Any] | None:
-    """Return the fixed permission abort action, if target permissions are missing."""
+    """Return the fixed permission abort action, if target permissions are missing.
+
+    A prompt-free defaultMode (auto, bypassPermissions) makes the allow-list
+    unnecessary, so the run proceeds. check_permissions.py's own report still
+    lists missing entries: it answers whether the allow-list is complete.
+    """
     required_raw = check_permissions.load_required()
     required = [
         {**item, "entry": check_permissions.expand_entry(item["entry"], repo_root, output_dir, PLUGIN_ROOT)}
         for item in required_raw
     ]
-    by_scope = check_permissions.effective_allow(repo_root)
-    all_granted = [rule for scope_rules in by_scope.values() for rule in scope_rules]
+    report = check_permissions.scope_report(repo_root)
+    if check_permissions.prompt_free_default_mode(report):
+        return None
+    all_granted = [rule for scope in report.values() for rule in scope["allow"]]
     missing_perms = check_permissions.diff_required(required, all_granted)
     if not missing_perms:
         return None
     entries = "\n".join(f"  {item['entry']}" for item in missing_perms)
+    checked = "\n".join(
+        f"  {name:<8} {scope['path']} "
+        f"({check_permissions.scope_label(scope['status'], len(scope['allow']), scope['detail'])})"
+        for name, scope in report.items()
+    )
+    unverifiable = [name for name, scope in report.items() if scope["status"] == "unreadable"]
+    headline = (
+        f"Cannot verify Claude Code permissions: {', '.join(unverifiable)} settings unreadable "
+        f"(a sandboxed shell masks these files). Verify or fix outside the sandbox."
+        if unverifiable
+        else "Missing required Claude Code permissions for this repo."
+    )
     return {
         "schema_version": 1,
         "action": "abort",
         "mode": cfg.get("mode", "full"),
         "reason": (
-            f"Missing required Claude Code permissions for this repo.\n"
-            f"Run:  make setup-target REPO={repo_root}\n"
+            f"{headline}\n"
+            f"Run:  make -C {PLUGIN_ROOT} setup-target REPO={repo_root}\n"
             f"then restart Claude Code and re-run the skill.\n\n"
+            f"Settings files checked:\n{checked}\n\n"
             f"Missing entries:\n{entries}"
         ),
         "exit_code": 2,
@@ -2493,8 +2534,14 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
     # waiting for an answer nobody could give, and died at the artifact gate
     # with no Stage 1 (2026-09-05 insecure-python-app). Every condition the
     # question depends on is resolved here, so the runtime has one field to read.
+    # A stored repository context already answers it, so asking again on every
+    # re-run would only repeat a question the operator settled before.
+    _stored_context = (Path(cfg["repo_root"]) / resolve_config._load_business_context_module().REPO_RELATIVE).is_file()
     _context_prompt_needed = bool(
-        not _headless and not cfg.get("skip_business_context") and not cfg.get("business_context_source")
+        not _headless
+        and not cfg.get("skip_business_context")
+        and not cfg.get("business_context_source")
+        and not _stored_context
     )
     # When the interactive prompt will handle the model choice, drop the passive
     # session cost callout + orchestrator recommendation line from the box (they
@@ -2678,13 +2725,20 @@ def _load_json_object(path: Path, *, contract: str, producer: str = "determinist
 
 
 def _validate_json_artifact(
-    path: Path, schema_path: Path, *, contract: str, producer: str = "deterministic"
+    path: Path,
+    schema_path: Path,
+    *,
+    contract: str,
+    producer: str = "deterministic",
+    agent_authored: bool = False,
 ) -> dict[str, Any]:
     """Validate one JSON artifact with the required structural dependency.
 
     ``producer`` names who wrote the artifact and therefore which faults are
     repairable; it defaults to ``deterministic`` so every existing call site
-    keeps its terminal behaviour unchanged.
+    keeps its terminal behaviour unchanged. ``agent_authored`` applies the
+    shared lossless repairs first and persists them, so consumers read the
+    canonical form.
     """
     if Draft202012Validator is None:
         raise ControllerError(f"cannot validate {contract}: jsonschema dependency is unavailable")
@@ -2693,7 +2747,10 @@ def _validate_json_artifact(
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ControllerError(f"cannot load schema for {contract}: {exc}") from exc
-    errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda item: list(item.path))
+    validator = Draft202012Validator(schema)
+    if agent_authored or producer == "llm":
+        _canonicalize_agent_artifact(path, value, validator, contract=contract)
+    errors = sorted(validator.iter_errors(value), key=lambda item: list(item.path))
     if errors:
         detail = "; ".join(error.message for error in errors[:5])
         raise _document_fault(
@@ -2702,6 +2759,22 @@ def _validate_json_artifact(
             [f"{_schema_error_path(error)}: {error.message}" for error in errors[:32]],
         )
     return value
+
+
+def _canonicalize_agent_artifact(path: Path, value: Any, validator: Any, *, contract: str) -> list[str]:
+    """Apply the shared lossless repairs to agent output in place and persist them."""
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+    from schema_canonicalize import canonicalize_lossless  # noqa: PLC0415
+
+    changes = [str(change) for change in canonicalize_lossless(value, validator)]
+    if changes:
+        atomic_write_json(path, value, sort_keys=False)
+        _append_event(
+            path.parent,
+            "AGENT_OUTPUT_CANONICALIZED",
+            f"{contract}: {'; '.join(changes[:10])}",
+        )
+    return changes
 
 
 def _schema_error_path(error: Any) -> str:
@@ -2734,6 +2807,7 @@ def _validate_evidence_verification(path: Path, threats_path: Path | None = None
         path,
         PLUGIN_ROOT / "schemas" / "evidence-verification.schema.json",
         contract="evidence-verification-v1",
+        agent_authored=True,
     )
     valid, semantic_errors = intermediate_contract.validate_evidence_verification(value)
     if not valid:
@@ -2876,6 +2950,7 @@ def _validate_context_v2_analyst_context(
         path,
         PLUGIN_ROOT / "schemas" / "stride-analyst-context.schema.json",
         contract="stride-analyst-context-v1",
+        agent_authored=True,
     )
     components = _load_json_object(output_dir / ".components.json", contract="components-v1").get("components")
     if not isinstance(components, list):
@@ -3205,6 +3280,7 @@ def _write_stride_component_context_plan(
     repository_projection_path: str | None = None,
     repository_projection_sha256: str | None = None,
     security_context_projections: list[dict[str, str]] | None = None,
+    repair: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Write one bounded STRIDE admission plan derived from validated inputs."""
     from _atomic_io import atomic_write_json
@@ -3279,6 +3355,10 @@ def _write_stride_component_context_plan(
         "lens_ids": lens_ids,
         "inputs": inputs,
     }
+    if repair is not None:
+        # Inline, not another input: the plan is already receipted, and one more
+        # artifact per component would push a full wave past the receipt cap.
+        value["repair"] = repair
     atomic_write_json(path, value, sort_keys=True)
     receipt = _validated_json_receipt(
         output_dir,
@@ -3718,6 +3798,9 @@ def _validate_stride_component_context_plan(
     }
     if analysis != expected_analysis or value["lens_ids"] != job.get("lens_ids"):
         raise ControllerError("stride analyzer job metadata drifted from its component context plan")
+    repair = value.get("repair")
+    if repair is not None and repair.get("rejected_attempt") != job.get("attempt", 0) - 1:
+        raise ControllerError("stride analyzer repair brief does not name the attempt before this one")
     inputs = {row["context_id"]: row for row in value["inputs"]}
     expected_context_ids = {"controls.component_evidence", "threats.component_taxonomy"}
     if architecture_context is not None:
@@ -4436,6 +4519,21 @@ def _context_v2_after_recon(output_dir: Path, cfg: dict[str, Any], receipts: lis
     if config_failure is not None:
         _withhold_config_scan(output_dir, config_findings, config_failure, receipts)
 
+    # Phase 2.5c — deployment inventory for the §2 Deployment and Technology figure.
+    # Presentation data, not analysis input: the scanner validates its own output
+    # and writes nothing on failure, so §2.2 keeps its Mermaid diagram and the
+    # tolerated failure surfaces as a Run Issue. Clear prior bytes first so a
+    # failed scan cannot leave a previous repository's inventory behind.
+    deployment_inventory = output_dir / ".deployment-inventory.json"
+    deployment_inventory.unlink(missing_ok=True)
+    if _best_effort_script(
+        output_dir,
+        "deployment_inventory.py",
+        ["--repo-root", repo_root, "--output", str(deployment_inventory)],
+        receipts,
+    ):
+        receipts.append("deployment inventory produced deterministically")
+
     # Phase 2.5 Step 1c — cross-repository register.
     register_args = [
         "--repo-root",
@@ -5139,6 +5237,7 @@ def _context_v2_stride_wave_action(
                 repository_projection_receipt["sha256"] if repository_projection_receipt is not None else None
             ),
             security_context_projections=security_context_projections,
+            repair=stride_dispatch_waves.rejection_brief(output_dir, component_id, attempt),
         )
         structured.append(context_plan_receipt)
         input_artifacts = [context_plan_path, bundle_path, taxonomy_path]
@@ -5533,53 +5632,30 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
 
 
 def _canonicalize_triage_flag_types(output_dir: Path) -> list[str]:
-    """Repair `-`/`_` drift in the LLM-authored `flags[].type` before validation.
+    """Apply the shared lossless repairs to the LLM-authored `.triage-flags.json`.
 
-    The triage validator agent rewrites `.triage-flags.json` including flags the
-    deterministic pass authored, and its instruction file spells the same token
-    two ways: `business_impact` in the normative JSON block, `business-impact` in
-    the prose one page earlier. The agent copied the prose spelling and the
-    schema enum rejected it, ending a completed Stage-1 run over one character
-    (juice-shop2 2026-08-18). Agent output is untrusted input, so canonicalise
-    the separator before validating rather than failing the whole run on it.
-
-    The accepted values come from the schema itself; a second hand-maintained
-    list here would be the same drift one layer down. Only separator spelling is
-    repaired — a value that is not a declared one after canonicalisation is left
-    untouched for the validator to reject.
-
-    Returns the repaired ``old -> new`` pairs, empty when nothing changed.
+    The triage agent once copied `business-impact` from prose where the schema
+    declares `business_impact`, aborting a completed Stage 1 (juice-shop2
+    2026-08-18). Returns the repaired ``old -> new`` pairs.
     """
     from _atomic_io import atomic_write_json  # noqa: PLC0415
+    from schema_canonicalize import canonicalize_lossless  # noqa: PLC0415
 
     path = output_dir / ".triage-flags.json"
     schema_path = PLUGIN_ROOT / "schemas" / "triage-flags.schema.yaml"
+    if Draft202012Validator is None:
+        return []
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
         schema = yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
     except (OSError, json.JSONDecodeError, yaml.YAMLError):
         return []
-    declared = (
-        ((schema.get("properties") or {}).get("flags") or {}).get("items", {}).get("properties", {}).get("type", {})
-    ).get("enum")
-    if not isinstance(declared, list) or not isinstance(document, dict):
+    if not isinstance(document, dict):
         return []
-    by_canonical = {str(value).replace("-", "_").lower(): value for value in declared if isinstance(value, str)}
-    repaired: list[str] = []
-    for flag in document.get("flags") or []:
-        if not isinstance(flag, dict):
-            continue
-        current = flag.get("type")
-        if not isinstance(current, str) or current in by_canonical.values():
-            continue
-        replacement = by_canonical.get(current.replace("-", "_").lower())
-        if replacement is None:
-            continue
-        flag["type"] = replacement
-        repaired.append(f"{current} -> {replacement}")
-    if repaired:
+    changes = canonicalize_lossless(document, Draft202012Validator(schema))
+    if changes:
         atomic_write_json(path, document, sort_keys=True)
-    return repaired
+    return [str(change) if change.after is None else f"{change.before} -> {change.after}" for change in changes]
 
 
 def _context_v2_after_triage(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -5753,6 +5829,7 @@ def context_v2_post_merge(output_dir: Path) -> dict[str, Any]:
         output_dir / ".merge-decisions.json",
         PLUGIN_ROOT / "schemas" / "merge-decisions.schema.json",
         contract="merge-decisions-v2",
+        agent_authored=True,
     )
     review = _validate_json_artifact(
         output_dir / ".merge-context" / "candidates.json",
@@ -5847,29 +5924,6 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
         flows = record_embedded_access(repo_root, components.get("components") or [], flows)
     except OSError as exc:
         raise ControllerError(f"embedded store access reconciliation failed: {exc}") from exc
-    from reconcile_privileged_roles import reconcile as reconcile_privileged_roles
-    from reconcile_privileged_roles import unevidenced_privileged_actors
-
-    try:
-        resolved = json.loads((output_dir / ".actors-resolved.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        resolved = {}
-    flows, added = reconcile_privileged_roles(repo_root, components.get("components") or [], flows, resolved)
-    unevidenced = unevidenced_privileged_actors(flows, resolved, repo_root)
-    if unevidenced:
-        _append_event(
-            output_dir,
-            "PRIVILEGED_ROLE_UNEVIDENCED",
-            f"actors={','.join(unevidenced)} reason=no cited file:line resolves in the repository",
-            level="WARN",
-        )
-    if added:
-        _append_event(
-            output_dir,
-            "PRIVILEGED_ROLE_ADDED",
-            f"actor={added['actor_id']} entity={added['entity_id']} flow={added['flow_id'] or '-'}",
-            level="WARN",
-        )
     from flow_route_auth import reconcile as reconcile_flow_authentication
 
     try:
@@ -5881,6 +5935,57 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
         _append_event(output_dir, "FLOW_AUTH_RECONCILED", "flows=" + ",".join(filled))
     if mixed:
         _append_event(output_dir, "FLOW_AUTH_MIXED", "flows=" + ",".join(mixed), level="WARN")
+    # Role access and the privileged role read flow authentication, so both follow its route fill.
+    from reconcile_role_access import apply_declared, declared_roles, system_proven_anonymous
+    from reconcile_role_access import reconcile as reconcile_role_access
+
+    try:
+        flows, applied = apply_declared(flows, declared_roles(repo_root))
+    except (ValueError, OSError) as exc:
+        raise ControllerError(f"declared legitimate roles cannot be applied: {exc}") from exc
+    for receipt in applied:
+        _append_event(
+            output_dir,
+            "ROLE_DECLARED",
+            f"entity={receipt['entity_id']} action={receipt['action']} access={receipt['access']} "
+            "source=.appsec/actors.yaml",
+        )
+    flows, withdrawn = reconcile_role_access(flows, components.get("components") or [])
+    for change in withdrawn:
+        _append_event(
+            output_dir,
+            "ROLE_ACCESS_WITHDRAWN",
+            f"entity={change['entity_id']} access={change['from']}->{change['to']} "
+            "reason=own flows unauthenticated and no request hop authenticates",
+            level="WARN",
+        )
+    from reconcile_privileged_roles import reconcile as reconcile_privileged_roles
+    from reconcile_privileged_roles import unevidenced_privileged_actors
+
+    try:
+        resolved = json.loads((output_dir / ".actors-resolved.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        resolved = {}
+    flows, added = reconcile_privileged_roles(repo_root, components.get("components") or [], flows, resolved)
+    unevidenced = (
+        []
+        if system_proven_anonymous(flows, components.get("components") or [])
+        else unevidenced_privileged_actors(flows, resolved, repo_root)
+    )
+    if unevidenced:
+        _append_event(
+            output_dir,
+            "PRIVILEGED_ROLE_UNEVIDENCED",
+            f"actors={','.join(unevidenced)} reason=no cited file:line cites code in the repository",
+            level="WARN",
+        )
+    if added:
+        _append_event(
+            output_dir,
+            "PRIVILEGED_ROLE_ADDED",
+            f"actor={added['actor_id']} entity={added['entity_id']} flow={added['flow_id'] or '-'}",
+            level="WARN",
+        )
     # Validate the complete enriched artifact before replacing the accepted input.
     _validate_receipt_state(
         flows, PLUGIN_ROOT / "schemas" / "fragments" / "data-flows.schema.json", "identity integration data flows"

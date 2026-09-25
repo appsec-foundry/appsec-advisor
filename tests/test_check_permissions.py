@@ -432,3 +432,98 @@ def test_modular_baseline_loader_uses_existing_shell_permission():
     assert "--migrate" in shell["reason"]
     assert "no new execution grant" in shell["reason"]
     assert not any("Write(" in item["entry"] and ".appsec-baseline" in item["entry"] for item in entries)
+
+
+# ---------- per-scope read status ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("content", "status", "allow"),
+    [
+        (None, "absent", []),
+        ('{"permissions": {"allow": ["Bash(*)", 3]}}', "ok", ["Bash(*)"]),
+        ("{}", "ok", []),
+        ('{"permissions": null}', "ok", []),
+        ("{not json", "invalid", []),
+        ("[]", "invalid", []),
+        ('{"permissions": []}', "invalid", []),
+        ('{"permissions": {"allow": "Bash(*)"}}', "invalid", []),
+    ],
+)
+def test_read_scope_status(tmp_path, content, status, allow):
+    path = tmp_path / "settings.json"
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+    assert cp.read_scope(path)[:2] == (status, allow)
+
+
+@pytest.mark.parametrize("make_node", ["directory", "device"])
+def test_read_scope_non_regular_file_is_unreadable_not_absent(tmp_path, make_node):
+    """A sandbox masks settings with a device node; its grant is unknown, not empty."""
+    if make_node == "directory":
+        path = tmp_path / "settings.json"
+        path.mkdir()
+    else:
+        path = Path("/dev/null")
+    status, allow, detail = cp.read_scope(path)
+    assert (status, allow) == ("unreadable", [])
+    assert detail
+
+
+def test_scope_report_grants_match_effective_allow(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text('{"permissions": {"allow": ["Read(*)"]}}', encoding="utf-8")
+    report = cp.scope_report(tmp_path)
+    assert {scope: entry["allow"] for scope, entry in report.items()} == cp.effective_allow(tmp_path)
+    assert report["project"]["status"] == "ok"
+    assert report["local"]["status"] == report["user"]["status"] == "absent"
+
+
+def test_render_human_reports_unreadable_scope(tmp_path):
+    out = cp.render_human([], [], {"local": 0}, None, scope_paths={"local": Path("/dev/null")})
+    assert "cannot read" in out
+    assert "not found" not in out
+
+
+# ---------- prompt-free defaultMode -------------------------------------
+
+
+def _mode_report(**modes):
+    return {scope: {"default_mode": modes.get(scope)} for scope in ("local", "project", "user")}
+
+
+@pytest.mark.parametrize(
+    ("modes", "expected"),
+    [
+        ({"user": "auto"}, "auto"),
+        ({"project": "bypassPermissions"}, "bypassPermissions"),
+        ({"user": "acceptEdits"}, None),
+        ({"user": "plan"}, None),
+        ({"user": "default"}, None),
+        ({}, None),
+        ({"local": "default", "user": "auto"}, None),
+        ({"project": "acceptEdits", "user": "auto"}, None),
+        ({"local": "auto", "user": "default"}, "auto"),
+    ],
+)
+def test_prompt_free_default_mode_follows_settings_precedence(modes, expected):
+    assert cp.prompt_free_default_mode(_mode_report(**modes)) == expected
+
+
+@pytest.mark.parametrize(
+    ("content", "mode"),
+    [
+        ('{"permissions": {"defaultMode": "auto"}}', "auto"),
+        ('{"permissions": {"allow": []}}', None),
+        ('{"permissions": {"defaultMode": 1}}', None),
+        ("{not json", None),
+    ],
+)
+def test_scope_report_reads_default_mode(tmp_path, monkeypatch, content, mode):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.local.json").write_text(content, encoding="utf-8")
+    report = cp.scope_report(tmp_path)
+    assert report["local"]["default_mode"] == mode
+    assert report["user"]["default_mode"] is None

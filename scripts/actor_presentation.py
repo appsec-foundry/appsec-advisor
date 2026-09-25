@@ -22,9 +22,44 @@ def default_groups() -> dict[str, str]:
 
 
 @cache
-def display_groups() -> frozenset[str]:
+def _posture_labels() -> dict[str, dict]:
     data = yaml.safe_load((Path(__file__).resolve().parent.parent / "data/posture-actor-labels.yaml").read_text())
-    return frozenset(data["actors"])
+    return data["actors"]
+
+
+@cache
+def display_groups() -> frozenset[str]:
+    return frozenset(_posture_labels())
+
+
+# Names for access groups without an entry in data/posture-actor-labels.yaml.
+FALLBACK_ACTOR_LABELS = {
+    "internet-anon": "Anonymous Internet Attacker",
+    "internet-user": "Authenticated Internet Attacker",
+    "internet-priv-user": "Privileged User",
+    "repo-read": "Source-Code Reader",
+    "supply-chain": "Supply-Chain Attacker",
+    "build-time": "Supply-Chain / Build Attacker",
+    "malicious-insider": "Malicious Insider",
+    "insider": "Malicious Insider",
+    "developer": "Developer",
+    "b2b-partner": "B2B Partner",
+}
+
+
+def attacker_display(slug: str | None, meta: dict | None, labels: dict | None = None) -> tuple[str, str]:
+    """Name and subtitle of an attacker access group, identical in every figure, table and legend.
+
+    The slug is projected through the canonical reach equivalence first, so a
+    self-registered user or a public-source reader carries the name of the
+    group it is drawn in. `labels` overrides the plugin label vocabulary.
+    """
+    meta = meta or {}
+    slug = overview_actor_slug((slug or "internet-anon").strip(), meta)
+    if slug == "internet-anon" and meta.get("open_user_registration") is True:
+        return "Internet Attacker", "can self-register a regular account"
+    entry = (_posture_labels() if labels is None else labels).get(slug) or {}
+    return entry.get("label") or FALLBACK_ACTOR_LABELS.get(slug) or slug, entry.get("default_subtitle") or ""
 
 
 def actor_group(actor: dict) -> str | None:

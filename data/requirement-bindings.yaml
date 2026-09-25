@@ -447,6 +447,7 @@ requirements:
       - scripts/actor_attribution.py
       - data/actor-attribution-rules.yaml
       - scripts/reconcile_privileged_roles.py
+      - scripts/reconcile_role_access.py
       - scripts/figure1_detail.py
       - scripts/figure1_security.py
       - scripts/figure1_svg.py
@@ -488,6 +489,8 @@ requirements:
       - tests/test_resolve_actors.py::test_discovery_cannot_revive_an_opt_in_class
       - tests/test_actor_attribution.py::test_insider_reading_committed_content_projects_to_repository_read_but_keeps_its_own_group_otherwise
       - tests/test_reconcile_privileged_roles.py::test_confirmed_privileged_actor_gains_its_own_role_and_client_interaction
+      - tests/test_reconcile_role_access.py::test_role_reaching_an_unauthenticated_system_is_anonymous
+      - tests/test_reconcile_privileged_roles.py::test_no_privileged_role_is_added_to_a_system_nobody_logs_into
       - tests/test_figure1_dfd.py::test_classified_roles_carry_the_project_name_and_privileged_roles_stay_distinct
       - tests/test_figure1_dfd.py::test_attack_edge_targets_the_finding_component_and_names_other_affected_ones_in_its_tooltip
       - tests/test_actor_presentation.py::test_distinct_access_groups_do_not_gain_each_others_findings
@@ -515,7 +518,8 @@ requirements:
       - tests/test_detect_public_repo.py::test_host_and_license_cannot_distinguish_repository_visibility
       - tests/test_emit_auth_coverage.py::TestDetectionAndRating::test_registration_evidence_requires_post_not_user_listing
       - tests/test_build_threat_model_yaml.py::test_builder_preserves_named_entities_and_resolved_registration_equivalence
-      - tests/test_compose_threat_model.py::test_ms_open_questions_match_console_selection_and_follow_top_weaknesses
+      - tests/test_compose_threat_model.py::test_ms_open_questions_follow_top_weaknesses
+      - tests/test_render_completion_summary.py::TestManualReviewStep::test_next_steps_omits_report_questions_without_mutating_artifacts
       - tests/test_compose_threat_model.py::test_ms_open_questions_are_omitted_when_the_selector_returns_none
       - tests/test_compose_threat_model.py::test_toc_keeps_management_summary_subsections_out_of_the_short_form
       - tests/test_qa_checks_cov_band1.py::test_ms_structure_requires_selected_team_questions_in_the_canonical_slot

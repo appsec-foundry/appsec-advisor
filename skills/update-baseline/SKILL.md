@@ -118,7 +118,7 @@ Only where it tells the user something the output does not:
   not in this one. Claude Code reads instruction files when a session begins.
 - **A file in the repository was updated** — it is uncommitted. Name the path so
   the user can review the diff and commit it. Do not commit it yourself.
-- **A newer signed release was installed** — the session banner reports it as ahead of the configured id until the plugin catches up. That is expected, not a fault.
+- **A newer signed release was installed** — the session banner shows its loaded id and scope without comparing it to the plugin's configured id. No further action is needed.
 - **Exit `3`, a new published id** — the id is what the session banner and
   `verify-baseline` look for, so it moves when the plugin does. Say that
   updating the plugin is what brings the new version, and stop. Do not fetch it

@@ -527,6 +527,13 @@ properties:
           type: string
           minLength: 1
           maxLength: 240
+        declared:
+          type: object
+          additionalProperties: false
+          required: [source]
+          properties:
+            source: {const: .appsec/actors.yaml}
+            authentication: {type: string, minLength: 1, maxLength: 240}
         evidence:
           type: array
           minItems: 1
@@ -1332,6 +1339,23 @@ properties:
             properties:
               file: { type: string }
               line: { type: [integer, "null"] }
+        mechanism_trace:
+          description: Source and sink evidence retained from a confirmed STRIDE input-to-sink finding.
+          type: object
+          additionalProperties: false
+          required: [input, sink, connection, control]
+          properties:
+            input: {type: object, additionalProperties: false, required: [file, line], properties: {file: {type: string, minLength: 1, maxLength: 512}, line: {type: integer, minimum: 1}}}
+            sink: {type: object, additionalProperties: false, required: [file, line], properties: {file: {type: string, minLength: 1, maxLength: 512}, line: {type: integer, minimum: 1}}}
+            connection: {type: string, minLength: 20, maxLength: 500}
+            control:
+              type: object
+              additionalProperties: false
+              required: [status, location, explanation]
+              properties:
+                status: {enum: [absent-at-sink, ineffective, bypassed]}
+                location: {type: object, additionalProperties: false, required: [file, line], properties: {file: {type: string, minLength: 1, maxLength: 512}, line: {type: integer, minimum: 1}}}
+                explanation: {type: string, minLength: 20, maxLength: 500}
         boundary_refs:
           type: array
           maxItems: 2

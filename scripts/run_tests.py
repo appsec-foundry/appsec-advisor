@@ -55,6 +55,8 @@ GROUPS = {
         annotate_sequences
         architect_structural_checks
         compose_depth_scoped_crossrefs
+        compose_services
+        deployment_inventory
         compose_threat_model
         compose_threat_model_cov
         compose_threat_model_cov2
@@ -72,6 +74,8 @@ GROUPS = {
         figure1_security
         figure1_svg
         figure2_svg
+        figure_deployment
+        figure_details
         final_render_guards
         fragment_authoring_fidelity
         fragment_invariant_parity
@@ -193,7 +197,6 @@ GROUPS = {
         cost_running_total
         cutoff_cause
         diagnostic_bundle
-        report_plugin_issue
         dispatch_manifest
         dispatch_model_and_diagnostics
         dispatch_prompt_cache_order
@@ -204,6 +207,7 @@ GROUPS = {
         hook_payload
         hook_payload_contract
         hooks_schema
+        lens_coverage
         live_canary
         log_agent_end
         log_event
@@ -218,6 +222,7 @@ GROUPS = {
         render_completion_summary_verdict
         render_progress
         render_run_diagnosis
+        report_plugin_issue
         run_defect_fixes_2026_07_24
         run_diagnostics_recovery_2026_07_20
         run_headless_completion
@@ -231,6 +236,7 @@ GROUPS = {
         runtime_cleanup
         runtime_doc_cli_contract
         runtime_helper_batch
+        schema_canonicalize
         session_banner
         skill_auto_retry
         skill_watchdog
@@ -334,6 +340,7 @@ GROUPS = {
         merge_threats
         promote_verified_abuse_cases
         reconcile_privileged_roles
+        reconcile_role_access
         sanitize_perimeter_claims
         security_relevance_filter
         security_score
@@ -507,6 +514,113 @@ MANUAL_TESTS = {
 # build_threat_model_yaml and compose_threat_model, so modules they import
 # route to it.
 SOURCE_TESTS = {
+    "scripts/dispatch_window.py": _tests("""
+        orchestration_controller
+        record_stage_stats
+        wait_agent_calls
+    """),
+    "agents/appsec-evidence-verifier.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        requirements_verification
+        run_diagnostics_recovery_2026_07_20
+        stride_outputs
+    """),
+    "agents/appsec-stride-analyzer-v2.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        prompt_token_bounds
+        requirements_verification
+        stride_outputs
+    """),
+    "schemas/evidence-verifier-context.schema.json": _tests("""
+        build_post_stride_contexts
+        new_schemas
+        requirements_verification
+        schema_integrity
+        schemas
+    """),
+    "schemas/stride.schema.yaml": _tests("""
+        agent_definitions
+        intermediate_json
+        new_schemas
+        requirements_verification
+        schema_drift
+        schema_integrity
+        schemas
+        stride_dispatch_waves
+        validate_intermediate
+    """),
+    "schemas/threat-model.output.schema.yaml": _tests("""
+        build_threat_model_yaml
+        new_schemas
+        requirements_verification
+        schema_drift
+        schema_integrity
+        schemas
+    """),
+    "schemas/threats-merged.schema.yaml": _tests("""
+        build_post_stride_contexts
+        merge_threats
+        new_schemas
+        requirements_verification
+        schema_drift
+        schema_integrity
+        schemas
+        threats_merged_schema
+    """),
+    "scripts/build_post_stride_contexts.py": _tests("""
+        build_post_stride_contexts
+        orchestration_controller
+        requirements_verification
+        stride_outputs
+    """),
+    "scripts/schema_canonicalize.py": _tests("""
+        gate_preconditions
+        schema_canonicalize
+        stride_dispatch_waves
+        validate_fragment
+    """),
+    "scripts/stride_dispatch_waves.py": _tests("""
+        lens_coverage
+        orchestration_controller
+        requirements_verification
+        stride_dispatch_waves
+        stride_outputs
+        wait_stride_progress
+    """),
+    "scripts/validate_intermediate.py": _tests("""
+        actor_attribution
+        actor_presentation
+        agent_definitions
+        arch_coverage_bridge
+        authz_confirm
+        build_post_stride_contexts
+        credential_lifecycle_checks
+        database_privilege_separation
+        e2e_pipeline
+        figure1_dfd
+        fragment_invariant_parity
+        intermediate_json
+        lens_coverage
+        new_schemas
+        orchestration_controller
+        pentest_tasks
+        recon_signals_schema
+        requirements_verification
+        review_threat_model
+        run_diagnostics_recovery_2026_07_20
+        schema_integrity
+        severity_policy
+        stage1_coverage_recovery_2026_07_20
+        stage1_coverage_recovery_2026_08_02
+        stride_dispatch_waves
+        stride_outputs
+        threat_fixture
+        threats_merged_schema
+        validate_intermediate
+        wait_stride_progress
+    """),
     "AGENTS.md": _tests("""
         context_prompt_budgets
         decision_register
@@ -599,6 +713,12 @@ SOURCE_TESTS = {
     "scripts/reconcile_privileged_roles.py": _tests("""
         orchestration_controller
         reconcile_privileged_roles
+    """),
+    "scripts/reconcile_role_access.py": _tests("""
+        figure1_dfd
+        orchestration_controller
+        reconcile_privileged_roles
+        reconcile_role_access
     """),
     "scripts/actor_presentation.py": _tests("""
         actor_attribution
@@ -837,6 +957,47 @@ SOURCE_TESTS = {
         security_score
         stride_outputs
         validate_intermediate
+    """),
+    "scripts/deployment_inventory.py": _tests("""
+        deployment_inventory
+        figure_deployment
+        figure_details
+        check_permissions
+        runtime_cleanup
+        e2e_pipeline
+        threat_fixture
+    """),
+    "scripts/figure_deployment.py": _tests("""
+        figure_deployment
+        figure_details
+        e2e_pipeline
+        threat_fixture
+    """),
+    "scripts/figure_details.py": _tests("""
+        figure_details
+        figure_deployment
+        e2e_pipeline
+        threat_fixture
+    """),
+    "scripts/compose_services.py": _tests("""
+        compose_services
+        deployment_inventory
+        figure_details
+        e2e_pipeline
+        threat_fixture
+    """),
+    "data/deployment-technology.yaml": _tests("""
+        deployment_inventory
+        figure_deployment
+        e2e_pipeline
+        threat_fixture
+    """),
+    "schemas/deployment-inventory.schema.json": _tests("""
+        deployment_inventory
+        figure_deployment
+        figure_details
+        e2e_pipeline
+        threat_fixture
     """),
     "scripts/mass_assignment_scanner.py": _tests("""
         check_target_specificity

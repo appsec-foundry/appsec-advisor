@@ -37,6 +37,8 @@ TIER2 = [
     "figure1-detail.svg",
     "threat-model.figure1.svg",
     "threat-model.figure1-detail.svg",
+    # §2 detail figures (Figures 3–4) that threat-model.md references.
+    *(f"{stem}figure{n}.svg" for n in range(3, 5) for stem in ("", "threat-model.")),
     ".architect-review.md",
 ]
 

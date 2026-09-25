@@ -57,3 +57,42 @@ properties:
   inherit_org:
     type: boolean
     default: true
+  legitimate_roles:
+    type: array
+    maxItems: 16
+    description: |
+      Legitimate roles the repository owner declares, typically because their
+      access control lives outside this repository (ingress SSO, VPN,
+      authenticating proxy). A declared role replaces the modelled role with the
+      same id, or is added, and its access class is never withdrawn.
+    items:
+      type: object
+      additionalProperties: false
+      required: [id, name, access, description]
+      properties:
+        id:
+          type: string
+          pattern: "^ext-[a-z0-9]+(?:-[a-z0-9]+)*$"
+          maxLength: 100
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        access:
+          type: string
+          enum: [internet-anon, internet-user, internet-priv-user]
+        description:
+          type: string
+          minLength: 1
+          maxLength: 240
+        authentication:
+          type: string
+          minLength: 1
+          maxLength: 240
+          description: "Where and how the role signs in, e.g. 'SSO via oauth2-proxy at the ingress'."
+      if:
+        properties:
+          access:
+            enum: [internet-user, internet-priv-user]
+      then:
+        required: [authentication]

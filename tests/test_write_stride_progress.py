@@ -371,9 +371,12 @@ def test_runtime_failure_is_reported_without_an_argparse_usage_block(tmp_path: P
     assert "usage:" not in result.stderr
 
 
-def test_status_rejects_old_v2_progress_when_new_attempt_is_active(
+def test_status_never_shows_old_v2_progress_as_the_new_attempts(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # A retry claim is active before its analyzer writes a step, so the old
+    # record is expected history: it keeps the join waiting, shows no step, and
+    # only an attempt beyond the claim is a contradiction.
     _plan(tmp_path, "full")
     _claim(tmp_path, "full", attempt=1)
     progress.write_progress(tmp_path, "api", "API", 1, 9, "Context", ROOT)
@@ -381,5 +384,7 @@ def test_status_rejects_old_v2_progress_when_new_attempt_is_active(
     waves["active_claim"]["attempts"]["api"] = 2
     (tmp_path / ".dispatch-waves.json").write_text(json.dumps(waves), encoding="utf-8")
 
-    assert stride_progress.main(["stride_progress.py", str(tmp_path), "1", "--force"]) == 2
-    assert "progress attempt contradicts current dispatch claim" in capsys.readouterr().err
+    assert stride_progress.main(["stride_progress.py", str(tmp_path), "1", "--force"]) == 1
+    out = capsys.readouterr().out
+    assert "API [starting]" in out
+    assert "1/9" not in out

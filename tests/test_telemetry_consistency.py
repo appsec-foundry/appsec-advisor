@@ -333,3 +333,28 @@ def test_a_deliberately_backgrounded_call_is_not_expected_to_carry_usage(tmp_pat
     lifecycle.state_path(tmp_path).write_text(json.dumps(state), encoding="utf-8")
 
     assert "usage_source_absent" not in _codes(tmp_path)
+
+
+def test_a_wave_issued_one_call_per_message_is_named() -> None:
+    """juice-shop 2026-09-24: five STRIDE jobs spawned 13 s apart, one turn each."""
+    per_message = [{"spawned_at": 1_000 + 13 * index} for index in range(5)]
+    one_message = [{"spawned_at": 1_000 + (index > 2)} for index in range(5)]
+
+    assert telemetry.wave_split_seconds(per_message) == 52
+    assert telemetry.wave_split_seconds(one_message) is None
+    assert telemetry.wave_split_seconds(per_message[:1]) is None
+
+
+def test_a_split_wave_reaches_the_boundary_report(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    second = dict(json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))["calls"][0])
+    state = json.loads(lifecycle.state_path(tmp_path).read_text(encoding="utf-8"))
+    second.update(agent_call_id="toolu_recon2", job_id="phase2-recon-b", spawned_at=second["spawned_at"] + 20)
+    state["calls"].append(second)
+    lifecycle.state_path(tmp_path).write_text(json.dumps(state), encoding="utf-8")
+    (tmp_path / ".context-routing-plan.json").write_text(
+        json.dumps({"actions": [{"action_id": ACTION_ID, "job_ids": ["phase2-recon", "phase2-recon-b"]}]}),
+        encoding="utf-8",
+    )
+
+    assert "wave_split_across_messages" in _codes(tmp_path)

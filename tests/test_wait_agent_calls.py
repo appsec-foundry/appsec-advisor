@@ -152,6 +152,18 @@ def test_an_empty_since_joins_every_live_plugin_call(tmp_path):
     assert _join(tmp_path, "") == wac.PENDING_EXIT_CODE
 
 
+def test_an_omitted_since_joins_from_the_controller_dispatch_window(tmp_path, monkeypatch, no_sleep):
+    """The controller stamps the window at emission; the orchestrator spends no turn on it."""
+    now = int(time.time())
+    (tmp_path / ".dispatch-window.json").write_text(json.dumps({"since": _iso(now - 30)}), encoding="utf-8")
+    seen = []
+    monkeypatch.setattr(wac, "joined_calls", lambda _output_dir, since: seen.append(since) or [])
+
+    wac.main([str(tmp_path), "--rounds", "1"])
+
+    assert seen and seen[0] == wac.parse_since(_iso(now - 30))
+
+
 def test_a_since_in_the_future_does_not_skip_the_join(tmp_path):
     now = int(time.time())
     _write_calls(tmp_path, _call("toolu_sa", now - 5))

@@ -78,10 +78,16 @@ def _load(path: Path) -> dict:
         return {}
 
 
-def _validate_progress_record(output_dir: Path, data: dict, done: bool) -> None:
-    """Validate v2 progress identity and reject an obsolete active attempt."""
+def _validate_progress_record(output_dir: Path, data: dict, done: bool) -> bool:
+    """Validate v2 progress identity; return True when a retry superseded it.
+
+    A retry claim raises the attempt before the new analyzer has written its
+    first step, so the previous attempt's record is still on disk for a while.
+    That record is history, not a contradiction. Only a record from an attempt
+    the claim has not reached yet is impossible.
+    """
     if data.get("schema_version") != 2:
-        return
+        return False
     schema = _load(Path(__file__).resolve().parent.parent / "schemas" / "stride-progress.schema.json")
     Draft202012Validator(schema).validate(data)
     waves = _load(output_dir / ".dispatch-waves.json")
@@ -89,11 +95,14 @@ def _validate_progress_record(output_dir: Path, data: dict, done: bool) -> None:
     if not isinstance(active, dict):
         if not done:
             raise ValueError("v2 progress has no dispatch-wave claim")
-        return
+        return False
     component_id = data["component_id"]
-    if component_id in (active.get("component_ids") or []):
-        if (active.get("attempts") or {}).get(component_id) != data["attempt"]:
-            raise ValueError(f"progress attempt contradicts current dispatch claim for {component_id}")
+    if component_id not in (active.get("component_ids") or []):
+        return False
+    claimed = (active.get("attempts") or {}).get(component_id)
+    if not isinstance(claimed, int) or data["attempt"] > claimed:
+        raise ValueError(f"progress attempt contradicts current dispatch claim for {component_id}")
+    return data["attempt"] < claimed
 
 
 def _depths(output_dir: Path) -> dict[str, str] | None:
@@ -263,7 +272,7 @@ def main(argv: list[str]) -> int:
         comp_id = data.get("component_id") or pf.stem
         done = comp_id in ready_ids
         try:
-            _validate_progress_record(output_dir, data, done)
+            superseded = _validate_progress_record(output_dir, data, done)
         except (ValueError, ValidationError) as exc:
             print(f"stride_progress: invalid progress record: {exc}", file=sys.stderr)
             return 2
@@ -272,8 +281,11 @@ def main(argv: list[str]) -> int:
             print(f"stride_progress: progress depth contradicts current context plan for {comp_id}", file=sys.stderr)
             return 2
         seen_ids.add(comp_id)
+        if superseded and not done:
+            # The old attempt's steps say nothing about the retry now starting.
+            data = {**data, "step": None, "total": None, "label": ""}
         stale = False
-        if not done:
+        if not done and not superseded:
             try:
                 mtime = pf.stat().st_mtime
                 stale = (now - mtime) > STALE_SECONDS

@@ -54,6 +54,7 @@
         "path": {"type": "string", "maxLength": 2000},
         "framework": {"enum": ["express", "koa", "fastify", "hapi", "nestjs", "fastapi", "flask", "django", "spring", "jaxrs", "aspnet-minimal", "graphql", "rails", "laravel", "gin", "echo", "unknown"]},
         "handler_file": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "handler_module": {"type": "string", "minLength": 1, "maxLength": 1000},
         "handler_line": {"type": "integer", "minimum": 1, "maximum": 1000000000},
         "authn_signal": {"enum": ["present", "absent", "unknown", "middleware_present", "decorator_present", "inherited_unknown"]},
         "authz_signal": {"enum": ["present", "absent", "unknown", "middleware_present", "decorator_present", "inherited_unknown"]},

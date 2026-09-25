@@ -35,6 +35,9 @@
 # compound commands / pipelines / VAR=$(...) chains still prompt. A single
 # Bash(*) is the only way to keep an interactive run prompt-free. It is wide
 # open by design; the guards above are what bound the blast radius.
+# A configured permissions.defaultMode of auto or bypassPermissions already
+# keeps the run prompt-free, so the create-threat-model preflight does not
+# require this list then (check_permissions.PROMPT_FREE_MODES).
 # Maintainer commands such as scripts/run_tests.py --changed-against,
 # make test-plan, make test-changed, and make test-group use the existing
 # Bash(*) rule; local Git diffs and test selection add no permission entries.
@@ -78,11 +81,11 @@ required:
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/**)"
-    reason: "deterministic preparers, context projectors, build_stride_evidence_bundles.py, compose_threat_model.py (including paired figure1 and figure1-detail SVGs and the figure2 SVG), fragment writers, and annotators write under OUTPUT_DIR, including neutral report-error reproductions under .plugin-issue-repro/ and run-bound .dispatch-context/editorial/plan-<batch>.json packets and gate comparison receipts, bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
+    reason: "deterministic preparers, context projectors, build_stride_evidence_bundles.py, compose_threat_model.py (including paired figure1 and figure1-detail SVGs, the figure2 SVG and the figure3 §2 deployment SVG), fragment writers, and annotators write under OUTPUT_DIR, including neutral report-error reproductions under .plugin-issue-repro/ and run-bound .dispatch-context/editorial/plan-<batch>.json packets and gate comparison receipts, bounded .dispatch-context/architecture recon/route inputs, .dispatch-context/post-stride evidence/threat/mitigation inputs, .dispatch-context/abuse-cases candidate inputs, and fingerprinted .dispatch-context/<component> evidence, business, architecture, security, plan, and repository-root artifacts"
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"
-    reason: "agents and deterministic preparers, including config_iac_scanner.py and merge_threats.py refresh-weaknesses (.impl-strategy.json, .impl-design-signals.json, .finding-design-signals.json), write report-error .plugin-issue-input.json, .plugin-issue-draft.json, per-digest submission receipts, and direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents and deterministic preparers, including config_iac_scanner.py, deployment_inventory.py (.deployment-inventory.json) and merge_threats.py refresh-weaknesses (.impl-strategy.json, .impl-design-signals.json, .finding-design-signals.json), write report-error .plugin-issue-input.json, .plugin-issue-draft.json, per-digest submission receipts, and direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/**)"

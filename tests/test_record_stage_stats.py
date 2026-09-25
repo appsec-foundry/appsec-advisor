@@ -949,3 +949,18 @@ def test_a_whole_log_fallback_does_not_cap_future_dispatches(tmp_path):
     assert row["dispatch_count"] == 2
     assert len(row["dispatch_event_ids"]) == 2
     assert "dispatch_count_ceiling" not in row
+
+
+def test_dispatch_derivation_defaults_to_the_controller_window(tmp_path):
+    """Without --since-iso the controller's dispatch window bounds the derivation."""
+    (tmp_path / ".hook-events.log").write_text(
+        "2026-08-28T21:19:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-threat-renderer  model=sonnet\n"
+        "2026-08-28T21:29:10Z  [s]  INFO   AGENT_SPAWN  appsec-advisor:appsec-threat-renderer  model=sonnet\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".dispatch-window.json").write_text(json.dumps({"since": "2026-08-28T21:20:00Z"}), encoding="utf-8")
+
+    rec.main(_argv(tmp_path, **{"--subagent-type": "appsec-advisor:appsec-threat-renderer"}))
+
+    row = json.loads((tmp_path / ".stage-stats.jsonl").read_text().splitlines()[-1])
+    assert row["dispatch_count"] == 1

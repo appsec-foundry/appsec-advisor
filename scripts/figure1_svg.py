@@ -767,26 +767,10 @@ def build_figure1_svg(
                     fid_comp.setdefault(f"{pre}{m.group(1)}", cid)
 
     # ---- actors & attack scenarios -------------------------------------------
-    _FALLBACK_ACTOR = {
-        "internet-anon": "Anonymous Internet Attacker",
-        "internet-user": "Authenticated User",
-        "internet-priv-user": "Privileged User",
-        "repo-read": "Source-Code Reader",
-        "supply-chain": "Supply-Chain Attacker",
-        "build-time": "Supply-Chain / Build Attacker",
-        "malicious-insider": "Malicious Insider",
-        "insider": "Malicious Insider",
-        "developer": "Developer",
-        "b2b-partner": "B2B Partner",
-    }
+    from actor_presentation import attacker_display
 
     def actor_name(slug: str) -> str:
-        slug = (slug or "internet-anon").strip()
-        if slug == "internet-anon" and meta.get("open_user_registration") is True:
-            return "Internet Attacker"
-        if actor_labels and slug in actor_labels:
-            return (actor_labels[slug] or {}).get("label") or _FALLBACK_ACTOR.get(slug) or slug
-        return _FALLBACK_ACTOR.get(slug, slug)
+        return attacker_display(slug, meta, actor_labels or {})[0]
 
     # Per attack path: a number, its attacking actor, and the drawn components it
     # hits. Multiple distinct attackers are supported. Scenarios are NOT capped

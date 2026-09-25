@@ -1761,6 +1761,43 @@ def validate_finding_boundary_refs(
     return cleaned, diagnostics
 
 
+def revalidate_boundary_refs(
+    threats: Iterable[dict],
+    *,
+    boundaries: Iterable[dict],
+    known_component_ids: set[str] | None,
+) -> list[str]:
+    """Reapply the finding rule after a pass merged, moved or rebuilt findings.
+
+    Every writer of the merged register and of the model ends here, so no pass
+    publishes a reference the rule rejects; a pass that changes a finding's
+    owner calls ``validate_finding_boundary_refs`` with the new origin instead.
+    """
+    boundaries = list(boundaries)
+    diagnostics: list[str] = []
+    for threat in threats:
+        if not isinstance(threat, dict):
+            continue
+        if not threat.get("boundary_refs"):
+            threat.pop("boundary_refs", None)
+            continue
+        refs, notes = validate_finding_boundary_refs(
+            threat,
+            boundaries=boundaries,
+            origin_component_id=None,
+            candidate_ids=None,
+            require_candidate=False,
+            known_component_ids=known_component_ids,
+        )
+        if refs:
+            threat["boundary_refs"] = refs
+        else:
+            threat.pop("boundary_refs", None)
+        label = threat.get("t_id") or threat.get("id") or "<anon>"
+        diagnostics.extend(f"{label}: {note}" for note in notes)
+    return diagnostics
+
+
 # --------------------------------------------------------------------------- #
 # Deterministic consolidation (juice-shop 2026-07-30)
 #

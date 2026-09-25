@@ -298,6 +298,26 @@ def test_parse_build_gradle(tmp_path: Path):
     assert "singlecoord" not in by_name
 
 
+def test_parse_build_gradle_map_notation(tmp_path: Path):
+    """Groovy map and Kotlin named-argument declarations are dependencies too."""
+    p = tmp_path / "build.gradle"
+    p.write_text(
+        "dependencies {\n"
+        "    implementation group: 'org.acme', name: 'widget-core', version: '1.4.2'\n"
+        "    runtimeOnly group:'org.acme', name:'widget-db'\n"
+        '    testImplementation(group = "org.acme", name = "widget-test", version = "2.0")\n'
+        "}\n"
+        "task docs(group: 'documentation', description: 'not a dependency')\n"
+    )
+    deps = {d.package: d for d in M.parse_manifest(p, tmp_path)}
+    assert deps["org.acme:widget-core"].version == "1.4.2"
+    assert deps["org.acme:widget-core"].line == 2
+    # No version: managed elsewhere (BOM or platform), not an unversioned finding by itself.
+    assert deps["org.acme:widget-db"].version is None
+    assert deps["org.acme:widget-test"].version == "2.0"
+    assert not any(pkg.startswith("documentation") for pkg in deps)
+
+
 # ---------------------------------------------------------------------------
 # _parse_gemfile
 # ---------------------------------------------------------------------------
