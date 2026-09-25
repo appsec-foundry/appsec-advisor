@@ -197,7 +197,6 @@ GROUPS = {
         cost_running_total
         cutoff_cause
         diagnostic_bundle
-        report_plugin_issue
         dispatch_manifest
         dispatch_model_and_diagnostics
         dispatch_prompt_cache_order
@@ -208,6 +207,7 @@ GROUPS = {
         hook_payload
         hook_payload_contract
         hooks_schema
+        lens_coverage
         live_canary
         log_agent_end
         log_event
@@ -222,6 +222,7 @@ GROUPS = {
         render_completion_summary_verdict
         render_progress
         render_run_diagnosis
+        report_plugin_issue
         run_defect_fixes_2026_07_24
         run_diagnostics_recovery_2026_07_20
         run_headless_completion
@@ -235,6 +236,7 @@ GROUPS = {
         runtime_cleanup
         runtime_doc_cli_contract
         runtime_helper_batch
+        schema_canonicalize
         session_banner
         skill_auto_retry
         skill_watchdog
@@ -568,7 +570,14 @@ SOURCE_TESTS = {
         requirements_verification
         stride_outputs
     """),
+    "scripts/schema_canonicalize.py": _tests("""
+        gate_preconditions
+        schema_canonicalize
+        stride_dispatch_waves
+        validate_fragment
+    """),
     "scripts/stride_dispatch_waves.py": _tests("""
+        lens_coverage
         orchestration_controller
         requirements_verification
         stride_dispatch_waves
@@ -588,6 +597,7 @@ SOURCE_TESTS = {
         figure1_dfd
         fragment_invariant_parity
         intermediate_json
+        lens_coverage
         new_schemas
         orchestration_controller
         pentest_tasks

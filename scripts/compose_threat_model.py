@@ -13508,7 +13508,7 @@ def _render_appendix_run_statistics(ctx: RenderContext, env: jinja2.Environment,
     if stride_cap:
         lines.append(
             f"| STRIDE per-category cap | {stride_cap} threat(s) per category "
-            f"per component (Critical-safe; `--stride-cap`) |"
+            f"per component (Critical/High-safe; `--stride-cap`) |"
         )
     # Declared business context, disclosed the same way as the STRIDE cap: a
     # reader cannot otherwise tell whether a supplied document reached this

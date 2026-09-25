@@ -169,13 +169,22 @@ For identity spoofing, cite the executable consumer that trusts the attacker-con
 All six are mandatory. `analysis.estimated_threat_count: low` or
 `analysis.depth: light` changes pacing only: skip optional verification,
 finish the categories within six reasoning turns, and reserve two for writes.
-`max_threats_per_category` trims only the lower-ranked tail, never a category
-or mandatory evidence-backed finding.
+`max_threats_per_category` trims only lower-ranked Medium and Low findings;
+it never removes a Critical or High finding, a category, or a mandatory
+evidence-backed finding.
 
 Apply every selected lens during the relevant category. LLM and agentic tags
 go in `owasp_llm_ids` and `owasp_asi_ids`. Do not duplicate one
 mechanism merely because two lenses name it. Use one CWE, RFC, or OWASP
 `remediation.reference`.
+
+With `llm` or `agentic` selected, write top-level `lens_coverage` with one
+entry per LLM01-LLM10 or ASI01-ASI10: `{"item", "disposition"}` plus
+`local_ids` for `finding` (threats tagged with that ID), `evidence` file:line
+and `reason` for `controlled`, and `reason` for `not-applicable` (capability
+absent) or `no-evidence` (checked, not proven). Check each item in code; a
+tagged finding meets the normal evidence bar and cites code. `no-evidence` is
+a valid answer, never a reason to invent a finding.
 
 With a `requirements.component_context` slice, list in
 `violated_requirements` only its `id`s your cited evidence proves broken;
@@ -271,7 +280,7 @@ these exact threat fields:
 or configuration value, never a header, blank, comment, or closing brace.
 For a confirmed input-to-sink CWE listed above, add `"mechanism_trace": {"input": {"file": "<entry path>", "line": 1}, "sink": {"file": "<same as evidence.file>", "line": 1}, "connection": "<how this input reaches this sink>", "control": {"status": "<absent-at-sink|ineffective|bypassed>", "location": {"file": "<control path>", "line": 1}, "explanation": "<why this control fails>"}}`. Omit it for other findings.
 
-A plan `repair` holds your rejected previous `threats` and the `gate_errors` indexing them. Keep unnamed threats; fix each named one at its source by the rules above. Never drop a finding to pass; skip re-analysis of untouched categories.
+A plan `repair` holds your rejected previous `threats` and the `gate_errors` indexing them. Keep unnamed threats; fix each named one, and each named `lens_coverage` item, at its source by the rules above. Never drop a finding to pass; skip re-analysis of untouched categories.
 
 After each category, check your dispatch IDs:
 

@@ -826,6 +826,77 @@ def prune_optional_schema_violations(data: dict) -> list[str]:
     return pruned
 
 
+def canonicalize_stride(data: dict) -> list[str]:
+    """Lossless null/enum-spelling repairs; runs before the lossy prune net."""
+    from schema_canonicalize import canonicalize_lossless
+
+    return [str(change) for change in canonicalize_lossless(data, _validator("stride"))]
+
+
+LENS_CHECKLISTS = {
+    "llm": tuple(f"LLM{n:02d}" for n in range(1, 11)),
+    "agentic": tuple(f"ASI{n:02d}" for n in range(1, 11)),
+}
+_LENS_ID_FIELD = {"LLM": "owasp_llm_ids", "ASI": "owasp_asi_ids"}
+
+
+def lens_coverage_errors(data: dict, lens_ids: list[str], repo_root: Path | None = None) -> list[str]:
+    """Every checklist item of a selected lens needs one consistent disposition."""
+    items = [item for lens in lens_ids for item in LENS_CHECKLISTS.get(lens, ())]
+    if not items or not isinstance(data, dict):
+        return []
+    threats = [t for t in data.get("threats") or [] if isinstance(t, dict)]
+    tagged: dict[str, set[str]] = {}
+    errors: list[str] = []
+    for index, threat in enumerate(threats):
+        ids = [*(threat.get("owasp_llm_ids") or []), *(threat.get("owasp_asi_ids") or [])]
+        for item in ids:
+            tagged.setdefault(item, set()).add(str(threat.get("local_id")))
+        evidence = threat.get("evidence")
+        if ids and not (isinstance(evidence, dict) and evidence.get("file")):
+            errors.append(f"threats[{index}] carries {', '.join(ids)} without a code evidence location")
+    entries: dict[str, dict] = {}
+    for entry in data.get("lens_coverage") or []:
+        if not isinstance(entry, dict) or entry.get("item") not in items:
+            continue
+        if entry["item"] in entries:
+            errors.append(f"lens_coverage lists {entry['item']} more than once")
+        entries[entry["item"]] = entry
+    missing = [item for item in items if item not in entries]
+    if missing:
+        errors.append(f"lens_coverage has no disposition for {', '.join(missing)}")
+    known = {str(t.get("local_id")) for t in threats}
+    for item, entry in entries.items():
+        disposition = entry.get("disposition")
+        local_ids = set(entry.get("local_ids") or [])
+        field = _LENS_ID_FIELD[item[:3]]
+        if disposition == "finding":
+            if not local_ids:
+                errors.append(f"lens_coverage {item} is a finding without local_ids")
+            for local_id in sorted(local_ids - known):
+                errors.append(f"lens_coverage {item} names unknown threat {local_id}")
+            for local_id in sorted((local_ids & known) - tagged.get(item, set())):
+                errors.append(f"lens_coverage {item} names {local_id}, which lacks {item} in {field}")
+        elif item in tagged:
+            errors.append(f"lens_coverage {item} is {disposition} but {', '.join(sorted(tagged[item]))} carries {item}")
+        if disposition == "controlled":
+            if not isinstance(entry.get("evidence"), dict):
+                errors.append(f"lens_coverage {item} is controlled without the control's evidence location")
+            elif repo_root is not None:
+                errors.extend(
+                    repository_evidence_errors(
+                        [entry["evidence"]],
+                        repo_root,
+                        label=f"lens_coverage {item}.evidence",
+                        require_line=True,
+                        require_code=True,
+                    )
+                )
+        if disposition in {"controlled", "not-applicable", "no-evidence"} and not entry.get("reason"):
+            errors.append(f"lens_coverage {item} is {disposition} without a reason")
+    return errors
+
+
 def _check_architecture_coverage_invariants(data: dict) -> list[str]:
     """Enforce arch.md §Pipeline-Integration invariants for the new
     architecture-coverage / threat-hypothesis sources:

@@ -240,7 +240,7 @@ The standard run included one STRIDE retry. Cost follows the number and complexi
 | Option | Effect |
 |---|---|
 | `--cheap-stride` / `--no-cheap-stride` | Use or disable the light pass for proven-internal components. It is on by default for quick and standard and off for thorough. All six STRIDE categories still run. |
-| `--stride-cap N` | Limit non-Critical findings per STRIDE category and component. Off by default. |
+| `--stride-cap N` | Limit Medium and Low findings per STRIDE category and component; Critical and High are never dropped. Off by default. |
 | `--evidence-verifier-cap N` | Limit non-Critical findings sent through evidence verification. Critical findings are always selected first. |
 | `--register-severity-floor LEVEL` | Set the lowest severity included in the report and exports. Default: `medium`, which reports the Low tally as `n/a` rather than `0`. |
 

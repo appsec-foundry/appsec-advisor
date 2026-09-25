@@ -45,7 +45,12 @@ from merge_threats import (
     backfill_threat_cvss_v4,
     drop_invalid_threat_boundary_refs,
 )
-from validate_intermediate import prune_optional_schema_violations, validate_stride
+from validate_intermediate import (
+    canonicalize_stride,
+    lens_coverage_errors,
+    prune_optional_schema_violations,
+    validate_stride,
+)
 
 DEFAULT_CONCURRENCY = 5
 # One context-v2 component can require eleven immediate receipt checks: bundle,
@@ -415,6 +420,13 @@ def completion_error(
     errors = _gate_validation_errors(output_dir, data)
     if errors:
         return "schema validation failed: " + "; ".join(errors[:3])
+    coverage = _lens_coverage_errors(output_dir, component_id, data)
+    if coverage and attempt is not None:
+        # One targeted retry buys the checklist; a run never aborts over it.
+        if attempt < max_attempts():
+            return "lens coverage incomplete: " + "; ".join(coverage[:3])
+        if promote:
+            _log_lens_coverage_gap(output_dir, component_id, coverage)
     if promote:
         if attempt is None:
             raise WavePlanError("only an attempt-qualified output can be promoted")
@@ -464,7 +476,7 @@ def rejection_brief(output_dir: Path, component_id: str, attempt: int) -> dict[s
     data = copy.deepcopy(data)
     data["skipped_categories"] = []
     _repair_in_place(output_dir, component_id, data, log_pruned=False)
-    errors = _gate_validation_errors(output_dir, data)
+    errors = _gate_validation_errors(output_dir, data) + _lens_coverage_errors(output_dir, component_id, data)
     if not errors:
         return None
     return {
@@ -499,6 +511,8 @@ def _repair_in_place(output_dir: Path, component_id: str, data: dict[str, Any], 
     # Persist the repaired output so merge and any resume see the canonical form.
     if _canonicalize_discovery_escape_aliases(data):
         repaired = True
+    if canonicalize_stride(data):
+        repaired = True
     for threat in data["threats"]:
         if isinstance(threat, dict):
             if backfill_threat_category_id(threat):
@@ -525,20 +539,47 @@ def _repair_in_place(output_dir: Path, component_id: str, data: dict[str, Any], 
     return repaired
 
 
+def _configured_repo_root(output_dir: Path) -> Path | None:
+    config_path = output_dir / ".skill-config.json"
+    if not config_path.is_file():
+        return None
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None  # The controller's configuration gate owns malformed run config.
+    configured_root = config.get("repo_root") if isinstance(config, dict) else None
+    return Path(configured_root) if isinstance(configured_root, str) and configured_root else None
+
+
 def _gate_validation_errors(output_dir: Path, data: dict[str, Any]) -> list[str]:
     """Every error the completion gate reports for an already repaired payload."""
-    config_path = output_dir / ".skill-config.json"
-    repo_root = None
-    if config_path.is_file():
-        try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-            configured_root = config.get("repo_root") if isinstance(config, dict) else None
-            if isinstance(configured_root, str) and configured_root:
-                repo_root = Path(configured_root)
-        except (OSError, ValueError):
-            pass  # The controller's configuration gate owns malformed run config.
-    ok, errors = validate_stride(data, repo_root=repo_root)
+    ok, errors = validate_stride(data, repo_root=_configured_repo_root(output_dir))
     return [] if ok else errors
+
+
+def _lens_coverage_errors(output_dir: Path, component_id: str, data: dict[str, Any]) -> list[str]:
+    """Checklist gaps for the lenses the controller selected for this component."""
+    path = output_dir / ".dispatch-context" / component_id / "context-plan.json"
+    try:
+        lens_ids = json.loads(path.read_text(encoding="utf-8")).get("lens_ids") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    return lens_coverage_errors(data, list(lens_ids), repo_root=_configured_repo_root(output_dir))
+
+
+def _log_lens_coverage_gap(output_dir: Path, component_id: str, errors: list[str]) -> None:
+    try:
+        with (output_dir / ".agent-run.log").open("a", encoding="utf-8") as handle:
+            handle.write(
+                format_line(
+                    "LENS_COVERAGE_INCOMPLETE",
+                    f"{component_id}: {'; '.join(errors[:5])}",
+                    level="WARN ",
+                    component="stride-waves",
+                )
+            )
+    except OSError:
+        pass
 
 
 def reconcile_progress(output_dir: Path, component_id: str) -> bool:

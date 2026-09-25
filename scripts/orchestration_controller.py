@@ -2704,13 +2704,20 @@ def _load_json_object(path: Path, *, contract: str, producer: str = "determinist
 
 
 def _validate_json_artifact(
-    path: Path, schema_path: Path, *, contract: str, producer: str = "deterministic"
+    path: Path,
+    schema_path: Path,
+    *,
+    contract: str,
+    producer: str = "deterministic",
+    agent_authored: bool = False,
 ) -> dict[str, Any]:
     """Validate one JSON artifact with the required structural dependency.
 
     ``producer`` names who wrote the artifact and therefore which faults are
     repairable; it defaults to ``deterministic`` so every existing call site
-    keeps its terminal behaviour unchanged.
+    keeps its terminal behaviour unchanged. ``agent_authored`` applies the
+    shared lossless repairs first and persists them, so consumers read the
+    canonical form.
     """
     if Draft202012Validator is None:
         raise ControllerError(f"cannot validate {contract}: jsonschema dependency is unavailable")
@@ -2719,7 +2726,10 @@ def _validate_json_artifact(
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ControllerError(f"cannot load schema for {contract}: {exc}") from exc
-    errors = sorted(Draft202012Validator(schema).iter_errors(value), key=lambda item: list(item.path))
+    validator = Draft202012Validator(schema)
+    if agent_authored or producer == "llm":
+        _canonicalize_agent_artifact(path, value, validator, contract=contract)
+    errors = sorted(validator.iter_errors(value), key=lambda item: list(item.path))
     if errors:
         detail = "; ".join(error.message for error in errors[:5])
         raise _document_fault(
@@ -2728,6 +2738,22 @@ def _validate_json_artifact(
             [f"{_schema_error_path(error)}: {error.message}" for error in errors[:32]],
         )
     return value
+
+
+def _canonicalize_agent_artifact(path: Path, value: Any, validator: Any, *, contract: str) -> list[str]:
+    """Apply the shared lossless repairs to agent output in place and persist them."""
+    from _atomic_io import atomic_write_json  # noqa: PLC0415
+    from schema_canonicalize import canonicalize_lossless  # noqa: PLC0415
+
+    changes = [str(change) for change in canonicalize_lossless(value, validator)]
+    if changes:
+        atomic_write_json(path, value, sort_keys=False)
+        _append_event(
+            path.parent,
+            "AGENT_OUTPUT_CANONICALIZED",
+            f"{contract}: {'; '.join(changes[:10])}",
+        )
+    return changes
 
 
 def _schema_error_path(error: Any) -> str:
@@ -2760,6 +2786,7 @@ def _validate_evidence_verification(path: Path, threats_path: Path | None = None
         path,
         PLUGIN_ROOT / "schemas" / "evidence-verification.schema.json",
         contract="evidence-verification-v1",
+        agent_authored=True,
     )
     valid, semantic_errors = intermediate_contract.validate_evidence_verification(value)
     if not valid:
@@ -2902,6 +2929,7 @@ def _validate_context_v2_analyst_context(
         path,
         PLUGIN_ROOT / "schemas" / "stride-analyst-context.schema.json",
         contract="stride-analyst-context-v1",
+        agent_authored=True,
     )
     components = _load_json_object(output_dir / ".components.json", contract="components-v1").get("components")
     if not isinstance(components, list):
@@ -5583,53 +5611,30 @@ def _context_v2_after_evidence(output_dir: Path, cfg: dict[str, Any]) -> dict[st
 
 
 def _canonicalize_triage_flag_types(output_dir: Path) -> list[str]:
-    """Repair `-`/`_` drift in the LLM-authored `flags[].type` before validation.
+    """Apply the shared lossless repairs to the LLM-authored `.triage-flags.json`.
 
-    The triage validator agent rewrites `.triage-flags.json` including flags the
-    deterministic pass authored, and its instruction file spells the same token
-    two ways: `business_impact` in the normative JSON block, `business-impact` in
-    the prose one page earlier. The agent copied the prose spelling and the
-    schema enum rejected it, ending a completed Stage-1 run over one character
-    (juice-shop2 2026-08-18). Agent output is untrusted input, so canonicalise
-    the separator before validating rather than failing the whole run on it.
-
-    The accepted values come from the schema itself; a second hand-maintained
-    list here would be the same drift one layer down. Only separator spelling is
-    repaired — a value that is not a declared one after canonicalisation is left
-    untouched for the validator to reject.
-
-    Returns the repaired ``old -> new`` pairs, empty when nothing changed.
+    The triage agent once copied `business-impact` from prose where the schema
+    declares `business_impact`, aborting a completed Stage 1 (juice-shop2
+    2026-08-18). Returns the repaired ``old -> new`` pairs.
     """
     from _atomic_io import atomic_write_json  # noqa: PLC0415
+    from schema_canonicalize import canonicalize_lossless  # noqa: PLC0415
 
     path = output_dir / ".triage-flags.json"
     schema_path = PLUGIN_ROOT / "schemas" / "triage-flags.schema.yaml"
+    if Draft202012Validator is None:
+        return []
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
         schema = yaml.safe_load(schema_path.read_text(encoding="utf-8")) or {}
     except (OSError, json.JSONDecodeError, yaml.YAMLError):
         return []
-    declared = (
-        ((schema.get("properties") or {}).get("flags") or {}).get("items", {}).get("properties", {}).get("type", {})
-    ).get("enum")
-    if not isinstance(declared, list) or not isinstance(document, dict):
+    if not isinstance(document, dict):
         return []
-    by_canonical = {str(value).replace("-", "_").lower(): value for value in declared if isinstance(value, str)}
-    repaired: list[str] = []
-    for flag in document.get("flags") or []:
-        if not isinstance(flag, dict):
-            continue
-        current = flag.get("type")
-        if not isinstance(current, str) or current in by_canonical.values():
-            continue
-        replacement = by_canonical.get(current.replace("-", "_").lower())
-        if replacement is None:
-            continue
-        flag["type"] = replacement
-        repaired.append(f"{current} -> {replacement}")
-    if repaired:
+    changes = canonicalize_lossless(document, Draft202012Validator(schema))
+    if changes:
         atomic_write_json(path, document, sort_keys=True)
-    return repaired
+    return [str(change) if change.after is None else f"{change.before} -> {change.after}" for change in changes]
 
 
 def _context_v2_after_triage(output_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -5803,6 +5808,7 @@ def context_v2_post_merge(output_dir: Path) -> dict[str, Any]:
         output_dir / ".merge-decisions.json",
         PLUGIN_ROOT / "schemas" / "merge-decisions.schema.json",
         contract="merge-decisions-v2",
+        agent_authored=True,
     )
     review = _validate_json_artifact(
         output_dir / ".merge-context" / "candidates.json",

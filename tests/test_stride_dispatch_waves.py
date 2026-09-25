@@ -302,6 +302,47 @@ def test_core_evidence_defect_stays_fatal(tmp_path: Path, label: str, mutate) ->
     assert waves.completion_error(tmp_path, "service-01") is not None, label
 
 
+@pytest.mark.parametrize(
+    ("label", "mutate", "check"),
+    [
+        # juice-shop 2026-09-24 backend-api: a CWE-915 finding carried
+        # `"mechanism_trace": null` and cost a full component retry.
+        (
+            "null optional object",
+            lambda d: d["threats"][0].update(cwe="CWE-915", mechanism_trace=None),
+            lambda t: "mechanism_trace" not in t,
+        ),
+        (
+            "null optional nested string",
+            lambda d: d["threats"][0]["remediation"].update(reference=None),
+            lambda t: "reference" not in t["remediation"],
+        ),
+        ("risk case drift", lambda d: d["threats"][0].update(risk="high"), lambda t: t["risk"] == "High"),
+    ],
+)
+def test_lossless_form_slip_is_canonicalized_not_retried(tmp_path: Path, label: str, mutate, check) -> None:
+    """A null for an omitted optional field, or an enum token in the wrong case,
+    means exactly what the contract means; it must not cost a re-dispatch."""
+    data = _valid_stride_component()
+    mutate(data)
+    path = _write_component(tmp_path, data)
+
+    assert waves.completion_error(tmp_path, "service-01") is None, label
+
+    repaired = json.loads(path.read_text(encoding="utf-8"))
+    assert check(repaired["threats"][0]), label
+
+
+def test_null_trace_on_a_confirmed_sink_finding_stays_fatal(tmp_path: Path) -> None:
+    """Removing the null must not hide a missing trace the gate requires."""
+    data = _valid_stride_component()
+    data["threats"][0].update(cwe="CWE-89", mechanism_trace=None)
+    _write_component(tmp_path, data)
+
+    error = waves.completion_error(tmp_path, "service-01")
+    assert error is not None and "mechanism_trace is required" in error
+
+
 def test_pruning_an_optional_branch_does_not_mask_a_core_defect(tmp_path: Path) -> None:
     """The dangerous failure mode: an optional defect is pruned successfully
     while a core defect in the same payload is swallowed with it."""
@@ -1052,3 +1093,53 @@ def test_rejection_brief_carries_every_gate_error_and_leaves_the_attempt_untouch
         f"threats[{index}].mechanism_trace.sink must equal the finding evidence location" for index in range(5)
     ]
     assert path.read_bytes() == before
+
+
+def _with_llm_lens(output_dir: Path, component_id: str = "service-01") -> None:
+    plan = output_dir / ".dispatch-context" / component_id / "context-plan.json"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text(json.dumps({"component_id": component_id, "lens_ids": ["llm"]}), encoding="utf-8")
+
+
+def _full_llm_coverage() -> list[dict]:
+    return [
+        {"item": f"LLM{n:02d}", "disposition": "no-evidence", "reason": "checked the chat route; nothing proven"}
+        for n in range(1, 11)
+    ]
+
+
+def test_missing_llm_coverage_buys_one_targeted_retry(tmp_path: Path) -> None:
+    _with_llm_lens(tmp_path)
+    _write_attempt(tmp_path, "service-01", 1, _valid_stride_component())
+
+    error = waves.completion_error(tmp_path, "service-01", attempt=1)
+    assert error is not None and error.startswith("lens coverage incomplete")
+
+    brief = waves.rejection_brief(tmp_path, "service-01", 2)
+    assert brief is not None
+    assert any("lens_coverage has no disposition for LLM01" in e for e in brief["gate_errors"])
+
+
+def test_missing_llm_coverage_never_aborts_the_final_attempt(tmp_path: Path) -> None:
+    _with_llm_lens(tmp_path)
+    final = waves.max_attempts()
+    _write_attempt(tmp_path, "service-01", final, _valid_stride_component())
+
+    assert waves.completion_error(tmp_path, "service-01", attempt=final, promote=True) is None
+    assert (tmp_path / ".stride-service-01.json").is_file()
+    assert "LENS_COVERAGE_INCOMPLETE" in (tmp_path / ".agent-run.log").read_text(encoding="utf-8")
+
+
+def test_complete_llm_coverage_passes_on_the_first_attempt(tmp_path: Path) -> None:
+    _with_llm_lens(tmp_path)
+    data = _valid_stride_component()
+    data["lens_coverage"] = _full_llm_coverage()
+    _write_attempt(tmp_path, "service-01", 1, data)
+
+    assert waves.completion_error(tmp_path, "service-01", attempt=1) is None
+
+
+def test_components_without_a_checklist_lens_are_not_asked_for_coverage(tmp_path: Path) -> None:
+    _write_attempt(tmp_path, "service-01", 1, _valid_stride_component())
+
+    assert waves.completion_error(tmp_path, "service-01", attempt=1) is None

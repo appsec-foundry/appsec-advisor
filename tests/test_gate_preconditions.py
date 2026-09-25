@@ -290,3 +290,20 @@ def test_an_abort_still_names_a_lone_finding_below_a_benign_first_line():
 
     assert "threats[18].title" in detail
     assert "×" not in detail
+
+
+def test_agent_authored_json_is_canonicalized_before_validation(tmp_path):
+    """A null for an omitted optional field must not end the run."""
+    schema = tmp_path / "s.json"
+    schema.write_text(
+        json.dumps({"type": "object", "properties": {"trace": {"type": "object"}}, "additionalProperties": False}),
+        encoding="utf-8",
+    )
+    artifact = tmp_path / ".merge-decisions.json"
+    artifact.write_text(json.dumps({"trace": None}), encoding="utf-8")
+
+    with pytest.raises(oc.ControllerError):
+        oc._validate_json_artifact(artifact, schema, contract="probe")
+    assert oc._validate_json_artifact(artifact, schema, contract="probe", agent_authored=True) == {}
+    assert json.loads(artifact.read_text(encoding="utf-8")) == {}
+    assert "AGENT_OUTPUT_CANONICALIZED" in (tmp_path / ".agent-run.log").read_text(encoding="utf-8")

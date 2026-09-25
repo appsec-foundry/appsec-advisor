@@ -68,9 +68,9 @@ DEPTH & MODEL
                                also skips Stage 3 QA and detailed walkthroughs
   --thorough                   Shortcut for --assessment-depth thorough
   --stride-cap <N>             Opt-in cost lever: keep at most N threats per
-                               STRIDE category per component (Critical-safe —
-                               Criticals are never dropped). Trims the
-                               High/Medium/Low tail to cut tokens; full depth
+                               STRIDE category per component (Critical and
+                               High findings are never dropped). Trims the
+                               Medium/Low tail to cut tokens; full depth
                                (CVSS, evidence, greps) otherwise unchanged.
                                Off by default.
   --cheap-stride               Cost lever: light-depth STRIDE for the internal

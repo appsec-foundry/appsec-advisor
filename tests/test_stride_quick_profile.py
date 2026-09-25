@@ -7,7 +7,7 @@ drift away from the documented Quick-mode contract.
 Profile (A-F, applies only when reasoning_mode=sonnet-economy AND
 depth=quick):
   A. skip_verification_greps = True
-  B. max_threats_per_category = 1   (Critical-safe: Criticals never dropped)
+  B. max_threats_per_category = 1   (Critical/High-safe: never dropped)
   C. skip_code_examples = False     (R9 — flipped 2026-05, kept actionable)
   D. skip_evidence_excerpt = False  (P3 — kept, restores §8 evidence)
   E. skip_cvss_scoring = True

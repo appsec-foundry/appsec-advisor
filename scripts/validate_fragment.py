@@ -741,6 +741,19 @@ def _schema_violations(data: object, schema: dict) -> list[str]:
     return [f"schema violation at {'/'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}" for e in errors]
 
 
+def _canonicalize_fragment(path: Path, data: object, schema: dict) -> None:
+    """Persist the shared lossless repairs so later readers see the same bytes."""
+    from _atomic_io import atomic_write_json
+    from schema_canonicalize import canonicalize_lossless
+
+    validator_cls = jsonschema.validators.validator_for(schema)
+    changes = canonicalize_lossless(data, validator_cls(schema))
+    if changes:
+        atomic_write_json(path, data, sort_keys=False)
+        for change in changes:
+            print(f"CANONICALIZED: {path.name} — {change}")
+
+
 def _report_violations(path: Path, fragment_type: str, errors: list[str]) -> None:
     for error in errors[:MAX_REPORTED_VIOLATIONS]:
         print(f"VALIDATE_FAILED: {path.name} ({fragment_type}) — {error}", file=sys.stderr)
@@ -780,6 +793,7 @@ def validate(
     """
     schema = _load_schema(fragment_type)
     data = _load_fragment(path)
+    _canonicalize_fragment(path, data, schema)
     errors = _schema_violations(data, schema)
     if errors:
         _report_violations(path, fragment_type, errors)
