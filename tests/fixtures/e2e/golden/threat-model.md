@@ -77,7 +77,7 @@ _Append-only history of assessment runs. Most recent first._
 **Risk distribution:** 🔴 Critical: 3 · 🟠 High: 1 · 🟡 Medium: 0 · 🟢 Low: n/a · **Total: 4**<br/>**Reporting threshold:** medium - Low and Informational excluded
 
 
-**Method and limits:** An automated, AI-assisted threat model built from the repository's source code and configuration - static analysis only, no dynamic or penetration testing. It does not replace a threat-modeling session with the team: business context, design intent, runtime behaviour and production configuration are not covered, and each finding still needs confirmation in the deployed system. Details: [§11 Out of Scope](#11-out-of-scope).
+**Method and limits:** Automated static analysis of code and configuration, not a pentest or a team threat-modeling session - see [§11 Out of Scope](#11-out-of-scope).
 
 <br/>
 

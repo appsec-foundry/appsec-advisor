@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Architecture diagrams preserve component connections and avoid duplicate databases and identity providers.
 - Figure 1 aligns finding counts with the report and identifies the attacker behind each scenario badge and attack arrow.
 - Reports with architecture enrichment populate Security Architecture prose and send remaining placeholders for repair.
-- Management summaries state the analysis method, component depth, and limitations accurately and present unresolved questions with concise finding references.
+- Management summaries state the analysis method and any screened or unanalysed components in one sentence, leaving the full limitations to §1 and §11, and present unresolved questions with concise finding references.
 - A run no longer aborts after evidence verification when a consolidated finding moves from a data store to the application component that owns its code; its trust-boundary references stay valid.
 - A STRIDE component whose findings fail a validation rule is retried with the exact errors to repair instead of being re-analyzed blind, and an aborted run names that rule rather than reporting "missing output".
 - Agents reaching their turn budget no longer stall runs or cut other agents' analysis short.

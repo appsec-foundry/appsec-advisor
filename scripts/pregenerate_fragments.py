@@ -210,7 +210,7 @@ METHOD_SENTENCE = (
     "static analysis only, no dynamic or penetration testing."
 )
 
-_DEPTH_LABELS = {"quick": "Quick", "standard": "Standard", "thorough": "Thorough"}
+METHOD_SHORT = "Automated static analysis of code and configuration, not a pentest or a team threat-modeling session"
 
 
 def _component_names(rows: list[dict], bold: bool) -> str:
@@ -229,34 +229,6 @@ def screening_clause(screened: list[dict], bold: bool = False) -> str:
     """
     verb = "was" if len(screened) == 1 else "were"
     return f"{_component_names(screened, bold)} {verb} only screened, a shorter pass without follow-up code checks per finding"
-
-
-def coverage_statement(meta: dict) -> str | None:
-    """The Management Summary depth sentence, from `component_coverage` and `meta.assessment_depth`."""
-    coverage = component_coverage(meta)
-    if not coverage:
-        return None
-    depth = _DEPTH_LABELS.get(str(meta.get("assessment_depth") or "").strip().lower())
-    total = coverage["total"]
-    if not coverage["screened"] and not coverage["excluded"]:
-        body = (
-            f"all {total} components analysed with full STRIDE"
-            if total != 1
-            else "its one component analysed with full STRIDE"
-        )
-    else:
-        clauses = [f"{len(coverage['full'])} of {total} components analysed with full STRIDE"]
-        if coverage["screened"]:
-            clauses.append(screening_clause(coverage["screened"]))
-        if coverage["excluded"]:
-            clauses.append(f"not analysed: {_component_names(coverage['excluded'], False)}")
-        body = "; ".join(clauses)
-    sentence = f"{depth} depth: {body}." if depth else body[0].upper() + body[1:] + "."
-    if depth == "Quick":
-        sentence += " Only the top findings per STRIDE category are reported."
-    if depth == "Quick" or coverage["excluded"]:
-        sentence += " A higher `--assessment-depth` analyses in more detail."
-    return sentence
 
 
 def business_context_clause(meta: dict) -> str | None:
@@ -282,17 +254,22 @@ def limits_statement(meta: dict) -> str:
 
 
 def method_and_limits(meta: dict) -> str:
-    """The Management Summary method block; §1 and §11 reuse `METHOD_SENTENCE` and `limits_statement`."""
-    coverage = coverage_statement(meta)
+    """The one-sentence Management Summary method line; §1 carries coverage, §11 the itemised limits."""
+    coverage = component_coverage(meta)
+    gaps = []
+    if coverage:
+        for key, state in (("screened", "only screened"), ("excluded", "not analysed")):
+            if coverage[key]:
+                verb = "was" if len(coverage[key]) == 1 else "were"
+                gaps.append(f"{_component_names(coverage[key], False)} {verb} {state}")
     # §1 carries the coverage detail only when a component selection exists; a §1
     # fragment without one need not have a Scope anchor, so the link follows it.
     details = (
-        "[§1 Scope](#scope), [§11 Out of Scope](#11-out-of-scope)"
+        "[§1 Scope](#scope) and [§11 Out of Scope](#11-out-of-scope)"
         if coverage
         else "[§11 Out of Scope](#11-out-of-scope)"
     )
-    parts = [METHOD_SENTENCE, coverage, limits_statement(meta)]
-    return "**Method and limits:** " + " ".join(p for p in parts if p) + f" Details: {details}."
+    return f"**Method and limits:** {'; '.join([METHOD_SHORT, *gaps])} — see {details}."
 
 
 def gen_system_overview(yaml_data: dict) -> str:

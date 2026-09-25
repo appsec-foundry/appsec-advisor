@@ -5198,8 +5198,8 @@ def test_verdict_scope_coverage_line(tmp_path: Path) -> None:
     out = compose._render_verdict(ctx, env, section)
     import pregenerate_fragments as pregen
 
-    assert pregen.coverage_statement(yaml_data["meta"]) in out
-    assert "2 of 4 components analysed with full STRIDE; not analysed: Worker and DB." in out
+    assert pregen.method_and_limits(yaml_data["meta"]) in out
+    assert "; Worker and DB were not analysed — see [§1 Scope](#scope)" in out
     assert "**Scope:**" not in out and "lower-priority / internal" not in out
 
 
@@ -5240,8 +5240,7 @@ def test_verdict_basis_line_is_unconditional(tmp_path: Path) -> None:
     import pregenerate_fragments as pregen
 
     assert "**Scope:**" not in out and "**Basis:**" not in out
-    assert f"**Method and limits:** {pregen.METHOD_SENTENCE}" in out
-    assert pregen.limits_statement({}) in out
+    assert f"**Method and limits:** {pregen.METHOD_SHORT} — see [§11 Out of Scope](#11-out-of-scope)." in out
     assert "components analysed" not in out
     assert "[§11 Out of Scope](#11-out-of-scope)" in out
     # Without a selection §1 carries no coverage detail, so the block links §11 only.
@@ -5282,11 +5281,9 @@ def test_verdict_scope_coverage_counts_screening_separately(tmp_path: Path) -> N
     env = compose._build_jinja_env(ctx)
     section = {"fragment": "ms-verdict.json", "schema": "verdict.schema.json", "template": "verdict.md.j2"}
     out = compose._render_verdict(ctx, env, section)
-    assert "1 of 4 components analysed with full STRIDE" in out
     # The screening set is named, not characterised: it is not necessarily
     # internal (a crown-jewel API with runtime-only zones used to land in it).
-    assert "Auth was only screened, a shorter pass without follow-up code checks per finding" in out
-    assert "not analysed: Worker and DB" in out
+    assert "; Auth was only screened; Worker and DB were not analysed — see" in out
     for jargon in ("(s)", "reduced-budget", "verification greps", "internal"):
         assert jargon not in out.split("**Method and limits:**", 1)[1].split("\n", 1)[0]
 
@@ -5406,13 +5403,10 @@ def test_scope_surfaces_state_one_coverage_rule(tmp_path: Path, depths: list[str
     if n_screen or n_excluded:
         assert f"**{n_full} of {total}**" in overview
         assert f"All {total} modeled components were analysed with full STRIDE." not in overview
-        assert f"{n_full} of {total} components analysed with full STRIDE" in verdict
-        if screened_rows:
-            assert pregen.screening_clause(screened_rows) in verdict
     else:
         assert f"All {total} modeled components were analysed with full STRIDE." in overview
-        assert f"all {total} components analysed with full stride." in verdict.lower()
-    assert pregen.coverage_statement(meta) in verdict
+    assert ("was only screened" in verdict or "were only screened" in verdict) is bool(n_screen)
+    assert pregen.method_and_limits(meta) in verdict
 
 
 def _verdict_ctx_with_abuse(tmp_path: Path, bullets: list[dict], abuse_cases: list[dict] | None):

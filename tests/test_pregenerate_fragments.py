@@ -3971,28 +3971,25 @@ def test_method_and_limits_states_depth_coverage_and_context_plainly(depth, shap
     overview = pf.gen_system_overview({"meta": meta, "components": comps})
     out_of_scope = pf.gen_out_of_scope({"meta": meta})
 
-    assert block.startswith(f"**Method and limits:** {pf.METHOD_SENTENCE}")
+    assert block.startswith(f"**Method and limits:** {pf.METHOD_SHORT}")
+    assert block.endswith("— see [§1 Scope](#scope) and [§11 Out of Scope](#11-out-of-scope).")
+    assert block.count(". ") == 0, "the Management Summary method line is one sentence"
     assert pf.METHOD_SENTENCE in overview and pf.METHOD_SENTENCE in out_of_scope
-    assert pf.limits_statement(meta) in block and pf.limits_statement(meta) in out_of_scope
+    assert pf.limits_statement(meta) in out_of_scope
     total = n_full + n_screen + n_excluded
-    assert bool(depth and f"{depth.capitalize()} depth:" in block) is bool(depth)
     if n_screen or n_excluded:
-        assert f"{n_full} of {total} components analysed with full STRIDE" in block
         assert f"**{n_full} of {total}**" in overview
     else:
-        assert f"all {total} components analysed with full STRIDE" in block.lower().replace("stride", "STRIDE")
         assert f"All {total} modeled components were analysed with full STRIDE." in overview
-    screened = [e for e in meta["component_selection"]["selected"] if e.get("analysis_depth") == "screening"]
-    assert bool(screened and pf.screening_clause(screened) in block) is bool(n_screen)
-    assert ("--assessment-depth" in block) is bool(n_excluded or depth == "quick")
+    assert ("only screened" in block) is bool(n_screen)
+    assert ("not analysed" in block) is bool(n_excluded)
     if context:
-        assert "business context, design intent" not in block
-        assert ("supplied for this run" in block) is (context == ".business-context-input.md")
         assert ".business-context-input.md" not in block + overview + out_of_scope
         assert "beyond the supplied business context" in out_of_scope
     else:
         assert (
-            "business context, design intent, runtime behaviour and production configuration are not covered" in block
+            "business context, design intent, runtime behaviour and production configuration are not covered"
+            in out_of_scope
         )
         assert "that leave the code" in out_of_scope
     for text in (block, overview, out_of_scope):
