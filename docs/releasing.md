@@ -14,8 +14,8 @@ at the bottom.
 ## Checklist
 
 ```
-[ ] 1. Align pyproject.toml + plugin.json, promote Unreleased to a dated CHANGELOG.md heading
-[ ] 2. Sync the signed baseline fallback and commit any updates
+[ ] 1. Sync the latest signed baseline and commit any updates
+[ ] 2. Curate Unreleased, align pyproject.toml + plugin.json + badge, promote to a dated CHANGELOG.md heading
 [ ] 3. make release-all          # deterministic gate, then live e2e (stops if gate fails)
 [ ] 4. Merge dev → main, tag, push
 [ ] 5. Verify GitHub release was created by the tag workflow
@@ -24,14 +24,24 @@ at the bottom.
 
 ## Steps
 
-### 1. Bump the version
+### 1. Sync the bundled baseline
 
-Set the release version in `pyproject.toml`, `.claude-plugin/plugin.json`, and the README version badge,
-then promote the pending notes under `## Unreleased` into the dated matching
-`CHANGELOG.md` heading. Leave the `## Unreleased` heading itself in place, empty
-— `check_release_meta.py` requires it to exist *and* to be empty, so deleting it
-fails the gate just as leaving notes under it does. Commit all metadata changes
-together:
+Run `make baseline-sync` first, before the changelog is curated. It fetches and verifies the latest signed baseline release, then updates the bundled fallback and modular bundle when the id is unchanged. If it exits with `ACTION NEEDED` because the published id changed, review that release and rerun with `make baseline-sync ACCEPT_ID=<published-id>` to update the fallback, modular bundle, configured id, and README together. Commit any changes on `dev`; do not tag a commit with an older fallback by skipping this step.
+
+A new baseline id reaches every user who installs or updates the baseline, so add one `Changed` bullet under `## Unreleased` that names the new id. A refresh under the same id needs no entry.
+
+The sync uses the network and changes tracked files, so it runs during release preparation rather than inside the offline `release-check` that CI reruns on the immutable tag. If the source cannot be verified, resolve that before releasing.
+
+### 2. Curate the changelog and bump the version
+
+Entries under `## Unreleased` accumulate one change at a time, so review them as a whole before promoting them. Apply the `CHANGELOG.md` rule in `AGENTS.md` to the complete list:
+
+- Remove bullets that describe internal implementation, refactors, tests, documentation, or maintainer tooling rather than a change users notice.
+- Merge bullets that describe the same user-facing outcome, including across `Added`, `Changed`, and `Fixed`, into one short sentence.
+- Move each remaining bullet to the category that fits the released result: new capability under `Added`, changed behavior under `Changed`, removed behavior under `Removed`, and corrected defects under `Fixed`. A defect in a feature added in the same release is not a `Fixed` entry; fold it into that feature's bullet.
+- Order bullets within each category by user impact, most significant first.
+
+Then set the release version in `pyproject.toml`, `.claude-plugin/plugin.json`, and the README version badge, and move the curated notes into the dated matching `CHANGELOG.md` heading. Leave the `## Unreleased` heading itself in place, empty — `check_release_meta.py` requires it to exist *and* to be empty, so deleting it fails the gate just as leaving notes under it does. Commit all metadata changes together:
 
 ```bash
 git commit -am "release: 0.6.0b1"
@@ -39,12 +49,6 @@ git commit -am "release: 0.6.0b1"
 
 > Until this commit exists, step 3 will fail at `check_release_meta.py` — that is
 > the intended signal that the tree is not a release yet.
-
-### 2. Sync the bundled baseline
-
-Run `make baseline-sync` before the release checks. It fetches and verifies the published baseline, then updates the bundled fallback when the id is unchanged. If it stops because the published id changed, review the release and rerun with `make baseline-sync ACCEPT_ID=<published-id>` to update the fallback, modular bundle, configured id, and README together. Review and commit those changes on `dev` before continuing; do not tag a commit with an older fallback by skipping this step.
-
-The sync uses the network and changes tracked files, so it runs during release preparation rather than inside the offline `release-check` that CI reruns on the immutable tag. If the source cannot be verified, resolve that before releasing.
 
 ### 3. Run the tests
 
