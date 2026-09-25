@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Figure 1 no longer shows signed-in users or an admin for applications nobody logs into: a role whose request path authenticates nowhere is shown as anonymous, and an admin role needs an access check cited in code rather than a file header.
 - Confirmed injection and SSRF findings cite their input, sink, and failed control for evidence review.
 - Weakness derivation and report links cover more NoSQL injection, code evaluation, attribute binding, browser credential, and CSRF cases while avoiding unrelated grouping and safe-code false positives.
-- AI analysis preserves component-owned RAG and agentic signals, adds transport-specific MCP checks, and keeps unrelated LLM findings out of agentic risk categories.
+- AI analysis preserves component-owned RAG and agentic signals and keeps OWASP LLM and agentic tags when findings are consolidated, checks every path into the model context and the identity model-driven tools act for, adds transport-specific MCP checks, and keeps unrelated LLM findings out of agentic risk categories.
 - Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.
 - Dependency checks recognize Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
 - Detection gaps such as missing security logging no longer name an attacker, and each finding's attack vector follows its attributed attacker, so supply-chain findings read as build-time attacks.

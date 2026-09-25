@@ -164,7 +164,7 @@ Trace persisted attacker input through its write path to the eventual query, cod
 
 For confirmed `CWE-78`, `CWE-79`, `CWE-89`, `CWE-94`, `CWE-95`, `CWE-918`, or `CWE-1336`, write `mechanism_trace` with `input` and `sink` repository-relative `file:line` locations and a short `connection` naming the value and how it reaches the sink. `evidence` must repeat the sink location. Record the failed control as `control.status` (`absent-at-sink`, `ineffective`, or `bypassed`), cite `control.location`, and explain why it fails. `absent-at-sink` cites the sink itself; it does not prove that no upstream control exists. If the input, connection, or control outcome cannot be established, use `evidence_tier: insecure-practice` and state the gap; do not invent a trace or score confirmed exploitation.
 
-For identity spoofing, cite the executable consumer that trusts the attacker-controlled identity in a security decision. A client setting a header, decoding a token, or connecting without credentials alone establishes no server authentication bypass; unused helpers and hypothetical consumers do not complete the path. Place the control failure on the component accepting the identity. Classify credentials predictably derived from public identifiers as weak credentials (`CWE-1391`); use `CWE-522` for inadequate protection of credentials and `CWE-798` for embedded reusable credentials. Cite both credential creation and its authentication use when claiming account access.
+For identity spoofing, cite the executable consumer that trusts the attacker-controlled identity in a security decision. A client setting a header or connecting without credentials alone establishes no server authentication bypass; a server that takes identity from a token it decoded without verifying the signature does (`CWE-347`, at that consumer); unused helpers and hypothetical consumers do not complete the path. Place the control failure on the component accepting the identity. Classify credentials predictably derived from public identifiers as weak credentials (`CWE-1391`); use `CWE-522` for inadequate protection of credentials and `CWE-798` for embedded reusable credentials. Cite both credential creation and its authentication use when claiming account access.
 
 All six are mandatory. `analysis.estimated_threat_count: low` or
 `analysis.depth: light` changes pacing only: skip optional verification,
@@ -183,7 +183,9 @@ entry per LLM01-LLM10 or ASI01-ASI10: `{"item", "disposition"}` plus
 `local_ids` for `finding` (threats tagged with that ID), `evidence` file:line
 and `reason` for `controlled`, and `reason` for `not-applicable` (capability
 absent) or `no-evidence` (checked, not proven). Check each item in code; a
-tagged finding meets the normal evidence bar and cites code. `no-evidence` is
+tagged finding meets the normal evidence bar and cites code. A `controlled` or
+`no-evidence` answer that relies on an identity or ownership check cites where
+that identity is verified, not only where it is read. `no-evidence` is
 a valid answer, never a reason to invent a finding.
 
 With a `requirements.component_context` slice, list in

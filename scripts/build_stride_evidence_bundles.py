@@ -103,6 +103,7 @@ SIGNAL_FILES = (
     ("config-scan", ".config-scan-findings.json"),
     ("sca-practice", ".sca-practice-findings.json"),
     ("known-bad-library", ".known-bad-libs-findings.json"),
+    ("route-auth", ".route-inventory.json"),
 )
 
 
@@ -1026,6 +1027,32 @@ def _referenced_primary_paths(value: Any) -> set[str]:
     return found
 
 
+def _route_auth_leads(payload: Any) -> list[dict[str, Any]]:
+    """Handlers that trust a token decoded without signature verification.
+
+    Every other route row is inventory, not a lead, so it stays out of the
+    bounded signal budget.
+    """
+    leads: list[dict[str, Any]] = []
+    routes = payload.get("routes") if isinstance(payload, dict) else None
+    for route in routes if isinstance(routes, list) else []:
+        if not isinstance(route, dict) or route.get("authn_handler_signal") != "decode_only":
+            continue
+        for evidence in route.get("authn_handler_evidence") or []:
+            if isinstance(evidence, dict) and isinstance(evidence.get("file"), str) and evidence.get("line"):
+                leads.append(
+                    {
+                        "file": evidence["file"],
+                        "line": evidence["line"],
+                        "check_id": "route-decode-only",
+                        "severity": "High",
+                        "message": f"{route.get('method')} {route.get('path')} trusts a token decoded without "
+                        "signature verification; check every authorization decision that uses its claims",
+                    }
+                )
+    return leads
+
+
 def _walk_signal_rows(value: Any, signal_kind: str) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     if isinstance(value, dict):
@@ -1127,6 +1154,8 @@ def _source_signals(
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise BundleError(f"validated signal artifact is unreadable: {filename}: {exc}") from exc
+        if signal_kind == "route-auth":
+            payload = _route_auth_leads(payload)
         candidates.extend(_walk_signal_rows(payload, signal_kind))
 
     normalized: list[dict[str, Any]] = []

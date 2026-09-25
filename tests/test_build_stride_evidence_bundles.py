@@ -97,6 +97,32 @@ def test_build_all_emits_bounded_valid_component_bundle(tmp_path):
     assert not (output / ".dispatch-context/backend-api/architecture-context.json").exists()
 
 
+def test_decode_only_route_handler_reaches_the_bundle_and_other_routes_do_not(tmp_path):
+    repo, output = _repo(tmp_path)
+    route = {"method": "POST", "path": "/login", "authn_handler_signal": "decode_only"}
+    routes = [
+        route | {"authn_handler_evidence": [{"file": "src/app.py", "line": 2}]},
+        route | {"authn_handler_signal": "verified", "authn_handler_evidence": [{"file": "src/app.py", "line": 1}]},
+    ]
+    (output / ".route-inventory.json").write_text(json.dumps({"routes": routes}), encoding="utf-8")
+    manifest = bundles.build_all(output, repo, _manifest())
+
+    component = manifest["components"][0]
+    parsed = bundles.validate_bundle(
+        output / component["evidence_bundle_path"],
+        {"primary": repo},
+        expected_component_id="backend-api",
+        expected_sha256=component["evidence_bundle_sha256"],
+        output_dir=output,
+    )
+    route_slices = [row for row in parsed["source_slices"] if row["signal_kind"] == "route-auth"]
+    assert [(row["path"], row["start_line"]) for row in route_slices] == [("src/app.py", 2)]
+    signals = [json.loads(row["value"]) for row in parsed["evidence"]["recon_signals"]]
+    lead = next(signal for signal in signals if signal["signal_kind"] == "route-auth")
+    assert lead["check_id"] == "route-decode-only" and lead["severity"] == "High"
+    assert "POST /login" in lead["message"]
+
+
 def test_build_all_reconstructs_its_canonical_empty_routing_lists(tmp_path):
     repo, output = _repo(tmp_path)
     manifest = _manifest(_component())

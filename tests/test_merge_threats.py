@@ -2416,6 +2416,17 @@ class TestConsolidationInternals:
         out = mt._consolidate_by_group(threats)
         assert out == threats and out is not threats
 
+    def test_consolidate_by_group_keeps_every_member_lens_tag(self, mt, monkeypatch):
+        group = {"id": "g", "title": "Shared", "match_any": [{"cwe": ["CWE-89"]}]}
+        monkeypatch.setattr(mt, "_load_consolidation_groups", lambda: (group,))
+        threats = [
+            _threat(component_id="a", risk="Critical", evidence={"file": "a.ts", "line": 1}),
+            _threat(component_id="a", evidence={"file": "b.ts", "line": 2}, owasp_llm_ids=["LLM05"]),
+        ]
+        out = mt._consolidate_by_group(threats)
+        assert len(out) == 1
+        assert out[0]["owasp_llm_ids"] == ["LLM05"]
+
 
 def g_first(groups):
     return groups[0]
@@ -2581,6 +2592,28 @@ class TestApplyDecisionsBranches:
         }
         assert merged["mitigation_ids"] == ["M-001", "M-002"]
         assert any(threat["component_id"] == "c" for threat in out)
+
+    def test_consolidate_keeps_every_member_lens_tag(self, mt):
+        threats = [
+            {"component_id": "a", **_threat(evidence={"file": "a.py", "line": 1}, owasp_llm_ids=["LLM10"])},
+            {"component_id": "b", **_threat(evidence={"file": "b.py", "line": 2}, owasp_asi_ids=["ASI08"])},
+            {"component_id": "c", **_threat(evidence={"file": "c.py", "line": 3}, risk="Critical")},
+        ]
+        gid = mt._group_candidates(threats)[0]["group_id"]
+        out = mt._apply_decisions(
+            threats,
+            [
+                {
+                    "group_id": gid,
+                    "action": "consolidate",
+                    "merge_target_index": 2,
+                    "consolidated_title": "Systemic SQL Injection",
+                }
+            ],
+        )
+        assert len(out) == 1
+        assert out[0]["owasp_llm_ids"] == ["LLM10"]
+        assert out[0]["owasp_asi_ids"] == ["ASI08"]
 
     def test_consolidate_bad_target_skipped(self, mt):
         # line 1396: consolidate out-of-range target → continue.

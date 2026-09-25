@@ -1275,6 +1275,7 @@ def _consolidate_config_checks(threats: list[dict]) -> list[dict]:
         if boundary_refs:
             survivor["boundary_refs"] = boundary_refs
         survivor["title"] = _declassify_config_title(survivor.get("title", ""))
+        _union_lens_ids(survivor, members)
         # Record the consolidated local_ids for traceability.
         refs = [m.get("config_scan_ref") for m in members if m.get("config_scan_ref")]
         if refs:
@@ -1542,6 +1543,7 @@ def _consolidate_by_group(threats: list[dict]) -> list[dict]:
         survivor["instance_count"] = len(instances)
         survivor["systemic"] = True
         survivor["consolidation_group"] = g["id"]
+        _union_lens_ids(survivor, members)
         if g.get("title"):
             survivor["title"] = g["title"]
         if mids:
@@ -2064,6 +2066,18 @@ def _select_boundary_refs(members: list[dict], *, preferred_component_id: str | 
     return selected
 
 
+def _union_lens_ids(survivor: dict, members: list[dict]) -> None:
+    """Keep every member's OWASP LLM/ASI tag: the AI exposure section and lens coverage key off them."""
+    for field in ("owasp_llm_ids", "owasp_asi_ids"):
+        ids: list[str] = []
+        for member in [survivor, *members]:
+            for value in member.get(field) or []:
+                if isinstance(value, str) and value and value not in ids:
+                    ids.append(value)
+        if ids:
+            survivor[field] = ids
+
+
 def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: bool) -> None:
     """Preserve merged metadata and bounded boundary traceability on survivor."""
     instances: list[dict] = []
@@ -2130,6 +2144,7 @@ def _merge_member_metadata(survivor: dict, members: list[dict], *, systemic: boo
         survivor["merged_cwes"] = cwes
     if additional_categories:
         survivor["additional_categories"] = additional_categories
+    _union_lens_ids(survivor, members)
     # A folded scanner member carries the anchors the deterministic remediation
     # backfill keys off. Losing them to an LLM-authored survivor would downgrade
     # the fix card to generic prose for a finding a check catalog can answer.
