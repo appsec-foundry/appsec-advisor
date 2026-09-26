@@ -8,8 +8,9 @@ for no content gain.
 
 This script gives the renderer an objective pass/fail so it authors once and
 stops. It catches both runaway prose and engineering-level terminology in the
-product-owner Verdict. A bullet body may name the weakness class (SQL injection,
-XSS); opening, titles and closing state outcomes only. Technology identifiers,
+product-owner Verdict. Opening, titles and bullet bodies may name the weakness
+class by its standard name (SQL injection, XSS); the closing names no attack,
+in standard or paraphrased form (RA-9). Technology identifiers,
 code and locations belong in §§7–8, never in the short management summary.
 
 It also judges every Management Summary fragment the renderer authored against
@@ -40,9 +41,8 @@ import validate_fragment
 # --- JSON schema: the schema preserves the shape, while this gate protects the
 # --- product-owner reading level and concise worst-case scenarios.
 VERDICT_OPENING_MAX_WORDS = 52
-# A bullet body names the weakness class in plain words, optionally with its
-# standard term in parentheses ("database query injection (SQL injection)").
-# That costs 4-6 words over an outcome-only sentence, so the authoring contract
+# A bullet body names the weakness class by its standard name ("SQL injection").
+# That costs a few words over an outcome-only sentence, so the authoring contract
 # targets 20 words and 26 stays a runaway catcher above that target rather than
 # a second authoring rule. At the former 20-word cap, runs produced bodies that
 # named no weakness at all and read as vague to the engineers who act on them.
@@ -59,13 +59,16 @@ _TECHNICAL_DETAIL_RE = re.compile(
     r"parameteri[sz]ed|sandbox(?:ing)?|allow-?list)\b",
     re.IGNORECASE,
 )
-# Weakness-class names and the plain names of what a class exposes. A bullet
-# body names the class so an engineer can map the scenario to its finding;
-# opening, titles and closing state outcomes only and keep rejecting them.
-# `llm` is a technology, not a weakness, and stays in the list above.
+# Weakness classes, by their standard names and by the plain-word stems a
+# paraphrase falls back on. Opening, titles and bodies may name the standard
+# class — a reader knows "SQL injection", and banning it produced invented terms
+# such as "database injection". The closing names none, in either form: it adds
+# consequence or operating context and must not restate the attack paths the
+# bullets already name (RA-9). `llm` is a technology and stays in the list above.
 _ATTACK_CLASS_RE = re.compile(
-    r"\b(?:csrf|idor|sql|xss|xxe|prompt[ -]injection|system prompt|directory listing|"
-    r"private key|public key)\b",
+    r"\b(?:csrf|idor|sql|xss|xxe|ssrf|rce|prompt[ -]injection|system prompt|directory listing|"
+    r"private key|public key|\w*injection|(?:cross-site )?scripting|forgery|forged|traversal|"
+    r"mass[ -]assignment|hard-?coded|deserializ\w*|deserialis\w*)\b",
     re.IGNORECASE,
 )
 _CODE_OR_LOCATION_RE = re.compile(
@@ -88,17 +91,22 @@ def _sentences(text: str) -> int:
     return max(1, len(parts))
 
 
-def _check_management_language(value: str, field: str, violations: list[str], *, body: bool = False) -> None:
+def _check_management_language(value: str, field: str, violations: list[str], *, closing: bool = False) -> None:
     """Reject implementation detail in prose intended for non-experts.
 
-    A bullet body may name the weakness class; every other field states outcomes only.
+    Every field may name the weakness class except the closing, which names no attack at all.
     """
-    patterns = [_TECHNICAL_DETAIL_RE, _CODE_OR_LOCATION_RE] + ([] if body else [_ATTACK_CLASS_RE])
-    for pattern in patterns:
+    for pattern in (_TECHNICAL_DETAIL_RE, _CODE_OR_LOCATION_RE):
         match = pattern.search(value or "")
         if match:
             violations.append(f"ms-verdict.json: {field} contains technical detail {match.group(0)!r}")
             return
+    match = _ATTACK_CLASS_RE.search(value or "") if closing else None
+    if match:
+        violations.append(
+            f"ms-verdict.json: {field} names an attack {match.group(0)!r} — the bullets already name the "
+            "attack paths; state the business consequence or operating context instead"
+        )
 
 
 def _check_verdict(path: Path, violations: list[str]) -> None:
@@ -110,7 +118,7 @@ def _check_verdict(path: Path, violations: list[str]) -> None:
     closing = data.get("closing") or ""
     if len(closing) > VERDICT_CLOSING_MAX_CHARS:
         violations.append(f"ms-verdict.json: closing is {len(closing)} chars (max {VERDICT_CLOSING_MAX_CHARS})")
-    _check_management_language(closing, "closing", violations)
+    _check_management_language(closing, "closing", violations, closing=True)
     for i, b in enumerate(data.get("bullets") or []):
         if not isinstance(b, dict):
             continue
@@ -122,7 +130,7 @@ def _check_verdict(path: Path, violations: list[str]) -> None:
             )
         if _sentences(body) > 1:
             violations.append(f"ms-verdict.json: bullets[{i}].body has {_sentences(body)} sentences (max 1)")
-        _check_management_language(body, f"bullets[{i}].body", violations, body=True)
+        _check_management_language(body, f"bullets[{i}].body", violations)
 
 
 def main() -> int:

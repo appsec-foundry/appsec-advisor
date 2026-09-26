@@ -729,15 +729,46 @@ class TestVerdict:
 
     def test_bullets_carry_valid_refs_grouped_by_stride(self):
         data = json.loads(pf.gen_verdict(self._YAML))
-        # 5 threats across 5 distinct STRIDE classes → 5 scenario bullets.
-        assert len(data["bullets"]) == 5
+        # 5 STRIDE classes, but on a red posture the Medium-only Repudiation
+        # scenario is no worst case (RA-23) → 4 scenario bullets.
+        assert len(data["bullets"]) == 4
         seen_refs = set()
         for b in data["bullets"]:
             assert 1 <= len(b["refs"]) <= 5
             for r in b["refs"]:
                 assert re.match(r"^[FT]-\d{3,4}$", r)
                 seen_refs.add(r)
-        assert {"T-001", "T-002", "T-003", "T-004", "T-005"} <= seen_refs
+        assert seen_refs == {"T-001", "T-002", "T-003", "T-004"}
+
+    @pytest.mark.parametrize(
+        "threats",
+        [
+            pytest.param(
+                [("Critical", "Tampering", None)] * 7 + [("Medium", "Repudiation", None)], id="7-critical-one-class"
+            ),
+            pytest.param(
+                [("Critical", s, None) for s in ("Tampering", "Spoofing", "Denial of Service") * 4], id="12-critical"
+            ),
+            pytest.param(
+                [("Medium", "Tampering", "Critical"), ("Low", "Spoofing", None)], id="green-with-effective-critical"
+            ),
+            pytest.param([("High", "Spoofing", None), ("Medium", "Tampering", None)], id="yellow"),
+            pytest.param([("Medium", "Tampering", None), ("Low", "Spoofing", None)], id="green"),
+        ],
+    )
+    def test_floor_passes_the_verdict_gate_it_backs_up(self, tmp_path, threats):
+        import validate_fragment
+
+        model = {
+            "threats": [
+                {"id": f"T-{i:03d}", "title": "x", "risk": risk, "stride": stride}
+                | ({"effective_severity": eff} if eff else {})
+                for i, (risk, stride, eff) in enumerate(threats, start=1)
+            ]
+        }
+        (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
+        verdict = json.loads(pf.gen_verdict(model))
+        assert validate_fragment.verdict_floor_errors(tmp_path, verdict) == []
 
     def test_worst_severity_scenario_leads(self):
         # A Critical Tampering finding must surface its scenario before a Medium.

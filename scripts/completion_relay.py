@@ -19,9 +19,10 @@ two surfaces are bound here:
   ``stop_hook_active``.
 
 A printed line counts as reproduced when it appears in printed order with only
-its whitespace changed. Anything the message adds around the lines, such as a
-code fence or a lead-in, is allowed. The review deletes the record once it has
-decided. ``runtime_cleanup.py`` deliberately leaves the record alone, because
+its whitespace changed. A lead-in before the summary and code fences are
+allowed; text after its last line is not, because an appended note repeats or
+contradicts what the summary already says (it prints its own re-export
+commands). The review deletes the record once it has decided. ``runtime_cleanup.py`` deliberately leaves the record alone, because
 the closing Stop fires after cleanup; the next run's preflight removes a record
 that a crashed session left behind.
 """
@@ -76,6 +77,16 @@ def missing_lines(summary: str, message: str) -> list[str]:
     return missing
 
 
+def trailing_lines(summary: str, message: str) -> list[str]:
+    """Message lines after the reproduced summary's last line, code fences aside."""
+    printed = _lines(summary)
+    reproduced = _lines(message)
+    if not printed or printed[-1] not in reproduced:
+        return []
+    end = len(reproduced) - reproduced[::-1].index(printed[-1])
+    return [line for line in reproduced[end:] if not line.startswith("```")]
+
+
 def final_message(transcript_path: str) -> str:
     """The assistant text after the session's last tool call or user turn.
 
@@ -113,7 +124,7 @@ def final_message(transcript_path: str) -> str:
 
 
 def review_final_message(output_dir: Path | str, session_id: str, message: str, *, retry: bool) -> list[str]:
-    """Return the printed lines the closing message dropped; ``[]`` lets the session stop.
+    """Return the printed lines the closing message dropped, else the lines it appended; ``[]`` lets the session stop.
 
     ``retry`` is the host's ``stop_hook_active``. A record of another run is left
     for that run's session. Every other outcome decides the record: it is
@@ -131,7 +142,7 @@ def review_final_message(output_dir: Path | str, session_id: str, message: str, 
     summary = record.get("summary") if isinstance(record, dict) else None
     missing: list[str] = []
     if isinstance(summary, str) and message and not retry and not record.get("returned"):
-        missing = missing_lines(summary, message)
+        missing = missing_lines(summary, message) or trailing_lines(summary, message)
     if missing:
         atomic_write_text(path, json.dumps({**record, "returned": True}))
     else:

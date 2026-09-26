@@ -1675,7 +1675,7 @@ def scan_file(
                     line=line_idx + 1,
                     evidence_snippet=_evidence_snippet(evidence_lines, line_idx),
                     title=_title_with_location(check, file_rel, line_idx + 1),
-                    scenario=check.rationale,
+                    scenario=check.rationale,  # an attack scenario; requirements belong in remediation
                     severity=check.severity_if_violated,
                     cwe=[check.cwe] if check.cwe else [],
                     recommended_mitigation_title=check.remediation,

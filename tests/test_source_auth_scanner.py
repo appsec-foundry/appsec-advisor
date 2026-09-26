@@ -1441,3 +1441,15 @@ def test_template_source_practice_reaches_the_injection_overview(tmp_path):
     threat = _source_auth_finding_to_threat(asdict(findings[0]))
     assert threat["evidence_tier"] == "insecure-practice"
     assert classify_threat(threat, load_weakness_classes(), warn=False) == "injection"
+
+
+def test_every_check_rationale_reads_as_an_attack_scenario():
+    """A check's rationale becomes its findings' `scenario`, which the report and
+    the verdict narrate. A normative requirement ("the server MUST …") there gave
+    a Critical authorization finding no attack to tell, and the verdict dropped
+    it; the requirement belongs in `remediation`."""
+    import yaml
+
+    checks = yaml.safe_load(CHECKS.read_text(encoding="utf-8"))["checks"]
+    normative = [c["id"] for c in checks if re.search(r"\b(?:MUST|SHALL|SHOULD)\b", c.get("rationale") or "")]
+    assert normative == []

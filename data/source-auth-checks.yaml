@@ -85,11 +85,11 @@ checks:
     finding_type: FT-040
     breach_vector: "Internet User"
     rationale: >
-      Server-side authorization MUST derive the resource owner from the
-      authenticated session (req.user / req.session / req.auth), never
-      from attacker-controlled request data. Trusting req.body.UserId
-      etc. enables horizontal privilege escalation across all
-      authenticated tenants.
+      A signed-in attacker puts another user's ID into the owner field of
+      the request (req.body.UserId and the like); the query trusts it
+      instead of the session identity, so the attacker reads or changes
+      every other user's records — horizontal privilege escalation across
+      all accounts.
     remediation: "Replace req.body.UserId/userId/ownerId with req.user.id (or equivalent session-derived identity) in every WHERE/filter clause."
 
   # ===================================================================
@@ -370,9 +370,10 @@ checks:
     finding_type: FT-030
     breach_vector: "Internet Anon"
     rationale: >
-      The middleware is the gate for every authenticated route — a
-      mis-configured expressJwt undermines the entire authorization
-      surface.
+      Without an algorithm allowlist the token middleware that guards every
+      authenticated route accepts tokens an attacker signs with a weaker or
+      unintended algorithm, so a forged token passes as any user on every
+      protected route.
     remediation: "Add `algorithms: ['RS256']` (or matching) to the expressJwt() options object."
 
   # ===================================================================
@@ -426,10 +427,10 @@ checks:
     finding_type: FT-042
     breach_vector: "Internet Anon"
     rationale: >
-      State-changing operations on sensitive resources MUST require a
-      proven session. A registration line that lacks any auth marker
-      either trusts the URL itself or relies on a downstream check that
-      the static signature cannot prove exists.
+      The route registration carries no authentication marker, so an
+      anonymous attacker may call this state-changing operation on a
+      sensitive resource directly, unless a downstream check the scanner
+      cannot see stops it.
     remediation: "Add an explicit auth middleware (isAuthorized() / passport.authenticate() / requireAuth) to the route registration, or mark the route intentionally public via app.get(...) for read-only access only."
 
   # ===================================================================

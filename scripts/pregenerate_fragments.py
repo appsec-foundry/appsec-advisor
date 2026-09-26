@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
-from _severity_rollup import register_severity
+from _severity_rollup import display_id, priority_severity, register_severity, verdict_floor_ids
 from load_business_context import RUN_ONLY_NAME
 
 # Sibling module — deterministic §3 walkthrough renderer. Imported here
@@ -5405,9 +5405,11 @@ def gen_verdict(yaml_data: dict):
 
     Posture (severity) is a conservative reading of the risk distribution: any
     Critical → red, else any High → yellow, else green. Bullets are one
-    business-language scenario per STRIDE class present, ordered by the severity
-    of the finding that first surfaced the class (so the exec summary reads
-    worst-first). Returns ``None`` only when no citable finding exists (a
+    business-language scenario per STRIDE class present, ordered by the
+    prioritisation severity of the finding that first surfaced the class (so the
+    exec summary reads worst-first). The floor meets the verdict gate the LLM
+    version must pass (RA-23): every required Critical is cited, and on red or
+    yellow no bullet rests on Medium or Low findings alone. Returns ``None`` only when no citable finding exists (a
     degenerate model where the verdict has nothing to reference); compose's own
     empty-model handling then applies.
     """
@@ -5426,32 +5428,50 @@ def gen_verdict(yaml_data: dict):
     else:
         severity = "green"
 
-    # Severity-then-numeric-id ordering so the highest-impact scenario leads.
+    # Prioritisation-severity-then-numeric-id ordering so the highest-impact
+    # scenario leads and each bullet opens with its most severe finding.
     def _id_key(t: dict) -> tuple:
         m = re.search(r"(\d+)", str(t.get("id") or ""))
-        return (_VERDICT_SEV_RANK.get(_sev(t), 5), int(m.group(1)) if m else 1_000_000, str(t.get("id")))
+        rank = _VERDICT_SEV_RANK.get(priority_severity(t).lower(), 5)
+        return (rank, int(m.group(1)) if m else 1_000_000, str(t.get("id")))
 
     ranked = sorted(threats, key=_id_key)
+    rated = {str(t.get("id")).strip(): priority_severity(t) for t in ranked}
+    floor = set(verdict_floor_ids(yaml_data))
 
-    # Group by scenario (dict preserves first-seen = severity order). Each bullet
-    # collects up to 5 supporting refs (schema maxItems).
+    # Group by scenario (dict preserves first-seen = severity order), then split
+    # each group into bullets of at most 5 refs (schema maxItems). A continuation
+    # bullet exists only to carry a Critical the floor (RA-23) requires.
     grouped: dict[tuple[str, str], list[str]] = {}
     for t in ranked:
         tid = str(t.get("id") or "").strip()
         if not re.match(r"^[FT]-\d{3,4}$", tid):
             continue
-        scenario = _verdict_scenario_for_stride(t.get("stride"))
-        refs = grouped.setdefault(scenario, [])
-        if tid not in refs and len(refs) < 5:
+        refs = grouped.setdefault(_verdict_scenario_for_stride(t.get("stride")), [])
+        if tid not in refs:
             refs.append(tid)
 
-    bullets: list[dict] = []
+    candidates: list[tuple[bool, dict]] = []
     for (title, body), refs in grouped.items():
-        if not refs:
-            continue
-        bullets.append({"title": title, "body": body, "refs": refs})
-        if len(bullets) >= 6:  # schema max 8; keep the exec summary tight
-            break
+        for start in range(0, len(refs), 5):
+            chunk = refs[start : start + 5]
+            carries_floor = any(display_id(r) in floor for r in chunk)
+            if start and not carries_floor:
+                continue
+            # On a red or yellow posture every bullet cites a Critical or High finding (RA-23).
+            if severity != "green" and not any(rated.get(r) in ("Critical", "High") for r in chunk):
+                continue
+            candidates.append((carries_floor, {"title": title, "body": body, "refs": chunk}))
+    # Every floor bullet stays (at most 8, one per required Critical); beyond the
+    # floor the exec summary stays at 6. Candidate order is severity order.
+    room = max(0, 6 - sum(1 for carries, _ in candidates if carries))
+    bullets = []
+    for carries, bullet in candidates:
+        if not carries:
+            if not room:
+                continue
+            room -= 1
+        bullets.append(bullet)
 
     # Schema requires >= 2 bullets. If only one scenario surfaced, synthesise a
     # distinct second bullet from the top citable finding so the floor is valid.

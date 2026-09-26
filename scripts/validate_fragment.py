@@ -32,6 +32,7 @@ import jsonschema
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _ms_component_refs
+import _severity_rollup
 import yaml
 from _atomic_io import atomic_write_json
 
@@ -858,13 +859,71 @@ def _describe_schema_error(error: jsonschema.ValidationError) -> str:
     return f"{where}: {message}"
 
 
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def verdict_floor_errors(output_dir: Path, verdict: Any) -> list[str]:
+    """Violations of the verdict's Critical floor (RA-23), without the fragment-name prefix.
+
+    Every required Critical (``_severity_rollup.verdict_floor_ids``) is cited by
+    some bullet, and on a red or yellow posture every bullet cites at least one
+    Critical or High finding. Refs the model does not know are left to the
+    schema; without a readable model there is nothing to judge.
+    """
+    if not isinstance(verdict, dict):
+        return []
+    try:
+        model = yaml.safe_load((output_dir / "threat-model.yaml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return []
+    if not isinstance(model, dict):
+        return []
+    triage = _read_json(output_dir / ".triage-flags.json")
+    try:
+        ranked = [r.get("id") for r in triage["ranking"]["views"]["top_findings"]["findings_ranked"]]
+    except (TypeError, KeyError, AttributeError):
+        ranked = []
+    ranked = [r for r in ranked if isinstance(r, str)]
+    bullets = [b for b in (verdict.get("bullets") or []) if isinstance(b, dict)]
+
+    def _refs(bullet: dict) -> list[str]:
+        return [_severity_rollup.display_id(r) for r in (bullet.get("refs") or []) if isinstance(r, str)]
+
+    cited = {ref for b in bullets for ref in _refs(b)}
+    errors: list[str] = []
+    missing = [tid for tid in _severity_rollup.verdict_floor_ids(model, ranked) if tid not in cited]
+    if missing:
+        errors.append(
+            f"bullets cite no Critical finding {', '.join(missing)} — add it to the bullet whose "
+            "scenario it shares, or give it a bullet of its own"
+        )
+    if verdict.get("severity") in ("red", "yellow"):
+        known = {
+            _severity_rollup.display_id(str(t["id"])): _severity_rollup.priority_severity(t)
+            for t in _severity_rollup.register_threats(model)
+            if t.get("id")
+        }
+        for i, bullet in enumerate(bullets):
+            rated = [known[ref] for ref in _refs(bullet) if ref in known]
+            if rated and not any(sev in ("Critical", "High") for sev in rated):
+                errors.append(
+                    f"bullets[{i}] cites no Critical or High finding — replace it with a higher-rated scenario"
+                )
+    return errors
+
+
 def ms_renderer_schema_errors(output_dir: Path) -> list[str]:
     """Schema violations in the MS renderer's fragments, judged as the pre-render gate judges them.
 
     The renderer reaches this through ``validate_ms_compactness.py``, so a broken
     schema limit is corrected in its own turn instead of by a fragment-fixer
     dispatch and a second compose. It applies the gate's slug -> C-NN repair in
-    memory and the gate's schema check, nothing stricter, and rewrites no file.
+    memory, the gate's schema check and its verdict Critical floor, nothing
+    stricter, and rewrites no file.
     Unreadable JSON stays the pre-render gate's finding.
     """
     fragments_dir = output_dir / ".fragments"
@@ -883,6 +942,8 @@ def ms_renderer_schema_errors(output_dir: Path) -> list[str]:
         validator = jsonschema.validators.validator_for(schema)(schema)
         for error in sorted(validator.iter_errors(data), key=lambda e: [str(part) for part in e.absolute_path]):
             errors.append(f"{name}: {_describe_schema_error(error)}")
+        if fragment_type == "verdict":
+            errors.extend(f"{name}: {error}" for error in verdict_floor_errors(output_dir, data))
     return errors
 
 
@@ -989,7 +1050,22 @@ def run_pre_render_gate(
 
         try:
             jsonschema.validate(instance=data, schema=schema)
-            report["passed"].append(path.name)
+            floor_errors = verdict_floor_errors(output_dir, data) if ftype == "verdict" else []
+            if floor_errors:
+                report["failed"].append(
+                    {
+                        "file": path.name,
+                        "type": ftype,
+                        "error": "; ".join(floor_errors),
+                        "remediation": (
+                            f"Edit `.fragments/{path.name}` so its bullets cover the Critical findings named in "
+                            "the violation and every bullet cites a Critical or High finding. Change only the "
+                            "affected bullets and keep every other value."
+                        ),
+                    }
+                )
+            else:
+                report["passed"].append(path.name)
         except jsonschema.ValidationError as e:
             where = "/".join(str(p) for p in e.absolute_path) or "<root>"
             report["failed"].append(
@@ -1082,7 +1158,8 @@ def _write_repair_plan(output_dir: Path, report: dict) -> None:
             "type": "fragment_schema_violation",
             "section_id": "fragments",
             "fragments_to_rewrite": [f".fragments/{entry['file']}"],
-            "remediation": (
+            "remediation": entry.get("remediation")
+            or (
                 f"Re-author `.fragments/{entry['file']}` so it validates against "
                 f"`schemas/fragments/{FRAGMENT_SCHEMAS[entry['type']]}`. The violation carries "
                 "its exact JSON path — correct that field only and preserve every other value. "

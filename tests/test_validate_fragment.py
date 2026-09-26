@@ -1118,3 +1118,106 @@ def test_a_lossless_form_slip_is_repaired_and_persisted(tmp_path: Path, monkeypa
 
     assert json.loads(frag.read_text(encoding="utf-8")) == {"flows": [], "tier": "High"}
     assert "CANONICALIZED" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# verdict Critical floor (RA-23)
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+
+def _finding(n: int, risk: str, **extra) -> dict:
+    return {"id": f"T-{n:03d}", "title": "x", "risk": risk, "stride": "Tampering", **extra}
+
+
+def _verdict(*bullet_refs: list[str], severity: str = "red") -> dict:
+    return {
+        "severity": severity,
+        "opening": "o" * 80,
+        "bullets": [{"title": "Outcome headline", "body": "b" * 40, "refs": refs} for refs in bullet_refs],
+        "closing": "c" * 60,
+    }
+
+
+def _floor_errors(tmp_path: Path, threats: list[dict], verdict: dict, ranked: list[str] | None = None) -> list[str]:
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump({"threats": threats}), encoding="utf-8")
+    if ranked is not None:
+        triage = {"ranking": {"views": {"top_findings": {"findings_ranked": [{"id": r} for r in ranked]}}}}
+        (tmp_path / ".triage-flags.json").write_text(json.dumps(triage), encoding="utf-8")
+    return vf.verdict_floor_errors(tmp_path, verdict)
+
+
+@pytest.mark.parametrize(
+    ("threats", "verdict", "ranked", "expected"),
+    [
+        pytest.param(
+            [_finding(1, "Critical"), _finding(2, "Critical")],
+            _verdict(["T-001"], ["F-001"]),
+            None,
+            ["F-002"],
+            id="uncited-critical",
+        ),
+        pytest.param(
+            [_finding(1, "Critical"), _finding(2, "Medium", effective_severity="Critical")],
+            _verdict(["T-001"], ["T-001"]),
+            None,
+            ["F-002"],
+            id="effective-critical-counts",
+        ),
+        pytest.param(
+            [_finding(1, "Critical"), _finding(2, "Critical", evidence_check="refuted")],
+            _verdict(["T-001"], ["T-001"]),
+            None,
+            [],
+            id="refuted-is-not-required",
+        ),
+        pytest.param(
+            [_finding(n, "Critical") for n in range(1, 11)],
+            _verdict(*[[f"T-{n:03d}"] for n in range(3, 11)]),
+            [f"T-{n:03d}" for n in range(3, 11)] + ["T-001", "T-002"],
+            [],
+            id="beyond-the-limit-the-lowest-ranked-are-optional",
+        ),
+        pytest.param(
+            [_finding(1, "Critical"), _finding(2, "Medium")],
+            _verdict(["T-001"], ["T-002"]),
+            None,
+            ["bullets[1]"],
+            id="medium-only-bullet-on-red",
+        ),
+        pytest.param(
+            [_finding(1, "Medium"), _finding(2, "Low")],
+            _verdict(["T-001"], ["T-002"], severity="green"),
+            None,
+            [],
+            id="green-may-cite-residual-risks",
+        ),
+        pytest.param([_finding(1, "High")], _verdict(["T-001"], ["T-999"]), None, [], id="unknown-ref-left-to-schema"),
+    ],
+)
+def test_verdict_floor(tmp_path: Path, threats, verdict, ranked, expected):
+    errors = _floor_errors(tmp_path, threats, verdict, ranked)
+    assert len(errors) == len(expected)
+    for error, fragment in zip(errors, expected):
+        assert fragment in error
+
+
+def test_verdict_floor_without_model_judges_nothing(tmp_path: Path):
+    assert vf.verdict_floor_errors(tmp_path, _verdict(["T-001"], ["T-002"])) == []
+
+
+def test_pre_render_gate_turns_an_uncited_critical_into_a_repair_action(tmp_path: Path):
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    (tmp_path / "threat-model.yaml").write_text(
+        yaml.safe_dump({"threats": [_finding(1, "Critical"), _finding(2, "Critical")]}), encoding="utf-8"
+    )
+    (frag / "ms-verdict.json").write_text(json.dumps(_verdict(["T-001"], ["T-001"])), encoding="utf-8")
+    assert vf.run_pre_render_gate(tmp_path, write_repair_plan=True) == 1
+    plan = json.loads((tmp_path / ".pre-render-repair-plan.json").read_text(encoding="utf-8"))
+    action = plan["actions"][0]
+    assert "F-002" in action["raw_issue"]
+    assert "Critical findings named in the violation" in action["remediation"]
+    # The renderer's own gate reports the same violation the pre-render gate fails on.
+    assert any("F-002" in e for e in vf.ms_renderer_schema_errors(tmp_path))

@@ -194,3 +194,49 @@ def test_without_persisted_bullets_the_console_drops_the_reference_clauses(refs)
 def test_an_italic_aside_without_a_finding_link_stays():
     bullet = "- **Customer data exposed** — Anyone can dump every record. *(internal network only)*"
     assert rcs._verdict_console_lines(bullet, []) == [bullet]
+
+
+# ---------------------------------------------------------------------------
+# Fix first — the model's P1 mitigations, never the verdict's closing prose
+# ---------------------------------------------------------------------------
+
+
+def _fix_first_model(mitigations: list[dict]) -> dict:
+    return {
+        "threats": [
+            {"id": "T-001", "risk": "High", "effective_severity": "Critical"},
+            {"id": "T-002", "risk": "Critical"},
+            {"id": "T-003", "risk": "Medium"},
+        ],
+        "mitigations": mitigations,
+    }
+
+
+def test_fix_first_lists_p1_mitigations_most_severe_finding_first():
+    lines = rcs.render_fix_first(
+        _fix_first_model(
+            [
+                {"id": "M-003", "title": "Harden logging", "priority": "P1", "threat_ids": ["T-003"]},
+                {"id": "M-002", "title": "Check ownership", "priority": 1, "threat_ids": ["T-002"]},
+                {"id": "M-001", "title": "Verify tokens", "priority": "P1", "threat_ids": ["T-001"]},
+                {"id": "M-004", "title": "Later work", "priority": "P2", "threat_ids": ["T-002"]},
+            ]
+        ),
+        {},
+    )
+    rows = [line.split()[0] for line in lines[2:]]
+    assert rows == ["M-001", "M-002", "M-003"]
+    assert lines[2].endswith("→ F-001")
+
+
+def test_fix_first_caps_the_list_and_names_the_rest():
+    mitigations = [{"id": f"M-{n:03d}", "title": "t", "priority": "P1", "threat_ids": ["T-002"]} for n in range(1, 11)]
+    lines = rcs.render_fix_first(_fix_first_model(mitigations), {})
+    assert len(lines) == 2 + rcs._FIX_FIRST_LIMIT + 1
+    assert lines[-1].strip().startswith("+2 more P1")
+
+
+@pytest.mark.parametrize("cfg", [{"quiet": True}, {}])
+def test_fix_first_is_absent_when_quiet_or_without_p1(cfg):
+    model = _fix_first_model([{"id": "M-001", "title": "t", "priority": "P2", "threat_ids": ["T-002"]}])
+    assert rcs.render_fix_first(model, cfg) == []

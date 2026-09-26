@@ -85,7 +85,7 @@ def test_check_verdict_rejects_technical_detail_and_multiple_sentences(tmp_path)
     v: list[str] = []
     mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
     assert any("opening contains technical detail 'JWT'" in issue for issue in v)
-    assert any("closing contains technical detail 'SQL'" in issue for issue in v)
+    assert any("closing names an attack 'SQL'" in issue for issue in v)
     assert any("title contains technical detail 'JWT'" in issue for issue in v)
     assert any("body has 2 sentences" in issue for issue in v)
     assert any("body contains technical detail 'middleware'" in issue for issue in v)
@@ -93,7 +93,7 @@ def test_check_verdict_rejects_technical_detail_and_multiple_sentences(tmp_path)
 
 def test_check_verdict_body_may_name_the_weakness_class(tmp_path):
     bodies = [
-        "Database query injection (SQL injection) in the product search lets anyone dump every customer record.",
+        "SQL injection in the product search lets anyone dump every customer record.",
         "Stored cross-site scripting (XSS) in product reviews lets an attacker hijack any visitor's session.",
         "XML external entity injection (XXE) in the invoice import lets any customer read server files.",
         "Missing ownership checks (IDOR) let any signed-in customer read another customer's orders.",
@@ -105,20 +105,34 @@ def test_check_verdict_body_may_name_the_weakness_class(tmp_path):
     assert v == []
 
 
-def test_check_verdict_keeps_weakness_class_out_of_outcome_fields(tmp_path):
+def test_check_verdict_opening_and_titles_may_name_the_weakness_class(tmp_path):
     _write_verdict(
         tmp_path,
         {
             "opening": "Not production-ready. SQL injection exposes every customer account.",
-            "closing": "Fix the XSS before release.",
+            "closing": "Any customer data processed by this deployment must be treated as already breached.",
             "bullets": [{"title": "IDOR on orders", "body": "Anyone can read another customer's orders."}],
         },
     )
     v: list[str] = []
     mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
-    assert any("opening contains technical detail 'SQL'" in issue for issue in v)
-    assert any("closing contains technical detail 'XSS'" in issue for issue in v)
-    assert any("title contains technical detail 'IDOR'" in issue for issue in v)
+    assert v == []
+
+
+@pytest.mark.parametrize(
+    ("closing", "term"),
+    [
+        ("Fix the XSS before release.", "XSS"),
+        ("Fix database injection and mass assignment first.", "injection"),
+        ("Then address stored scripting and token forgery.", "scripting"),
+        ("Remove the hard-coded wallet phrase next.", "hard-coded"),
+    ],
+)
+def test_check_verdict_closing_names_no_attack_even_paraphrased(tmp_path, closing, term):
+    _write_verdict(tmp_path, {"closing": closing})
+    v: list[str] = []
+    mod._check_verdict(tmp_path / ".fragments" / "ms-verdict.json", v)
+    assert v and f"closing names an attack '{term}'" in v[0]
 
 
 def test_check_verdict_body_still_rejects_technology_terms(tmp_path):

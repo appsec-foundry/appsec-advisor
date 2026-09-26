@@ -37,8 +37,9 @@ colours and capability ranking, walkthrough dots and coverage counts — is
 ``severity_rationale`` (``emit_severity_rationale.py``). Surfaces that
 prioritise work rather than state a finding's rating stay on
 ``effective_severity`` by design: §9 abuse cases, mitigation priority and the
-top-mitigation Critical floor (and the QA check that mirrors it), Top Findings
-and walkthrough selection, and the YAML export, which carries both fields.
+top-mitigation Critical floor (and the QA check that mirrors it), the verdict
+bullets' Critical floor (:func:`verdict_floor_ids`), Top Findings and
+walkthrough selection, and the YAML export, which carries both fields.
 
 Triage surfaces (``review_threat_model.py``, ``query_threat_model.py``) tally
 the finding list they operate on, which is the §8 register basis and a
@@ -248,3 +249,36 @@ def low_cell(yaml_data: dict, counts: dict) -> str:
     not measured, not measured-as-zero.
     """
     return "n/a" if low_suppressed(yaml_data) else str(counts.get("low", 0))
+
+
+# verdict.schema.json allows at most 8 bullets, so the floor never demands more
+# Critical findings than that many bullets can each carry alone.
+VERDICT_FLOOR_LIMIT = 8
+
+
+def priority_severity(threat: dict | None) -> str:
+    """Canonical severity for prioritisation surfaces: ``effective_severity`` first."""
+    if not threat:
+        return ""
+    raw = str(threat.get("effective_severity") or "").strip()
+    label = raw[:1].upper() + raw[1:].lower()
+    return label if label in SEVERITY_ORDER else register_severity(threat)
+
+
+def verdict_floor_ids(yaml_data: dict, ranked_ids: list[str] | None = None) -> list[str]:
+    """Display ids of the Critical findings the Management-Summary verdict must cite (RA-23).
+
+    The verdict prioritises like Top Findings and the top-mitigation Critical
+    floor, so it counts :func:`priority_severity` Criticals of the register.
+    Order is the triage ranking, then yaml order; only the first
+    :data:`VERDICT_FLOOR_LIMIT` are required.
+    """
+    critical = [
+        display_id(str(t["id"]))
+        for t in register_threats(yaml_data or {})
+        if t.get("id") and priority_severity(t) == "Critical"
+    ]
+    rank = {tid: i for i, tid in enumerate(display_id(str(r)) for r in (ranked_ids or []))}
+    position = {tid: i for i, tid in enumerate(critical)}
+    critical.sort(key=lambda tid: (rank.get(tid, len(rank)), position[tid]))
+    return critical[:VERDICT_FLOOR_LIMIT]

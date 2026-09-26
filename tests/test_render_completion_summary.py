@@ -2602,6 +2602,16 @@ class TestRequestedDeliverablesAreReported:
         assert body.count("MISSING — requested but not produced") == 5
         assert "5 requested deliverable(s) missing" in body
 
+    def test_a_missing_pdf_or_html_prints_its_export_command(self, tmp_path):
+        mod = _load_module()
+        (tmp_path / "threat-model.pdf").write_text("x", encoding="utf-8")
+        body = "\n".join(mod.render_files(tmp_path, {"write_pdf": True, "write_html": True, "write_sarif": True}))
+        commands = [line.strip() for line in body.splitlines() if line.strip().startswith("python3 ")]
+        assert len(commands) == 1
+        assert "export_html.py --require-mermaid --input" in commands[0]
+        assert commands[0].endswith(str(tmp_path / "threat-model.html"))
+        assert "--no-mermaid" not in body
+
     def test_present_deliverable_is_listed_normally(self, tmp_path):
         mod = _load_module()
         (tmp_path / "threat-model.pdf").write_text("x", encoding="utf-8")

@@ -63,6 +63,7 @@ import argparse
 import datetime as _dt
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -1551,6 +1552,31 @@ def render_files(output_dir: Path, cfg: dict) -> list[str]:
         lines.append("")
         lines.append(f"  ⚠ {len(absent)} requested deliverable(s) missing: {', '.join(absent)}")
         lines.append("    The threat model itself is complete; re-run the export step for these.")
+        lines.extend(_reexport_commands(output_dir, absent))
+    return lines
+
+
+# PDF and HTML need pandoc and a headless Chrome, which a sandboxed session may
+# not start. The summary prints the command itself so the closing message never
+# needs wording of its own (completion_relay rejects text after the summary).
+_REEXPORT_SCRIPTS: dict[str, tuple[str, ...]] = {
+    "threat-model.pdf": ("export_pdf.py",),
+    "threat-model.html": ("export_html.py", "--require-mermaid"),
+}
+
+
+def _reexport_commands(output_dir: Path, absent: list[str]) -> list[str]:
+    scripts_dir = Path(__file__).resolve().parent
+    lines: list[str] = []
+    for basename in absent:
+        script = _REEXPORT_SCRIPTS.get(basename)
+        if script is None:
+            continue
+        argv = ["python3", str(scripts_dir / script[0]), *script[1:]]
+        argv += ["--input", str(output_dir / "threat-model.md"), "--output", str(output_dir / basename)]
+        if not lines:
+            lines.append("    Export from a terminal (needs headless Chrome), or prefix with ! in the session:")
+        lines.append(f"      {shlex.join(argv)}")
     return lines
 
 
@@ -2144,6 +2170,7 @@ def render_summary(
         return "\n".join(lines) + "\n"
 
     lines.extend(render_verdict(md_text, cfg, summarize_threat_model.persisted_verdict(yaml_data, plugin_root)))
+    lines.extend(render_fix_first(yaml_data, cfg))
     if change:
         lines.extend(render_change_summary(change))
         lines.extend(render_threat_delta(change))
@@ -2309,6 +2336,48 @@ def render_verdict(md_text: str, cfg: dict, verdict: dict | None = None) -> list
     lines = ["", f"  -- Verdict {SECTION_RULE[:48]}", ""]
     for line in _verdict_console_lines(verdict_md, (verdict or {}).get("bullets") or []):
         lines.append(f"  {line}" if line.strip() else "")
+    return lines
+
+
+_FIX_FIRST_LIMIT = 8
+
+
+def render_fix_first(yaml_data: dict, cfg: dict) -> list[str]:
+    """Console `Fix first` block: the model's P1 mitigations, most severe finding first.
+
+    What to fix first is the mitigation priority the model assigned, never the
+    verdict's closing prose, which is free text and names no attack (RA-9).
+    """
+    if cfg.get("quiet"):
+        return []
+    threats = {
+        _severity_rollup.display_id(str(t.get("id"))): t
+        for t in (yaml_data.get("threats") or [])
+        if isinstance(t, dict) and t.get("id")
+    }
+
+    def _priority(m: dict) -> str:
+        key = str(m.get("priority") or "").strip().upper()
+        return f"P{key}" if key.isdigit() else key
+
+    rows = []
+    for m in yaml_data.get("mitigations") or []:
+        if not isinstance(m, dict) or not m.get("id") or _priority(m) != "P1":
+            continue
+        refs = [_severity_rollup.display_id(str(t)) for t in (m.get("threat_ids") or [])]
+        ranks = [
+            _severity_rollup.SEVERITY_ORDER.get(_severity_rollup.priority_severity(threats.get(r)), 9) for r in refs
+        ]
+        rows.append((min(ranks, default=9), str(m["id"]), str(m.get("title") or "").strip(), refs))
+    if not rows:
+        return []
+    rows.sort(key=lambda row: (row[0], row[1]))
+    width = max(len(title) for _, _, title, _ in rows[:_FIX_FIRST_LIMIT])
+    lines = ["", "  Fix first (P1 mitigations)"]
+    for _, mid, title, refs in rows[:_FIX_FIRST_LIMIT]:
+        lines.append(f"    {mid}  {title.ljust(width)}  → {', '.join(refs)}".rstrip())
+    if len(rows) > _FIX_FIRST_LIMIT:
+        lines.append(f"    +{len(rows) - _FIX_FIRST_LIMIT} more P1 — see §10 Mitigation Register")
     return lines
 
 

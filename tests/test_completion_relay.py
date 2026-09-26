@@ -97,6 +97,34 @@ class TestMissingLines:
         assert relay.missing_lines(text, "Logs\n" + logs + head)
 
 
+class TestTrailingLines:
+    @pytest.mark.parametrize(
+        "relay_of",
+        [
+            lambda text: text,
+            lambda text: "Here is the completion summary:\n```\n" + text + "```\n",
+        ],
+        ids=["as-printed", "fenced-with-lead-in"],
+    )
+    def test_a_lead_in_and_fences_are_not_trailing_text(self, relay_of):
+        text = _summary("/srv/app")
+        assert relay.trailing_lines(text, relay_of(text)) == []
+
+    def test_a_note_after_the_summary_is_trailing_text(self):
+        text = _summary("/srv/app")
+        note = "---\nHTML export note: run export_html.py from your terminal."
+        assert relay.trailing_lines(text, text + note) == [
+            "---",
+            "HTML export note: run export_html.py from your terminal.",
+        ]
+
+    def test_an_appended_note_is_returned_once(self, run_dir):
+        relay.persist(run_dir, _summary("/srv/app"))
+        message = _summary("/srv/app") + "\nA note of my own."
+        assert relay.review_final_message(run_dir, "", message, retry=False) == ["A note of my own."]
+        assert relay.review_final_message(run_dir, "", message, retry=False) == []
+
+
 class TestPersist:
     def test_records_the_printed_summary_for_the_run_holding_the_lock(self, run_dir):
         relay.persist(run_dir, "line one\n")
