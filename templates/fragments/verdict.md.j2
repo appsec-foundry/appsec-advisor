@@ -14,8 +14,7 @@
              verified_suffixes[] (renderer-computed, one per bullet): a
              plain-language ` — ✓ verified attack path` badge for bullets whose
              findings anchor a fully-viable abuse chain, else '' (abuse-cases.json).
-             Finding references remain provenance data and are intentionally not
-             rendered in this product-owner-facing block.
+             Finding and design-risk references render as compact evidence links.
              method_limits (renderer-computed, unconditional): one sentence on
              the method and any screened or unanalysed components.
 -#}
@@ -30,7 +29,7 @@
 {% endif %}
 <br/>
 
-**{{ data.bullets_intro or "Worst-case scenarios behind this verdict — what an attacker could do today:" }}**
+**{{ data.bullets_intro or ("Residual risks worth reviewing:" if data.severity == "green" else "Security concerns behind this assessment:") }}**
 
 <blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
 

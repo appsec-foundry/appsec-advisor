@@ -869,10 +869,9 @@ def _read_json(path: Path) -> Any:
 def verdict_floor_errors(output_dir: Path, verdict: Any) -> list[str]:
     """Violations of the verdict's Critical floor (RA-23), without the fragment-name prefix.
 
-    Every required Critical (``_severity_rollup.verdict_floor_ids``) is cited by
-    some bullet, and on a red or yellow posture every bullet cites at least one
-    Critical or High finding. Refs the model does not know are left to the
-    schema; without a readable model there is nothing to judge.
+    Check colour, ranked Critical coverage and live finding/design-risk refs.
+    The enclosing pipeline validates the model; standalone schema checks without
+    a model cannot judge these cross-artifact rules.
     """
     if not isinstance(verdict, dict):
         return []
@@ -883,11 +882,7 @@ def verdict_floor_errors(output_dir: Path, verdict: Any) -> list[str]:
     if not isinstance(model, dict):
         return []
     triage = _read_json(output_dir / ".triage-flags.json")
-    try:
-        ranked = [r.get("id") for r in triage["ranking"]["views"]["top_findings"]["findings_ranked"]]
-    except (TypeError, KeyError, AttributeError):
-        ranked = []
-    ranked = [r for r in ranked if isinstance(r, str)]
+    ranked = _severity_rollup.verdict_ranked_ids(triage)
     bullets = [b for b in (verdict.get("bullets") or []) if isinstance(b, dict)]
 
     def _refs(bullet: dict) -> list[str]:
@@ -895,24 +890,35 @@ def verdict_floor_errors(output_dir: Path, verdict: Any) -> list[str]:
 
     cited = {ref for b in bullets for ref in _refs(b)}
     errors: list[str] = []
+    # Catch the former stock approval openings. This is not a semantic proof
+    # of arbitrary prose: authors still own qualifications and prerequisites.
+    if re.match(
+        r"\s*(?:production[- ]ready|ready for production|safe to deploy)\b", str(verdict.get("opening") or ""), re.I
+    ):
+        errors.append("opening asserts release readiness — state security concerns in the assessed scope instead")
+    expected = _severity_rollup.verdict_severity(model)
+    if verdict.get("severity") != expected:
+        errors.append(
+            f"severity must be {expected} for the assessed findings and design risks; "
+            "align the opening with that concern level, not production readiness"
+        )
     missing = [tid for tid in _severity_rollup.verdict_floor_ids(model, ranked) if tid not in cited]
     if missing:
         errors.append(
             f"bullets cite no Critical finding {', '.join(missing)} — add it to the bullet whose "
             "scenario it shares, or give it a bullet of its own"
         )
-    if verdict.get("severity") in ("red", "yellow"):
-        known = {
-            _severity_rollup.display_id(str(t["id"])): _severity_rollup.priority_severity(t)
-            for t in _severity_rollup.register_threats(model)
-            if t.get("id")
-        }
-        for i, bullet in enumerate(bullets):
-            rated = [known[ref] for ref in _refs(bullet) if ref in known]
-            if rated and not any(sev in ("Critical", "High") for sev in rated):
-                errors.append(
-                    f"bullets[{i}] cites no Critical or High finding — replace it with a higher-rated scenario"
-                )
+    known = _severity_rollup.verdict_basis(model)
+    for i, bullet in enumerate(bullets):
+        refs = _refs(bullet)
+        unknown = sorted(set(refs) - known.keys())
+        if unknown:
+            errors.append(f"bullets[{i}] cites unavailable finding or design-risk reference(s): {', '.join(unknown)}")
+        rated = [known[ref] for ref in refs if ref in known]
+        if expected in ("red", "yellow") and rated and not any(sev in ("Critical", "High") for sev in rated):
+            errors.append(
+                f"bullets[{i}] cites no Critical or High finding or design risk — replace it with a higher-rated concern"
+            )
     return errors
 
 
@@ -1059,8 +1065,9 @@ def run_pre_render_gate(
                         "error": "; ".join(floor_errors),
                         "remediation": (
                             f"Edit `.fragments/{path.name}` so its bullets cover the Critical findings named in "
-                            "the violation and every bullet cites a Critical or High finding. Change only the "
-                            "affected bullets and keep every other value."
+                            "the violation and every red/yellow bullet cites a Critical or High concern. Change only the "
+                            "values named in the violation, including severity and unavailable references. "
+                            "A design risk may cite its W-NNN directly; never invent a finding or claim production readiness."
                         ),
                     }
                 )

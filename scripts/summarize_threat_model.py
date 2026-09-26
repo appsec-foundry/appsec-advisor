@@ -417,9 +417,9 @@ _NEXT_STEP_LINES = [
 # Posture flag of the report's `### Verdict`, in the report's own colours.
 _POSTURE_ICON = {"red": "🔴", "yellow": "🟡", "green": "🟢"}
 _POSTURE_LABEL = {
-    "red": "not production-ready",
-    "yellow": "acceptable with caveats",
-    "green": "production-ready",
+    "red": "critical security concerns",
+    "yellow": "high security concerns",
+    "green": "no high or critical concerns reported",
 }
 
 _WRAP_WIDTH = 92

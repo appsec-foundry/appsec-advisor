@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every report section names the same actors as Figure 1, and Identified Actors lists one row per Figure 1 actor with its access, scenarios and finding counts, including configured actors in their group.
 - Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
 - `--stride-cap` and the quick profile never drop a Critical or High finding; only Medium and Low findings are trimmed.
-- Verdicts retain Critical coverage and standard weakness names without inventing fallback outcomes, and completion summaries preserve prerequisites, qualify verification, order P1 fixes by triage rank and show recovery commands for missing PDF or HTML exports.
+- Verdicts rate evidenced concerns without implying release readiness, retain ranked Critical coverage and direct design-risk references, and completion summaries preserve prerequisites, qualify verification, order P1 fixes by triage rank and show recovery commands for missing PDF or HTML exports.
 - Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item.
 - New aiscb installations load verified modules on demand, and `update-baseline` delegates existing upstream installations to compatible signed AISCB installers while preserving their scope and mode.
 - Interactive runs replace generic business-context prompts with finding-backed questions in the report and reuse concrete component or asset answers from `docs/business-context.md` on the next full run.

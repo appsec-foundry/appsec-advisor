@@ -18,7 +18,7 @@
 
 ---
 
-## Pair A — MS Verdict Opening (`ms-verdict.json::verdict_prose`)
+## Pair A — MS Verdict Opening (`ms-verdict.json::opening`)
 
 ### BEFORE (95 words, 5 sentences, AI-flavored)
 
@@ -30,15 +30,16 @@
 - "a user with only a browser and repository read access" — long noun phrase; a human writes "anyone"
 - Closing sentence "Closing the risk requires structural changes at the X, Y, and Z layers, not a single-point patch" — typical AI cadence: triplet + "not a single X" antithesis
 
-### AFTER (62 words, 4 sentences, human)
+### AFTER (bounded assessment)
 
-> 🔴 Not production-ready. The app is a training target — intentional weaknesses live in every tier. Anyone with a browser and repo read access can take over admin accounts and the host server through several independent paths, none of which need elevated privilege or special tooling. Fixing this means rebuilding authentication, data access, and secret management — not patching a single bug.
+> 🔴 Critical security concerns were identified in the assessed scope. The evidenced paths let unauthorized users take over administrative accounts and the host, requiring changes to the affected controls before the team makes a deployment decision.
 
 ### Rule
-1. **Dissolve nominalizations**: "embedding weaknesses" → "weaknesses live"
-2. **Break the triplet cadence**: not "X, Y, and Z layers" — instead a verb form with an em-dash close
-3. **"a user with only a browser…" → "anyone with…"**: shorter, more human
-4. **Word-count reduction ~30 %** with no loss of content
+
+1. Name the evidenced consequence directly.
+2. Bound the assessment to the examined scope; it is not a release approval.
+3. Keep the access prerequisites with each scenario rather than implying that all paths share them.
+4. Leave severity counts to the deterministic renderer.
 
 ---
 

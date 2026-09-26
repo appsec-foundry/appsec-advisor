@@ -268,3 +268,34 @@ def test_every_per_finding_surface_shows_the_register_severity(tmp_path, shape):
     assert compose._severity_by_finding_num([threat])[1] == (expected or "low").lower()
     phrase = wr.SEVERITY_PHRASES.get(expected.lower(), wr.SEVERITY_PHRASES["high"])
     assert wr.render_business_impact(threat, []).startswith(phrase)
+
+
+@pytest.mark.parametrize(
+    "threats,weaknesses,expected",
+    [
+        ([{"id": "T-081", "risk": "Critical"}], [], "red"),
+        ([{"id": "F-207", "risk": "Medium", "effective_severity": "Critical"}], [], "red"),
+        ([{"id": "T-081", "risk": "High"}], [], "yellow"),
+        ([{"id": "T-081", "risk": "Medium"}], [], "green"),
+        ([{"id": "T-081", "risk": "Critical", "evidence_check": "refuted"}], [], "green"),
+        ([], [{"id": "W-031", "kind": "design", "severity_basis": "design-risk", "severity": "Critical"}], "red"),
+        ([], [{"id": "W-044", "kind": "design", "severity_basis": "design-risk", "severity": "High"}], "yellow"),
+        ([], [{"id": "W-031", "severity_basis": "observed-practice", "severity": "Critical"}], "green"),
+    ],
+)
+def test_verdict_concern_basis(threats, weaknesses, expected):
+    import copy
+
+    model = {"threats": threats, "weaknesses": weaknesses}
+    before = copy.deepcopy(model)
+    assert sr.verdict_severity(model) == expected
+    assert model == before  # overall concern never rewrites a finding's rating/evidence
+
+
+def test_verdict_practice_concern_does_not_claim_confirmation():
+    model = {
+        "threats": [{"id": "T-081", "risk": "High", "evidence_tier": "insecure-practice"}],
+        "weaknesses": [{"id": "W-001", "kind": "implementation", "severity_basis": "observed-practice"}],
+    }
+    assert sr.verdict_basis(model) == {"F-081": "High"}
+    assert sr.weakness_basis_breakdown(model)[1] == 0

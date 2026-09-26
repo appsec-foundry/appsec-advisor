@@ -705,7 +705,7 @@ class TestVerdict:
     def test_red_posture_when_critical_present(self):
         data = json.loads(pf.gen_verdict(self._YAML))
         assert data["severity"] == "red"
-        assert data["opening"].startswith("Not production-ready")
+        assert data["opening"].startswith("Critical security concerns")
 
     def test_yellow_posture_when_high_no_critical(self):
         y = {
@@ -749,9 +749,7 @@ class TestVerdict:
             pytest.param(
                 [("Critical", s, None) for s in ("Tampering", "Spoofing", "Denial of Service") * 4], id="12-critical"
             ),
-            pytest.param(
-                [("Medium", "Tampering", "Critical"), ("Low", "Spoofing", None)], id="green-with-effective-critical"
-            ),
+            pytest.param([("Medium", "Tampering", "Critical"), ("Low", "Spoofing", None)], id="effective-critical"),
             pytest.param([("High", "Spoofing", None), ("Medium", "Tampering", None)], id="yellow"),
             pytest.param([("Medium", "Tampering", None), ("Low", "Spoofing", None)], id="green"),
         ],
@@ -4165,3 +4163,56 @@ def test_verdict_schema_still_rejects_empty_or_oversized_scenario_lists(count):
     schema = json.loads((REPO_ROOT / "schemas/fragments/verdict.schema.json").read_text())
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(data, schema)
+
+
+@pytest.mark.parametrize("offset,prefix", [(0, "T"), (200, "F")])
+def test_ranked_verdict_floor_matches_the_gate(tmp_path, offset, prefix):
+    """A neutral reproduction and renamed variant of the >8-Critical ranking defect."""
+    import validate_fragment
+
+    ids = [f"{prefix}-{offset + i:03d}" for i in range(1, 13)]
+    model = {"threats": [{"id": tid, "risk": "Critical", "stride": "Tampering"} for tid in ids]}
+    triage = {"ranking": {"views": {"top_findings": {"findings_ranked": [{"id": tid} for tid in reversed(ids)]}}}}
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    (tmp_path / ".triage-flags.json").write_text(json.dumps(triage))
+    assert pf.main([str(tmp_path), "--only", "ms-verdict.json"]) == 0
+    verdict = json.loads((tmp_path / ".fragments/ms-verdict.json").read_text())
+    assert validate_fragment.verdict_floor_errors(tmp_path, verdict) == []
+    cited = {ref for b in verdict["bullets"] for ref in b["refs"]}
+    assert set(ids[-8:]) <= cited
+
+
+@pytest.mark.parametrize("wid,risk", [("W-031", "Critical"), ("W-204", "High")])
+def test_verdict_design_risk_has_its_own_evidence(tmp_path, wid, risk):
+    import validate_fragment
+    import validate_ms_compactness
+
+    model = {
+        "threats": [{"id": "T-071", "risk": "Medium", "stride": "Repudiation"}],
+        "weaknesses": [{"id": wid, "kind": "design", "severity_basis": "design-risk", "severity": risk}],
+    }
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    assert pf.main([str(tmp_path), "--only", "ms-verdict.json"]) == 0
+    verdict = json.loads((tmp_path / ".fragments/ms-verdict.json").read_text())
+    assert verdict["severity"] == ("red" if risk == "Critical" else "yellow")
+    assert any(wid in b["refs"] for b in verdict["bullets"])
+    assert validate_fragment.ms_renderer_schema_errors(tmp_path) == []
+    language = []
+    validate_ms_compactness._check_verdict(tmp_path / ".fragments/ms-verdict.json", language)
+    assert language == []
+    assert "production-ready" not in verdict["opening"].lower()
+    model["threats"] = []
+    assert json.loads(pf.gen_verdict(model))["bullets"][0]["refs"] == [wid]
+
+
+def test_verdict_fallback_ignores_refuted_findings():
+    model = {
+        "threats": [
+            {"id": "T-071", "risk": "Critical", "evidence_check": "refuted"},
+            {"id": "T-072", "risk": "Medium", "stride": "Repudiation"},
+        ]
+    }
+    verdict = json.loads(pf.gen_verdict(model))
+    assert verdict["severity"] == "green"
+    assert [ref for b in verdict["bullets"] for ref in b["refs"]] == ["T-072"]
+    assert "does not establish" in verdict["opening"]

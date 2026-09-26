@@ -641,6 +641,39 @@ def test_all_shipped_source_routes_remain_selective():
         assert selection.paths != ("tests/",), (source, selection.reasons)
 
 
+@pytest.mark.parametrize(
+    "source, readers",
+    [
+        ("agents/appsec-ms-renderer.md", {"dispatch_manifest", "prompt_token_bounds"}),
+        ("agents/appsec-secarch-renderer.md", {"prompt_token_bounds"}),
+        (
+            "agents/appsec-threat-renderer.md",
+            {
+                "dispatch_manifest",
+                "fragment_authoring_fidelity",
+                "phase_group_prompts",
+                "schema_drift",
+                "validate_ms_compactness",
+                "requirements_resolution",
+            },
+        ),
+    ],
+)
+def test_renderer_prompts_select_their_contract_readers_without_full_suite(source, readers):
+    readers |= {
+        "agent_definitions",
+        "agent_doc_shell_snippets",
+        "completion_contract",
+        "fragment_invariant_parity",
+        "requirements_verification",
+        "stride_outputs",
+    }
+    selection = runner.select_changed([source])
+    assert {f"tests/test_{reader}.py" for reader in readers} <= set(selection.paths)
+    assert "tests/" not in selection.paths
+    assert "tests/test_orchestration_controller.py" not in selection.paths
+
+
 def test_modules_on_the_golden_fixture_replay_route_to_it():
     """threat_fixture replays these producers, so every routed module they import must select it."""
     replayed = ("scripts/compose_threat_model.py", "scripts/build_threat_model_yaml.py")

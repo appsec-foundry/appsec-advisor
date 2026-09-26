@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://appsec-advisor/schemas/fragments/verdict.schema.json",
   "title": "Management Summary — Verdict fragment",
-  "description": "Structured data the LLM writes for the `### Verdict` sub-section. The renderer composes the final markdown (red HTML blockquote + F-NNN linkification) from this data. The LLM never writes raw markdown for this section.",
+  "description": "Structured Management Summary verdict. The generator and gate share the concern rating; the LLM authors evidence-supported prose and the composer adds counts and citations.",
   "type": "object",
   "required": ["severity", "opening", "bullets", "closing"],
   "additionalProperties": false,
@@ -10,27 +10,27 @@
     "severity": {
       "type": "string",
       "enum": ["green", "yellow", "red"],
-      "description": "Overall posture. 🟢 green = production-ready, 🟡 yellow = acceptable with caveats, 🔴 red = not production-ready."
+      "description": "Concern level in the assessed scope: red for any Critical priority finding or Critical design risk, otherwise yellow for High, otherwise green. Green means no High or Critical concern reported, never production readiness. Refuted findings are excluded; practice findings retain their unproven status."
     },
     "opening": {
       "type": "string",
       "minLength": 60,
       "maxLength": 450,
-      "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
-      "description": "Opening assessment — ONE or TWO short sentences for the product owner, who owns roadmap and budget but is not a security engineer. State the overall business posture and consequence in plain language (who can do what, with what access, to whose data); do not name attack classes or implementation mechanics. Begin with a posture phrase such as 'Not production-ready', 'Production-ready with reservations', or 'Production-ready'. The bullets[] array supplies concrete scenarios, so do not repeat them here. Do NOT enumerate findings or reference F-NNN / T-NNN IDs. Stay at management altitude: no config keys, library names or versions, CVE/CWE numbers, file names or file:line refs, framework-internal symbols, ports, security acronyms, or protocol names. The renderer prepends the severity emoji."
+      "pattern": "^(?!.*\\b[FTW]-\\d{3,4}\\b).*$",
+      "description": "One or two short sentences stating security concerns and consequences in the assessed scope. Lead with the outcome; standard weakness names are allowed. Do not assert production readiness, deployment safety or complete coverage. Do not enumerate findings or severity counts; the composer supplies the counts. No technology identifiers, code, locations or finding IDs."
     },
     "bullets_intro": {
       "type": "string",
       "minLength": 20,
       "maxLength": 200,
-      "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
-      "description": "ONE short sentence that introduces the blockquote of worst-case scenarios below. Frames what the reader is about to see without claiming a ranking. Renders in bold directly above the red HTML blockquote. Do NOT cite individual finding IDs here — the bullets do that. On red or yellow use 'What an attacker can do today:'; on green, where the opening states that no weakness gives an attacker meaningful access, use 'Residual risks worth monitoring:' instead. Assert no access level the bullets do not all share — each bullet carries its own precondition in body."
+      "pattern": "^(?!.*\\b[FTW]-\\d{3,4}\\b).*$",
+      "description": "One short neutral introduction without a ranking or shared access prerequisite. Use Security concerns behind this assessment: on red/yellow, Residual risks worth reviewing: on green. Design risks and unproven findings must not be framed as confirmed attacks."
     },
     "bullets": {
       "type": "array",
       "minItems": 1,
       "maxItems": 8,
-      "description": "Worst-case attack scenarios, business-language. Rendered as bold bullets inside the red HTML blockquote. Use one when only one distinct scenario is supported; never pad the list. Quick depth typically authors 3–5; standard/thorough may emit up to 8 when distinct attack paths warrant it.",
+      "description": "One to eight evidence-supported scenarios or design concerns. Every red/yellow bullet cites a High or Critical priority finding or design risk. Cite design-risk weaknesses directly when no confirmed finding supports the concern; do not invent an attack.",
       "items": {
         "type": "object",
         "required": ["title", "body", "refs"],
@@ -40,7 +40,7 @@
             "type": "string",
             "minLength": 5,
             "maxLength": 60,
-            "description": "Short, plain-language business-outcome headline, e.g. 'Admin login without a password'. Rendered bold. Do not name an attack technique or implementation detail."
+            "description": "Short business-outcome or design-concern headline. Standard weakness names are allowed; implementation details are not."
           },
           "body": {
             "type": "string",
@@ -54,8 +54,8 @@
             "maxItems": 5,
             "items": {
               "type": "string",
-              "pattern": "^[FT]-\\d{3,4}$",
-              "description": "Finding (F-NNN) or threat (T-NNN) reference. Provenance only: it is retained to derive the verification status, but is deliberately not displayed in the management summary. Each reference must directly support this scenario; do not add loosely related Critical findings."
+              "pattern": "^[FTW]-\\d{3,4}$",
+              "description": "Live finding F-NNN/T-NNN or design-risk weakness W-NNN. Every reference must directly support the concern and resolve in the current model. The composer displays compact citations; a W reference does not establish confirmed exploitation."
             }
           }
         }
@@ -65,8 +65,8 @@
       "type": "string",
       "minLength": 40,
       "maxLength": 220,
-      "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
-      "description": "ONE short plain-language closing assessment — the bottom line / call to action. Rendered after the bullets blockquote. Do NOT reference F-NNN / T-NNN IDs, security acronyms, attack-class names, config keys, libraries, files, or implementation details."
+      "pattern": "^(?!.*\\b[FTW]-\\d{3,4}\\b).*$",
+      "description": "ONE short plain-language closing assessment — the bottom line / call to action. Rendered after the bullets blockquote. Do NOT reference F-NNN / T-NNN / W-NNN IDs, security acronyms, attack-class names, config keys, libraries, files, or implementation details."
     }
   }
 }

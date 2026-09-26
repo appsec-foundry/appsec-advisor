@@ -2644,6 +2644,10 @@ def _build_verdict_export(ctx: RenderContext, data: dict, fmap: dict[str, list[s
         weaknesses: list[str] = []
         for raw in b.get("refs") or []:
             fid = _severity_rollup.display_id(str(raw).strip().upper())
+            if re.fullmatch(r"W-\d+", fid):
+                if fid not in weaknesses:
+                    weaknesses.append(fid)
+                continue
             if not re.match(r"^F-\d+$", fid):
                 continue
             if fid not in findings:
@@ -7083,8 +7087,13 @@ def _verdict_bullet_refs_suffix(refs: list[str], ctx: RenderContext) -> str:
     fw = _get_finding_weakness_map(ctx)
     flinks: list[str] = []
     wids: list[str] = []
+    direct_wids: list[str] = []
     for r in refs:
         ru = str(r).strip().upper()
+        if re.fullmatch(r"W-\d+", ru):
+            if ru not in direct_wids:
+                direct_wids.append(ru)
+            continue
         m = re.search(r"(\d+)$", ru)
         if not m or not ru.startswith(("T-", "F-")):
             continue
@@ -7095,11 +7104,15 @@ def _verdict_bullet_refs_suffix(refs: list[str], ctx: RenderContext) -> str:
         w = fw.get(f"F-{n}")
         if w and w.get("id") and w["id"] not in wids:
             wids.append(w["id"])
-    if not flinks:
+    if not flinks and not direct_wids:
         return ""
     tail = ", ".join(flinks)
     if wids:
         tail += " → " + ", ".join(f"[{wid}](#{wid.lower()})" for wid in wids)
+    # Direct design-risk citations do not claim a finding → weakness relation.
+    direct_wids = [wid for wid in direct_wids if wid not in wids]
+    if direct_wids:
+        tail += ("; " if tail else "") + ", ".join(f"[{wid}](#{wid.lower()})" for wid in direct_wids)
     return f" *({tail})*"
 
 

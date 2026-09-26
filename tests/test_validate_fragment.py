@@ -1193,7 +1193,13 @@ def _floor_errors(tmp_path: Path, threats: list[dict], verdict: dict, ranked: li
             [],
             id="green-may-cite-residual-risks",
         ),
-        pytest.param([_finding(1, "High")], _verdict(["T-001"], ["T-999"]), None, [], id="unknown-ref-left-to-schema"),
+        pytest.param(
+            [_finding(1, "High")],
+            _verdict(["T-001"], ["T-999"], severity="yellow"),
+            None,
+            ["unavailable"],
+            id="unknown-ref-is-rejected",
+        ),
     ],
 )
 def test_verdict_floor(tmp_path: Path, threats, verdict, ranked, expected):
@@ -1221,3 +1227,53 @@ def test_pre_render_gate_turns_an_uncited_critical_into_a_repair_action(tmp_path
     assert "Critical findings named in the violation" in action["remediation"]
     # The renderer's own gate reports the same violation the pre-render gate fails on.
     assert any("F-002" in e for e in vf.ms_renderer_schema_errors(tmp_path))
+
+
+@pytest.mark.parametrize("tid", ["T-071", "F-208"])
+@pytest.mark.parametrize("case", ["green-critical", "yellow-critical", "unknown", "refuted", "approval"])
+def test_verdict_rejects_inconsistent_colour_and_refs(tmp_path, tid, case):
+    model = {"threats": [{"id": tid, "risk": "Critical"}]}
+    verdict = _verdict([tid])
+    expected = "severity must be red"
+    if case in ("green-critical", "yellow-critical"):
+        verdict["severity"] = case.split("-")[0]
+    elif case == "unknown":
+        verdict["bullets"].append(_verdict(["T-999"])["bullets"][0])
+        expected = "unavailable"
+    elif case == "refuted":
+        model["threats"].append({"id": "T-999", "risk": "Critical", "evidence_check": "refuted"})
+        verdict["bullets"].append(_verdict(["T-999"])["bullets"][0])
+        expected = "unavailable"
+    else:
+        verdict["opening"] = (
+            "Production-ready with reservations: review the listed security concerns before deployment."
+        )
+        expected = "release readiness"
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    frag = tmp_path / ".fragments"
+    frag.mkdir()
+    (frag / "ms-verdict.json").write_text(json.dumps(verdict))
+    assert any(expected in error for error in vf.ms_renderer_schema_errors(tmp_path))
+    vf.run_pre_render_gate(tmp_path, write_repair_plan=True)
+    report = json.loads((tmp_path / ".pre-render-report.json").read_text())
+    assert any(row["file"] == "ms-verdict.json" and expected in row["error"] for row in report["failed"])
+
+
+def test_verdict_accepts_residual_risk_without_release_approval(tmp_path):
+    verdict = _verdict(["T-071"], severity="green")
+    verdict["opening"] = (
+        "No high security concerns were reported in the assessed scope; unexamined surfaces remain outside this conclusion."
+    )
+    assert _floor_errors(tmp_path, [_finding(71, "Medium")], verdict) == []
+
+
+def test_verdict_rejects_non_design_weakness_as_direct_evidence(tmp_path):
+    model = {
+        "threats": [_finding(1, "High")],
+        "weaknesses": [
+            {"id": "W-071", "severity": "High", "severity_basis": "observed-practice"},
+        ],
+    }
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    errors = vf.verdict_floor_errors(tmp_path, _verdict(["W-071"], severity="yellow"))
+    assert any("W-071" in error and "unavailable" in error for error in errors)

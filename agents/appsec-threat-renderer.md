@@ -163,7 +163,7 @@ fragment schema limits, so a disciplined first write passes immediately.
 
 ### `ms-verdict.json` authoring contract
 
-Renders as the §1 Verdict block (red/yellow/green HTML blockquote). **Author EXACTLY this schema** (`schemas/fragments/verdict.schema.json`, `additionalProperties:false` — any extra key fails `compose --strict`):
+Renders as the §1 Verdict block with a concern-level cue, never a production-readiness decision. **Author EXACTLY this schema** (`schemas/fragments/verdict.schema.json`, `additionalProperties:false` — any extra key fails `compose --strict`):
 
 ```json
 {
@@ -174,36 +174,22 @@ Renders as the §1 Verdict block (red/yellow/green HTML blockquote). **Author EX
     {
       "title": "<plain-language business-outcome headline, 5-60 chars>",
       "body": "<one short sentence: outcome and broad protection gap, 20-260 chars>",
-      "refs": ["T-001", "F-012"]         // REQUIRED, 1-5 ids, each matching ^[FT]-\\d{3,4}$
+      "refs": ["T-001", "F-012"]         // REQUIRED, 1-5 ids, each matching ^[FTW]-\\d{3,4}$
     }
   ],
   "closing": "<one short plain-language wrap, 40-220 chars>"   // REQUIRED. NO F/T ids (regex-blocked). NOT "closing_prose".
 }
 ```
 
-**`bullets_intro` must not assert a precondition the bullets do not all share.**
-It introduces a heterogeneous list, so any blanket claim about access level
-("an unauthenticated attacker can reach each of the following"), effort, or
-time is false as soon as one bullet needs a logged-in session — and it is the
-sentence the reader trusts for all of them. Juice-shop 2026-08-22 shipped
-exactly that: the intro claimed unauthenticated reach while two of six bullets
-read "any logged-in user" and "any customer" in their own bodies. Each bullet
-already carries its own precondition in `body`; leave it there. Write a neutral
-frame that claims no order — on red or yellow "What an attacker can do today:",
-on green "Residual risks worth monitoring:" — or omit the key; it is optional,
-and the deterministic default is the same neutral pair.
-A uniform precondition is allowed only when EVERY bullet genuinely shares it.
+**Rating and evidence.** Use the shared concern level: any Critical priority finding (`effective_severity`, otherwise `risk`) or Critical design-risk weakness means red; otherwise High means yellow; otherwise green. Exclude refuted findings; practice findings retain their unproven status. This rates concerns in the assessed scope, not production readiness or coverage. Keep unproven exploitation qualified. A design-risk weakness may be cited directly as `W-NNN`; do not invent a finding for it. The gate checks the colour and every reference against the current model.
 
-The frame names what the bullets ARE, so do not spend `opening` on a second
-forward pointer to them ("the scenarios below summarise…"): the reader then
-gets "look below" twice in a row. Keep `opening` on posture and let this line
-hand over.
+**Introduction.** Use "Security concerns behind this assessment:" on red/yellow and "Residual risks worth reviewing:" on green, or omit the field for that deterministic default. Assert no ranking or shared prerequisite; each bullet states its own access requirements. Keep `opening` on the assessment rather than a second pointer to the bullets.
 
 **Forbidden legacy keys** (they were the 2026-06-05 parallel-render drift): `verdict_label`, `verdict_color`, `worst_case_scenarios`, `closing_prose`, `verdict_prose`. The ONLY top-level keys are the five above. Do not cite exact severity counts in `opening` (the composer injects the authoritative `**Risk distribution:** …` line). Run the MS compactness gate after authoring (see "MS prose — single-pass discipline").
 
-**Management-language hard gate.** A product owner must understand the verdict without security training. `opening` is at most 52 words; each bullet body is **one sentence, aim for 20 words and never exceed 26** (the gate rejects 27+); `closing` is at most 220 characters. A body must **add what the `title` does not already say** — the weakness class, who reaches it, what they walk away with. Name the class by its standard name — "SQL injection", "stored cross-site scripting (XSS)", "path traversal in archive upload (zip slip)", "mass assignment on account update", "hard-coded token signing key" — never an invented paraphrase such as "database injection". Restating the title in other words and padding with a generic consequence clause ("granting complete control over all user accounts and data") is the failure mode this budget exists to prevent; cut the clause rather than the fact. `opening` and `title` lead with the outcome ("account takeover", "customer data exposed", "server takeover", "active login stolen") and may name the standard class. `closing` names no attack at all, neither by class nor in paraphrase: the bullets already name the attack paths, so it states the business consequence or operating context (the gate rejects `injection`, `scripting`, `forgery`, `hard-coded` and the like there). No field uses technology or implementation vocabulary — for example `JWT`, `RSA`, `API`, `endpoint`, `middleware`, `localStorage`, `HttpOnly`, `sandbox` — nor file paths, line numbers, code, backticks, config keys, library names, or CWE/CVE numbers. `refs` are audit provenance only: the renderer deliberately hides IDs, finding titles, locations, and abuse-case IDs in this block. Every reference must directly support the scenario; never pad a bullet with a loosely related Critical finding.
+**Management-language hard gate.** A product owner must understand the verdict without security training. `opening` is at most 52 words; each bullet body is **one sentence, aim for 20 words and never exceed 26** (the gate rejects 27+); `closing` is at most 220 characters. A body must **add what the `title` does not already say** — the weakness class, who reaches it, what they walk away with. Name the class by its standard name — "SQL injection", "stored cross-site scripting (XSS)", "path traversal in archive upload (zip slip)", "mass assignment on account update", "hard-coded token signing key" — never an invented paraphrase such as "database injection". Restating the title in other words and padding with a generic consequence clause ("granting complete control over all user accounts and data") is the failure mode this budget exists to prevent; cut the clause rather than the fact. `opening` and `title` lead with the outcome ("account takeover", "customer data exposed", "server takeover", "active login stolen") and may name the standard class. `closing` names no attack at all, neither by class nor in paraphrase: the bullets already name the attack paths, so it states the business consequence or operating context (the gate rejects `injection`, `scripting`, `forgery`, `hard-coded` and the like there). No field uses technology or implementation vocabulary — for example `JWT`, `RSA`, `API`, `endpoint`, `middleware`, `localStorage`, `HttpOnly`, `sandbox` — nor file paths, line numbers, code, backticks, config keys, library names, or CWE/CVE numbers. `refs` become compact evidence links; finding titles, locations and abuse-case IDs stay out of this block. Every reference must directly support the scenario; never pad a bullet with a loosely related Critical finding.
 
-**Which scenarios — the Critical floor (RA-23).** Take the scenarios from `.triage-flags.json → ranking.views.top_findings.findings_ranked`, in that order, and group findings that give the attacker the same outcome into one bullet. Every finding with `effective_severity: Critical` must appear in some bullet's `refs` (the first 8 by rank when there are more). A Critical that shares no scenario with an existing bullet gets a bullet of its own; that is not padding. On a red or yellow verdict every bullet cites at least one finding with `effective_severity` Critical or High. Authorization defects (IDOR, missing ownership or role checks) are Criticals like any other: write their outcome ("another customer's orders read and changed") even when the finding text is terse. The compactness gate checks the floor and names every uncited Critical. The renderer shows only the plain-language badge `✓ cited finding in a code-verified chain` when a referenced finding participates in a fully viable chain; this does not verify the entire scenario.
+**Which scenarios — the Critical floor (RA-23).** Take the scenarios from `.triage-flags.json → ranking.views.top_findings.findings_ranked`, in that order, and group findings that give the attacker the same outcome into one bullet. Every finding with `effective_severity: Critical` must appear in some bullet's `refs` (the first 8 by rank when there are more). A Critical that shares no scenario with an existing bullet gets a bullet of its own; that is not padding. On a red or yellow verdict every bullet cites a Critical or High priority finding or design-risk weakness. Authorization defects (IDOR, missing ownership or role checks) are Criticals like any other: write their outcome ("another customer's orders read and changed") even when the finding text is terse. The compactness gate checks the floor and names every uncited Critical. The renderer shows only the plain-language badge `✓ cited finding in a code-verified chain` when a referenced finding participates in a fully viable chain; this does not verify the entire scenario.
 
 ### `ms-anti-patterns.json` authoring contract (OPTIONAL — architecture anti-patterns)
 

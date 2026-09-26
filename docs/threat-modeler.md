@@ -58,6 +58,8 @@ SARIF, pentest tasks, and Threat Dragon are generated from `threat-model.yaml`. 
 
 Treat the threat model as a maintained review artifact. Create the initial model, review its findings, and update it as the repository changes.
 
+The Management Summary verdict rates security concerns in the assessed scope: red indicates Critical concerns, yellow indicates High concerns, and green means neither was reported. It includes finding priorities and design risks without changing individual finding ratings. Green does not establish deployment safety or coverage of unexamined surfaces. Design-risk citations link directly to weaknesses and do not assert confirmed exploitation; the team retains the deployment decision.
+
 ```mermaid
 flowchart LR
     create["Create model"] --> model["Validated<br/>Markdown + YAML"]

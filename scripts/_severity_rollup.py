@@ -265,6 +265,44 @@ def priority_severity(threat: dict | None) -> str:
     return label if label in SEVERITY_ORDER else register_severity(threat)
 
 
+def verdict_ranked_ids(triage: dict | None) -> list[str]:
+    """Read the shared Top Findings order; an absent view uses model order."""
+    try:
+        rows = triage["ranking"]["views"]["top_findings"]["findings_ranked"]
+    except (TypeError, KeyError):
+        return []
+    if not isinstance(rows, list):
+        return []
+    return [r["id"] for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)]
+
+
+def verdict_basis(yaml_data: dict) -> dict[str, str]:
+    """Citable concerns and their priority, without asserting exploitability.
+
+    Findings retain their register ratings; verified priority elevation affects
+    the overall concern, as it does scenario selection. Design-risk weaknesses
+    have no confirmed finding and therefore carry their own W reference.
+    Refuted findings cannot support a verdict. Practice findings remain citable
+    while present in the register, without becoming confirmed exploitation.
+    """
+    basis = {display_id(str(t["id"])): priority_severity(t) for t in register_threats(yaml_data) if t.get("id")}
+    for w in yaml_data.get("weaknesses") or []:
+        if w.get("id") and w.get("severity_basis") == "design-risk":
+            basis[str(w["id"])] = register_severity(w)
+    return basis
+
+
+def verdict_severity(yaml_data: dict) -> str:
+    """Rate concerns in the assessed scope, never production readiness.
+
+    Critical concerns (including elevated findings and design risks) are red;
+    High concerns are yellow. Green means neither was reported, not that the
+    system is safe or that unexamined surfaces have been assessed.
+    """
+    severities = set(verdict_basis(yaml_data).values())
+    return "red" if "Critical" in severities else "yellow" if "High" in severities else "green"
+
+
 def verdict_floor_ids(yaml_data: dict, ranked_ids: list[str] | None = None) -> list[str]:
     """Display ids of the Critical findings the Management-Summary verdict must cite (RA-23).
 

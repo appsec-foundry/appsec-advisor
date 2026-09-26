@@ -1721,7 +1721,7 @@ properties:
     required: [severity, opening, bullets]
     properties:
       severity:
-        description: Overall posture. green = production-ready, yellow = acceptable with caveats, red = not production-ready.
+        description: Concern level in the assessed scope; green means no High or Critical concern reported, yellow means High concerns, red means Critical concerns, never production readiness.
         type: string
         enum: [green, yellow, red]
       opening:
@@ -1748,7 +1748,7 @@ properties:
                 type: string
                 pattern: "^F-\\d{3,}$"
             weaknesses:
-              description: Systemic weaknesses (W-NNN) the cited findings roll up to.
+              description: Systemic weaknesses (W-NNN) cited directly as design risks or linked from the cited findings.
               type: array
               items:
                 type: string

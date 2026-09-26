@@ -191,7 +191,7 @@ def test_worst_case_prefers_the_persisted_verdict(tmp_path):
     summary = stm.build_summary(data, tmp_path)
     out = stm.render_text(summary, None, show_all=False)
 
-    assert "Verdict    🔴 not production-ready" in out
+    assert "Verdict    🔴 critical security concerns" in out
     assert "anyone can reach admin data today" in out
     assert "Fix the credential handling" in out
     # The shared worst-case table: ✓, outcome, the finding's weakness class.

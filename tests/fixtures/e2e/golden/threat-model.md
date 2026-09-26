@@ -81,7 +81,7 @@ _Append-only history of assessment runs. Most recent first._
 
 <br/>
 
-**Worst-case scenarios behind this verdict - what an attacker could do today:**
+**Security concerns behind this assessment:**
 
 <blockquote style="border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;">
 

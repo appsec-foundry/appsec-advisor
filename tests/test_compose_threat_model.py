@@ -7111,3 +7111,67 @@ def test_verdict_badge_claims_participation_not_whole_scenario(refs, fmap):
     badge = compose._verdict_bullet_badge(refs, fmap)
     assert badge == " — ✓ cited finding in a code-verified chain"
     assert compose._verdict_bullet_badge(["F-999"], fmap) == ""
+
+
+@pytest.mark.parametrize("wid", ["W-031", "W-204"])
+def test_verdict_direct_design_reference_survives_render_and_export(tmp_path, wid):
+    import emit_verdict_to_model
+    import pregenerate_fragments
+
+    model = {
+        "threats": [],
+        "weaknesses": [
+            {"id": wid, "kind": "design", "severity_basis": "design-risk", "severity": "Critical"},
+        ],
+    }
+    ctx, env, section = _verdict_ctx_with_abuse(tmp_path, [], None)
+    ctx.yaml_data = model
+    fragment = pregenerate_fragments.gen_verdict(model)
+    (ctx.fragments_dir / "ms-verdict.json").write_text(fragment)
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    rendered = compose._render_verdict(ctx, env, section)
+    assert f"[{wid}](#{wid.lower()})" in rendered
+    assert "✓" not in rendered
+    assert ctx.verdict_export["bullets"][0]["findings"] == []
+    assert ctx.verdict_export["bullets"][0]["weaknesses"] == [wid]
+    assert emit_verdict_to_model.build_verdict(tmp_path) == ctx.verdict_export
+
+
+def test_green_verdict_default_intro_does_not_assert_an_attack(tmp_path):
+    ctx, env, section = _verdict_ctx_with_abuse(
+        tmp_path,
+        [
+            {
+                "title": "Residual concern",
+                "body": "The cited finding describes a limited accountability concern.",
+                "refs": ["T-071"],
+            }
+        ],
+        None,
+    )
+    frag = ctx.fragments_dir / "ms-verdict.json"
+    data = json.loads(frag.read_text())
+    data["severity"] = "green"
+    frag.write_text(json.dumps(data))
+    rendered = compose._render_verdict(ctx, env, section)
+    assert "Residual risks worth reviewing:" in rendered
+    assert "what an attacker could do today" not in rendered
+
+
+def test_verdict_direct_design_citation_does_not_invent_a_finding_relation(tmp_path):
+    ctx = compose.RenderContext(
+        output_dir=tmp_path,
+        contract={},
+        triage={},
+        fragments_dir=tmp_path,
+        yaml_data={
+            "threats": [{"id": "T-071", "risk": "High"}],
+            "weaknesses": [
+                {"id": "W-011", "instances": [{"id": "T-071"}]},
+                {"id": "W-204", "severity_basis": "design-risk"},
+            ],
+        },
+    )
+    suffix = compose._verdict_bullet_refs_suffix(["T-071", "W-204", "W-011"], ctx)
+    assert suffix == " *([F-071](#f-071) → [W-011](#w-011); [W-204](#w-204))*"
+    assert compose._verdict_bullet_refs_suffix(["W-204", "W-204"], ctx) == " *([W-204](#w-204))*"

@@ -511,10 +511,43 @@ MANUAL_TESTS = {
 # Repository documents (guidance, changelog, docs, specs, requirement bindings)
 # are not runtime input: their routes name the tests that read them, including
 # the tracked-file content scan. Shipped Markdown under agents/ and skills/
-# remains runtime input and therefore falls back to all. threat_fixture replays
+# remains runtime input and falls back to all unless explicitly routed below. threat_fixture replays
 # build_threat_model_yaml and compose_threat_model, so modules they import
 # route to it.
 SOURCE_TESTS = {
+    "agents/appsec-ms-renderer.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        completion_contract
+        dispatch_manifest
+        fragment_invariant_parity
+        prompt_token_bounds
+        requirements_verification
+        stride_outputs
+    """),
+    "agents/appsec-secarch-renderer.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        completion_contract
+        fragment_invariant_parity
+        prompt_token_bounds
+        requirements_verification
+        stride_outputs
+    """),
+    "agents/appsec-threat-renderer.md": _tests("""
+        agent_definitions
+        agent_doc_shell_snippets
+        completion_contract
+        dispatch_manifest
+        fragment_authoring_fidelity
+        fragment_invariant_parity
+        phase_group_prompts
+        requirements_resolution
+        requirements_verification
+        schema_drift
+        stride_outputs
+        validate_ms_compactness
+    """),
     "scripts/dispatch_window.py": _tests("""
         orchestration_controller
         record_stage_stats

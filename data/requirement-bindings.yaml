@@ -44,12 +44,25 @@ requirements:
     applies_to:
       - agents/appsec-stride-analyzer-v2.md
       - docs/threat-modeler.md
-    decisions: []
+      - agents/appsec-threat-renderer.md
+      - agents/shared/ms-template.md
+      - agents/shared/prose-samples.md
+      - scripts/_severity_rollup.py
+      - scripts/pregenerate_fragments.py
+      - scripts/validate_fragment.py
+      - scripts/summarize_threat_model.py
+      - schemas/fragments/verdict.schema.json
+    decisions:
+      - RA-24
     documents:
       - README.md
       - docs/threat-modeler.md
-    coverage: advisory
-    guards: []
+    coverage: partial
+    guards:
+      - tests/test_severity_rollup.py::test_verdict_concern_basis
+      - tests/test_pregenerate_fragments.py::test_verdict_design_risk_has_its_own_evidence
+      - tests/test_validate_fragment.py::test_verdict_rejects_inconsistent_colour_and_refs
+      - tests/test_validate_fragment.py::test_verdict_accepts_residual_risk_without_release_approval
 
   REQ-PUR-003:
     applies_to:
@@ -190,6 +203,7 @@ requirements:
     documents: []
     coverage: partial
     guards:
+      - tests/test_severity_rollup.py::test_verdict_practice_concern_does_not_claim_confirmation
       - tests/test_figure2_svg.py::test_unproven_status_and_risk_do_not_come_from_impact_defaults
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_unproven_evidence_keeps_its_status
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_practice_evidence_does_not_become_confirmed_exploitation

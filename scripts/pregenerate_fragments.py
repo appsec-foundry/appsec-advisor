@@ -59,7 +59,16 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
-from _severity_rollup import display_id, priority_severity, register_severity, verdict_floor_ids
+from _severity_rollup import (
+    display_id,
+    priority_severity,
+    register_severity,
+    register_threats,
+    verdict_basis,
+    verdict_floor_ids,
+    verdict_ranked_ids,
+    verdict_severity,
+)
 from load_business_context import RUN_ONLY_NAME
 
 # Sibling module — deterministic §3 walkthrough renderer. Imported here
@@ -5289,31 +5298,29 @@ def gen_critical_attack_tree(yaml_data: dict):
 # --force): a richer LLM-authored verdict already on disk is preserved — this
 # only fires when the fragment is genuinely missing.
 #
-# The prose is deliberately generic and technology-free: verdict.schema.json
-# forbids finding IDs (`[FT]-\d{3,4}`) in opening/bullets_intro/closing/titles/
-# bodies and its field descriptions forbid acronyms, CWE numbers, file paths,
-# and attack-class names. A deterministic generator cannot match the LLM's
-# per-repo eloquence, so it aims only for a valid, honest floor.
+# The fallback names concerns without inferring exploitation from a category.
+# Evidence IDs belong in refs; the shared verdict contract governs plain-language
+# prose, concern levels and the distinction from deployment approval.
 
 # Posture → (opening, closing) templates. Management-altitude prose only.
 _VERDICT_OPENING = {
     "red": (
-        "Not production-ready: the assessment contains Critical findings that need "
-        "attention before release; the findings register records their evidence and scope."
+        "Critical security concerns were identified in the assessed scope; "
+        "review their evidence, access requirements and impact before making deployment decisions."
     ),
     "yellow": (
-        "Production-ready with reservations: the assessment contains High findings; "
-        "review their evidence and access requirements before deciding whether to release."
+        "High security concerns were identified in the assessed scope; "
+        "review their evidence, access requirements and impact before making deployment decisions."
     ),
     "green": (
-        "No High or Critical findings were reported; this rating alone does not "
+        "No High or Critical security concerns were reported in the assessed scope; this rating alone does not "
         "establish that every attack path is blocked or that deployment is safe."
     ),
 }
 # Category summaries must not be framed as established attack scenarios.
-_VERDICT_BULLETS_INTRO = "Finding categories; see cited evidence for attack prerequisites and impact:"
+_VERDICT_BULLETS_INTRO = "Security concerns; see cited evidence for attack prerequisites and impact:"
 _VERDICT_CLOSING = {
-    level: "Review the cited findings for access requirements, affected assets and proposed fixes before making a release decision."
+    level: "Review the cited evidence for access requirements, affected assets and proposed fixes before making a deployment decision."
     for level in ("red", "yellow", "green")
 }
 
@@ -5369,44 +5376,38 @@ def _verdict_scenario_for_stride(stride: str) -> tuple[str, str]:
     return _VERDICT_GENERIC_SCENARIO
 
 
-def gen_verdict(yaml_data: dict):
+def gen_verdict(yaml_data: dict, triage: dict | None = None):
     """Deterministically emit a schema-valid ms-verdict.json floor.
 
-    Posture (severity) is a conservative reading of the risk distribution: any
-    Critical → red, else any High → yellow, else green. Bullets are one
+    Posture follows the shared verdict basis, including priority elevations
+    and design risks, without changing individual finding ratings. Bullets are one
     bounded concern per STRIDE class present, ordered by the
     prioritisation severity of the finding that first surfaced the class (so the
     highest-rated concerns lead). The floor meets the verdict gate the LLM
     version must pass (RA-23): every required Critical is cited, and on red or
-    yellow no bullet rests on Medium or Low findings alone. Returns ``None`` only when no citable finding exists (a
+    yellow no bullet rests on Medium or Low concerns alone. Returns ``None`` only when no citable concern exists (a
     degenerate model where the verdict has nothing to reference); compose's own
     empty-model handling then applies.
     """
-    threats = [t for t in (yaml_data.get("threats") or []) if isinstance(t, dict) and t.get("id")]
-    if not threats:
+    threats = [t for t in register_threats(yaml_data) if t.get("id")]
+    basis = verdict_basis(yaml_data)
+    if not basis:
         return None
-
-    def _sev(t: dict) -> str:
-        return str(t.get("risk") or t.get("severity") or "").strip().lower()
-
-    sevs = {_sev(t) for t in threats}
-    if "critical" in sevs:
-        severity = "red"
-    elif "high" in sevs:
-        severity = "yellow"
-    else:
-        severity = "green"
+    severity = verdict_severity(yaml_data)
+    ranked_ids = verdict_ranked_ids(triage)
+    triage_rank = {display_id(tid): i for i, tid in enumerate(ranked_ids)}
+    floor = set(verdict_floor_ids(yaml_data, ranked_ids))
 
     # Prioritisation-severity-then-numeric-id ordering so the highest-impact
     # scenario leads and each bullet opens with its most severe finding.
     def _id_key(t: dict) -> tuple:
         m = re.search(r"(\d+)", str(t.get("id") or ""))
         rank = _VERDICT_SEV_RANK.get(priority_severity(t).lower(), 5)
-        return (rank, int(m.group(1)) if m else 1_000_000, str(t.get("id")))
+        fid = display_id(str(t.get("id")))
+        return (fid not in floor, rank, triage_rank.get(fid, len(triage_rank)), int(m.group(1)) if m else 1_000_000)
 
     ranked = sorted(threats, key=_id_key)
     rated = {str(t.get("id")).strip(): priority_severity(t) for t in ranked}
-    floor = set(verdict_floor_ids(yaml_data))
 
     # Group by scenario (dict preserves first-seen = severity order), then split
     # each group into bullets of at most 5 refs (schema maxItems). A continuation
@@ -5421,6 +5422,22 @@ def gen_verdict(yaml_data: dict):
             refs.append(tid)
 
     candidates: list[tuple[bool, dict]] = []
+    # A design-only concern needs a direct W citation, not an invented finding.
+    design_refs = sorted(
+        (ref for ref in basis if ref.startswith("W-") and (severity == "green" or basis[ref] in ("Critical", "High"))),
+        key=lambda ref: (_VERDICT_SEV_RANK.get(basis[ref].lower(), 5), ref),
+    )
+    if design_refs:
+        candidates.append(
+            (
+                False,
+                {
+                    "title": "Design risks requiring review",
+                    "body": "The cited design weaknesses identify protection gaps; their evidence defines the affected assets and does not establish a confirmed attack.",
+                    "refs": design_refs[:5],
+                },
+            )
+        )
     for (title, body), refs in grouped.items():
         for start in range(0, len(refs), 5):
             chunk = refs[start : start + 5]
@@ -5638,6 +5655,10 @@ def main(argv: list[str] | None = None) -> int:
             # other generators have a (yaml_data) signature.
             if name == "security-architecture.md":
                 content = gen_security_architecture_v2(yaml_data, depth)
+            elif name == "ms-verdict.json":
+                triage_path = output_dir / ".triage-flags.json"
+                triage = json.loads(triage_path.read_text(encoding="utf-8")) if triage_path.is_file() else None
+                content = gen_verdict(yaml_data, triage)
             else:
                 content = GENERATORS[name](yaml_data)
         except Exception as exc:  # noqa: BLE001 — we want to keep going
