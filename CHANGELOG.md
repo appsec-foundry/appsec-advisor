@@ -11,53 +11,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- §2.1 shows a C4 context diagram of the Figure 1 actors and modelled external systems, §2.2 shows where each component runs and what it is built on from the repository's Dockerfile, compose, Kubernetes, OpenShift, Helm, GitLab Auto Deploy and AWS Terraform files (as a table for a single deployment unit), and §2.3 tabulates control coverage per component; §2.4 Technology Architecture is removed.
-- `scripts/repo_scan.py` runs selected deterministic checks without a threat model, with severity filtering and endpoint and technology inventories; both it and Security Score accept local repositories or HTTPS GitHub and GitLab URLs and export YAML or JSON.
-- `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic-bundle workflow.
-- `.appsec/actors.yaml` accepts `legitimate_roles` for roles whose login lives outside the repository; declared roles replace or add modelled roles, keep their names in Figure 1, and are never downgraded.
+- `scripts/repo_scan.py` runs selected deterministic checks without a threat model, with severity filtering and endpoint and technology inventories; it and Security Score accept local repositories or HTTPS GitHub and GitLab URLs and export YAML or JSON.
+- `.appsec/actors.yaml` accepts `legitimate_roles` to add or replace modelled roles whose login lives outside the repository, preserving their declared names and access levels.
 
 ### Changed
 
-- Figure 1 adds technology labels, authentication markers for login, OAuth, API, and embedded-database access, source-evidenced RAG, MCP, agentic, and service-role labels with linked finding severity, and navigable detail views, which PDF exports carry as a linked appendix; dense PDF overviews use a larger A3 page, while existing models need a new analysis for missing authentication evidence.
-- Figure 2 connects numbered attack routes to example findings, access prerequisites including public source availability, weaknesses, and impact for each relevant attacker.
-- Every report section names the same actors as Figure 1, and Identified Actors lists one row per Figure 1 actor with its access, scenarios and finding counts, including configured actors in their group.
-- Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
-- `--stride-cap` and the quick profile never drop a Critical or High finding; only Medium and Low findings are trimmed.
-- Verdicts rate evidenced concerns without implying release readiness, retain ranked Critical coverage and direct design-risk references, and completion summaries preserve prerequisites, qualify verification, order P1 fixes by triage rank and show recovery commands for missing PDF or HTML exports.
+- The architecture report now includes a C4 context diagram (§2.1), deployment details from repository configuration (§2.2), and per-component control coverage (§2.3), replacing the separate Technology Architecture section (§2.4).
+- Figure 1 adds technology and authentication labels, evidenced AI and service roles, and navigable detail views with a linked PDF appendix; existing models need a new analysis for missing authentication evidence.
+- Figure 2 links numbered attack routes to findings, access prerequisites, weaknesses, and impact for each relevant attacker.
+- Malicious insiders and attackers holding a user's device now require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
+- `--stride-cap` and the quick profile never drop Critical or High findings.
 - Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item.
-- New aiscb installations load verified modules on demand, and `update-baseline` delegates existing upstream installations to compatible signed AISCB installers while preserving their scope and mode.
-- Interactive runs propose relevant use cases and business impacts, including no material harm, then apply and save confirmed answers for later analyses.
-- Top Mitigations and the completion summary's `Fix first` list name the declared business-critical assets their measures protect.
-- `create-threat-model` no longer requires the `Bash(*)` allow-list when the configured `permissions.defaultMode` is `auto` or `bypassPermissions`.
-- The missing-permissions abort lists each settings file with its status, reports settings a sandbox makes unreadable as unverifiable instead of missing, and gives a `setup-target` command that runs from any directory.
-- Completion summaries omit open team questions and use the existing report, triage, and ask paths for follow-up.
-- The Management Summary's open team questions no longer ask the team to verify individual findings.
-- The session banner shows the threat-model line only when a model exists or a scan runs, and finds the model from subdirectories; `/appsec-advisor:help` prints a quick start grouped by function, covering threat models, requirements checks, the baseline and the coach, with the full reference behind `--all`.
+- Interactive runs propose use cases and business impacts for confirmation and reuse, and prioritised mitigations name the declared business-critical assets they protect.
+- Report sections use Figure 1's actor names consistently, and Identified Actors lists each actor's access, scenarios, and finding counts.
+- Verdicts assess evidenced concerns without implying release readiness, and completion summaries preserve attack prerequisites, qualify verification, and order P1 fixes by triage rank.
+- Open team questions stay in the Management Summary and focus on unresolved assumptions and decisions rather than verification of individual findings.
+- `/appsec-advisor:report-error` investigates suspected plugin errors and prepares anonymised GitHub issue drafts for review and explicit publication approval; `--bundle-only` retains the local diagnostic workflow.
+- New aiscb installations load verified modules on demand, and `update-baseline` uses compatible signed upstream installers while preserving installation scope and mode.
+- `create-threat-model` no longer requires the `Bash(*)` allow-list when `permissions.defaultMode` is `auto` or `bypassPermissions`, and permission failures distinguish missing from unreadable settings and provide a usable `setup-target` command.
+- `/appsec-advisor:help` shows a grouped quick start with the full reference behind `--all`, and the session banner shows a threat model only when one exists or a scan runs, including from subdirectories.
 
 ### Fixed
 
 - Finding ratings enforce policy ceilings and verified-chain requirements for elevation, with consistent severity and ranking across reports and exports.
-- Route authentication checks use the handler resolved through imports, preventing protected neighboring routes or decoded-only tokens from masking missing authentication, and findings on authenticated routes are attributed to authenticated attackers.
 - Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
-- Finding deduplication preserves the highest risk, case-sensitive source paths, source evidence, and scenario references.
-- Scanners retain application source coverage and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading signals without following external symlinks.
-- Figure 1 no longer shows signed-in users or an admin for applications nobody logs into: a role whose request path authenticates nowhere is shown as anonymous, and an admin role needs an access check cited in code rather than a file header.
-- Confirmed injection and SSRF findings cite their input, sink, and failed control for evidence review.
-- Weakness derivation and report links cover more NoSQL injection, code evaluation, attribute binding, browser credential, and CSRF cases while avoiding unrelated grouping and safe-code false positives.
-- AI analysis preserves component-owned RAG and agentic signals and keeps OWASP LLM and agentic tags when findings are consolidated, checks every path into the model context and the identity model-driven tools act for, adds transport-specific MCP checks, and keeps unrelated LLM findings out of agentic risk categories.
+- Route authentication checks resolve imported handlers and reject misleading neighbouring-route or decoded-token signals, with findings on authenticated routes attributed to authenticated attackers.
+- Finding deduplication preserves the highest risk, case-sensitive source paths, evidence, and scenario references.
 - Security Score withholds a score when a required scanner fails or returns invalid output while preserving available findings and diagnostics.
-- Dependency checks recognize Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
-- Detection gaps such as missing security logging no longer name an attacker, and each finding's attack vector follows its attributed attacker, so supply-chain findings read as build-time attacks.
-- Actor discovery and diagrams retain confirmed administrators as their own role, and relevant attackers without adding roles that an exploit does not require.
-- Architecture diagrams preserve component connections and avoid duplicate databases and identity providers.
-- Figure 1 aligns finding counts with the report and identifies the attacker behind each scenario badge and attack arrow.
-- Reports with architecture enrichment populate Security Architecture prose and send remaining placeholders for repair.
-- Management summaries state the analysis method and any screened or unanalysed components in one sentence, leaving the full limitations to §1 and §11, and present unresolved questions with concise finding references.
-- A run no longer aborts after evidence verification when a consolidated finding moves from a data store to the application component that owns its code; its trust-boundary references stay valid.
-- A STRIDE component whose findings fail a validation rule is retried with the exact errors to repair instead of being re-analyzed blind, and an aborted run names that rule rather than reporting "missing output".
-- Agents reaching their turn budget no longer stall runs or cut other agents' analysis short.
-- Architecture self-checks catch inconsistent data flows and asset locations before they cause later validation failures.
-- Run logs retain earlier events, and completion summaries report measured costs or explain why they are unavailable.
+- Scanners retain application source coverage and distinguish effective authentication, LLM guards, field annotations, and supply-chain controls from misleading signals without following external symlinks.
+- Findings provide clearer injection and SSRF evidence and more accurate weakness classifications and links, with fewer safe-code false positives.
+- AI analysis retains component-specific RAG and agentic evidence and tags, checks model-context entry paths and tool identities, and applies transport-specific MCP checks without misclassifying unrelated LLM findings as agentic risks.
+- Actor discovery preserves confirmed administrators and relevant attackers without inventing unnecessary roles or treating unauthenticated paths as signed-in access.
+- Detection gaps no longer name an attacker, and attack vectors match the attributed attacker, including build-time supply-chain attacks.
+- Runs no longer abort when consolidated findings move to their owning application component or stall and curtail other analyses when agents exhaust their turn budget.
+- STRIDE validation retries receive the exact errors to repair, and aborted runs name the failed rule instead of reporting missing output.
+- Architecture diagrams preserve component connections, avoid duplicate databases and identity providers, align finding counts with the report, and identify each scenario's attacker.
+- Architecture enrichment fills Security Architecture prose and routes remaining placeholders to repair, while self-checks catch inconsistent flows and asset locations before later validation failures.
+- Management summaries state the analysis method and coverage limits concisely and use short finding references for unresolved questions.
+- Dependency checks recognise Gradle dependencies declared in map notation (`group:`, `name:`, `version:`).
+- Run logs retain earlier events, and completion summaries explain missing cost measurements and provide recovery commands for missing PDF or HTML exports.
 - Plugin update checks compare against released versions instead of advertising development builds.
 
 ## 0.6.0-beta.3 (2026-09-14)
