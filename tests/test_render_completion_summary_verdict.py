@@ -29,6 +29,7 @@ def _load_module():
 
 rcs = _load_module()
 
+
 def _bullet(
     title: str,
     cwes: list[str] | None = None,
@@ -123,8 +124,7 @@ def test_no_line_opens_a_markdown_block():
     # The completion summary is relayed as Markdown, which strips leading blanks
     # and reads `#`, `-`, `>`, `1.` at a line start as block syntax.
     bullets = [
-        _bullet(f"Outcome {n} " + "x" * 80, ["CWE-79"], verified=n % 2 == 0, findings=["F-001"])
-        for n in range(1, 12)
+        _bullet(f"Outcome {n} " + "x" * 80, ["CWE-79"], verified=n % 2 == 0, findings=["F-001"]) for n in range(1, 12)
     ]
     for row in stm.render_worst_case_table(bullets, indent=""):
         assert not re.match(r"(#|[-*+>=]|\d+[.)])(\s|$)", row), row

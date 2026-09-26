@@ -1017,7 +1017,9 @@ def _project_legitimate_roles(yaml_data):
     """
     d, victim, notes = _fold_legitimate_roles(yaml_data)
     # The owner named a declared role; the access-class name would replace a decision with a guess.
-    roles = [e for e in d.get("external_entities") or [] if e.get("kind") == "legitimate-role" and not e.get("declared")]
+    roles = [
+        e for e in d.get("external_entities") or [] if e.get("kind") == "legitimate-role" and not e.get("declared")
+    ]
     names = {e["id"]: _role_name(d, e.get("access")) for e in roles}
     counts = collections.Counter(names.values())
     for entity in roles:

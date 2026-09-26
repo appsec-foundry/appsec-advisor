@@ -2139,8 +2139,14 @@ def test_regular_roles_with_equal_edges_still_fold_beside_a_privileged_role():
 def test_a_role_with_an_edge_of_its_own_keeps_its_card():
     """A scanner posting to its own endpoint is a difference the diagram can show."""
     model = _roles_model(
-        ({"id": "ext-user", "name": "End User", "kind": "legitimate-role"}, [{"to": "app0", "label": "Places an order"}]),
-        ({"id": "ext-scanner", "name": "Scanner", "kind": "legitimate-role"}, [{"to": "app0", "label": "Posts findings"}]),
+        (
+            {"id": "ext-user", "name": "End User", "kind": "legitimate-role"},
+            [{"to": "app0", "label": "Places an order"}],
+        ),
+        (
+            {"id": "ext-scanner", "name": "Scanner", "kind": "legitimate-role"},
+            [{"to": "app0", "label": "Posts findings"}],
+        ),
     )
 
     F._merge_indistinct_roles(model)
@@ -2190,7 +2196,10 @@ def test_a_declared_role_is_never_absorbed(declared_first):
 
 def test_a_role_without_edges_is_never_folded_into_an_arbitrary_card():
     model = _roles_model(
-        ({"id": "ext-user", "name": "End User", "kind": "legitimate-role"}, [{"to": "app0", "label": "Places an order"}]),
+        (
+            {"id": "ext-user", "name": "End User", "kind": "legitimate-role"},
+            [{"to": "app0", "label": "Places an order"}],
+        ),
         ({"id": "ext-ops", "name": "Operator", "kind": "legitimate-role"}, []),
     )
 
