@@ -532,6 +532,7 @@ SOURCE_TESTS = {
         actor_presentation
         build_threat_model_yaml
         check_target_specificity
+        compose_threat_model_cov2
         gate_preconditions
         incremental_two_run_e2e
         match_abuse_cases
@@ -539,6 +540,7 @@ SOURCE_TESTS = {
         new_schemas
         orchestration_controller
         promote_verified_abuse_cases
+        reference_format
         render_abuse_cases
         requirements_verification
         run_path_guard
@@ -838,6 +840,7 @@ SOURCE_TESTS = {
     """),
     "CHANGELOG.md": _tests("requirements_verification"),
     "README.md": _tests("""
+        business_context_preview
         marketplace_manifest
         orchestration_controller
         requirements_verification
@@ -1650,6 +1653,7 @@ SOURCE_TESTS = {
         compose_threat_model
         compose_threat_model_cov2
         e2e_pipeline
+        emit_verdict_to_model
         enforcement_mutations
         gate_preconditions
         p1_renderer_correctness
@@ -3058,6 +3062,7 @@ SOURCE_TESTS = {
         check_target_specificity
         gate_preconditions
         orchestration_controller
+        requirements_verification
         run_path_guard
         stride_outputs
     """),
