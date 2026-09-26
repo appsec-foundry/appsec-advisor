@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The architecture report now includes a C4 context diagram (§2.1), deployment details from repository configuration (§2.2), and per-component control coverage (§2.3), replacing the separate Technology Architecture section (§2.4).
-- Figure 1 adds technology and authentication labels, evidenced AI and service roles, and navigable detail views with a linked PDF appendix; existing models need a new analysis for missing authentication evidence.
+- Figure 1 adds technology and authentication labels and evidenced AI and service roles, and shows full flow and boundary detail in one diagram; only very large models get a compact figure with linked detail views and a PDF appendix, and existing models need a new analysis for missing authentication evidence.
 - Figure 2 links numbered attack routes to findings, access prerequisites, weaknesses, and impact for each relevant attacker.
 - Malicious insiders and attackers holding a user's device now require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.
 - `--stride-cap` and the quick profile never drop Critical or High findings.

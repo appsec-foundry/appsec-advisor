@@ -5924,16 +5924,20 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     # flow); a diagram that fails that check is wrong, not merely ugly, so it
     # falls back like a crash does — and both paths leave a RENDER_WARN, so a
     # silent downgrade cannot hide behind a report that still has a Figure 1.
+    # Figure 1 is the detail rendering. Only a model beyond the overview caps gets
+    # the compact overview as Figure 1 plus a linked paged detail sibling.
     svg, intro = "", ""
     detail_svg = ""
     detail_basename = f"{Path(ctx.figure_basename).stem}-detail.svg"
     role_notes = []
     try:
+        from figure1_detail import needs_views
         from figure1_dfd import check_diagram, legitimate_role_notes, overview_facts
 
         figure_data = _figure1_display_data(ctx)
+        paged = needs_views(figure_data)
         svg, problems = check_diagram(
-            figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=False
+            figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=not paged
         )
         if problems:
             ctx.warnings.append(
@@ -5947,17 +5951,18 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
                 (figure_data.get("project") or {}).get("name") or "The system",
                 overview_facts(figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels),
             )
-            try:
-                detail_svg, detail_problems = check_diagram(
-                    figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=True
-                )
-            except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
-                detail_svg, detail_problems = "", [str(exc)]
-            if detail_problems:
-                ctx.warnings.append(
-                    f"figure1: detailed diagram failed its self-check: {'; '.join(detail_problems[:3])}"
-                )
-                detail_svg = ""
+            if paged:
+                try:
+                    detail_svg, detail_problems = check_diagram(
+                        figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=True
+                    )
+                except Exception as exc:  # noqa: BLE001 — a detail failure must not discard a valid overview
+                    detail_svg, detail_problems = "", [str(exc)]
+                if detail_problems:
+                    ctx.warnings.append(
+                        f"figure1: detailed diagram failed its self-check: {'; '.join(detail_problems[:3])}"
+                    )
+                    detail_svg = ""
     except Exception as exc:  # noqa: BLE001 — the DFD builder must never break the section
         ctx.warnings.append(
             f"figure1: data-flow diagram builder failed ({type(exc).__name__}: {exc}) — rendered the tier-stack fallback"

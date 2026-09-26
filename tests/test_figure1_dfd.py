@@ -2033,13 +2033,14 @@ def test_report_composer_publishes_compact_annotations_without_fallback(tmp_path
     assert f"each of the {facts['scenarios']} attack scenarios below begins" in intro
     # The in-figure legend explains the notation; the introduction does not repeat it.
     assert "hexagon" not in intro and "not established" not in intro
-    assert "Detailed architecture diagram" in markdown
+    # A model within the overview caps publishes one figure: the detail rendering.
+    assert "Detailed architecture diagram" not in markdown
+    assert not (tmp_path / "report.figure1-detail.svg").exists()
     assert "All Critical · High fills to 5 · +N = omitted High categories" in svg
     assert "Unsafe Query Construction (SQLi)" in svg
     assert "Insufficient Resource Limits" not in svg
     assert not re.search(r"[WT]-\d{3}", svg)
-    assert ">Data flows<" not in svg
-    assert ">Data flows<" in (tmp_path / "report.figure1-detail.svg").read_text()
+    assert ">Data flows<" in svg
     assert "sensitive data handling" not in svg
 
 
@@ -2362,7 +2363,7 @@ def test_composer_keeps_dfd_for_opposing_routes(tmp_path, prefix):
     context = SimpleNamespace(yaml_data=model, output_dir=tmp_path, figure_basename="review.figure1.svg", warnings=[])
     markdown = composer._render_figure1_svg(context, paths, {})
     assert context.warnings == []
-    assert "review.figure1-detail.svg" in markdown
+    assert "review.figure1-detail.svg" not in markdown
     assert 'data-flow-ids="df-002"' in (tmp_path / "review.figure1.svg").read_text()
 
 

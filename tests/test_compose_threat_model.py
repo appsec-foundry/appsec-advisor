@@ -5949,25 +5949,26 @@ def test_render_figure1_svg_writes_file_and_image_ref(tmp_path: Path) -> None:
     assert svg.is_file() and svg.read_text(encoding="utf-8").startswith("<svg")
 
 
-def test_detail_failure_keeps_overview_and_removes_stale_detail(tmp_path, monkeypatch):
+def test_model_within_overview_caps_renders_only_the_detail_figure(tmp_path, monkeypatch):
     import figure1_dfd
 
     render = figure1_dfd.check_diagram
+    modes = []
 
-    def fail_detail(*args, **kwargs):
-        if kwargs.get("detail"):
-            raise ValueError("invalid detail geometry")
+    def record(*args, **kwargs):
+        modes.append(kwargs.get("detail"))
         return render(*args, **kwargs)
 
-    monkeypatch.setattr(figure1_dfd, "check_diagram", fail_detail)
+    monkeypatch.setattr(figure1_dfd, "check_diagram", record)
     stale = tmp_path / "figure1-detail.svg"
     stale.write_text("prior run")
     ctx = _fig1_ctx(tmp_path)
     markdown = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
+    assert modes == [True]
     assert "data-legend-section" in (tmp_path / "figure1.svg").read_text()
     assert "Detailed architecture diagram" not in markdown
     assert not stale.exists()
-    assert any("detailed diagram failed" in warning for warning in ctx.warnings)
+    assert ctx.warnings == []
 
 
 def test_large_detail_uses_existing_sibling_and_removes_it_on_view_failure(tmp_path, monkeypatch):
@@ -5983,6 +5984,7 @@ def test_large_detail_uses_existing_sibling_and_removes_it_on_view_failure(tmp_p
     markdown = compose._render_figure1_svg(ctx, paths, {})
     detail = tmp_path / "custom.figure1-detail.svg"
     assert 'data-paged-detail="true"' in detail.read_text()
+    assert 'data-paged-detail="true"' not in (tmp_path / ctx.figure_basename).read_text()
     assert "[Detailed architecture diagram](custom.figure1-detail.svg)" in markdown
     assert ctx.warnings == []
     monkeypatch.setattr(figure1_detail, "check_views", lambda *args: ["missing component view"])
@@ -6106,7 +6108,7 @@ def test_render_figure1_svg_prefers_the_data_flow_diagram(tmp_path: Path) -> Non
         "The system has 3 components in 3 layers. Figure 1 shows these data flows and where the attack scenario below begins."
     )
     assert "Architecture and Threat Overview" in md
-    assert (out / "figure1-detail.svg").is_file()
+    assert not (out / "figure1-detail.svg").exists()
     assert "Architecture tiers top-to-bottom" not in md
     assert not [w for w in ctx.warnings if w.startswith("figure1:")]
     assert 'data-legend-section="notation"' in (out / "figure1.svg").read_text(encoding="utf-8")
@@ -7043,7 +7045,7 @@ def test_run_statistics_omit_the_row_without_declared_context(tmp_path):
         ("Cargo.toml", '[package]\nname="archive-worker"\nversion="0.8.2"\n', "Archive Worker", "0.8.2"),
     ],
 )
-def test_figure1_uses_project_manifest_identity_in_both_images(tmp_path, manifest, content, name, version):
+def test_figure1_uses_project_manifest_identity_in_the_image(tmp_path, manifest, content, name, version):
     import copy
 
     (tmp_path / manifest).write_text(content)
@@ -7055,10 +7057,9 @@ def test_figure1_uses_project_manifest_identity_in_both_images(tmp_path, manifes
     markdown = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
     assert ctx.warnings == []
     assert markdown.startswith(f"{name} has 3 components in 3 layers.")
-    for filename in ("figure1.svg", "figure1-detail.svg"):
-        svg = (out / filename).read_text()
-        assert f"{name} · {version}" in svg
-        assert "working-copy-2" not in svg and "9.9.9" not in svg
+    svg = (out / "figure1.svg").read_text()
+    assert f"{name} · {version}" in svg
+    assert "working-copy-2" not in svg and "9.9.9" not in svg
     assert ctx.yaml_data == original
 
 

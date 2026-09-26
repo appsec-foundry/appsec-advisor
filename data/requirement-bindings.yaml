@@ -650,7 +650,7 @@ requirements:
       - tests/test_figure1_dfd.py::test_multiline_payload_labels_keep_content_and_protocol_outside_notes
       - tests/test_figure1_dfd.py::test_dense_asset_preview_prioritizes_linked_risk_then_classification
       - tests/test_figure1_dfd.py::test_project_identity_prefers_recorded_name_and_never_uses_plugin_version
-      - tests/test_compose_threat_model.py::test_figure1_uses_project_manifest_identity_in_both_images
+      - tests/test_compose_threat_model.py::test_figure1_uses_project_manifest_identity_in_the_image
       - tests/test_compose_threat_model.py::test_figure1_retains_known_identity_without_local_manifest
       - tests/test_figure1_dfd.py::test_nearly_aligned_flow_ports_avoid_micro_jogs
       - tests/test_figure1_dfd.py::test_intra_column_arrow_tips_have_a_straight_approach
