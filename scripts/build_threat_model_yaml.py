@@ -964,19 +964,27 @@ def _apply_business_context_basis(threats: list[dict], output_dir: Path, skill_c
     carries field names only, never the business prose: the document stays out of
     the delivered model, and the record stays deterministic.
 
-    Same three material fields the ranking tie-break uses, from the same
-    validated projection, so a finding cannot be marked here and unmarked there.
-    Returns how many findings were marked."""
+    Priority basis uses the ranking's material fields. Explicit no-harm context
+    counts as applied without a priority basis; its status survives in coverage.
+    Returns how many findings received either kind of declared context."""
     if skill_cfg.get("skip_business_context"):
         return 0
     basis_by_component = triage_compute_ranking._business_context_basis_by_component(output_dir)
-    if not basis_by_component:
+    no_harm = {
+        row["component_id"]
+        for row in _business_context_component_coverage(output_dir)
+        if row.get("impact_is_material") is False
+    }
+    if not basis_by_component and not no_harm:
         return 0
     marked = 0
     for threat in threats:
         basis = triage_compute_ranking._finding_business_context_basis(threat, basis_by_component)
         if basis:
             threat["business_context_basis"] = list(basis)
+            marked += 1
+        elif (threat.get("component") or threat.get("component_id")) in no_harm:
+            threat.pop("business_context_basis", None)
             marked += 1
     return marked
 
@@ -1034,7 +1042,10 @@ def _business_context_component_coverage(output_dir: Path) -> list[dict[str, Any
             elif isinstance(value, list) and any(isinstance(item, str) and item.strip() for item in value):
                 fields.append(field)
         if fields:
-            rows.append({"component_id": component_id, "fields": fields})
+            row = {"component_id": component_id, "fields": fields}
+            if isinstance(business.get("impact_is_material"), bool):
+                row["impact_is_material"] = business["impact_is_material"]
+            rows.append(row)
     return rows
 
 

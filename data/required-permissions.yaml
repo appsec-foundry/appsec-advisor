@@ -64,6 +64,10 @@ required:
     reason: "agents and deterministic resolvers read scanned-repository evidence, including external entity roles, sensitive-data handling, asset locations, and optional data-only inputs such as .appsec/trust-boundaries.yaml"
     category: file
 
+  - entry: "Write(${REPO_ROOT}/docs/business-context.md)"
+    reason: "complete-preflight validates and saves substantive early-dialog answers alongside existing repository business context for later analyses; explicit --context imports remain run-only"
+    category: file
+
   - entry: "Read(${PLUGIN_ROOT}/**)"
     reason: "agents and scripts read plugin data files, including the Figure 2 presentation schema, other schemas, templates, CWE taxonomy, and the human context catalog with its internal runtime bindings"
     category: file
@@ -85,7 +89,7 @@ required:
     category: file
 
   - entry: "Write(${OUTPUT_DIR}/.*)"
-    reason: "agents and deterministic preparers, including config_iac_scanner.py, deployment_inventory.py (.deployment-inventory.json) and merge_threats.py refresh-weaknesses (.impl-strategy.json, .impl-design-signals.json, .finding-design-signals.json), write report-error .plugin-issue-input.json, .plugin-issue-draft.json, per-digest submission receipts, and direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children"
+    reason: "agents and deterministic preparers, including config_iac_scanner.py, deployment_inventory.py (.deployment-inventory.json) and merge_threats.py refresh-weaknesses (.impl-strategy.json, .impl-design-signals.json, .finding-design-signals.json), write report-error .plugin-issue-input.json, .plugin-issue-draft.json, per-digest submission receipts, and direct dotfile sidecars such as the config scan, effective context-routing plan and receipt, finalized components/data flows, and candidate/canonical/coverage trust-boundary artifacts; Claude Code's /** glob does NOT match direct dotfile children; the early business-context dialog writes .business-context-preview.json and .business-context-raw.md using prepare --interactive-context and complete-preflight"
     category: file
 
   - entry: "Edit(${OUTPUT_DIR}/**)"

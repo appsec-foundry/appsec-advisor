@@ -18,10 +18,10 @@ the skill-only `--force` flag:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
-  prepare -- <invocation-arguments>
+  prepare --interactive-context -- <invocation-arguments>
 
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/orchestration_controller.py" \
-  prepare --force -- <invocation-arguments>
+  prepare --force --interactive-context -- <invocation-arguments>
 ```
 
 Parse the returned JSON as `ACTION`. It has already been validated against
@@ -30,6 +30,7 @@ Parse the returned JSON as `ACTION`. It has already been validated against
 - If `ACTION.action=abort`, print `ACTION.reason` and stop with
   `ACTION.exit_code`. Do not dispatch an agent. **One exception:** when
   `ACTION.reason` contains `LOCK_BLOCKED`, run §1a instead of stopping silently.
+- If `ACTION.action=decision_required`, bind §3 paths/run ID. In one Read batch, load `ACTION.instruction_file` (`modes/business-context.md`), its sibling `business-impact.md`, and `$OUTPUT_DIR/.business-context-preview.json`. Follow the use-case mode, then the impact mode when the controller returns it; reuse these reads. Replace `ACTION` with the successful `complete-preflight` result. No scanner or agent starts while this decision is pending.
 - Otherwise require `dispatch_agent` at `stage1`; otherwise fail closed.
 - Treat `ACTION.dispatch_values` as authoritative resolved configuration. Do
   not parse flags again and do not re-read `.skill-config.json` unless a later

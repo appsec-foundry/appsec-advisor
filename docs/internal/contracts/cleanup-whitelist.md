@@ -46,6 +46,8 @@ Audit artifacts (`docs/internal/contracts/audit-artifacts.md`) and incremental a
 .appsec-progress.json
 .skill-watchdog.tick
 .business-context-input.md
+.business-context-preview.json
+.business-context-raw.md
 .pending-dispatch.json
 .receipt-verification.json
 ```

@@ -288,6 +288,10 @@ The exported status vocabulary is `PASS`, `FAIL`, `PARTIAL`, `UNVERIFIABLE`, and
 
 `threat-model.yaml` is the canonical machine-readable trace. New runs persist an explicit `business_context_trace` even when context was skipped or absent, a complete `abuse_case_analysis` after the deterministic verifier fold, and `requirements_provenance` whenever a catalog was assessed. These blocks carry bounded semantic values and hashes, never raw business-context prose or rendering tokens.
 
+An optional boolean `impact_is_material` accompanies declared `impact_if_compromised` in analyst, dispatch, and component business context. False records an explicit no-material-harm declaration and its stated conditions; absence remains unknown or legacy context. The canonical component coverage preserves that boolean alongside the impact field name. Findings covered by explicit no-harm context count as context-applied without receiving an impact-based priority bonus. Independently declared sensitive assets and obligations remain material, and technical findings and severity rules stay authoritative.
+
+The canonical verdict optionally carries `business_context_note`, a deterministic disclosure of the component scope with explicitly declared no material business harm. The Management Summary renders the same note. It does not lower technical finding severity or the verdict concern level, and unknown context never produces it.
+
 Every finding, mitigation, requirement, and abuse-case reference inside those blocks must resolve against the same YAML document. `validate_intermediate.py` owns this reconciliation, and a producer that adds or changes canonical trace data validates the updated document before replacing the last valid model.
 
 Threat Dragon has no native structures for these dimensions. Its exporter attaches applicable trace to the existing finding and mitigation text fields and reports counted omissions; it never creates a second threat merely to represent an abuse chain or requirement.

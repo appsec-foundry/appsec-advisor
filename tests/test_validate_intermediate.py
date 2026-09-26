@@ -1322,6 +1322,27 @@ def test_export_trace_cross_references_fail_closed():
     assert any("verification_complete does not match" in error for error in errors)
 
 
+def test_no_harm_context_counts_as_applied_without_priority_basis():
+    data = {
+        "components": [{"id": "practice-api"}],
+        "threats": [{"id": "T-001", "component": "practice-api"}],
+        "business_context_trace": {
+            "status": "applied",
+            "source_kind": "repository",
+            "source": "docs/business-context.md",
+            "sha256": "a" * 64,
+            "fields_present": ["impact_if_compromised"],
+            "component_coverage": [
+                {"component_id": "practice-api", "fields": ["impact_if_compromised"], "impact_is_material": False}
+            ],
+            "applied_finding_count": 1,
+        },
+    }
+    assert vi._check_export_trace_invariants(data) == []
+    data["business_context_trace"]["applied_finding_count"] = 0
+    assert any("applied_finding_count" in error for error in vi._check_export_trace_invariants(data))
+
+
 def test_requirement_references_are_unresolved_not_invalid_without_a_compliance_section():
     """Absent authority is "unknown", never "invalid".
 

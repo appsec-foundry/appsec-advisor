@@ -83,11 +83,14 @@ properties:
           description: Bounded human-readable business and organization facts for this component.
           type: object
           minProperties: 1
-          maxProperties: 5
+          maxProperties: 6
+          dependentRequired:
+            impact_is_material: [impact_if_compromised]
           additionalProperties: false
           properties:
             business_purpose: { type: string, minLength: 1, maxLength: 1000, pattern: "\\S" }
             impact_if_compromised: { type: string, minLength: 1, maxLength: 1000, pattern: "\\S" }
+            impact_is_material: { type: boolean }
             sensitive_assets: { $ref: "#/$defs/context_list" }
             security_obligations: { $ref: "#/$defs/context_list" }
             security_assumptions: { $ref: "#/$defs/context_list" }

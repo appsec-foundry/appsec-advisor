@@ -140,6 +140,7 @@ def _business_context_basis_by_component(output_dir: Path) -> dict[str, tuple[st
             for field in _MATERIAL_BUSINESS_CONTEXT_FIELDS
             if (
                 field == "impact_if_compromised"
+                and business.get("impact_is_material") is not False
                 and isinstance(business.get(field), str)
                 and bool(business[field].strip())
                 or field != "impact_if_compromised"

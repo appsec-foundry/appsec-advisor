@@ -94,6 +94,8 @@ the controller tells you to print after config resolution (e.g.
 `📋 Existing threat model found — preparing a full re-assessment …`), and then
 (2) the `Threat Model — Pre-flight` summary. Nothing may appear between them.
 
+**Sanctioned exception — the early business-context dialog.** For prepare's `action=decision_required`, follow its plugin-owned `modes/business-context.md` before expensive scanning. Its optional questions may precede the Pre-flight summary.
+
 **Sanctioned exception — the interactive orchestrator-model prompt.** When the
 thin runtime's prepare ACTION reports `orchestrator_prompt_needed: true`
 (SKILL-full-runtime.md §2a), you MUST call `AskUserQuestion` to let the user choose

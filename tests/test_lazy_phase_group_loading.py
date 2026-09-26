@@ -19,12 +19,22 @@ def test_business_context_reaches_the_default_full_runtime():
 
     assert "BUSINESS_CONTEXT_SOURCE = business_context_source" in runtime
     assert "SKIP_BUSINESS_CONTEXT = skip_business_context" in runtime
-    # A run asks no business-context question before the analysis: it cannot
-    # name anything the repository contains yet, so a `--context` source is the
-    # only pre-run input and the controller captures it pre-flight.
-    assert "modes/business-context.md" not in runtime
-    assert not (MODES_DIR / "business-context.md").exists()
-    assert "business-context question" not in router
+    assert "prepare --interactive-context --" in runtime
+    assert "prepare --force --interactive-context --" in runtime
+    assert "ACTION.action=decision_required" in runtime
+    assert "modes/business-context.md" in runtime
+    mode = _read(MODES_DIR / "business-context.md")
+    assert "in English" in mode
+    assert "No, a different use case" in mode
+    assert "bare “No”" in mode
+    impact = _read(MODES_DIR / "business-impact.md")
+    assert "in English" in impact
+    assert "No material business harm" in impact
+    assert "wait for explicit selection" in impact
+    assert "including stated conditions" in impact
+    assert "AskUserQuestion" in mode
+    assert "complete-preflight" in mode
+    assert "business-context dialog" in router
 
 
 def test_full_runtime_loads_only_controller_returned_stage_surfaces():

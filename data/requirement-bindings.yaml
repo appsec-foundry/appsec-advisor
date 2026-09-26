@@ -351,10 +351,18 @@ requirements:
       - scripts/resolve_config.py
       - scripts/build_threat_model_yaml.py
       - scripts/build_stride_dispatch_manifest.py
+      - scripts/build_stride_evidence_bundles.py
+      - scripts/triage_compute_ranking.py
+      - scripts/_business_relevance.py
+      - scripts/compose_threat_model.py
+      - agents/appsec-threat-renderer.md
+      - templates/fragments/verdict.md.j2
       - scripts/triage_validate_ratings.py
       - agents/appsec-control-analyst.md
       - agents/appsec-stride-analyzer-v2.md
       - schemas/stride-component-business-context.schema.json
+      - schemas/stride-analyst-context.schema.json
+      - schemas/stride-dispatch-manifest.schema.yaml
       - schemas/threat-model.output.schema.yaml
     decisions:
       - RC-1
@@ -367,6 +375,14 @@ requirements:
       - tests/test_build_threat_model_yaml.py::test_build_meta_records_which_file_the_context_digest_came_from
       - tests/test_dispatch_manifest.py::test_declared_business_assets_make_a_component_crown_jewel
       - tests/test_triage_validate_ratings.py::test_step5b_flags_low_impact_where_context_declares_assets
+      - tests/test_triage_validate_ratings.py::test_step5b_explicit_no_harm_does_not_request_higher_impact
+      - tests/test_triage_compute_ranking.py::test_declared_no_harm_does_not_promote_findings_or_mitigations
+      - tests/test_build_stride_evidence_bundles.py::test_declared_impact_status_reaches_validated_component_context
+      - tests/test_build_threat_model_yaml.py::test_no_harm_context_is_applied_without_a_priority_basis
+      - tests/test_validate_intermediate.py::test_no_harm_context_counts_as_applied_without_priority_basis
+      - tests/test_compose_threat_model.py::test_verdict_discloses_no_harm_without_hiding_critical_findings
+      - tests/test_emit_verdict_to_model.py::test_no_harm_scope_survives_export_without_lowering_technical_severity
+      - tests/test_business_relevance.py::test_named_synthetic_assets_with_no_harm_do_not_add_priority
       - tests/test_build_threat_model_yaml.py::test_declared_context_marks_the_findings_of_its_component
       - tests/test_build_threat_model_yaml.py::test_business_context_basis_never_carries_the_business_prose
       - tests/test_build_threat_model_yaml.py::test_sourced_asset_answer_reaches_stride_and_settles_only_its_question
@@ -389,6 +405,27 @@ requirements:
       - tests/test_aggregate_run_issues.py::test_declared_context_mapping_to_no_component_is_surfaced
       - tests/test_compose_threat_model.py::test_run_statistics_disclose_the_business_context_source
       - tests/test_build_threat_modeling_context.py::test_skip_context_excludes_the_repository_business_context
+
+  REQ-BIZ-005:
+    applies_to:
+      - scripts/business_context_preview.py
+      - scripts/orchestration_controller.py
+      - schemas/business-context-preview.schema.json
+      - skills/create-threat-model/SKILL-full-runtime.md
+      - skills/create-threat-model/modes/business-context.md
+      - skills/create-threat-model/modes/business-impact.md
+    decisions:
+      - RC-4
+    documents:
+      - docs/threat-modeler.md
+      - docs/internal/contracts/orchestration-actions.md
+    coverage: partial
+    guards:
+      - tests/test_orchestration_controller.py::test_early_context_blocks_scanners_until_answers_reach_context
+      - tests/test_orchestration_controller.py::test_early_context_persists_answers_without_persisting_run_only_import
+      - tests/test_orchestration_controller.py::test_early_context_rejects_unsafe_persistence_before_writes
+      - tests/test_business_context_preview.py::test_large_repository_preview_stays_bounded
+      - tests/test_lazy_phase_group_loading.py::test_business_context_reaches_the_default_full_runtime
 
   REQ-RPT-001:
     applies_to:

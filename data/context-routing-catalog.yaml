@@ -110,6 +110,11 @@ agents:
 # Runtime migration state is reported by effective-plan receipts and the
 # implementation plan; it is not a human routing choice.
 contexts:
+  - id: discovery.application_preview
+    name: Early application overview
+    category: repository_discovery
+    description: Bounded preliminary source excerpts reused after the business-context dialog; not a complete inventory.
+    scope: whole_run
   - id: run.configuration
     name: Resolved run configuration
     category: target_and_run
@@ -481,6 +486,14 @@ assignments:
     importance: supporting
     applies_to: whole_run
     reason: Deterministic patterns reduce broad discovery and retain the documented fallback.
+  - id: reuse-early-application-overview
+    context: discovery.application_preview
+    agents:
+      - recon_scanner
+    delivery: optional
+    importance: supporting
+    applies_to: whole_run
+    reason: Recon reuses bounded source excerpts already collected for early questions without treating missing excerpts as absent surfaces.
   - id: repair-brief-for-recon
     context: run.producer_repair_brief
     agents:

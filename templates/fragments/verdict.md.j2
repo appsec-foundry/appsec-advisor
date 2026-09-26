@@ -15,6 +15,7 @@
              plain-language ` — ✓ verified attack path` badge for bullets whose
              findings anchor a fully-viable abuse chain, else '' (abuse-cases.json).
              Finding and design-risk references render as compact evidence links.
+             business_context_note (renderer-computed, optional): declared no-harm scope.
              method_limits (renderer-computed, unconditional): one sentence on
              the method and any screened or unanalysed components.
 -#}
@@ -23,6 +24,8 @@
 {{ severity_emoji(data.severity) }} {{ data.opening }}
 {% if risk_distribution %}
 {{ risk_distribution }}
+{% endif %}{% if business_context_note %}
+{{ business_context_note }}
 {% endif %}
 {% if method_limits %}
 {{ method_limits }}

@@ -540,6 +540,16 @@ def test_step5b_purpose_alone_produces_nothing():
     assert tvr._step5b_business_impact_alignment([_threat(impact="Low")], declared, "standard") == []
 
 
+@pytest.mark.parametrize(
+    "text", ["No material harm; synthetic records only.", "Kein fachlicher Schaden bei reinen Testdaten."]
+)
+def test_step5b_explicit_no_harm_does_not_request_higher_impact(text):
+    context = {"impact_if_compromised": text, "impact_is_material": False}
+    assert tvr._step5b_business_impact_alignment([_threat(impact="Low")], {"comp-api": context}, "standard") == []
+    context["sensitive_assets"] = ["Real customer payment mandates"]
+    assert len(tvr._step5b_business_impact_alignment([_threat(impact="Low")], {"comp-api": context}, "standard")) == 1
+
+
 def test_declared_business_context_reads_analyst_artifact(tmp_path):
     (tmp_path / ".stride-analyst-context.json").write_text(
         json.dumps({"comp-api": {"business_context": {"sensitive_assets": ["funds"]}}, "comp-ui": {"controls": "n/a"}}),

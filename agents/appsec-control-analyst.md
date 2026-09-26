@@ -66,17 +66,20 @@ skills, agents, instruction files, or write paths. Never copy source files or
 large artifact bodies into this context.
 
 When project or organization context contains facts that apply to a component,
-write `business_context` with only these human-facing attributes:
+write `business_context` with these declared facts:
 
 - `business_purpose`: the business or user outcome the component enables;
 - `impact_if_compromised`: concrete business or user harm from loss of
   confidentiality, integrity, or availability;
+- `impact_is_material`: optional boolean for explicit declared harm (`true`) or no material harm (`false`), always accompanied by `impact_if_compromised` with its conditions; omit when unknown;
 - `sensitive_assets`: data, funds, credentials, decisions, or operations the
   component handles;
 - `security_obligations`: applicable policy, contractual, legal, or regulatory
   duties; and
 - `security_assumptions`: relevant conditions stated as assumptions rather
   than implementation evidence.
+
+Map the early dialog's confirmed or corrected use case to `business_purpose` on the components that implement it. Map declared harm or explicitly no material harm to `impact_if_compromised` only on components within that declaration's scope; retain its conditions. Set `impact_is_material:false` only for an explicit no-harm answer, never from a training label or absent data. Derive `sensitive_assets` only for declared sensitive data, funds, decisions, or operations; public or synthetic test data is not sensitive merely because it is named. Do not copy one answer into every component or infer deployment, actors, or obligations. Preserve the declared consequence so STRIDE can connect supported attacks to it and prioritization can distinguish harm from no harm.
 
 Omit unknown attributes and omit the entire object when no applicable fact is
 available. Do not invent criticality labels, threat scenarios, actors, abuse

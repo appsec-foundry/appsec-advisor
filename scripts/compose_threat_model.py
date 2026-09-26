@@ -2673,6 +2673,9 @@ def _build_verdict_export(ctx: RenderContext, data: dict, fmap: dict[str, list[s
     intro = str(data.get("bullets_intro") or "").strip()
     if intro:
         export["bullets_intro"] = intro
+    note = _business_relevance.verdict_context_note(ctx.yaml_data)
+    if note:
+        export["business_context_note"] = note
     return export
 
 
@@ -2736,6 +2739,7 @@ def _render_verdict(ctx: RenderContext, env: jinja2.Environment, section: dict) 
             data=data,
             risk_distribution=risk_distribution,
             method_limits=method_limits,
+            business_context_note=ctx.verdict_export.get("business_context_note", ""),
             verified_suffixes=verified_suffixes,
         ).rstrip()
         + "\n"

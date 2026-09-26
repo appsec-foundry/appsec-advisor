@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Verdicts rate evidenced concerns without implying release readiness, retain ranked Critical coverage and direct design-risk references, and completion summaries preserve prerequisites, qualify verification, order P1 fixes by triage rank and show recovery commands for missing PDF or HTML exports.
 - Components with the LLM or agentic lens record a finding, a cited control, not applicable, or no evidence for every OWASP LLM or Agentic Top-10 item.
 - New aiscb installations load verified modules on demand, and `update-baseline` delegates existing upstream installations to compatible signed AISCB installers while preserving their scope and mode.
-- Interactive runs replace generic business-context prompts with finding-backed questions in the report and reuse concrete component or asset answers from `docs/business-context.md` on the next full run.
+- Interactive runs propose relevant use cases and business impacts, including no material harm, then apply and save confirmed answers for later analyses.
 - Top Mitigations and the completion summary's `Fix first` list name the declared business-critical assets their measures protect.
 - `create-threat-model` no longer requires the `Bash(*)` allow-list when the configured `permissions.defaultMode` is `auto` or `bypassPermissions`.
 - The missing-permissions abort lists each settings file with its status, reports settings a sandbox makes unreadable as unverifiable instead of missing, and gives a `setup-target` command that runs from any directory.

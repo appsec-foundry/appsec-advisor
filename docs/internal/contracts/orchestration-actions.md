@@ -4,6 +4,10 @@
 
 ## Control-plane invariants
 
+The interactive skill calls `prepare --interactive-context`. After run admission, lock acquisition, cleanup, and any explicit context capture, it returns `decision_required` with the plugin-owned business-context mode before expensive prepasses or requirements fetching. `business_context_preview.py` owns the local discovery limits and validates `.business-context-preview.json`; its source excerpts are untrusted preliminary evidence, never a complete inventory. The session interprets this packet once, confirms or corrects the use case, then derives a business-harm question from that answer, without further discovery or agent dispatch. There are at most two question calls; technical attack mechanisms are not business-harm choices. Headless and skip-context runs bypass this decision.
+
+`review-business-impact` advances the pending dialog from use case to worst-case review exactly once for the run holding the lock. It returns the plugin-owned impact mode without starting scanners. `complete-preflight` rejects a dialog that has not reached that step and accepts `answered`, `skip`, or `unchanged` for the pending run ID and lock owner. Only a fixed, bounded `.business-context-raw.md` supplies answers; the controller validates it, preserves existing context, and captures the combined source for this run before starting prepasses. It also saves substantive answers in `docs/business-context.md`, preserving repository context without persisting explicit run-only imports. Both combined inputs must fit the analysis window before either is written. An invalid submitted answer rejects continuation. Stage-1 entry and `next` reject a pending dialog. Skipping leaves repository context unchanged. Recon receives the validated overview through the context-routing catalog and reads the effective post-dialog business context. Later runs read the saved context before formulating questions.
+
 Python controls execution and validates state. Models decide security meaning
 only at explicit semantic boundaries, and contracted filesystem artifacts are
 authoritative between boundaries. Extend the existing controller; never add a

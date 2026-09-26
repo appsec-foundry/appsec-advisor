@@ -1310,9 +1310,13 @@ def _check_export_trace_invariants(data: dict) -> list[str]:
                 errors.append("business_context_trace: answered question requires applied component coverage")
             if answer.get("topic") == "asset-criticality" and answer.get("asset_name") not in asset_names:
                 errors.append("business_context_trace: answered question asset does not resolve")
-        applied_count = sum(bool(row.get("business_context_basis")) for row in threats)
+        no_harm = {row.get("component_id") for row in coverage if row.get("impact_is_material") is False}
+        applied_count = sum(
+            bool(row.get("business_context_basis")) or (row.get("component") or row.get("component_id")) in no_harm
+            for row in threats
+        )
         if business.get("applied_finding_count") != applied_count:
-            errors.append("business_context_trace.applied_finding_count does not match threats with context basis")
+            errors.append("business_context_trace.applied_finding_count does not match threats with declared context")
         if status == "applied":
             if not business.get("source") or not business.get("sha256"):
                 errors.append("business_context_trace: applied status requires source and sha256")

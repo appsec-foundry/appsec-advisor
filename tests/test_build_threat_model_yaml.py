@@ -3180,6 +3180,30 @@ def test_declared_context_marks_the_findings_of_its_component(tmp_path):
     assert "business_context_basis" not in threats[2]
 
 
+def test_no_harm_context_is_applied_without_a_priority_basis(tmp_path):
+    _analyst_context(
+        tmp_path,
+        {
+            "practice-service": {
+                "business_context": {
+                    "impact_if_compromised": "No material business harm with only synthetic data.",
+                    "impact_is_material": False,
+                }
+            }
+        },
+    )
+    threats = [{"id": "T-001", "component": "practice-service", "business_context_basis": ["impact_if_compromised"]}]
+    assert b._apply_business_context_basis(threats, tmp_path, {}) == 1
+    assert "business_context_basis" not in threats[0]
+    assert b._business_context_component_coverage(tmp_path) == [
+        {
+            "component_id": "practice-service",
+            "fields": ["impact_if_compromised"],
+            "impact_is_material": False,
+        }
+    ]
+
+
 def test_business_context_basis_never_carries_the_business_prose(tmp_path):
     """The delivered model records which fields applied, never what they said."""
     secret_prose = "Settles payouts for merchant ACME under contract 4711."

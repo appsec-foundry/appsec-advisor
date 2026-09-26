@@ -46,6 +46,7 @@ MAX_SUPERSEDED_EVIDENCE_PATHS = 8
 BUSINESS_CONTEXT_FIELDS = (
     "business_purpose",
     "impact_if_compromised",
+    "impact_is_material",
     "sensitive_assets",
     "security_obligations",
     "security_assumptions",
@@ -695,10 +696,17 @@ def business_context_projection(value: Any, component_id: str) -> dict[str, Any]
         if unknown:
             raise BundleError(f"business_context for {component_id} contains unknown attributes: {', '.join(unknown)}")
         attributes = {}
+        if "impact_is_material" in value and not isinstance(value.get("impact_if_compromised"), str):
+            raise BundleError(f"business_context.impact_is_material for {component_id} requires impact_if_compromised")
         for name in BUSINESS_CONTEXT_FIELDS:
             if name not in value:
                 continue
             raw = value[name]
+            if name == "impact_is_material":
+                if not isinstance(raw, bool):
+                    raise BundleError(f"business_context.impact_is_material for {component_id} must be boolean")
+                attributes[name] = raw
+                continue
             if name in BUSINESS_CONTEXT_TEXT_FIELDS:
                 if not isinstance(raw, str):
                     raise BundleError(f"business_context.{name} for {component_id} must be text")
@@ -758,7 +766,7 @@ def validate_business_context_bytes(
         if name in BUSINESS_CONTEXT_TEXT_FIELDS:
             if attribute != attribute.strip():
                 raise BundleError("business-context text is not normalized")
-        elif any(item != item.strip() for item in attribute):
+        elif name != "impact_is_material" and any(item != item.strip() for item in attribute):
             raise BundleError("business-context list is not normalized")
     return value
 

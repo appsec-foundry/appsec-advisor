@@ -42,7 +42,7 @@ Read `COMPONENT_CONTEXT_PLAN_PATH` first. Its `analysis`, `lens_ids`, and
 dispatch manifest, `.threat-modeling-context.md`, `.org-context.md`, or
 `.recon-summary.md`. Obey `analysis.max_turns`; read each untrusted input once.
 
-`business.component_context` weights evidenced impact: use `impact_if_compromised` and only reached `sensitive_assets` in `impact_description`. `architecture.component_context` informs topology and assumptions, not proof. Treat role/permission/identity claims as authorization questions; absent server revalidation proof, use one `missing-control-proof` escape.
+`business.component_context` carries the confirmed use case and declared harm. For supported findings that can reach that harm, assess `impact` under the existing rating rules and caps, connecting the technical and declared business consequences in `impact_description`. `impact_is_material:false` means explicitly no material business harm under the stated conditions, not unknown impact or proof of safety; retain technically supported severity and consequences, and flag paths outside those conditions. Never suppress a supported finding because of training use or a no-harm declaration. Do not transfer worst-case harm to unrelated attacks or inflate likelihood or severity from a concern. Use only reached `sensitive_assets`. `architecture.component_context` informs topology and assumptions, not proof. Treat role/permission/identity claims as authorization questions; absent server revalidation proof, use one `missing-control-proof` escape.
 
 Lenses:
 

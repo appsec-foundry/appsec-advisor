@@ -186,6 +186,8 @@ def test_business_context_is_normalized_and_receipted_per_component(tmp_path):
     ("business_context", "message"),
     [
         ({"criticality_weight": 9}, "unknown attributes"),
+        ({"impact_is_material": False}, "requires impact_if_compromised"),
+        ({"impact_if_compromised": "No material harm.", "impact_is_material": "false"}, "must be boolean"),
         ({"business_purpose": "   "}, "empty or oversized"),
         ({"sensitive_assets": []}, "must contain 1-8 items"),
         ({"security_obligations": [f"obligation-{index}" for index in range(9)]}, "must contain 1-8 items"),
@@ -195,6 +197,23 @@ def test_business_context_rejects_technical_unknown_empty_and_oversized_values(t
     repo, output = _repo(tmp_path)
     with pytest.raises(bundles.BundleError, match=message):
         bundles.build_all(output, repo, _manifest(_component(business_context=business_context)))
+
+
+@pytest.mark.parametrize("material", [False, True])
+def test_declared_impact_status_reaches_validated_component_context(tmp_path, material):
+    repo, output = _repo(tmp_path)
+    context = {
+        "impact_if_compromised": "The user's declared consequence and its conditions.",
+        "impact_is_material": material,
+    }
+    manifest = bundles.build_all(output, repo, _manifest(_component(business_context=context)))
+    component = manifest["components"][0]
+    projection = bundles.validate_business_context_bytes(
+        (output / component["business_context_path"]).read_bytes(),
+        expected_component_id=component["component_id"],
+        expected_sha256=component["business_context_sha256"],
+    )
+    assert projection["attributes"] == context
 
 
 def test_bundle_rejects_tampered_business_context_receipt(tmp_path):

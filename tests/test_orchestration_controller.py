@@ -4664,14 +4664,16 @@ def test_main_maps_controller_error_to_exit_code(monkeypatch, tmp_path, capsys):
 def test_main_prepare_forwards_force_flag(monkeypatch, capsys):
     seen: dict[str, object] = {}
 
-    def fake_prepare(argv, *, force=False):
+    def fake_prepare(argv, *, force=False, interactive_context=False):
         seen["argv"] = argv
         seen["force"] = force
+        seen["interactive_context"] = interactive_context
         return {"schema_version": 1, "action": "abort", "reason": "x", "exit_code": 0}
 
     monkeypatch.setattr(controller, "prepare", fake_prepare)
-    controller.main(["prepare", "--force", "--", "--rebuild"])
+    controller.main(["prepare", "--force", "--interactive-context", "--", "--rebuild"])
     assert seen["force"] is True
+    assert seen["interactive_context"] is True
     assert seen["argv"] == ["--rebuild"]
 
 
@@ -5201,6 +5203,24 @@ def _context_v2_prepass_stub(output: Path):
 
 
 class TestContextV2ReconWave:
+    def test_recon_reuses_the_validated_early_overview(self, tmp_path, monkeypatch, capsys):
+        import business_context_preview
+
+        output = _context_v2_run(tmp_path)
+        repo = tmp_path / "repo"
+        (repo / "README.md").write_text("Schedules maintenance visits.")
+        packet = business_context_preview.build(repo)
+        (output / business_context_preview.PREVIEW_NAME).write_text(json.dumps(packet))
+        monkeypatch.setattr(controller, "_run_script", _context_v2_prepass_stub(output))
+        action = controller.context_v2_begin(output)
+        assert business_context_preview.PREVIEW_NAME in action["dispatch_jobs"][0]["input_artifacts"]
+        assert controller._emit(action) == 0
+        emitted = json.loads(capsys.readouterr().out)
+        assert emitted["action"] == "dispatch_parallel"
+        assert any(
+            row["artifact_path"] == business_context_preview.PREVIEW_NAME for row in emitted["artifact_receipts"]
+        )
+
     def test_every_semantic_role_has_pre_handoff_contract_enforcement(self):
         classified = controller.CONTEXT_V2_PRODUCER_GATED_ROLES | controller.CONTEXT_V2_CONTROLLER_RECOVERY_ROLES
 
@@ -6732,6 +6752,278 @@ def test_no_declared_context_captures_nothing(tmp_path):
     controller._capture_business_context({"repo_root": str(tmp_path), "output_dir": str(out)}, receipts)
 
     assert receipts == []
+    assert not (out / ".business-context-input.md").exists()
+
+
+@pytest.mark.parametrize(
+    "application,asset", [("booking-service", "room reservations"), ("parcel-hub", "delivery addresses")]
+)
+def test_early_context_blocks_scanners_until_answers_reach_context(tmp_path, monkeypatch, application, asset):
+    import build_threat_modeling_context
+    import business_context_preview
+    import load_business_context
+    import triage_compute_ranking
+    import yaml
+
+    cfg = _cfg(tmp_path)
+    repo = Path(cfg["repo_root"])
+    repo.mkdir()
+    (repo / "README.md").write_text(f"# {application}\nProcesses {asset}.\n")
+    (repo / "docs").mkdir()
+    saved = repo / "docs/business-context.md"
+    saved.write_text(f"Business purpose: handles {asset}.\n")
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_headless_session", lambda: False)
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "Threat Model — Pre-flight\n")
+    real_script = controller._run_script
+    calls = []
+
+    def script(name, args, **kwargs):
+        calls.append(name)
+        if name == "acquire_lock.py":
+            return real_script(name, args, **kwargs)
+        return _completed()
+
+    monkeypatch.setattr(controller, "_run_script", script)
+    monkeypatch.setattr(controller, "_prepasses", lambda *args: calls.append("prepasses"))
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda *args: calls.append("requirements"))
+    action = controller.prepare(["--full"], interactive_context=True)
+    controller._validate_action(action)
+    assert action["action"] == "decision_required"
+    assert "prepasses" not in calls and "requirements" not in calls
+    out = Path(cfg["output_dir"])
+    packet = json.loads((out / business_context_preview.PREVIEW_NAME).read_text())
+    assert asset in packet["existing_context"]
+    assert application in packet["sources"][0]["excerpt"]
+    for advance in (controller.context_v2_begin, controller.next_action):
+        with pytest.raises(controller.CallError, match="dialog"):
+            advance(out)
+    answer = f"Question: What would disclosure of {asset} mean?\nAnswer: Disclosure exposes customer movements.\n"
+    (out / business_context_preview.RAW_NAME).write_text(answer)
+    with pytest.raises(controller.CallError, match="review business impact"):
+        controller.complete_preflight(out, run_id=cfg["run_id"], context_answer="answered")
+    impact = controller.review_business_impact(out, run_id=cfg["run_id"])
+    controller._validate_action(impact)
+    assert impact["action"] == "decision_required"
+    assert impact["instruction_file"].endswith("modes/business-impact.md")
+    assert "prepasses" not in calls and "requirements" not in calls
+    with pytest.raises(controller.CallError, match="use-case answer"):
+        controller.review_business_impact(out, run_id=cfg["run_id"])
+    completed = controller.complete_preflight(out, run_id=cfg["run_id"], context_answer="answered")
+    assert completed["action"] == "dispatch_agent"
+    assert calls.index("prepasses") < calls.index("requirements")
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    (plugin / "config.json").write_text('{"external_context":{"enabled":false}}')
+    context = build_threat_modeling_context.build(repo, out, plugin).read_text()
+    assert answer.strip() in context
+    assert f"Business purpose: handles {asset}." in context
+    assert f"Business purpose: handles {asset}.\n" in saved.read_text()
+    assert answer.strip() in saved.read_text()
+    assert load_business_context.effective_source(repo, out) == saved
+    assert not (out / business_context_preview.RAW_NAME).exists()
+
+    # Exercise deterministic consumers of the semantic analyst's mapping, not
+    # merely file presence. Choosing that mapping remains the model's job.
+    threats = [
+        {
+            "t_id": f"T-00{i}",
+            "component_id": cid,
+            "title": f"Input validation in {cid}",
+            "risk": "High",
+            "impact": "High",
+            "likelihood": "Medium",
+            "primary_cwe": "CWE-20",
+        }
+        for i, cid in enumerate(("status-view", application), 1)
+    ]
+    model = {
+        "meta": {"analysis_version": 5, "plugin_version": "test"},
+        "components": [{"id": "status-view"}, {"id": application}],
+        "threats": threats,
+        "mitigations": [{"m_id": f"M-00{i}", "addresses": [f"T-00{i}"], "effort": "Medium"} for i in (1, 2)],
+        "security_controls": [],
+        "assets": [],
+        "trust_boundaries": [],
+    }
+    (out / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    before = triage_compute_ranking.compute_ranking(out)
+    business = {
+        "business_purpose": f"Business purpose: handles {asset}.",
+        "impact_if_compromised": "Disclosure exposes customer movements.",
+    }
+    projection = evidence_bundles.business_context_projection(business, application)
+    assert projection["attributes"]["impact_if_compromised"] in context
+    assert projection["attributes"]["business_purpose"] in context
+    assert evidence_bundles.business_context_projection({}, "status-view") is None
+    (out / ".stride-analyst-context.json").write_text(json.dumps({application: {"business_context": business}}))
+    after = triage_compute_ranking.compute_ranking(out)
+    finding_view = lambda ranking: ranking["views"]["top_findings"]["findings_ranked"]
+    mitigation_view = lambda ranking: ranking["views"]["prioritized_mitigations"]["mitigations_ranked"]
+    assert [row["id"] for row in finding_view(before)] == ["T-001", "T-002"]
+    assert [row["id"] for row in finding_view(after)] == ["T-002", "T-001"]
+    assert [row["id"] for row in mitigation_view(after)] == ["M-002", "M-001"]
+    assert finding_view(after)[0]["business_context_basis"] == ["impact_if_compromised"]
+    assert "business_context_basis" not in finding_view(after)[1]
+    assert {row["id"]: row["score"] for row in finding_view(before)} == {
+        row["id"]: row["score"] for row in finding_view(after)
+    }
+    with pytest.raises(controller.CallError, match="not waiting"):
+        controller.complete_preflight(out, run_id=cfg["run_id"], context_answer="answered")
+    # Simulate the next analysis after transient artifacts have been cleaned.
+    controller._cleanup_full(out)
+    next_out = tmp_path / "next-output"
+    next_out.mkdir()
+    next_context = build_threat_modeling_context.build(repo, next_out, plugin).read_text()
+    assert answer.strip() in next_context
+    packet = business_context_preview.build(repo, context_path=saved)
+    assert answer.strip() in packet["existing_context"]
+
+
+@pytest.mark.parametrize("headless,skip", [(True, False), (False, True)])
+def test_early_context_bypass_never_waits(tmp_path, monkeypatch, headless, skip):
+    cfg = _cfg(tmp_path)
+    cfg["skip_business_context"] = skip
+    Path(cfg["repo_root"]).mkdir()
+    monkeypatch.setattr(controller, "_resolve", lambda argv: cfg)
+    monkeypatch.setattr(controller, "_headless_session", lambda: headless)
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(controller, "_prepasses", lambda *args: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda *args: None)
+    monkeypatch.setattr(controller.resolve_config, "render_run_plan", lambda *args: "Preflight\n")
+    assert controller.prepare([], interactive_context=True)["action"] == "dispatch_agent"
+    assert not (Path(cfg["output_dir"]) / ".business-context-preview.json").exists()
+
+
+@pytest.mark.parametrize("fault", ["wrong_run", "wrong_lock", "missing", "symlink", "large", "credential"])
+def test_early_context_rejects_invalid_answers_before_scanning(tmp_path, monkeypatch, fault):
+    import acquire_lock
+
+    cfg = _cfg(tmp_path)
+    out = Path(cfg["output_dir"])
+    out.mkdir()
+    cfg.update(run_id="current-run", business_context_pending=True, business_context_step="worst_case")
+    (out / ".skill-config.json").write_text(json.dumps(cfg))
+    monkeypatch.setattr(
+        acquire_lock, "read_run_id", lambda path: "other-run" if fault == "wrong_lock" else "current-run"
+    )
+    monkeypatch.setattr(controller, "_prepasses", lambda *args: pytest.fail("scanner ran before accepted answer"))
+    raw = out / ".business-context-raw.md"
+    if fault == "symlink":
+        outside = tmp_path / "other.md"
+        outside.write_text("not authorized input")
+        raw.symlink_to(outside)
+    elif fault == "large":
+        raw.write_text("a" * 8001)
+    elif fault == "credential":
+        raw.write_text('api_key = "' + "AKIA" + "1234567890ABCDEF" + '"')
+    run_id = "another-run" if fault == "wrong_run" else "current-run"
+    with pytest.raises(controller.CallError):
+        controller.complete_preflight(out, run_id=run_id, context_answer="answered")
+    assert not (out / ".business-context-input.md").exists()
+    assert json.loads((out / ".skill-config.json").read_text())["business_context_pending"]
+
+
+@pytest.mark.parametrize("decision", ["skip", "unchanged"])
+def test_early_context_skipping_preserves_supplied_source(tmp_path, monkeypatch, decision):
+    import acquire_lock
+
+    cfg = _cfg(tmp_path)
+    out = Path(cfg["output_dir"])
+    out.mkdir()
+    cfg.update(
+        run_id="current-run",
+        business_context_pending=True,
+        business_context_step="worst_case",
+        preflight_workspace={"removed": 0, "had_state": False},
+    )
+    (out / ".skill-config.json").write_text(json.dumps(cfg))
+    source = out / ".business-context-input.md"
+    source.write_text("The dispatch service schedules essential medical deliveries.")
+    original = source.read_bytes()
+    (out / ".business-context-raw.md").write_text("A stale answer must not be consumed.")
+    monkeypatch.setattr(acquire_lock, "read_run_id", lambda path: "current-run")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(controller, "_prepasses", lambda *args: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda *args: None)
+    monkeypatch.setattr(controller, "_prepared_action", lambda *args: {"action": "dispatch_agent"})
+    assert (
+        controller.complete_preflight(out, run_id="current-run", context_answer=decision)["action"] == "dispatch_agent"
+    )
+    assert source.read_bytes() == original
+    assert not (out / ".business-context-raw.md").exists()
+    assert not (Path(cfg["repo_root"]) / "docs/business-context.md").exists()
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_early_context_persists_answers_without_persisting_run_only_import(tmp_path, monkeypatch, existing):
+    import acquire_lock
+
+    cfg = _cfg(tmp_path)
+    repo, out = Path(cfg["repo_root"]), Path(cfg["output_dir"])
+    (repo / "docs").mkdir(parents=True)
+    out.mkdir()
+    target = repo / "docs/business-context.md"
+    if existing:
+        target.write_text("Repository declaration: schedules urgent appointments.\n")
+    cfg.update(
+        run_id="current-run",
+        business_context_pending=True,
+        business_context_step="worst_case",
+        preflight_workspace={"removed": 0, "had_state": False},
+    )
+    (out / ".skill-config.json").write_text(json.dumps(cfg))
+    source = out / ".business-context-input.md"
+    source.write_text("Temporary imported context for this assessment only.\n")
+    answer = "## Impact if compromised\nPatients miss urgent appointments.\n"
+    (out / ".business-context-raw.md").write_text(answer)
+    monkeypatch.setattr(acquire_lock, "read_run_id", lambda path: "current-run")
+    monkeypatch.setattr(controller, "_run_script", lambda *args, **kwargs: _completed())
+    monkeypatch.setattr(controller, "_prepasses", lambda *args: None)
+    monkeypatch.setattr(controller, "_fetch_requirements", lambda *args: None)
+    monkeypatch.setattr(controller, "_prepared_action", lambda *args: {"action": "dispatch_agent"})
+    controller.complete_preflight(out, run_id="current-run", context_answer="answered")
+    assert answer.strip() in target.read_text()
+    assert "Temporary imported context" not in target.read_text()
+    assert ("Repository declaration" in target.read_text()) is existing
+    assert "Temporary imported context" in source.read_text()
+    assert answer.strip() in source.read_text()
+
+
+@pytest.mark.parametrize("fault", ["symlink", "parent_escape", "oversized", "credential"])
+def test_early_context_rejects_unsafe_persistence_before_writes(tmp_path, monkeypatch, fault):
+    import acquire_lock
+
+    cfg = _cfg(tmp_path)
+    repo, out = Path(cfg["repo_root"]), Path(cfg["output_dir"])
+    repo.mkdir()
+    out.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    untouched = outside / "business-context.md"
+    untouched.write_text("Unrelated context must stay unchanged.\n")
+    docs = repo / "docs"
+    if fault == "parent_escape":
+        docs.symlink_to(outside, target_is_directory=True)
+    else:
+        docs.mkdir()
+    target = docs / "business-context.md"
+    if fault == "symlink":
+        target.symlink_to(untouched)
+    elif fault == "oversized":
+        target.write_text("x" * 16001)
+    elif fault == "credential":
+        target.write_text('api_key = "' + "AKIA" + '1234567890ABCDEF"')
+    original = target.read_bytes()
+    cfg.update(run_id="current-run", business_context_pending=True, business_context_step="worst_case")
+    (out / ".skill-config.json").write_text(json.dumps(cfg))
+    (out / ".business-context-raw.md").write_text("## Business purpose\nCoordinates equipment repairs.\n")
+    monkeypatch.setattr(acquire_lock, "read_run_id", lambda path: "current-run")
+    monkeypatch.setattr(controller, "_prepasses", lambda *args: pytest.fail("scanner ran despite rejected persistence"))
+    with pytest.raises(controller.CallError):
+        controller.complete_preflight(out, run_id="current-run", context_answer="answered")
+    assert target.read_bytes() == original
+    assert untouched.read_text() == "Unrelated context must stay unchanged.\n"
     assert not (out / ".business-context-input.md").exists()
 
 

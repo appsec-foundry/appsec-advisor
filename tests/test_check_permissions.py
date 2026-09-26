@@ -116,14 +116,22 @@ def test_yaml_entries_use_known_tools():
 
 
 def test_controller_command_and_paths_are_covered_by_existing_rules():
-    """The thin runtime adds no broader permission: Bash(*) runs the fixed
-    controller command and the existing plugin/output globs cover its reads
-    and writes."""
+    """The controller uses fixed commands and one exact repository write target."""
     entries = cp.load_required(cp.DATA_FILE)
     rules = [entry["entry"] for entry in entries]
     assert any(cp._rule_covers(rule, "Bash(python3 orchestration_controller.py)") for rule in rules)
     assert "Read(${PLUGIN_ROOT}/**)" in rules
     assert "Write(${OUTPUT_DIR}/**)" in rules
+    for command in (
+        "prepare --interactive-context",
+        "review-business-impact",
+        "complete-preflight --context-answer answered",
+    ):
+        assert any(cp._rule_covers(rule, f"Bash(python3 orchestration_controller.py {command})") for rule in rules)
+    assert "Write(${OUTPUT_DIR}/.*)" in rules
+    assert "Read(${OUTPUT_DIR}/.*)" in rules
+    assert "Write(${REPO_ROOT}/docs/business-context.md)" in rules
+    assert "Write(${REPO_ROOT}/**)" not in rules
 
 
 def test_diagnosis_recommendation_refresh_uses_existing_permissions():

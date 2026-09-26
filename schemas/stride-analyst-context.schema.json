@@ -153,14 +153,16 @@
       "description": "Human-readable business and organization facts projected for one component. These values inform scenarios and impact; they do not override repository evidence or severity policy.",
       "type": "object",
       "minProperties": 1,
-      "maxProperties": 5,
+      "maxProperties": 6,
       "properties": {
         "business_purpose": { "$ref": "#/$defs/context_text" },
         "impact_if_compromised": { "$ref": "#/$defs/context_text" },
+        "impact_is_material": { "type": "boolean", "description": "Explicit declared impact: false means no material business harm under the conditions in impact_if_compromised; omit when unknown. Never inferred from an application label." },
         "sensitive_assets": { "$ref": "#/$defs/context_list" },
         "security_obligations": { "$ref": "#/$defs/context_list" },
         "security_assumptions": { "$ref": "#/$defs/context_list" }
       },
+      "dependentRequired": { "impact_is_material": ["impact_if_compromised"] },
       "additionalProperties": false
     },
     "architecture_context": {

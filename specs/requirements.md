@@ -91,6 +91,10 @@ is present.
 
 ## Business context
 
+### REQ-BIZ-005 — Early questions inform the same analysis
+
+Interactive full and rebuild runs use a bounded application overview to ask at most two relevant business-context questions before expensive scanning. The dialog first confirms or corrects the intended use case, then asks for the worst plausible business or user harm in that use case. Technical attack mechanisms alone are not business-harm choices. Choices reflect the confirmed application use and available evidence, with the most plausible option recommended first and explicit confirmation required. No material business harm is a supported answer, including a conditional recommendation for training or demo use with synthetic data and no important business operations. Existing context informs the questions, and already answered topics are omitted. Answers reach the analysis in that same run as optional, validated context and inform relevant finding impact and mitigation ordering. Substantive dialog answers are also saved in `docs/business-context.md`, preserving existing repository context, so later analyses reuse them. An explicit run-only context source is not persisted with those answers. Users can skip questions; headless runs and `--skip-context` never wait for this dialog or write dialog answers. Limited discovery yields explicit uncertainty rather than an extended reconnaissance loop.
+
 ### REQ-BIZ-001 — Declared context is validated and treated as data
 
 Repository and operator supplied context is validated before use and remains
@@ -108,6 +112,8 @@ the impact rating and the presentation order of findings that already stand on
 repository evidence. They never determine whether a finding exists, never relax a
 severity cap, and never substitute for evidence. A finding whose impact rating
 rests on declared context names the context that carried it.
+
+An explicit declaration of no material business harm remains distinct from unknown impact. It does not by itself add a business-priority bonus or trigger a request to raise impact. Independently declared sensitive assets and obligations remain relevant, and technical evidence still governs findings and ratings. The verdict distinguishes the declared no-harm scope from its technical concern level.
 
 ### REQ-BIZ-004 — A run says whether declared context reached the analysis
 

@@ -494,6 +494,8 @@ def _step5b_business_impact_alignment(threats: list[dict], business: dict[str, d
             continue
         assets = [a for a in (declared.get("sensitive_assets") or []) if isinstance(a, str)]
         harm = declared.get("impact_if_compromised") if isinstance(declared.get("impact_if_compromised"), str) else ""
+        if declared.get("impact_is_material") is False:
+            harm = ""
         if not assets and not harm:
             continue
         stated = ", ".join(assets[:3]) if assets else harm.strip()[:160]

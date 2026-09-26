@@ -92,6 +92,8 @@ EXPECTED_WHITELIST_FILES = {
     ".arch-coverage-threats.json",
     ".producer-retries.json",
     ".business-context-input.md",
+    ".business-context-preview.json",
+    ".business-context-raw.md",
     ".pending-dispatch.json",
     ".receipt-verification.json",
 }

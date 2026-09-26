@@ -27,6 +27,11 @@ def relevant_findings(yaml_data: dict) -> dict[str, tuple[str, ...]]:
     if not isinstance(trace, dict) or trace.get("status") != "applied":
         return {}
     declared = {name for name in trace.get("declared_asset_names") or [] if isinstance(name, str)}
+    no_harm = {
+        row.get("component_id")
+        for row in trace.get("component_coverage") or []
+        if isinstance(row, dict) and row.get("impact_is_material") is False
+    }
     names_by_finding: dict[str, list[str]] = {}
     for asset in yaml_data.get("assets") or []:
         if not isinstance(asset, dict) or asset.get("name") not in declared:
@@ -40,6 +45,10 @@ def relevant_findings(yaml_data: dict) -> dict[str, tuple[str, ...]]:
             continue
         display = _severity_rollup.display_id(str(tid))
         names = tuple(dict.fromkeys(names_by_finding.get(display, [])))
+        if (threat.get("component") or threat.get("component_id")) in no_harm and not threat.get(
+            "business_context_basis"
+        ):
+            continue
         if names or threat.get("business_context_basis"):
             relevant[str(tid)] = names
             relevant[display] = names
@@ -58,3 +67,24 @@ def mitigation_note(finding_ids: list, relevant: dict[str, tuple[str, ...]]) -> 
     shown = ", ".join(names[:_MAX_NAMED_ASSETS])
     more = len(names) - _MAX_NAMED_ASSETS
     return f"Business-critical: {shown}" + (f" +{more}" if more > 0 else "")
+
+
+def verdict_context_note(yaml_data: dict) -> str:
+    """Disclose declared no-harm scope without changing technical concern levels."""
+    trace = yaml_data.get("business_context_trace") or {}
+    if not isinstance(trace, dict) or trace.get("status") != "applied":
+        return ""
+    components = {c["id"] for c in yaml_data.get("components") or [] if isinstance(c, dict) and c.get("id")}
+    covered = {
+        row.get("component_id")
+        for row in trace.get("component_coverage") or []
+        if isinstance(row, dict) and row.get("impact_is_material") is False
+    } & components
+    if not covered:
+        return ""
+    return (
+        f"Declared business impact: no material harm for {len(covered)} of {len(components)} "
+        "modeled components under the stated use-case assumptions. Finding severities and the verdict "
+        "retain their technical security concern levels; evidence of consequences outside those "
+        "assumptions still requires review."
+    )

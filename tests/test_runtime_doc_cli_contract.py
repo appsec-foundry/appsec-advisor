@@ -53,7 +53,8 @@ _SUBCOMMAND = re.compile(r"^[\"']?\s*([a-z][a-z0-9-]*)(?![\w=/.-])")
 def _documented_invocations() -> list[tuple[Path, str, str, frozenset[str]]]:
     """(doc, script, subcommand, flags) for every scripted invocation in a doc."""
     found: list[tuple[Path, str, str, frozenset[str]]] = []
-    for doc in sorted(SKILLS.rglob("SKILL*.md")):
+    docs = set(SKILLS.rglob("SKILL*.md")) | set((SKILLS / "create-threat-model" / "modes").glob("*.md"))
+    for doc in sorted(docs):
         text = doc.read_text(encoding="utf-8")
         for block in _BASH_BLOCK.findall(text):
             for match in _SCRIPT_CALL.finditer(block):
@@ -63,7 +64,7 @@ def _documented_invocations() -> list[tuple[Path, str, str, frozenset[str]]]:
                 args = match.group("args")
                 # Several scripts dispatch on a subcommand and hang their flags
                 # off the subparser, where a bare `--help` cannot see them.
-                sub = _SUBCOMMAND.match(args)
+                sub = _SUBCOMMAND.match(args.replace("\\\n", " "))
                 subcommand = sub.group(1) if sub else ""
                 flags = frozenset(_FLAG.findall(args))
                 if flags:
@@ -92,6 +93,23 @@ def _accepted_flags(script: str, subcommand: str) -> frozenset[str] | None:
 
 
 INVOCATIONS = _documented_invocations()
+
+
+@pytest.mark.parametrize("separator", [" ", " \\\n  "])
+def test_subcommand_extraction_preserves_continued_invocations(tmp_path, monkeypatch, separator):
+    skills = tmp_path / "skills"
+    scripts = tmp_path / "scripts"
+    skills.mkdir()
+    scripts.mkdir()
+    (scripts / "runner.py").write_text("")
+    (skills / "SKILL.md").write_text(
+        '```bash\npython3 "$PLUGIN/scripts/runner.py"' + separator + "inspect --scope sample\n```\n"
+    )
+    monkeypatch.setitem(_documented_invocations.__globals__, "SKILLS", skills)
+    monkeypatch.setitem(_documented_invocations.__globals__, "SCRIPTS", scripts)
+    rows = _documented_invocations()
+    assert len(rows) == 1
+    assert rows[0][1:] == ("runner.py", "inspect", frozenset({"--scope"}))
 
 
 def test_the_runtime_docs_actually_invoke_scripts():

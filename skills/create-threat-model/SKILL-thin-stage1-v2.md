@@ -83,7 +83,7 @@ never resolve any output artifact against `REPO_ROOT`. Alias boundary/merger
 inputs as `ASSESSMENT_INPUT_PATH`/`CANDIDATES_FILE`.
 
 Aliases: context `CHECK_REQUIREMENTS`, `REQUIREMENTS_URL_OVERRIDE`; recon `SCOPE`,
-`SCAN_MANIFEST`, `ASSESSMENT_DEPTH`; config gets `ASSESSMENT_DEPTH`; triage too;
+`SCAN_MANIFEST`, `ASSESSMENT_DEPTH`, `SKIP_BUSINESS_CONTEXT`; config gets `ASSESSMENT_DEPTH`; triage too;
 evidence `EVIDENCE_VERIFIER_MAX_FINDINGS`. Omit nulls.
 
 Build each STRIDE analyzer prompt in this order:

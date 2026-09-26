@@ -1206,6 +1206,50 @@ def test_business_context_breaks_only_equal_finding_and_mitigation_scores(tmp_pa
     assert "Protect cardholder data" not in serialized
 
 
+@pytest.mark.parametrize(
+    "component,description",
+    [
+        ("practice-lab", "Only synthetic records; no material harm."),
+        ("example-catalog", "Keine wesentlichen fachlichen Folgen; öffentliche Beispieldaten."),
+    ],
+)
+def test_declared_no_harm_does_not_promote_findings_or_mitigations(tmp_path, component, description):
+    tcr = _tcr()
+    threats = [
+        {
+            "t_id": tid,
+            "component_id": cid,
+            "title": "Input validation",
+            "risk": "High",
+            "impact": "High",
+            "likelihood": "Medium",
+            "primary_cwe": "CWE-20",
+        }
+        for tid, cid in [("T-001", "other-service"), ("T-002", component)]
+    ]
+    data = _minimal_yaml(threats)
+    data["components"] = [{"id": "other-service"}, {"id": component}]
+    data["mitigations"] = [{"m_id": f"M-00{i}", "addresses": [f"T-00{i}"], "effort": "Medium"} for i in (1, 2)]
+    _write_yaml(tmp_path / "threat-model.yaml", data)
+    sidecar = tmp_path / ".stride-analyst-context.json"
+    business = {"impact_if_compromised": description, "impact_is_material": False}
+    sidecar.write_text(json.dumps({component: {"business_context": business}}))
+    ranking = tcr.compute_ranking(tmp_path)
+    findings = ranking["views"]["top_findings"]["findings_ranked"]
+    assert [row["id"] for row in findings] == ["T-001", "T-002"]
+    assert all("business_context_basis" not in row for row in findings)
+    assert [row["id"] for row in ranking["views"]["prioritized_mitigations"]["mitigations_ranked"]] == [
+        "M-001",
+        "M-002",
+    ]
+    business["impact_is_material"] = True
+    business["impact_if_compromised"] = "Important delivery decisions are falsified."
+    sidecar.write_text(json.dumps({component: {"business_context": business}}))
+    positive = tcr.compute_ranking(tmp_path)["views"]["top_findings"]["findings_ranked"]
+    assert [row["id"] for row in positive] == ["T-002", "T-001"]
+    assert {row["id"]: row["score"] for row in findings} == {row["id"]: row["score"] for row in positive}
+
+
 def test_malformed_business_context_sidecar_preserves_empty_basis(tmp_path: Path):
     tcr = _tcr()
     sidecar = tmp_path / ".stride-analyst-context.json"

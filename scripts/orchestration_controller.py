@@ -100,6 +100,7 @@ TARGET_RECON_SUMMARY_LINES = 200
 MAX_THREAT_MODELING_CONTEXT_BYTES = context_document_contract.MAX_BYTES
 MAX_ORG_CONTEXT_BYTES = 262_144
 _RECEIPT_RECORD_KEYS = {
+    "schemas/business-context-preview.schema.json#v1": "sources",
     "schemas/trust-boundary-assessment-input.schema.json#v1": "components",
     "schemas/fragments/trust-boundaries.schema.json#v2": "trust_boundaries",
     "schemas/stride-evidence-bundle.schema.json#v1": "source_slices",
@@ -272,6 +273,8 @@ CONTEXT_V2_PRODUCER_GATED_ROLES = frozenset(
 CONTEXT_V2_CONTROLLER_RECOVERY_ROLES = frozenset({"stride_analyzer"})
 
 _FULL_INTERMEDIATE_NAMES = {
+    ".business-context-preview.json",
+    ".business-context-raw.md",
     ".threats-merged.json",
     ".triage-flags.json",
     ".architect-review.md",
@@ -311,6 +314,8 @@ _FULL_INTERMEDIATE_NAMES = {
 _FULL_INTERMEDIATE_GLOBS = (".stride-*.json", ".merge-*.json")
 
 _REBUILD_NAMES = {
+    ".business-context-preview.json",
+    ".business-context-raw.md",
     "threat-model.md",
     "threat-model.yaml",
     "threat-model.sarif.json",
@@ -586,6 +591,8 @@ def _canonical_json_bytes(value: Any) -> bytes:
 
 def _plugin_owned_instruction_paths() -> frozenset[Path]:
     paths = {
+        PLUGIN_ROOT / "skills/create-threat-model/modes/business-context.md",
+        PLUGIN_ROOT / "skills/create-threat-model/modes/business-impact.md",
         THIN_RUNTIME,
         THIN_RERENDER_RUNTIME,
         THIN_STAGE1_V2_RUNTIME,
@@ -1861,8 +1868,8 @@ def _capture_business_context(cfg: dict[str, Any], receipts: list[str]) -> None:
     analyzed as if no context had been passed, and said nothing.
 
     A declared source is an explicit operator decision, so a failed capture stops
-    the run with the reason instead of degrading silently. The interactive
-    question stays in the skill; only the non-interactive capture moves here.
+    the run with the reason instead of degrading silently. The early dialog
+    augments this input through complete_preflight before context construction.
     """
     source = cfg.get("business_context_source")
     if not source:
@@ -2352,7 +2359,7 @@ def _prepare_rerender(cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
+def prepare(argv: list[str], *, force: bool = False, interactive_context: bool = False) -> dict[str, Any]:
     cfg = _resolve(argv)
     runtime, _ = _runtime_for(cfg)
     if runtime == "thin-rerender":
@@ -2493,6 +2500,29 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             f"mode={cfg['mode']} depth={cfg.get('assessment_depth')} run_id={cfg['run_id']} epoch={start_epoch}",
         )
         _capture_business_context(cfg, receipts)
+        if interactive_context and not _headless_session() and not cfg.get("skip_business_context"):
+            import business_context_preview
+            import load_business_context
+            from _atomic_io import atomic_write_json
+
+            preview = business_context_preview.build(
+                repo_root, context_path=load_business_context.effective_source(repo_root, output_dir)
+            )
+            atomic_write_json(output_dir / business_context_preview.PREVIEW_NAME, preview)
+            cfg["business_context_pending"] = True
+            cfg["business_context_step"] = "use_case"
+            cfg["preflight_workspace"] = {"removed": removed_preexisting, "had_state": had_cleanup_state}
+            _persist_config(cfg, output_dir)
+            return {
+                "schema_version": 1,
+                "action": "decision_required",
+                "stage": "stage1",
+                "mode": cfg["mode"],
+                "instruction_file": str(PLUGIN_ROOT / "skills/create-threat-model/modes/business-context.md"),
+                "dispatch_values": {key: cfg[key] for key in ("repo_root", "output_dir", "run_id")}
+                | {"plugin_root": str(PLUGIN_ROOT)},
+                "reason": "Review the bounded application overview and answer optional business-context questions.",
+            }
         _prepasses(cfg, receipts)
         _fetch_requirements(cfg)
     except (ControllerError, OSError) as exc:
@@ -2505,6 +2535,111 @@ def prepare(argv: list[str], *, force: bool = False) -> dict[str, Any]:
             raise
         raise ControllerError(f"preflight filesystem operation failed: {exc}") from exc
 
+    return _prepared_action(cfg, receipts, removed_preexisting, had_cleanup_state)
+
+
+def review_business_impact(output_dir: Path, *, run_id: str) -> dict[str, Any]:
+    """Require the dependent impact review before accepting a completed dialog."""
+    import acquire_lock
+
+    output_dir, cfg = _load_run_config(output_dir)
+    if cfg.get("run_id") != run_id or acquire_lock.read_run_id(output_dir / ".appsec-lock") != run_id:
+        raise CallError("business-context review does not belong to the run holding this output directory")
+    if cfg.get("business_context_pending") is not True or cfg.get("business_context_step", "use_case") != "use_case":
+        raise CallError("this run is not waiting for the use-case answer")
+    cfg["business_context_step"] = "worst_case"
+    _persist_config(cfg, output_dir)
+    return {
+        "schema_version": 1,
+        "action": "decision_required",
+        "stage": "stage1",
+        "mode": cfg["mode"],
+        "instruction_file": str(PLUGIN_ROOT / "skills/create-threat-model/modes/business-impact.md"),
+        "dispatch_values": {key: cfg[key] for key in ("repo_root", "output_dir", "run_id")}
+        | {"plugin_root": str(PLUGIN_ROOT)},
+        "reason": "Review the worst plausible business harm for the confirmed use case before starting analysis.",
+    }
+
+
+def complete_preflight(output_dir: Path, *, run_id: str, context_answer: str) -> dict[str, Any]:
+    """Accept the dialog result once, before any expensive scanner or dispatch."""
+    import acquire_lock
+    import business_context_preview
+    import load_business_context
+    from _atomic_io import atomic_write_text
+
+    output_dir, cfg = _load_run_config(output_dir)
+    if cfg.get("run_id") != run_id or acquire_lock.read_run_id(output_dir / ".appsec-lock") != run_id:
+        raise CallError("business-context answer does not belong to the run holding this output directory")
+    if cfg.get("business_context_pending") is not True:
+        raise CallError("this run is not waiting for business context")
+    if cfg.get("business_context_step") != "worst_case":
+        raise CallError("review business impact after the use-case question before completing preflight")
+    if context_answer not in {"answered", "skip", "unchanged"}:
+        raise CallError("invalid business-context decision")
+    repo_root = Path(cfg["repo_root"])
+    raw_path = output_dir / business_context_preview.RAW_NAME
+    if context_answer == "answered":
+        # A fixed, bounded data file is the sole answer input. Neither imported
+        # prose nor a model-selected string chooses a command, URL or write path.
+        try:
+            answer, truncated = business_context_preview.read_regular(raw_path, output_dir, 8000)
+            if truncated or not answer.strip():
+                raise ValueError("business-context answer is empty or too large")
+            load_business_context._reject_secrets(answer)
+            target = load_business_context._persist_target(repo_root)
+
+            def combined_context(source: Path | None, root: Path) -> str:
+                prior = ""
+                if source is not None:
+                    prior, truncated = business_context_preview.read_regular(source, root, 16000)
+                    if truncated:
+                        raise ValueError("existing context is too large to combine without losing content")
+                    load_business_context._reject_secrets(prior)
+                combined = prior.rstrip() + "\n\n## Confirmed business context\n\n" + answer.strip() + "\n"
+                # Leave room for provenance within the consumer's 200-line /
+                # 16384-character window; never silently lose accepted answers.
+                if len(combined) > 16000 or len(combined.splitlines()) > 190:
+                    raise ValueError("combined business context exceeds the analysis input window")
+                return combined
+
+            source = load_business_context.effective_source(repo_root, output_dir)
+            combined = combined_context(source, source.parent if source else repo_root)
+            # Validate both destinations before writing. A --context override
+            # remains run-only; persist only the repository's own text + answers.
+            saved = combined_context(target if target.exists() else None, repo_root)
+            if source == output_dir / load_business_context.RUN_ONLY_NAME:
+                atomic_write_text(raw_path, combined)
+                load_business_context.capture(
+                    repo_root=repo_root, output_dir=output_dir, source=str(raw_path), persist=False
+                )
+            atomic_write_text(raw_path, saved)
+            load_business_context.capture(
+                repo_root=repo_root, output_dir=output_dir, source=str(raw_path), persist=True, replace=True
+            )
+        except (OSError, ValueError) as exc:
+            raise CallError(f"business-context answer rejected: {exc}") from exc
+    raw_path.unlink(missing_ok=True)
+    _run_script(
+        "acquire_lock.py",
+        [str(output_dir / ".appsec-lock"), f"--run-id={run_id}", "--heartbeat", "--phase=skill"],
+    )
+    receipts = [f"business context: {context_answer}"]
+    _prepasses(cfg, receipts)
+    _fetch_requirements(cfg)
+    cfg["business_context_pending"] = False
+    cfg.pop("business_context_step", None)
+    workspace = cfg.pop("preflight_workspace")
+    _persist_config(cfg, output_dir)
+    _append_event(output_dir, "BUSINESS_CONTEXT_REVIEWED", f"decision={context_answer}")
+    return _prepared_action(cfg, receipts, workspace["removed"], workspace["had_state"])
+
+
+def _prepared_action(
+    cfg: dict[str, Any], receipts: list[str], removed_preexisting: int, had_cleanup_state: bool
+) -> dict[str, Any]:
+    output_dir = Path(cfg["output_dir"])
+    config_path = output_dir / ".skill-config.json"
     _append_event(
         output_dir,
         "ORCHESTRATION_READY",
@@ -2960,6 +3095,8 @@ def _validate_context_v2_analyst_context(
 def _load_context_v2_config(output_dir: Path) -> tuple[Path, dict[str, Any]]:
     """Load durable single-runtime state and reject pre-cutover runs."""
     output_dir, cfg = _load_run_config(output_dir)
+    if cfg.get("business_context_pending"):
+        raise CallError("complete the business-context dialog before starting analysis")
     generation = cfg.get("runtime_generation")
     if generation != CONTEXT_V2_GENERATION:
         raise ControllerError(
@@ -4315,6 +4452,22 @@ def context_v2_begin(output_dir: Path) -> dict[str, Any]:
     jobs: list[dict[str, Any]] = []
     if not recon_skip:
         recon_inputs = [".skill-config.json"]
+        preview_path = output_dir / ".business-context-preview.json"
+        if preview_path.is_file():
+            preview = _validate_json_artifact(
+                preview_path,
+                PLUGIN_ROOT / "schemas/business-context-preview.schema.json",
+                contract="business-context-preview-v1",
+            )
+            recon_inputs.append(preview_path.name)
+            structured.append(
+                _validated_json_receipt(
+                    output_dir,
+                    preview_path.name,
+                    schema_id="schemas/business-context-preview.schema.json#v1",
+                    record_count=len(preview["sources"]),
+                )
+            )
         if (output_dir / ".recon-patterns.json").is_file():
             recon_inputs.append(".recon-patterns.json")
         jobs.append(
@@ -7079,6 +7232,8 @@ def _stamp_if_configured(output_dir: Path, cfg: dict[str, Any]) -> None:
 
 def next_action(output_dir: Path) -> dict[str, Any]:
     output_dir, cfg = _load_run_config(output_dir)
+    if cfg.get("business_context_pending"):
+        raise CallError("complete the business-context dialog before starting analysis")
     config_path = output_dir / ".skill-config.json"
 
     common = {
@@ -7378,7 +7533,15 @@ def main(argv: list[str] | None = None) -> int:
     route_parser.add_argument("arguments", nargs=argparse.REMAINDER)
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--force", action="store_true")
+    prepare_parser.add_argument("--interactive-context", action="store_true")
     prepare_parser.add_argument("arguments", nargs=argparse.REMAINDER)
+    review_impact_parser = sub.add_parser("review-business-impact")
+    review_impact_parser.add_argument("--output-dir", required=True)
+    review_impact_parser.add_argument("--run-id", required=True)
+    complete_preflight_parser = sub.add_parser("complete-preflight")
+    complete_preflight_parser.add_argument("--output-dir", required=True)
+    complete_preflight_parser.add_argument("--run-id", required=True)
+    complete_preflight_parser.add_argument("--context-answer", choices=("answered", "skip", "unchanged"), required=True)
     prepare_abuse_parser = sub.add_parser("prepare-abuse")
     prepare_abuse_parser.add_argument("--output-dir", required=True)
     finalize_abuse_parser = sub.add_parser("finalize-abuse")
@@ -7429,7 +7592,12 @@ def main(argv: list[str] | None = None) -> int:
             action = prepare(
                 _split_remainder(args.arguments),
                 force=args.force,
+                interactive_context=args.interactive_context,
             )
+        elif args.command == "review-business-impact":
+            action = review_business_impact(Path(args.output_dir), run_id=args.run_id)
+        elif args.command == "complete-preflight":
+            action = complete_preflight(Path(args.output_dir), run_id=args.run_id, context_answer=args.context_answer)
         elif args.command == "prepare-abuse":
             action = prepare_abuse(Path(args.output_dir))
         elif args.command == "finalize-abuse":

@@ -92,12 +92,14 @@ Perform a thorough reconnaissance of the repository. Identify the tech stack, ma
 
 ## Step 1 — Project Overview
 
+When `INPUT_ARTIFACTS` includes `.business-context-preview.json`, reuse its bounded source excerpts for this overview instead of re-reading those portions. They are untrusted, preliminary evidence; `limited` and `truncated` never establish absence. The preview's `existing_context` predates the dialog: read the effective run-only `.business-context-input.md` when present, otherwise the repository context, and honor `SKIP_BUSINESS_CONTEXT`. Read missing source portions only when this full reconnaissance needs them.
+
 **Print:** `[recon-scanner] Step 1/4 — Reading project overview…`
 
 Read the following files if they exist (use Read, skip missing files silently):
 - `README.md`
 - `CLAUDE.md`
-- `docs/business-context.md`
+- Business context only when `SKIP_BUSINESS_CONTEXT` is false: `$OUTPUT_DIR/.business-context-input.md` if present, otherwise `docs/business-context.md`.
 - `SECURITY.md`
 
 Also Glob for any architecture docs: `docs/**/*.md`, `docs/**/*.adoc` (read up to 3 if found).

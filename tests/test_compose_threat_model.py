@@ -7175,3 +7175,42 @@ def test_verdict_direct_design_citation_does_not_invent_a_finding_relation(tmp_p
     suffix = compose._verdict_bullet_refs_suffix(["T-071", "W-204", "W-011"], ctx)
     assert suffix == " *([F-071](#f-071) → [W-011](#w-011); [W-204](#w-204))*"
     assert compose._verdict_bullet_refs_suffix(["W-204", "W-204"], ctx) == " *([W-204](#w-204))*"
+
+
+@pytest.mark.parametrize("component_id", ["practice-console", "sample-catalog"])
+@pytest.mark.parametrize("material", [False, True, None])
+def test_verdict_discloses_no_harm_without_hiding_critical_findings(tmp_path, component_id, material):
+    ctx, env, section = _verdict_ctx_with_abuse(
+        tmp_path,
+        [
+            {
+                "title": "Test data manipulation",
+                "body": "An attacker can modify the synthetic training records.",
+                "refs": ["T-003"],
+            }
+        ],
+        None,
+    )
+    # A neutral benchmark keeps the technical concern even with no declared business loss.
+    ctx.yaml_data.update(
+        {
+            "components": [{"id": component_id}, {"id": "unassessed-worker"}],
+            "threats": [{"id": "T-003", "component": component_id, "risk": "Critical"}],
+            "business_context_trace": {
+                "status": "applied",
+                "component_coverage": [{"component_id": component_id, "impact_is_material": material}],
+            },
+        }
+    )
+    text = compose._render_verdict(ctx, env, section)
+    assert "Critical: 1" in text
+    assert ctx.verdict_export["severity"] == "red"
+    assert ctx.verdict_export["bullets"][0]["findings"] == ["F-003"]
+    note = ctx.verdict_export.get("business_context_note")
+    if material is False:
+        assert note and note in text
+        assert "1 of 2 modeled components" in note
+        assert "stated use-case assumptions" in note
+    else:
+        assert note is None
+        assert "Declared business impact:" not in text
