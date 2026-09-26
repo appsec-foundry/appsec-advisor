@@ -194,9 +194,8 @@ def test_worst_case_prefers_the_persisted_verdict(tmp_path):
     assert "Verdict    🔴 critical security concerns" in out
     assert "anyone can reach admin data today" in out
     assert "Fix the credential handling" in out
-    # The shared worst-case table: ✓, outcome, the finding's weakness class.
-    label = stm.verdict_class_labels(data["threats"])["F-001"][0]
-    assert f"\n  ✓  Full admin takeover  via {label}\n" in out
+    # The shared worst-case table: ✓, outcome, the finding's CWE and the finding itself.
+    assert "\n  ✓  Full admin takeover (CWE-798)  → F-001\n" in out
     assert stm.WORST_CASE_LEGEND in out
     # The scenario sentence survives; the weak fallback must not also render.
     assert "Anyone can sign in as an administrator" in out

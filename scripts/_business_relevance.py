@@ -17,6 +17,7 @@ import _severity_rollup
 
 _UNSAFE_NAME_CHARS_RE = re.compile(r"[\x00-\x1f\x7f\[\]()<>`*_|\\]")
 _MAX_NAMED_ASSETS = 2
+UNNAMED_CONTEXT_NOTE = "Declared business context"
 
 
 def relevant_findings(yaml_data: dict) -> dict[str, tuple[str, ...]]:
@@ -63,7 +64,7 @@ def mitigation_note(finding_ids: list, relevant: dict[str, tuple[str, ...]]) -> 
     names = [" ".join(_UNSAFE_NAME_CHARS_RE.sub("", n).split())[:60] for group in hits for n in group]
     names = [n for n in dict.fromkeys(names) if n]
     if not names:
-        return "Declared business context"
+        return UNNAMED_CONTEXT_NOTE
     shown = ", ".join(names[:_MAX_NAMED_ASSETS])
     more = len(names) - _MAX_NAMED_ASSETS
     return f"Business-critical: {shown}" + (f" +{more}" if more > 0 else "")

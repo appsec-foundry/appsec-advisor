@@ -2164,7 +2164,7 @@ def render_summary(
         lines.extend(render_files(output_dir, cfg))
         return "\n".join(lines) + "\n"
 
-    lines.extend(render_verdict(md_text, cfg, summarize_threat_model.persisted_verdict(yaml_data, plugin_root)))
+    lines.extend(render_verdict(md_text, cfg, summarize_threat_model.persisted_verdict(yaml_data)))
     lines.extend(render_fix_first(yaml_data, cfg, _load_json_object(output_dir / ".triage-flags.json")))
     if change:
         lines.extend(render_change_summary(change))
@@ -2380,11 +2380,11 @@ def render_fix_first(yaml_data: dict, cfg: dict, triage: dict | None = None) -> 
     if not rows:
         return []
     rows.sort(key=(lambda row: order[row[3]]) if all(row[3] in order for row in rows) else lambda row: row[:4])
-    width = max(len(row[4]) for row in rows[:_FIX_FIRST_LIMIT])
     lines = ["", "  Fix first (P1 mitigations)"]
     for _, _, _, mid, title, refs, note in rows[:_FIX_FIRST_LIMIT]:
-        suffix = f"  [{note}]" if note else ""
-        lines.append(f"    {mid}  {title.ljust(width)}  → {', '.join(refs)}{suffix}".rstrip())
+        # Without an asset name the note explains nothing on the console; it still orders the row.
+        suffix = f"  [{note}]" if note and note != _business_relevance.UNNAMED_CONTEXT_NOTE else ""
+        lines.append(f"    {mid}  {title}  → {', '.join(refs)}{suffix}".rstrip())
     if len(rows) > _FIX_FIRST_LIMIT:
         lines.append(f"    +{len(rows) - _FIX_FIRST_LIMIT} more P1 — see §10 Mitigation Register")
     return lines

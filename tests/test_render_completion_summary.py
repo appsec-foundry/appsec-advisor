@@ -2325,15 +2325,20 @@ class TestVerdictEcho:
         )
         verdict = {
             "bullets": [
-                {"title": "Admin takeover via forged JWT", "classes": ["Hard-coded Key"], "verified_attack_path": True}
+                {
+                    "title": "Admin takeover via forged JWT",
+                    "cwes": ["CWE-798"],
+                    "findings": ["F-006", "F-008"],
+                    "verified_attack_path": True,
+                }
             ]
         }
         joined = "\n".join(rcs.render_verdict(md, {}, verdict))
-        assert "  ✓  Admin takeover via forged JWT  via Hard-coded Key" in joined
+        assert "  ✓  Admin takeover via forged JWT (CWE-798)  → F-006, F-008" in joined
         assert rcs.summarize_threat_model.WORST_CASE_LEGEND in joined
-        # The sentence and the reference clause (ids, titles, locations) stay in the report.
+        # The report's reference clause (weakness, titles, locations) stays in the report.
         assert "key committed" not in joined
-        assert "F-006" not in joined and "W-004" not in joined
+        assert "Hardcoded Key" not in joined and "W-004" not in joined
         assert "lib/insecurity.ts:23" not in joined
         # Lines outside the bullet list are untouched.
         assert "**Risk distribution:** 🔴 Critical: 24" in joined

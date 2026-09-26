@@ -151,71 +151,59 @@ def _coverage(threats: list) -> dict:
     return {"with_mitigation": with_m, "uncovered": len(threats) - with_m}
 
 
-# `Improper Neutralization … (SQL Injection)` → `SQL Injection`.
-_CWE_SHORT_NAME_RE = re.compile(r"\(([^()]+)\)\s*$")
+_CWE_ID_RE = re.compile(r"^CWE-\d+$")
 
 
-def verdict_class_labels(threats: object, plugin_root: Path | None = None) -> dict[str, list[str]]:
-    """Weakness-class labels per report anchor (F-NNN), from each finding's CWE.
-
-    The label is the CWE title's parenthetical short name when it has one
-    (`SQL Injection`, `XSS`), else the title itself. A CWE absent from
-    `data/cwe-taxonomy.yaml` contributes no label.
-    """
-    import yaml
-
-    root = plugin_root or Path(__file__).resolve().parent.parent
-    try:
-        taxonomy = yaml.safe_load((root / "data" / "cwe-taxonomy.yaml").read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
-        return {}
-    cwes = (taxonomy.get("cwes") if isinstance(taxonomy, dict) else None) or {}
-    labels: dict[str, list[str]] = {}
+def verdict_cwe_ids(threats: object) -> dict[str, list[str]]:
+    """CWE ids per report anchor (F-NNN), in the finding's own order without repeats."""
+    ids: dict[str, list[str]] = {}
     for threat in threats if isinstance(threats, list) else []:
         if not isinstance(threat, dict):
             continue
         raw = threat.get("cwe")
         found: list[str] = []
         for cwe in raw if isinstance(raw, list) else [raw]:
-            title = str((cwes.get(str(cwe)) or {}).get("title") or "").strip() if cwe else ""
-            match = _CWE_SHORT_NAME_RE.search(title)
-            label = (match.group(1) if match else title).strip()
-            if label and label not in found:
-                found.append(label)
+            cwe = str(cwe or "").strip().upper()
+            if _CWE_ID_RE.match(cwe) and cwe not in found:
+                found.append(cwe)
         raw_id = str(threat.get("t_id") or threat.get("id") or "")
         if found and raw_id:
-            labels[_severity_rollup.display_id(raw_id)] = found
-    return labels
+            ids[_severity_rollup.display_id(raw_id)] = found
+    return ids
 
 
-def persisted_verdict(data: dict, plugin_root: Path | None = None) -> dict | None:
+def persisted_verdict(data: dict) -> dict | None:
     """The report's `### Verdict` block, read verbatim from ``verdict``.
 
     Written by the composer after a successful render (the LLM fragment it
     comes from is deleted by cleanup). Absent on models composed before the
     field existed — callers degrade rather than invent a verdict. Each bullet
-    carries the weakness classes of its findings (``verdict_class_labels``),
-    in finding order without repeats."""
+    carries its findings as report anchors and their CWE ids, in finding order
+    without repeats."""
     v = data.get("verdict")
     if not isinstance(v, dict) or not (v.get("opening") or "").strip():
         return None
-    labels = verdict_class_labels(data.get("threats"), plugin_root)
+    cwe_ids = verdict_cwe_ids(data.get("threats"))
     bullets = []
     for b in v.get("bullets") or []:
         if not isinstance(b, dict) or not str(b.get("title") or "").strip():
             continue
-        findings = [str(f).strip() for f in (b.get("findings") or []) if str(f).strip()]
-        classes: list[str] = []
+        findings = list(
+            dict.fromkeys(
+                _severity_rollup.display_id(str(f).strip()) for f in (b.get("findings") or []) if str(f).strip()
+            )
+        )
+        cwes: list[str] = []
         for fid in findings:
-            for label in labels.get(_severity_rollup.display_id(fid), []):
-                if label not in classes:
-                    classes.append(label)
+            for cwe in cwe_ids.get(fid, []):
+                if cwe not in cwes:
+                    cwes.append(cwe)
         bullets.append(
             {
                 "title": str(b.get("title") or "").strip(),
                 "body": str(b.get("body") or "").strip(),
                 "findings": findings,
-                "classes": classes,
+                "cwes": cwes,
                 "verified_attack_path": bool(b.get("verified_attack_path")),
             }
         )
@@ -465,6 +453,11 @@ def _render_verdict_block(verdict: dict | None) -> list[str]:
     return out
 
 
+def _capped(items: list[str], limit: int) -> str:
+    shown = ", ".join(items[:limit])
+    return f"{shown} +{len(items) - limit}" if len(items) > limit else shown
+
+
 WORST_CASE_LEGEND = (
     "✓ a cited finding participates in an attack chain verified in code; "
     "this does not verify the entire scenario or mean an attack was executed"
@@ -475,25 +468,34 @@ def render_worst_case_table(bullets: list[dict], indent: str = "  ") -> list[str
     """The verdict's outcomes and their full prerequisite-bearing sentences.
 
     Shared by the completion summary and this overview so both consoles show
-    the list identically: ✓ for a cited finding in a verified chain or • otherwise, outcome,
-    and "via" the first weakness class with a `+N` count of the rest, followed
-    by the scenario's own sentence, preserving its access prerequisites. No rank:
-    nothing orders the verdict's bullets by severity (RA-14). There is no header
-    row and each scenario starts with ✓ or •: the completion summary is relayed
-    as Markdown, which strips leading blanks and reads a leading `#` as a
-    heading. review-threat-model's landing lists finding-level worst cases with
-    their fixes — a triage view on another basis — and keeps its own rows.
+    the list identically: ✓ for a cited finding in a verified chain or • otherwise,
+    the outcome with its CWE ids and the cited findings, followed by the
+    scenario's own sentence, preserving its access prerequisites. The finding
+    ids are the join key to `Fix first`; mitigations stay there so the console
+    names one action list. No rank: nothing orders the verdict's bullets by
+    severity (RA-14). There is no header row and each scenario starts with ✓ or
+    •: the completion summary is relayed as Markdown, which strips leading
+    blanks and reads a leading `#` as a heading. review-threat-model's landing
+    lists finding-level worst cases with their fixes — a triage view on another
+    basis — and keeps its own rows.
     """
     if not bullets:
         return []
-    title_w = max(len(b["title"]) for b in bullets)
     rows = []
     for b in bullets:
-        classes = b.get("classes") or []
-        weakness = f"{classes[0]} +{len(classes) - 1}" if len(classes) > 1 else "".join(classes[:1])
         mark = "✓" if b.get("verified_attack_path") else "•"
-        via = f"via {weakness}" if weakness else ""
-        rows.append(f"{indent}{mark}  {b['title']:<{title_w}}  {via}".rstrip())
+        head = f"{indent}{mark}  {b['title']}"
+        cwes = b.get("cwes") or []
+        if cwes:
+            head += f" ({_capped(cwes, 2)})"
+        findings = b.get("findings") or []
+        refs = f"→ {_capped(findings, 4)}" if findings else ""
+        if refs and len(head) + 2 + len(refs) <= _WRAP_WIDTH:
+            rows.append(f"{head}  {refs}")
+        else:
+            rows.append(head)
+            if refs:
+                rows.append(f"{indent}   {refs}")
         body = str(b.get("body") or "").strip()
         if body:
             rows.extend(_wrap(body, indent=indent + "   "))

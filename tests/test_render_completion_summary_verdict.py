@@ -29,100 +29,103 @@ def _load_module():
 
 rcs = _load_module()
 
-_TAXONOMY = {
-    "cwes": {
-        "CWE-1": {"title": "Improper Neutralization in a Query (Query Injection)"},
-        "CWE-2": {"title": "Path Traversal"},
-        "CWE-3": {"title": "Improper Output Encoding (XSS)"},
-    }
-}
+def _bullet(
+    title: str,
+    cwes: list[str] | None = None,
+    verified: bool = False,
+    findings: list[str] | None = None,
+) -> dict:
+    return {"title": title, "cwes": cwes or [], "findings": findings or [], "verified_attack_path": verified}
 
 
-def _plugin_root(tmp_path: Path) -> Path:
-    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "data" / "cwe-taxonomy.yaml").write_text(yaml.safe_dump(_TAXONOMY), encoding="utf-8")
-    return tmp_path
-
-
-def _bullet(title: str, classes: list[str] | None = None, verified: bool = False) -> dict:
-    return {"title": title, "classes": classes or [], "verified_attack_path": verified}
-
-
-def test_labels_follow_the_cwe_short_name_rule(tmp_path):
-    labels = stm.verdict_class_labels(
+def test_cwe_ids_per_finding_keep_order_and_drop_non_ids():
+    ids = stm.verdict_cwe_ids(
         [
-            {"id": "T-011", "cwe": "CWE-1"},
-            {"id": "T-012", "cwe": "CWE-2"},
-            {"id": "T-013", "cwe": ["CWE-3", "CWE-3"]},
-            {"t_id": "T-014", "cwe": "CWE-1"},
-            {"id": "T-015", "cwe": "CWE-999"},
-            {"id": "T-016"},
+            {"id": "T-011", "cwe": "CWE-89"},
+            {"id": "T-012", "cwe": ["cwe-306", "CWE-306", "CWE-400"]},
+            {"t_id": "T-013", "cwe": "CWE-74"},
+            {"id": "T-014", "cwe": "SQL Injection"},
+            {"id": "T-015"},
             "not-a-threat",
-        ],
-        _plugin_root(tmp_path),
+        ]
     )
-    assert labels == {
-        "F-011": ["Query Injection"],
-        "F-012": ["Path Traversal"],
-        "F-013": ["XSS"],
-        "F-014": ["Query Injection"],
-    }
+    assert ids == {"F-011": ["CWE-89"], "F-012": ["CWE-306", "CWE-400"], "F-013": ["CWE-74"]}
 
 
-def test_missing_taxonomy_yields_no_labels(tmp_path):
-    assert stm.verdict_class_labels([{"id": "T-011", "cwe": "CWE-1"}], tmp_path) == {}
-
-
-def test_bullet_classes_follow_finding_order_without_repeats(tmp_path):
+def test_bullet_carries_findings_and_cwes_in_finding_order_without_repeats():
     data = {
         "threats": [
-            {"id": "T-011", "cwe": "CWE-1"},
-            {"id": "T-012", "cwe": ["CWE-1", "CWE-2"]},
-            {"id": "T-013", "cwe": "CWE-3"},
+            {"id": "T-011", "cwe": "CWE-89"},
+            {"id": "T-012", "cwe": ["CWE-89", "CWE-22"]},
+            {"id": "T-013", "cwe": "CWE-79"},
         ],
         "verdict": {
             "opening": "Not production-ready.",
-            "bullets": [{"title": "Customer data exposed", "findings": ["F-012", "T-011", "F-013"]}],
+            "bullets": [{"title": "Customer data exposed", "findings": ["F-012", "T-011", "F-013", "F-012"]}],
         },
     }
-    bullet = stm.persisted_verdict(data, _plugin_root(tmp_path))["bullets"][0]
-    assert bullet["classes"] == ["Query Injection", "Path Traversal", "XSS"]
+    bullet = stm.persisted_verdict(data)["bullets"][0]
+    assert bullet["findings"] == ["F-012", "F-011", "F-013"]
+    assert bullet["cwes"] == ["CWE-89", "CWE-22", "CWE-79"]
 
 
-def test_rows_carry_mark_outcome_and_first_class_in_one_column():
+def test_rows_carry_mark_outcome_cwes_and_findings():
     rows = stm.render_worst_case_table(
         [
-            _bullet("Admin takeover", ["SQL Injection"]),
-            _bullet("Token forgery", ["Hard-coded Key", "Signature Bypass"], verified=True),
+            _bullet("Admin takeover", ["CWE-89"], findings=["F-001"]),
+            _bullet("Token forgery", ["CWE-798", "CWE-347", "CWE-321"], verified=True, findings=["F-002", "F-003"]),
             _bullet("Unclassified outcome"),
         ],
         indent="",
     )
-    assert [row[:3] for row in rows[:3]] == ["•  ", "✓  ", "•  "]
-    assert rows[0][3:].startswith("Admin takeover") and rows[1][3:].startswith("Token forgery")
-    assert rows[0].index("via SQL Injection") == rows[1].index("via Hard-coded Key +1")
-    assert rows[2] == "•  Unclassified outcome"
+    assert rows[:3] == [
+        "•  Admin takeover (CWE-89)  → F-001",
+        "✓  Token forgery (CWE-798, CWE-347 +1)  → F-002, F-003",
+        "•  Unclassified outcome",
+    ]
     assert rows[3:] == ["", stm.WORST_CASE_LEGEND]
 
 
+def test_rows_never_repeat_the_weakness_after_the_title():
+    # The title already names the attack; the row adds only the CWE id.
+    row = stm.render_worst_case_table([_bullet("Login bypass via SQL injection", ["CWE-89"], findings=["F-001"])])[0]
+    assert row.count("via") == 1
+
+
+def test_rows_leave_mitigations_to_fix_first():
+    rows = stm.render_worst_case_table([_bullet("Admin takeover", ["CWE-89"], findings=["F-001"])], indent="")
+    assert not any("M-" in row or "Fix" in row for row in rows)
+
+
+def test_long_rows_move_the_findings_to_their_own_line():
+    title = "Language model service open to any internet caller without credentials"
+    rows = stm.render_worst_case_table(
+        [_bullet(title, ["CWE-306"], findings=["F-006", "F-013", "F-027", "F-030", "F-031"])]
+    )
+    assert rows[0] == f"  •  {title} (CWE-306)"
+    assert rows[1] == "     → F-006, F-013, F-027, F-030 +1"
+    assert all(len(row) <= 92 for row in rows)
+
+
 def test_legend_only_when_a_path_is_verified():
-    assert stm.render_worst_case_table([_bullet("Admin takeover", ["SQL Injection"])]) == [
-        "  •  Admin takeover  via SQL Injection"
-    ]
+    assert stm.render_worst_case_table([_bullet("Admin takeover", ["CWE-89"])]) == ["  •  Admin takeover (CWE-89)"]
     assert stm.render_worst_case_table([]) == []
 
 
 def test_rows_claim_no_rank():
     # RA-14: the verdict's bullets carry no severity order, so no row shows a rank.
-    rows = stm.render_worst_case_table([_bullet(f"Outcome {n}", ["XSS"]) for n in range(1, 11)], indent="")
-    assert len({row.index("via XSS") for row in rows}) == 1
+    rows = stm.render_worst_case_table([_bullet(f"Outcome {n}", ["CWE-79"]) for n in range(1, 11)], indent="")
     assert all(row[0] in "✓•" for row in rows)
+    assert not any(re.search(r"#\d|\b(rank|worst first)\b", row) for row in rows)
 
 
 def test_no_line_opens_a_markdown_block():
     # The completion summary is relayed as Markdown, which strips leading blanks
     # and reads `#`, `-`, `>`, `1.` at a line start as block syntax.
-    bullets = [_bullet(f"Outcome {n}", ["XSS"], verified=n % 2 == 0) for n in range(1, 12)]
+    bullets = [
+        _bullet(f"Outcome {n} " + "x" * 80, ["CWE-79"], verified=n % 2 == 0, findings=["F-001"])
+        for n in range(1, 12)
+    ]
     for row in stm.render_worst_case_table(bullets, indent=""):
         assert not re.match(r"(#|[-*+>=]|\d+[.)])(\s|$)", row), row
 
@@ -155,7 +158,6 @@ def test_completion_summary_swaps_the_bullets_for_the_table(tmp_path):
     }
     model = {"meta": {"schema_version": 1}, "threats": threats, "mitigations": [], "components": [], "verdict": verdict}
     (out / "threat-model.yaml").write_text(yaml.safe_dump(model), encoding="utf-8")
-    label = stm.verdict_class_labels(threats)["F-011"][0]
     r = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--output-dir", str(out), "--repo-root", str(out), "--mode", "full"],
         capture_output=True,
@@ -164,11 +166,11 @@ def test_completion_summary_swaps_the_bullets_for_the_table(tmp_path):
     assert r.returncode == 0, r.stderr
     verdict_block = r.stdout.split("-- Verdict", 1)[1].split("Fix the query layer first.", 1)[0]
     assert "\n  What an attacker can do today, worst first\n" in verdict_block
-    assert f"\n  ✓  Customer data exposed  via {label}\n" in verdict_block
+    assert "\n  ✓  Customer data exposed (CWE-89)  → F-011\n" in verdict_block
     assert stm.WORST_CASE_LEGEND in verdict_block
-    # The sentence survives; finding links and locations stay in the report.
+    # The sentence survives; the report's reference clause (weakness, location) does not.
     assert "Anyone can dump every record" in verdict_block
-    assert "F-011" not in verdict_block and "W-003" not in verdict_block and "search.ts" not in verdict_block
+    assert "W-003" not in verdict_block and "search.ts" not in verdict_block
     assert "**" not in verdict_block
     assert "\n\n\n" not in verdict_block
 
@@ -248,6 +250,35 @@ def test_fix_first_puts_declared_business_context_first_within_a_severity():
     assert "[" not in lines[3]
 
 
+def test_fix_first_rows_are_not_padded_to_the_longest_title():
+    lines = rcs.render_fix_first(
+        _fix_first_model(
+            [
+                {"id": "M-001", "title": "Short", "priority": "P1", "threat_ids": ["T-001"]},
+                {"id": "M-002", "title": "A much longer mitigation title", "priority": "P1", "threat_ids": ["T-002"]},
+            ]
+        ),
+        {},
+    )
+    assert "    M-001  Short  → F-001" in lines
+
+
+def test_fix_first_orders_by_unnamed_context_but_does_not_print_it():
+    model = _fix_first_model(
+        [
+            {"id": "M-001", "title": "Verify tokens", "priority": "P1", "threat_ids": ["T-001"]},
+            {"id": "M-002", "title": "Check ownership", "priority": "P1", "threat_ids": ["T-002"]},
+        ]
+    )
+    model["business_context_trace"] = {"status": "applied"}
+    model["threats"][1]["business_context_basis"] = "declared use case"
+
+    lines = rcs.render_fix_first(model, {})
+
+    assert [line.split()[0] for line in lines[2:]] == ["M-002", "M-001"]
+    assert not any("[" in line for line in lines)
+
+
 def test_fix_first_caps_the_list_and_names_the_rest():
     mitigations = [{"id": f"M-{n:03d}", "title": "t", "priority": "P1", "threat_ids": ["T-002"]} for n in range(1, 11)]
     lines = rcs.render_fix_first(_fix_first_model(mitigations), {})
@@ -269,7 +300,7 @@ def test_fix_first_is_absent_when_quiet_or_without_p1(cfg):
     ],
 )
 def test_console_preserves_scenario_access_requirements(body):
-    bullet = {"title": "Records exposed", "body": body, "classes": ["Missing Authorization"]}
+    bullet = {"title": "Records exposed", "body": body, "cwes": ["CWE-862"]}
     report = f"- **Records exposed** — {body}"
     rendered = " ".join(" ".join(rcs._verdict_console_lines(report, [bullet])).split())
     assert body in rendered
