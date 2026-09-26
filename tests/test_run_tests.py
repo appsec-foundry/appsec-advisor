@@ -316,6 +316,19 @@ def test_deleted_source_requires_full_suite(selection_repo):
     assert runner.select_changed(["scripts/emitter.py"], selection_repo).paths == ("tests/",)
 
 
+@pytest.mark.parametrize("names", [("alpha", "beta"), ("convert", "publish")])
+def test_full_suite_explains_every_unrouted_path_and_retains_reviewed_reasons(selection_repo, names):
+    unknown = [f"scripts/{name}.py" for name in names]
+    for path in unknown:
+        (selection_repo / path).touch()
+    paths = [unknown[0], "scripts/emitter.py", "scripts/deleted.py", unknown[1]]
+    result = runner.select_changed(paths, selection_repo)
+    assert result.paths == ("tests/",)
+    assert len([reason for reason in result.reasons if reason.startswith("full suite:")]) == 3
+    for path in paths:
+        assert any(repr(path) in reason for reason in result.reasons)
+
+
 def test_new_test_requires_inventory_review(selection_repo):
     (selection_repo / "tests/test_new.py").touch()
     result = runner.select_changed(["tests/test_new.py"], selection_repo)
@@ -633,6 +646,39 @@ def test_shipped_source_routes_include_reviewed_producers_and_consumers(source, 
     selection = runner.select_changed([source])
     assert required <= set(selection.paths)
     assert "tests/test_full_run_e2e.py" not in selection.paths
+
+
+@pytest.mark.parametrize(
+    "source, consumer",
+    [
+        ("agents/appsec-control-analyst.md", "agent_definitions"),
+        ("agents/appsec-recon-scanner.md", "agent_definitions"),
+        ("agents/shared/ms-template.md", "agent_definitions"),
+        ("agents/shared/prose-samples.md", "agent_definitions"),
+        ("agents/shared/qa-ms-checks.md", "agent_definitions"),
+        ("data/context-routing-bindings.json", "context_routing"),
+        ("data/context-routing-catalog.yaml", "context_routing"),
+        ("data/required-permissions.yaml", "check_permissions"),
+        ("data/weakness-classes.yaml", "weakness_class_config_consistency"),
+        ("docs/internal/contracts/cleanup-whitelist.md", "runtime_cleanup"),
+        ("schemas/fragments/verdict.schema.json", "validate_fragment"),
+        ("schemas/stride-analyst-context.schema.json", "schemas"),
+        ("scripts/_severity_rollup.py", "severity_rollup"),
+        ("scripts/compose_threat_model.py", "threat_fixture"),
+        ("scripts/runtime_cleanup.py", "threat_model_health"),
+        ("scripts/summarize_threat_model.py", "render_completion_summary"),
+        ("scripts/triage_compute_ranking.py", "build_threat_model_yaml"),
+        ("scripts/validate_fragment.py", "validate_fragment"),
+        ("skills/create-threat-model/SKILL-full-runtime.md", "lazy_phase_group_loading"),
+        ("skills/create-threat-model/SKILL-thin-stage1-v2.md", "context_prompt_budgets"),
+        ("skills/create-threat-model/SKILL.md", "skill_definitions"),
+        ("templates/fragments/mitigations.md.j2", "compose_threat_model"),
+        ("templates/fragments/verdict.md.j2", "compose_threat_model"),
+        ("tests/fixtures/e2e/golden/threat-model.md", "e2e_pipeline"),
+    ],
+)
+def test_previously_unrouted_sources_keep_their_consumer_routes(source, consumer):
+    assert f"tests/test_{consumer}.py" in runner.SOURCE_TESTS.get(source, ())
 
 
 def test_all_shipped_source_routes_remain_selective():
