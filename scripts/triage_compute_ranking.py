@@ -50,7 +50,7 @@ from typing import Any
 import _yaml_io
 import plugin_meta
 import yaml  # noqa: F401  (kept for downstream callers writing yaml)
-from _severity_policy import companion_cwes, cwe_ceiling, individual_critical_ceiling, normalize_risks
+from _severity_policy import abuse_case_risk, companion_cwes, cwe_ceiling, individual_critical_ceiling, normalize_risks
 from prepare_trust_boundary_context import (
     boundary_assumption_state,
     boundary_endpoints_valid,
@@ -431,9 +431,9 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
     Only ``fully_viable`` chains elevate — ``partially_blocked`` /
     ``inconclusive`` do not (guardrail against inflation). A finding bound to a
     ``required`` step is a keystone; a non-required step is a contributor. The
-    chain severity is one notch above the highest member raw severity — the
-    "combined exceeds individual" semantics that justify an abuse case — capped
-    at Critical. Returns [] when the sidecars are absent (non-fatal)."""
+    chain severity is the highest policy-rated member risk. A weaker member
+    may inherit that context, but verifying a path cannot raise its strongest
+    finding's risk. Returns [] when the sidecars are absent (non-fatal)."""
     if not isinstance(verdicts_doc, dict) or not isinstance(matches_doc, dict):
         return []
     verdict_by_id = {v.get("abuse_case_id"): v for v in (verdicts_doc.get("verdicts") or []) if isinstance(v, dict)}
@@ -459,7 +459,7 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
         if not v or v.get("chain_verdict") != "fully_viable":
             continue
 
-        keystones, contributors, members, member_sevs = [], [], [], []
+        keystones, contributors, members, member_findings = [], [], [], []
         missing_required = False
         for sm in m.get("step_matches") or []:
             raw = (sm.get("matched_finding_id") or "").strip()
@@ -471,7 +471,7 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
             if not tid:
                 continue
             members.append(tid)
-            member_sevs.append(_finding_severity(finding))
+            member_findings.append(finding)
             if sm.get("required", True):
                 keystones.append(tid)
             else:
@@ -479,14 +479,12 @@ def _detect_verified_abuse_chains(findings: list[dict], verdicts_doc: Any, match
         if not members or missing_required:
             continue
 
-        base = max((_sev_rank(s) for s in member_sevs), default=_sev_rank("High"))
-        combined_rank = min(base + 1, _sev_rank("Critical"))
         out.append(
             {
                 "id": cid,
                 "name": m.get("title") or cid,
-                "severity": _sev_label(combined_rank),
-                "severity_justification": f"code-verified fully-viable abuse chain {cid}",
+                "severity": abuse_case_risk(member_findings),
+                "severity_justification": f"highest policy-rated member risk in verified abuse chain {cid}",
                 "breach_distance": 1,
                 "keystones": keystones,
                 "contributors": contributors,

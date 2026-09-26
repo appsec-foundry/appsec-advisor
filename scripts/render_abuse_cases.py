@@ -30,6 +30,7 @@ from pathlib import Path
 
 import yaml
 from _atomic_io import atomic_write_text
+from _severity_policy import abuse_case_priority, abuse_case_risk
 from actor_presentation import attacker_display
 from enrichment_pass import EnrichmentContinuation
 
@@ -46,7 +47,7 @@ _CHAIN_VERDICT = {
 
 # Combined-risk level → emoji.
 _RISK_EMOJI = {"Critical": "🔴", "High": "🟠", "Medium": "🟡", "Low": "🟢", "Informational": "⚪"}
-_SEV_ORDER = ["Low", "Medium", "High", "Critical"]
+_SEV_ORDER = ["Informational", "Low", "Medium", "High", "Critical"]
 
 # initial_access enum → report prose.
 _ACCESS_PROSE = {
@@ -164,18 +165,8 @@ def _severity(finding: dict) -> str:
 
 
 def _combined_risk(matched: list[dict], chain_verdict: str) -> str:
-    """Highest matched-finding severity, escalated one notch when the chain is
-    fully viable (the whole point of an abuse case: the chain exceeds the
-    individual ratings)."""
-    sevs = [s for s in (_severity(f) for f in matched) if s]
-    if not sevs:
-        base = "High"
-    else:
-        base = max(sevs, key=lambda s: _SEV_ORDER.index(s))
-    if chain_verdict == "fully_viable":
-        idx = min(_SEV_ORDER.index(base) + 1, len(_SEV_ORDER) - 1)
-        return _SEV_ORDER[idx]
-    return base
+    """Verification status is separate from the highest linked finding risk."""
+    return abuse_case_risk(matched)
 
 
 def _step_status_icon(verdict: str, controls_found: list) -> str:
@@ -562,7 +553,7 @@ def _case_markdown(m: dict) -> str:
         out.append(f"| {r['step']} | {finding_cell} | {r['outcome']} |")
     out.append("")
     if m["combined_risk_rationale"]:
-        out.append("**Why combined risk exceeds individual ratings**")
+        out.append("**Scenario impact**")
         out.append("")
         out.append(m["combined_risk_rationale"])
         out.append("")
@@ -612,14 +603,21 @@ def _summary_table(models: list[dict]) -> str:
 
 
 _INTRO = (
-    "_Abuse cases describe end-to-end attack scenarios that chain individual "
-    "findings into an exploitation path. Each case is **mandatory** — defined in "
-    "the org profile / plugin library and evaluated against every repository. "
-    "Every chain step references a finding from "
-    "[§8 Findings Register](#8-findings-register); each step is code-confirmed "
-    "against the repository and the chain verdict is folded deterministically "
-    "from the per-step results, never rated by hand._"
+    "_Abuse cases connect findings into attack scenarios. The verdict records "
+    "whether repository evidence confirms the path. Combined risk is the highest "
+    "policy-rated risk of the linked findings in the "
+    "[§8 Findings Register](#8-findings-register); verification adds no severity. "
+    "Within each verification group, higher-risk cases appear first. Equal risks "
+    "use the strongest finding's assessed reach, impact and likelihood. "
+    "Case IDs remain stable and do not indicate priority._"
 )
+
+_VERIFICATION_GROUPS = {
+    "fully_viable": "Confirmed attack paths",
+    "partially_blocked": "Partially blocked attack paths",
+    "inconclusive": "Unresolved scenarios",
+    "mitigated": "Mitigated scenarios",
+}
 
 _LEGEND = (
     "_Verdict: ⚠ Fully viable — no effective control blocks this chain · "
@@ -652,7 +650,12 @@ def _catalog_table(rows: list[dict]) -> str:
 def render_fragment(models: list[dict], catalog_rows: list[dict] | None = None) -> str:
     parts: list[str] = [HEADING, ""]
     if models:
-        parts += [_INTRO, "", _summary_table(models), "", _LEGEND, ""]
+        parts += [_INTRO, ""]
+        for verdict, label in _VERIFICATION_GROUPS.items():
+            group = [model for model in models if model["chain_verdict"] == verdict]
+            if group:
+                parts += [f"**{label}**", "", _summary_table(group), ""]
+        parts += [_LEGEND, ""]
         for m in models:
             parts.append("---")
             parts.append("")
@@ -755,7 +758,6 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
                 pass
 
     models = []
-    # Stable order: by id.
     for cid in sorted(verdicts):
         verdict = verdicts[cid]
         case = case_by_id.get(cid)
@@ -767,7 +769,17 @@ def build_models(output_dir: Path, org_profile: str | None, repo_root: str | Non
         models.append(
             render_case(case, verdict, findings_idx, mitigations, matches_by_id.get(cid), tm.get("meta") or {})
         )
-    return models
+    group_order = {verdict: index for index, verdict in enumerate(_VERIFICATION_GROUPS)}
+
+    def priority(model: dict) -> tuple:
+        findings = [findings_idx[fid] for fid in model["matched_finding_ids"] if fid in findings_idx]
+        return (
+            group_order.get(model["chain_verdict"], group_order["inconclusive"]),
+            *abuse_case_priority(findings),
+            model["id"],
+        )
+
+    return sorted(models, key=priority)
 
 
 def build_catalog_evaluation(output_dir: Path) -> list[dict]:

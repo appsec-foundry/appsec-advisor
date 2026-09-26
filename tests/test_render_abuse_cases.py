@@ -179,8 +179,8 @@ def test_fully_viable_case_model(tmp_path: Path):
     m = models[0]
     assert m["id"] == "AC-T-001"
     assert m["chain_verdict"] == "fully_viable"
-    # max matched severity High → escalated to Critical because fully viable
-    assert m["combined_risk"] == "Critical"
+    # Verification establishes the path without increasing its assessed risk.
+    assert m["combined_risk"] == "High"
     # step 1 confirmed, no controls → ⚠; step 3 inconclusive/unmatched → ?
     icons = [r["status_icon"] for r in m["rows"]]
     assert icons == ["⚠", "⚠", "?"]
@@ -203,6 +203,94 @@ def test_refuted_step_keeps_its_own_icon(tmp_path: Path):
     assert [r["status_icon"] for r in m["rows"]] == ["⚠", "✗", "?"]
     assert [r["verdict"] for r in m["rows"]] == ["confirmed", "refuted", "inconclusive"]
     assert "✗ Refuted" in rac._LEGEND
+
+
+@pytest.mark.parametrize(
+    "title,filename", [("Alter project records", "src/records.py"), ("Run queued work", "jobs/run.go")]
+)
+@pytest.mark.parametrize("risks", [("High",), ("High", "Medium"), ("High", "High"), ("Critical", "Medium")])
+def test_verified_case_retains_highest_assessed_risk(title, filename, risks):
+    case = {
+        "id": "ORG-AC-901",
+        "title": title,
+        "source": "mandatory",
+        "goal": title,
+        "attacker": {"actor_id": "external-attacker", "initial_access": "unauthenticated"},
+        "chain": [{"step": n, "description": f"Reach operation {n}"} for n in range(1, len(risks) + 1)],
+    }
+    verdict = {
+        "chain_verdict": "fully_viable",
+        "step_verdicts": [
+            {"step": n, "verdict": "confirmed", "matched_finding_id": f"F-{n:03d}", "controls_found": []}
+            for n in range(1, len(risks) + 1)
+        ],
+    }
+    findings = {
+        f"F-{n:03d}": {"risk": risk, "title": title, "evidence": {"file": filename, "line": n}}
+        for n, risk in enumerate(risks, 1)
+    }
+    model = rac.render_case(case, verdict, findings, [])
+    assert model["combined_risk"] == ("Critical" if "Critical" in risks else "High")
+    assert "Why combined risk exceeds individual ratings" not in rac.render_fragment([model])
+
+
+@pytest.mark.parametrize("ids", [(11, 900, 80, 1, 2, 3), (950, 40, 700, 30, 20, 10)])
+def test_report_orders_cases_by_verified_risk_and_preserves_export_order(tmp_path, ids):
+    definitions, verdicts = [], []
+    rows = [
+        ("Read project records", "T-010", "fully_viable"),
+        ("Execute a server operation", "T-001", "fully_viable"),
+        ("Change a protected role", "T-002", "fully_viable"),
+        ("Reach a guarded operation", "T-001", "partially_blocked"),
+        ("Investigate an operation", "T-001", "inconclusive"),
+        ("Attempt a denied operation", "T-001", "mitigated"),
+    ]
+    for number, (title, fid, status) in zip(ids, rows):
+        cid = f"ORG-AC-{number:03d}"
+        definitions.append(
+            {
+                "id": cid,
+                "title": title,
+                "source": "mandatory",
+                "goal": title,
+                "attacker": {"actor_id": "external-attacker", "initial_access": "unauthenticated"},
+                "chain": [
+                    {"step": 1, "label": title, "grants": "operation_access", "probe": {"sink_patterns": ["operation"]}}
+                ],
+            }
+        )
+        verdicts.append(
+            {
+                "abuse_case_id": cid,
+                "chain_verdict": status,
+                "step_verdicts": [{"step": 1, "verdict": "confirmed", "matched_finding_id": fid}],
+            }
+        )
+    profile = tmp_path / "profile"
+    (profile / "abuse-cases").mkdir(parents=True)
+    (profile / "abuse-cases" / "cases.yaml").write_text(yaml.safe_dump({"abuse_cases": definitions}))
+    profile_path = profile / "org-profile.yaml"
+    profile_path.write_text(yaml.safe_dump({"abuse_cases": {"inherit_defaults": False}}))
+    _setup(tmp_path, {"schema_version": 1, "verdicts": verdicts})
+    path = tmp_path / "threat-model.yaml"
+    model = yaml.safe_load(path.read_text())
+    for finding in model["threats"]:
+        finding["breach_distance"] = 2 if finding["id"] == "T-010" else 1
+    path.write_text(yaml.safe_dump(model))
+    expected = [f"ORG-AC-{ids[index]:03d}" for index in (1, 2, 0, 3, 4, 5)]
+
+    for ordered_verdicts in (verdicts, list(reversed(verdicts))):
+        (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps({"verdicts": ordered_verdicts}))
+        assert rac.main(["--output-dir", str(tmp_path), "--org-profile", str(profile_path)]) == 0
+        sidecar = json.loads((tmp_path / ".fragments" / "abuse-cases.json").read_text())
+        assert [case["id"] for case in sidecar["abuse_cases"]] == expected
+        exported = yaml.safe_load(path.read_text())["abuse_case_analysis"]["cases"]
+        assert [case["id"] for case in exported] == expected
+        assert [case["combined_risk"] for case in exported[:3]] == ["Critical", "High", "High"]
+        md = (tmp_path / ".fragments" / "abuse-cases.md").read_text()
+        assert [md.index(f"### {cid}") for cid in expected] == sorted(md.index(f"### {cid}") for cid in expected)
+        assert md.index("**Confirmed attack paths**") < md.index("**Unresolved scenarios**")
+        assert md.index("**Unresolved scenarios**") < md.index("**Mitigated scenarios**")
 
 
 def test_fragment_markdown_structure(tmp_path: Path):

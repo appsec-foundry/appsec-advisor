@@ -11,6 +11,9 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 REPO_ROOT = Path(__file__).parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "match_abuse_cases.py"
 
@@ -526,6 +529,53 @@ def test_malformed_late_registration_meta_preserves_recon_signal_state(tmp_path:
 # ---------------------------------------------------------------------------
 # CLI: match → list-candidates round trip against the shipped library
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ids,filename", [((1, 900, 20), "src/records.py"), ((980, 120, 400), "handlers/work.go")])
+def test_cli_candidates_prioritize_evidenced_risk_without_dropping_partial_cases(tmp_path, capsys, ids, filename):
+    cases = [
+        _case([_step(1, "record_lookup")], id=f"ORG-AC-{ids[0]:03d}"),
+        _case([_step(1, "run_operation")], id=f"ORG-AC-{ids[1]:03d}"),
+        _case([_step(1, "inspect_state"), _step(2, "missing_operation")], id=f"ORG-AC-{ids[2]:03d}"),
+    ]
+    # A declared template severity cannot override an actual linked finding.
+    cases[0]["chain"][0]["finding"] = {
+        "cwe": "CWE-89",
+        "stride": "Tampering",
+        "severity": "Critical",
+        "mitigation_title": "Constrain input",
+    }
+    profile_dir = tmp_path / "profile"
+    (profile_dir / "abuse-cases").mkdir(parents=True)
+    (profile_dir / "abuse-cases" / "cases.yaml").write_text(yaml.safe_dump({"abuse_cases": cases}))
+    profile_path = profile_dir / "org-profile.yaml"
+    profile_path.write_text(yaml.safe_dump({"abuse_cases": {"inherit_defaults": False}}))
+    findings = [
+        {**_finding("T-011", "record_lookup", file=filename), "risk": "High", "cwe": "CWE-89"},
+        {**_finding("T-092", "run_operation", file=filename), "risk": "Critical"},
+        {**_finding("T-080", "inspect_state", file=filename), "risk": "Medium"},
+    ]
+    (tmp_path / ".threats-merged.json").write_text(json.dumps({"threats": findings}))
+    assert mac.main(["match", "--output-dir", str(tmp_path), "--org-profile", str(profile_path)]) == 0
+    assert mac.main(["list-candidates", "--output-dir", str(tmp_path)]) == 0
+    assert capsys.readouterr().out.split() == [f"ORG-AC-{ids[i]:03d}" for i in (1, 0, 2)]
+    matches = json.loads((tmp_path / ".abuse-case-matches.json").read_text())["matches"]
+    assert matches[-1]["structural_verdict"] == "partial_candidate"
+
+
+def test_source_probe_priority_uses_only_matched_classification():
+    case = _case([_step(1, "operation"), _step(2, "other")])
+    case["chain"][0]["finding"] = {"severity": "High", "cwe": "CWE-79"}
+    case["chain"][1]["finding"] = {"severity": "Critical", "cwe": "CWE-94"}
+    match = {
+        "abuse_case_id": case["id"],
+        "case": case,
+        "structural_verdict": "partial_candidate",
+        "step_matches": [{"step": 1, "matched": True, "match_basis": "source_probe"}, {"step": 2, "matched": False}],
+    }
+    assert mac._candidate_priority(match, {})[0] == -2  # High; the Critical step never matched.
+    match["step_matches"][0]["matched"] = False
+    assert mac._candidate_priority(match, {})[0] > 0
 
 
 def test_cli_match_and_list_candidates(tmp_path: Path, capsys):

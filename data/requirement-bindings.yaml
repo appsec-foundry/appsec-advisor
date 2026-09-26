@@ -430,6 +430,8 @@ requirements:
   REQ-RPT-001:
     applies_to:
       - scripts/_severity_policy.py
+      - scripts/match_abuse_cases.py
+      - scripts/render_abuse_cases.py
       - scripts/triage_compute_ranking.py
       - scripts/triage_validate_ratings.py
       - scripts/merge_threats.py
@@ -441,12 +443,18 @@ requirements:
       - scripts/_severity_rollup.py
     decisions:
       - FE-1
-    documents: []
+      - AC-9
+    documents:
+      - docs/internal/contracts/schema-invariants.md
     coverage: direct
     guards:
       - tests/test_severity_policy.py::test_policy_risk_reaches_register_summary_and_sarif
       - tests/test_triage_compute_ranking.py::test_policy_cap_wins_over_critical_input
       - tests/test_triage_compute_ranking.py::test_unrelated_pattern_matches_do_not_elevate
+      - tests/test_triage_compute_ranking.py::test_verified_chain_never_increases_its_highest_member_risk
+      - tests/test_render_abuse_cases.py::test_verified_case_retains_highest_assessed_risk
+      - tests/test_render_abuse_cases.py::test_report_orders_cases_by_verified_risk_and_preserves_export_order
+      - tests/test_match_abuse_cases.py::test_cli_candidates_prioritize_evidenced_risk_without_dropping_partial_cases
       - tests/test_cvss_eligibility.py::TestForbiddenSources::test_cvss_forbidden
       - tests/test_cvss_eligibility.py::TestRequiredSources::test_missing_cvss_for_required_source
       - tests/test_cvss_eligibility.py::TestStrideSource::test_stride_eligible_cwe_with_line_passes

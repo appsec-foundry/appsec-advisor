@@ -94,6 +94,44 @@ def normalize_risks(findings: list[dict]) -> None:
             finding["risk"] = corrected
 
 
+def abuse_case_priority(findings: list[dict]) -> tuple[int, int, int, int]:
+    """Order scenarios by their strongest policy-rated finding, without a bonus.
+
+    Lower keys come first. Equal risks use that finding's assessed breach
+    distance, impact and likelihood. Missing assessments sort last; template
+    titles, case IDs and previously elevated effective severity do not rate a
+    scenario. Callers supply only the findings bound to the case, with risk
+    already normalized against the complete register. Reapplying ceilings to
+    this subset could lose a valid companion-CWE exception.
+    """
+    ranks = {"Informational": -1, **RANK}
+    keys = []
+    for finding in findings:
+        if finding.get("evidence_check") == "refuted":
+            continue
+        risk = finding.get("risk") or finding.get("severity")
+        if risk not in ranks:
+            continue
+        distance = finding.get("breach_distance")
+        if type(distance) is not int or not 0 <= distance <= 4:
+            distance = 5
+        keys.append(
+            (
+                -ranks[risk],
+                distance,
+                -ranks.get(finding.get("impact"), -2),
+                -ranks.get(finding.get("likelihood"), -2),
+            )
+        )
+    return min(keys, default=(2, 5, 2, 2))
+
+
+def abuse_case_risk(findings: list[dict], *, fallback: str = "High") -> str:
+    """Use the highest individual risk; verifying a path adds no severity."""
+    labels = {-1: "Informational", **{rank: label for label, rank in RANK.items()}}
+    return labels.get(-abuse_case_priority(findings)[0], fallback)
+
+
 def policy_errors(findings: list[dict]) -> list[str]:
     """Reject policy violations at artifact gates; never mutate findings."""
     caps, criteria = load_policy()

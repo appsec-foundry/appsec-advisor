@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Finding ratings enforce policy ceilings and verified-chain requirements for elevation, with consistent severity and ranking across reports and exports.
+- Findings and abuse cases use consistent, policy-capped ratings without automatic chain inflation, and abuse cases are ordered by verification status and risk.
 - Config and IaC findings reach the report again, and rejected configuration scans appear in Run Issues.
 - Route authentication checks resolve imported handlers and reject misleading neighbouring-route or decoded-token signals, with findings on authenticated routes attributed to authenticated attackers.
 - Finding deduplication preserves the highest risk, case-sensitive source paths, evidence, and scenario references.

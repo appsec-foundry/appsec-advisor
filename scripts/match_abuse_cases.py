@@ -50,6 +50,7 @@ from pathlib import Path
 
 import scan_excludes
 import yaml
+from _severity_policy import abuse_case_priority, normalize_risks
 from validate_intermediate import validate_recon_signals
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -734,6 +735,31 @@ def _scan_case_config(output_dir: Path) -> tuple[list[Path], set[str]]:
     return files, ids
 
 
+def _candidate_priority(case_match: dict, findings_by_id: dict[str, dict]) -> tuple:
+    """Prioritize verification from matched evidence, retaining every candidate.
+
+    A source-only probe uses its declared classification provisionally. A
+    template never overrides an existing finding or rates an unmatched step.
+    """
+    definitions = {step.get("step"): step for step in (case_match.get("case") or {}).get("chain") or []}
+    findings = []
+    for step in case_match.get("step_matches") or []:
+        finding = findings_by_id.get(step.get("matched_finding_id"))
+        if finding:
+            findings.append(finding)
+        elif step.get("match_basis") == "source_probe" and step.get("matched"):
+            classification = (definitions.get(step.get("step")) or {}).get("finding")
+            if classification:
+                provisional = dict(classification)
+                normalize_risks([provisional])
+                findings.append(provisional)
+    return (
+        *abuse_case_priority(findings),
+        case_match.get("structural_verdict") != "candidate",
+        case_match.get("abuse_case_id") or "",
+    )
+
+
 def cmd_match(args: argparse.Namespace) -> int:
     out_dir = Path(args.output_dir)
     findings_path = Path(args.findings) if args.findings else out_dir / ".threats-merged.json"
@@ -741,6 +767,7 @@ def cmd_match(args: argparse.Namespace) -> int:
     # no longer a finding and must not bind a later chain step merely because
     # the pre-verification merged register retains it for auditability.
     findings = matchable_findings(load_findings(findings_path))
+    normalize_risks(findings)
     repo_root = Path(args.repo_root) if getattr(args, "repo_root", None) else None
     signals = _load_signals(args.signals, repo_root=repo_root)
     signals = _effective_registration_signal(signals, out_dir)
@@ -769,6 +796,8 @@ def cmd_match(args: argparse.Namespace) -> int:
     if only_ids:
         cases = [c for c in cases if c.get("id") in only_ids]
     matches = [match_case(c, findings, signals, repo_root=repo_root) for c in cases]
+    findings_by_id = {_finding_id(finding): finding for finding in findings}
+    matches.sort(key=lambda match: _candidate_priority(match, findings_by_id))
     result = {"schema_version": 1, "matches": matches}
     (out_dir / ".abuse-case-matches.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     n_cand = sum(1 for m in matches if m["structural_verdict"] in ("candidate", "partial_candidate"))

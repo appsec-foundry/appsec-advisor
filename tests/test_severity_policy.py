@@ -56,6 +56,33 @@ def test_normalization_preserves_valid_risks_and_is_idempotent():
     assert findings[2]["risk_before_policy"] == "Critical"
 
 
+def test_abuse_case_priority_uses_assessed_risk_and_reach_without_context_feedback():
+    remote = {"risk": "High", "breach_distance": 1, "impact": "High", "likelihood": "High"}
+    protected = dict(remote, breach_distance=3, effective_severity="Critical", risk_before_policy="Critical")
+    critical = dict(protected, risk="Critical")
+    assert policy.abuse_case_priority([critical]) < policy.abuse_case_priority([remote])
+    assert policy.abuse_case_priority([remote]) < policy.abuse_case_priority([protected])
+    assert policy.abuse_case_risk([protected]) == "High"
+    assert policy.abuse_case_risk([dict(critical, evidence_check="refuted"), remote]) == "High"
+    assert policy.abuse_case_risk([{"risk": "Informational"}]) == "Informational"
+
+
+@pytest.mark.parametrize("distance", [None, True, -1, 99, "1"])
+def test_unknown_abuse_case_reach_never_wins_a_tie(distance):
+    rated = {"risk": "High", "breach_distance": 4}
+    assert policy.abuse_case_priority([rated]) < policy.abuse_case_priority([dict(rated, breach_distance=distance)])
+
+
+def test_abuse_case_preserves_risk_normalized_with_companions_outside_the_chain():
+    findings = [
+        {"risk": "Critical", "cwe": "CWE-200", "threat_category_id": "TH-17"},
+        {"risk": "High", "cwe": "CWE-522", "threat_category_id": "TH-17"},
+        {"risk": "High", "cwe": "CWE-862", "threat_category_id": "TH-17"},
+    ]
+    policy.normalize_risks(findings)
+    assert policy.abuse_case_risk(findings[:1]) == "Critical"
+
+
 def test_builder_repairs_labels_before_policy_and_applies_floor_after_policy():
     finding = {
         "t_id": "T-001",
@@ -210,7 +237,7 @@ def test_optional_unmatched_step_does_not_discard_verified_chain():
     }
     verdicts = {"verdicts": [{"abuse_case_id": "AC-T-001", "chain_verdict": "fully_viable"}]}
     chains = _detect_verified_abuse_chains([{"id": "T-001", "risk": "High"}], verdicts, matches)
-    assert len(chains) == 1 and chains[0]["severity"] == "Critical"
+    assert len(chains) == 1 and chains[0]["severity"] == "High"
 
 
 @pytest.mark.parametrize("id_key", ["id", "t_id"])
@@ -261,7 +288,10 @@ def test_merge_caps_before_capturing_instance_severity(tmp_path, filename):
 
 
 def test_roles_cannot_be_borrowed_from_a_different_verified_chain(tmp_path):
-    findings = [{"id": "T-001", "cwe": "CWE-321", "risk": "Medium"}, {"id": "T-002", "cwe": "CWE-79", "risk": "High"}]
+    findings = [
+        {"id": "T-001", "cwe": "CWE-321", "risk": "Medium"},
+        {"id": "T-002", "cwe": "CWE-89", "risk": "Critical", "impact": "Critical"},
+    ]
     matches = {
         "matches": [
             {"abuse_case_id": "AC-T-001", "step_matches": [{"matched_finding_id": "T-001", "required": True}]},

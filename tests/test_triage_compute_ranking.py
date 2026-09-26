@@ -691,7 +691,7 @@ def _tcr():
     return tcr
 
 
-def _ac_docs(chain_verdict: str, *, required: bool = True):
+def _ac_docs(chain_verdict: str, *, required: bool = True, outcome_finding_id: str | None = None):
     """Build a matches+verdicts pair for one abuse case AC-T-001 whose single
     matched step binds finding F-1."""
     matches = {
@@ -706,21 +706,36 @@ def _ac_docs(chain_verdict: str, *, required: bool = True):
         ]
     }
     verdicts = {"verdicts": [{"abuse_case_id": "AC-T-001", "chain_verdict": chain_verdict}]}
+    if outcome_finding_id:
+        matches["matches"][0]["step_matches"].append(
+            {"step": 2, "required": True, "matched_finding_id": outcome_finding_id}
+        )
     return verdicts, matches
 
 
 def test_verified_fully_viable_chain_elevates_required_finding() -> None:
-    """A finding bound to a REQUIRED step of a code-verified fully_viable chain
-    is a keystone → its effective severity is pulled up one notch (High→Critical)."""
+    """A required precondition can inherit a verified Critical outcome's risk."""
     tcr = _tcr()
-    findings = [{"id": "F-1", "risk": "High", "title": "Stored XSS"}]
-    verdicts, matches = _ac_docs("fully_viable")
+    findings = [
+        {"id": "F-1", "risk": "High", "title": "Change operation parameters"},
+        {"id": "F-2", "risk": "Critical", "title": "Execute a server operation"},
+    ]
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2")
     chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
     assert len(chains) == 1
     ch = chains[0]
     assert ch["id"] == "AC-T-001"
-    assert ch["keystones"] == ["F-1"]
-    assert ch["severity"] == "Critical"  # one notch above High, capped
+    assert ch["keystones"] == ["F-1", "F-2"]
+    assert ch["severity"] == "Critical"
+
+
+@pytest.mark.parametrize("risks", [("Medium",), ("High",), ("High", "High"), ("Critical", "High")])
+def test_verified_chain_never_increases_its_highest_member_risk(risks):
+    tcr = _tcr()
+    findings = [{"id": f"F-{n}", "risk": risk} for n, risk in enumerate(risks, 1)]
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2" if len(risks) == 2 else None)
+    chains = tcr._detect_verified_abuse_chains(findings, verdicts, matches)
+    assert chains[0]["severity"] == max(risks, key=tcr._sev_rank)
 
 
 def test_matched_id_key_mismatch_resolves_to_triage_id() -> None:
@@ -777,9 +792,10 @@ def test_verified_chain_annotates_finding_end_to_end(tmp_path: Path) -> None:
     tcr = _tcr()
     threats = [
         {"id": "F-1", "title": "Stored XSS", "risk": "High", "impact": "High", "primary_cwe": "CWE-79"},
+        {"id": "F-2", "title": "Server-side code execution", "risk": "Critical", "primary_cwe": "CWE-94"},
     ]
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
-    verdicts, matches = _ac_docs("fully_viable")
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2")
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
     (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
 
@@ -809,7 +825,10 @@ def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> 
         )
         assert res.returncode == 0, res.stderr
 
-    threats = [{"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"}]
+    threats = [
+        {"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"},
+        {"id": "F-2", "title": "Server-side code execution", "risk": "Critical", "primary_cwe": "CWE-94"},
+    ]
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
 
     # Pass 1 — no abuse sidecars: stays High (no chain elevation).
@@ -819,7 +838,7 @@ def test_rerun_after_abuse_elevates_upward_and_is_idempotent(tmp_path: Path) -> 
     assert f1["effective_severity"] == "High"
 
     # Sidecars now appear (Stage 1d completed) — pass 2 must elevate to Critical.
-    verdicts, matches = _ac_docs("fully_viable")
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2")
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
     (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
     _persist(tmp_path)
@@ -866,14 +885,17 @@ def test_if_deterministic_owner_noop_on_llm_ranking(tmp_path: Path) -> None:
 def test_if_deterministic_owner_folds_chains_without_env(tmp_path: Path) -> None:
     """End-to-end Stage 1d fold: deterministic marker present → the re-run works
     WITHOUT the env flag and elevates the verified chain keystone."""
-    threats = [{"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"}]
+    threats = [
+        {"id": "F-1", "title": "Stored XSS", "risk": "High", "primary_cwe": "CWE-79"},
+        {"id": "F-2", "title": "Server-side code execution", "risk": "Critical", "primary_cwe": "CWE-94"},
+    ]
     _write_yaml(tmp_path / "threat-model.yaml", _minimal_yaml(threats))
     # Phase 10b deterministic run writes the owner marker (ranking.computed_by).
     res0 = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": "1"})
     assert res0.returncode == 0, res0.stderr
     # Stage 1d: abuse sidecars appear, fold re-runs with --if-deterministic-owner
     # and the env flag explicitly UNSET (default-run conditions).
-    verdicts, matches = _ac_docs("fully_viable")
+    verdicts, matches = _ac_docs("fully_viable", outcome_finding_id="F-2")
     (tmp_path / ".abuse-case-verdicts.json").write_text(json.dumps(verdicts), encoding="utf-8")
     (tmp_path / ".abuse-case-matches.json").write_text(json.dumps(matches), encoding="utf-8")
     res = _run(tmp_path, {"APPSEC_TRIAGE_DETERMINISTIC": ""}, ["--if-deterministic-owner"])
