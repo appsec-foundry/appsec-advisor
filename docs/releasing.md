@@ -1,15 +1,13 @@
-# Release Runbook
+# Release runbook
 
-Step-by-step procedure to cut a release of `appsec-advisor`. Follow the steps in
-order. Reference material (branch model, version formats, gate internals, CI) is
-at the bottom.
+Follow these steps in order to release `appsec-advisor`. The [reference](#reference) covers branches, version formats, validation gates, and CI.
 
 ## Prerequisites
 
 - You are on `dev` with the work for this release finished and committed.
 - `claude` CLI is on `PATH` (the end-to-end step needs it).
 - Authenticated for the LLM run: `claude /login` (subscription) **or** `ANTHROPIC_API_KEY` set.
-- **First release only:** the `dev` branch must exist — see [Appendix: create `dev`](#appendix-create-the-dev-branch-first-release-only).
+- **First release only:** the `dev` branch must exist. See [Appendix: create `dev`](#appendix-create-the-dev-branch-first-release-only).
 
 ## Checklist
 
@@ -41,19 +39,17 @@ Entries under `## Unreleased` accumulate one change at a time, so review them as
 - Move each remaining bullet to the category that fits the released result: new capability under `Added`, changed behavior under `Changed`, removed behavior under `Removed`, and corrected defects under `Fixed`. A defect in a feature added in the same release is not a `Fixed` entry; fold it into that feature's bullet.
 - Order bullets within each category by user impact, most significant first.
 
-Then set the release version in `pyproject.toml`, `.claude-plugin/plugin.json`, and the README version badge, and move the curated notes into the dated matching `CHANGELOG.md` heading. Leave the `## Unreleased` heading itself in place, empty — `check_release_meta.py` requires it to exist *and* to be empty, so deleting it fails the gate just as leaving notes under it does. Commit all metadata changes together:
+Then set the release version in `pyproject.toml`, `.claude-plugin/plugin.json`, and the README version badge, and move the curated notes into the dated matching `CHANGELOG.md` heading. Keep the `## Unreleased` heading empty; `check_release_meta.py` rejects both a missing heading and remaining notes. Commit all metadata changes together:
 
 ```bash
 git commit -am "release: 0.6.0b1"
 ```
 
-> Until this commit exists, step 3 will fail at `check_release_meta.py` — that is
-> the intended signal that the tree is not a release yet.
+> Step 3 fails at `check_release_meta.py` until the release metadata is committed.
 
 ### 3. Run the tests
 
-One command runs the cheap deterministic gate first and only proceeds to the
-expensive LLM run if it passes:
+Run the deterministic checks followed by the live LLM assessment. The assessment starts only if the checks pass:
 
 ```bash
 make release-all
@@ -66,8 +62,7 @@ make release-check   # ruff, format, config, fragment-registry drift, full pytes
 make e2e-full        # live LLM pipeline against the bundled fixture (~10–15 min, ~30–50% of a Pro 5h window)
 ```
 
-Fix anything either gate reports before continuing — see
-[Troubleshooting the gate](#troubleshooting-the-gate).
+Fix failures before continuing. See [Troubleshooting the gate](#troubleshooting-the-gate).
 
 Optional, depending on what you changed:
 
@@ -95,10 +90,7 @@ Pushing the tag triggers `.github/workflows/release.yml`: it re-runs
 the prerelease flag for a beta or RC). Confirm the release appears on GitHub and
 the workflow is green.
 
-GitHub refuses to mark a prerelease as "latest", so a beta published this way
-leaves the previous release showing as latest. When the beta *is* the recommended
-version, clear the prerelease flag and promote it (the REST API — `gh release
-edit` has no such flag):
+GitHub refuses to mark a prerelease as "latest", so a beta published this way leaves the previous release showing as latest. When the beta *is* the recommended version, clear the prerelease flag and promote it with the REST API:
 
 ```bash
 id=$(gh api repos/<owner>/<repo>/releases/tags/v0.5.0-beta --jq .id)
@@ -120,8 +112,8 @@ git checkout dev
 
 ### Branch model
 
-- `dev` — all day-to-day work. Stays ahead of `main` between releases.
-- `main` — releases only. Tags live here.
+- `dev`: day-to-day development. It stays ahead of `main` between releases.
+- `main`: releases and release tags.
 
 When a release is ready, merge `dev` into `main` and tag the merge commit on
 `main`. A tag points at a commit, not a branch, so once it lands on `main` it's
@@ -153,64 +145,42 @@ The README badge is the exception: it must equal `plugin.json` at all times, not
 
 ### The two gates
 
-- **`make check`** — the everyday gate: lint, format, config validation, drift
-  guards, full test suite + coverage floor. CI runs it on every push and PR to
-  `main` and `dev`. Must pass on every commit.
-- **`make release-check`** — `make check` plus `check_release_meta.py`, which
-  confirms version, tag, and changelog agree. Run it locally before tagging; CI
-  re-runs it on the tag. It *fails* on an ordinary dev commit (no version bump
-  yet) — that failure is the intended signal that the tree isn't a release.
-- **`make release-all`** — convenience target: `release-check` then `e2e-full`,
-  stopping if the gate fails. The full pre-release test sequence in one command.
+- **`make check`**: lint, format, configuration validation, drift guards, and the complete test suite. Run it for the changes that require the full gate in [Contributing](../CONTRIBUTING.md#targeted-tests-before-finishing-a-non-trivial-change).
+- **`make release-check`**: `make check` plus `check_release_meta.py`, which verifies the version, tag, and changelog. Run it before tagging; CI repeats it on the tag. An ordinary development commit fails the release-metadata check.
+- **`make release-all`**: `release-check` followed by `e2e-full`. It stops if the first gate fails.
 
 ### Troubleshooting the gate
 
-`make release-check` runs six stages in order and stops at the **first** failure.
-Read the error, identify the stage, then fix it. The first two stages are
-mechanical and auto-repairable; the rest are semantic and must be fixed by hand —
-**fix the producer, never relax the schema, hand-patch output, or weaken a test
-to make the gate pass.**
+`make release-check` stops at the first failure. Identify the stage from its error and fix the producer. Lint and formatting support automatic repair. For other failures, correct the source; do not relax schemas, patch generated output, or weaken tests to pass the gate.
 
 | # | Stage | Symptom | Fix |
 |---|-------|---------|-----|
 | 1 | `ruff check` | `file:line` + rule code (e.g. `F401`) | `make fix` (runs `ruff check --fix`), or fix manually. Don't silence with `# noqa` unless justified. |
-| 2 | `ruff format --check` | `Would reformat: …` | `make fix` (runs `ruff format`). Never hand-format `resolve_config.py` — it is intentionally excluded in `pyproject.toml`. |
+| 2 | `ruff format --check` | `Would reformat: …` | `make fix` (runs `ruff format`). Never hand-format `resolve_config.py`; it is intentionally excluded in `pyproject.toml`. |
 | 3 | `validate_config.py` | config/YAML schema error | Correct the offending field. Fix the producer, don't loosen the schema. |
-| 4 | `check_fragment_registry.py` | registry maps out of sync | Align all registry maps — see [`adding-a-section.md`](internal/runbooks/adding-a-section.md) and `schema-invariants.md §4f`. |
+| 4 | `check_fragment_registry.py` | registry maps out of sync | Align all registry maps. See [`adding-a-section.md`](internal/runbooks/adding-a-section.md) and `schema-invariants.md §4f`. |
 | 5 | `pytest` + coverage | failing tests or coverage below floor | Separate pre-existing failures from new ones. Run a single file with `pytest tests/test_x.py -v --tb=short`. Add tests for new code; don't lower the floor. |
-| 6 | `check_release_meta.py` | version/plugin manifest/tag/changelog mismatch or unpromoted notes | **Expected on an ordinary dev commit** — it's the signal the tree isn't a release. For a real release, reconcile all [version formats](#version-formats) and promote `Unreleased`. To check only code health, run `make check` instead. |
+| 6 | `check_release_meta.py` | version/plugin manifest/tag/changelog mismatch or unpromoted notes | Expected on a development commit. For a real release, reconcile all [version formats](#version-formats) and promote `Unreleased`. To check only code health, run `make check` instead. |
 
 **Auto-repair:** `make fix` handles stages 1–2 (`ruff check --fix` + `ruff
 format`) and then prints what stages 3–6 still need from you. It deliberately
 does **not** touch the semantic stages.
 
-`make fix` is a repair step, **not a replacement** for the gate — it only covers
-2 of the 6 stages and proves nothing about the rest. Always end on a green
-`make release-check`:
+After `make fix`, rerun `make release-check` to verify all stages:
 
 ```bash
 make fix             # repair lint + format automatically
 make release-check   # re-check; fix any remaining stage 3–6 failure by hand
 ```
 
-**Triage helper (maintainer dev tool).** Every `make release-check` run captures
-its full output to `.cache/release-check.log` (gitignored). When the gate fails,
-run the project-local slash command `/triage-release-check`: it reads that log,
-identifies the first red stage, and recommends the producer-side fix using the
-table above — analysis only, it applies nothing unless you ask. It is a
-`.claude/commands/` dev command (like `e2e-full`), **not** part of the shipped
-plugin.
+**Triage helper (maintainer dev tool).** Every `make release-check` run captures its full output to `.cache/release-check.log` (gitignored). When the gate fails, run the project-local slash command `/triage-release-check`: it reads that log, identifies the first red stage, and recommends the producer-side fix using the table above. It proposes changes and applies them only when requested. It is a `.claude/commands/` dev command (like `e2e-full`), **not** part of the shipped plugin.
 
 ### What CI does
 
-- **Test workflow** — every push and PR to `main` and `dev`: lint, format,
-  config validation, fragment-registry drift, full pytest across Python
-  3.10–3.12, Codecov upload.
-- **Release workflow** — only on a `v*` tag: runs `make release-check` and
-  publishes the release.
+- **Test workflow**: every push and PR to `main` and `dev`: lint, format, config validation, fragment-registry drift, full pytest across Python 3.10–3.12, Codecov upload.
+- **Release workflow**: only on a `v*` tag: runs `make release-check` and publishes the release.
 
-The end-to-end run is deliberately not in CI — it's non-deterministic and costs
-money. It stays the one manual step you run before tagging.
+Run the live end-to-end assessment manually before tagging. CI excludes it because it is non-deterministic and consumes model budget.
 
 ### Pre-release snapshots
 
@@ -224,9 +194,7 @@ git push origin v0.5.0-alpha.1
 gh release create v0.5.0-alpha.1 --prerelease --target dev --notes "Snapshot for testing."
 ```
 
-The tag stays on the `dev` line and won't appear on `main` until that commit is
-merged for a real release — at which point the same tag becomes reachable from
-`main` without being recreated.
+The tag stays on the `dev` line and won't appear on `main` until that commit is merged for a release. The same tag then becomes reachable from `main` without being recreated.
 
 ### Appendix: create the `dev` branch (first release only)
 

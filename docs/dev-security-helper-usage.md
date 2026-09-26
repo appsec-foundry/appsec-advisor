@@ -1,4 +1,5 @@
-# Dev Security Helper
+<a id="dev-security-helper"></a>
+# Developer security tools
 
 `appsec-advisor` includes prompt-time guidance, an interactive change review, and a CI review command.
 

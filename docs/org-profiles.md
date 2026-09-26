@@ -1,4 +1,5 @@
-# Org Profiles
+<a id="org-profiles"></a>
+# Organization profiles
 
 Org profiles package organization-specific presets, requirements, context, actors, and skill settings without changing the core plugin.
 
@@ -187,9 +188,7 @@ These rules apply in addition to the schema:
 Two gates turn a run's outcome into a CI exit code. Each stays advisory until a
 preset opts in, and each is overridden by its own command-line flag.
 
-The requirements gate fails when graded requirements come back FAIL — or PARTIAL
-too, if you ask for it. It covers both `verify-requirements` and
-`audit-security-requirements`.
+The requirements gate fails on FAIL results and optionally on PARTIAL results. It covers `verify-requirements` and `audit-security-requirements`.
 
 ```yaml
 presets:
@@ -226,15 +225,9 @@ policy:
   url_allowlist: [appsec.int.example.com, raw.githubusercontent.com]
 ```
 
-`disable_opus` downgrades every Opus selection to Sonnet — a cost or compliance
-ceiling. The profile can only turn it on: `--no-opus` and `APPSEC_DISABLE_OPUS`
-add to it, but nothing switches it back off for a run.
+`disable_opus` replaces every Opus selection with Sonnet to enforce a cost or compliance ceiling. `--no-opus` and `APPSEC_DISABLE_OPUS` can also enable this restriction. A run cannot disable a restriction set by the profile.
 
-`url_allowlist` limits where the tool fetches from — the requirements catalog and
-related-repo threat models. A host matches exactly or as a dotted subdomain, and
-a listed internal host is allowed even on a private address. Unlisted
-related-repo URLs still hit the full SSRF block (loopback, RFC1918,
-cloud-metadata).
+`url_allowlist` restricts fetch destinations for the requirements catalog and related-repo threat models. A host matches exactly or as a dotted subdomain, and a listed internal host is allowed even on a private address. Unlisted related-repo URLs still hit the full SSRF block (loopback, RFC1918, cloud-metadata).
 
 ## Branding
 
@@ -256,12 +249,11 @@ the default cover.
 
 Every session opens with a short status banner:
 
-1. **Identity** — plugin name and version (or your `headline`) plus `help` when packaged.
-2. **Threat model** — findings, age, drift, and the one skill that state calls for. The line appears only when a model exists or a scan is running.
-3. **Coding baseline** — the loaded id and scope, or what is missing or mismatched. Where the AI Secure Coding Baseline installer's own startup hook already prints the baseline status, the line appears only when something needs a decision.
+1. **Identity**: plugin name and version (or your `headline`) plus `help` when packaged.
+2. **Threat model**: findings, age, drift, and the one skill that state calls for. The line appears only when a model exists or a scan is running.
+3. **Coding baseline**: the loaded id and scope, or what is missing or mismatched. Where the AI Secure Coding Baseline installer's own startup hook already prints the baseline status, the line appears only when something needs a decision.
 
-There are no status glyphs. Commands sit on the domain they act on. Two fields
-customize the banner, and one turns it off:
+Use `headline` and `url` to customize the banner and help output, or `enabled` to disable the banner:
 
 ```yaml
 banner:
@@ -314,9 +306,7 @@ baseline:
   file: baselines/acme-sec.md          # offline fallback, inside the profile dir
 ```
 
-`name` is what the session banner and both skills call it. Leave it out and they
-say `secure-coding baseline` — declaring your own baseline never puts the
-plugin's product name on your rules.
+`name` sets the baseline label in the session banner and baseline skills. It defaults to `secure-coding baseline`.
 
 Or point at a git repository, for a baseline that is not served as a raw file:
 
@@ -342,33 +332,17 @@ and the baseline file must declare it as a line reading:
 from context: every baseline id you carry, with the file you loaded it from.
 ```
 
-Nothing is installed unless the fetched document carries that marker. That is
-what stops a captive-portal login page, a 404 body, or a URL that has moved on
-to something else from being written into `CLAUDE.md` as security rules — and
-it is why `baseline.file` is validated at package time rather than at install
-time on somebody's laptop.
+Installation rejects documents without the configured marker, including login pages and error responses. Packaging checks `baseline.file` for the same marker before distribution.
 
-The convention is `<name>-<version>[+<derivative>]`. A derivative of the
-configured id (`aiscb-0.1.14+acme`, your adaptation of the published baseline)
-counts as installed and is reported with its suffix, so a reader can see the
-adaptation. A *newer* version of the same baseline counts as loaded and is
-reported as ahead of the id you declared — a baseline is published on its own
-schedule, and a machine that updated before your profile did is not broken. An
-*older* version is reported as behind, with `/appsec-advisor:update-baseline` to
-refresh it in place — the scope is already chosen, only the text lags. A
-different baseline stays visible as drift with no command beside it: which of
-two rule sets should apply is a decision, not a repair. Both fail an enforcing
-check, because in neither case are the rules you declared the ones in context.
+Use `<name>-<version>[+<derivative>]` for the ID. A derivative such as `aiscb-0.1.14+acme` counts as installed and keeps its suffix in status output. A newer version of the same baseline is reported as ahead and passes verification.
 
-Declaring any source replaces the plugin's default baseline everywhere —
-banner, verify, and what install writes. The upstream release source and the upstream
-bundled copy both carry the upstream id, which your own id check would refuse,
-so packaging clears them rather than leaving a source that can only fail.
-Ship a `file:` if your users need to install without reaching your server.
+An older version is reported as behind, with `/appsec-advisor:update-baseline` as the repair command. A different baseline is reported as drift without a repair command; choose which rule set should apply. Older and different baselines fail an enforcing check.
+
+A custom source replaces the default baseline in the banner, verification, and installation. Packaging removes the upstream release source and bundled copy because they carry a different ID. Include `file:` for installations that cannot reach your server.
 
 ### Keeping the vendored copy current
 
-`file:` is a copy, so it is exactly as current as the last time somebody updated it. Nothing notices when it falls behind the `url` or `git` source beside it: the id still matches, packaging still passes, and an offline install serves rules you no longer publish.
+`file:` is an offline copy and needs explicit updates. A matching ID does not prove that its content matches the `url` or `git` source; packaging does not detect that drift.
 
 Refresh it from the source the same profile declares:
 
@@ -384,11 +358,7 @@ The command talks to the network, so keep it out of your packaging build: `packa
 
 ### Making it a gate
 
-By default the check reports and nothing fails: which rules a machine loads is
-the reader's own configuration. Set `enforce: true` when your organization
-requires it — `/appsec-advisor:verify-baseline` then exits non-zero where no
-configured baseline is loaded, which is what a CI step gates on. A newer version
-of your baseline never fails, because failing it would demand a downgrade.
+Verification is advisory by default. Set `enforce: true` to make `/appsec-advisor:verify-baseline` exit non-zero when the configured baseline is missing, older, or different. A newer version of the same baseline passes.
 
 ```yaml
 baseline:
@@ -431,11 +401,7 @@ nothing for a developer to install or keep current, and a second local copy
 would only be another file to maintain. Distribute the file with MDM, Group
 Policy, or Ansible.
 
-`install-baseline` also reuses what a repository already carries. A baseline in
-`AGENTS.md` for Codex and Cursor, in `.github/copilot-instructions.md` for
-Copilot, or in a copy somebody committed and never imported is wired up with an
-import rather than duplicated — two files with the same rules diverge the day
-one of them is edited. `--no-reuse` opts out.
+`install-baseline` also reuses what a repository already carries. A baseline in `AGENTS.md` for Codex and Cursor, in `.github/copilot-instructions.md` for Copilot, or in a copy somebody committed and never imported is wired up with an import rather than copied, so updates have one source. `--no-reuse` opts out.
 
 ## Actors
 
@@ -505,10 +471,7 @@ llm_policy:
     - outbound message to a customer
 ```
 
-A data class the component sends to a prompt, tool call, retrieval index, or shared
-memory but that is not on the list becomes a finding. For each approval-required
-action, the analysis checks whether an enforced gate exists in code — an instruction
-in a system prompt does not count as one.
+A data class the component sends to a prompt, tool call, retrieval index, or shared memory but that is not on the list becomes a finding. For each approval-required action, the analysis checks for an enforced gate in code. A system-prompt instruction does not count as a gate.
 
 ## Adding your own skills
 
@@ -528,11 +491,7 @@ org-profile/
       SKILL.md
 ```
 
-Claude Code discovers skills by convention — every `skills/<name>/SKILL.md`
-under the plugin root — so packaging copies each matched directory into the
-build. An added skill is a skill in every other respect: it appears in the
-packaged README, `plugin_surface.skills` can exclude it, `skill_toggles` can
-disable it, and the `skill-policy-gate` hook enforces that toggle.
+Packaging copies each matched skill directory to `skills/<name>/SKILL.md` under the plugin root, where Claude Code discovers it. Added skills appear in the packaged README. `plugin_surface.skills` can exclude them, and `skill_toggles` can disable them through the `skill-policy-gate` hook.
 
 Two things abort the build rather than resolve quietly:
 
@@ -552,11 +511,7 @@ distinct from the upstream ones so the artifact surface stays auditable.
 
 ## Skill toggles
 
-Skills can be disabled with a reason. The policy is enforced by the
-`skill-policy-gate` hook, which covers both ways a skill is reached: a person
-typing `/<plugin>:<skill>`, and Claude invoking it through the `Skill` tool.
-Enforcement sits outside the model on purpose — a check written into a skill's
-prose is an instruction, and an instruction can be skipped.
+Skills can be disabled with a reason. The policy is enforced by the `skill-policy-gate` hook, which covers both ways a skill is reached: a person typing `/<plugin>:<skill>`, and Claude invoking it through the `Skill` tool. The hook enforces the policy outside the model; skill prose alone cannot enforce it.
 
 A disabled skill is refused with the organization's reason:
 
@@ -564,11 +519,7 @@ A disabled skill is refused with the organization's reason:
 - **Help-only**: `--help` still renders even when the skill is disabled. Exit code 10.
 - **Operational / repair skills** (`status`, `check-permissions`, `clean-run-state`, `fix-run-issues`, `threat-model-health`): the org profile can warn but never hard-blocks them. Exit code 20.
 
-Any skill this build ships can be named. The key set is derived from
-`skills/*/SKILL.md` rather than kept as a list, so a skill added upstream — or
-one your profile adds — is togglable the moment it exists. A skill your
-package policy removed may still be named, so the toggle that documents *why*
-it is gone does not contradict the exclusion; a typo is still rejected.
+Toggles accept any skill included in the build, including organization-added skills. They also accept skills removed by package policy, so you can retain the reason for removal. Unknown names are rejected.
 
 Without a skill policy, all skills remain enabled.
 
@@ -576,24 +527,14 @@ Without a skill policy, all skills remain enabled.
 
 Two sources, in this order:
 
-1. `.org-profile-effective.json` — what the current run resolved, including
-   preset and CLI effects.
-2. `skill_toggles` in the packaged `config.json`, which packaging resolves from
-   this profile at build time.
+1. `.org-profile-effective.json`: what the current run resolved, including preset and CLI effects.
+2. `skill_toggles` in the packaged `config.json`, which packaging resolves from this profile at build time.
 
-The second matters more than it looks. The effective profile is written by a
-`create-threat-model` run into its output directory, so before the first scan
-there was nothing to read and every skill ran — while `status` reported it as
-disabled. The packaged copy gives a fresh clone the same answer as a scanned
-one, the way the banner and baseline blocks already work.
+The packaged configuration enforces toggles before the first scan, when no effective run profile exists.
 
 ### Toggle or remove?
 
-Skill toggles block a command at runtime and explain why. To take a skill out
-of the package entirely — no command, no code, not in the README — use
-`plugin_surface.skills` in `org-profile/package-policy.yaml`, described in the
-packaging runbook. Use a toggle when people should learn what the policy is;
-use the package policy when the command should not exist.
+Use a skill toggle to block a command and show the policy reason. Use `plugin_surface.skills` in `org-profile/package-policy.yaml` to remove its command, code, and README entry from the package. See the [packaging runbook](internal-plugin-packaging.md).
 
 ## Security Coach
 
@@ -618,10 +559,7 @@ security_coach:
       requirements: [SEC-PAY-IDEMPOTENT, SEC-PAY-DUAL-APPROVAL]
 ```
 
-Your topics are added to the built-in ones (auth, injection, crypto, …); an org
-topic with the same name replaces the built-in. Set `inherit_default_topics: false`
-to use only your own. Guidance is injected as advice — like the packaged context,
-it never overrides tool behaviour, gates, or severity.
+Your topics are added to the built-in ones (auth, injection, crypto, …); an org topic with the same name replaces the built-in. Set `inherit_default_topics: false` to use only your own. Guidance is advisory and never overrides tool behavior, gates, or severity.
 
 ## Status output
 
@@ -692,22 +630,12 @@ Override requirements for one run:
 
 The plugin loads cases in this order:
 
-1. **Plugin standard library** — `data/abuse-cases/default-library.yaml` (the
-   `AC-T-NNN` mandatory set), unless an org profile sets
-   `abuse_cases.inherit_defaults: false`.
-2. **Org profile** — `abuse_cases.add` is a glob (relative to the org-profile
-   directory) of extra case files; `abuse_cases.disable` removes ids. Use the
-   `ORG-AC-NNN` ID prefix.
-3. **Repository** — any `*.yaml` under
-   `<repo>/.appsec/abuse-cases/` in the target repository is loaded
-   automatically. Use the `REPO-AC-NNN` ID prefix. IDs must be unique.
-4. **One scan** — `--abuse-case-file <repo-relative-path>` adds a YAML file
-   below the target repository. Repeat `--only-abuse-case <ID>` to run selected
-   cases only. Either flag runs abuse-case verification at any depth, and an
-   unreadable file or an unknown id is reported rather than silently skipped.
+1. **Plugin standard library**: `data/abuse-cases/default-library.yaml` (the `AC-T-NNN` mandatory set), unless an org profile sets `abuse_cases.inherit_defaults: false`.
+2. **Org profile**: `abuse_cases.add` is a glob (relative to the org-profile directory) of extra case files; `abuse_cases.disable` removes ids. Use the `ORG-AC-NNN` ID prefix.
+3. **Repository**: any `*.yaml` under `<repo>/.appsec/abuse-cases/` in the target repository is loaded automatically. Use the `REPO-AC-NNN` ID prefix. IDs must be unique.
+4. **One scan**: `--abuse-case-file <repo-relative-path>` adds a YAML file below the target repository. Repeat `--only-abuse-case <ID>` to run selected cases only. Either flag runs abuse-case verification at any depth, and an unreadable file or an unknown id is reported rather than silently skipped.
 
-`examples/abuse-cases.yaml` is a commented, schema-valid case to copy and
-adapt — it documents every field and the vocabulary each one accepts.
+Copy and adapt `examples/abuse-cases.yaml`; its comments describe each field and accepted value.
 
 Example repo-local case (`<repo>/.appsec/abuse-cases/payments.yaml`):
 
@@ -755,9 +683,7 @@ release_gate:
 
 ## Hooks
 
-An org can bundle its own Claude Code hooks in the packaged plugin — one central
-artifact carrying its own event handlers. Declare them and put the scripts under
-`org-profile/hooks/`:
+To bundle organization-specific Claude Code hooks, declare them in the profile and place their scripts under `org-profile/hooks/`:
 
 ```yaml
 hooks:
@@ -767,21 +693,11 @@ hooks:
     command: python3 ${CLAUDE_PLUGIN_ROOT}/org-profile/hooks/guard.py
 ```
 
-Each hook is recorded in `package-surface.json` (org-owned, separate from the
-upstream hooks) so the artifact surface stays auditable; `plugin_surface.hooks`
-can exclude one by id. Hooks run at Claude Code's event layer — they can add
-context or block a tool call, but never reach the analysis pipeline; findings,
-severity, and schemas stay core-owned. The full mechanism and rules live in the
-[packaging runbook](internal-plugin-packaging.md).
+Each hook is recorded in `package-surface.json` (org-owned, separate from the upstream hooks) so the artifact surface stays auditable; `plugin_surface.hooks` can exclude one by ID. Hooks run at Claude Code's event layer. They can add context or block tool calls, but cannot change the analysis pipeline's findings, severity rules, or schemas. The full mechanism and rules live in the [packaging runbook](internal-plugin-packaging.md).
 
 ## MCP servers
 
-The `mcp` block lets an org wire its own MCP servers — e.g. an internal SAST or
-SCA service — into the packaged plugin. At build time the packager emits the
-declared servers into the plugin's `.mcp.json`, so Claude Code loads them
-whenever the internal plugin is active. Which servers are emitted can be narrowed
-by the [package policy](internal-plugin-packaging.md) allowlist
-(`plugin_surface.mcp_servers`); by default every declared server is included.
+Use `mcp` to include organization MCP servers, such as internal SAST or SCA services, in the packaged plugin. At build time the packager emits the declared servers into the plugin's `.mcp.json`, so Claude Code loads them whenever the internal plugin is active. Which servers are emitted can be narrowed by the [package policy](internal-plugin-packaging.md) allowlist (`plugin_surface.mcp_servers`); by default every declared server is included.
 
 ```yaml
 mcp:

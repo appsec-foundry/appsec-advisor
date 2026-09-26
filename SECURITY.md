@@ -1,11 +1,11 @@
-# Security Policy
+# Security policy
 
 ## Supported versions
 
 | Version | Supported |
 |---------|-----------|
 | 0.10.x-beta | Yes |
-| < 0.10 | No — please upgrade |
+| < 0.10 | No; upgrade required |
 
 The `-beta` suffix means the feature set is stable but has been validated against a limited set of repository shapes. Breaking changes to flags, intermediate-file schemas, or YAML output formats may still land in minor-version bumps (`0.10 → 0.11`); check the release notes before upgrading.
 
@@ -29,10 +29,10 @@ AppSec reviewers should read this section before approving a run on a sensitive 
 
 Every phase of the assessment dispatches one or more prompts to the Anthropic API. The prompts are assembled locally by Claude Code and consist of:
 
-- **Agent system prompt** — plugin-defined instructions from `agents/*.md`. No repository content.
-- **Tool-call inputs** — file paths, glob patterns, grep patterns, `Bash` commands. The file paths reference your repository; the patterns are derived from recon heuristics.
-- **Tool-call outputs** — the raw contents Claude read back. This is where repository source code enters the conversation. STRIDE analysis requires reading the files under analysis, so source code and configuration files belonging to the scanned components **are** transmitted to the API.
-- **Prior tool results within the same session** — once a file has been read, it remains in that conversation's context. Parallel component analyses use separate sessions.
+- **Agent system prompt**: plugin-defined instructions from `agents/*.md`. No repository content.
+- **Tool-call inputs**: file paths, glob patterns, grep patterns, `Bash` commands. The file paths reference your repository; the patterns are derived from recon heuristics.
+- **Tool-call outputs**: the raw contents Claude read back. This is where repository source code enters the conversation. STRIDE analysis requires reading the files under analysis, so source code and configuration files belonging to the scanned components **are** transmitted to the API.
+- **Prior tool results within the same session**: once a file has been read, it remains in that conversation's context. Parallel component analyses use separate sessions.
 
 The plugin does not upload the repository wholesale. It reads files on demand, scoped to what each phase needs. Typical transmission profile on OWASP Juice Shop (thorough, 8 components): a few hundred file reads, dominated by source files under the components being analyzed, plus `package.json`/manifests and configuration files.
 
@@ -42,7 +42,7 @@ All intermediate artifacts are written to `$OUTPUT_DIR` (default: `docs/security
 
 | File | Content | Sensitivity |
 |------|---------|-------------|
-| `threat-model.md` / `.yaml` / `.sarif.json` | The report itself | Describes vulnerabilities in your code — treat as sensitive |
+| `threat-model.md` / `.yaml` / `.sarif.json` | The report itself | Describes vulnerabilities in your code; treat as sensitive |
 | `.stride-<component-id>.json` | Per-component STRIDE findings | Same sensitivity as the report |
 | `.threats-merged.json` | Canonical merged threat list | Same |
 | `.recon-summary.md` | Tech stack, security-pattern hits, detected secrets | **May reference hardcoded secrets** when recon flags them |
@@ -53,17 +53,17 @@ All intermediate artifacts are written to `$OUTPUT_DIR` (default: `docs/security
 
 The two log files carry no source code and no prompt content, but they do carry file paths (e.g. `FILE_WRITE /path/to/secrets.ts`). Treat them as sensitive alongside the reports themselves. Logs rotate at 5 MB (`logging.max_log_bytes` in `config.json`).
 
-When the recon scanner detects hardcoded secrets (Category 12 of 26), the match context — including a small snippet around the match — is written into `.recon-summary.md` so the finding can be audited. This file should be treated as secret-handling scope.
+When the recon scanner detects hardcoded secrets (Category 12 of 26), the match context, including a small snippet around the match, is written into `.recon-summary.md` so the finding can be audited. This file should be treated as secret-handling scope.
 
 ### What is logged by Anthropic
 
 Anthropic's API logs the prompts and responses per their [privacy policy](https://www.anthropic.com/privacy). API-key and Claude Pro/Team/Enterprise subscriptions have different data-retention terms; check with your Anthropic account representative for your specific contract.
 
-Prompt caching is used aggressively (see `pricing.cache_*` in `config.json`). Cached segments reside on Anthropic's infrastructure for the cache TTL.
+The plugin uses prompt caching (see `pricing.cache_*` in `config.json`). Cached segments reside on Anthropic's infrastructure for the cache TTL.
 
 ### Air-gapped environments
 
-The plugin **cannot** run fully air-gapped. Claude Code requires a connection to `api.anthropic.com`. There is no offline mode. If your environment prohibits outbound connections to `api.anthropic.com`, the plugin is not usable in that environment.
+Claude Code requires a connection to `api.anthropic.com`. The plugin has no offline mode and cannot run in an environment that blocks this connection.
 
 ### Plugin code fetching
 
@@ -75,10 +75,11 @@ Before running the plugin on a codebase that contains production secrets, PII, o
 
 1. Confirm your contract with Anthropic covers the data classification of the source files that will be read.
 2. Decide where `docs/security/` lives. Committing `.yaml` / `.sarif.json` to the repository is the common pattern; the intermediate files (`.stride-*.json`, `.recon-summary.md`) are `.gitignore`d by default but contain the same content.
-3. Review `hooks/steering_keywords.json` if the security coach is enabled — the coach injects prompts on every user-submitted prompt, not just plugin runs.
+3. Review `hooks/steering_keywords.json` if the security coach is enabled. It adds guidance to matching prompts throughout the session, including outside plugin runs.
 4. Rotate any secret the recon scanner might plausibly find before running; assume recon findings will be persisted in `.recon-summary.md`.
 
-## Known issues — untrusted repositories
+<a id="known-issues--untrusted-repositories"></a>
+## Known issues: untrusted repositories
 
 Scanned repositories are **untrusted by default**. Headless runs apply the
 untrusted preflight before Claude starts; `--trust-mode trusted` is an explicit
@@ -89,11 +90,11 @@ actively malicious content:
 | # | Issue | Vector |
 |---|-------|--------|
 | 1 | Prompt injection via repo content | Source files, comments, markdown read by agents flow into the LLM context. Attacker-controlled instructions there can steer the agent. The shipped Bash allow-list still includes RCE-capable primitives (`python3`, `awk`, `sed`); successful prompt injection can therefore become arbitrary command execution on the reviewer's machine. |
-| 2 | SSRF via `docs/related-repos.yaml` | *(Hardened 2026-05.)* `scripts/load_related_repos.py` validates the target URL through `scripts/_url_guard.py` — RFC1918, loopback, link-local (incl. `169.254.169.254`), multicast, reserved IPs are rejected, and cross-host redirects strip `Authorization`/`Cookie` headers. For stricter control, set `APPSEC_URL_ALLOWLIST=host1,host2` and pass `--strict-urls` (auto-enabled in `--trust-mode untrusted`). |
-| 3 | Symlink-driven file reads | *(Hardened 2026-05.)* The recon walker (`scripts/recon_patterns.py`) runs `os.walk(..., followlinks=False)` and the new `scripts/_path_guard.py` helper drops symlinks whose target escapes the repo root. Free-form agent reads via the Read tool are *not* sandboxed at the harness level — `scripts/preflight_untrusted.py` enumerates escaping symlinks before the run begins and refuses to proceed in untrusted mode. |
+| 2 | SSRF via `docs/related-repos.yaml` | *(Hardened 2026-05.)* `scripts/load_related_repos.py` validates the target URL through `scripts/_url_guard.py`: RFC1918, loopback, link-local (incl. `169.254.169.254`), multicast, reserved IPs are rejected, and cross-host redirects strip `Authorization`/`Cookie` headers. For stricter control, set `APPSEC_URL_ALLOWLIST=host1,host2` and pass `--strict-urls` (auto-enabled in `--trust-mode untrusted`). |
+| 3 | Symlink-driven file reads | *(Hardened 2026-05.)* The recon walker (`scripts/recon_patterns.py`) runs `os.walk(..., followlinks=False)` and the new `scripts/_path_guard.py` helper drops symlinks whose target escapes the repo root. Free-form agent reads via the Read tool are *not* sandboxed at the harness level. `scripts/preflight_untrusted.py` enumerates escaping symlinks before the run begins and refuses to proceed in untrusted mode. |
 | 4 | Repo-owned Claude Code hooks | An interactive Claude Code session may load `.claude/settings.json`, `.claude/hooks/`, or `.vscode/tasks.json` from its working directory **before** the plugin runs. Run `scripts/preflight_untrusted.py --strict --strict-urls` before starting an interactive session in a third-party repository, or use the headless runner so its default untrusted preflight runs before Claude. The recon-scanner still flags these files as Cat 28 for after-the-fact visibility. |
-| 5 | Argument injection in subprocess calls | Filenames and refs from the repo flow into `git` (and, when the GitHub CLI is available, optional `gh pr list`) without consistent `--` separators or strict character validation. *(Reduced 2026-05: `npm audit` / `pip-audit` / `govulncheck` are no longer invoked — the plugin runs supply-chain detection passively, never spawns package-manager or CVE-database tools.)* |
-| 6 | ~~Third-party scanner RCEs~~ | **Resolved 2026-05** — `dep_scan.py` was removed. The plugin no longer invokes external audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) on attacker-controlled manifests. Supply-chain posture is now produced by `scripts/emit_sca_practice.py` + `scripts/emit_known_bad_libs.py` + `scripts/emit_dep_update_activity.py` — all three are pure file-system inspection plus `git log`. |
+| 5 | Argument injection in subprocess calls | Filenames and refs from the repo flow into `git` (and, when the GitHub CLI is available, optional `gh pr list`) without consistent `--` separators or strict character validation. *(Reduced 2026-05: `npm audit` / `pip-audit` / `govulncheck` are no longer invoked; the plugin runs supply-chain detection passively, never spawns package-manager or CVE-database tools.)* |
+| 6 | ~~Third-party scanner RCEs~~ | **Resolved 2026-05**: `dep_scan.py` was removed. The plugin no longer invokes external audit tools (`npm audit`, `pip-audit`, `govulncheck`, etc.) on attacker-controlled manifests. Supply-chain posture is now produced by `scripts/emit_sca_practice.py` + `scripts/emit_known_bad_libs.py` + `scripts/emit_dep_update_activity.py`; all three are pure file-system inspection plus `git log`. |
 
 ### Recommended mitigations for untrusted repos
 

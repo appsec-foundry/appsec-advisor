@@ -1,4 +1,4 @@
-# Requirements Harvester
+# Requirements harvester
 
 The requirements audit and threat modeler read a YAML requirements catalog. `scripts/harvest_requirements.py` can build that catalog from Confluence, Antora, or other HTML pages. It can also render selected functional sources as one OpenSpec Markdown file, one SpecDD `.sdd` file, or both.
 
@@ -283,13 +283,13 @@ The plugin caches the fetched catalog. An explicit `--requirements <url>` overri
 
 ## Troubleshooting
 
-**Parser returns zero requirements.** Run with `--verbose` — the harvester prints every parser attempt per page. If all five strategies miss, either the ID shape doesn't match `PREFIX-PART[-PART…]` (e.g. pure numeric IDs like `REQ_001`) or the HTML is an SPA that needs JavaScript to render content (the harvester fetches static HTML only).
+**Parser returns zero requirements.** Run with `--verbose` to see every parser attempt per page. If all five strategies miss, either the ID shape doesn't match `PREFIX-PART[-PART…]` (e.g. pure numeric IDs like `REQ_001`) or the HTML is an SPA that needs JavaScript to render content (the harvester fetches static HTML only).
 
-**OpenSpec or SpecDD says no source targets the format.** Add that format to the `outputs` array of the functional requirement source. Catalog-only remains the default so secure-coding guidance is never exported as application behavior implicitly. If you passed `--format`, check it names a format some source actually declares — `--format` only narrows a run, it never adds a format a source doesn't already opt into.
+**OpenSpec or SpecDD says no source targets the format.** Add that format to the `outputs` array of the functional requirement source. Catalog-only remains the default so secure-coding guidance is never exported as application behavior implicitly. If you passed `--format`, check that a source declares that format in `outputs`. The flag only narrows the selected formats.
 
 **A configured blueprint page is missing from the YAML.** The current harvester indexes the configured `crawl_url` itself and direct same-origin child links below that path. If a blueprint still does not appear, check the dry-run output for `Found N sub-page link(s)` and the blueprint count. Common causes are JavaScript-rendered content, links outside the configured base path, deeper nested pages that are not linked directly from `crawl_url`, or `max_pages` capping the discovered links before the page is reached. Fix by adding explicit `sources[]` entries for those pages or raising `max_pages`.
 
-**Auth token works interactively but fails in CI.** `HARVEST_AUTH_TOKEN` must be set as a CI secret *and* passed through in the job's `env:` block — secrets are not auto-exposed on recent GitHub / GitLab runners.
+**Auth token works interactively but fails in CI.** Set `HARVEST_AUTH_TOKEN` as a CI secret and pass it through the job's `env:` block.
 
 **Mock server returns the bundled YAML after I ran the harvester.** The mock intentionally hardcodes `examples/appsec-requirements-example.yaml` as its demo payload and does not serve a harvested production catalog. To test a generated file without overwriting the bundled example, serve its containing directory on loopback with `python3 -m http.server 4445 --bind 127.0.0.1 --directory data` and pass the resulting URL explicitly with `--requirements`.
 

@@ -1,4 +1,4 @@
-# Advanced Configuration
+# Advanced configuration
 
 Most users do not need to edit plugin configuration. The default configuration supports an interactive threat-model run after the permissions setup in the main README.
 
@@ -50,7 +50,7 @@ The `pricing` block supplies USD prices per one million tokens for local run-cos
 }
 ```
 
-These values do not select a model and do not change provider billing. Model routing and assessment-depth guidance live in [Model Selection, Cost & Context Window](model-selection.md). Each configured price must be a non-negative number.
+These values do not select a model and do not change provider billing. Model routing and assessment-depth guidance live in [Model selection, cost, and context window](model-selection.md). Each configured price must be a non-negative number.
 
 When `config.local.json` exists, the event logger and cost verifier read pricing from that file instead of `config.json`. Missing individual price fields fall back to their built-in values.
 

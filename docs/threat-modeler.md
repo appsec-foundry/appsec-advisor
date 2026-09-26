@@ -24,8 +24,8 @@ An assessment generates an architecture and security report from repository evid
 
 **Default outputs**
 
-- `threat-model.md` — report for engineers, architects, and security reviewers.
-- `threat-model.yaml` — canonical structured model used by automation and exports, including requirements assessment and provenance, verified abuse-case outcomes, and bounded business-context provenance without the source prose.
+- `threat-model.md`: report for engineers, architects, and security reviewers.
+- `threat-model.yaml`: canonical structured model used by automation and exports, including requirements assessment and provenance, verified abuse-case outcomes, and bounded business-context provenance without the source prose.
 
 **Optional outputs**
 
@@ -292,7 +292,8 @@ The hard cut requires an `ANTHROPIC_API_KEY`; the soft budget and time limits al
 
 Four optional files provide context that cannot be derived from code. The plugin treats their contents as data, and they cannot suppress a finding supported by repository evidence.
 
-### Business context — `docs/business-context.md`
+<a id="business-context--docsbusiness-contextmd"></a>
+### Business context: `docs/business-context.md`
 
 Use this file for business facts that are not visible in code:
 
@@ -325,7 +326,8 @@ The impact choices follow the confirmed use case, with the most plausible option
 
 Changing persistent context does not re-rate an existing model automatically. Run `--full` to apply it to every finding. Keep actor definitions, abuse cases, trust boundaries, threat ratings, and claimed controls out of this file; they have separate inputs or require repository evidence.
 
-### Actor layer — `.appsec/actors.yaml`
+<a id="actor-layer--appsecactorsyaml"></a>
+### Actor layer: `.appsec/actors.yaml`
 
 Use this file to add, change, enable, or disable actors for the repository. It is checked against a schema before the scan starts. Organization actors are inherited by default; set `inherit_org: false` to leave them out. A repository cannot re-enable an actor disabled by the organization.
 
@@ -344,7 +346,9 @@ inherit_org: true
 
 Actor choices made in conversation apply only to that run. Commit `.appsec/actors.yaml` when a choice must persist.
 
-A legitimate role counts as signed in (`internet-user`, `internet-priv-user`) only when its request path shows authentication. A role that reaches the system without authentication and passes no authenticating hop on its way is shown as anonymous, and an admin role is added only when the cited access check is code rather than a file header. Access control outside the repository — ingress SSO, a VPN, an authenticating proxy — is invisible to that check. Declare such roles under `legitimate_roles`; a declared role replaces the modelled role with the same `id` (the run log names withdrawn roles in `ROLE_ACCESS_WITHDRAWN`) or is added, keeps its name in Figure 1, and is never downgraded. Signed-in classes must state where the login happens:
+A legitimate role is shown as signed in (`internet-user` or `internet-priv-user`) only when its request path includes authentication. A path without an authenticating hop is shown as anonymous. An admin role requires a cited access check in code; a file header is not evidence.
+
+The check cannot see external controls such as ingress SSO, an authenticating proxy, or VPN restrictions. Declare roles that depend on these controls under `legitimate_roles`. A declaration replaces a modeled role with the same `id` or adds a new role. It retains its name in Figure 1 and is never downgraded. The run log identifies withdrawn roles with `ROLE_ACCESS_WITHDRAWN`. Signed-in classes must state where login occurs:
 
 ```yaml
 legitimate_roles:
@@ -357,7 +361,8 @@ legitimate_roles:
 
 Figures group actors linked to displayed findings by access category. Adding twenty roles does not create twenty diagram nodes. Identified Actors has one row for each attacker and legitimate role that Figure 1 draws, under the same name, and names your configured roles inside the attacker group that draws them. §2.1, the threat-actor legend and the abuse cases use the same names. A role whose group Figure 1 does not draw does not appear in the report. Grouping does not imply that the roles share every permission.
 
-### Known threats — `docs/known-threats.yaml`
+<a id="known-threats--docsknown-threatsyaml"></a>
+### Known threats: `docs/known-threats.yaml`
 
 Use this file for prior pentest findings, accepted risks, or issues that each assessment should revisit. Schema validation runs before analysis, and an invalid entry stops the assessment.
 
@@ -382,7 +387,8 @@ threats:
 
 Optional fields are `evidence`, `pentest_ref`, `accepted_risk`, and `mitigation_ref`.
 
-### Trust-boundary declarations — `.appsec/trust-boundaries.yaml`
+<a id="trust-boundary-declarations--appsectrust-boundariesyaml"></a>
+### Trust-boundary declarations: `.appsec/trust-boundaries.yaml`
 
 Use this file when deployment, tenancy, or ownership is not clear from the source. A declaration can add a boundary or clarify one the scan found. It cannot remove a detected boundary, claim that a control works, or change a rating on its own.
 

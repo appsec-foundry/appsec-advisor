@@ -13,9 +13,7 @@ Open an issue before substantial changes so the approach can be agreed before im
 3. Run the relevant tests and lint checks.
 4. Complete the pull request template.
 
-Maintainers are listed in [`.github/CODEOWNERS`](.github/CODEOWNERS) and review
-all changes to `main`. Security issues follow a separate path — see
-[Reporting security issues](#reporting-security-issues).
+Maintainers are listed in [`.github/CODEOWNERS`](.github/CODEOWNERS) and review all changes to `main`. For security issues, follow [Reporting security issues](#reporting-security-issues).
 
 ## Dev environment setup
 
@@ -200,7 +198,7 @@ python3 scripts/diagnostic_bundle.py inspect --bundle appsec-diag-<id>.tgz      
 | `templates/` | Report templates (management summary, sections) |
 | `data/` | Requirements, policy, and rule data |
 | `scripts/` | Python helpers used by agents/hooks plus user-facing CLI wrappers (`run-headless.sh`, `harvest_requirements.py`, `mock-server.py`) |
-| `tests/` | Pytest suite — agent definitions, integration, steering, SARIF, schemas |
+| `tests/` | Pytest suite: agent definitions, integration, steering, SARIF, schemas |
 | `examples/` | Example requirements catalogs, blueprints, abuse cases, and audit outputs |
 | `docs/` | User and maintainer documentation |
 | `config.json` | Plugin config (external context, pricing, logging) |
@@ -226,7 +224,7 @@ Add type hints to new public functions. `mypy` is not currently enforced.
 
 ## Adding components
 
-When adding a new section to the generated threat model, see [`docs/internal/runbooks/adding-a-section.md`](docs/internal/runbooks/adding-a-section.md). It walks through the five registry maps that must stay aligned — those maps are documented at [`docs/internal/contracts/schema-invariants.md` §4f](docs/internal/contracts/schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth).
+When adding a new section to the generated threat model, see [`docs/internal/runbooks/adding-a-section.md`](docs/internal/runbooks/adding-a-section.md). It covers the five registry maps that must stay aligned. Their contracts are documented in [`docs/internal/contracts/schema-invariants.md` §4f](docs/internal/contracts/schema-invariants.md#4f-fragment-registry-maps--single-source-of-truth).
 
 ## Reporting security issues
 

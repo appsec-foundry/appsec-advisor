@@ -1,4 +1,4 @@
-# Requirements Audit
+# Requirements audit
 
 `/appsec-advisor:audit-security-requirements` grades a repository against a security requirements catalog. It is narrower than a full threat model and can be used for pull-request gates or audit preparation.
 
@@ -159,7 +159,7 @@ The command accepts these flags:
 | `--demo` | Audit against the packaged example catalog; report is stamped **DEMO** |
 | `--status` | Show which requirements would be used (source, date, count, freshness), then exit |
 | `--clear-requirements` | Forget the remembered source and delete the cached catalog, then exit |
-| `<CATEGORY_FILTER>` | Grade only requirements whose ID/category matches (e.g. `SEC-AUTH`, `AUTH`) — narrows scope; an unfiltered run grades the whole catalog |
+| `<CATEGORY_FILTER>` | Grade requirements whose ID or category matches (e.g. `SEC-AUTH`, `AUTH`). Without a filter, grade the whole catalog. |
 | `--org-profile <path>` / `--preset <name>` / `--no-org-profile` | Control org-profile source resolution |
 | `--md` / `--pdf` / `--json` | Save the report as Markdown / PDF / JSON (`--pdf` also writes the Markdown it is converted from; needs pandoc + weasyprint) |
 | `--save` | Save all formats (`--md`, `--pdf`, `--json`) |

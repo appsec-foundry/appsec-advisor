@@ -42,10 +42,7 @@ python3 scripts/measure_run.py <OUTPUT_DIR>                  # writes <OUTPUT_DI
 docs/baselines/<repo-slug>-<depth>-v<plugin-version>.run-metrics.json
 ```
 
-e.g. `juice-shop-standard-v<X.Y.Z>.run-metrics.json`. Capture the two
-canonical repos from the plan's Open Question 2 (Juice Shop + one internal
-use-case with a different profile). Re-capture after any change that claims a
-perf effect and diff against the prior file — the delta is the evidence.
+For example, `juice-shop-standard-v<X.Y.Z>.run-metrics.json`. Capture both repositories required by the plan: Juice Shop and an internal use case with a different profile. For a claimed performance change, record new measurements and compare them with the previous file.
 
 ## Reproducibility
 

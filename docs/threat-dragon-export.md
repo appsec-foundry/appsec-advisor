@@ -1,12 +1,8 @@
 # Threat Dragon export (alpha)
 
-> **Alpha.** The mapping may change between releases. The export is not part of
-> `--formats all` — request it by name.
+> **Alpha.** The mapping may change between releases. Request this format explicitly; `--formats all` does not include it.
 
-Exports a finished threat model as **OWASP Threat Dragon v2 JSON**. The file
-opens in [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/)
-and imports into [OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/)
-via **Diagram → Import**.
+Export a finished threat model as OWASP Threat Dragon v2 JSON. Open the file in [OWASP Threat Dragon](https://owasp.org/www-project-threat-dragon/) or import it into [OWASP ThreatAtlas](https://owasp.org/www-project-threatatlas/) through **Diagram → Import**.
 
 ## Running it
 
@@ -30,26 +26,21 @@ python3 scripts/export_threat_dragon.py \
   --output       docs/security/threat-model.threatdragon.json
 ```
 
-Output: `<exports-dir>/threat-model.threatdragon.json`. Deterministic — the same
-yaml always produces the same bytes. Reads `threat-model.yaml` only; writes
-nothing else and makes no network calls.
+The exporter reads `threat-model.yaml` and writes `<exports-dir>/threat-model.threatdragon.json`. The same YAML produces the same bytes. It writes no other files and makes no network calls.
 
 ## Why Threat Dragon and not a ThreatAtlas format
 
-ThreatAtlas' importer accepts four shapes: its own diagram export, its own
-product export, draw.io XML, and Threat Dragon JSON. Only the **Threat Dragon**
-path creates threats and mitigations in the target — the other three carry
-geometry and drop every finding.
+ThreatAtlas accepts its own diagram and product exports, draw.io XML, and Threat Dragon JSON. Only the Threat Dragon import creates threats and mitigations; the other formats carry diagram geometry without findings.
 
 ## What lands where
 
 | Threat model | Threat Dragon |
 |---|---|
 | `meta.project`, `meta.team_owner` | diagram title and owner |
-| `components[]` | DFD elements — `tier: client` → actor, `application` → process, `data` → store (legacy `kind` is the fallback, unknown defaults to process) |
+| `components[]` | DFD elements: `tier: client` → actor, `application` → process, `data` → store (legacy `kind` is the fallback, unknown defaults to process) |
 | `data_flows[]` | flows between elements; endpoints resolve by component id or name, and the reserved `external` endpoint becomes an actor |
 | `threats[]` | threats on their component's element |
-| `threats[].stride` | threat type, in Threat Dragon's own spelling (`Information disclosure`) — becomes the category in ThreatAtlas |
+| `threats[].stride` | threat type, in Threat Dragon's own spelling (`Information disclosure`); used as the category in ThreatAtlas |
 | `threats[].risk` | severity; ThreatAtlas turns Critical/High/Medium/Low into likelihood and impact 5/4/3/2, and an unrated threat exports as Threat Dragon's `TBD` |
 | `threats[].cvss_v4.base_score` | the threat's `score` field; the vector goes into the description |
 | `threats[].boundary_refs[]` | the crossing and its exposure, in the threat description; a flow across a confirmed internet crossing is also marked `isPublicNetwork` |
@@ -60,22 +51,15 @@ geometry and drop every finding.
 | `mitigations[].fulfills_requirements`, `mitigations[].blueprint` | bounded requirement and implementation-blueprint text in the mitigation field |
 | `mitigations[].kind: accept_risk` | threat status `Accepted`, when no other mitigation is linked |
 
-Every threat title keeps its report anchor — `[F-012] Missing authorization on …`
-— and the description ends with a pointer back to `threat-model.md`.
+Threat titles retain their report anchor, for example `[F-012] Missing authorization on …`. Each description ends with a reference to `threat-model.md`.
 
 ## What is lost
 
-Threat Dragon's schema is much narrower than ours. The **CVSS v4 vector**, **CWE**, **evidence summary, file and line**, **evidence tier**, **finding source**, **mitigation priority and effort**, **requirements traceability**, **abuse-case links**, and **business-context use** have no native field and are folded into bounded text. Requirement and abuse-case rows beyond the stated limits remain only in `threat-model.yaml` and `threat-model.md`. **Actors**, **attack surface**, **assets**, **walkthroughs**, and the **weakness register** are dropped entirely.
+Threat Dragon has no native fields for several report dimensions. The export includes the CVSS v4 vector, CWE, evidence summary and location, evidence tier, finding source, mitigation priority and effort, requirements traceability, abuse-case links, and business-context use as bounded text. Requirement and abuse-case rows beyond the stated limits remain only in `threat-model.yaml` and `threat-model.md`. Actors, attack surface, assets, walkthroughs, and the weakness register are omitted.
 
 The exporter reports counted warnings for requirements, abuse cases, and business context whose semantics had to be folded into text. It never represents those records as synthetic threats, so finding counts remain stable.
 
-**Trust boundaries are not drawn.** Ours are a `from`/`to` pair with a kind and
-an assumption; Threat Dragon wants a geometric box or curve, and ThreatAtlas
-skips boundary curves on import outright. The export reports how many were left
-out. What survives is attached to the findings: a referenced crossing appears in
-the threat description as `tb-2 external → rest-api (internet-facing)`, and a
-flow across a confirmed internet crossing is marked `isPublicNetwork`. The full
-catalogue stays in `threat-model.yaml` and SARIF.
+**Trust boundaries are not drawn.** The source model describes crossings with endpoints, a kind, and an assumption. Threat Dragon requires a geometric box or curve, and ThreatAtlas skips boundary curves on import. The exporter reports the omitted count. Referenced crossings remain in threat descriptions, for example `tb-2 external → rest-api (internet-facing)`. Flows across confirmed internet crossings receive `isPublicNetwork`. The complete catalog remains in `threat-model.yaml` and SARIF.
 
 `threat-model.md` remains the authoritative report; this export is for
 threat-modeling tools, SARIF for scanners.
@@ -98,16 +82,11 @@ threat-modeling tools, SARIF for scanners.
 
 ## Best-effort behaviour
 
-Thin or inconsistent input degrades to a warning on stderr, never to a failed
-export:
+The exporter handles these incomplete inputs with warnings on stderr:
 
-- a threat whose component reference does not resolve is attached to a single
-  `Unassigned` element
-- a data flow with an unresolved endpoint is dropped; the reserved `external`
-  endpoint is not "unresolved" and materialises an actor element instead
-- a yaml with no `components[]` gets its elements synthesised from the component
-  references the threats carry
-- an empty model still produces one placeholder element, because both importers
-  reject a diagram with no elements
+- a threat whose component reference does not resolve is attached to a single `Unassigned` element
+- a data flow with an unresolved endpoint is dropped; the reserved `external` endpoint is not "unresolved" and materialises an actor element instead
+- a YAML document with no `components[]` gets elements from the component references in its threats
+- an empty model still produces one placeholder element, because both importers reject a diagram with no elements
 
-Exit codes: `0` success, `1` yaml not found, `2` unparsable yaml, `3` write error.
+Exit codes: `0` success, `1` YAML not found, `2` unparsable YAML, `3` write error.

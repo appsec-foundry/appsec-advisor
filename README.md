@@ -7,11 +7,11 @@
 [![SARIF](https://img.shields.io/badge/SARIF-v2.1.0-blue.svg)](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
 [![codecov](https://codecov.io/gh/appsec-foundry/appsec-advisor/graph/badge.svg)](https://codecov.io/gh/appsec-foundry/appsec-advisor)
 
-> ⚠️ **Beta — not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
+> ⚠️ **Beta: not production ready.** `appsec-advisor` is under active development. Interfaces, schemas, and output may change without notice.
 
 `appsec-advisor` is a Claude Code plugin for **code-derived threat modeling**: it reads the code and configuration in a repository, builds an architecture model, and runs STRIDE against it. Each finding references repository evidence and includes remediation guidance.
 
-Re-run the assessment when the code changes. The result complements workshops and scanners with an implementation-level model; it does not replace either. The plugin also includes requirements audits, change reviews, and CI gates.
+The plugin also includes requirements audits, change reviews, and CI gates.
 
 [Why appsec-advisor?](#why-appsec-advisor) · [Security](#security-notes) · [Quick start](#quick-start) · [Threat Modeler](#threat-modeler) · [Documentation](#documentation) · [What's new in 0.6.0-beta.4](#whats-new-in-060-beta4) · [Contributing](#contributing)
 

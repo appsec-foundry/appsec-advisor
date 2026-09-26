@@ -1,4 +1,4 @@
-# Non-interactive Mode
+# Non-interactive mode
 
 Use `scripts/run-headless.sh` to run a full threat-model assessment from a
 shell, CI job, or scheduled task. The wrapper owns authentication, host-level
@@ -119,7 +119,9 @@ Headless limits are enforced outside the model runtime:
 
 `--max-duration` uses the host `timeout` command.
 
-The two cost flags do different jobs. `--soft-budget` steers the run: an invocation that cannot fit is refused before it spends anything, and a run that overruns still finishes and reports the overrun. `--hard-budget` is the host's cut, applies to API billing, and kills the session wherever it is. Giving only `--soft-budget` derives the hard cut at 1.25 times its value, above the band the soft budget is allowed to use, so it fires only when the soft mechanism was wrong. Pass `--hard-budget` to set it yourself. An interrupted or capped assessment is not resumable mid-analysis. One boundary is recoverable: a run that stopped after Stage 1 but before the report leaves validated Stage-1 artifacts, and `--rerender` turns them into a report without analyzing the source again. The run prints the command that applies to what it left behind. `--full` and `--rebuild` refuse to discard those artifacts until you repeat the invocation with `--force`. Anything earlier than that boundary starts again with `--full` or `--rebuild`; partial component artifacts may remain for diagnosis, but they are never silently admitted as a legacy continuation.
+`--soft-budget` rejects a run before it starts if the estimated cost exceeds the budget. Once started, the run can exceed that budget and reports the overrun. `--hard-budget` stops the session at the host level and applies to API billing. If you supply only a soft budget, the hard budget defaults to 1.25 times that value. Set `--hard-budget` to override it.
+
+An interrupted assessment cannot resume mid-analysis. If Stage 1 finished, use `--rerender` to create the report from its validated artifacts. The run prints the applicable recovery command. `--full` and `--rebuild` require `--force` before discarding a completed Stage 1. If Stage 1 did not finish, start again with `--full` or `--rebuild`; partial component artifacts remain for diagnosis only.
 
 ## Scheduled CI example
 
@@ -171,9 +173,9 @@ modes:
 
 Unless you pass `--quiet`, the run prints a progress line: the phase it is in, roughly how far along it is, how long it has taken, and what it has spent so far. The spend is a lower bound, marked `≥`, because sub-agents only report when they finish. With `--soft-budget` it is shown against that budget, and passing 80 % or 100 % of it prints a warning once. A warning never stops the run; only `--hard-budget` does that.
 
-Where the host reports no usage, the run says so once and shows no spend at all rather than a figure that is far too low. Nothing is then tracking the soft budget, and only `--hard-budget` still applies.
+If the host reports no usage, the run prints a notice and omits spend figures. Soft-budget tracking is then unavailable; `--hard-budget` still applies.
 
-At the end you get the exact cost per model for the whole run, sub-agents included, and under it a table of what each phase took. A role that carries no model pin of its own runs on the session model, so a run can bill as few as two models and that is still the complete figure, not a truncated one. The `Models` line the run prints at the start names what each model drives; a model listed there and absent from the cost table means missing spend.
+The final summary lists cost by model, including subagents, and duration by phase. Roles without a model override use the session model, so two billed models can account for the complete run. Compare the cost table with the initial `Models` line to identify missing usage.
 
 ## Output
 

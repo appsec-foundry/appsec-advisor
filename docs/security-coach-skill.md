@@ -89,15 +89,15 @@ Thresholds are configured under `thresholds` in `hooks/steering_keywords.json`.
 
 Topics are defined in `hooks/steering_keywords.json` under `topics.<name>`. Each topic lists:
 
-- `triggers` — keywords that route to this topic
-- `guidance` — the bullet list injected into the prompt when the topic matches
-- `requirements` — `SEC-*` IDs resolved at runtime against the requirements YAML
+- `triggers`: keywords that route to this topic
+- `guidance`: the bullet list injected into the prompt when the topic matches
+- `requirements`: `SEC-*` IDs resolved at runtime against the requirements YAML
 
 Default topics:
 
 | Topic | Scope |
 |-------|-------|
-| `general` | Broad security intent (vulnerability, exploit, privilege) — injects baseline only |
+| `general` | Broad security intent (vulnerability, exploit, privilege); adds the baseline only |
 | `auth` | Authentication, session, tokens, OAuth/OIDC, MFA |
 | `injection` | SQL/NoSQL injection, ORM, input sanitization, parameterized queries |
 | `crypto` | Hashing, encryption, TLS, certificates, password storage |
@@ -150,15 +150,15 @@ The system message lists the matched topics. Requirement text comes from the sam
 
 These prompts do not trigger the coach:
 
-- `"create a README"` — action verb with no code-density
-- `"rename the button"` — UI change, no security-relevant tokens
-- `"why is this test failing"` — no triggers, no action+code combo
-- `"add a logger"` — 1 action + 1 code word, below the combined threshold
-- `"what is an API"` — single code keyword alone
-- `"hello, how are you?"` — conversational
-- `"summarize this meeting"` — unrelated domain
+- `"create a README"`: action verb without enough code keywords
+- `"rename the button"`: UI change, no security-relevant tokens
+- `"why is this test failing"`: no topic trigger or qualifying combination of action and code keywords
+- `"add a logger"`: 1 action + 1 code word, below the combined threshold
+- `"what is an API"`: single code keyword alone
+- `"hello, how are you?"`: conversational
+- `"summarize this meeting"`: unrelated domain
 
-If you see a prompt firing that shouldn't, see [Tuning false positives](#tuning-false-positives).
+For unexpected matches, see [Tuning false positives](#tuning-false-positives).
 
 ## Requirements-aware mode
 
@@ -190,10 +190,10 @@ Each injection appends a `COACH_INJECTED` event to the hook log:
 
 Fields:
 
-- `topics` — matched topic names (sorted, comma-separated)
-- `req_ids` — requirement IDs resolved and injected, or `-` if none
-- `chars` — length of the injected context block
-- `prompt` — first 8 hex chars of a SHA-256 of the prompt (stable reference without logging the prompt text)
+- `topics`: matched topic names (sorted, comma-separated)
+- `req_ids`: requirement IDs resolved and injected, or `-` if none
+- `chars`: length of the injected context block
+- `prompt`: first 8 hex chars of a SHA-256 of the prompt (stable reference without logging the prompt text)
 
 The event does not include the prompt body. It can be used to review trigger frequency and tune topic keywords.
 
