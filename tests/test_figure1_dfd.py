@@ -1168,6 +1168,26 @@ def test_large_models_collapse_and_explain():
     assert "collapsed" in svg  # the legend explains the flows that are not drawn
 
 
+@pytest.mark.parametrize("prefix", ["C", "Node"])
+def test_collapsed_bar_keeps_count_and_threat_total_for_many_members(prefix):
+    many = [{"name": f"{prefix}-{i:02d} · Service {i}", "sev": {"High": 2}} for i in range(9, 101)]
+    label = F._bar_label(many)
+    assert len(label) <= 40
+    assert label.startswith("+92 more") and label.endswith(" · 184 threats")
+    assert "…" in label
+    few = [{"name": f"{prefix}-{i} · Store", "sev": {"High": 1}} for i in (1, 2)]
+    assert F._bar_label(few) == f"+2 more: {prefix}-1, {prefix}-2 · 2 threats"
+
+
+def test_collapsed_bar_names_every_member_in_its_tooltip():
+    y, apd, tax = _model(big=30)
+    svg, problems = F.check_diagram(y, apd, tax, detail=False)
+    assert problems == []
+    title = next(t.text for t in ET.fromstring(svg).findall(".//{*}title") if (t.text or "").startswith("Collapsed: "))
+    hidden = re.search(r"\+(\d+) more", svg)
+    assert title.count(";") + 1 == int(hidden[1])
+
+
 def test_unknown_flow_endpoints_and_self_loops_are_explained():
     y, apd, tax = _model()
     y["data_flows"] += [

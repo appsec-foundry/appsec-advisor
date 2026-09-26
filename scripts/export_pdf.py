@@ -41,6 +41,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
+from html import escape as html_escape
 from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote
@@ -749,6 +751,65 @@ def _wrap_wide_figure1(html: str, base_dir: Path) -> str:
     return html[: m.start()] + f'<div class="{cls}">\n' + m.group(0) + "\n</div>" + html[m.end() :]
 
 
+# The link compose writes under Figure 1 to its generated detail sibling.
+DETAIL_LINK_RE = re.compile(
+    r"^\[Detailed architecture diagram\]\("
+    r"((?:[\w.-]+\.)?figure1-detail\.svg|data:image/svg\+xml;base64,[A-Za-z0-9+/=]+)\)$",
+    re.MULTILINE,
+)
+_DETAIL_APPENDIX = "Appendix: Detailed architecture diagram"
+
+
+def read_architecture_detail(ref: str, base_dir: Optional[Path]) -> str:
+    """Detail SVG behind a DETAIL_LINK_RE reference; only a contained sibling is read."""
+    try:
+        if ref.startswith("data:"):
+            return base64.b64decode(ref.split(",", 1)[1], validate=True).decode("utf-8")
+        if base_dir is not None:
+            source = (base_dir / ref).resolve()
+            if source.parent == base_dir.resolve():
+                return source.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+def _append_architecture_detail(md_text: str, base_dir: Path) -> str:
+    """Move the detail diagram into a PDF appendix and point Figure 1's link at it.
+
+    A PDF cannot carry the sibling SVG, so the link would otherwise resolve to
+    the deleted work directory. An unreadable detail drops the link.
+    """
+    m = DETAIL_LINK_RE.search(md_text)
+    if not m:
+        return md_text
+    ref = m[1]
+    svg = read_architecture_detail(ref, base_dir)
+    if not svg:
+        return md_text[: m.start()] + md_text[m.end() :]
+    if 'data-paged-detail="true"' in svg:
+        from figure1_detail import image_views
+
+        # image_views serialises namespace-prefixed roots, so read the size from the element.
+        views = []
+        for title, page in image_views(svg):
+            root = ET.fromstring(page)
+            src = "data:image/svg+xml;base64," + base64.b64encode(page.encode()).decode("ascii")
+            views.append((title, src, (float(root.get("width")), float(root.get("height")))))
+    else:
+        views = [("", ref, _svg_dimensions(ref, base_dir))]
+    anchor = _DETAIL_APPENDIX.lower().replace(":", "").replace(" ", "-")
+    parts = [f"## {_DETAIL_APPENDIX}"]
+    for title, src, dims in views:
+        cls = ""
+        if dims and dims[0] >= _LANDSCAPE_MIN_WIDTH_PX:
+            cls = "figure-landscape" if dims[0] >= _LANDSCAPE_MIN_ASPECT * dims[1] else "figure-portrait"
+        caption = f"<p><strong>{html_escape(title)}</strong></p>\n\n" if title else ""
+        parts.append(f'<div class="{cls}">\n\n{caption}![Architecture detail]({src})\n\n</div>')
+    link = f"[Detailed architecture diagram](#{anchor})"
+    return md_text[: m.start()] + link + md_text[m.end() :].rstrip("\n") + "\n\n" + "\n\n".join(parts) + "\n"
+
+
 def _replace_unsupported_emoji(html: str) -> str:
     """Swap emoji WeasyPrint can't render for colored DejaVu-safe glyphs.
 
@@ -892,6 +953,7 @@ def export_pdf(
 ) -> int:
     md_text = input_md.read_text(encoding="utf-8")
     md_text = rewrite_vscode_links(md_text)
+    md_text = _append_architecture_detail(md_text, input_md.parent)
 
     with tempfile.TemporaryDirectory(prefix="export-threat-model-pdf-") as tmp:
         work = Path(tmp)

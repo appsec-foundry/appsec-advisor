@@ -32,7 +32,6 @@ from __future__ import annotations
 import argparse
 import base64
 import html
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -47,12 +46,14 @@ except ImportError:
 # rewrite, and pandoc invocation stay byte-identical between PDF and HTML.
 try:
     from export_pdf import (  # noqa: E402
+        DETAIL_LINK_RE,
         INSTALL_HINTS,
         _inject_table_colgroups,
         check_tool,
         md_to_html,
         probe_mmdc,
         probe_runs,
+        read_architecture_detail,
         render_mermaid_blocks,
         rewrite_vscode_links,
         stage_relative_images,
@@ -60,12 +61,14 @@ try:
 except ImportError:
     sys.path.insert(0, str(Path(__file__).parent))
     from export_pdf import (  # noqa: E402
+        DETAIL_LINK_RE,
         INSTALL_HINTS,
         _inject_table_colgroups,
         check_tool,
         md_to_html,
         probe_mmdc,
         probe_runs,
+        read_architecture_detail,
         render_mermaid_blocks,
         rewrite_vscode_links,
         stage_relative_images,
@@ -85,14 +88,8 @@ def _expand_architecture_detail(md_text: str, base_dir: Path | None = None) -> s
 
     def expand(match):
         ref = match[1]
-        svg = ""
+        svg = read_architecture_detail(ref, base_dir)
         try:
-            if ref.startswith("data:"):
-                svg = base64.b64decode(ref.split(",", 1)[1], validate=True).decode("utf-8")
-            elif base_dir is not None:
-                source = (base_dir / ref).resolve()
-                if source.parent == base_dir.resolve():
-                    svg = source.read_text(encoding="utf-8")
             if 'data-paged-detail="true"' in svg:
                 from figure1_detail import image_views
 
@@ -113,13 +110,7 @@ def _expand_architecture_detail(md_text: str, base_dir: Path | None = None) -> s
             f"![Detailed architecture diagram]({ref})\n\n</details>"
         )
 
-    return re.sub(
-        r"^\[Detailed architecture diagram\]\("
-        r"((?:[\w.-]+\.)?figure1-detail\.svg|data:image/svg\+xml;base64,[A-Za-z0-9+/=]+)\)$",
-        expand,
-        md_text,
-        flags=re.MULTILINE,
-    )
+    return DETAIL_LINK_RE.sub(expand, md_text)
 
 
 def preflight(require_mermaid: bool) -> tuple[bool, list[str]]:

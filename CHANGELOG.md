@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Figure 1 adds technology labels, authentication markers for login, OAuth, API, and embedded-database access, source-evidenced RAG, MCP, agentic, and service-role labels with linked finding severity, and navigable detail views; dense PDF overviews use a larger A3 page, while existing models need a new analysis for missing authentication evidence.
+- Figure 1 adds technology labels, authentication markers for login, OAuth, API, and embedded-database access, source-evidenced RAG, MCP, agentic, and service-role labels with linked finding severity, and navigable detail views, which PDF exports carry as a linked appendix; dense PDF overviews use a larger A3 page, while existing models need a new analysis for missing authentication evidence.
 - Figure 2 connects numbered attack routes to example findings, access prerequisites including public source availability, weaknesses, and impact for each relevant attacker.
 - Every report section names the same actors as Figure 1, and Identified Actors lists one row per Figure 1 actor with its access, scenarios and finding counts, including configured actors in their group.
 - Malicious insiders and attackers holding a user's device require opt-in through `enable:` in `.appsec/actors.yaml` or `actors.enable` in the organization profile and are otherwise listed as not assessed.

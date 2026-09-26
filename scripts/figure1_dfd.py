@@ -158,6 +158,22 @@ def _cut(s, n):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _bar_label(nodes, max_chars=40):
+    """Collapsed-bar caption: the count and threat total always fit; ids fill the rest."""
+    ids = [n["name"].split(" · ")[0] for n in nodes]
+    nthr = sum(sum(n.get("sev", {}).values()) for n in nodes)
+    head, tail = f"+{len(ids)} more", f" · {nthr} threats"
+    shown = []
+    for i, ident in enumerate(ids):
+        rest = ", …" if i + 1 < len(ids) else ""
+        if len(head) + 2 + len(", ".join([*shown, ident])) + len(rest) + len(tail) > max_chars:
+            break
+        shown.append(ident)
+    if not shown:
+        return head + tail
+    return f"{head}: {', '.join(shown)}{', …' if len(shown) < len(ids) else ''}{tail}"
+
+
 def _figure_boundaries(d):
     """Only resolved catalogue rows with canonical endpoints may affect the figure."""
     component_ids = {c["id"] for c in d.get("components") or [] if isinstance(c, dict) and c.get("id")}
@@ -2700,16 +2716,10 @@ def _render(
         if sub:
             c.text(zb["x"] + 10, zb["y"] + 29, _cut(sub, 38), size=8.5, anchor="start", fill=MUTED, italic=True)
     for zb in [z for z in zone_boxes if z.get("bar")]:
-        ids = ", ".join(n["name"].split(" · ")[0] for n in zb["nodes"])
-        nthr = sum(sum(n.get("sev", {}).values()) for n in zb["nodes"])
+        c.add(f"<g><title>{_esc('Collapsed: ' + '; '.join(n['name'] for n in zb['nodes']))}</title>")
         c.rect(zb["x"], zb["y"], zb["w"], zb["h"], fill="#ffffff", stroke=LINE, sw=1, rx=6, dash="3 3")
-        c.text(
-            zb["x"] + zb["w"] / 2,
-            zb["y"] + 15,
-            _cut(f"+{len(zb['nodes'])} more: {ids} · {nthr} threats", 40),
-            size=8.5,
-            fill=MUTED,
-        )
+        c.text(zb["x"] + zb["w"] / 2, zb["y"] + 15, _bar_label(zb["nodes"]), size=8.5, fill=MUTED)
+        c.add("</g>")
 
     # A column gap is only a routing coordinate unless a resolved boundary crosses it.
     cnums = d.get("_component_numbers") or {}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -962,3 +963,85 @@ def test_print_css_declares_the_landscape_figure_page() -> None:
     # WeasyPrint keeps `page: auto` content on the page it is already on, so
     # the body needs its own named page for portrait to resume after the figure.
     assert re.search(r"\bbody\s*\{[^}]*page:\s*main", css) and re.search(r"@page main\s*\{[^}]*size:\s*A4\s*;", css)
+
+
+# --------------------------------------------------------------------------
+# Figure 1 detail appendix
+# --------------------------------------------------------------------------
+
+
+def _detail_md(tmp_path, count, topology, prefix, *, stem, embedded):
+    import base64
+
+    import figure1_dfd
+
+    from tests.test_figure1_detail import model
+
+    data = model(count, topology, prefix)
+    svg, errors = figure1_dfd.check_diagram(data, {}, {})
+    assert errors == []
+    ref = f"{stem}.figure1-detail.svg"
+    (tmp_path / ref).write_text(svg)
+    if embedded:
+        ref = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+    return data, f"# Review\n\nIntro.\n\n[Detailed architecture diagram]({ref})\n\n## Next\n\nBody.\n", ref
+
+
+@pytest.mark.parametrize("embedded", [True, False])
+@pytest.mark.parametrize(
+    ("count", "topology", "prefix", "stem"),
+    [(9, "star", "dispatch", "report"), (20, "chain", "telemetry", "custom-run")],
+)
+def test_paged_detail_moves_into_linked_appendix(tmp_path, count, topology, prefix, stem, embedded):
+    import base64
+    import xml.etree.ElementTree as ET
+
+    data, md, ref = _detail_md(tmp_path, count, topology, prefix, stem=stem, embedded=embedded)
+    out = ep._append_architecture_detail(md, tmp_path)
+    assert ref not in out  # neither a sibling path nor a clickable data URI survives as a link
+    assert "[Detailed architecture diagram](#appendix-detailed-architecture-diagram)" in out
+    assert out.index("## Next") < out.index("## Appendix: Detailed architecture diagram")
+    seen = set()
+    for encoded in re.findall(r"data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)", out):
+        page = ET.fromstring(base64.b64decode(encoded))
+        seen.update(g.get("data-component-id") for g in page.iter() if g.get("data-component-id"))
+    assert seen == {c["id"] for c in data["components"]}
+
+
+def test_unpaged_detail_keeps_its_single_image(tmp_path):
+    _, md, ref = _detail_md(tmp_path, 3, "star", "orders", stem="report", embedded=False)
+    out = ep._append_architecture_detail(md, tmp_path)
+    assert f"![Architecture detail]({ref})" in out
+    assert f"]({ref})" not in out.split("## Appendix")[0]
+
+
+@pytest.mark.parametrize("escapes", [False, True])
+def test_unreadable_detail_drops_the_dead_link(tmp_path, escapes):
+    inside = tmp_path / "inside"
+    inside.mkdir()
+    ref = "report.figure1-detail.svg"
+    if escapes:
+        (tmp_path / "outside.svg").write_text('<svg data-paged-detail="true"/>')
+        (inside / ref).symlink_to(tmp_path / "outside.svg")
+    md = f"# Review\n\n[Detailed architecture diagram]({ref})\n"
+    out = ep._append_architecture_detail(md, inside)
+    assert "Detailed architecture diagram" not in out and "Appendix" not in out
+
+
+def test_report_without_detail_link_is_unchanged(tmp_path):
+    md = "# Review\n\nSee [Detailed architecture diagram](https://example.invalid/x.svg).\n"
+    assert ep._append_architecture_detail(md, tmp_path) == md
+
+
+@pytest.mark.skipif(not shutil.which("pandoc"), reason="pandoc is not installed")
+def test_appendix_anchor_matches_pandoc_heading_id(tmp_path):
+    _, md, _ = _detail_md(tmp_path, 3, "star", "orders", stem="report", embedded=True)
+    src = tmp_path / "in.md"
+    src.write_text(ep._append_architecture_detail(md, tmp_path))
+    css = tmp_path / "print.css"
+    css.write_text("body { color: black; }")
+    html_path = tmp_path / "out.html"
+    ep.md_to_html(src, html_path, css, "t")
+    html = html_path.read_text()
+    assert 'href="#appendix-detailed-architecture-diagram"' in html
+    assert 'id="appendix-detailed-architecture-diagram"' in html
