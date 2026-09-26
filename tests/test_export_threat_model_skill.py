@@ -12,6 +12,7 @@ helpers don't already cover.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -328,3 +329,31 @@ def test_html_helper_missing_input_exits_two(tmp_path: Path):
         text=True,
     )
     assert result.returncode == 2
+
+
+def test_slug_names_every_export_like_the_create_stamp():
+    """`--slug` must name each export the way `create-threat-model --slug`
+    stamps it, so both skills put the same file into a shared directory."""
+    sys.path.insert(0, str(SCRIPTS))
+    import stamp_threat_model
+
+    content = (ROOT / "skills" / "export-threat-model" / "SKILL.md").read_text()
+    outputs = re.findall(r"\$EXPORTS_DIR/([\w.$-]+)", content.split("## Step 4")[1])
+    assert outputs, "no export destinations found in Step 4"
+    for name in outputs:
+        assert "$SFX" in name, f"export ignores --slug: {name}"
+        unstamped = name.replace("$SFX", "")
+        assert name.replace("$SFX", "-a3f9") == stamp_threat_model._stamped_name(unstamped, "a3f9")
+    assert {n.replace("$SFX", "") for n in outputs} >= {"pentest-tasks.yaml", "threat-model.sarif.json"}
+
+
+def test_slug_validation_matches_the_create_stamp():
+    sys.path.insert(0, str(SCRIPTS))
+    import stamp_threat_model
+
+    content = (ROOT / "skills" / "export-threat-model" / "SKILL.md").read_text()
+    pattern = re.search(r"grep -Eqx '([^']+)'", content).group(1)
+    assert pattern == stamp_threat_model._SLUG_RE.pattern
+    for value, ok in (("a3f9", True), ("team.v2_x-1", True), ("../x", False), ("a b", False), ("x" * 65, False)):
+        proc = subprocess.run(["grep", "-Eqx", pattern], input=value, text=True)
+        assert (proc.returncode == 0) is ok, value

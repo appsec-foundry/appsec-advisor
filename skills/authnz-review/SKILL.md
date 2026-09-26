@@ -73,6 +73,7 @@ USAGE
                                  [--with-threat-model] [--save] [--gate]
                                  [--pentest-tasks | --no-pentest-tasks]
                                  [--pentest-format <fmt>] [--pentest-target <url>]
+                                 [--slug <value>]
 
 OPTIONS
   --repo <path>           Repository root to analyze (default: current directory)
@@ -89,6 +90,9 @@ OPTIONS
   --pentest-format <fmt>  generic (default) or strix
   --pentest-target <url>  Base URL of the running target, e.g.
                           http://localhost:3000
+  --slug <value>          Name the task file pentest-tasks-authnz-<value>.yaml,
+                          matching create-threat-model --slug; 1-64 characters
+                          from [A-Za-z0-9._-]
 
   The three pentest values default to the organization profile's outputs
   block (pentest_tasks, pentest_format, pentest_target) when one is active.
@@ -124,6 +128,10 @@ Parse the user's message or slash-command arguments:
 - `--pentest-format <fmt>` → `PENTEST_FORMAT` (`generic` | `strix`; reject any
   other value with a one-line error and stop)
 - `--pentest-target <url>` → `PENTEST_TARGET`
+- `--slug <value>` → `SLUG` (reject a value that is not 1-64 characters from
+  `[A-Za-z0-9._-]` with a one-line error and stop); set
+  `PENTEST_FILE=pentest-tasks-authnz-<SLUG>.yaml`, else
+  `PENTEST_FILE=pentest-tasks-authnz.yaml`
 - `--gate` → `GATE_MODE=true`
 
 Then resolve the organization defaults for the three pentest values — the
@@ -552,7 +560,7 @@ Only when `PENTEST_TASKS=true`. Run:
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/render_pentest_tasks.py" \
   --authnz "$OUTPUT_DIR/.authnz-report.json" \
   --route-inventory "$OUTPUT_DIR/.route-inventory.json" \
-  --output "$REPO_ROOT/docs/security/pentest-tasks-authnz.yaml" \
+  --output "$REPO_ROOT/docs/security/$PENTEST_FILE" \
   --dialect "$PENTEST_FORMAT" \
   --project "<repo name>"
 ```
@@ -570,7 +578,7 @@ does not invalidate the review.
 
 Print (task count from the exporter's `VALID: wrote <N> pentest tasks` line):
 ```
-  Saved → docs/security/pentest-tasks-authnz.yaml  (<N> tasks, <PENTEST_FORMAT>, target <PENTEST_TARGET or: none>)
+  Saved → docs/security/<PENTEST_FILE>  (<N> tasks, <PENTEST_FORMAT>, target <PENTEST_TARGET or: none>)
 ```
 
 ---

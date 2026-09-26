@@ -2555,6 +2555,33 @@ class TestExportDeliverablesBackstop:
         )
         rcs._export_deliverables_if_configured(tmp_path)
 
+    @pytest.mark.parametrize(("slug", "stamped"), [("abc", "pentest-tasks-abc.yaml"), (None, None)])
+    def test_pentest_tasks_are_stamped_when_a_slug_is_set(self, tmp_path: Path, slug, stamped):
+        import json as _json
+
+        cfg = {"write_pentest_tasks": True, **({"slug": slug} if slug else {})}
+        self._seed(tmp_path, **cfg)
+        (tmp_path / "threat-model.md").write_text("Tasks: `pentest-tasks.yaml`.\n", encoding="utf-8")
+        threat = {
+            "t_id": "T-001",
+            "component_id": "api",
+            "component_name": "API Server",
+            "stride": "Tampering",
+            "risk": "High",
+            "title": "SQL injection in login endpoint",
+            "cwe": "CWE-89",
+            "evidence": {"file": "routes/login.ts", "line": 34},
+            "source": "stride",
+        }
+        (tmp_path / ".threats-merged.json").write_text(_json.dumps({"version": 1, "threats": [threat]}))
+
+        rcs._export_deliverables_if_configured(tmp_path)
+        rcs._stamp_slug_if_configured(tmp_path)
+
+        assert (tmp_path / "pentest-tasks.yaml").is_file()
+        stamped_files = sorted(p.name for p in tmp_path.glob("pentest-tasks-*.yaml"))
+        assert stamped_files == ([stamped] if stamped else [])
+
     def test_export_table_matches_the_controller(self):
         """Both anchors must cover the same artefact set — a flag wired into one
         and not the other reintroduces the silent-drop for that flag."""

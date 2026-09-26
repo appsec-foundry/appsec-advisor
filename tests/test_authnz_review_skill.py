@@ -204,3 +204,14 @@ def test_skill_writes_its_own_task_file():
     text = _skill_text()
     assert "pentest-tasks-authnz.yaml" in text
     assert "docs/security/pentest-tasks.yaml" not in text
+
+
+def test_slug_names_the_task_file():
+    """With `--slug`, the task file carries the slug like the stamped
+    threat-model deliverables; without it, the default name stays."""
+    text = _skill_text()
+    assert "--slug <value>" in text
+    assert "PENTEST_FILE=pentest-tasks-authnz-<SLUG>.yaml" in text
+    assert "PENTEST_FILE=pentest-tasks-authnz.yaml" in text
+    assert '--output "$REPO_ROOT/docs/security/$PENTEST_FILE"' in text
+    assert "[A-Za-z0-9._-]" in text
