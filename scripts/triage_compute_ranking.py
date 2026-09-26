@@ -1166,7 +1166,9 @@ def _rank_mitigations(
     for m in mits:
         if not isinstance(m, dict):
             continue
-        addressed = m.get("addresses") or m.get("addresses_findings") or m.get("addresses_threats") or []
+        addressed = (
+            m.get("threat_ids") or m.get("addresses") or m.get("addresses_findings") or m.get("addresses_threats") or []
+        )
         if not isinstance(addressed, list):
             addressed = []
         max_addressed_rank = 0

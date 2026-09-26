@@ -2164,7 +2164,7 @@ def render_summary(
         return "\n".join(lines) + "\n"
 
     lines.extend(render_verdict(md_text, cfg, summarize_threat_model.persisted_verdict(yaml_data, plugin_root)))
-    lines.extend(render_fix_first(yaml_data, cfg))
+    lines.extend(render_fix_first(yaml_data, cfg, _load_json_object(output_dir / ".triage-flags.json")))
     if change:
         lines.extend(render_change_summary(change))
         lines.extend(render_threat_delta(change))
@@ -2336,11 +2336,14 @@ def render_verdict(md_text: str, cfg: dict, verdict: dict | None = None) -> list
 _FIX_FIRST_LIMIT = 8
 
 
-def render_fix_first(yaml_data: dict, cfg: dict) -> list[str]:
+def render_fix_first(yaml_data: dict, cfg: dict, triage: dict | None = None) -> list[str]:
     """Console `Fix first` block: the model's P1 mitigations, most severe finding first.
 
     What to fix first is the mitigation priority the model assigned, never the
     verdict's closing prose, which is free text and names no attack (RA-9).
+    Use the existing triage mitigation order when it covers the displayed P1
+    set. Without a complete ranking, sort by severity, effort
+    and id, matching the triage ranking's ordering dimensions.
     """
     if cfg.get("quiet"):
         return []
@@ -2354,6 +2357,11 @@ def render_fix_first(yaml_data: dict, cfg: dict) -> list[str]:
         key = str(m.get("priority") or "").strip().upper()
         return f"P{key}" if key.isdigit() else key
 
+    ranked = triage
+    for key in ("ranking", "views", "prioritized_mitigations", "mitigations_ranked"):
+        ranked = ranked.get(key) if isinstance(ranked, dict) else None
+    ranked_rows = ranked if isinstance(ranked, list) else []
+    order = {str(m["id"]): i for i, m in enumerate(ranked_rows) if isinstance(m, dict) and m.get("id")}
     rows = []
     for m in yaml_data.get("mitigations") or []:
         if not isinstance(m, dict) or not m.get("id") or _priority(m) != "P1":
@@ -2362,13 +2370,14 @@ def render_fix_first(yaml_data: dict, cfg: dict) -> list[str]:
         ranks = [
             _severity_rollup.SEVERITY_ORDER.get(_severity_rollup.priority_severity(threats.get(r)), 9) for r in refs
         ]
-        rows.append((min(ranks, default=9), str(m["id"]), str(m.get("title") or "").strip(), refs))
+        effort = {"low": 0, "medium": 1, "high": 2}.get(str(m.get("effort") or "Medium").lower(), 1)
+        rows.append((min(ranks, default=9), effort, str(m["id"]), str(m.get("title") or "").strip(), refs))
     if not rows:
         return []
-    rows.sort(key=lambda row: (row[0], row[1]))
-    width = max(len(title) for _, _, title, _ in rows[:_FIX_FIRST_LIMIT])
+    rows.sort(key=(lambda row: order[row[2]]) if all(row[2] in order for row in rows) else lambda row: row[:3])
+    width = max(len(row[3]) for row in rows[:_FIX_FIRST_LIMIT])
     lines = ["", "  Fix first (P1 mitigations)"]
-    for _, mid, title, refs in rows[:_FIX_FIRST_LIMIT]:
+    for _, _, mid, title, refs in rows[:_FIX_FIRST_LIMIT]:
         lines.append(f"    {mid}  {title.ljust(width)}  → {', '.join(refs)}".rstrip())
     if len(rows) > _FIX_FIRST_LIMIT:
         lines.append(f"    +{len(rows) - _FIX_FIRST_LIMIT} more P1 — see §10 Mitigation Register")

@@ -166,8 +166,8 @@ def test_completion_summary_swaps_the_bullets_for_the_table(tmp_path):
     assert "\n  What an attacker can do today, worst first\n" in verdict_block
     assert f"\n  ✓  Customer data exposed  via {label}\n" in verdict_block
     assert stm.WORST_CASE_LEGEND in verdict_block
-    # The sentence, the finding links and their locations stay in the report.
-    assert "Anyone can dump every record" not in verdict_block
+    # The sentence survives; finding links and locations stay in the report.
+    assert "Anyone can dump every record" in verdict_block
     assert "F-011" not in verdict_block and "W-003" not in verdict_block and "search.ts" not in verdict_block
     assert "**" not in verdict_block
     assert "\n\n\n" not in verdict_block
@@ -240,3 +240,76 @@ def test_fix_first_caps_the_list_and_names_the_rest():
 def test_fix_first_is_absent_when_quiet_or_without_p1(cfg):
     model = _fix_first_model([{"id": "M-001", "title": "t", "priority": "P2", "threat_ids": ["T-002"]}])
     assert rcs.render_fix_first(model, cfg) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "A signed-in customer can change another customer record.",
+        "An operator with deployment access can read archived messages.",
+    ],
+)
+def test_console_preserves_scenario_access_requirements(body):
+    bullet = {"title": "Records exposed", "body": body, "classes": ["Missing Authorization"]}
+    report = f"- **Records exposed** — {body}"
+    rendered = " ".join(" ".join(rcs._verdict_console_lines(report, [bullet])).split())
+    assert body in rendered
+    assert "✓" not in rendered
+
+
+def test_verification_legend_limits_the_claim_to_finding_participation():
+    rendered = "\n".join(stm.render_worst_case_table([_bullet("Records exposed", verified=True)]))
+    assert "a cited finding participates" in rendered
+    assert "does not verify the entire scenario" in rendered
+    assert "attack was executed" in rendered
+
+
+@pytest.mark.parametrize("ids", [("M-071", "M-092"), ("M-315", "M-208")])
+def test_fix_first_uses_existing_triage_order(ids):
+    model = _fix_first_model(
+        [{"id": mid, "title": "Check access", "priority": "P1", "threat_ids": ["T-002"]} for mid in ids]
+    )
+    triage = {
+        "ranking": {
+            "views": {"prioritized_mitigations": {"mitigations_ranked": [{"id": mid} for mid in reversed(ids)]}}
+        }
+    }
+    rows = rcs.render_fix_first(model, {}, triage)[2:]
+    assert [row.split()[0] for row in rows] == list(reversed(ids))
+
+
+@pytest.mark.parametrize(
+    "triage",
+    [
+        None,
+        {},
+        {"ranking": []},
+        {"ranking": {"views": "invalid"}},
+        {"ranking": {"views": {"prioritized_mitigations": {"mitigations_ranked": [{"id": "M-001"}]}}}},
+    ],
+)
+def test_fix_first_fallback_uses_effort_without_losing_unranked_p1(triage):
+    model = _fix_first_model(
+        [
+            {"id": "M-001", "title": "Broad change", "effort": "High", "priority": "P1", "threat_ids": ["T-002"]},
+            {"id": "M-002", "title": "Small change", "effort": "Low", "priority": "P1", "threat_ids": ["T-002"]},
+            {"id": "M-003", "title": "Later work", "effort": "Low", "priority": "P2", "threat_ids": ["T-002"]},
+        ]
+    )
+    assert [row.split()[0] for row in rcs.render_fix_first(model, {}, triage)[2:]] == ["M-002", "M-001"]
+
+
+def test_completion_summary_reads_persisted_mitigation_order(tmp_path):
+    model = _fix_first_model(
+        [
+            {"id": mid, "title": title, "priority": "P1", "threat_ids": ["T-002"]}
+            for mid, title in [("M-071", "First numbered fix"), ("M-092", "First ranked fix")]
+        ]
+    )
+    (tmp_path / "threat-model.yaml").write_text(yaml.safe_dump(model))
+    (tmp_path / ".triage-flags.json").write_text(
+        '{"ranking":{"views":{"prioritized_mitigations":{"mitigations_ranked":[{"id":"M-092"},{"id":"M-071"}]}}}}'
+    )
+    rendered = rcs.render_summary(tmp_path, tmp_path, {}, REPO_ROOT)
+    fixes = rendered.split("Fix first (P1 mitigations)", 1)[1]
+    assert fixes.index("M-092") < fixes.index("M-071")

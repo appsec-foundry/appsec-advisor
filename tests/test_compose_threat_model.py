@@ -5490,7 +5490,7 @@ def test_verdict_badges_bullet_anchoring_fully_viable_chain(tmp_path: Path) -> N
     )
     out = compose._render_verdict(ctx, env, section)
     # Fully-viable chain badges the bullet without exposing an abuse-case ID.
-    assert "✓ verified attack path" in out
+    assert "✓ cited finding in a code-verified chain" in out
     assert "AC-T-001" not in out
     # 2026-07-14 (user point 7): each bullet cites its findings; the abuse-case ID
     # itself stays hidden (readers get the finding + weakness, not chain mechanics).
@@ -5508,10 +5508,10 @@ def test_verdict_badge_normalises_t_ref_and_omits_when_no_chain(tmp_path: Path) 
     )
     out = compose._render_verdict(ctx, env, section)
     # T-003 ref normalises to F-003 internally and receives a generic badge.
-    assert "✓ verified attack path" in out
+    assert "✓ cited finding in a code-verified chain" in out
     assert "AC-T-002" not in out
     # The bullet with no chain-anchoring finding is left un-badged.
-    assert out.count("✓ verified attack path") == 1
+    assert out.count("✓ cited finding in a code-verified chain") == 1
 
 
 def test_verdict_no_badge_when_abuse_sidecar_absent(tmp_path: Path) -> None:
@@ -7077,3 +7077,16 @@ def test_weakness_card_preserves_source_backing_without_duplicate_finding(tmp_pa
     assert result.count("[F-001](#f-001)") == 1
     assert "Practice sites:" not in result
     assert "Source evidence (`view.ts:3`)" in result
+
+
+@pytest.mark.parametrize(
+    "refs, fmap",
+    [
+        (["F-071", "F-072"], {"F-071": ["AC-011"]}),
+        (["T-208", "T-209"], {"F-209": ["AC-029"]}),
+    ],
+)
+def test_verdict_badge_claims_participation_not_whole_scenario(refs, fmap):
+    badge = compose._verdict_bullet_badge(refs, fmap)
+    assert badge == " — ✓ cited finding in a code-verified chain"
+    assert compose._verdict_bullet_badge(["F-999"], fmap) == ""

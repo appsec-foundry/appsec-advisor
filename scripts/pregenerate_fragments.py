@@ -5298,94 +5298,63 @@ def gen_critical_attack_tree(yaml_data: dict):
 # Posture → (opening, closing) templates. Management-altitude prose only.
 _VERDICT_OPENING = {
     "red": (
-        "Not production-ready: this assessment confirmed weaknesses that let "
-        "attackers reach customer data and core application functions without the "
-        "safeguards a live system requires."
+        "Not production-ready: the assessment contains Critical findings that need "
+        "attention before release; the findings register records their evidence and scope."
     ),
     "yellow": (
-        "Production-ready with reservations: the assessment found weaknesses that "
-        "should be resolved before launch, though none hand an attacker unrestricted "
-        "access on their own."
+        "Production-ready with reservations: the assessment contains High findings; "
+        "review their evidence and access requirements before deciding whether to release."
     ),
     "green": (
-        "Production-ready: the assessment found no weakness that gives an attacker "
-        "meaningful access to customer data or core functions."
+        "No High or Critical findings were reported; this rating alone does not "
+        "establish that every attack path is blocked or that deployment is safe."
     ),
 }
-# The line rendered in bold directly above the blockquote. It is the sentence
-# that says what the bullets ARE, so `opening` no longer ends on a forward
-# pointer of its own ("The scenarios below summarise…") — saying "look below"
-# twice in a row is what the reader saw before.
-#
-# Posture-keyed, because one fixed frame cannot serve all three. On green the
-# opening states that no weakness gives an attacker meaningful access, so
-# announcing what an attacker can do would contradict it one line later; green
-# frames the same bullets as residual risk. Neither variant asserts an access
-# level — the per-bullet precondition stays in `body` (see the renderer
-# contract's "must not assert a precondition the bullets do not all share").
-# Nor an order: nothing sorts the bullets by severity (RA-14).
-_VERDICT_BULLETS_INTRO = {
-    "red": "What an attacker can do today:",
-    "yellow": "What an attacker can do today:",
-    "green": "Residual risks worth monitoring:",
-}
+# Category summaries must not be framed as established attack scenarios.
+_VERDICT_BULLETS_INTRO = "Finding categories; see cited evidence for attack prerequisites and impact:"
 _VERDICT_CLOSING = {
-    "red": (
-        "Prioritising the fixes behind the scenarios above will close the most "
-        "dangerous exposures before they can be used against customers."
-    ),
-    "yellow": ("Resolving the items above before launch will bring the application to a solid security baseline."),
-    "green": (
-        "Maintaining the current controls and monitoring the residual risks will "
-        "keep the application on a sound footing."
-    ),
+    level: "Review the cited findings for access requirements, affected assets and proposed fixes before making a release decision."
+    for level in ("red", "yellow", "green")
 }
 
-# STRIDE class → (business-outcome title, business-outcome body). Deliberately
-# generic and technology-free so the deterministic fallback stays within the
-# verdict schema's management-language constraints. Canonical STRIDE order.
+# A STRIDE category establishes a concern, not a concrete exploit or its scope.
+# The fallback names that concern and explicitly defers prerequisites and impact
+# to the cited findings. Only authored, evidenced scenarios claim an outcome.
 _VERDICT_STRIDE_SCENARIOS: list[tuple[tuple[str, ...], str, str]] = [
     (
         ("spoof",),
-        "Accounts accessed by impostors",
-        "An attacker can impersonate legitimate customers or staff and act with "
-        "their permissions, because the application does not reliably confirm who "
-        "is making a request.",
+        "Identity verification concerns",
+        "The cited findings concern identity verification; their evidence determines who can impersonate whom and with what access.",
     ),
     (
         ("tamper", "inject"),
-        "Business data read or altered",
-        "Crafted input can read or change records a user should not be able to "
-        "touch, putting the accuracy and confidentiality of stored data at risk.",
+        "Data integrity concerns",
+        "The cited findings concern unauthorized changes; their evidence determines which data or actions are affected and what access is required.",
     ),
     (
         ("repudiat",),
-        "Malicious actions cannot be traced",
-        "Important events are not reliably recorded, so harmful or mistaken actions "
-        "cannot be attributed or investigated after the fact.",
+        "Accountability concerns",
+        "The cited findings concern accountability; their evidence identifies which actions lack reliable attribution or records.",
     ),
     (
         ("information", "disclos", "info"),
-        "Confidential information exposed",
-        "Sensitive data such as customer records or internal secrets can be read by "
-        "people who should not have access to it.",
+        "Confidentiality concerns",
+        "The cited findings concern disclosure; their evidence determines which information is exposed and who can reach it.",
     ),
     (
         ("denial", "dos", "availab"),
-        "Service taken offline",
-        "An attacker can disrupt or exhaust the service so that legitimate customers are unable to use it.",
+        "Availability concerns",
+        "The cited findings concern availability; their evidence determines the affected functions, disruption and required access.",
     ),
     (
         ("elevation", "privilege", "eop", "rce", "execution"),
-        "Full system takeover",
-        "An attacker can gain administrator-level control or run their own commands "
-        "on the server, taking command of the application and the data it holds.",
+        "Permission boundary concerns",
+        "The cited findings concern elevated permissions; their evidence determines the access gained and does not automatically establish full system control.",
     ),
 ]
 _VERDICT_GENERIC_SCENARIO = (
-    "Protections bypassed",
-    "Weaknesses let an attacker sidestep protections the application relies on to "
-    "keep customer data and core functions safe.",
+    "Finding scope requires review",
+    "The cited findings record security concerns whose access requirements and consequences must be read from their individual evidence.",
 )
 _VERDICT_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
@@ -5405,9 +5374,9 @@ def gen_verdict(yaml_data: dict):
 
     Posture (severity) is a conservative reading of the risk distribution: any
     Critical → red, else any High → yellow, else green. Bullets are one
-    business-language scenario per STRIDE class present, ordered by the
+    bounded concern per STRIDE class present, ordered by the
     prioritisation severity of the finding that first surfaced the class (so the
-    exec summary reads worst-first). The floor meets the verdict gate the LLM
+    highest-rated concerns lead). The floor meets the verdict gate the LLM
     version must pass (RA-23): every required Critical is cited, and on red or
     yellow no bullet rests on Medium or Low findings alone. Returns ``None`` only when no citable finding exists (a
     degenerate model where the verdict has nothing to reference); compose's own
@@ -5473,34 +5442,13 @@ def gen_verdict(yaml_data: dict):
             room -= 1
         bullets.append(bullet)
 
-    # Schema requires >= 2 bullets. If only one scenario surfaced, synthesise a
-    # distinct second bullet from the top citable finding so the floor is valid.
-    if len(bullets) < 2:
-        top_ref = next(
-            (str(t.get("id")).strip() for t in ranked if re.match(r"^[FT]-\d{3,4}$", str(t.get("id") or "").strip())),
-            None,
-        )
-        if top_ref is None:
-            return None  # no citable finding → cannot build a valid verdict
-        if not bullets:
-            gt, gb = _VERDICT_GENERIC_SCENARIO
-            bullets.append({"title": gt, "body": gb, "refs": [top_ref]})
-        bullets.append(
-            {
-                "title": "Layered defences missing",
-                "body": (
-                    "Several safeguards a live system depends on are absent or "
-                    "ineffective, leaving customer data and core functions exposed "
-                    "if a single control is bypassed."
-                ),
-                "refs": [top_ref],
-            }
-        )
+    if not bullets:
+        return None
 
     payload = {
         "severity": severity,
         "opening": _VERDICT_OPENING[severity],
-        "bullets_intro": _VERDICT_BULLETS_INTRO[severity],
+        "bullets_intro": _VERDICT_BULLETS_INTRO,
         "bullets": bullets[:8],
         "closing": _VERDICT_CLOSING[severity],
     }

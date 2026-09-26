@@ -24,13 +24,13 @@
       "minLength": 20,
       "maxLength": 200,
       "pattern": "^(?!.*\\b[FT]-\\d{3,4}\\b).*$",
-      "description": "ONE short sentence that introduces the blockquote of worst-case scenarios below. Frames what the reader is about to see and how it is ordered. Renders in bold directly above the red HTML blockquote. Do NOT cite individual finding IDs here — the bullets do that. On red or yellow use 'What an attacker can do today, worst first:'; on green, where the opening states that no weakness gives an attacker meaningful access, use 'Residual risks worth monitoring, most significant first:' instead. Assert no access level the bullets do not all share — each bullet carries its own precondition in body."
+      "description": "ONE short sentence that introduces the blockquote of worst-case scenarios below. Frames what the reader is about to see without claiming a ranking. Renders in bold directly above the red HTML blockquote. Do NOT cite individual finding IDs here — the bullets do that. On red or yellow use 'What an attacker can do today:'; on green, where the opening states that no weakness gives an attacker meaningful access, use 'Residual risks worth monitoring:' instead. Assert no access level the bullets do not all share — each bullet carries its own precondition in body."
     },
     "bullets": {
       "type": "array",
-      "minItems": 2,
+      "minItems": 1,
       "maxItems": 8,
-      "description": "Worst-case attack scenarios, business-language. Rendered as bold bullets inside the red HTML blockquote. Quick depth typically authors 3–5; standard/thorough may emit up to 8 when distinct attack paths warrant it.",
+      "description": "Worst-case attack scenarios, business-language. Rendered as bold bullets inside the red HTML blockquote. Use one when only one distinct scenario is supported; never pad the list. Quick depth typically authors 3–5; standard/thorough may emit up to 8 when distinct attack paths warrant it.",
       "items": {
         "type": "object",
         "required": ["title", "body", "refs"],

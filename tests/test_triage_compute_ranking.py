@@ -1810,3 +1810,17 @@ def test_write_outputs_explains_an_elevated_rating_in_the_same_write(tmp_path: P
     tcr.write_outputs(tmp_path, ranking)
     written = yaml.safe_load((tmp_path / "threat-model.yaml").read_text())["threats"][0]
     assert written.get("severity_rationale") == expected
+
+
+@pytest.mark.parametrize("ids", [("T-071", "T-092"), ("F-208", "F-315")])
+def test_rank_mitigations_reads_canonical_threat_ids_before_effort(ids):
+    high, critical = ids
+    ranked = _tcr()._rank_mitigations(
+        [
+            {"id": "M-001", "threat_ids": [high], "effort": "Low"},
+            {"id": "M-002", "threat_ids": [critical], "effort": "High"},
+        ],
+        {high: "High", critical: "Critical"},
+    )
+    assert [row["id"] for row in ranked] == ["M-002", "M-001"]
+    assert ranked[0]["addresses_findings"] == [critical]

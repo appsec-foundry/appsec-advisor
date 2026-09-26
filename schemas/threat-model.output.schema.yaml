@@ -1656,7 +1656,7 @@ properties:
       bullets_intro:
         type: string
       bullets:
-        description: Worst-case scenarios behind the verdict, in business language, most damaging first.
+        description: Worst-case scenarios behind the verdict, in business language, without a guaranteed severity order.
         type: array
         items:
           type: object
@@ -1680,7 +1680,7 @@ properties:
                 type: string
                 pattern: "^W-\\d{3,}$"
             verified_attack_path:
-              description: True when the cited findings anchor a fully viable abuse chain.
+              description: True when at least one cited finding participates in a fully viable code-verified abuse chain; it does not verify the entire scenario or record an executed attack.
               type: boolean
       closing:
         type: string

@@ -8,7 +8,7 @@ If `## Management Summary` is **entirely missing**, `check_ms_structure` will su
 
 ## 2. Five required sub-sections (helper-enforced)
 
-1. `### Verdict` — severity cue 🟢/🟡/🔴 + one-sentence verdict, then a **red HTML `<blockquote>`** styled `border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;` containing 2–5 bold-name worst-case-scenario bullets (`- **<Name>** — <sentence>. *([F-NNN](#f-NNN))*`), then 1–2 closing sentences.
+1. `### Verdict` — severity cue 🟢/🟡/🔴 + one-sentence verdict, then a **red HTML `<blockquote>`** styled `border-left: 3px solid #dc2626; background: #fef2f2; padding: 16px 20px; margin: 0;` containing 1–8 evidence-supported bold-name worst-case-scenario bullets (`- **<Name>** — <sentence>. *([F-NNN](#f-NNN))*`), then 1–2 closing sentences.
 2. `### Top Findings` — 7-col table: `# | Criticality | Finding | Component | Threat | Vektor | Primary Mitigations`. 🔴 rows before 🟠. Legend line follows: `> 🔴 = Critical · 🟠 = High. **Vektor** values link to full definitions in [Appendix A — Vektor Taxonomy](#appendix-a-vektor-taxonomy).`
 3. `### Architecture Assessment` — 3-col table: `Defect | Description | Key Findings`. Bold short defect phrase. `Key Findings` cells carry `[F-NNN](#f-NNN) — <short label>` (multiple `<br/>`-separated). Closes with reference to `[§6 Security Architecture](#6-security-architecture)`. Preceded by 🔴/🟡/🟢 severity cue sentence + short framing.
 4. `### Mitigations` — two sub-tables under `#### Prioritized Mitigations` and `#### Follow-up Mitigations`. Both 5-col: `ID | Mitigation | Component | Addresses | Effort`. Sorted by effort asc, then findings-addressed desc. Every Critical finding from Top Findings appears at least once in Prioritized.

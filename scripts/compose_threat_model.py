@@ -7054,7 +7054,8 @@ def _verdict_bullet_badge(refs: list[str], fmap: dict[str, list[str]]) -> str:
     Management-summary readers need the confidence signal, not an abuse-case ID
     or the technical chain mechanics. The underlying refs remain in the fragment
     for auditability; this presentation layer intentionally emits only a short
-    ``verified attack path`` badge. T-NNN refs are normalised to F-NNN to match
+    ``cited finding in a code-verified chain`` badge, without asserting that
+    the whole scenario is that chain. T-NNN refs are normalised to F-NNN to match
     ``matched_finding_ids``.
     """
     if not fmap or not refs:
@@ -7068,7 +7069,7 @@ def _verdict_bullet_badge(refs: list[str], fmap: dict[str, list[str]]) -> str:
         for cid in fmap.get(fid, []):
             if cid not in chains:
                 chains.append(cid)
-    return " — ✓ verified attack path" if chains else ""
+    return " — ✓ cited finding in a code-verified chain" if chains else ""
 
 
 def _verdict_bullet_refs_suffix(refs: list[str], ctx: RenderContext) -> str:

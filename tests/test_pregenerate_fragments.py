@@ -773,16 +773,16 @@ class TestVerdict:
     def test_worst_severity_scenario_leads(self):
         # A Critical Tampering finding must surface its scenario before a Medium.
         data = json.loads(pf.gen_verdict(self._YAML))
-        assert data["bullets"][0]["title"] == "Business data read or altered"
+        assert data["bullets"][0]["title"] == "Data integrity concerns"
 
-    def test_synthesises_second_bullet_when_single_scenario(self):
-        # One finding → one STRIDE scenario, but the schema needs >=2 bullets.
+    def test_single_supported_concern_is_not_padded(self):
+        # One finding supports one concern; a second would invent evidence.
         y = {"threats": [{"id": "T-001", "title": "X — a.ts:1", "risk": "Critical", "stride": "Tampering"}]}
         import jsonschema
 
         data = json.loads(pf.gen_verdict(y))
         jsonschema.validate(data, self._schema())
-        assert len(data["bullets"]) == 2
+        assert len(data["bullets"]) == 1
 
     def test_returns_none_for_threatless_model(self):
         assert pf.gen_verdict({"threats": []}) is None
@@ -4126,3 +4126,42 @@ def test_ai_summary_discloses_bounded_risk_group_selection():
     assert len(result["ai_risks"]) == 10
     assert "10 of 11" in result["summary"]
     assert "Findings Register" in result["summary"]
+
+
+@pytest.mark.parametrize(
+    "tid, title",
+    [
+        ("T-071", "Regular account reaches one restricted business action"),
+        ("F-208", "Editor may change another workspace setting"),
+    ],
+)
+def test_verdict_fallback_never_infers_system_takeover_from_privilege_category(tmp_path, tid, title):
+    import jsonschema
+    import validate_ms_compactness
+
+    model = {"threats": [{"id": tid, "title": title, "risk": "High", "stride": "Elevation of Privilege"}]}
+    data = json.loads(pf.gen_verdict(model))
+    schema = json.loads((REPO_ROOT / "schemas/fragments/verdict.schema.json").read_text())
+    jsonschema.validate(data, schema)
+    assert len(data["bullets"]) == 1
+    assert data["bullets"][0]["refs"] == [tid]
+    assert data["bullets"][0]["title"] == "Permission boundary concerns"
+    assert "Full system takeover" not in json.dumps(data)
+    assert "Layered defences missing" not in json.dumps(data)
+    assert "prerequisites" in data["bullets_intro"]
+    path = tmp_path / "ms-verdict.json"
+    path.write_text(json.dumps(data))
+    errors = []
+    validate_ms_compactness._check_verdict(path, errors)
+    assert errors == []
+
+
+@pytest.mark.parametrize("count", [0, 9])
+def test_verdict_schema_still_rejects_empty_or_oversized_scenario_lists(count):
+    import jsonschema
+
+    data = json.loads(pf.gen_verdict({"threats": [{"id": "T-071", "risk": "High", "stride": "Spoofing"}]}))
+    data["bullets"] *= count
+    schema = json.loads((REPO_ROOT / "schemas/fragments/verdict.schema.json").read_text())
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(data, schema)
