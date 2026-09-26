@@ -23,25 +23,23 @@ REPORT_INTRO = (
     "The code cannot answer these questions; the people who own the business and the deployment can. "
     "Each question states under it what its answer changes."
 )
-# Asset criticality is a business fact the code never carries. Until declared
-# context names sensitive assets or compromise impact, the impact ratings rest on
-# classifications inferred from code, so the owners are asked before anything else.
+# Naming an asset does not answer its criticality. Only an explicit, sourced
+# answer projected by the control analyst settles that question for its scope.
 ASSET_CRITICALITY_IMPACT = (
     "The answer weights the impact rating and fix order of every finding that reaches these assets; recorded "
-    "under Sensitive assets and Impact if compromised in `docs/business-context.md`, the next full run applies it."
+    "with the asset name and concrete harm in `docs/business-context.md`, the next full run applies it."
 )
 _CRITICAL_CLASSIFICATIONS = {"Restricted": 0, "Confidential": 1}
-_DECLARED_ASSET_FIELDS = {"sensitive_assets", "impact_if_compromised"}
 _UNSAFE_NAME_CHARS_RE = re.compile(r"[\x00-\x1f\x7f\[\]()<>`*_?#|\\]")
 _AUTHENTICATED_ACCESS = {"authenticated-user-session", "authenticated-session"}
 _AUTHENTICATED_POSITIONS = {"authenticated-user-authority", "authenticated-user"}
 _BYPASS_CWES = {"CWE-287", "CWE-288", "CWE-290", "CWE-294", "CWE-303", "CWE-304", "CWE-305", "CWE-306", "CWE-1390"}
 _BYPASS_VIA_INJECTION_CWES = {"CWE-89", "CWE-564", "CWE-943"}
 _AUTH_CONTEXT_RE = re.compile(r"\b(login|log-in|sign-?in|authentication|authenticate|credential)\b", re.I)
-REGISTRATION_QUESTION = "Can anyone create an account, or does onboarding require approval?"
+REGISTRATION_QUESTION = "Can anyone create an account for {component}, or does onboarding require approval?"
 REGISTRATION_IMPACT = (
-    "Open registration puts every account-gated finding within reach of an anonymous attacker; gated "
-    "onboarding keeps them behind an approval step."
+    "Public onboarding can give an outsider the ordinary account these findings require; approval-gated "
+    "onboarding adds a prerequisite. The answer does not establish privileged access or prove a control."
 )
 
 # The reference tail a rendered report bullet ends with: the optional weakness
@@ -191,14 +189,18 @@ def select_open_questions(
     candidates.sort(key=lambda item: (item["rank"], int(item["id"][2:])))
     by_id = {item["id"]: item for item in candidates}
     component_names = {
-        str(component.get("id")): str(component.get("name") or component.get("id"))
+        str(component.get("id")): " ".join(
+            _UNSAFE_NAME_CHARS_RE.sub("", str(component.get("name") or component.get("id"))).split()
+        )[:100]
         for component in yaml_data.get("components") or []
         if isinstance(component, dict) and component.get("id")
     }
 
     def subject(items: list[dict]) -> str:
         """Name the components the cited findings sit in, so the question has a concrete subject."""
-        names = list(dict.fromkeys(component_names[i["component"]] for i in items if i["component"] in component_names))
+        names = list(
+            dict.fromkeys(component_names[i["component"]] for i in items if component_names.get(i["component"]))
+        )
         if not names:
             return "this application"
         return " or ".join(names[:2]) + (" and other components" if len(names) > 2 else "")
@@ -217,26 +219,55 @@ def select_open_questions(
         for actor in yaml_data.get("actors") or []
         if isinstance(actor, dict)
         and actor.get("id")
+        and "privileged-user-authority" not in (actor.get("trust_positions") or [])
         and (
             set(actor.get("access") or []) & _AUTHENTICATED_ACCESS
             or set(actor.get("trust_positions") or []) & _AUTHENTICATED_POSITIONS
         )
     }
-    # An authentication bypass next to account-gated findings means the attacker
-    # needs no account. It is a finding, not a team decision, so it only keeps the
-    # registration question below from asking something the code already settled.
+    # Only verified bypasses can settle onboarding through a verified chain.
+    # A neighboring bypass is not evidence that another route needs no account.
     gated = [item for item in candidates if item["actor_ids"] and item["actor_ids"] <= authenticated_actors]
     bypass = [
         item
         for item in candidates
-        if not item["actor_ids"] & authenticated_actors
+        if not item["unproven"]
+        and not item["actor_ids"] & authenticated_actors
         and (
             item["cwes"] & _BYPASS_CWES
             or (item["cwes"] & _BYPASS_VIA_INJECTION_CWES and _AUTH_CONTEXT_RE.search(item["context"]))
         )
     ]
-    separation_broken = bool(gated and bypass)
+    # Sharing a component does not prove that a bypass reaches another route.
+    # Suppress onboarding only for a verified chain containing both findings.
+    analysis = yaml_data.get("abuse_case_analysis") or {}
+    verified_chains = [
+        set(case.get("matched_finding_ids") or [])
+        for case in analysis.get("cases", [])
+        if analysis.get("status") == "completed"
+        and case.get("chain_verdict") == "fully_viable"
+        and case.get("verification_complete")
+        and not case.get("unverified_steps")
+    ]
+    gated = [
+        item
+        for item in gated
+        if not any(item["id"] in chain and any(other["id"] in chain for other in bypass) for chain in verified_chains)
+    ]
 
+    trace = yaml_data.get("business_context_trace") or {}
+    answers = trace.get("answered_questions", []) if trace.get("status") == "applied" else []
+
+    def answered(topic: str, component: str, asset_name: str = "") -> bool:
+        return bool(component) and any(
+            row.get("topic") == topic
+            and row.get("component_id") == component
+            and row.get("asset_name", "") == asset_name
+            for row in answers
+            if isinstance(row, dict)
+        )
+
+    gated = [item for item in gated if not answered("account-onboarding", item["component"])]
     registration = (yaml_data.get("meta") or {}).get("open_registration_resolution") or {}
     # `not-established` means no signal was found, not that onboarding is closed.
     # While an authenticated actor carries findings of its own, how someone gets
@@ -244,7 +275,7 @@ def select_open_questions(
     # resolution is asked rather than assumed (VulnerableApp, 2026-09-20).
     # A confirmed bypass settles it the other way: the attacker needs no account,
     # so how accounts are issued no longer changes any rating.
-    registration_open = not separation_broken and (
+    registration_open = bool(gated) and (
         (registration.get("disputed") is True and registration.get("evidence"))
         or (str(registration.get("reason") or "") == "not-established" and authenticated_actors)
     )
@@ -253,54 +284,54 @@ def select_open_questions(
             {
                 "rank": -1,
                 "order": -1,
-                "question": REGISTRATION_QUESTION,
+                "question": REGISTRATION_QUESTION.format(component=subject(gated)),
                 "impact": REGISTRATION_IMPACT,
+                "refs": gated[:2],
+                "hidden": max(0, len(gated) - 2),
+                "reach": len(gated),
+                "weakness_id": "",
+            }
+        )
+
+    data_tier = {
+        str(component.get("id"))
+        for component in yaml_data.get("components") or []
+        if isinstance(component, dict) and component.get("tier") == "data"
+    }
+    exposed: list[tuple[bool, int, int, str]] = []
+    for asset in yaml_data.get("assets") or []:
+        if not isinstance(asset, dict) or asset.get("classification") not in _CRITICAL_CLASSIFICATIONS:
+            continue
+        linked = {_severity_rollup.display_id(str(value)) for value in asset.get("linked_threats") or []}
+        reached = [by_id[fid] for fid in sorted(linked & by_id.keys())]
+        if reached and all(answered("asset-criticality", item["component"], asset.get("name")) for item in reached):
+            continue
+        name = " ".join(_UNSAFE_NAME_CHARS_RE.sub("", str(asset.get("name") or "")).split())[:60].strip()
+        reach = len(linked & by_id.keys())
+        # Data held in a data store is what the business owns; keys and tokens
+        # that only protect it follow its criticality, so they rank behind it.
+        persisted = any(
+            isinstance(ref, dict) and ref.get("relation") == "stored" and ref.get("component_id") in data_tier
+            for ref in asset.get("component_refs") or []
+        )
+        if name and reach:
+            exposed.append((not persisted, _CRITICAL_CLASSIFICATIONS[asset["classification"]], -reach, name))
+    names = list(dict.fromkeys(entry[-1] for entry in sorted(exposed)))[:3]
+    if names:
+        listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+        topics.append(
+            {
+                "rank": -2,
+                "order": -2,
+                "question": f"How critical are {listed} to the business, "
+                "and what harm would their disclosure, manipulation or unavailability cause?",
+                "impact": ASSET_CRITICALITY_IMPACT,
                 "refs": [],
                 "hidden": 0,
                 "reach": 0,
                 "weakness_id": "",
             }
         )
-
-    trace = yaml_data.get("business_context_trace") or {}
-    declared = trace.get("status") == "applied" and set(trace.get("fields_present") or []) & _DECLARED_ASSET_FIELDS
-    if not declared:
-        data_tier = {
-            str(component.get("id"))
-            for component in yaml_data.get("components") or []
-            if isinstance(component, dict) and component.get("tier") == "data"
-        }
-        exposed: list[tuple[bool, int, int, str]] = []
-        for asset in yaml_data.get("assets") or []:
-            if not isinstance(asset, dict) or asset.get("classification") not in _CRITICAL_CLASSIFICATIONS:
-                continue
-            linked = {_severity_rollup.display_id(str(value)) for value in asset.get("linked_threats") or []}
-            name = " ".join(_UNSAFE_NAME_CHARS_RE.sub("", str(asset.get("name") or "")).split())[:60].strip()
-            reach = len(linked & by_id.keys())
-            # Data held in a data store is what the business owns; keys and tokens
-            # that only protect it follow its criticality, so they rank behind it.
-            persisted = any(
-                isinstance(ref, dict) and ref.get("relation") == "stored" and ref.get("component_id") in data_tier
-                for ref in asset.get("component_refs") or []
-            )
-            if name and reach:
-                exposed.append((not persisted, _CRITICAL_CLASSIFICATIONS[asset["classification"]], -reach, name))
-        names = list(dict.fromkeys(entry[-1] for entry in sorted(exposed)))[:3]
-        if names:
-            listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
-            topics.append(
-                {
-                    "rank": -2,
-                    "order": -2,
-                    "question": f"How critical are {listed} to the business, "
-                    "and what harm would their disclosure or manipulation cause?",
-                    "impact": ASSET_CRITICALITY_IMPACT,
-                    "refs": [],
-                    "hidden": 0,
-                    "reach": 0,
-                    "weakness_id": "",
-                }
-            )
 
     def add(
         question: str,
@@ -309,7 +340,11 @@ def select_open_questions(
         priority: int | None = None,
         limit: int = 2,
         weakness_id: str = "",
+        topic: str = "",
     ) -> None:
+        if not impact.strip():
+            return
+        groups = tuple([item for item in group if not answered(topic, item["component"])] for group in groups)
         refs: list[dict] = []
         seen: set[str] = set()
         for offset in range(limit):
@@ -351,14 +386,18 @@ def select_open_questions(
             if step.get("verdict") == "inconclusive" and not step.get("unverified") and step.get("finding_id") in by_id
         ]
         related = [by_id[fid] for fid in case.get("matched_finding_ids") or [] if fid in by_id]
-        if unresolved and len({item["id"] for item in unresolved + related}) >= 2:
+        if (
+            unresolved
+            and len({item["id"] for item in unresolved + related}) >= 2
+            and not all(answered("attack-path-connection", item["component"]) for item in unresolved + related)
+        ):
             add(
-                "Can an attacker combine these findings into one attack in the deployed system?",
+                f"Which production data or identities connect these attack paths through {subject(unresolved + related)}?",
                 unresolved,
                 related,
                 impact=(
-                    "A confirmed chain rates above its individual findings and changes what gets fixed first; "
-                    "a broken link lets each finding stay rated on its own."
+                    "Shared production data or identities identify a chain to verify; the answer alone cannot "
+                    "confirm exploitation or raise a finding's rating."
                 ),
                 priority=-1,
             )
@@ -374,15 +413,27 @@ def select_open_questions(
             for instance in weakness.get("instances") or []
             if isinstance(instance, dict)
         }
+        related = [
+            item
+            for item in candidates
+            if item["id"] in instance_ids and not answered(str(weakness.get("mechanism_id")), item["component"])
+        ]
+        if not related:
+            continue
+        question = question.replace("{component}", subject(related))
         add(
             question,
-            [item for item in candidates if item["id"] in instance_ids],
+            related,
             impact=decision_impacts.get(str(weakness.get("mechanism_id") or ""), ""),
             limit=3,
             weakness_id=weakness_id,
         )
 
-    execution = [item for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-95"}) if not item["build_time"]]
+    execution = [
+        item
+        for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-95"})
+        if not item["build_time"] and not answered("process-reach", item["component"])
+    ]
     if execution:
         runs = "commands" if all(item["cwes"] & {"CWE-77", "CWE-78"} for item in execution) else "code"
         add(
@@ -395,26 +446,30 @@ def select_open_questions(
             ),
         )
     else:
-        requests = matching({"CWE-918"})
+        requests = [item for item in matching({"CWE-918"}) if not answered("server-request-reach", item["component"])]
         add(
             f"Which internal services or infrastructure credentials can server-side requests from {subject(requests)} reach?",
             requests,
             impact=(
                 "Reachable metadata endpoints or internal admin APIs turn this into credential theft; a "
-                "restricted egress path keeps it to outbound noise."
+                "restricted egress path limits the reachable targets and informs containment."
             ),
         )
     model_tools = [
         item
         for item in matching({"CWE-1427", "CWE-20", "CWE-863", "CWE-862"}, r"\b(llm|prompt injection|language model)\b")
         if re.search(r"\b(tool|tools|tool-calling|agent|actions?)\b", item["context"], re.I)
+        # App-owned action lists and checks belong to source analysis. Ask only
+        # when the finding actually identifies tools/actions supplied remotely.
+        and re.search(r"\b(?:external|remote)\s+(?:tools?|actions?|mcp)\b", item["context"], re.I)
+        and not answered("model-actions", item["component"])
     ]
     add(
-        f"Which actions can the model trigger in {subject(model_tools)} without a separate authorization decision?",
+        f"Which production actions are enabled for the model in {subject(model_tools)} outside this repository?",
         model_tools,
         impact=(
-            "Each action reachable without its own authorization check becomes an attacker primitive through "
-            "prompt injection; an action set behind separate checks keeps injection to text."
+            "The enabled production actions bound the business impact of model misuse and identify which "
+            "authorization boundaries the analysis must verify."
         ),
     )
 

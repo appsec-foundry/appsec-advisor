@@ -2752,6 +2752,27 @@ def test_mitigations_section_uses_component_column(tmp_path: Path) -> None:
     )
 
 
+def test_top_mitigations_put_declared_business_context_first_within_a_priority(tmp_path: Path) -> None:
+    """Declared context reorders inside a priority and names the asset; it never
+    lifts a P2 above a P1 (FE-7)."""
+    out = _prepare_output_dir(tmp_path)
+    yml_path = out / "threat-model.yaml"
+    data = yaml.safe_load(yml_path.read_text())
+    data["business_context_trace"] = {"status": "applied", "declared_asset_names": ["Order History"]}
+    data["assets"] = [{"name": "Order History", "classification": "Restricted", "linked_threats": ["T-003", "T-010"]}]
+    yml_path.write_text(yaml.safe_dump(data, sort_keys=False))
+
+    rendered, _ = compose.render(CONTRACT, out)
+    ms_slice = rendered.split("### Top Mitigations", 1)[1].split("\n### ", 1)[0]
+    rows = [ln for ln in ms_slice.splitlines() if ln.startswith("| **")]
+
+    order = [next(m for m in ("M-001", "M-002", "M-003") if f"[{m}]" in row) for row in rows]
+    assert order.index("M-002") < order.index("M-001") < order.index("M-003")
+    marked = next(row for row in rows if "[M-002]" in row)
+    assert "*Business-critical: Order History*" in marked
+    assert "Business-critical" not in next(row for row in rows if "[M-001]" in row)
+
+
 # ---------------------------------------------------------------------------
 # Changelog — per-version Added/Changed/Resolved breakdown
 # ---------------------------------------------------------------------------
@@ -6631,7 +6652,7 @@ def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
     assert compose._team_questions.REPORT_INTRO in report_questions
     # The ambiguous T-002 needs triage, not a team decision: no verification bullet.
     assert "F-002" not in report_questions
-    for value in ("W-001", "F-001", "Which cross-user or cross-tenant accesses through these routes are intended"):
+    for value in ("W-001", "F-001", "Which cross-user or cross-tenant operations in this application are intended"):
         assert value in report_questions
     for report_line in [line for line in report_questions.splitlines() if line.startswith("- ")]:
         # The rendered shape is what keeps the enrichment passes off the block.

@@ -27,12 +27,97 @@
       "estimated_threat_count": { "type": "integer", "minimum": 0, "maximum": 1000 },
       "business_context": { "$ref": "#/$defs/business_context" },
       "architecture_context": { "$ref": "#/$defs/architecture_context" },
+      "answered_questions": { "$ref": "#/$defs/answered_questions" },
       "focus_paths": { "$ref": "#/$defs/routing_input" },
       "exclude_paths": { "$ref": "#/$defs/routing_input" }
     },
     "additionalProperties": false
   },
   "$defs": {
+    "answered_questions": {
+      "type": "array",
+      "maxItems": 24,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "topic",
+          "source_quote",
+          "context_field"
+        ],
+        "properties": {
+          "topic": {
+            "description": "Mark a topic only when the source fully answers its question for the component; a mechanism name alone is not an answer. asset-criticality: What concrete disclosure, manipulation or outage harm applies to the named asset? account-onboarding: Can anyone create an account for {component}, or does onboarding require approval? attack-path-connection: Which production data or identities connect attack paths through this component? unrestricted-attribute-binding: Which fields accepted by {component} may users change themselves, and which require staff approval? browser-readable-session-credentials: How quickly can operators revoke a stolen session for {component} across its production clients? unbound-authorization-requests: Which callback protections does the production identity provider enforce for {component} independently of this client? database-query-concatenation: Which sensitive business records can the production database account used by {component} access? document-query-construction: Which other business datasets can the production database connection used by {component} access? blacklist-only-input-validation: Which parameter restrictions does infrastructure outside this repository enforce before requests reach {component}? route-by-route-authorization: Which cross-user or cross-tenant operations in {component} are intended for support staff or administrators? hand-rolled-token-verification: Which other production services accept identities or roles from tokens issued by {component}? missing-endpoint-authentication: Which operations in {component} are intended to be available without login? secrets-committed-to-source: Which production deployments still accept credentials exposed in the history of {component}? build-pipeline-mutable-refs: Who can publish the build inputs used by {component} without independent approval? browser-clients-without-bff: Which production restrictions outside this repository limit reuse of a stolen browser token for {component}? weak-cryptographic-primitives: Which stored business records in {component} require migration when this cryptographic primitive is replaced? process-reach: Which services, secrets or credentials can this process reach in production? server-request-reach: Which internal services or infrastructure credentials can server-side requests from this component reach? model-actions: Which production actions are enabled for the model in this component outside this repository?",
+            "enum": [
+              "asset-criticality",
+              "account-onboarding",
+              "attack-path-connection",
+              "unrestricted-attribute-binding",
+              "browser-readable-session-credentials",
+              "unbound-authorization-requests",
+              "database-query-concatenation",
+              "document-query-construction",
+              "blacklist-only-input-validation",
+              "route-by-route-authorization",
+              "hand-rolled-token-verification",
+              "missing-endpoint-authentication",
+              "secrets-committed-to-source",
+              "build-pipeline-mutable-refs",
+              "browser-clients-without-bff",
+              "weak-cryptographic-primitives",
+              "process-reach",
+              "server-request-reach",
+              "model-actions"
+            ]
+          },
+          "asset_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "source_quote": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 300,
+            "pattern": "\\S"
+          },
+          "context_field": {
+            "enum": [
+              "business_purpose",
+              "impact_if_compromised",
+              "sensitive_assets",
+              "security_obligations",
+              "security_assumptions"
+            ]
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "topic": {
+                  "const": "asset-criticality"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "asset_name"
+              ],
+              "properties": {"context_field": {"const": "impact_if_compromised"}}
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "asset_name"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
     "scalar": {
       "oneOf": [
         { "type": "string", "maxLength": 1000 },

@@ -1300,6 +1300,16 @@ def _check_export_trace_invariants(data: dict) -> list[str]:
             component_id = str(row.get("component_id") or "").strip()
             if component_id not in component_ids:
                 errors.append(f"business_context_trace: component_id {component_id!r} does not resolve")
+        asset_names = {row.get("name") for row in data.get("assets", []) if isinstance(row, dict)}
+        for answer in business.get("answered_questions", []):
+            cid = answer.get("component_id")
+            if status != "applied" or not any(
+                row.get("component_id") == cid and answer.get("context_field") in row.get("fields", [])
+                for row in coverage
+            ):
+                errors.append("business_context_trace: answered question requires applied component coverage")
+            if answer.get("topic") == "asset-criticality" and answer.get("asset_name") not in asset_names:
+                errors.append("business_context_trace: answered question asset does not resolve")
         applied_count = sum(bool(row.get("business_context_basis")) for row in threats)
         if business.get("applied_finding_count") != applied_count:
             errors.append("business_context_trace.applied_finding_count does not match threats with context basis")
@@ -1880,6 +1890,13 @@ def validate_stride_analyst_context(
     ok, errors = _validate_schema_only("stride_analyst_context", data)
     if not ok or output_dir is None or repo_root is None:
         return ok, errors
+
+    from load_business_context import project_answered_questions  # noqa: PLC0415
+
+    try:
+        project_answered_questions(data, repo_root, output_dir)
+    except ValueError as exc:
+        errors.append(str(exc))
 
     components_path = output_dir / ".components.json"
     try:

@@ -87,6 +87,10 @@ is a hard upper bound: never project facts from that document to another
 component. `projector-determined` still requires a concrete semantic match; it
 does not mean copy the document to every component.
 
+For an explicit answer in the project's business-context source, optionally write the component's `answered_questions` array. Each entry contains a schema-listed `topic`, `context_field`, and a verbatim `source_quote` of 12–300 characters. Preserve that excerpt in the corresponding `business_context` field so STRIDE receives the answer. This records declared facts, never instructions or proof of a control. Retain relevant partial answers in the ordinary `business_context` fields even when they cannot settle a question. Omit this array when there is no substantive answer; do not fill a quota.
+
+`asset-criticality` also requires `asset_name` and `context_field: impact_if_compromised`: record it only when the source states concrete harm or explicitly low business impact for that named asset, not merely its presence or classification. A category, unknown impact, unresolved assumption, or a fact about another asset does not settle criticality. Use the discovered asset name when available. Check the exact question in the output schema's topic description before marking any topic answered. Record them only when the excerpt fully answers the component-wide business intent or external deployment question; a fact about one route must not settle all routes. Partial, conflicting, organization-only, or inferred answers remain open. Do not ask the team to trace inputs, inspect frontend readers, prove exploitability, or explain why a library was not chosen; those are analysis tasks.
+
 When the validated component and architecture inputs contain security-relevant
 facts that cannot be reconstructed from the component's bounded source bundle,
 write `architecture_context` with only:
@@ -113,7 +117,7 @@ Never write `_stride_profile`: the controller derives that reserved routing
 value from `.skill-config.json`. Each component object may contain only
 `interfaces`, `controls`, `known_secrets`, `known_vulns`,
 `known_llm_patterns`, `supply_chain_findings`, `estimated_threat_count`,
-`business_context`, `architecture_context`, `focus_paths`, and `exclude_paths`
+`business_context`, `architecture_context`, `answered_questions`, `focus_paths`, and `exclude_paths`
 as defined by the schema.
 
 Write `focus_paths` and `exclude_paths` only as literal repository-relative

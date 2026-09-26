@@ -227,3 +227,16 @@ def test_cli_reports_a_rejected_source_without_writing(tmp_path, capsys):
     assert code == 1
     assert "credential" in capsys.readouterr().err
     assert not (repo / lbc.REPO_RELATIVE).exists()
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("- Order History: revenue critical\n", ["Order History"]),
+        ("order  history is critical", ["Order History"]),
+        # A category or a longer word is not the asset.
+        ("- Personal data\n- Order Historyarchive\n", []),
+    ],
+)
+def test_declared_names_match_whole_phrases_only(text, expected):
+    assert lbc.declared_names(text, ["Order History"]) == expected

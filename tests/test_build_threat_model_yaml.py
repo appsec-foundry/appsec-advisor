@@ -3227,9 +3227,124 @@ def test_business_context_trace_records_safe_provenance_without_prose(tmp_path):
             }
         ],
         "applied_finding_count": 3,
+        "declared_asset_names": [],
     }
     assert len(trace["sha256"]) == 64
     assert secret_prose not in json.dumps(trace)
+
+
+def test_trace_names_the_model_assets_the_context_describes(tmp_path):
+    repo, output = _business_meta(tmp_path)
+    (output / ".business-context-input.md").write_text(
+        "## Sensitive assets\n- merchant balances: revenue critical, audited yearly\n", encoding="utf-8"
+    )
+    assets = [{"name": "Merchant Balances"}, {"name": "Session Tokens"}, {"name": "Balances"}]
+
+    trace = b.build_business_context_trace({"output_dir": str(output)}, repo, 0, assets)
+
+    # Model names only, matched as whole phrases; the business prose stays out.
+    assert trace["declared_asset_names"] == ["Merchant Balances", "Balances"]
+    assert "revenue critical" not in json.dumps(trace)
+
+
+@pytest.mark.parametrize("name", ["Shipment Ledger", "Dispatch Schedule"])
+def test_sourced_asset_answer_reaches_stride_and_settles_only_its_question(tmp_path, name):
+    import team_questions
+
+    repo, output = _business_meta(tmp_path)
+    quote = f"{name} manipulation can interrupt scheduled deliveries for one day."
+    (output / ".business-context-input.md").write_text(quote)
+    _analyst_context(
+        output,
+        {
+            "dispatch": {
+                "business_context": {"impact_if_compromised": quote},
+                "answered_questions": [
+                    {
+                        "topic": "asset-criticality",
+                        "asset_name": name,
+                        "context_field": "impact_if_compromised",
+                        "source_quote": quote,
+                    }
+                ],
+            }
+        },
+    )
+    assets = [{"name": name, "classification": "Confidential", "linked_threats": ["T-001"]}]
+    trace = b.build_business_context_trace({"output_dir": str(output)}, repo, 1, assets)
+    model = {
+        "business_context_trace": trace,
+        "assets": assets,
+        "threats": [
+            {"id": "T-001", "component": "dispatch", "risk": "High", "evidence": [{"file": "src/dispatch.py"}]}
+        ],
+    }
+    assert quote not in json.dumps(trace)
+    answer = trace["answered_questions"][0]
+    assert answer["component_id"] == "dispatch" and len(answer["source_quote_sha256"]) == 64
+    assert team_questions.select_open_questions(model, {"f-001"}) == {"questions": []}
+    model["threats"][0]["component"] = "other"
+    assert team_questions.select_open_questions(model, {"f-001"})["questions"]
+
+
+@pytest.mark.parametrize(
+    "defect", ["invented-quote", "not-delivered", "truncated", "unknown-topic", "wrong-shape", "impact-not-delivered"]
+)
+def test_answer_provenance_rejects_untrusted_or_undelivered_claims(tmp_path, defect):
+    repo, output = _business_meta(tmp_path)
+    quote = "Support staff may read records across tenants only after customer approval."
+    source = quote if defect != "truncated" else "\n" * 201 + quote
+    (output / ".business-context-input.md").write_text(source)
+    answer = {"topic": "route-by-route-authorization", "context_field": "security_assumptions", "source_quote": quote}
+    if defect == "invented-quote":
+        answer["source_quote"] = "All callers may access every tenant without restriction."
+    if defect == "unknown-topic":
+        answer["topic"] = "execute-command"
+    overlay = {"business_context": {"security_assumptions": [quote]}, "answered_questions": [answer]}
+    if defect == "not-delivered":
+        overlay["business_context"] = {"business_purpose": "Serves customers."}
+    if defect == "wrong-shape":
+        overlay["answered_questions"] = {"all": True}
+    if defect == "impact-not-delivered":
+        answer.update(topic="asset-criticality", asset_name="Customer Records")
+    _analyst_context(output, {"support": overlay})
+    with pytest.raises(ValueError):
+        b.build_business_context_trace({"output_dir": str(output)}, repo, 1)
+
+
+def test_skipped_context_cannot_export_answer_claims(tmp_path):
+    repo, output = _business_meta(tmp_path)
+    _analyst_context(output, {"support": {"answered_questions": [{"topic": "forged"}]}})
+    trace = b.build_business_context_trace({"output_dir": str(output), "skip_business_context": True}, repo, 0)
+    assert "answered_questions" not in trace
+
+
+def test_invalid_answer_aborts_publication_without_logging_business_prose(tmp_path, monkeypatch, capsys):
+    _write_min_intermediates(tmp_path)
+    cfg_path = tmp_path / ".skill-config.json"
+    cfg = json.loads(cfg_path.read_text())
+    cfg["output_dir"] = str(tmp_path)
+    cfg_path.write_text(json.dumps(cfg))
+    private_prose = "Confidential dispatch plans for the next quarter."
+    (tmp_path / ".business-context-input.md").write_text(private_prose)
+    _analyst_context(
+        tmp_path,
+        {
+            "api": {
+                "business_context": {"impact_if_compromised": private_prose},
+                "answered_questions": [
+                    {"topic": "invalid", "context_field": "impact_if_compromised", "source_quote": private_prose}
+                ],
+            }
+        },
+    )
+    prior = "meta: {}\n"
+    (tmp_path / "threat-model.yaml").write_text(prior)
+    assert _run_main(monkeypatch, [str(tmp_path), "--repo-root", str(tmp_path), "--plugin-root", str(ROOT)]) == 5
+    assert (tmp_path / "threat-model.yaml").read_text() == prior
+    error = capsys.readouterr().err
+    assert "invalid answered-question projection" in error
+    assert private_prose not in error and "Traceback" not in error
 
 
 def test_business_context_trace_distinguishes_skipped_and_absent(tmp_path):

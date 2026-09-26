@@ -78,7 +78,7 @@ The controller has already:
 
 Emit `ACTION.preflight_status` once when non-empty. Then, **if
 `ACTION.orchestrator_prompt_needed` is `true`, run §2a before the run plan** (the
-model choice is a cost gate → first), then §2b. Otherwise run §2b and emit
+model choice is a cost gate → first). Then emit
 `ACTION.run_plan` verbatim as response text — no summary, no controller receipts.
 When the prompt fires the controller has already stripped the redundant session
 advisories from the run plan.
@@ -101,17 +101,6 @@ On the answer, before the run plan / Stage 1:
 - resolves to a **different** model → do NOT continue: `rm -f "$OUTPUT_DIR/.appsec-lock"`, then print the switch instructions and stop. Prefer the in-session path (no relaunch flags needed): `run /clear then /model <choice>, then re-run the skill`. For a fresh terminal, add: `claude --model <choice>` **plus the launch flags this session started with** (e.g. `--plugin-dir <dir>`) — fill those in from how the session was launched; a bare `claude --model <choice>` would drop the plugin.
 
 Never binding — the prompt exists so the user chooses.
-
-### 2b. Business context
-
-Fires only when `ACTION.business_context_prompt_needed` is `true` (no source
-captured from `--context`, no stored `docs/business-context.md`, `--skip-context`
-not set, and an operator who can answer — never in a headless run). Then bind both (§3), read
-`<base-dir>/modes/business-context.md`, follow it, then emit the run plan.
-
-Otherwise nothing is left to do here: a `business_context_source` was already
-captured by the controller pre-flight, and a capture that failed stopped the run
-there.
 
 ## 3. Bind compact state
 

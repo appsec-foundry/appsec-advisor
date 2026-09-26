@@ -16,29 +16,15 @@ def _read(path: Path) -> str:
 def test_business_context_reaches_the_default_full_runtime():
     runtime = _read(SKILL_DIR / "SKILL-full-runtime.md")
     router = _read(SKILL_DIR / "SKILL.md")
-    mode = _read(MODES_DIR / "business-context.md")
 
     assert "BUSINESS_CONTEXT_SOURCE = business_context_source" in runtime
-    assert runtime.count("modes/business-context.md") == 1
     assert "SKIP_BUSINESS_CONTEXT = skip_business_context" in runtime
-    # §2b states no condition of its own. All three reasons not to ask — a
-    # source already captured, --skip-context, and a run with no operator — are
-    # resolved by the controller and arrive as one field. The wording used to be
-    # pinned here instead, and it told the runtime to read APPSEC_HEADLESS,
-    # which it cannot see.
-    section = runtime.split("### 2b.")[1].split("## 3.")[0]
-    assert "ACTION.business_context_prompt_needed" in section
-    assert "APPSEC_HEADLESS" not in section
-    assert runtime.index("modes/business-context.md") < runtime.index("## 3. Bind compact state")
-    assert "load_business_context.py" in mode
-    assert "business-context question" in router
-
-    # The mode file is the interactive question only. A `--context` source is
-    # captured by the controller pre-flight, so the supplied document no longer
-    # depends on this instruction being followed.
-    assert "Step 0" not in mode
-    assert "interactive question only" in mode
-    assert "business_context_prompt_needed" in mode
+    # A run asks no business-context question before the analysis: it cannot
+    # name anything the repository contains yet, so a `--context` source is the
+    # only pre-run input and the controller captures it pre-flight.
+    assert "modes/business-context.md" not in runtime
+    assert not (MODES_DIR / "business-context.md").exists()
+    assert "business-context question" not in router
 
 
 def test_full_runtime_loads_only_controller_returned_stage_surfaces():

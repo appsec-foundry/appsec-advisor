@@ -69,6 +69,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
+import _business_relevance  # sibling script
 import _severity_rollup  # sibling script — see extract_metrics()
 import completion_relay  # sibling script — records the printed summary for the closing Stop
 import run_timing  # sibling script — scripts/ is on sys.path (script dir / conftest)
@@ -2342,7 +2343,7 @@ def render_fix_first(yaml_data: dict, cfg: dict, triage: dict | None = None) -> 
     What to fix first is the mitigation priority the model assigned, never the
     verdict's closing prose, which is free text and names no attack (RA-9).
     Use the existing triage mitigation order when it covers the displayed P1
-    set. Without a complete ranking, sort by severity, effort
+    set. Without a complete ranking, sort by severity, effort, business context
     and id, matching the triage ranking's ordering dimensions.
     """
     if cfg.get("quiet"):
@@ -2357,6 +2358,7 @@ def render_fix_first(yaml_data: dict, cfg: dict, triage: dict | None = None) -> 
         key = str(m.get("priority") or "").strip().upper()
         return f"P{key}" if key.isdigit() else key
 
+    relevant = _business_relevance.relevant_findings(yaml_data)
     ranked = triage
     for key in ("ranking", "views", "prioritized_mitigations", "mitigations_ranked"):
         ranked = ranked.get(key) if isinstance(ranked, dict) else None
@@ -2370,15 +2372,19 @@ def render_fix_first(yaml_data: dict, cfg: dict, triage: dict | None = None) -> 
         ranks = [
             _severity_rollup.SEVERITY_ORDER.get(_severity_rollup.priority_severity(threats.get(r)), 9) for r in refs
         ]
+        note = _business_relevance.mitigation_note(refs, relevant)
         effort = {"low": 0, "medium": 1, "high": 2}.get(str(m.get("effort") or "Medium").lower(), 1)
-        rows.append((min(ranks, default=9), effort, str(m["id"]), str(m.get("title") or "").strip(), refs))
+        rows.append(
+            (min(ranks, default=9), effort, not note, str(m["id"]), str(m.get("title") or "").strip(), refs, note)
+        )
     if not rows:
         return []
-    rows.sort(key=(lambda row: order[row[2]]) if all(row[2] in order for row in rows) else lambda row: row[:3])
-    width = max(len(row[3]) for row in rows[:_FIX_FIRST_LIMIT])
+    rows.sort(key=(lambda row: order[row[3]]) if all(row[3] in order for row in rows) else lambda row: row[:4])
+    width = max(len(row[4]) for row in rows[:_FIX_FIRST_LIMIT])
     lines = ["", "  Fix first (P1 mitigations)"]
-    for _, _, mid, title, refs in rows[:_FIX_FIRST_LIMIT]:
-        lines.append(f"    {mid}  {title.ljust(width)}  → {', '.join(refs)}".rstrip())
+    for _, _, _, mid, title, refs, note in rows[:_FIX_FIRST_LIMIT]:
+        suffix = f"  [{note}]" if note else ""
+        lines.append(f"    {mid}  {title.ljust(width)}  → {', '.join(refs)}{suffix}".rstrip())
     if len(rows) > _FIX_FIRST_LIMIT:
         lines.append(f"    +{len(rows) - _FIX_FIRST_LIMIT} more P1 — see §10 Mitigation Register")
     return lines

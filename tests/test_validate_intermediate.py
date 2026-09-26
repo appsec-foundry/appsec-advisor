@@ -32,6 +32,69 @@ def _load_module(name: str, path: Path):
 vi = _load_module("validate_intermediate", SCRIPT_PATH)
 
 
+@pytest.mark.parametrize("scope", ["valid", "unknown-component", "unknown-asset", "skipped", "wrong-field"])
+def test_business_answer_trace_requires_matching_coverage_and_asset(scope):
+    trace = {
+        "status": "applied",
+        "source": "docs/business-context.md",
+        "sha256": "a" * 64,
+        "fields_present": ["impact_if_compromised"],
+        "applied_finding_count": 0,
+        "component_coverage": [{"component_id": "service", "fields": ["impact_if_compromised"]}],
+        "answered_questions": [
+            {
+                "component_id": "service",
+                "topic": "asset-criticality",
+                "asset_name": "Ledger",
+                "context_field": "impact_if_compromised",
+                "source_quote_sha256": "b" * 64,
+            }
+        ],
+    }
+    answer = trace["answered_questions"][0]
+    if scope == "unknown-component":
+        answer["component_id"] = "other"
+    elif scope == "unknown-asset":
+        answer["asset_name"] = "Other Asset"
+    elif scope == "skipped":
+        trace["status"] = "skipped"
+    elif scope == "wrong-field":
+        answer["context_field"] = "security_assumptions"
+    model = {"business_context_trace": trace, "components": [{"id": "service"}], "assets": [{"name": "Ledger"}]}
+    errors = vi._check_export_trace_invariants(model)
+    assert bool(errors) == (scope != "valid"), errors
+
+
+@pytest.mark.parametrize("skip_context", [False, True])
+def test_analyst_gate_rejects_an_answer_without_source_provenance(tmp_path, monkeypatch, skip_context):
+    import json
+
+    import load_business_context
+
+    (tmp_path / ".components.json").write_text(json.dumps({"components": [{"id": "service", "paths": ["src"]}]}))
+    overlay = {
+        "service": {
+            "business_context": {"security_assumptions": ["Support may access other tenants after approval."]},
+            "answered_questions": [
+                {
+                    "topic": "route-by-route-authorization",
+                    "context_field": "security_assumptions",
+                    "source_quote": "Support may access other tenants after approval.",
+                }
+            ],
+        }
+    }
+    if skip_context:
+        (tmp_path / ".skill-config.json").write_text(json.dumps({"skip_business_context": True}))
+
+        def reject_source_read(*args):
+            pytest.fail("skipped business context must not be read")
+
+        monkeypatch.setattr(load_business_context, "effective_source", reject_source_read)
+    ok, errors = vi.validate_stride_analyst_context(overlay, output_dir=tmp_path, repo_root=tmp_path)
+    assert not ok and any("business context" in error for error in errors)
+
+
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH), *args],

@@ -64,6 +64,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+import _business_relevance
 import _ms_component_refs
 import _safe_cond
 import _severity_rollup
@@ -7832,6 +7833,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     mitigations = ctx.yaml_data.get("mitigations", []) or []
     threats = _threat_lookup(ctx)
     components = _component_lookup(ctx)
+    business_relevant = _business_relevance.relevant_findings(ctx.yaml_data)
 
     def _derive_priority(max_sev_rank: int) -> str:
         # _severity_rank: critical=0, high=1, medium=2, low=3
@@ -7895,6 +7897,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             "priority": priority,
             "max_sev_rank": max_sev,
             "addressed_count": len(addressed),
+            "business_note": _business_relevance.mitigation_note(addressed_ids, business_relevant),
         }
 
     enriched = [enrich(m) for m in mitigations]
@@ -7947,6 +7950,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     def _row_sort_key(r: dict[str, Any]) -> tuple[int, int, int, int, str]:
         # Sort order:
         #   1. priority           (P1 first)
+        #   1b. declared business context first within its priority (FE-7)
         #   2. -addressed_count   (high-leverage mitigations first — closes
         #                          the historic "P1 fix addressing 1 finding
         #                          outranks P1 fix addressing 4 findings"
@@ -7956,6 +7960,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
         #   5. id                 (stable tie-break)
         return (
             {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
+            not r.get("business_note"),
             -int(r.get("addressed_count") or 0),
             r.get("max_sev_rank", 9),
             _effort_rank(r.get("effort", "Medium")),
@@ -8040,6 +8045,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
     def _display_sort_key(r: dict[str, Any]) -> tuple[Any, ...]:
         return (
             {"P1": 0, "P2": 1, "P3": 2, "P4": 3}.get(r.get("priority", "P4"), 9),
+            not r.get("business_note"),
             _component_sort_key(r.get("primary_component_id") or ""),
             -int(r.get("addressed_count") or 0),
             r.get("max_sev_rank", 9),
@@ -8106,7 +8112,7 @@ def _render_mitigations(ctx: RenderContext, env: jinja2.Environment, section: di
             "*"
             + " · ".join(footer_parts)
             + " in [§10 Mitigation Register](#10-mitigation-register). "
-            + "Sorted by priority (P1 first), then component, then leverage "
+            + "Sorted by priority (P1 first), then declared business context, then component, then leverage "
             + "(most findings first), severity (Critical first), and effort "
             + "(Low first).*"
         )

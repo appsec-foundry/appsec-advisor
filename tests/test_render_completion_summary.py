@@ -689,9 +689,9 @@ class TestManualReviewStep:
         # comes last and the cap holds at three.
         assert [re.findall(r"\b(W-\d+)\b", line) for line in questions] == [["W-002"], ["W-003"], ["W-004"]]
         assert re.findall(r"\b(F-\d+)\b", text) == ["F-001", "F-002", "F-020", "F-030"]
-        assert "Which cross-user or cross-tenant accesses through these routes are intended" in questions[0]
-        assert "still accept these secrets from the git history" in questions[1]
-        assert "meant to be reachable without login" in questions[2]
+        assert "Which cross-user or cross-tenant operations in this application are intended" in questions[0]
+        assert "still accept credentials exposed in the history" in questions[1]
+        assert "intended to be available without login" in questions[2]
         assert len(questions) == 3
         # Every question states what its answer decides, on its own line.
         assert [line for line in lines[1:] if not line.startswith("- ")] == [
@@ -773,7 +773,7 @@ class TestManualReviewStep:
         finding = self.finding(1, evidence=[{"file": ".github/workflows/package.yml", "line": 20}])
         assert self.render([finding]) == ""
         text = self.render([finding], [self.weakness(6, "build-pipeline-mutable-refs", 1)])
-        assert "Who can change these build inputs or publish artifacts" in text
+        assert "Who can publish the build inputs used by this application" in text
         assert "that process reach" not in text
 
     def test_weakness_questions_come_from_mechanism_guidance_not_cwe_membership(self):
@@ -785,7 +785,7 @@ class TestManualReviewStep:
         assert self.render([owner]) == ""
         text = self.render([owner], [self.weakness(2, "route-by-route-authorization", 1)])
         assert self.bullets(text)[0].endswith(" (W-002: F-001)")
-        assert "Which cross-user or cross-tenant accesses through these routes are intended" in text
+        assert "Which cross-user or cross-tenant operations in this application are intended" in text
         assert self.render([owner], [self.weakness(2, "no-such-mechanism", 1)]) == ""
         questions = rcs.mechanism_team_questions()
         assert set(questions) >= {"route-by-route-authorization", "secrets-committed-to-source"}
@@ -793,7 +793,7 @@ class TestManualReviewStep:
         # A mechanism whose fix is mechanical still asks — about the impact the
         # code cannot show (what the reachable schema holds), never about the fix.
         mechanical = self.render([owner], [self.weakness(2, "database-query-concatenation", 1)])
-        assert "personal or regulated" in mechanical
+        assert "sensitive business records" in mechanical
         assert "parameteris" not in mechanical and "prepared statement" not in mechanical
 
     def test_weakness_line_links_three_worst_instances_and_counts_the_rest(self):
@@ -818,7 +818,10 @@ class TestManualReviewStep:
         no_tools = self.finding(1, "CWE-1427", "LLM prompt injection")
         assert self.render([no_tools]) == ""
         tools = {**no_tools, "evidence_summary": "The language model invokes a purchase tool without approval."}
-        assert "without a separate authorization decision?" in self.render([tools])
+        assert self.render([tools]) == ""  # App-owned action checks are source-analysis work.
+        tools["evidence_summary"] = "The language model invokes a purchase tool from an external tool registry."
+        assert "Which production actions are enabled for the model" in self.render([tools])
+        assert "outside this repository?" in self.render([tools])
 
     def test_ssrf_question_does_not_assert_process_takeover(self):
         text = self.render([self.finding(1, "CWE-918", "Unrestricted URL fetching")])
@@ -847,7 +850,7 @@ class TestManualReviewStep:
     def test_unresolved_investigated_chain_gets_priority_without_becoming_a_finding(self):
         findings = [self.finding(1), self.finding(2, "CWE-89", "SQL injection in invoice search")]
         text = self.render(findings, abuse_case_analysis=self.chain_analysis())
-        assert "Can an attacker combine these findings" in text.splitlines()[1]
+        assert "Which production data or identities connect these attack paths" in text.splitlines()[1]
         assert "F-001" in text.splitlines()[1] and "F-002" in text.splitlines()[1]
         assert "Critical" not in text
         assert "that process reach" not in text  # Already addressed by the chain question.
@@ -862,7 +865,7 @@ class TestManualReviewStep:
             )["cases"][0]
         )
         text = self.render(findings, abuse_case_analysis=analysis)
-        assert text.count("Can an attacker combine these findings") == 1
+        assert text.count("Which production data or identities connect these attack paths") == 1
         analysis["cases"].reverse()
         assert self.render(findings, abuse_case_analysis=analysis) == text
 

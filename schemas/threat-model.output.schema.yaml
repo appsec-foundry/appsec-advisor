@@ -659,6 +659,80 @@ properties:
                 type: string
                 enum: [business_purpose, impact_if_compromised, sensitive_assets, security_obligations, security_assumptions]
       applied_finding_count: {type: integer, minimum: 0}
+      declared_asset_names:
+        description: Names from `assets` mentioned by the business context; a mention alone does not settle criticality.
+        type: array
+        uniqueItems: true
+        maxItems: 100
+        items: {type: string, minLength: 1}
+
+      answered_questions:
+        description: Sourced answers to team questions, scoped to a component; no source prose. Absence means unresolved.
+        type: array
+        maxItems: 2400
+        uniqueItems: true
+        items:
+          type: object
+          additionalProperties: false
+          required:
+          - component_id
+          - topic
+          - context_field
+          - source_quote_sha256
+          properties:
+            component_id:
+              type: string
+              minLength: 1
+              maxLength: 100
+            topic:
+              enum:
+              - asset-criticality
+              - account-onboarding
+              - attack-path-connection
+              - unrestricted-attribute-binding
+              - browser-readable-session-credentials
+              - unbound-authorization-requests
+              - database-query-concatenation
+              - document-query-construction
+              - blacklist-only-input-validation
+              - route-by-route-authorization
+              - hand-rolled-token-verification
+              - missing-endpoint-authentication
+              - secrets-committed-to-source
+              - build-pipeline-mutable-refs
+              - browser-clients-without-bff
+              - weak-cryptographic-primitives
+              - process-reach
+              - server-request-reach
+              - model-actions
+            asset_name:
+              type: string
+              minLength: 1
+              maxLength: 200
+            context_field:
+              enum:
+              - business_purpose
+              - impact_if_compromised
+              - sensitive_assets
+              - security_obligations
+              - security_assumptions
+            source_quote_sha256:
+              type: string
+              pattern: ^[a-f0-9]{64}$
+          allOf:
+          - if:
+              properties:
+                topic:
+                  const: asset-criticality
+            then:
+              required:
+              - asset_name
+              properties:
+                context_field: {const: impact_if_compromised}
+            else:
+              not:
+                required:
+                - asset_name
 
   requirements_compliance:
     # The §7b assessment, exported so a consumer of the YAML sees the same

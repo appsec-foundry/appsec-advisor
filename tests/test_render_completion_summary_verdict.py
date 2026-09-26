@@ -229,6 +229,25 @@ def test_fix_first_lists_p1_mitigations_most_severe_finding_first():
     assert lines[2].endswith("→ F-001")
 
 
+def test_fix_first_puts_declared_business_context_first_within_a_severity():
+    model = _fix_first_model(
+        [
+            {"id": "M-001", "title": "Verify tokens", "priority": "P1", "threat_ids": ["T-001"]},
+            {"id": "M-002", "title": "Check ownership", "priority": "P1", "threat_ids": ["T-002"]},
+            {"id": "M-003", "title": "Harden logging", "priority": "P1", "threat_ids": ["T-003"]},
+        ]
+    )
+    model["business_context_trace"] = {"status": "applied", "declared_asset_names": ["Order History"]}
+    model["assets"] = [{"name": "Order History", "linked_threats": ["T-002", "T-003"]}]
+
+    lines = rcs.render_fix_first(model, {})
+
+    # Business context reorders within Critical; it never lifts the Medium M-003.
+    assert [line.split()[0] for line in lines[2:]] == ["M-002", "M-001", "M-003"]
+    assert lines[2].endswith("[Business-critical: Order History]")
+    assert "[" not in lines[3]
+
+
 def test_fix_first_caps_the_list_and_names_the_rest():
     mitigations = [{"id": f"M-{n:03d}", "title": "t", "priority": "P1", "threat_ids": ["T-002"]} for n in range(1, 11)]
     lines = rcs.render_fix_first(_fix_first_model(mitigations), {})

@@ -94,7 +94,7 @@ the controller tells you to print after config resolution (e.g.
 `📋 Existing threat model found — preparing a full re-assessment …`), and then
 (2) the `Threat Model — Pre-flight` summary. Nothing may appear between them.
 
-**Sanctioned exception 1 — the interactive orchestrator-model prompt.** When the
+**Sanctioned exception — the interactive orchestrator-model prompt.** When the
 thin runtime's prepare ACTION reports `orchestrator_prompt_needed: true`
 (SKILL-full-runtime.md §2a), you MUST call `AskUserQuestion` to let the user choose
 the session model — emitted **before the Pre-flight summary** (the choice is a cost
@@ -104,10 +104,5 @@ whenever the detected session model diverges from the repo-size recommendation (
 Sonnet-5 or an Opus session on a normal-sized repo), and is skipped under
 `APPSEC_HEADLESS=1`. The early `💡 Session model` heads-up is NOT a substitute — it
 is a one-line hint, not a choice.
-
-**Sanctioned exception 2 — the business-context questions.** When
-`ACTION.business_context_prompt_needed` is `true`, an interactive full/rebuild run
-asks up to three short, skippable business-context questions once, before the
-Pre-flight summary. Do not suppress them.
 
 Do not narrate reading, executing, or rendering steps before the Pre-flight summary.

@@ -315,6 +315,7 @@ GROUPS = {
         arch_coverage_bridge_coverage
         attack_step_quality
         auto_emitter_pass
+        business_relevance
         critical_findings_sync
         cvss_eligibility
         decision_register
@@ -552,12 +553,32 @@ SOURCE_TESTS = {
         validate_intermediate
     """),
     "schemas/threat-model.output.schema.yaml": _tests("""
+        actor_presentation
         build_threat_model_yaml
+        check_target_specificity
+        config_iac_checks
+        detect_open_registration
+        emit_clean_finding_titles
+        emit_verdict_to_model
+        enrichment_pass
+        figure1_security
+        incremental_two_run_e2e
+        load_related_repos
+        merge_threats
         new_schemas
+        prepare_trust_boundary_context
+        promote_verified_abuse_cases
+        qa_checks
         requirements_verification
         schema_drift
         schema_integrity
         schemas
+        severity_policy
+        team_questions
+        validate_evidence_lines
+        validate_fragment
+        validate_intermediate
+        weakness_class_config_consistency
     """),
     "schemas/threats-merged.schema.yaml": _tests("""
         build_post_stride_contexts
@@ -594,30 +615,49 @@ SOURCE_TESTS = {
         actor_presentation
         agent_definitions
         arch_coverage_bridge
+        architect_structural_checks
         authz_confirm
         build_post_stride_contexts
+        build_threat_model_yaml
+        build_threat_modeling_context
+        build_trust_boundary_assessment_input
+        check_stride_dispatch
+        check_target_specificity
+        config_scanner_wireup
         credential_lifecycle_checks
+        cvss_eligibility
         database_privilege_separation
         e2e_pipeline
         figure1_dfd
         fragment_invariant_parity
+        gate_preconditions
+        incremental_two_run_e2e
         intermediate_json
         lens_coverage
+        match_abuse_cases
+        merge_threats
         new_schemas
         orchestration_controller
         pentest_tasks
+        reclassify_components
         recon_signals_schema
+        reconcile_role_access
+        render_abuse_cases
         requirements_verification
+        resolve_actors
         review_threat_model
         run_diagnostics_recovery_2026_07_20
+        run_path_guard
         schema_integrity
         severity_policy
+        source_auth_scanner
         stage1_coverage_recovery_2026_07_20
         stage1_coverage_recovery_2026_08_02
         stride_dispatch_waves
         stride_outputs
         threat_fixture
         threats_merged_schema
+        triage_compute_ranking
         validate_intermediate
         wait_stride_progress
     """),
@@ -1205,6 +1245,174 @@ SOURCE_TESTS = {
         run_path_guard
         stride_outputs
         version_status
+    """),
+    "scripts/load_business_context.py": _tests("""
+        actor_presentation
+        analysis_version_upgrade
+        assert_completeness
+        build_threat_model_yaml
+        build_threat_modeling_context
+        check_target_specificity
+        compose_depth_scoped_crossrefs
+        compose_threat_model
+        compose_threat_model_cov
+        compose_threat_model_cov2
+        compose_threat_model_cov3
+        config_iac_checks
+        dispatch_manifest
+        e2e_pipeline
+        emit_verdict_to_model
+        enforcement_mutations
+        figure1_dfd
+        figure1_layout_harness
+        figure2_svg
+        figure_deployment
+        figure_details
+        fragment_authoring_fidelity
+        gate_preconditions
+        incremental_two_run_e2e
+        load_business_context
+        merge_threats
+        orchestration_controller
+        p1_renderer_correctness
+        p2_structural_determinism
+        p3_behavior_tuning
+        p4_cross_reference_coverage
+        pregenerate_fragments
+        pregenerate_fragments_coverage
+        prepare_trust_boundary_context
+        promote_verified_abuse_cases
+        qa_checks
+        qa_checks_cov_band1
+        qa_checks_cov_band2
+        qa_checks_cov_band4
+        reference_format
+        render_integrity
+        render_properties
+        requirements_catalog_predicate
+        requirements_mapping
+        requirements_trace
+        requirements_verification
+        resolve_config
+        run_path_guard
+        run_statistics_appendix
+        runtime_doc_cli_contract
+        safe_cond
+        severity_policy
+        severity_rollup
+        skill_auto_retry
+        stride_outputs
+        taxonomy_coverage
+        team_questions
+        threat_fixture
+        validate_evidence_lines
+        validate_intermediate
+    """),
+    "scripts/team_questions.py": _tests("""
+        analysis_version_upgrade
+        build_threat_model_yaml
+        check_target_specificity
+        completion_relay
+        compose_threat_model
+        compose_threat_model_cov2
+        e2e_pipeline
+        enforcement_mutations
+        gate_preconditions
+        p1_renderer_correctness
+        p2_structural_determinism
+        p4_cross_reference_coverage
+        qa_checks
+        qa_checks_cov_band1
+        qa_checks_cov_band2
+        qa_checks_cov_band4
+        reference_format
+        render_completion_summary
+        render_completion_summary_config
+        render_completion_summary_verdict
+        render_integrity
+        render_properties
+        report_plugin_issue
+        requirements_mapping
+        requirements_verification
+        run_headless_completion
+        run_path_guard
+        runtime_doc_cli_contract
+        stride_outputs
+        team_questions
+        threat_fixture
+    """),
+    "scripts/build_threat_model_yaml.py": _tests("""
+        actor_presentation
+        build_threat_model_yaml
+        check_target_specificity
+        config_iac_checks
+        dispatch_manifest
+        gate_preconditions
+        incremental_two_run_e2e
+        merge_threats
+        orchestration_controller
+        prepare_trust_boundary_context
+        promote_verified_abuse_cases
+        requirements_catalog_predicate
+        requirements_trace
+        requirements_verification
+        run_path_guard
+        run_tests
+        severity_policy
+        stride_outputs
+        threat_fixture
+        validate_evidence_lines
+    """),
+    "scripts/orchestration_controller.py": _tests("""
+        agent_config_checks
+        agent_logger_cov
+        auto_emitter_pass
+        check_target_specificity
+        config_scanner_wireup
+        context_routing
+        database_privilege_separation
+        discover_identity_providers
+        dispatch_manifest
+        dispatch_model_and_diagnostics
+        dispatch_values_stage
+        embedded_store_access
+        flow_route_auth
+        fragment_invariant_parity
+        gate_preconditions
+        orchestration_controller
+        phase_group_prompts
+        reasoning_model_resolution
+        reconcile_role_access
+        render_completion_summary
+        render_completion_summary_config
+        report_plugin_issue
+        requirements_verification
+        run_diagnostics_recovery_2026_07_20
+        run_headless_completion
+        run_ownership
+        run_path_guard
+        runtime_doc_cli_contract
+        source_auth_scanner
+        stage1_context_edge_inventory
+        stage1_coverage_recovery_2026_07_20
+        stride_outputs
+        telemetry_consistency
+        thin_runtime_regressions_2026_07_20
+    """),
+    "scripts/_business_relevance.py": _tests("""
+        business_relevance
+        compose_threat_model
+        render_completion_summary_verdict
+        threat_fixture
+    """),
+    "schemas/orchestration-action.schema.json": _tests("""
+        check_target_specificity
+        context_routing
+        dispatch_model_and_diagnostics
+        orchestration_controller
+        requirements_verification
+        schema_integrity
+        schemas
     """),
 }
 

@@ -30,8 +30,12 @@
                                      or "Cross-cutting") for the Component column
                   - mitigations[]: data rows with continuous global numbering
                                    { number, id, title, primary_component_id,
-                                     addresses[{ref,label}], effort, priority }
-                                   Pre-sorted: P1 → P2, severity, effort, ID.
+                                     addresses[{ref,label}], effort, priority,
+                                     business_note }
+                                   Pre-sorted: P1 → P2, declared business
+                                   context first, then component, leverage,
+                                   severity, effort, ID. `business_note` names
+                                   the declared asset that moved a row forward.
                                    (priority still drives the sort; it is just
                                    no longer rendered as its own column.)
       intro     : top-of-section paragraph string (mentions §9 register)
@@ -45,7 +49,7 @@
 |---|---|---|---|---|
 {%- for g in groups %}
 {%- for m in g.mitigations %}
-| **{{ m.number }}** | {% if g.component_label %}{{ g.component_label }}{% elif m.component_label %}{{ m.component_label }}{% endif %} | {{ linkify_with_label(m.id) }} | {% for a in m.addresses %}{% if a.dot %}{{ a.dot }} {% endif %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
+| **{{ m.number }}** | {% if g.component_label %}{{ g.component_label }}{% elif m.component_label %}{{ m.component_label }}{% endif %} | {{ linkify_with_label(m.id) }}{% if m.business_note %}<br/>*{{ m.business_note }}*{% endif %} | {% for a in m.addresses %}{% if a.dot %}{{ a.dot }} {% endif %}[{{ a.ref | replace('T-', 'F-') }}](#{{ (a.ref | replace('T-', 'F-')) | lower }}){% if a.label %} — {{ a.label }}{% endif %}{% if not loop.last %}<br/>{% endif %}{% endfor %} | {{ m.effort }} |
 {%- endfor %}
 {%- endfor %}
 {%- if footer %}

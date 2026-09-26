@@ -121,6 +121,17 @@ def _persist_target(repo_root: Path) -> Path:
     return target
 
 
+def declared_names(text: str, names: list[str]) -> list[str]:
+    """The names the context mentions as a whole phrase, case-insensitively."""
+    haystack = " ".join(text.lower().split())
+    found = []
+    for name in names:
+        needle = " ".join(name.lower().split())
+        if needle and re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack):
+            found.append(name)
+    return found
+
+
 def capture(
     *,
     repo_root: Path,
@@ -188,6 +199,65 @@ def context_digest(repo_root: Path, output_dir: Path) -> str | None:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return None
+
+
+def project_answered_questions(analyst: dict, repo_root: Path, output_dir: Path) -> list[dict]:
+    """Validate answer provenance and export bounded identities, never the prose.
+
+    The analyst owns semantic interpretation. Exact excerpts must occur both in
+    the effective bounded project context and in the component facts delivered
+    to STRIDE. An invented excerpt or a fact mapped only to another component
+    cannot suppress a question. Older overlays without answers remain valid.
+    """
+    if not isinstance(analyst, dict):
+        raise ValueError("answered questions require a component-keyed analyst context")
+    entries = [(cid, row) for cid, row in analyst.items() if isinstance(row, dict) and row.get("answered_questions")]
+    if not entries:
+        return []
+    config_path = output_dir / ".skill-config.json"
+    if config_path.is_file():
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
+            raise ValueError("answered questions require a valid run configuration")
+        if config.get("skip_business_context"):
+            raise ValueError("answered questions are unavailable when business context is skipped")
+    import jsonschema  # noqa: PLC0415
+    from build_threat_modeling_context import _bounded_lines  # noqa: PLC0415
+
+    source = _bounded_lines(effective_source(repo_root, output_dir), 200)
+    if not source or secret_scan.scan_text(source):
+        raise ValueError("answered questions require readable, credential-free business context")
+    schema = json.loads(
+        (Path(__file__).resolve().parent.parent / "schemas/stride-analyst-context.schema.json").read_text()
+    )["$defs"]["answered_questions"]
+    result: list[dict] = []
+    for cid, overlay in sorted(entries):
+        try:
+            jsonschema.Draft202012Validator(schema).validate(overlay["answered_questions"])
+        except jsonschema.ValidationError:
+            raise ValueError("invalid answered-question projection") from None
+        business = overlay.get("business_context") or {}
+        if not isinstance(business, dict):
+            raise ValueError("answered questions require structured component business context")
+        for answer in overlay["answered_questions"]:
+            quote = answer["source_quote"]
+            value = business.get(answer["context_field"], "")
+            values = value if isinstance(value, list) else [value]
+            if quote not in source or not any(isinstance(item, str) and quote in item for item in values):
+                raise ValueError("answered question lacks an exact source excerpt delivered to its component")
+            row = {
+                "component_id": cid,
+                "topic": answer["topic"],
+                "context_field": answer["context_field"],
+                "source_quote_sha256": hashlib.sha256(quote.encode("utf-8")).hexdigest(),
+            }
+            if "asset_name" in answer:
+                row["asset_name"] = answer["asset_name"]
+            if row not in result:
+                result.append(row)
+                if len(result) > 2400:
+                    raise ValueError("answered-question projection exceeds the model limit")
+    return result
 
 
 def _parser() -> argparse.ArgumentParser:

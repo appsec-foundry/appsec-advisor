@@ -69,6 +69,7 @@ from _atomic_io import atomic_write_text  # noqa: E402
 from _boundary_criticality import exposure_of as _boundary_exposure_of  # noqa: E402
 from _boundary_criticality import tier_of as _boundary_tier_of  # noqa: E402
 from _severity_policy import normalize_risks  # noqa: E402
+from load_business_context import project_answered_questions  # noqa: E402
 from merge_threats import normalize_cvss_v4 as _normalize_cvss_v4  # noqa: E402
 from stride_outputs import is_stride_output  # noqa: E402
 
@@ -1037,7 +1038,28 @@ def _business_context_component_coverage(output_dir: Path) -> list[dict[str, Any
     return rows
 
 
-def build_business_context_trace(skill_cfg: dict, repo_root: Path, applied_finding_count: int) -> dict[str, Any]:
+_MAX_DECLARED_ASSET_NAMES = 100
+
+
+def _declared_asset_names(skill_cfg: dict, repo_root: Path, assets: list) -> list[str]:
+    """Asset mentions used for presentation provenance, not answered criticality.
+
+    Carries model names only, never the business prose.
+    """
+    path = load_business_context.effective_source(repo_root, Path(skill_cfg["output_dir"]))
+    if path is None:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    names = [str(a.get("name")) for a in assets if isinstance(a, dict) and str(a.get("name") or "").strip()]
+    return list(dict.fromkeys(load_business_context.declared_names(text, names)))[:_MAX_DECLARED_ASSET_NAMES]
+
+
+def build_business_context_trace(
+    skill_cfg: dict, repo_root: Path, applied_finding_count: int, assets: list | None = None
+) -> dict[str, Any]:
     """Build the durable, non-prose trace of business-context use."""
     if skill_cfg.get("skip_business_context"):
         return {
@@ -1064,6 +1086,20 @@ def build_business_context_trace(skill_cfg: dict, repo_root: Path, applied_findi
     output_dir = Path(skill_cfg["output_dir"])
     coverage = _business_context_component_coverage(output_dir)
     present = [field for field in _BUSINESS_CONTEXT_TRACE_FIELDS if any(field in row["fields"] for row in coverage)]
+    answers = project_answered_questions(
+        _load_json(output_dir / ".stride-analyst-context.json") or {}, repo_root, output_dir
+    )
+    asset_by_name = {
+        " ".join(str(asset.get("name", "")).casefold().split()): asset.get("name") for asset in assets or []
+    }
+    resolved_answers = []
+    for answer in answers:
+        if "asset_name" in answer:
+            name = asset_by_name.get(" ".join(answer["asset_name"].casefold().split()))
+            if not name:
+                continue
+            answer["asset_name"] = name
+        resolved_answers.append(answer)
     return {
         "status": "applied",
         "source_kind": "run_only" if source == load_business_context.RUN_ONLY_NAME else "repository",
@@ -1072,6 +1108,8 @@ def build_business_context_trace(skill_cfg: dict, repo_root: Path, applied_findi
         "fields_present": present,
         "component_coverage": coverage,
         "applied_finding_count": applied_finding_count,
+        "declared_asset_names": _declared_asset_names(skill_cfg, repo_root, assets or []),
+        **({"answered_questions": resolved_answers} if resolved_answers else {}),
     }
 
 
@@ -3147,11 +3185,17 @@ def main() -> int:
         run_id=_run_id,
     )
 
+    try:
+        business_trace = build_business_context_trace(skill_cfg, repo_root, marked, assets)
+    except ValueError as exc:
+        sys.stderr.write(f"FATAL: {exc}\n")
+        return 5
+
     # Compose final document
     doc: dict[str, Any] = {
         "meta": meta,
         "changelog": changelog,
-        "business_context_trace": build_business_context_trace(skill_cfg, repo_root, marked),
+        "business_context_trace": business_trace,
         "abuse_case_analysis": build_initial_abuse_case_analysis(skill_cfg),
         "components": components,
         "data_flows": data_flows,

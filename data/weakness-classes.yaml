@@ -530,8 +530,9 @@ class_guidance:
 # code alone cannot settle — which cross-user access is intended, which
 # deployment still accepts a secret, which endpoints are meant to be public. It
 # is one question ending in "?", without a "Topic:" prefix and without a
-# proposed fix. The completion summary asks it under "Open questions for the
-# team", citing the register entry and its worst instances. A mechanism whose fix is purely mechanical (parameterise
+# proposed fix. The Management Summary substitutes the affected component
+# name for {component} and links the findings whose decision remains open.
+# A mechanism whose fix is purely mechanical (parameterise
 # the query, encode the output, pick a KDF) carries no question: there is
 # nothing for the team to decide, only work to schedule.
 mechanism_guidance:
@@ -546,8 +547,7 @@ mechanism_guidance:
       define operation-specific write schemas and assign privileged attributes
       exclusively through server-side policy
     team_question: >-
-      Which of these bound fields are callers allowed to set themselves, and
-      which are reserved for server-side policy?
+      Which fields accepted by {component} may users change themselves, and which require staff approval?
     decision_impact: >-
       Every field confirmed as caller-owned narrows the finding to the
       remaining reserved fields; if none are caller-owned, the whole binding
@@ -567,13 +567,6 @@ mechanism_guidance:
     structural_fix: >-
       replace evaluation of application values with a data parser or a fixed
       set of operations whose arguments remain data
-    team_question: >-
-      Which of the values reaching this interpreter can originate from a
-      request, an upload or a third-party feed rather than from operators?
-    decision_impact: >-
-      Any untrusted origin confirms remote code execution and keeps the
-      finding at its current rating; a confirmed operator-only origin reduces
-      it to a hardening item.
     finding_signal:
       any_pattern:
         - '\b(eval|exec|Function|evaluate)\s*\(\s*[A-Za-z_$][\w.$\[\]]*'
@@ -592,12 +585,10 @@ mechanism_guidance:
       move reusable credentials behind a server-managed session boundary and
       keep browser-visible state free of reusable authentication secrets
     team_question: >-
-      Which third-party scripts run in this origin, and how quickly can a
-      stolen session credential be revoked?
+      How quickly can operators revoke a stolen session for {component} across its production clients?
     decision_impact: >-
-      Third-party scripts in the origin make credential theft a live path
-      rather than a theoretical one; fast revocation limits how long a stolen
-      credential stays usable.
+      Revocation time bounds how long a stolen credential remains usable and
+      determines the operational response alongside the code fix.
     finding_signal:
       any_pattern:
         - '(?is)\b(?:localStorage|sessionStorage)\s*\.\s*(?:getItem|setItem)\s*\([^\n]*(?:token|session|credential|jwt|auth)'
@@ -612,13 +603,6 @@ mechanism_guidance:
     structural_fix: >-
       enforce framework CSRF protection or validated origin and anti-CSRF tokens
       on every mutation that accepts ambient browser credentials
-    team_question: >-
-      Are these state-changing endpoints called from a browser, or only by
-      clients that never send ambient cookies?
-    decision_impact: >-
-      Browser callers make cross-site request forgery exploitable as
-      described; a purely non-browser caller set allows removing the cookie
-      path instead of protecting it.
     finding_signal:
       # CWE-352 comes from the inspected authentication/mutation/control path;
       # merely seeing a cookie API without that finding never emits a signal.
@@ -636,8 +620,7 @@ mechanism_guidance:
       start every sign-in through a maintained OAuth/OIDC client that
       generates and verifies state (and PKCE) for each authorization request
     team_question: >-
-      Does the identity provider reject callbacks that carry no bound state or
-      PKCE value, independently of this client?
+      Which callback protections does the production identity provider enforce for {component} independently of this client?
     decision_impact: >-
       Provider-side enforcement contains the gap to defence in depth; without
       it a forged callback completes sign-in and the finding stands as rated.
@@ -656,12 +639,6 @@ mechanism_guidance:
     structural_fix: >-
       issue sensitive cookies server-side with HttpOnly protection and keep
       script-readable application preferences separate from session credentials
-    team_question: >-
-      Which of these cookies does frontend code actually read, and which only
-      travel back to the server?
-    decision_impact: >-
-      A cookie nothing reads can take HttpOnly immediately; one the frontend
-      depends on needs its value moved elsewhere before the flag can be set.
   application-data-as-template:
     weakness_name: "Application data crosses into template source"
     cwes: [CWE-1336]
@@ -671,13 +648,6 @@ mechanism_guidance:
     structural_fix: >-
       compile fixed templates and pass application values only through their
       data-binding interface
-    team_question: >-
-      Who supplies these templates — operators through a reviewed change, or
-      end users at runtime?
-    decision_impact: >-
-      End-user-supplied templates make server-side template injection directly
-      exploitable; an operator-only path moves the finding to the
-      change-review process.
   database-query-concatenation:
     weakness_name: "Database access relies on concatenated queries"
     cwes: [CWE-89]
@@ -689,8 +659,7 @@ mechanism_guidance:
       provide one parameterised repository or query-builder path and prohibit
       application-value interpolation in database queries
     team_question: >-
-      What data lives in the schema this database account can reach, and how
-      much of it is personal or regulated?
+      Which sensitive business records can the production database account used by {component} access?
     decision_impact: >-
       Personal or regulated data in reach raises both the breach impact and
       any notification duty; a narrowly scoped account limits the blast
@@ -708,8 +677,7 @@ mechanism_guidance:
       values to the expected scalar types, and disable server-side JavaScript
       evaluation in the database
     team_question: >-
-      Which collections can this connection reach beyond the one the endpoint
-      is meant to serve?
+      Which other business datasets can the production database connection used by {component} access?
     decision_impact: >-
       Every additional reachable collection widens the finding past the
       intended endpoint; a per-collection credential contains it.
@@ -743,8 +711,7 @@ mechanism_guidance:
       enforce server-side schemas and domain-specific allowlists before input
       reaches parsing, persistence, or command construction
     team_question: >-
-      Does a gateway, schema or framework layer outside this repository
-      already validate these parameters before they arrive?
+      Which parameter restrictions does infrastructure outside this repository enforce before requests reach {component}?
     decision_impact: >-
       A confirmed upstream validator downgrades this to defence in depth;
       without one the listed parameters reach the parser unchecked.
@@ -758,12 +725,6 @@ mechanism_guidance:
     structural_fix: >-
       use framework-safe rendering by default and isolate any required raw HTML
       behind one reviewed sanitisation and Trusted Types policy
-    team_question: >-
-      Can content submitted by one user reach another user's browser through
-      these rendering paths?
-    decision_impact: >-
-      A cross-user path makes this stored XSS against other accounts; a
-      self-only path limits it to the author's own session.
   route-by-route-authorization:
     weakness_name: "Authorization is implemented route by route"
     cwes: [CWE-285, CWE-639, CWE-862, CWE-863]
@@ -775,8 +736,7 @@ mechanism_guidance:
       enforce authorization through a shared server-side policy layer and make
       ownership and tenant scope mandatory inputs to data access
     team_question: >-
-      Which cross-user or cross-tenant accesses through these routes are
-      intended, for example for support staff or administrative bulk operations?
+      Which cross-user or cross-tenant operations in {component} are intended for support staff or administrators?
     decision_impact: >-
       Each access confirmed as intended narrows the finding to the remaining
       routes; if none are intended, every listed route is a live
@@ -792,8 +752,7 @@ mechanism_guidance:
       centralise token validation on a vetted library with pinned algorithms,
       issuer and audience checks, and managed signing keys
     team_question: >-
-      Which other services accept these tokens and would trust a forged role or
-      identity in them?
+      Which other production services accept identities or roles from tokens issued by {component}?
     decision_impact: >-
       Each additional accepting service multiplies the blast radius of one
       forged token; a single-consumer token keeps the impact local.
@@ -816,8 +775,7 @@ mechanism_guidance:
       enforce authentication centrally at the routing and channel boundary so every
       exposed endpoint requires a verified session unless explicitly marked public
     team_question: >-
-      Which of these endpoints and channels are meant to be reachable without
-      login?
+      Which operations in {component} are intended to be available without login?
     decision_impact: >-
       An endpoint confirmed as intentionally public becomes an accepted
       exposure; every other one stays a missing-authentication finding at its
@@ -838,7 +796,7 @@ mechanism_guidance:
       move every secret to a managed secret store or injected environment
       configuration, rotate the exposed values, and add secret-scanning to CI
     team_question: >-
-      Which deployments still accept these secrets from the git history?
+      Which production deployments still accept credentials exposed in the history of {component}?
     decision_impact: >-
       Any deployment that still accepts them makes rotation urgent; if none
       do, the remaining work is history scrubbing and detection.
@@ -857,8 +815,7 @@ mechanism_guidance:
       pin every third-party action and build dependency to an immutable commit SHA
       (or a vetted internal mirror) and enforce SHA-pinning in CI
     team_question: >-
-      Who can change these build inputs or publish artifacts without an
-      independent review?
+      Who can publish the build inputs used by {component} without independent approval?
     decision_impact: >-
       A wide or unreviewed set of writers makes pipeline compromise the
       cheapest path into production; a reviewed set contains it.
@@ -874,8 +831,7 @@ mechanism_guidance:
       introduce a backend-for-frontend that holds OAuth tokens server-side and
       gives the browser a hardened HttpOnly session cookie
     team_question: >-
-      What stops a token stolen from the browser from being replayed against
-      these APIs?
+      Which production restrictions outside this repository limit reuse of a stolen browser token for {component}?
     decision_impact: >-
       Without binding or a short lifetime a single XSS yields durable API
       access; sender-constrained or short-lived tokens limit the window.
@@ -888,12 +844,6 @@ mechanism_guidance:
     structural_fix: >-
       replace application-owned cryptographic protocol and key handling with a
       vetted library or managed cryptographic service
-    team_question: >-
-      What drove the decision to implement this in application code rather
-      than use the platform's cryptographic library?
-    decision_impact: >-
-      A constraint that still holds turns this into a documented, reviewed
-      exception; no remaining constraint makes replacement the fix.
   weak-cryptographic-primitives:
     weakness_name: "Security-sensitive data uses weak cryptographic primitives"
     cwes: [CWE-327, CWE-328, CWE-330, CWE-916]
@@ -906,8 +856,7 @@ mechanism_guidance:
       standardise on a password KDF, a CSPRNG for secrets, and modern
       authenticated cryptographic primitives with centrally reviewed parameters
     team_question: >-
-      How many stored records still carry values produced by this primitive,
-      and what does migrating them require?
+      Which stored business records in {component} require migration when this cryptographic primitive is replaced?
     decision_impact: >-
       A small or empty record set allows direct replacement; a large legacy
       set makes verify-then-rehash on next use the realistic path.
@@ -921,9 +870,3 @@ mechanism_guidance:
     structural_fix: >-
       ingest version-resolved SCA advisories in CI, block policy-violating builds,
       and track remediation to closure
-    team_question: >-
-      Which of these vulnerable dependency versions are reachable from code
-      this deployment actually runs?
-    decision_impact: >-
-      A reachable version needs the upgrade in this cycle; an unreachable one
-      can follow the normal dependency cadence.
