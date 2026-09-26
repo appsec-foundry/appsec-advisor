@@ -390,7 +390,7 @@ sections:
 
   # Deterministic questions selected from threat-model.yaml by the same module
   # that supplies the completion summary. It follows Top Weaknesses and is
-  # absent when neither a team decision nor unverified evidence remains.
+  # absent when no team decision remains.
   open_questions_for_team:
     heading: "### Open Questions for the Team"
     heading_numbered: false

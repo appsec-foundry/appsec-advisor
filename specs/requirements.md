@@ -130,7 +130,7 @@ may assign them again.
 
 ### REQ-RPT-003 — The report is concise and actionable for engineers
 
-A finding identifies where the problem is, why an attack works, and what must change in the repository's own vocabulary. References point only to locations that exist. Code symbols, source paths, configuration identifiers, and complete code expressions use one inline-code format consistently across report sections without consuming surrounding prose. When the code leaves team decisions open, the Management Summary shows up to three questions with weakness and finding references, followed by any unverified-evidence line; it omits the block when the selection is empty. The completion summary points readers to the report, finding triage, and the ask skill without repeating the questions.
+A finding identifies where the problem is, why an attack works, and what must change in the repository's own vocabulary. References point only to locations that exist. Code symbols, source paths, configuration identifiers, and complete code expressions use one inline-code format consistently across report sections without consuming surrounding prose. When the analysis leaves decisions open that only the team can settle, the Management Summary shows up to three questions: how critical the affected assets are when no business context declares it, then design and deployment decisions with their weakness and finding references; it never asks the team to verify individual findings and omits the block when the selection is empty. The completion summary points readers to the report, finding triage, and the ask skill without repeating the questions.
 
 ### REQ-RPT-005 — Mitigations are prioritized and verifiable
 

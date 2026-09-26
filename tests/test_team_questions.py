@@ -39,7 +39,7 @@ def anchors(*ids: str) -> set[str]:
     return {item.lower() for item in ids}
 
 
-def test_selector_caps_questions_but_keeps_unverified_evidence_line() -> None:
+def test_selector_caps_questions_and_leaves_unverified_findings_to_triage() -> None:
     model = {
         "threats": [
             finding(1),
@@ -61,7 +61,7 @@ def test_selector_caps_questions_but_keeps_unverified_evidence_line() -> None:
     )
 
     assert [item["weakness_id"] for item in selected["questions"]] == ["W-001", "W-002", "W-003"]
-    assert [item["id"] for item in selected["unverified"]] == ["F-009"]
+    assert set(selected) == {"questions"}
 
 
 def test_refuted_step_settles_the_whole_chain() -> None:
@@ -84,11 +84,7 @@ def test_refuted_step_settles_the_whole_chain() -> None:
         },
     }
 
-    assert tq.select_open_questions(model, anchors("F-001", "F-002")) == {
-        "questions": [],
-        "unverified": [],
-        "unverified_groups": [],
-    }
+    assert tq.select_open_questions(model, anchors("F-001", "F-002")) == {"questions": []}
 
 
 def test_visible_anchor_scan_ignores_opaque_markdown() -> None:
@@ -204,8 +200,6 @@ def test_every_team_question_is_one_plain_question_with_a_subject(component):
         assert question.endswith("?") and question.count("?") == 1, question
         assert not re.match(r"^[A-Z][\w -]{0,40}:\s", question), question  # no "Topic:" label
         assert not re.search(r"\bshould\b|\bplanned\b", question, re.I), question  # no proposed fix
-    for unverified in (tq.UNVERIFIED_CONFIG_QUESTION, tq.UNVERIFIED_CODE_QUESTION):
-        assert unverified.count("?") == 1 and not re.match(r"^[A-Z][\w -]{0,40}:\s", unverified)
 
 
 def test_questions_without_a_resolvable_component_do_not_invent_one():
@@ -244,30 +238,21 @@ def _actor_model(**overrides) -> dict:
     }
 
 
-def test_authentication_bypass_voids_the_authenticated_actor_separation() -> None:
-    selected = tq.select_open_questions(_actor_model(), anchors("F-001", "F-002"))["questions"]
+def test_authentication_bypass_is_a_finding_not_a_team_question() -> None:
+    questions = [
+        item["question"] for item in tq.select_open_questions(_actor_model(), anchors("F-001", "F-002"))["questions"]
+    ]
 
-    assert selected[0]["question"] == tq.ACTOR_SEPARATION_QUESTION
-    assert {ref["id"] for ref in selected[0]["refs"]} == {"F-001", "F-002"}
-
-
-def test_bypass_without_an_account_gated_finding_asks_nothing_about_actors() -> None:
-    model = _actor_model()
-    model["threats"][1]["actor_ids"] = ["ACT-D-01"]
-
-    questions = [item["question"] for item in tq.select_open_questions(model, anchors("F-001", "F-002"))["questions"]]
-
-    assert tq.ACTOR_SEPARATION_QUESTION not in questions
+    assert not any("anonymous attacker" in question for question in questions)
 
 
-def test_confirmed_bypass_replaces_rather_than_repeats_the_registration_question() -> None:
+def test_confirmed_bypass_settles_the_registration_question() -> None:
     model = _actor_model(
         meta={"open_registration_resolution": {"disputed": True, "evidence": [{"file": "signup.ts", "line": 1}]}}
     )
 
     questions = [item["question"] for item in tq.select_open_questions(model, anchors("F-001", "F-002"))["questions"]]
 
-    assert tq.ACTOR_SEPARATION_QUESTION in questions
     assert tq.REGISTRATION_QUESTION not in questions
 
 
@@ -278,26 +263,95 @@ def test_unsettled_registration_is_asked_only_while_an_authenticated_actor_exist
         "threats": [finding(2, actor_ids=["ACT-D-02"])],
     }
 
-    assert tq.REGISTRATION_QUESTION in [q["question"] for q in tq.select_open_questions(model, anchors("F-002"))["questions"]]
+    assert tq.REGISTRATION_QUESTION in [
+        q["question"] for q in tq.select_open_questions(model, anchors("F-002"))["questions"]
+    ]
 
     model["actors"] = []
     assert tq.select_open_questions(model, anchors("F-002"))["questions"] == []
 
 
-def test_unverified_findings_split_by_what_settles_them() -> None:
-    model = {
-        "threats": [
-            finding(1, evidence_check="ambiguous", evidence=[{"file": "docker-compose.yml", "line": 3}]),
-            finding(2, evidence_check="ambiguous", evidence=[{"file": "src/App.java", "line": 9}]),
-        ]
+@pytest.mark.parametrize("path", ["docker-compose.yml", "src/App.java", "deploy/nginx.conf"])
+def test_individual_findings_never_become_verification_questions(path) -> None:
+    model = {"threats": [finding(1, evidence_check="ambiguous", evidence=[{"file": path, "line": 3}])]}
+
+    assert tq.select_open_questions(model, anchors("F-001")) == {"questions": []}
+
+
+def asset(name: str, classification: str, *linked: int, stored_in: str = "") -> dict:
+    refs = [{"component_id": stored_in, "relation": "stored", "evidence": [{"file": "a.ts", "line": 1}]}]
+    return {
+        "name": name,
+        "classification": classification,
+        "linked_threats": [f"T-{n:03}" for n in linked],
+        "component_refs": refs if stored_in else [],
     }
 
-    groups = tq.select_open_questions(model, anchors("F-001", "F-002"))["unverified_groups"]
 
-    assert [group["question"] for group in groups] == [tq.UNVERIFIED_CONFIG_QUESTION, tq.UNVERIFIED_CODE_QUESTION]
-    assert [ref["id"] for ref in groups[0]["refs"]] == ["F-001"]
-    assert [ref["id"] for ref in groups[1]["refs"]] == ["F-002"]
-    assert all(group["impact"] for group in groups)
+def _asset_model(**overrides) -> dict:
+    return {
+        "components": [{"id": "db", "tier": "data"}, {"id": "api", "tier": "application"}],
+        "threats": [finding(n) for n in range(1, 5)],
+        "assets": [
+            asset("Signing Key", "Restricted", 1, 2, 3, 4, stored_in="api"),
+            asset("Customer Records", "Confidential", 1, stored_in="db"),
+            asset("Order History", "Restricted", 2, 3, stored_in="db"),
+            asset("Marketing Copy", "Public", 1, 2, 3, 4, stored_in="db"),
+            asset("Audit Trail", "Internal", 1, stored_in="db"),
+        ],
+        **overrides,
+    }
+
+
+@pytest.mark.parametrize("status", ["skipped", "not_configured", None])
+def test_undeclared_asset_criticality_is_asked_first(status) -> None:
+    model = _asset_model(business_context_trace={"status": status} if status else {})
+    model["weaknesses"] = [weakness(1, "route-by-route-authorization", 1)]
+
+    selected = tq.select_open_questions(model, anchors("F-001", "F-002", "F-003", "F-004", "W-001"))["questions"]
+
+    # Business data held in a data store leads; a key that only protects it follows.
+    assert selected[0]["question"] == (
+        "How critical are Order History, Customer Records and Signing Key to the business, "
+        "and what harm would their disclosure or manipulation cause?"
+    )
+    assert selected[0]["refs"] == [] and selected[0]["impact"] == tq.ASSET_CRITICALITY_IMPACT
+    assert selected[1]["weakness_id"] == "W-001"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"business_context_trace": {"status": "applied", "fields_present": ["sensitive_assets"]}},
+        {"business_context_trace": {"status": "applied", "fields_present": ["impact_if_compromised"]}},
+        {"threats": [finding(n, risk="Low") for n in range(1, 5)]},
+        {"assets": [asset("Marketing Copy", "Public", 1), asset("Audit Trail", "Internal", 2)]},
+        {"assets": [asset("Customer Records", "Restricted", 9, stored_in="db")]},
+    ],
+)
+def test_declared_context_or_unreached_assets_raise_no_criticality_question(overrides) -> None:
+    model = _asset_model(**overrides)
+
+    questions = tq.select_open_questions(model, anchors("F-001", "F-002", "F-003", "F-004"))["questions"]
+
+    assert not any(question["question"].startswith("How critical") for question in questions)
+
+
+def test_partial_declared_context_still_asks_for_criticality() -> None:
+    model = _asset_model(business_context_trace={"status": "applied", "fields_present": ["business_purpose"]})
+
+    assert _selected(model, "F-001", "F-002", "F-003", "F-004")[0].startswith("How critical are Order History")
+
+
+def test_asset_names_cannot_inject_markup_or_extra_questions() -> None:
+    model = _asset_model(
+        assets=[asset("Card [data](https://example.invalid)?\x1b`x`", "Restricted", 1, stored_in="db")]
+    )
+
+    question = _selected(model, "F-001")[0]
+
+    assert question.count("?") == 1
+    assert "](" not in question and "\x1b" not in question and "`" not in question
 
 
 def test_question_that_settles_more_findings_outranks_a_narrower_one() -> None:

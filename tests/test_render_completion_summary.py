@@ -32,7 +32,6 @@ def _load_module():
 
 
 rcs = _load_module()
-tq = sys.modules["team_questions"]
 
 
 # ---------------------------------------------------------------------------
@@ -728,8 +727,8 @@ class TestManualReviewStep:
         text = self.render([self.finding(1, evidence_check=state)])
         assert "F-001 (unproven)" in text
         assert "which other services, secrets or credentials can that process reach?" in text
-        # Source evidence: settled by reachability, not by reading the environment.
-        assert self.bullets(text)[-1] == f"- {tq.UNVERIFIED_CODE_QUESTION} (F-001)"
+        # Confirming the finding is triage work, not a separate team question.
+        assert len(self.bullets(text)) == 1
 
     def test_practice_evidence_does_not_become_confirmed_exploitation(self):
         text = self.render([self.finding(1, evidence_tier="insecure-practice")])
@@ -737,10 +736,9 @@ class TestManualReviewStep:
         # The insecure state is observed and verified: nothing left to confirm.
         assert "The code alone could not confirm" not in text
 
-    def test_unverified_findings_close_the_block_outside_the_question_cap(self):
+    def test_unverified_findings_add_no_question_beyond_the_cap(self):
         findings = [self.finding(n, "CWE-639", "Object owner not checked") for n in range(1, 5)]
         findings.append(self.finding(9, "CWE-89", "SQL injection in invoice search", evidence_check="ambiguous"))
-        findings.append(self.finding(10, "CWE-328", "Unsalted MD5 password hash", evidence_tier="insecure-practice"))
         weaknesses = [
             self.weakness(1, "route-by-route-authorization", 1),
             self.weakness(2, "secrets-committed-to-source", 2),
@@ -748,16 +746,9 @@ class TestManualReviewStep:
             self.weakness(4, "build-pipeline-mutable-refs", 4),
         ]
         questions = self.bullets(self.render(findings, weaknesses))
-        assert len(questions) == 4
-        assert [re.findall(r"\b(W-\d+)\b", line) for line in questions[:3]] == [["W-001"], ["W-002"], ["W-003"]]
-        # The verified practice-tier F-010 is not listed; only the ambiguous F-009.
-        assert questions[3] == f"- {tq.UNVERIFIED_CODE_QUESTION} (F-009)"
-        # A verified-only model raises no closing line; six unverified findings list five.
-        assert tq.UNVERIFIED_CODE_QUESTION not in self.render(findings[:4], weaknesses[:1])
+        assert [re.findall(r"\b(W-\d+)\b", line) for line in questions] == [["W-001"], ["W-002"], ["W-003"]]
         many = [self.finding(n, "CWE-89", "SQL injection", evidence_check="ambiguous") for n in range(1, 7)]
-        assert self.bullets(self.render(many)) == [
-            f"- {tq.UNVERIFIED_CODE_QUESTION} (" + ", ".join(f"F-{n:03}" for n in range(1, 6)) + " +1 more)"
-        ]
+        assert self.render(many) == ""
 
     @pytest.mark.parametrize(
         "report",

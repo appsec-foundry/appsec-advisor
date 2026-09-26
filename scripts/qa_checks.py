@@ -1443,7 +1443,7 @@ def check_ms_structure(md_path: Path) -> tuple[Report, str]:
                 model,
                 _team_questions.visible_anchor_ids(text),
             )
-            expected_questions = bool(selection["questions"] or selection["unverified"])
+            expected_questions = bool(selection["questions"])
     except Exception:
         expected_questions = None
     question_count = names.count("Open Questions for the Team")

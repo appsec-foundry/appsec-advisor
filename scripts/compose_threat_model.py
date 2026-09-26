@@ -9954,7 +9954,7 @@ def _render_ms_open_questions(ctx: RenderContext) -> str:
         ctx.yaml_data,
         _team_questions.model_anchor_ids(ctx.yaml_data),
     )
-    if not selection["questions"] and not selection["unverified"]:
+    if not selection["questions"]:
         return ""
 
     def link(item_id: str, *, unproven: bool = False) -> str:
@@ -9979,12 +9979,6 @@ def _render_ms_open_questions(ctx: RenderContext) -> str:
         out.append(f"- {topic['question']}" + (f" ({refs})" if refs else ""))
         if topic.get("impact"):
             out.append(f"  _{topic['impact']}_")
-    for group in selection.get("unverified_groups") or []:
-        refs = ", ".join(link(item["id"]) for item in group["refs"][:5])
-        if len(group["refs"]) > 5:
-            refs += f" +{len(group['refs']) - 5} more"
-        out.append(f"- {group['question']} ({refs})")
-        out.append(f"  _{group['impact']}_")
     out.append("")
     return "\n".join(out)
 
@@ -18537,7 +18531,7 @@ def render(
             # the hoisted P4 verdict table so pre-register runs / clean repos with
             # no register render nothing (goldens unchanged).
             "has_weakness_register": bool(yaml_data.get("weaknesses")),
-            "has_open_questions": bool(_open_questions["questions"] or _open_questions["unverified"]),
+            "has_open_questions": bool(_open_questions["questions"]),
             # Optional MS "Architectural Anti-Patterns" callout — true when the
             # threat-renderer authored ms-anti-patterns.json (gated on presence;
             # the renderer also self-gates defensively).

@@ -20,37 +20,19 @@ from _shared_sources import DESIGN_LEVEL_SOURCES
 CONSOLE_HEADER = "Open questions for the team:"
 REPORT_HEADING = "### Open Questions for the Team"
 REPORT_INTRO = (
-    "The analysis could not fully resolve these points from the code. Discuss them with the people who know the "
-    "deployment and the business requirements; the answers can change the severity or the fix of the linked findings. "
-    "Each question states under it what the answer decides, so it can be settled without reopening the analysis."
+    "The code cannot answer these questions; the people who own the business and the deployment can. "
+    "Each question states under it what its answer changes."
 )
-# Unverified findings split by what actually settles them: a configuration value
-# is checked against the running environment, a code path against reachability.
-# One generic "does this hold?" line asks a question nobody can act on, so the
-# split is by evidence location — the only signal the model carries for this.
-UNVERIFIED_CONFIG_QUESTION = "Which of these settings are active in the environment you actually run?"
-UNVERIFIED_CONFIG_IMPACT = (
-    "A setting confirmed active keeps its finding at the current rating; one that differs in the real "
-    "environment turns it into an environment-specific note."
+# Asset criticality is a business fact the code never carries. Until declared
+# context names sensitive assets or compromise impact, the impact ratings rest on
+# classifications inferred from code, so the owners are asked before anything else.
+ASSET_CRITICALITY_IMPACT = (
+    "The answer weights the impact rating and fix order of every finding that reaches these assets; recorded "
+    "under Sensitive assets and Impact if compromised in `docs/business-context.md`, the next full run applies it."
 )
-UNVERIFIED_CODE_QUESTION = "Which of these code paths are reachable in a running instance?"
-UNVERIFIED_CODE_IMPACT = (
-    "A reachable path confirms the finding as rated; an unreachable one makes it dead code to remove rather "
-    "than a fix to ship."
-)
-_DEPLOYMENT_FILE_RE = re.compile(
-    r"(?:^|/)(?:docker-compose[^/]*\.ya?ml|Dockerfile(?:\.[^/]+)?|Jenkinsfile|nginx[^/]*\.conf|[^/]*\.properties"
-    r"|[^/]*\.env|\.env[^/]*)$|^\.github/workflows/|^\.gitlab-ci\.ya?ml$",
-    re.I,
-)
-# An authenticated actor earns its own row only while something separates it from
-# the anonymous one. A confirmed authentication bypass removes that separation, so
-# the actor-gated findings silently inherit the anonymous actor's likelihood.
-ACTOR_SEPARATION_QUESTION = "What separates an anonymous attacker from an authenticated user in this system today?"
-ACTOR_SEPARATION_IMPACT = (
-    "If the confirmed authentication bypass removes that separation, the account-gated findings carry the "
-    "anonymous attacker's likelihood instead of their own, and the separate actor stops being meaningful."
-)
+_CRITICAL_CLASSIFICATIONS = {"Restricted": 0, "Confidential": 1}
+_DECLARED_ASSET_FIELDS = {"sensitive_assets", "impact_if_compromised"}
+_UNSAFE_NAME_CHARS_RE = re.compile(r"[\x00-\x1f\x7f\[\]()<>`*_?#|\\]")
 _AUTHENTICATED_ACCESS = {"authenticated-user-session", "authenticated-session"}
 _AUTHENTICATED_POSITIONS = {"authenticated-user-authority", "authenticated-user"}
 _BYPASS_CWES = {"CWE-287", "CWE-288", "CWE-290", "CWE-294", "CWE-303", "CWE-304", "CWE-305", "CWE-306", "CWE-1390"}
@@ -144,14 +126,16 @@ def select_open_questions(
     team_questions: Optional[dict[str, str]] = None,
     decision_impacts: Optional[dict[str, str]] = None,
 ) -> dict[str, list[dict]]:
-    """Select up to three team questions and the verification questions.
+    """Select up to three questions only the team can answer.
 
-    The sources are unresolved verified abuse-case investigations, registered
-    weakness mechanisms with an explicit question, the actor-separation check,
-    and the few mechanism signals intentionally handled outside the weakness
-    register. Only Medium-or-higher findings with evidence and a delivered
-    anchor participate. Every selected topic carries the `impact` its answer
-    decides, so a renderer never has to infer the consequence from the wording.
+    The sources are undeclared criticality of the classified assets the
+    findings reach, unresolved verified abuse-case investigations, registered
+    weakness mechanisms with an explicit question, and the few mechanism
+    signals intentionally handled outside the weakness register. Only
+    Medium-or-higher findings with evidence and a delivered anchor participate.
+    Verifying an individual finding is triage work, never a team question.
+    Every selected topic carries the `impact` its answer decides, so a renderer
+    never has to infer the consequence from the wording.
     """
     if team_questions is None:
         team_questions = mechanism_team_questions()
@@ -189,10 +173,6 @@ def select_open_questions(
             )
             for location in locations
         )
-        deployment = any(
-            isinstance(location, dict) and _DEPLOYMENT_FILE_RE.search(str(location.get("file") or ""))
-            for location in locations
-        )
         actor_ids = threat.get("actor_ids")
         candidates.append(
             {
@@ -202,12 +182,10 @@ def select_open_questions(
                 "title": title,
                 "context": context,
                 "build_time": build_time,
-                "deployment": deployment,
                 "actor_ids": {str(value) for value in actor_ids} if isinstance(actor_ids, list) else set(),
                 "component": str(threat.get("component") or threat.get("component_id") or ""),
                 "unproven": threat.get("evidence_tier") != "confirmed-exploitable"
                 or threat.get("evidence_check") not in {"verified", "verified-prior"},
-                "unverified": threat.get("evidence_check") not in {"verified", "verified-prior"},
             }
         )
     candidates.sort(key=lambda item: (item["rank"], int(item["id"][2:])))
@@ -244,9 +222,9 @@ def select_open_questions(
             or set(actor.get("trust_positions") or []) & _AUTHENTICATED_POSITIONS
         )
     }
-    # Actor separation. An authenticated actor is a modelling claim that reaching
-    # its findings costs an account. A confirmed authentication bypass voids that
-    # claim, and the register keeps rating those findings as if it held.
+    # An authentication bypass next to account-gated findings means the attacker
+    # needs no account. It is a finding, not a team decision, so it only keeps the
+    # registration question below from asking something the code already settled.
     gated = [item for item in candidates if item["actor_ids"] and item["actor_ids"] <= authenticated_actors]
     bypass = [
         item
@@ -265,7 +243,7 @@ def select_open_questions(
     # an account decides whether that actor is reachable at all, so an unsettled
     # resolution is asked rather than assumed (VulnerableApp, 2026-09-20).
     # A confirmed bypass settles it the other way: the attacker needs no account,
-    # so asking how accounts are issued would only restate the separation question.
+    # so how accounts are issued no longer changes any rating.
     registration_open = not separation_broken and (
         (registration.get("disputed") is True and registration.get("evidence"))
         or (str(registration.get("reason") or "") == "not-established" and authenticated_actors)
@@ -283,6 +261,46 @@ def select_open_questions(
                 "weakness_id": "",
             }
         )
+
+    trace = yaml_data.get("business_context_trace") or {}
+    declared = trace.get("status") == "applied" and set(trace.get("fields_present") or []) & _DECLARED_ASSET_FIELDS
+    if not declared:
+        data_tier = {
+            str(component.get("id"))
+            for component in yaml_data.get("components") or []
+            if isinstance(component, dict) and component.get("tier") == "data"
+        }
+        exposed: list[tuple[bool, int, int, str]] = []
+        for asset in yaml_data.get("assets") or []:
+            if not isinstance(asset, dict) or asset.get("classification") not in _CRITICAL_CLASSIFICATIONS:
+                continue
+            linked = {_severity_rollup.display_id(str(value)) for value in asset.get("linked_threats") or []}
+            name = " ".join(_UNSAFE_NAME_CHARS_RE.sub("", str(asset.get("name") or "")).split())[:60].strip()
+            reach = len(linked & by_id.keys())
+            # Data held in a data store is what the business owns; keys and tokens
+            # that only protect it follow its criticality, so they rank behind it.
+            persisted = any(
+                isinstance(ref, dict) and ref.get("relation") == "stored" and ref.get("component_id") in data_tier
+                for ref in asset.get("component_refs") or []
+            )
+            if name and reach:
+                exposed.append((not persisted, _CRITICAL_CLASSIFICATIONS[asset["classification"]], -reach, name))
+        names = list(dict.fromkeys(entry[-1] for entry in sorted(exposed)))[:3]
+        if names:
+            listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+            topics.append(
+                {
+                    "rank": -2,
+                    "order": -2,
+                    "question": f"How critical are {listed} to the business, "
+                    "and what harm would their disclosure or manipulation cause?",
+                    "impact": ASSET_CRITICALITY_IMPACT,
+                    "refs": [],
+                    "hidden": 0,
+                    "reach": 0,
+                    "weakness_id": "",
+                }
+            )
 
     def add(
         question: str,
@@ -364,9 +382,6 @@ def select_open_questions(
             weakness_id=weakness_id,
         )
 
-    if separation_broken:
-        add(ACTOR_SEPARATION_QUESTION, bypass, gated, impact=ACTOR_SEPARATION_IMPACT, priority=-1)
-
     execution = [item for item in matching({"CWE-77", "CWE-78", "CWE-94", "CWE-95"}) if not item["build_time"]]
     if execution:
         runs = "commands" if all(item["cwes"] & {"CWE-77", "CWE-78"} for item in execution) else "code"
@@ -421,20 +436,4 @@ def select_open_questions(
         if len(selected) == 3:
             break
 
-    unverified = [item for item in candidates if item["unverified"]]
-    config_side = [item for item in unverified if item["deployment"]]
-    code_side = [item for item in unverified if not item["deployment"]]
-    groups: list[dict] = []
-    if config_side and code_side:
-        groups.append({"question": UNVERIFIED_CONFIG_QUESTION, "impact": UNVERIFIED_CONFIG_IMPACT, "refs": config_side})
-        groups.append({"question": UNVERIFIED_CODE_QUESTION, "impact": UNVERIFIED_CODE_IMPACT, "refs": code_side})
-    elif config_side:
-        groups.append({"question": UNVERIFIED_CONFIG_QUESTION, "impact": UNVERIFIED_CONFIG_IMPACT, "refs": config_side})
-    elif code_side:
-        groups.append({"question": UNVERIFIED_CODE_QUESTION, "impact": UNVERIFIED_CODE_IMPACT, "refs": code_side})
-
-    return {
-        "questions": selected,
-        "unverified": unverified,
-        "unverified_groups": groups,
-    }
+    return {"questions": selected}

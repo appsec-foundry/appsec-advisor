@@ -508,7 +508,7 @@ requirements:
       - tests/test_embedded_store_access.py::test_open_accesses_to_linked_embedded_stores_record_no_authentication
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_no_generic_questions_for_empty_or_unmatched_models
       - tests/test_render_completion_summary.py::TestManualReviewStep::test_pipeline_gaps_and_resolved_chains_are_not_workshop_hypotheses
-      - tests/test_team_questions.py::test_selector_caps_questions_but_keeps_unverified_evidence_line
+      - tests/test_team_questions.py::test_selector_caps_questions_and_leaves_unverified_findings_to_triage
       - tests/test_team_questions.py::test_disputed_registration_is_shared_without_invented_finding_links
       - tests/test_resolve_actors.py::test_registration_owner_precedes_reach_equivalence
       - tests/test_detect_open_registration.py::test_registration_resolution_has_identical_closed_schemas

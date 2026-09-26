@@ -942,7 +942,7 @@ def build_manual_review_step(
         _team_questions.visible_anchor_ids(report_text),
         team_questions=team_questions,
     )
-    if not selection["questions"] and not selection["unverified"]:
+    if not selection["questions"]:
         return ""
 
     # Question first, plain IDs after it: a terminal prints a Markdown link's target beside its text (RA-13).
@@ -956,12 +956,6 @@ def build_manual_review_step(
         lines.append(f"- {topic['question']}" + (f" ({refs})" if refs else ""))
         if topic.get("impact"):
             lines.append(f"  → {topic['impact']}")
-    for group in selection.get("unverified_groups") or []:
-        refs = ", ".join(item["id"] for item in group["refs"][:5])
-        if len(group["refs"]) > 5:
-            refs += f" +{len(group['refs']) - 5} more"
-        lines.append(f"- {group['question']} ({refs})")
-        lines.append(f"  → {group['impact']}")
     return "\n".join(lines)
 
 

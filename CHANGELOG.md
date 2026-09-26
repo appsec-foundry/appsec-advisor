@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `create-threat-model` no longer requires the `Bash(*)` allow-list when the configured `permissions.defaultMode` is `auto` or `bypassPermissions`.
 - The missing-permissions abort lists each settings file with its status, reports settings a sandbox makes unreadable as unverifiable instead of missing, and gives a `setup-target` command that runs from any directory.
 - Completion summaries omit open team questions and use the existing report, triage, and ask paths for follow-up.
+- The Management Summary's open team questions ask how critical the affected assets are when no business context declares it, and no longer ask the team to verify individual findings.
 - The session banner shows the threat-model line only when a model exists or a scan runs, and finds the model from subdirectories; `/appsec-advisor:help` prints a quick start grouped by function, covering threat models, requirements checks, the baseline and the coach, with the full reference behind `--all`.
 
 ### Fixed

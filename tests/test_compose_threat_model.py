@@ -6628,8 +6628,9 @@ def test_ms_open_questions_follow_top_weaknesses(monkeypatch) -> None:
     report_questions = compose._render_ms_open_questions(_Ctx())
 
     assert report_questions.startswith("### Open Questions for the Team\n\n")
-    assert "The analysis could not fully resolve these points from the code." in report_questions
-    assert "Discuss them with the people who know the deployment" in report_questions
+    assert compose._team_questions.REPORT_INTRO in report_questions
+    # The ambiguous T-002 needs triage, not a team decision: no verification bullet.
+    assert "F-002" not in report_questions
     for value in ("W-001", "F-001", "Which cross-user or cross-tenant accesses through these routes are intended"):
         assert value in report_questions
     for report_line in [line for line in report_questions.splitlines() if line.startswith("- ")]:
