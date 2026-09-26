@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -1095,6 +1096,46 @@ class TestRenderThreatCardEvidenceSnippet:
         # snippet code block present (the real source line read from repo)
         assert "const q = 'SELECT ' + email;" in rendered
 
+    @staticmethod
+    def _render_snippet_block(tmp_path, source: str, rel: str, line: int, **threat) -> str:
+        out = _prepare_output_dir(tmp_path)
+        repo = tmp_path / "repo"
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(source)
+        (out / ".skill-config.json").write_text(json.dumps({"repo_root": str(repo)}))
+        data = _load_fixture_yaml(out)
+        data["threats"][0].update({"cwe": "CWE-89", "evidence": {"file": rel, "line": line}, **threat})
+        _write_yaml(out, data)
+        rendered, _ = compose.render(CONTRACT, out)
+        blocks = re.findall(r"```[a-z]*\n(.*?)\n```", rendered, re.S)
+        return next(b for b in blocks if "│" in b)
+
+    def test_single_location_snippet_is_numbered_without_header(self, tmp_path):
+        block = self._render_snippet_block(
+            tmp_path, "line1\nline2\nconst q = 'SELECT ' + email;\nline4\nline5\n", "routes/login.ts", 3
+        )
+        # The Location field names file:line, so no `// file:line` header line.
+        assert "routes/login.ts" not in block
+        assert "→ 3 │ const q = 'SELECT ' + email;" in block.splitlines()
+        # Window starts at the file's first line, not before it.
+        assert block.splitlines()[0].startswith("  1 │ ")
+
+    def test_consolidated_snippet_names_its_file_in_a_caption(self, tmp_path):
+        block = self._render_snippet_block(
+            tmp_path,
+            "a\nb\nuser = find(req.body.UserId)\nd\n",
+            "src/api/orders.py",
+            3,
+            instances=[
+                {"file": "src/api/orders.py", "line": 3, "severity": "critical"},
+                {"file": "src/api/carts.py", "line": 8, "severity": "high"},
+            ],
+        )
+        lines = block.splitlines()
+        # Plain caption: `//` is not a comment in Python, YAML or shell.
+        assert lines[0] == "src/api/orders.py"
+        assert "→ 3 │ user = find(req.body.UserId)" in lines
+
     def test_evidence_as_list_shape(self, tmp_path):
         out = _prepare_output_dir(tmp_path)
         data = _load_fixture_yaml(out)
@@ -1477,3 +1518,20 @@ class TestRenderAbuseChainAndBoundaries:
         _write_yaml(out, data)
         rendered, _ = compose.render(CONTRACT, out)
         assert rendered
+
+
+class TestNumberSnippetLines:
+    def test_marks_only_the_evidence_line(self):
+        out = compose._number_snippet_lines("a\nb\nc", 41, 42)
+        assert out.splitlines() == ["  41 │ a", "→ 42 │ b", "  43 │ c"]
+
+    def test_aligns_numbers_across_a_digit_boundary(self):
+        out = compose._number_snippet_lines("a\nb\nc", 8, 9)
+        assert out.splitlines() == ["   8 │ a", "→  9 │ b", "  10 │ c"]
+
+    def test_blank_source_line_keeps_its_number(self):
+        out = compose._number_snippet_lines("a\n\nc", 1, 3)
+        assert out.splitlines() == ["  1 │ a", "  2 │", "→ 3 │ c"]
+
+    def test_evidence_line_outside_window_marks_nothing(self):
+        assert "→" not in compose._number_snippet_lines("a\nb", 5, 99)

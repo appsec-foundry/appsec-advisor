@@ -14366,6 +14366,22 @@ def _trim_code_line(ln: str) -> str:
     return ln[:cut].rstrip() + " …"
 
 
+def _number_snippet_lines(snippet_text: str, first_line: int, mark_line: int) -> str:
+    """Prefix each snippet line with its source line number, gutter-style.
+
+    ``first_line`` is the source line of the first snippet line. The line at
+    ``mark_line`` gets a ``→`` marker so the reader sees the evidence line
+    without counting from the Location. Numbers are right-aligned to the
+    widest one so the ``│`` separator forms one column.
+    """
+    lines = snippet_text.split("\n")
+    width = len(str(first_line + len(lines) - 1))
+    return "\n".join(
+        f"{'→' if n == mark_line else ' '} {n:>{width}} │ {text}".rstrip()
+        for n, text in enumerate(lines, start=first_line)
+    )
+
+
 def _html_escape_for_pre(text: str) -> str:
     """HTML-escape so the text can sit inside ``<pre><code>…</code></pre>``."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -15213,7 +15229,14 @@ def _build_threat_card(
         snippet_text = _read_evidence_snippet(repo_root, ev_file, ev_line, depth["snippet_context"])
         if snippet_text:
             lang = (_lang_class_for_file(ev_file) or "").replace("language-", "")
-            snippet_block = f"```{lang}\n// {ev_file}:{ev_line}\n{snippet_text}\n```"
+            # Same window start as _read_evidence_snippet.
+            first_line = max(1, ev_line - depth["snippet_context"])
+            numbered = _number_snippet_lines(snippet_text, first_line, ev_line)
+            # A single-location card names `file:line` in its Location field; a
+            # consolidated card does not, so its block carries the file as a
+            # caption line (no comment syntax — it is not valid in every language).
+            caption = f"{ev_file}\n" if len(_distinct_instance_locations(t)) > 1 else ""
+            snippet_block = f"```{lang}\n{caption}{numbered}\n```"
 
     # ---- Assemble the card (threatdemo.md layout) -----------------------
     # Fixed field order, every card identical:
