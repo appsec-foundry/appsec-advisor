@@ -208,6 +208,18 @@ def test_shipped_inventory_and_source_routes_are_valid():
     assert runner.group_problems() == []
 
 
+def test_every_python_source_has_a_reviewed_route_or_full_suite_reason():
+    sources = {path.relative_to(runner.ROOT).as_posix() for path in (runner.ROOT / "scripts").glob("*.py")}
+    assert sources <= runner.SOURCE_TESTS.keys() | runner.FULL_SUITE_SOURCES.keys()
+    assert not runner.SOURCE_TESTS.keys() & runner.FULL_SUITE_SOURCES.keys()
+    for path, reason in runner.FULL_SUITE_SOURCES.items():
+        assert path in sources
+        assert reason.strip()
+        result = runner.select_changed([path])
+        assert result.paths == ("tests/",)
+        assert any(reason in explanation for explanation in result.reasons)
+
+
 @pytest.fixture
 def selection_repo(tmp_path, monkeypatch):
     groups = {
@@ -309,6 +321,18 @@ def test_multiple_reviewed_source_modules_union_their_routes(selection_repo, mon
         "tests/test_reader.py",
     }
     assert any("scripts/second.py" in reason and "1 reviewed test module(s)" in reason for reason in result.reasons)
+
+
+@pytest.mark.parametrize("name", ["shared_parser", "legacy_converter"])
+def test_explicit_full_suite_reason_overrides_other_focused_routes(selection_repo, monkeypatch, name):
+    source = f"scripts/{name}.py"
+    (selection_repo / source).touch()
+    reason = "Consumer behavior is not bounded by measured tests."
+    monkeypatch.setattr(runner, "FULL_SUITE_SOURCES", {source: reason})
+    result = runner.select_changed(["scripts/emitter.py", source], selection_repo)
+    assert result.paths == ("tests/",)
+    assert any(reason in explanation for explanation in result.reasons)
+    assert any("scripts/emitter.py" in explanation for explanation in result.reasons)
 
 
 def test_deleted_source_requires_full_suite(selection_repo):
@@ -682,9 +706,29 @@ def test_previously_unrouted_sources_keep_their_consumer_routes(source, consumer
 
 
 def test_all_shipped_source_routes_remain_selective():
-    for source in runner.SOURCE_TESTS:
-        selection = runner.select_changed([source])
-        assert selection.paths != ("tests/",), (source, selection.reasons)
+    # Any unbounded member makes the union fall back, so one selection checks
+    # every route without repeatedly validating the same complete inventory.
+    selection = runner.select_changed(list(runner.SOURCE_TESTS))
+    assert selection.paths != ("tests/",), selection.reasons
+
+
+def test_abuse_case_priority_change_selects_its_consumers_without_the_full_suite():
+    result = runner.select_changed(
+        ["scripts/_severity_policy.py", "scripts/match_abuse_cases.py", "scripts/render_abuse_cases.py"]
+    )
+    assert {
+        "tests/test_severity_policy.py",
+        "tests/test_match_abuse_cases.py",
+        "tests/test_abuse_case_verdicts.py",
+        "tests/test_render_abuse_cases.py",
+        "tests/test_triage_compute_ranking.py",
+        "tests/test_build_threat_model_yaml.py",
+        "tests/test_orchestration_controller.py",
+        "tests/test_reference_format.py",
+        "tests/test_threat_fixture.py",
+    } <= set(result.paths)
+    assert "tests/" not in result.paths
+    assert "tests/test_install_baseline.py" not in result.paths
 
 
 @pytest.mark.parametrize(
