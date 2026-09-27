@@ -6117,6 +6117,15 @@ def _bind_finalized_component_fingerprint(output_dir: Path, repo_root: Path) -> 
             "reason=own flows unauthenticated and no request hop authenticates",
             level="WARN",
         )
+    from reconcile_role_access import classify as classify_role_access
+
+    flows, classified = classify_role_access(flows, components.get("components") or [])
+    for change in classified:
+        _append_event(
+            output_dir,
+            "ROLE_ACCESS_CLASSIFIED",
+            f"entity={change['entity_id']} access={change['to']} reason=request path proves the class",
+        )
     from reconcile_privileged_roles import reconcile as reconcile_privileged_roles
     from reconcile_privileged_roles import unevidenced_privileged_actors
 

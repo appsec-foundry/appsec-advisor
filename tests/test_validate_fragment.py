@@ -956,6 +956,64 @@ def test_external_entity_references_resolve_and_remain_external():
     assert vf.architecture_reference_errors(data)
 
 
+def _role_model(client="spa", role="ext-shopper", *, interaction=True, access=None, behind=("none", "cookie")):
+    components = [
+        {"id": client, "tier": "client"},
+        {"id": "api", "tier": "application"},
+        {"id": "db", "tier": "data"},
+    ]
+    entity = {"id": role, "name": "Shopper", "kind": "legitimate-role", **({"access": access} if access else {})}
+    flows = [
+        {"id": "df-001", "from": "external", "from_entity": role, "to": "api"},
+        {"id": "df-002", "from": client, "to": "api"},
+        {"id": "df-003", "from": "api", "to": "db"},
+    ]
+    flows[0]["authentication"] = {"scheme": behind[0]}
+    flows[1]["authentication"] = {"scheme": behind[1]}
+    if interaction:
+        flows.append({"id": "df-004", "from": "external", "from_entity": role, "to": client, "interaction": True})
+    return {"external_entities": [entity], "data_flows": flows}, components
+
+
+@pytest.mark.parametrize("client,role", [("spa", "ext-shopper"), ("web-portal", "ext-member")])
+def test_roles_must_use_the_client_and_reach_one_privilege_level(client, role):
+    data, components = _role_model(client, role, interaction=False, behind=("none", "none"))
+    errors = vf.fragment_invariant_errors("data-flows", data, context={"components": components})
+    assert [e for e in errors if "uses the client" in e] == [
+        f"no legitimate role uses the client component(s) {client}: add an interaction flow "
+        f"from the role that uses each client ({role})"
+    ]
+    data, components = _role_model(client, role)
+    errors = vf.fragment_invariant_errors("data-flows", data, context={"components": components})
+    assert [e for e in errors if "cannot be derived" in e] == [
+        f"{role}: its request path reaches unauthenticated hops (df-001) and authenticated hops (df-002), "
+        "so its access cannot be derived; set `access`, modelling one role per privilege level"
+    ]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"access": "internet-user"},
+        {"behind": ("none", "none")},
+        {"behind": ("bearer", "cookie")},
+        {"behind": ("none", "unknown")},
+    ],
+    ids=["classified", "anonymous", "authenticated", "unknown"],
+)
+def test_derivable_or_classified_roles_that_use_the_client_pass(change):
+    data, components = _role_model(**change)
+    assert vf.legitimate_role_errors(data, components) == []
+
+
+def test_role_rules_skip_models_without_a_client_or_roles_and_published_models():
+    data, components = _role_model(interaction=False)
+    api_only = [c for c in components if c["tier"] != "client"]
+    assert [e for e in vf.legitimate_role_errors(data, api_only) if "client" in e] == []
+    assert vf.legitimate_role_errors({"external_entities": [], "data_flows": data["data_flows"]}, components) == []
+    assert vf.architecture_reference_errors({**data, "components": components}) == []
+
+
 def test_architecture_evidence_must_be_real_contained_source(tmp_path):
     (tmp_path / "roles.ts").write_text('export const roles = ["operator"]\n')
     data = {"external_entities": [{"id": "ext-operator", "evidence": [{"file": "roles.ts", "line": 1}]}]}

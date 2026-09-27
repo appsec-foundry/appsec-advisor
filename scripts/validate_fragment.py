@@ -467,6 +467,44 @@ def architecture_reference_errors(data: dict) -> list[str]:
     return errors
 
 
+def legitimate_role_errors(data: dict, components: list) -> list[str]:
+    """Roles Figure 1 cannot draw as distinct, connected people; checked on the analyst's own fragment.
+
+    A published model is not re-checked: these rules return the fragment to its
+    author, and an exported model has no author left to correct it.
+    """
+    from reconcile_role_access import _data_tier, mixed_request_path, unclassified_regular_roles
+
+    flows = [row for row in data.get("data_flows") or [] if isinstance(row, dict)]
+    roles = [
+        e
+        for e in data.get("external_entities") or []
+        if isinstance(e, dict) and e.get("kind") == "legitimate-role" and e.get("access") != "internet-priv-user"
+    ]
+    clients = sorted(c["id"] for c in components if isinstance(c, dict) and c.get("tier") == "client" and c.get("id"))
+    errors = []
+    role_ids = {e.get("id") for e in roles}
+    if (
+        clients
+        and roles
+        and not any(f.get("interaction") and f.get("from_entity") in role_ids and f.get("to") in clients for f in flows)
+    ):
+        errors.append(
+            f"no legitimate role uses the client component(s) {', '.join(clients)}: add an interaction flow "
+            f"from the role that uses each client ({', '.join(sorted(role_ids))})"
+        )
+    data_tier = _data_tier(components)
+    for entity in unclassified_regular_roles({"external_entities": roles}):
+        mixed = mixed_request_path(entity.get("id"), flows, data_tier)
+        if mixed:
+            errors.append(
+                f"{entity.get('id')}: its request path reaches unauthenticated hops ({', '.join(mixed[0])}) and "
+                f"authenticated hops ({', '.join(mixed[1])}), so its access cannot be derived; set `access`, "
+                "modelling one role per privilege level"
+            )
+    return errors
+
+
 def data_flow_endpoint_errors(flows: Any, component_ids: Any | None = None) -> list[str]:
     """Unique flow IDs, two distinct endpoints, and endpoints the inventory knows.
 
@@ -573,6 +611,7 @@ def fragment_invariant_errors(
         ids = [row["id"] for row in components if isinstance(row, dict) and isinstance(row.get("id"), str)]
         return (
             architecture_reference_errors({**data, "components": components})
+            + legitimate_role_errors(data, components)
             + interaction_evidence_errors(data.get("data_flows"), components)
             + data_flow_endpoint_errors(data.get("data_flows"), ids)
         )

@@ -9,6 +9,11 @@ analyst wrote: a role whose requests reach the system without authentication
 nowhere is anonymous, whatever the class claims. `unknown` proves nothing, so
 a path that is only unknown is left as authored.
 
+A regular role the analyst left unclassified takes the class its request path
+proves: `internet-anon` when every hop is `none`, `internet-user` when every
+hop with a known scheme authenticates. A path that mixes both proves neither;
+the architecture validator returns it to the analyst (`mixed_request_path`).
+
 Access control outside the repository (ingress SSO, VPN, authenticating proxy)
 is invisible to the code, so the owner may declare roles under
 `legitimate_roles` in `.appsec/actors.yaml`. A declared role replaces the
@@ -69,6 +74,43 @@ def proven_anonymous(entity_id: str, flows: list[dict], data_tier: set) -> bool:
     if any(_scheme(f) not in _UNPROVEN for f in (*direct, *path)):
         return False
     return any(_scheme(f) == "none" for f in direct)
+
+
+def derived_access(entity_id: str, flows: list[dict], data_tier: set) -> str | None:
+    """The regular access class the role's own request path proves, or None when unknown or mixed."""
+    direct, path = request_path(entity_id, flows, data_tier)
+    schemes = {_scheme(f) for f in (*direct, *path)}
+    if schemes == {"none"}:
+        return "internet-anon"
+    known = schemes - {"unknown"}
+    return "internet-user" if known and "none" not in known else None
+
+
+def mixed_request_path(entity_id: str, flows: list[dict], data_tier: set) -> tuple[list[str], list[str]] | None:
+    """(unauthenticated hop ids, authenticated hop ids) when the path contains both, else None."""
+    direct, path = request_path(entity_id, flows, data_tier)
+    hops = (*direct, *path)
+    open_ids = sorted(f.get("id") for f in hops if _scheme(f) == "none")
+    gated_ids = sorted(f.get("id") for f in hops if _scheme(f) not in _UNPROVEN)
+    return (open_ids, gated_ids) if open_ids and gated_ids else None
+
+
+def unclassified_regular_roles(document: dict) -> list[dict]:
+    return [e for e in _roles(document) if not e.get("access") and not e.get("declared")]
+
+
+def classify(document: dict, components: list) -> tuple[dict, list[dict]]:
+    """Return the data-flow document and one receipt per unclassified role its request path classifies."""
+    result = copy.deepcopy(document)
+    flows = _flows(result)
+    data_tier = _data_tier(components)
+    changes = []
+    for entity in unclassified_regular_roles(result):
+        access = derived_access(entity.get("id"), flows, data_tier)
+        if access:
+            entity["access"] = access
+            changes.append({"entity_id": entity["id"], "to": access})
+    return result, changes
 
 
 def system_proven_anonymous(document: dict, components: list) -> bool:

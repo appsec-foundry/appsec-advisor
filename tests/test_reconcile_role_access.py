@@ -10,7 +10,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from reconcile_role_access import (  # noqa: E402
     apply_declared,
+    classify,
     declared_roles,
+    mixed_request_path,
     reconcile,
     system_proven_anonymous,
 )
@@ -198,7 +200,50 @@ def test_a_declared_anonymous_role_leaves_the_system_proven_anonymous(tmp_path):
     assert system_proven_anonymous(result, COMPONENTS)
 
 
-def _handoff(tmp_path, declaration=None):
+def _classified(flows, entity="ext-role", **extra):
+    doc = document(flows, access=None, entity=entity)
+    del doc["external_entities"][0]["access"]
+    doc["external_entities"][0].update(extra)
+    result, changes = classify(doc, COMPONENTS)
+    return result["external_entities"][0].get("access"), changes
+
+
+@pytest.mark.parametrize("entity", ["ext-role", "ext-portal-member"])
+def test_unclassified_role_behind_a_client_takes_the_class_its_whole_path_proves(entity):
+    uses = flow("df-001", "external", "spa", entity=entity, interaction=True)
+    authenticated = [uses, flow("df-002", "spa", "backend", "cookie"), flow("df-003", "backend", "gateway", "bearer")]
+    assert _classified(authenticated, entity) == ("internet-user", [{"entity_id": entity, "to": "internet-user"}])
+    anonymous = [uses, flow("df-002", "spa", "backend", "none")]
+    assert _classified(anonymous, entity) == ("internet-anon", [{"entity_id": entity, "to": "internet-anon"}])
+
+
+@pytest.mark.parametrize(
+    "flows",
+    [
+        # One authenticated endpoint behind an anonymous entry proves no login for this role.
+        [
+            flow("df-001", "external", "gateway", "none", entity="ext-role"),
+            flow("df-002", "gateway", "backend", "bearer"),
+        ],
+        [flow("df-001", "external", "backend", "unknown", entity="ext-role")],
+        [flow("df-001", "external", "spa", entity="ext-role", interaction=True)],
+    ],
+    ids=["mixed", "unknown-only", "no-request-hop"],
+)
+def test_mixed_or_unknown_paths_leave_the_role_unclassified(flows):
+    assert _classified(flows) == (None, [])
+    if flows[0].get("authentication", {}).get("scheme") == "none":
+        assert mixed_request_path("ext-role", flows, {"db"}) == (["df-001"], ["df-002"])
+
+
+def test_classification_leaves_classified_and_declared_roles_alone():
+    flows = [flow("df-001", "external", "backend", "none", entity="ext-role")]
+    assert _classified(flows, declared={"source": ".appsec/actors.yaml"}) == (None, [])
+    result, changes = classify(document(flows, access="internet-user"), COMPONENTS)
+    assert result["external_entities"][0]["access"] == "internet-user" and changes == []
+
+
+def _handoff(tmp_path, declaration=None, access="internet-user"):
     import json
 
     import orchestration_controller as controller
@@ -228,7 +273,7 @@ def _handoff(tmp_path, declaration=None):
                 "id": "ext-visitor",
                 "name": "Visitor",
                 "kind": "legitimate-role",
-                "access": "internet-user",
+                **({"access": access} if access else {}),
                 "description": "Uses the API.",
                 "evidence": cited,
             }
@@ -259,6 +304,13 @@ def test_controller_withdraws_an_undeclared_authenticated_class_the_flows_dispro
     roles, log = _handoff(tmp_path)
     assert roles["ext-visitor"]["access"] == "internet-anon" and "declared" not in roles["ext-visitor"]
     assert "ROLE_ACCESS_WITHDRAWN" in log and "entity=ext-visitor" in log
+
+
+def test_controller_classifies_an_unclassified_role_from_its_request_path(tmp_path):
+    roles, log = _handoff(tmp_path, access=None)
+    assert roles["ext-visitor"]["access"] == "internet-anon"
+    assert "ROLE_ACCESS_CLASSIFIED" in log and "entity=ext-visitor access=internet-anon" in log
+    assert "ROLE_ACCESS_WITHDRAWN" not in log
 
 
 def test_controller_keeps_a_declared_login_outside_the_repository(tmp_path):
