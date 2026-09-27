@@ -1,6 +1,6 @@
 # Implplan: consistent Figure 1 for arbitrary repositories
 
-**Status:** measures verified by replay on 2026-09-27 and re-verified independently the same day. M1 and M1b are implemented with the confirmed RA-15 edits (`e978f404`); the other measures are open. M3b and M5 were revised after a genericity review; their decision edits in §8 need operator confirmation.
+**Status:** measures verified by replay on 2026-09-27 and re-verified independently the same day. Implemented: M1 and M1b (`e978f404`), M3 (`eb62810c`), M6 (`f54d6691`), M5 (`8f7646c7`, glyph numbering `f8b6b570`). Deferred: M2 (§4) and M4 (§6).
 
 **Trigger:** operator review of the juice-shop2 Figure 1 (run 2026-09-26, rendered before `96c919ba`) and of the same model rendered with the current code.
 
@@ -114,6 +114,10 @@ Add a deterministic emitter that turns `.deployment-inventory.json` into externa
 
 Verified: build components have zero flows in all three replayed repos that have one (juice-shop2, VulnerableApp, insecure-spring-app); the inventory carries CI systems, publish targets, base images and dependency counts for juice-shop2 and VulnerableApp; insecure-spring-app has an empty inventory and must stay unchanged (negative case).
 
+**Deferred.** Every external entity and data flow in the model requires file/line evidence, and the inventory records only the workflow directory for a CI system and no location for a publish target, action source or dependency source. M4 therefore first needs the inventory to record those locations. The inventory and the deployment topology it feeds were being reworked in parallel when M1–M6 landed, so M4 waits for that work to settle.
+
+Resolved design point: registries and package sources are `external-service` entities with the existing `package-registry` service role; no enum change is needed.
+
 Open design points: entity `kind` for artifact sources and registries (extend the enum or use `external-service` with `service_roles`); file/line evidence for CI entries (the inventory records only the workflow directory today); interaction with boundary `external → ci-cd-pipeline`, which is a boundary without a single flow in all three repos today. The emitted flows share its endpoints, so they bind to it by exact endpoint matching and need no M2.
 
 ## 7. M5 and M6 — attack class and display name (S8, S9)
@@ -135,9 +139,7 @@ Guards: a build-time-attributed CWE-347 finding lands in the supply-chain class;
 
 ## 8. Decision edits
 
-Confirmed and committed with M1 and M1b (`e978f404`): RA-15 and its M1b addition.
-
-Awaiting confirmation:
+Confirmed and committed: RA-15 with its M1b addition (`e978f404`), the RA-11 addition (`eb62810c`), RA-25 for M5 (`8f7646c7`), and the RA-18 note on the recorded project name (`f54d6691`). Confirmed wording:
 
 - RA-11 addition (M3b): "An unclassified, undeclared regular role takes `internet-user` only when every counted hop of its request path with a known scheme authenticates, and `internet-anon` only when every counted hop is `none`. A mixed path is an architecture error that returns to the analyst; an unknown-only path leaves the role unclassified."
 - New row (M5): "A finding attributed to the build-time group takes the supply-chain attack class before any CWE lookup; that class reuses the build-time CWE list of the attribution rules."
@@ -153,12 +155,11 @@ What replaces it: deterministic checks at the stage that can correct the defect.
 ## 10. Order
 
 1. Done (`e978f404`): M1 + M1b in one change with the RA-15 edits. M1 alone would bring S4 back.
-2. M3a + M3b + prompt: removes duplicate users and unconnected admins. M3a and the mixed-path error carry the effect; M3b only closes unambiguous cases.
-3. M4: gives the build boundary its flows, the only measure that adds substance to a boundary.
-4. M5 with golden replay.
-5. M6.
+2. Done (`eb62810c`): M3a + M3b + prompt. M3a and the mixed-path error carry the effect; M3b only closes unambiguous cases. An existing model keeps both cards until it is analysed again.
+3. Done (`f54d6691`): M6.
+4. Done (`8f7646c7`, `f8b6b570`): M5. The eighth class needed attack-path numbering from `glyph_sequence` in the composer and the posture QA checks, and a build-time attack edge ends at the finding's build component.
 
-Deferred: M2, until a large model shows the wrong chip placement in a report (§4).
+Deferred: M4 until the inventory records CI and publish locations (§6); M2 until a large model shows the wrong chip placement in a report (§4).
 
 Each step: neutral reproduction that fails before the change, a renamed variant, a negative case, replay of the four repos above, `make validate test-changed BASE=origin/dev`, `make lint`.
 
