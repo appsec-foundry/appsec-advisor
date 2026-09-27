@@ -530,6 +530,36 @@ def test_mask_text_preserves_code_reference(secret_scan):
         assert applied == []
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "external -> auth: routes/login.ts credential verification",
+        "token: lib/insecurity.ts:43",
+        "password: src/app/login/login.component.ts",
+        "secret = config/secrets.yaml",
+        "auth: app/controllers/sessions_controller.rb:12-30",
+    ],
+)
+def test_repository_file_path_is_a_code_reference(secret_scan, raw):
+    """A boundary name or evidence line cites the file it rests on; the path is
+    not the credential. Masked, `auth: routes/login.ts` became
+    `auth: **** (15 chars)` in a trust-boundary name (juice-shop2 2026-09-27)."""
+    assert [h for h in secret_scan.scan_text(raw) if h.pattern == "generic_credential_assignment"] == []
+    assert secret_scan.mask_text(raw) == (raw, [])
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "token: aGVsbG8/d29ybGQrYWJjZGVmZ2hp",  # base64 with a slash, no file extension
+        "secret = abc/def9x.k3y",  # extension-like tail that is no file type
+        "password: 'routes/login.ts'",  # quoted literal stays flagged
+    ],
+)
+def test_slash_bearing_secrets_are_not_taken_for_paths(secret_scan, raw):
+    assert any(h.pattern == "generic_credential_assignment" for h in secret_scan.scan_text(raw)), raw
+
+
 def test_mask_text_idempotent(secret_scan):
     once, _ = secret_scan.mask_text("password: 'admin123'")
     twice, applied2 = secret_scan.mask_text(once)

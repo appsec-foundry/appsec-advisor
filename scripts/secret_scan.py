@@ -145,6 +145,15 @@ _PATTERNS: list[_Pattern] = [
 ]
 
 
+# File types a report cites as evidence. A value ending in one of them after a
+# path separator names the file, not a credential; an open-ended extension
+# pattern would let a slash-bearing base64 secret with a dotted tail through.
+_SOURCE_FILE_EXTENSIONS = (
+    "ts|tsx|js|jsx|mjs|cjs|py|rb|php|java|kt|go|rs|cs|swift|scala|c|h|cc|cpp|hpp|"
+    "json|ya?ml|toml|ini|cfg|conf|env|xml|html?|hbs|pug|ejs|vue|svelte|md|sql|sh|"
+    "gradle|properties|tf|lock"
+)
+
 # An unquoted credential-assignment value that is a code-identifier reference
 # (camelCase / PascalCase / snake_case / dotted attribute path, no digits) — e.g.
 # ``secret: publicKey`` or ``password: security.hash`` — is a reference to a
@@ -159,6 +168,7 @@ _CODE_REFERENCE_RE = re.compile(
     r"|[a-z]+(?:_[a-z]+)+"  # snake_case:   read_unsigned_jwt_claims
     r"|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"  # env/template: $DB_PASS, ${DB_PASS}
     r"|#[A-Za-z0-9][A-Za-z0-9-]*"  # markdown anchor: #section-anchor
+    rf"|(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.(?:{_SOURCE_FILE_EXTENSIONS})(?::\d+(?:-\d+)?)?"  # routes/login.ts:34
     r")$"
 )
 
