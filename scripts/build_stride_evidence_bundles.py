@@ -730,6 +730,13 @@ def business_context_projection(value: Any, component_id: str) -> dict[str, Any]
                 if normalized not in normalized_items:
                     normalized_items.append(normalized)
             attributes[name] = normalized_items
+        # A no-harm declaration cannot raise a technical rating and must not
+        # lower one, so the STRIDE analyzer gets nothing from it; delivered, it
+        # pulled impact to Low. Triage and the verdict read it from the
+        # analyst context instead.
+        if attributes.get("impact_is_material") is False:
+            del attributes["impact_is_material"]
+            del attributes["impact_if_compromised"]
     if not attributes:
         return None
     return {

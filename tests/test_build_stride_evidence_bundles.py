@@ -199,12 +199,11 @@ def test_business_context_rejects_technical_unknown_empty_and_oversized_values(t
         bundles.build_all(output, repo, _manifest(_component(business_context=business_context)))
 
 
-@pytest.mark.parametrize("material", [False, True])
-def test_declared_impact_status_reaches_validated_component_context(tmp_path, material):
+def test_declared_material_impact_reaches_validated_component_context(tmp_path):
     repo, output = _repo(tmp_path)
     context = {
         "impact_if_compromised": "The user's declared consequence and its conditions.",
-        "impact_is_material": material,
+        "impact_is_material": True,
     }
     manifest = bundles.build_all(output, repo, _manifest(_component(business_context=context)))
     component = manifest["components"][0]
@@ -214,6 +213,34 @@ def test_declared_impact_status_reaches_validated_component_context(tmp_path, ma
         expected_sha256=component["business_context_sha256"],
     )
     assert projection["attributes"] == context
+
+
+def test_a_no_harm_declaration_is_withheld_from_the_stride_rating(tmp_path):
+    """A no-harm declaration cannot raise a technical rating and must not lower
+    one, so it carries nothing for STRIDE. Delivered, it pulled impact to Low
+    on juice-shop2 2026-09-27 (18 of 19 Low findings cited it)."""
+    repo, output = _repo(tmp_path)
+    context = {
+        "business_purpose": "Security training platform.",
+        "impact_if_compromised": "No material business harm; synthetic data only.",
+        "impact_is_material": False,
+    }
+    manifest = bundles.build_all(output, repo, _manifest(_component(business_context=context)))
+    component = manifest["components"][0]
+    projection = bundles.validate_business_context_bytes(
+        (output / component["business_context_path"]).read_bytes(),
+        expected_component_id=component["component_id"],
+        expected_sha256=component["business_context_sha256"],
+    )
+    assert projection["attributes"] == {"business_purpose": "Security training platform."}
+    assert component["business_context"] == context
+
+
+def test_a_bare_no_harm_declaration_delivers_no_business_context(tmp_path):
+    repo, output = _repo(tmp_path)
+    context = {"impact_if_compromised": "No material business harm.", "impact_is_material": False}
+    manifest = bundles.build_all(output, repo, _manifest(_component(business_context=context)))
+    assert manifest["components"][0].get("business_context_path") is None
 
 
 def test_bundle_rejects_tampered_business_context_receipt(tmp_path):
