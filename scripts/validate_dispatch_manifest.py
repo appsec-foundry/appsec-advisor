@@ -175,6 +175,7 @@ def validate(manifest_path: Path, output_dir: Path) -> tuple[bool, list[str], li
                         expected_sha256=comp["evidence_bundle_sha256"],
                         expected_focus_paths=comp.get("focus_paths", []),
                         expected_exclude_paths=comp.get("exclude_paths", []),
+                        expected_component_paths=comp.get("component_paths"),
                         output_dir=output_dir,
                     )
                     if bundle["limits"]["estimated_tokens"] != comp["evidence_bundle_estimated_tokens"]:

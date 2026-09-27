@@ -38,6 +38,7 @@ MAX_SOURCE_LINES = 400
 MAX_SOURCE_SLICES = 64
 MAX_SLICE_LINES = 40
 MAX_CLASS_VALUES = 32
+MAX_COMPONENT_PATHS = 32  # schema cap on `component.paths`, not on the component's scope
 MAX_VALUE_CHARS = 4096
 MAX_ROUTING_PATHS = 16
 MAX_ROUTING_PATH_CHARS = 500
@@ -1517,7 +1518,11 @@ def build_bundle(
     focus_paths = list(component.get("focus_paths") or [])
     exclude_paths = list(component.get("exclude_paths") or [])
     path_original = len(component_paths)
-    component_paths = sorted(dict.fromkeys(component_paths))[:32]
+    # The component's scope is every path it owns. Only the list written into the
+    # bundle is capped by its schema; evidence selection and ownership checks read
+    # the full scope, or a component with many paths loses the files past the cap.
+    scope_paths = sorted(dict.fromkeys(component_paths))
+    component_paths = scope_paths[:MAX_COMPONENT_PATHS]
 
     raw: dict[str, list[Any]] = {name: [] for name in ALL_EVIDENCE_CLASSES}
     raw["interfaces"] = _rows(component.get("interfaces"))
@@ -1534,7 +1539,7 @@ def build_bundle(
 
     mandatory_slices, signal_summaries, original_slice_count, protected_paths = _source_signals(
         output_dir,
-        component_paths,
+        scope_paths,
         registry,
         focus_paths,
     )
@@ -1580,7 +1585,7 @@ def build_bundle(
     source_slices, focus_decisions = _focus_source_slices(
         registry["primary"],
         focus_paths,
-        component_paths,
+        scope_paths,
         mandatory_slices,
     )
 
@@ -1653,7 +1658,7 @@ def build_bundle(
                 "original_count": path_original,
                 "retained_count": len(component_paths),
                 "omitted_count": path_original - len(component_paths),
-                "cap": 32,
+                "cap": MAX_COMPONENT_PATHS,
                 "ordering_key": "lexical-path",
             }
         )
@@ -1686,6 +1691,7 @@ def build_bundle(
         payload,
         registry,
         expected_component_id=component_id,
+        expected_component_paths=scope_paths,
         excluded_root=output_dir,
     )
     return bundle, payload
@@ -1699,6 +1705,27 @@ def _load_validator():
     return Draft202012Validator
 
 
+def _component_scope(bundle: dict[str, Any], expected: list[str] | str | None) -> list[str]:
+    """The component paths ownership is checked against.
+
+    A bundle lists at most ``MAX_COMPONENT_PATHS`` of them; a longer scope comes
+    from the dispatch entry, and the bundle's list must be its capped prefix.
+    Without that entry a capped bundle cannot establish ownership, so it is
+    rejected rather than checked against a partial scope.
+    """
+    listed = bundle["component"]["paths"]
+    truncated = any(row.get("signal_class") == "component_paths" for row in bundle.get("truncation") or [])
+    if expected is None:
+        if truncated:
+            raise BundleError("evidence-bundle component paths are capped; validation needs the dispatch entry's paths")
+        return listed
+    values = [expected] if isinstance(expected, str) else expected
+    scope = sorted(dict.fromkeys(str(value) for value in values))
+    if listed != scope[:MAX_COMPONENT_PATHS] or truncated != (len(scope) > MAX_COMPONENT_PATHS):
+        raise BundleError("evidence-bundle component paths do not match the dispatch entry")
+    return scope
+
+
 def validate_bundle_bytes(
     payload: bytes,
     registry: dict[str, Path],
@@ -1707,6 +1734,7 @@ def validate_bundle_bytes(
     expected_sha256: str | None = None,
     expected_focus_paths: list[str] | None = None,
     expected_exclude_paths: list[str] | None = None,
+    expected_component_paths: list[str] | str | None = None,
     excluded_root: Path | None = None,
 ) -> dict[str, Any]:
     if expected_sha256 and hashlib.sha256(payload).hexdigest() != expected_sha256:
@@ -1722,6 +1750,7 @@ def validate_bundle_bytes(
         raise BundleError(f"evidence bundle schema validation failed: {detail}")
     if expected_component_id and bundle["component"]["id"] != expected_component_id:
         raise BundleError("evidence-bundle component id does not match its dispatch entry")
+    component_paths = _component_scope(bundle, expected_component_paths)
     routing = bundle.get("path_routing")
     if not isinstance(routing, dict):
         if expected_focus_paths or expected_exclude_paths:
@@ -1825,7 +1854,6 @@ def validate_bundle_bytes(
         for row in routing["exclude_application"]:
             if (row["status"] == "superseded") != bool(row["superseded_by"]):
                 raise BundleError("evidence-bundle exclude application status is inconsistent")
-        component_paths = bundle["component"]["paths"]
         for name, paths in (
             ("focus_paths", focus_paths),
             ("exclude_paths", [row["path"] for row in routing["exclude_application"]]),
@@ -1882,6 +1910,7 @@ def validate_bundle(
     expected_sha256: str | None = None,
     expected_focus_paths: list[str] | None = None,
     expected_exclude_paths: list[str] | None = None,
+    expected_component_paths: list[str] | str | None = None,
     output_dir: Path | None = None,
 ) -> dict[str, Any]:
     try:
@@ -1895,6 +1924,7 @@ def validate_bundle(
         expected_sha256=expected_sha256,
         expected_focus_paths=expected_focus_paths,
         expected_exclude_paths=expected_exclude_paths,
+        expected_component_paths=expected_component_paths,
         excluded_root=output_dir,
     )
 

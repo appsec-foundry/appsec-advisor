@@ -566,6 +566,63 @@ def test_focus_directory_matches_component_glob_with_file_suffix(tmp_path):
     )
 
 
+def _many_file_component(repo: Path, directory: str, suffix: str, count: int = 40) -> list[str]:
+    root = repo / directory
+    root.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for index in range(count):
+        path = f"{directory}/h{index:02d}{suffix}"
+        (repo / path).write_text(f"handler_{index} = True\n", encoding="utf-8")
+        paths.append(path)
+    return paths
+
+
+@pytest.mark.parametrize("directory,suffix", [("routes", ".ts"), ("handlers/admin", ".py")])
+def test_a_component_scope_beyond_the_listed_cap_keeps_its_evidence_and_focus(tmp_path, directory, suffix):
+    """The bundle lists 32 component paths; the scope is still every path.
+
+    A focus path and a scanner signal on a file past the cap stay in scope, and
+    the validator checks ownership against the dispatch entry's full paths.
+    """
+    repo, output = _repo(tmp_path)
+    paths = _many_file_component(repo, directory, suffix)
+    late = paths[35]
+    _write_signal(output, file=paths[36])
+    component = _component(component_paths=paths, focus_paths=[late])
+    manifest = bundles.build_all(output, repo, _manifest(component))
+    entry = manifest["components"][0]
+    bundle_path = output / entry["evidence_bundle_path"]
+    bundle = json.loads(bundle_path.read_text())
+
+    assert bundle["component"]["paths"] == paths[: bundles.MAX_COMPONENT_PATHS]
+    assert [row["omitted_count"] for row in bundle["truncation"] if row["signal_class"] == "component_paths"] == [8]
+    assert "degraded" not in bundle["path_routing"]
+    assert bundle["path_routing"]["focus_admission"][0]["status"] == "admitted"
+    assert {late, paths[36]} <= {row["path"] for row in bundle["source_slices"]}
+    expected = dict(
+        expected_component_id="backend-api",
+        expected_sha256=entry["evidence_bundle_sha256"],
+        expected_focus_paths=[late],
+        expected_exclude_paths=[],
+        output_dir=output,
+    )
+    bundles.validate_bundle(bundle_path, {"primary": repo}, expected_component_paths=paths, **expected)
+    with pytest.raises(bundles.BundleError, match="capped"):
+        bundles.validate_bundle(bundle_path, {"primary": repo}, **expected)
+    without_focus = [path for path in paths if path != late]
+    with pytest.raises(bundles.BundleError, match="escapes component paths"):
+        bundles.validate_bundle(bundle_path, {"primary": repo}, expected_component_paths=without_focus, **expected)
+    with pytest.raises(bundles.BundleError, match="do not match the dispatch entry"):
+        bundles.validate_bundle(bundle_path, {"primary": repo}, expected_component_paths=paths[1:], **expected)
+
+
+def test_a_focus_path_outside_a_large_component_is_still_rejected(tmp_path):
+    repo, output = _repo(tmp_path)
+    paths = _many_file_component(repo, "routes", ".ts")
+    with pytest.raises(bundles.BundleError, match="outside the component paths"):
+        bundles.build_all(output, repo, _manifest(_component(component_paths=paths, focus_paths=["src/app.py"])))
+
+
 def test_focus_directory_drops_files_the_component_glob_does_not_own(tmp_path):
     """A typed component glob plus any non-matching file in the focus directory.
 
