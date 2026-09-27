@@ -132,6 +132,7 @@ def build_status(output_dir: Path) -> dict:
         "blocks_offered": int((projection.get("selection") or {}).get("blocks_total") or 0),
         "edits_proposed": proposed,
         "edits_applied": applied,
+        "edits_unchanged": 0 if reverted else int(apply_report.get("unchanged_count") or 0),
         "edits_rejected": int(apply_report.get("rejected_count") or 0),
         "apply_report_missing": apply_report_missing,
         "guard_violations": int(guard_report.get("violation_count") or 0),
@@ -154,11 +155,14 @@ def unaccounted(status: dict) -> int:
 
     The receipt cannot carry a line per loss type — a type nobody anticipated
     then has no line at all. This balance closes over every path: whatever the
-    reviewers proposed is applied, rejected, or dropped. A non-zero remainder
-    is a loss the code does not yet have a name for, and it is reported as one.
+    reviewers proposed is applied, left unchanged, rejected, or dropped. A
+    non-zero remainder is a loss the code does not yet have a name for, and it
+    is reported as one.
     """
     offered = status["edits_proposed"] + status["dropped_actions"]
-    accounted = status["edits_applied"] + status["edits_rejected"] + status["dropped_actions"]
+    accounted = (
+        status["edits_applied"] + status["edits_unchanged"] + status["edits_rejected"] + status["dropped_actions"]
+    )
     return offered - accounted
 
 
@@ -224,6 +228,7 @@ def log_detail(status: dict) -> str:
         f"offered={status['blocks_offered']} "
         f"proposed={status['edits_proposed']} "
         f"applied={status['edits_applied']} "
+        f"unchanged={status['edits_unchanged']} "
         f"rejected={status['edits_rejected']} "
         f"apply_report_missing={str(status['apply_report_missing']).lower()} "
         f"guard_violations={status['guard_violations']} "

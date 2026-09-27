@@ -571,7 +571,55 @@ def test_unchanged_markdown_is_not_counted_as_a_rewrite(output_dir, capsys):
     assert applier.main([str(output_dir)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["applied_count"] == 0
+    assert report["unchanged_count"] == 1
     assert report["files_touched"] == []
+
+
+def test_unchanged_field_is_counted_so_the_balance_closes(output_dir, capsys):
+    before = (output_dir / "threat-model.yaml").read_text(encoding="utf-8")
+    _plan(
+        output_dir,
+        [
+            {
+                "file": "threat-model.yaml",
+                "path": "threats[0].scenario",
+                "find": "The handler concatenates the id.",
+                "replace": "The handler concatenates the id.",
+            },
+            {
+                "file": "threat-model.yaml",
+                "path": "mitigations[0].verification",
+                "find": "Re-run the scanner.",
+                "replace": "Re-run the SAST scanner.",
+            },
+        ],
+    )
+    assert applier.main([str(output_dir)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert (report["applied_count"], report["unchanged_count"], report["rejected_count"]) == (1, 1, 0)
+    assert report["applied_count"] + report["unchanged_count"] + report["rejected_count"] == report["proposed_count"]
+    assert _model(output_dir)["threats"][0]["scenario"] == "The handler concatenates the id."
+    assert before != (output_dir / "threat-model.yaml").read_text(encoding="utf-8")
+
+
+def test_an_all_unchanged_structured_plan_touches_no_file(output_dir, capsys):
+    before = (output_dir / "threat-model.yaml").read_text(encoding="utf-8")
+    _plan(
+        output_dir,
+        [
+            {
+                "file": "threat-model.yaml",
+                "path": "threats[0].scenario",
+                "find": "The handler concatenates the id.",
+                "replace": "The handler concatenates the id.",
+            }
+        ],
+    )
+    assert applier.main([str(output_dir)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert (report["applied_count"], report["unchanged_count"]) == (0, 1)
+    assert report["files_touched"] == []
+    assert (output_dir / "threat-model.yaml").read_text(encoding="utf-8") == before
 
 
 def test_markdown_target_cannot_alias_another_run_artifact(output_dir):

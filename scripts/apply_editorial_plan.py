@@ -225,7 +225,7 @@ def _allowed_paths(name: str, document: Any) -> set[tuple]:
     return set(fragment_editable_paths(name, document))
 
 
-def _apply_structured(name: str, path_obj: Path, actions: list[dict]) -> tuple[int, list[dict], bool]:
+def _apply_structured(name: str, path_obj: Path, actions: list[dict]) -> tuple[int, int, list[dict], bool]:
     import yaml
     from enrichment_pass import EnrichmentContinuation
 
@@ -235,6 +235,7 @@ def _apply_structured(name: str, path_obj: Path, actions: list[dict]) -> tuple[i
     allowed = _allowed_paths(name, document)
 
     applied = 0
+    unchanged = 0
     rejected: list[dict] = []
     for action in actions:
         raw_path = action["path"]
@@ -251,6 +252,7 @@ def _apply_structured(name: str, path_obj: Path, actions: list[dict]) -> tuple[i
             rejected.append({"file": name, "path": raw_path, "reason": "current value does not match `find`"})
             continue
         if current == action["replace"]:
+            unchanged += 1
             continue
         _write_path(document, path, action["replace"])
         applied += 1
@@ -264,13 +266,14 @@ def _apply_structured(name: str, path_obj: Path, actions: list[dict]) -> tuple[i
             else yaml.safe_dump(document, **_YAML_DUMP)
         )
         atomic_write_text(path_obj, rendered)
-    return applied, rejected, bool(applied)
+    return applied, unchanged, rejected, bool(applied)
 
 
-def _apply_markdown(name: str, path_obj: Path, actions: list[dict]) -> tuple[int, list[dict], bool]:
+def _apply_markdown(name: str, path_obj: Path, actions: list[dict]) -> tuple[int, int, list[dict], bool]:
     text = path_obj.read_text(encoding="utf-8")
     original = text
     applied = 0
+    unchanged = 0
     rejected: list[dict] = []
     for action in actions:
         occurrences = text.count(action["find"])
@@ -278,12 +281,13 @@ def _apply_markdown(name: str, path_obj: Path, actions: list[dict]) -> tuple[int
             rejected.append({"file": name, "path": None, "reason": f"`find` matches {occurrences} times, expected 1"})
             continue
         if action["find"] == action["replace"]:
+            unchanged += 1
             continue
         text = text.replace(action["find"], action["replace"], 1)
         applied += 1
     if text != original:
         atomic_write_text(path_obj, text)
-    return applied, rejected, text != original
+    return applied, unchanged, rejected, text != original
 
 
 def apply_plan(plan: dict, output_dir: Path, dry_run: bool = False) -> dict:
@@ -292,6 +296,7 @@ def apply_plan(plan: dict, output_dir: Path, dry_run: bool = False) -> dict:
         by_file.setdefault(action["file"], []).append(action)
 
     applied = 0
+    unchanged = 0
     rejected: list[dict] = []
     touched: list[str] = []
     for name, actions in sorted(by_file.items()):
@@ -318,13 +323,15 @@ def apply_plan(plan: dict, output_dir: Path, dry_run: bool = False) -> dict:
         if dry_run:
             continue
         handler = _apply_markdown if name.endswith(".md") else _apply_structured
-        count, file_rejected, changed = handler(name, target, valid)
+        count, file_unchanged, file_rejected, changed = handler(name, target, valid)
         applied += count
+        unchanged += file_unchanged
         rejected.extend(file_rejected)
         if changed:
             touched.append(name)
     return {
         "applied_count": applied,
+        "unchanged_count": unchanged,
         "rejected_count": len(rejected),
         "rejected": rejected,
         "files_touched": sorted(touched),

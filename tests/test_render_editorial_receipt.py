@@ -338,6 +338,32 @@ def test_an_unexplained_gap_is_reported_without_a_named_loss_path(output_dir):
     assert "unaccounted=3" in receipt.log_detail(status)
 
 
+def test_unchanged_actions_close_the_balance(output_dir):
+    """An action whose replacement equals the current text is a recorded
+    outcome, not a loss: it must not surface as unaccounted."""
+    _write(output_dir, "blocks.json", {"selection": {"blocks_total": 40}})
+    _write(
+        output_dir,
+        "apply-report.json",
+        {
+            "complete": True,
+            "proposed_count": 10,
+            "applied_count": 6,
+            "unchanged_count": 1,
+            "rejected_count": 3,
+            "files_touched": ["threat-model.yaml"],
+            "batches_expected": 1,
+            "batches_completed": 1,
+        },
+    )
+    status = receipt.build_status(output_dir)
+    assert status["edits_unchanged"] == 1
+    assert receipt.unaccounted(status) == 0
+    assert "Unaccounted" not in receipt.render(status)
+    assert "unchanged=1" in receipt.log_detail(status)
+    assert "unaccounted=0" in receipt.log_detail(status)
+
+
 def test_qa_restore_is_visible_even_after_invariant_guard_was_clean(output_dir):
     _clean_pass(output_dir)
     _write(output_dir, "guard-report.json", {"status": "restored", "restored": ["threat-model.yaml"]})
