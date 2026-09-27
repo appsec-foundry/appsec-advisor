@@ -5949,7 +5949,7 @@ def test_render_figure1_svg_writes_file_and_image_ref(tmp_path: Path) -> None:
     assert svg.is_file() and svg.read_text(encoding="utf-8").startswith("<svg")
 
 
-def test_model_within_overview_caps_renders_only_the_detail_figure(tmp_path, monkeypatch):
+def test_model_within_overview_caps_renders_only_the_overview_figure(tmp_path, monkeypatch):
     import figure1_dfd
 
     render = figure1_dfd.check_diagram
@@ -5964,8 +5964,10 @@ def test_model_within_overview_caps_renders_only_the_detail_figure(tmp_path, mon
     stale.write_text("prior run")
     ctx = _fig1_ctx(tmp_path)
     markdown = compose._render_figure1_svg(ctx, _FIG1_APD, _FIG1_TAX)
-    assert modes == [True]
-    assert "data-legend-section" in (tmp_path / "figure1.svg").read_text()
+    assert modes == [False]
+    svg = (tmp_path / "figure1.svg").read_text()
+    assert ">Attackers<" in svg
+    assert "data-boundary-marker" not in svg and 'data-legend-section="boundaries"' not in svg
     assert "Detailed architecture diagram" not in markdown
     assert not stale.exists()
     assert ctx.warnings == []

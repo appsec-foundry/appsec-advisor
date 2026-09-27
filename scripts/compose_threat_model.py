@@ -5924,8 +5924,8 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
     # flow); a diagram that fails that check is wrong, not merely ugly, so it
     # falls back like a crash does — and both paths leave a RENDER_WARN, so a
     # silent downgrade cannot hide behind a report that still has a Figure 1.
-    # Figure 1 is the detail rendering. Only a model beyond the overview caps gets
-    # the compact overview as Figure 1 plus a linked paged detail sibling.
+    # Figure 1 is the overview. Only a model beyond the overview caps also gets
+    # a linked paged detail sibling.
     svg, intro = "", ""
     detail_svg = ""
     detail_basename = f"{Path(ctx.figure_basename).stem}-detail.svg"
@@ -5937,7 +5937,7 @@ def _render_figure1_svg(ctx: RenderContext, attack_paths_data: dict, attack_taxo
         figure_data = _figure1_display_data(ctx)
         paged = needs_views(figure_data)
         svg, problems = check_diagram(
-            figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=not paged
+            figure_data, attack_paths_data, attack_taxonomy, actor_labels=actor_labels, detail=False
         )
         if problems:
             ctx.warnings.append(

@@ -2242,7 +2242,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
 
 # ---- rendering ----------------------------------------------------------------------------------
 def _overview_groups(nodes, edges):
-    """Keep semantic sidebar groups contiguous; backend-only egress sits by data."""
+    """Keep semantic sidebar groups contiguous; every external participant stays in the external column."""
     has_build_zone = any(n["zone"] == "build" for n in nodes.values())
     for node in nodes.values():
         node["stable_order"] = True
@@ -2262,13 +2262,6 @@ def _overview_groups(nodes, edges):
             node["col_rank"] = 2
         elif node["zone"] == "third-party":
             node["col_rank"] = 3
-            peers = [
-                nodes[e["src"] if e["dst"] == node["id"] else e["dst"]]
-                for e in edges
-                if node["id"] in (e["src"], e["dst"])
-            ]
-            if peers and all(p["col"] in {1, 2} for p in peers):
-                node.update(col=2, col_rank=2)
 
 
 def _authentication_endpoint(edge, model):

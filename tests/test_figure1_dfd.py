@@ -2033,14 +2033,14 @@ def test_report_composer_publishes_compact_annotations_without_fallback(tmp_path
     assert f"each of the {facts['scenarios']} attack scenarios below begins" in intro
     # The in-figure legend explains the notation; the introduction does not repeat it.
     assert "hexagon" not in intro and "not established" not in intro
-    # A model within the overview caps publishes one figure: the detail rendering.
+    # A model within the overview caps publishes one figure: the overview.
     assert "Detailed architecture diagram" not in markdown
     assert not (tmp_path / "report.figure1-detail.svg").exists()
     assert "All Critical · High fills to 5 · +N = omitted High categories" in svg
     assert "Unsafe Query Construction (SQLi)" in svg
     assert "Insufficient Resource Limits" not in svg
     assert not re.search(r"[WT]-\d{3}", svg)
-    assert ">Data flows<" in svg
+    assert ">Data flows<" not in svg
     assert "sensitive data handling" not in svg
 
 
@@ -2960,15 +2960,36 @@ def test_boundary_lines_follow_resolved_crossings_only(rows, expected, detail):
     assert model == before
 
 
-@pytest.mark.parametrize("detail,column", [(False, 2), (True, 0)])
-def test_egress_boundary_line_follows_the_drawn_external_participant(detail, column):
+@pytest.mark.parametrize("detail", [False, True])
+@pytest.mark.parametrize(
+    "rows,expected",
+    [
+        ([("app0", "external")], {0: ["tb-1"]}),
+        ([("external", "app1"), ("app0", "external")], {0: ["tb-1", "tb-2"]}),
+        ([("external", "app1"), ("app0", "external"), ("app0", "db0")], {0: ["tb-1", "tb-2"], 1: ["tb-3"]}),
+    ],
+)
+def test_egress_boundary_line_follows_the_drawn_external_participant(rows, expected, detail):
     model, paths, taxonomy = _model()
-    model["trust_boundaries"] = [_resolved("app0", "external")]
+    model["trust_boundaries"] = [_resolved(source, target, i) for i, (source, target) in enumerate(rows, 1)]
     scenarios, actors = F.scenarios_from_attack_paths(model, paths, taxonomy)
     svg, state = F._build(model, scenarios, actors, detail=detail)
-    assert state["nodes"]["ext:app0"]["col"] == column
-    assert _boundary_lines(ET.fromstring(svg)) == {min(column, 1): ["tb-1"]}
+    assert state["nodes"]["ext:app0"]["col"] == 0
+    assert _boundary_lines(ET.fromstring(svg)) == expected
     assert F.check_diagram(model, paths, taxonomy, detail=detail)[1] == []
+
+
+@pytest.mark.parametrize("build_component", [True, False])
+def test_overview_groups_attackers_and_places_a_build_attacker_beside_its_build_zone(build_component):
+    model, _, _ = _model()
+    if not build_component:
+        model["components"] = [c for c in model["components"] if c["id"] != "ci"]
+        model["threats"] = [t for t in model["threats"] if t["component"] != "ci"]
+        model["trust_boundaries"] = [t for t in model["trust_boundaries"] if t["to"] != "ci"]
+    scenarios, actors = _shared_number_scenarios()
+    _, state = F._build(model, scenarios, actors, detail=False)
+    zones = {n["actor_slug"]: n["zone"] for n in state["nodes"].values() if n.get("attacker")}
+    assert zones == {"internet-anon": "attackers", "build-time": "build-threat" if build_component else "attackers"}
 
 
 def test_boundary_line_audit_rejects_unbacked_or_missing_lines():
