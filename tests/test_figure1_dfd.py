@@ -2979,6 +2979,18 @@ def test_egress_boundary_line_follows_the_drawn_external_participant(rows, expec
     assert F.check_diagram(model, paths, taxonomy, detail=detail)[1] == []
 
 
+@pytest.mark.parametrize("slug,target", [("build-time", "ci"), ("internet-anon", "app0")])
+def test_a_build_attacker_edge_ends_at_the_build_component_its_finding_also_touches(slug, target):
+    model, _, _ = _model()
+    name = {"build-time": "Build Attacker", "internet-anon": "Internet Attacker"}[slug]
+    scenario = dict(n="1", title="Tamper", actor=name, actor_slug=slug, victim=False, risk="High")
+    scenario.update(cids=["ci", "app0"], fids=[9], targets=[["ci", "app0"]])
+    actors = [{"name": name, "slug": slug, "sub": "", "attacker": True}]
+    _, state = F._build(model, [scenario], actors, detail=False)
+    attacks = [e for e in state["edges"] if e.get("attack")]
+    assert [e["dst"] for e in attacks] == [target]
+
+
 @pytest.mark.parametrize("build_component", [True, False])
 def test_overview_groups_attackers_and_places_a_build_attacker_beside_its_build_zone(build_component):
     model, _, _ = _model()

@@ -73,6 +73,7 @@ impacts:
       process can reach, including persistent storage.
     triggered_by:
       - remote-code-execution
+      - supply-chain
 
   - id: customer-data-exfiltration
     label: "Customer Data Exfiltration"
@@ -87,3 +88,4 @@ impacts:
       - privilege-escalation
       - sensitive-data-exposure
       - remote-code-execution
+      - supply-chain

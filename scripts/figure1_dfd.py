@@ -1469,9 +1469,15 @@ def _build_model(d, scenarios, actors, victim_target=USER_ID):
         # One edge per finding, to its own component when exposed, else to the
         # first exposed affected one; the other affected components go into
         # the edge's tooltip instead of fanning the attack out.
+        # A build-time attacker acts on the pipeline, so its edge ends at the
+        # finding's build component even when the finding also affects an
+        # exposed runtime component.
+        build_time = s.get("actor_slug") == "build-time"
         hit = []
         for affected in s.get("targets") or [cids]:
             exposed = [c for c in affected if c in app and nodes[c].get("exposed")]
+            if build_time:
+                exposed = [c for c in affected if c in nodes and nodes[c]["zone"] == "build"] or exposed
             if exposed:
                 hit += [exposed[0]] if exposed[0] not in hit else []
                 also[(src, exposed[0])].update(dict.fromkeys(c for c in affected if c in nodes and c != exposed[0]))

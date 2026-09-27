@@ -2935,7 +2935,31 @@ def _load_taxonomy(filename: str) -> dict:
 
 
 def _load_attack_class_taxonomy() -> dict:
-    return _load_taxonomy("attack-class-taxonomy.yaml")
+    """The attack classes; a class with `cwes_from` takes that actor group's CWEs from the attribution rules."""
+    taxonomy = _load_taxonomy("attack-class-taxonomy.yaml")
+    rules = _load_taxonomy("actor-attribution-rules.yaml").get("restricted_groups") or {}
+    for cls in taxonomy.get("classes") or []:
+        if isinstance(cls, dict) and cls.get("cwes_from") and "cwes" not in cls:
+            cls["cwes"] = list((rules.get(cls["cwes_from"]) or {}).get("cwes") or [])
+    return taxonomy
+
+
+def _attributed_only_to(threat: dict, model: dict | None, group: str) -> bool:
+    from actor_presentation import actor_group, attributed_actors
+
+    if not model:
+        return False
+    groups = {actor_group(actor) for actor in attributed_actors(model, threat)} - {None}
+    return groups == {group}
+
+
+def _actor_class(taxonomy: dict, threat: dict, model: dict | None) -> str | None:
+    """The class that owns every finding attributed only to its `cwes_from` actor group."""
+    for cls in taxonomy.get("classes") or []:
+        group = cls.get("cwes_from") if isinstance(cls, dict) else None
+        if group and _attributed_only_to(threat, model, group):
+            return cls.get("id")
+    return None
 
 
 def _load_business_impact_taxonomy() -> dict:
@@ -2963,10 +2987,14 @@ def _victim_label() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _classify_finding_class(threat: dict, taxonomy: dict) -> str | None:
+def _classify_finding_class(threat: dict, taxonomy: dict, model: dict | None = None) -> str | None:
     """Return the attack-class slug a finding belongs to, or ``None``.
 
-    First-match wins on the ``cwes`` list of each class in
+    A finding attributed only to a class's `cwes_from` actor group belongs to
+    that class whatever its CWE: a forged signature in the build pipeline is a
+    supply-chain attack, not an authentication bypass of the application.
+
+    Otherwise first-match wins on the ``cwes`` list of each class in
     ``data/attack-class-taxonomy.yaml`` — so ``injection`` beats
     ``remote-code-execution`` for CWE-94 (Code Injection) because
     ``injection`` is listed first in the taxonomy file.
@@ -2981,6 +3009,9 @@ def _classify_finding_class(threat: dict, taxonomy: dict) -> str | None:
          renders the Security Posture diagram with empty attack arrows /
          impact cards / attack-paths bullets.
     """
+    by_actor = _actor_class(taxonomy, threat, model)
+    if by_actor:
+        return by_actor
     cwes_to_check: list[str] = []
     cwe_single = (threat.get("cwe") or "").strip().upper()
     if cwe_single:
@@ -3005,7 +3036,7 @@ def _classify_finding_class(threat: dict, taxonomy: dict) -> str | None:
     return None
 
 
-def _derive_attack_paths_fallback(threats: list[dict], taxonomy: dict) -> dict:
+def _derive_attack_paths_fallback(threats: list[dict], taxonomy: dict, model: dict | None = None) -> dict:
     """Synthesise an ``attack_paths`` fragment from CWE → class membership.
 
     Used when ``.fragments/security-posture-attack-paths.json`` is missing.
@@ -3020,7 +3051,7 @@ def _derive_attack_paths_fallback(threats: list[dict], taxonomy: dict) -> dict:
     findings_by_class: dict[str, list[str]] = {}
     actors_present: set[str] = set()
     for t in threats:
-        slug = _classify_finding_class(t, taxonomy)
+        slug = _classify_finding_class(t, taxonomy, model)
         if not slug:
             continue
         fid = (t.get("id") or t.get("t_id") or "").strip()
@@ -3147,7 +3178,7 @@ def _load_attack_paths_fragment_impl(ctx: RenderContext, taxonomy: dict, threats
                         "security-posture-attack-paths.schema.json",
                     )
                 except (FragmentError, ContractError):
-                    return _derive_attack_paths_fallback(threats, taxonomy)
+                    return _derive_attack_paths_fallback(threats, taxonomy, ctx.yaml_data)
                 # Preserve the LLM's original (impact-tier) target before the
                 # control-tier reconciliation below overwrites it. Figure 1
                 # (architecture data-flow) routes by impact — injection shown
@@ -3170,7 +3201,7 @@ def _load_attack_paths_fragment_impl(ctx: RenderContext, taxonomy: dict, threats
                 return data
         except (json.JSONDecodeError, OSError):
             pass
-    return _derive_attack_paths_fallback(threats, taxonomy)
+    return _derive_attack_paths_fallback(threats, taxonomy, ctx.yaml_data)
 
 
 def _reconcile_attack_path_targets(data: dict, taxonomy: dict, ctx: RenderContext) -> None:
@@ -3259,7 +3290,7 @@ def _reconcile_attack_path_membership(data: dict, taxonomy: dict, threats: list[
     for t in threats or []:
         if not isinstance(t, dict):
             continue
-        slug = _classify_finding_class(t, taxonomy)
+        slug = _classify_finding_class(t, taxonomy, ctx.yaml_data)
         if not slug:
             continue
         # Prefer the legacy F-NNN identifier so generated entries match the
@@ -3274,11 +3305,39 @@ def _reconcile_attack_path_membership(data: dict, taxonomy: dict, threats: list[
             s = (ap.get("class") or "").strip()
             if s and s not in path_by_slug:
                 path_by_slug[s] = ap
-    existing_slugs = set(path_by_slug)
-
     gap_log: list[dict] = []
     appended: list[dict] = []
     merged_any = False
+    # A finding owned by an actor class leaves every other authored path; a path
+    # left without findings goes with it, so no scenario keeps a foreign title.
+    actor_slugs = {cls.get("id") for cls in classes_by_id.values() if cls.get("cwes_from")}
+    owner = {
+        _normalize_tid_to_fid(fid): slug
+        for slug, fids in findings_by_class.items()
+        if slug in actor_slugs
+        for fid in fids
+    }
+    for slug, ap in list(path_by_slug.items()):
+        refs = [f for f in (ap.get("findings") or []) if isinstance(f, str)]
+        moved = [f for f in refs if owner.get(_normalize_tid_to_fid(f), slug) != slug]
+        if not moved:
+            continue
+        ap["findings"] = [f for f in refs if f not in moved]
+        ap.pop("scenario_title", None)
+        merged_any = True
+        gap_log.append(
+            {
+                "class": slug,
+                "moved_findings": moved[:8],
+                "moved_count": len(moved),
+                "source": "attack-paths actor-class ownership",
+                "reason": f"{len(moved)} finding(s) belong to the class of their only attributed actor group",
+            }
+        )
+        if not ap["findings"]:
+            data["attack_paths"] = [p for p in data.get("attack_paths") or [] if p is not ap]
+            del path_by_slug[slug]
+    existing_slugs = set(path_by_slug)
     # (3) Union missing findings into EXISTING class paths. The LLM-authored
     # injection path lists e.g. SQL/NoSQL findings but routinely omits other
     # same-class findings (XXE CWE-611 is an `injection`-class finding on the
@@ -7387,7 +7446,7 @@ def _render_security_posture_at_a_glance(ctx: RenderContext, env: jinja2.Environ
                 for t in threats_list:
                     if not isinstance(t, dict):
                         continue
-                    if _classify_finding_class(t, attack_taxonomy) == cls_id:
+                    if _classify_finding_class(t, attack_taxonomy, ctx.yaml_data) == cls_id:
                         fid = (t.get("id") or t.get("t_id") or "").strip()
                         if fid:
                             finding_ids.append(fid)

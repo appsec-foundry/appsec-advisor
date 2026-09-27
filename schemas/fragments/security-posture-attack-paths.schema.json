@@ -49,7 +49,8 @@
               "sensitive-data-exposure",
               "remote-code-execution",
               "cross-site-scripting",
-              "cross-site-request-forgery"
+              "cross-site-request-forgery",
+              "supply-chain"
             ],
             "description": "Slug of one canonical class in data/attack-class-taxonomy.yaml. Each slug appears at most once across the array."
           },

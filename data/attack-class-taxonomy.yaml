@@ -1,6 +1,6 @@
-# attack-class-taxonomy.yaml — the seven canonical attack classes the
+# attack-class-taxonomy.yaml — the eight canonical attack classes the
 # Security Posture heatmap aggregates findings into. Each class becomes
-# one numbered red arrow (① … ⑦) in the Mermaid diagram and one bullet
+# one numbered red arrow (① … ⑧) in the Mermaid diagram and one bullet
 # in the **Attack paths** list below the diagram.
 #
 # Consumed by:
@@ -26,7 +26,7 @@ schema_version: 1
 # The fixed glyph sequence. Length = max number of classes the renderer
 # will emit. Position-based: classes are emitted in `classes` list order,
 # so the first non-empty class gets ①, the second gets ②, …
-glyph_sequence: ["①", "②", "③", "④", "⑤", "⑥", "⑦"]
+glyph_sequence: ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"]
 
 classes:
   - id: injection
@@ -209,3 +209,24 @@ classes:
       - CWE-942  # Permissive Cross-domain Policy with Untrusted Domains
     default_impacts:
       - customer-session-hijack
+
+  # Owns every finding attributed only to the build-time actor group, whatever
+  # its CWE, and CWE-matches the attribution rule's build-time list otherwise.
+  # `cwes_from` keeps one list: compose_threat_model loads it from
+  # data/actor-attribution-rules.yaml → restricted_groups.<group>.cwes.
+  - id: supply-chain
+    label: "Supply Chain"
+    short_label: "Supply Chain"
+    diagram_label: "Compromise the Build or Its Inputs"
+    threat_label: "Build Pipeline & Dependency Integrity"
+    stride: "T·E"
+    description: >-
+      a dependency, build input, pipeline step or published artifact can be
+      replaced or altered, so attacker-controlled code reaches the shipped
+      application.
+    default_actor: build-time
+    default_target_tier: application
+    cwes_from: build-time
+    default_impacts:
+      - full-server-compromise
+      - customer-data-exfiltration

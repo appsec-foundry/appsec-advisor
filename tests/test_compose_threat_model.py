@@ -5914,6 +5914,62 @@ def test_figure1_authored_title_survives_loading_unless_membership_expands(tmp_p
     assert "data-legend-section" in svg  # Primary audited renderer, not the fallback.
 
 
+_ACTORS = [
+    {"id": "ACT-BUILD", "heatmap_slug": "build-time", "active": True},
+    {"id": "ACT-WEB", "heatmap_slug": "internet-anon", "active": True},
+]
+
+
+def _attributed(fid, component, cwe, *actors):
+    return {"id": fid, "component": component, "cwe": cwe, "risk": "High", "actor_ids": list(actors)}
+
+
+@pytest.mark.parametrize("component", ["ci-cd-pipeline", "release-runner"])
+def test_a_finding_attributed_only_to_build_time_takes_the_supply_chain_class(component):
+    taxonomy = compose._load_attack_class_taxonomy()
+    model = {"actors": _ACTORS}
+    classify = compose._classify_finding_class
+    assert classify(_attributed("T-001", component, "CWE-347", "ACT-BUILD"), taxonomy, model) == "supply-chain"
+    assert classify(_attributed("T-002", "api", "CWE-347", "ACT-WEB"), taxonomy, model) == "auth-bypass"
+    # Both groups keep the CWE lookup; so does a caller without the model.
+    both = _attributed("T-003", component, "CWE-347", "ACT-BUILD", "ACT-WEB")
+    assert classify(both, taxonomy, model) == "auth-bypass"
+    assert classify(_attributed("T-004", component, "CWE-347", "ACT-BUILD"), taxonomy) == "auth-bypass"
+    assert classify({"id": "T-005", "cwe": "CWE-1104"}, taxonomy, model) == "supply-chain"
+
+
+def test_the_supply_chain_class_reuses_the_build_time_attribution_cwes():
+    rules = yaml.safe_load((compose.PLUGIN_ROOT / "data" / "actor-attribution-rules.yaml").read_text())
+    supply = next(c for c in compose._load_attack_class_taxonomy()["classes"] if c["id"] == "supply-chain")
+    assert supply["cwes"] == rules["restricted_groups"]["build-time"]["cwes"]
+    assert supply["default_actor"] == "build-time"
+
+
+@pytest.mark.parametrize("ref", ["T-007", "F-007"])
+def test_authored_paths_release_build_time_findings_to_the_supply_chain_path(tmp_path, ref):
+    ctx = _fig1_ctx(tmp_path)
+    ctx.yaml_data["actors"] = _ACTORS
+    threats = [
+        _attributed("T-007", "ci-cd-pipeline", "CWE-347", "ACT-BUILD"),
+        _attributed("T-008", "api", "CWE-347", "ACT-WEB"),
+        _attributed("T-009", "ci-cd-pipeline", "CWE-732", "ACT-BUILD"),
+    ]
+    ctx.yaml_data["threats"] = threats
+    data = {
+        "actors": ["internet-anon"],
+        "attack_paths": [
+            {"class": "auth-bypass", "actor": "internet-anon", "findings": [ref, "T-008"], "scenario_title": "Forged"},
+            {"class": "privilege-escalation", "actor": "internet-anon", "findings": ["T-009"]},
+        ],
+    }
+    compose._reconcile_attack_path_membership(data, compose._load_attack_class_taxonomy(), threats, ctx)
+    paths = {p["class"]: p for p in data["attack_paths"]}
+    assert paths["auth-bypass"]["findings"] == ["T-008"] and "scenario_title" not in paths["auth-bypass"]
+    assert "privilege-escalation" not in paths  # emptied, so no scenario keeps its title
+    assert paths["supply-chain"]["findings"] == ["T-007", "T-009"]
+    assert paths["supply-chain"]["actor"] == "build-time"
+
+
 @pytest.mark.parametrize("registration", [True, False])
 @pytest.mark.parametrize("access", [True, False])
 @pytest.mark.parametrize("fallback", [True, False])
