@@ -2241,7 +2241,7 @@ def _layout(nodes, edges, dropped, tb_threats, ncols=3, *, optimize=True):
 
 
 # ---- rendering ----------------------------------------------------------------------------------
-def _overview_groups(nodes, edges):
+def _overview_groups(nodes):
     """Keep semantic sidebar groups contiguous; every external participant stays in the external column."""
     has_build_zone = any(n["zone"] == "build" for n in nodes.values())
     for node in nodes.values():
@@ -3718,7 +3718,7 @@ def _build(
     )
     nodes, edges, tbs, tb_threats = _build_model(d, scenarios, actors, victim_target)
     if not detail:
-        _overview_groups(nodes, edges)
+        _overview_groups(nodes)
     group_labels = {"internet-user": "Self-registered users", "repo-read": "Public-source readers"}
     for node in nodes.values():
         if not node.get("attacker"):
