@@ -1,6 +1,6 @@
 # Implplan: consistent Figure 1 for arbitrary repositories
 
-**Status:** measures verified by replay on 2026-09-27 and re-verified independently the same day. M1 and M1b are implemented with the confirmed RA-15 edits; the other measures are open. The RA-11 edit in §8 needs operator confirmation before M3b.
+**Status:** measures verified by replay on 2026-09-27 and re-verified independently the same day. M1 and M1b are implemented with the confirmed RA-15 edits (`e978f404`); the other measures are open. M3b and M5 were revised after a genericity review; their decision edits in §8 need operator confirmation.
 
 **Trigger:** operator review of the juice-shop2 Figure 1 (run 2026-09-26, rendered before `96c919ba`) and of the same model rendered with the current code.
 
@@ -96,13 +96,17 @@ Verified rule matrix:
 | VulnerableApp (no client component) | no | no |
 | insecure-ai-app (client, no roles) | no | no |
 
-**M3b deterministic access classification.** In `reconcile_role_access.py`, classify an unclassified, undeclared regular role from its own request path (`request_path`): any reachable counted hop with an authenticating scheme → `internet-user`; all counted hops `none` → `internet-anon`; only `unknown` → leave unclassified. A requirement that the analyst always sets `access` was rejected: it fires on the VulnerableApp scanner role, which is legitimately unauthenticated.
+Both positive cases are Juice Shop models. The neutral SPA fixture and its renamed variant supply the positive case outside Juice Shop; no replayed non-Juice-Shop run has the defect.
 
-Verified: juice-shop2 variant C → schemes include `password`, `bearer`, `cookie` → `internet-user`; VulnerableApp `ext-security-scanner` → only `none` → `internet-anon`.
+**M3b deterministic access classification, unambiguous paths only.** In `reconcile_role_access.py`, classify an unclassified, undeclared regular role from its own request path (`request_path`) only when the path is unambiguous: every counted hop with a known scheme authenticates → `internet-user`; every counted hop is `none` → `internet-anon`. A mixed path (`none` beside an authenticating scheme) leaves the role unclassified and becomes an architecture validator error that names the role and the hops of each kind, so the analyst splits it into one role per privilege level. An unknown-only path leaves the role unclassified without an error.
+
+The first draft classified any path with one authenticating hop as `internet-user`. It was rejected: `request_path` includes every hop reachable behind the client, so a single authenticated API endpoint would make every role behind an SPA `internet-user`, including a purely anonymous visitor. A requirement that the analyst always sets `access` was rejected too: it fires on the VulnerableApp scanner role, which is legitimately unauthenticated.
+
+Verified: VulnerableApp `ext-security-scanner` → only `none` → `internet-anon`. juice-shop2 variant C (with an interaction flow) → `none` beside `password`, `bearer`, `cookie` → mixed, so M3b alone does not remove the duplicate card there; the retry after the validator error does. The expected effect on juice-shop2 therefore rests on the analyst following the error, not on a deterministic classification.
 
 **Prompt.** `appsec-architecture-analyst.md`: one role per privilege level (never one role spanning anonymous, user and admin), and the human interaction with each client component is required, not optional. Served client code stays a prompt rule (`schema-invariants.md:150`); no reliable deterministic signal was found.
 
-Guards: neutral SPA fixture without interaction → validator error; renamed variant → same error; API-only fixture → no error. Classification: authenticated path → `internet-user`, unauthenticated path → `internet-anon`, unknown-only → unchanged, declared role → unchanged.
+Guards: neutral SPA fixture without interaction → validator error; renamed variant → same error; API-only fixture → no error. Classification: fully authenticated path → `internet-user`, fully unauthenticated path → `internet-anon`, mixed path → unchanged plus validator error, SPA whose only authenticated hop is one API endpoint behind an anonymous role's path → not `internet-user`, unknown-only → unchanged without error, declared role → unchanged.
 
 ## 6. M4 — supply-chain inputs and outputs for build components (S7)
 
@@ -114,16 +118,31 @@ Open design points: entity `kind` for artifact sources and registries (extend th
 
 ## 7. M5 and M6 — attack class and display name (S8, S9)
 
-**M5.** Add a supply-chain class to `data/attack-class-taxonomy.yaml` with default actor `build-time` and the supply-chain CWEs observed on build findings (829, 494, 1104, 506, 345); CWE-250 (container runs as root) also occurs there but is not specific to the supply chain and stays out. This changes scenario numbering, Figure 2, top threats and Management Summary counts, so it needs its own change with golden-fixture replay. Verified: 12 of 14 juice-shop2 build findings map to no class today.
+**M5.** Two causes, both generic:
+
+1. The taxonomy has no supply-chain class, so 12 of 14 juice-shop2 build findings map to no class (VulnerableApp 11 of 13, insecure-spring-app 5 of 7, same CWE pattern).
+2. A finding takes the first class whose `cwes` contains its CWE (`compose_threat_model.py:2988-3003`); the attributed actor plays no part. CWE-347 and CWE-732 on build components therefore become "Bypass or Forge Authentication" and "Bypass Authorization", and exactly these two findings define the A2 scenarios today. A new class alone would leave both wrong titles in place.
+
+Change: add a supply-chain class with default actor `build-time`, and assign a finding whose attribution is the `build-time` group to that class before the CWE lookup. The class takes its CWE list from `restricted_groups.build-time.cwes` in `data/actor-attribution-rules.yaml` (494, 506, 829, 830, 1104, 1357, 1395) instead of a second list, so attribution and classification cannot drift. A finding without a build-time attribution keeps the CWE lookup. CWE-250 (container runs as root) stays in its current class, because the actor rule decides, not the CWE.
+
+The first draft used the CWEs observed on juice-shop2 build findings (829, 494, 1104, 506, 345). It was rejected: the list came from one run and duplicated the attribution rule.
+
+This changes scenario numbering, Figure 2, top threats and Management Summary counts, so it needs its own change with golden-fixture replay and a decision row.
+
+Guards: a build-time-attributed CWE-347 finding lands in the supply-chain class; the same CWE on an internet-attributed finding stays in `auth-bypass` (negative case); a renamed build component behaves identically; the class list and the attribution rule cannot diverge (one source).
 
 **M6.** Resolve the display name once in the YAML builder from the manifest under its `repo_root` argument (`build_threat_model_yaml.py`, `--repo-root` or `.skill-config.json`) and persist it as `meta.project_name`; the renderer never derives it from the output directory. No producer writes `meta.repository_root` today, so the renderer cannot find the repository itself. The readers of `meta.project_name` already exist (`figure1_dfd.py:_project_name`, `compose_threat_model.py:_figure1_display_data`); only the writer is missing. Without a manifest, fall back to the role noun alone. Verified: a copy outside `<repo>/docs/security` renders "juice-shop2 User"; with the manifest beside it, "Juice Shop User".
 
-## 8. Decision edits (awaiting confirmation)
+## 8. Decision edits
 
-- RA-15 (M1): "Figure 1 draws a trust-boundary line only in a column gap that a resolved boundary other than an internal interface crosses, and the self-check fails when drawn lines and resolved crossings disagree. Figure 1 is the overview without boundary IDs or boundary legend and defers the inventory to the report catalogue; a model within the overview caps gets no detail sibling, and only a model beyond them also links a paged detail view with boundary IDs."
-- RA-15 addition (M1b): "In the overview every external participant sits in the external column, so boundaries to or from `external` share one perimeter line."
-- New row (M2, deferred with M2, not up for confirmation now): "Boundary chips in detail views follow the boundary stage's persisted `crossing_flow_ids`, which stay on their boundary row through delivery renumbering; exact endpoint matching is only the fallback for models without that field."
-- RA-11 addition (M3b): "An unclassified, undeclared regular role takes `internet-user` when its request path authenticates anywhere and `internet-anon` when every counted hop is `none`; an unknown-only path leaves it unclassified."
+Confirmed and committed with M1 and M1b (`e978f404`): RA-15 and its M1b addition.
+
+Awaiting confirmation:
+
+- RA-11 addition (M3b): "An unclassified, undeclared regular role takes `internet-user` only when every counted hop of its request path with a known scheme authenticates, and `internet-anon` only when every counted hop is `none`. A mixed path is an architecture error that returns to the analyst; an unknown-only path leaves the role unclassified."
+- New row (M5): "A finding attributed to the build-time group takes the supply-chain attack class before any CWE lookup; that class reuses the build-time CWE list of the attribution rules."
+
+Deferred with M2, not up for confirmation: "Boundary chips in detail views follow the boundary stage's persisted `crossing_flow_ids`, which stay on their boundary row through delivery renumbering; exact endpoint matching is only the fallback for models without that field."
 
 ## 9. Rejected: an LLM agent that checks and corrects Figure 1
 
@@ -133,8 +152,8 @@ What replaces it: deterministic checks at the stage that can correct the defect.
 
 ## 10. Order
 
-1. M1 + M1b in one change with the RA-15 edits: smallest change, removes the regression from every in-cap report. M1 alone would bring S4 back.
-2. M3a + M3b + prompt: removes duplicate users and unconnected admins.
+1. Done (`e978f404`): M1 + M1b in one change with the RA-15 edits. M1 alone would bring S4 back.
+2. M3a + M3b + prompt: removes duplicate users and unconnected admins. M3a and the mixed-path error carry the effect; M3b only closes unambiguous cases.
 3. M4: gives the build boundary its flows, the only measure that adds substance to a boundary.
 4. M5 with golden replay.
 5. M6.
@@ -142,3 +161,5 @@ What replaces it: deterministic checks at the stage that can correct the defect.
 Deferred: M2, until a large model shows the wrong chip placement in a report (§4).
 
 Each step: neutral reproduction that fails before the change, a renamed variant, a negative case, replay of the four repos above, `make validate test-changed BASE=origin/dev`, `make lint`.
+
+Limit of the evidence: all four replayed repositories are deliberately vulnerable demo applications, and the positive M3a cases are Juice Shop models. No production application, monorepo, or repository without a web client (library, CLI) was replayed. The neutral fixtures cover the mechanisms; a run on such a repository after steps 2 and 4 is the open generality check.
